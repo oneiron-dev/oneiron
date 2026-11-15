@@ -156,11 +156,11 @@ fn a_slack_export_decodes_one_conversation_per_channel_with_its_members() -> Tes
             ("the venue is booked", Some("slack:U1")),
         ]
     );
-    assert_eq!(general.messages[0].native_id, "C1:1761955300.000100");
+    assert_eq!(general.messages[0].native_id, "T1:C1:1761955300.000100");
     assert_eq!(general.messages[0].at_ms, Some(1_761_955_300_000));
     assert_eq!(
         general.messages[1].parent_id.as_deref(),
-        Some("C1:1761955300.000100"),
+        Some("T1:C1:1761955300.000100"),
         "a thread reply names the message that began its thread"
     );
     assert!(

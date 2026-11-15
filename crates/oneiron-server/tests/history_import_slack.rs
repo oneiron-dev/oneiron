@@ -270,7 +270,7 @@ fn oneiron_import_slack_lands_each_channel_bound_to_its_mapped_members() -> Test
     );
 
     let vault = home.open()?;
-    for row in rows(&vault, "C1:1761955400.000100")? {
+    for row in rows(&vault, "T1:C1:1761955400.000100")? {
         assert!(
             reads(&vault, row, &[home.yuki])?,
             "yuki reads general's {row:?}"
@@ -288,7 +288,7 @@ fn oneiron_import_slack_lands_each_channel_bound_to_its_mapped_members() -> Test
             "a person never in the workspace reads nothing of {row:?}"
         );
     }
-    for row in rows(&vault, "G1:1761955600.000100")? {
+    for row in rows(&vault, "T1:G1:1761955600.000100")? {
         assert!(
             reads(&vault, row, &[home.owner])?,
             "the owner reads board's {row:?}"
@@ -372,7 +372,7 @@ fn a_workspace_with_no_member_mapped_reads_to_the_owner_alone() -> TestResult {
         stderr(&output)
     );
     let vault = home.open()?;
-    for native_id in ["C1:1761955300.000100", "G1:1761955600.000100"] {
+    for native_id in ["T1:C1:1761955300.000100", "T1:G1:1761955600.000100"] {
         for row in rows(&vault, native_id)? {
             assert!(
                 reads(&vault, row, &[home.owner])?,
@@ -400,7 +400,7 @@ fn the_imports_turns_are_born_under_the_workspaces_facet() -> TestResult {
         .ok_or("the report names the workspace's facet")?;
     let facet = EntityId::from_hex(named).map_err(|_| "the facet is an id in hex")?;
     let vault = home.open()?;
-    for native_id in ["C1:1761955300.000100", "G1:1761955600.000100"] {
+    for native_id in ["T1:C1:1761955300.000100", "T1:G1:1761955600.000100"] {
         let rows = imported_message_rows(&vault, HistorySource::Slack, native_id)?
             .ok_or_else(|| format!("message {native_id} did not land"))?;
         assert_eq!(
@@ -518,7 +518,7 @@ fn the_proposed_map_matches_members_by_email() -> TestResult {
     assert_eq!(report["totals"]["new"], LANDED);
     assert_eq!(report["workspace"]["matched"], 1);
     let vault = home.open()?;
-    for row in rows(&vault, "C1:1761955400.000100")? {
+    for row in rows(&vault, "T1:C1:1761955400.000100")? {
         assert!(
             reads(&vault, row, &[yuki])?,
             "the person the owner confirmed reads general's {row:?}"
@@ -539,7 +539,7 @@ fn a_later_map_gives_a_contact_the_channels_it_was_in() -> TestResult {
     let report = landed(&home.import(&export, &members)?)?;
     assert_eq!(report["workspace"]["key"], "T1");
     // sam's words in general (public) and in board (private to owen and sam).
-    let sams = ["C1:1761955500.000100", "G1:1761955600.000100"];
+    let sams = ["T1:C1:1761955500.000100", "T1:G1:1761955600.000100"];
     {
         let vault = home.open()?;
         for native_id in sams {
@@ -578,7 +578,7 @@ fn a_later_map_gives_a_contact_the_channels_it_was_in() -> TestResult {
                 );
             }
         }
-        for row in rows(&vault, "G1:1761955600.000100")? {
+        for row in rows(&vault, "T1:G1:1761955600.000100")? {
             assert!(
                 !reads(&vault, row, &[home.yuki])?,
                 "yuki, a contact, still reads nothing of board's {row:?}"
