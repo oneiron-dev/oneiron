@@ -34,16 +34,17 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oneiron::llm::InferenceCallReceipt;
-use oneiron::llm::media::wav::pcm16_wav;
 use oneiron::llm::media::{
     AiOperation, InterruptedMediaCall, MediaBackend, MediaCallProgress, MediaFuture, MediaPart,
     MediaProgressFuture, MediaRequest, MediaResponse, MediaUsage, MediaVoice,
 };
-use oneiron::voice_cascade::speakable_pieces;
 use oneiron::voice_cascade::voxcpm2::{PcmSpool, VoiceServingLimits, VoxCpm2PcmBody, WarmTarget};
 use oneiron::{
     BudgetLease, EntityId, FatalLlmError, LlmError, LlmResult, ModelId, ModelLocality,
     RetryableLlmError, Vault,
+};
+use oneiron_speech::tts::voxcpm2::{
+    RenderReply, Transcript, header_pieces, joined_wav_header, render_body,
 };
 use serde_json::{Value as JsonValue, json};
 
@@ -52,112 +53,6 @@ use super::http::{
 };
 use super::media::{AdmittedReference, VoiceReferenceUploadGuard};
 use super::rerank::transport;
-
-/// Where a render's reference transcript rides.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TranscriptPlacement {
-    /// In the JSON header, beside the text: every worker takes this.
-    Header,
-    /// As its own frame of `transcript_bytes` bytes between the header and
-    /// the clip, for a worker whose `/ready` says it takes one.
-    Frame,
-}
-
-/// A render's reference transcript and where it rides.
-#[derive(Clone, Copy)]
-struct Transcript<'a> {
-    text: &'a str,
-    placement: TranscriptPlacement,
-}
-
-/// One render's JSON header: the pinned target, the text, and the reference
-/// transcript when it rides here, else its byte length.
-fn render_header(target: &JsonValue, text: &str, transcript: Transcript<'_>) -> LlmResult<Vec<u8>> {
-    let header = match transcript.placement {
-        TranscriptPlacement::Header => json!({
-            "target": target,
-            "text": text,
-            "transcript": transcript.text,
-        }),
-        TranscriptPlacement::Frame => json!({
-            "target": target,
-            "text": text,
-            "transcript_bytes": transcript.text.len(),
-        }),
-    };
-    serde_json::to_vec(&header).map_err(|_| FatalLlmError::InvalidRequest.into())
-}
-
-/// The bytes `text` takes as a JSON string, without its quotes.
-fn escaped_len(text: &str) -> usize {
-    serde_json::to_string(text).map_or(usize::MAX, |quoted| quoted.len().saturating_sub(2))
-}
-
-/// The renders `text` goes as, and where their reference transcript rides,
-/// so every render's header stays within the worker's decoder bound
-/// `max_header` (FIX 3758). The transcript rides in the header while every
-/// piece within `max_text` fits beside it, as before; past that, as a frame
-/// of its own when the worker takes one; else the pieces split again until
-/// each header fits. Refused only when not one character fits.
-fn header_pieces<'t>(
-    target: &JsonValue,
-    text: &'t str,
-    transcript: &'t str,
-    limits: VoiceServingLimits,
-    takes_frame: bool,
-) -> LlmResult<(Transcript<'t>, Vec<&'t str>)> {
-    let max_text = usize::try_from(limits.max_text_bytes).unwrap_or(usize::MAX);
-    let max_header = usize::try_from(limits.max_header_bytes).unwrap_or(usize::MAX);
-    let pieces = speakable_pieces(text, max_text);
-    // Every header differs from the empty-text one only by its text.
-    let fits_beside = |transcript: Transcript<'_>| -> LlmResult<_> {
-        let overhead = render_header(target, "", transcript)?.len();
-        Ok(move |piece: &str| overhead.saturating_add(escaped_len(piece)) <= max_header)
-    };
-    let inline = Transcript {
-        text: transcript,
-        placement: TranscriptPlacement::Header,
-    };
-    let fits = fits_beside(inline)?;
-    if pieces.iter().all(|&piece| fits(piece)) {
-        return Ok((inline, pieces));
-    }
-    let transcript = if takes_frame {
-        Transcript {
-            text: transcript,
-            placement: TranscriptPlacement::Frame,
-        }
-    } else {
-        inline
-    };
-    let fits = fits_beside(transcript)?;
-    let mut fitted = Vec::with_capacity(pieces.len());
-    for piece in pieces {
-        split_to_fit(piece, &fits, &mut fitted)?;
-    }
-    Ok((transcript, fitted))
-}
-
-/// `piece` as pieces whose header `fits`, in order: one that does not is
-/// split again within half its length.
-fn split_to_fit<'t>(
-    piece: &'t str,
-    fits: &dyn Fn(&str) -> bool,
-    out: &mut Vec<&'t str>,
-) -> LlmResult<()> {
-    if fits(piece) {
-        out.push(piece);
-        return Ok(());
-    }
-    // One character that does not fit beside the transcript cannot go.
-    if piece.chars().nth(1).is_none() {
-        return Err(FatalLlmError::InvalidRequest.into());
-    }
-    for part in speakable_pieces(piece, piece.len() / 2) {
-        split_to_fit(part, fits, out)?;
-    }
-    Ok(())
-}
 
 /// One VoxCPM2 worker's media client, serving the models the speech seat
 /// names on it.
@@ -203,20 +98,6 @@ fn spool_failed(error: oneiron::Error) -> LlmError {
     RetryableLlmError::ServerError.into()
 }
 
-/// The header of one mono WAV at `sample_rate` holding every render's
-/// audio, with room for it: the header [`pcm16_wav`] writes for an empty
-/// clip, its RIFF and data lengths the joined audio's. `None` when the
-/// joined audio overflows a WAV's 32-bit lengths.
-fn joined_wav_header(sample_rate: u32, renders: &[VoxCpm2PcmBody]) -> Option<Vec<u8>> {
-    let data = u32::try_from(renders.iter().map(VoxCpm2PcmBody::len).sum::<u64>()).ok()?;
-    let riff = data.checked_add(36)?;
-    let mut wav = pcm16_wav(sample_rate, 1, &[])?;
-    wav.get_mut(4..8)?.copy_from_slice(&riff.to_le_bytes());
-    wav.get_mut(40..44)?.copy_from_slice(&data.to_le_bytes());
-    wav.reserve_exact(data as usize);
-    Some(wav)
-}
-
 /// The vault's serving policy for `holder`, narrowed to the worker's
 /// ceiling: each field the smaller of the two, so a narrowing never widens
 /// past what the worker reports. The worker's own ceiling when the vault is
@@ -245,67 +126,20 @@ fn effective_limits(
     }
 }
 
-/// One render's framed reply, taken as it arrives: a 4-byte big-endian
-/// header length, the JSON header, then the mono PCM16, which goes to its
-/// spool.
+/// One render's framed reply, taken as it arrives: its framing read by
+/// [`RenderReply`], its mono PCM16 into its spool.
 struct FramedRender<'a> {
-    warm: &'a WarmTarget,
-    limits: VoiceServingLimits,
-    target: &'a JsonValue,
-    /// The length prefix, then the header, until both are whole.
-    head: Vec<u8>,
-    /// The header's length, once its prefix is in.
-    header: Option<usize>,
+    reply: RenderReply<'a>,
     spool: PcmSpool,
 }
 
 impl FramedRender<'_> {
-    /// Takes the reply's next bytes. The header's length is checked against
-    /// the effective bound before a byte of the header is held, and the
-    /// header against the target this call pinned before any audio is kept.
-    fn push(&mut self, mut bytes: &[u8]) -> LlmResult<()> {
-        let length = match self.header {
-            Some(length) => length,
-            None => {
-                let take = (4 - self.head.len()).min(bytes.len());
-                self.head.extend_from_slice(&bytes[..take]);
-                bytes = &bytes[take..];
-                let Ok(prefix) = <[u8; 4]>::try_from(self.head.as_slice()) else {
-                    return Ok(());
-                };
-                let n = u32::from_be_bytes(prefix);
-                if n == 0 || u64::from(n) > self.limits.max_header_bytes {
-                    return Err(FatalLlmError::EmptyResponse.into());
-                }
-                let length = n as usize;
-                self.header = Some(length);
-                length
-            }
-        };
-        if self.head.len() < 4 + length {
-            let take = (4 + length - self.head.len()).min(bytes.len());
-            self.head.extend_from_slice(&bytes[..take]);
-            bytes = &bytes[take..];
-            if self.head.len() < 4 + length {
-                return Ok(());
-            }
-            self.check_header()?;
-        }
-        if !bytes.is_empty() {
-            self.spool.write(bytes).map_err(spool_failed)?;
-        }
-        Ok(())
-    }
-
-    /// The audio must be for the very target this call pinned.
-    fn check_header(&self) -> LlmResult<()> {
-        let meta: JsonValue =
-            serde_json::from_slice(&self.head[4..]).map_err(|_| FatalLlmError::EmptyResponse)?;
-        if meta["target"] != *self.target
-            || meta["sample_rate"].as_u64() != Some(u64::from(self.warm.sample_rate))
-            || meta["channels"].as_u64() != Some(1)
-        {
-            return Err(FatalLlmError::EmptyResponse.into());
+    /// Takes the reply's next bytes: the audio past the checked header goes
+    /// to the spool.
+    fn push(&mut self, bytes: &[u8]) -> LlmResult<()> {
+        let audio = self.reply.push(bytes)?;
+        if !audio.is_empty() {
+            self.spool.write(audio).map_err(spool_failed)?;
         }
         Ok(())
     }
@@ -313,10 +147,7 @@ impl FramedRender<'_> {
     /// The render's whole audio, once its reply ended: none when the reply
     /// ended before its header did, held no audio or split a sample.
     fn finish(self, vault: &Vault) -> LlmResult<VoxCpm2PcmBody> {
-        if self
-            .header
-            .is_none_or(|length| self.head.len() < 4 + length)
-        {
+        if !self.reply.header_whole() {
             return Err(FatalLlmError::EmptyResponse.into());
         }
         let body = self.spool.finish(vault).map_err(spool_failed)?;
@@ -494,22 +325,7 @@ impl VoxCpm2Speech {
             .voice_refs
             .vault()
             .ok_or(FatalLlmError::InvalidRequest)?;
-        let header = render_header(target, text, transcript)?;
-        // The effective JSON header decoder bound, its wire's own: the
-        // pieces were cut to fit within it.
-        if header.len() as u64 > limits.max_header_bytes {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let length = u32::try_from(header.len()).map_err(|_| FatalLlmError::InvalidRequest)?;
-        let framed = match transcript.placement {
-            TranscriptPlacement::Header => &[][..],
-            TranscriptPlacement::Frame => transcript.text.as_bytes(),
-        };
-        let mut body = Vec::with_capacity(4 + header.len() + framed.len() + audio.len());
-        body.extend_from_slice(&length.to_be_bytes());
-        body.extend_from_slice(&header);
-        body.extend_from_slice(framed);
-        body.extend_from_slice(audio);
+        let body = render_body(target, text, transcript, limits.max_header_bytes, audio)?;
         let reply = match dispatch {
             Some((release, lease)) => self
                 .http
@@ -530,11 +346,7 @@ impl VoxCpm2Speech {
             StreamedReply::Refused(reply) => return Err(refused(&reply)),
         };
         let mut framed = FramedRender {
-            warm,
-            limits,
-            target,
-            head: Vec::with_capacity(4),
-            header: None,
+            reply: RenderReply::new(target, warm.sample_rate, limits.max_header_bytes),
             spool: PcmSpool::new(&vault).map_err(spool_failed)?,
         };
         while let Some(chunk) = reply.chunk().await.map_err(transport)? {

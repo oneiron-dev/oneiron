@@ -6,6 +6,25 @@
 use oneiron::voice_cascade::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
 use oneiron::{Error, Result};
 
+/// Soniox error codes a fresh socket may clear: a request timeout and the
+/// server's own failures. Any other error fails the hearing.
+pub const RETRIABLE_ERROR_CODES: [u64; 5] = [408, 500, 502, 503, 504];
+/// The control frame that asks Soniox to finalize every word so far.
+pub const FINALIZE: &str = r#"{"type":"finalize"}"#;
+
+/// A Soniox error frame a fresh socket may clear, as the hearing's failure.
+/// Worded as the host's own socket refusals are, `soniox: ` first.
+pub fn retriable_error(frame: &serde_json::Value) -> Option<Error> {
+    let code = frame.get("error_code")?.as_u64()?;
+    RETRIABLE_ERROR_CODES.contains(&code).then(|| {
+        let message = frame
+            .get("error_message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unnamed");
+        Error::InvalidConfig(format!("soniox: provider error: {code}: {message}"))
+    })
+}
+
 /// Host-owned transport: submit only, no provider work under the session lock.
 pub trait SonioxTransport {
     fn submit_audio(&mut self, bytes: &[u8]) -> Result<()>;

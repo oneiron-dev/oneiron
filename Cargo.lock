@@ -8979,6 +8979,7 @@ name = "oneiron-speech"
 version = "0.1.0"
 dependencies = [
  "oneiron",
+ "oneiron-llm",
  "serde_json",
 ]
 

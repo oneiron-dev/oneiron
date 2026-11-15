@@ -29,6 +29,8 @@ use oneiron_llm::openai_compat::{
     OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
     OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };
+use oneiron_speech::tts::cartesia::CARTESIA_VERSION;
+use oneiron_speech::tts::hosted::HostedWire;
 use serde::Serialize;
 
 use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind};
@@ -39,7 +41,7 @@ use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
 use super::gemini_media::gemini_backend;
 use super::host_budgets::ModelHostBudgets;
-use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
+use super::hosted_speech::{HostedCloner, HostedSpeech};
 use super::http::{HttpReleaseError, KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, clone_connector, media_offer};
