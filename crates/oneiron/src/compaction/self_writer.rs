@@ -38,7 +38,7 @@ use super::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::row_birth::RowBirth;
-use crate::vault::{RevisionRef, Vault};
+use crate::vault::Vault;
 use oneiron_model::llm::SelfCompactionSource;
 
 /// Why a flight could not be written as its agent. The flight keeps its raw
@@ -119,15 +119,13 @@ impl SelfCompactionUnavailable {
     }
 }
 
-/// Provider-reported usage of one self-written call. `None` is unknown, never
-/// a measured zero: an adapter that reports no cache counter leaves it unset.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactionUsage {
-    pub input_tokens: Option<u64>,
-    pub cached_read_tokens: Option<u64>,
-    pub cache_write_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::compaction::self_writer::hex32;
+#[doc(hidden)]
+pub use oneiron_records::compaction::self_writer::{
+    CompactionEvidence, CompactionHomeRef, CompactionLanding, CompactionStepRef, CompactionUsage,
+    HOME_PART_WORN, compaction_home_worn_parts, compaction_home_worn_rows,
+};
 
 /// Provider usage keys that report a cache read or a cache write, as the
 /// adapters receive them; a zero counter under one of them is a measured
@@ -173,43 +171,6 @@ fn names_key(value: &Value, key: &str) -> bool {
         Value::Array(items) => items.iter().any(|inner| names_key(inner, key)),
         _ => false,
     }
-}
-
-/// The state of a home part the call wore whole: the only state that shaped
-/// what it wrote. A cut part never reached the call; an absent one is named
-/// by why.
-pub const HOME_PART_WORN: &str = "present";
-
-/// One part of the home a self-written call wore, by ref.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactionHomeRef {
-    /// `voice`, `self_model`, `diary` or `lessons`.
-    pub part: String,
-    /// The row it was read from; `None` for an absent part.
-    pub row: Option<EntityId>,
-    /// `present`, `truncated` (it did not fit the call's room), or
-    /// `absent:<why>`.
-    pub state: String,
-    /// The row's live revision in the snapshot its words were read in (FIX
-    /// 4817). A worn part's summary stands only while the row still reads
-    /// at it: an edit that publishes another revision withdraws the summary.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revision: Option<RevisionRef>,
-}
-
-/// Every home row a call wore whole. A cut or absent part is not an input.
-pub fn compaction_home_worn_rows(
-    home: &[CompactionHomeRef],
-) -> impl Iterator<Item = EntityId> + '_ {
-    compaction_home_worn_parts(home).filter_map(|part| part.row)
-}
-
-/// Every home part a call wore whole, each with the revision its words were
-/// read at (FIX 4817). A cut or absent part pins nothing.
-pub fn compaction_home_worn_parts(
-    home: &[CompactionHomeRef],
-) -> impl Iterator<Item = &CompactionHomeRef> + '_ {
-    home.iter().filter(|part| part.state == HOME_PART_WORN)
 }
 
 /// What ran one self-written epoch or fold call: the host's record, beside
@@ -278,47 +239,6 @@ pub use oneiron_records::compaction::self_writer::CompactionCall;
 /// the inline bound lives in one, and its bytes leave only while it and
 /// every record it was derived from stand (FIX 5977).
 pub(crate) const COMPACTION_STEP_RESPONSE_NAME: &str = "compaction.step.response";
-
-/// One filed call of a self-written pass: its terminal `dreamer.step`
-/// claim, whose job is the run the pass compacted (FIX 4465 B).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactionStepRef {
-    /// The step's claim.
-    pub claim: EntityId,
-    /// The hex BLAKE3 of the admitted request's canonical bytes.
-    pub step_hash: String,
-}
-
-/// The retained evidence a self-written summary was cut from, by revision.
-/// An executor run's (FIX 4465 B) is its committed steps `first..=last`,
-/// pinned by the chained state hash the span's last checkpoint committed; a
-/// conversation's (FIX 4465 D) is its SESSION, conversation and branch and
-/// the ordered retained turns of the span, each pinned by its projection's
-/// fingerprint. A later read that finds another pin reads other evidence.
-/// Each source keeps its own fields, so an executor receipt reads as it was
-/// written.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum CompactionEvidence {
-    Executor {
-        run: EntityId,
-        first: u64,
-        last: u64,
-        /// Hex of the last step's committed state hash.
-        revision: String,
-    },
-    Conversation(super::ConversationEvidence),
-}
-
-/// Where a self-written summary landed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum CompactionLanding {
-    /// One epoch of its run: its SUMMARY row and its number.
-    Epoch { summary: EntityId, epoch: u64 },
-    /// One fold of its run's ledger.
-    Fold { fold: u64 },
-}
 
 /// A landed self-written summary's durable receipt, read back where its
 /// run's rows are (FIX 4465 B): the epoch's coverage-row tail or the fold's

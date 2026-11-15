@@ -40,8 +40,10 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
-/// The payload key a conversation's declaration rides under.
-const CONVERSATION_DECLARATION_KEY: &str = "conversation_declaration";
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::maintenance::compaction_check::conversation::{
+    CONVERSATION_DECLARATION_KEY, hex32,
+};
 
 /// Why a check waits: a turn of its span is away from this replica.
 const SPAN_NOT_RESIDENT: &str = "a turn of the checked span is not resident here";

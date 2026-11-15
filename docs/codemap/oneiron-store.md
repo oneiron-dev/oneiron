@@ -310,7 +310,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/known_value_index/forms.rs` | src | m | 1 struct · 11 fn · 1 const | View | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/known_value_index/rolling.rs` | src | s | 3 struct · 11 fn | RollingKey, RollingScan, RollingSets | The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window… |
 | `src/l2_evidence.rs` | src | s | 2 struct · 4 fn | L2BaseCache, L2BaseSummary | Bounded, vault-owned cache of score-free context evidence |
-| `src/lib.rs` | src | s | 223 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 224 mod | — | The store layer of the oneiron engine |
 | `src/live_speaker_calls.rs` | src | s | 1 struct · 3 fn | LiveSpeakers | Per-room live voice-call registration index |
 | `src/local_queue_budget.rs` | src | s | 1 fn | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
@@ -424,6 +424,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/reaction_predicate.rs` | src | s | 1 const | — | Reaction outcome predicate stored by event-outcome projections |
 | `src/reader_fold_receipt.rs` | src | s | 2 struct | ReceiptPartial, SummaryMemo | Stored reader-fold receipts and their occurrence vocabulary |
 | `src/receipt_identity.rs` | src | s | 1 fn · 2 const | — | The identity marker carried after receipt attribution is erased |
+| `src/receipt_ref.rs` | src | s | 1 struct · 1 enum · 8 fn | ReceiptRef, ReceiptRefError | A receipt reference: a receipt's kind and its id, in the one text form `{kind}:{lowercase hex}` (fable pass… |
 | `src/receipt_row.rs` | src | s | 1 enum · 6 fn · 38 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
 | `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `src/record_links/blocks.rs` | src | m | 1 struct · 1 enum · 2 fn | Blocks, Line | The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as… |
@@ -669,6 +670,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `tests/phonetic_han_codes.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form… |
 | `tests/phonetic_ipa.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): the readings of a name and the Normalized… |
+| `tests/receipt_ref.rs` | test | s | — | — | PLAN-UC-04 2.4a: `ReceiptRef`, the one text form `{kind}:{lowercase hex}` of a receipt reference |
 | `tests/session_overlay_dump_suppression.rs` | test | s | — | — | Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core… |
 | `tests/session_overlay_dump_suppression_off.rs` | test | s | — | — | Census row L6-18: the operator's off switch |
 | `tests/shared_path_acl.rs` | test | s | — | — | Census row L6-04 item A (ARCH-0038 #restore-path-open): the check of a restore's path reads each macOS… |
