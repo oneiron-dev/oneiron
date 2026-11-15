@@ -213,9 +213,15 @@ fn refusal(verb: &str, error: OwnerError) -> MemoryError {
 /// The engine's session refusal as the row's, as the owner adapter words it.
 fn session_refusal(error: oneiron::Error, session_ref: &str) -> MemoryError {
     match error.kind() {
-        ErrorKind::OffRecordSessionNotFound | ErrorKind::OffRecordNotInRoom => {
+        ErrorKind::OffRecordSessionNotFound => {
             MemoryError::not_found(format!("no off-record session {session_ref}"))
         }
+        // SEEDED FAULT F5b: an outsider is told the room's stretch exists.
+        ErrorKind::OffRecordNotInRoom => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("off-record session {session_ref} is a room you are not in"),
+            &[],
+        ),
         ErrorKind::OffRecordSessionClosing => MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             format!("off-record session {session_ref} is closing"),
@@ -278,9 +284,8 @@ fn managed_session<'vault>(
     session_ref: &str,
 ) -> MemoryResult<OffRecordSession<'vault>> {
     let session = bound_session(vault, caller, verb, session_ref)?;
-    if session.room()?.is_some() {
-        return Err(room_management(verb));
-    }
+    // SEEDED FAULT F5a: a room's stretch is managed as one entered alone.
+    let _ = room_management;
     Ok(session)
 }
 
@@ -385,6 +390,20 @@ pub(crate) async fn vault_off_record_status(
         };
         live(vault, credential, VERB)?;
         let rooms = vault.off_record_session_vault();
+        // SEEDED FAULT F3: a stretch another principal entered alone says so.
+        if !in_room(vault, session_ref)?
+            && vault
+                .off_record_session(session_ref)
+                .map_err(|error| session_refusal(error, session_ref))?
+                .is_some()
+            && rooms.bind_as_creator(session_ref, who).is_err()
+        {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!("off-record session {session_ref} is held by another"),
+                &[],
+            ));
+        }
         // A room's stretch reads as the room's own route reads it to a
         // member; one entered alone, whole, to its creator.
         let record = if in_room(vault, session_ref)? {
@@ -474,16 +493,15 @@ pub(crate) async fn vault_off_record_discard(
     const VERB: &str = "vault.off_record.discard";
     as_caller_unlisted(server, auth, VERB, move |server, caller| {
         let session_ref = &input.session_ref;
-        let closed = managed_session(server.vault(), caller, VERB, session_ref)?
-            .close()
-            .map_err(|error| session_refusal(error, session_ref))?;
+        // SEEDED FAULT F1: the discard answers without closing the stretch.
+        drop(managed_session(server.vault(), caller, VERB, session_ref)?);
         Ok(OffRecordClosed {
             session_ref: input.session_ref,
-            turns_dropped: closed.turns_deleted,
-            context_receipts_dropped: closed.context_receipts_deleted,
-            emit_receipts_dropped: closed.emit_receipts_deleted,
-            emit_receipts_kept: closed.emit_receipts_retained.len(),
-            promoted_turns_kept: closed.promoted_turns_kept,
+            turns_dropped: 1,
+            context_receipts_dropped: 0,
+            emit_receipts_dropped: 0,
+            emit_receipts_kept: 0,
+            promoted_turns_kept: 0,
         })
     })
     .await
@@ -539,11 +557,13 @@ pub(crate) async fn vault_off_record_notes_create(
         let session = bound_session(server.vault(), caller, VERB, &input.session_ref)?;
         crate::api::credential_memory(&server.vault, Some(&held), actor, class)
             .at(held.locality())
-            .create_note_in_session(
-                &session,
-                &input.note.kind,
+            // SEEDED FAULT F2: the session's NOTE is written on record.
+            .create_note(
+                {
+                    let _ = (&session, &input.evidence_turn_refs);
+                    &input.note.kind
+                },
                 &input.note.markdown,
-                &input.evidence_turn_refs,
             )
     })
     .await
