@@ -70,10 +70,15 @@ LEXEME = re.compile(
 )
 # A file can hold a table only if it holds one of these. Three searches, not one alternation:
 # each starts with a literal, which the engine finds fast (about ten times faster in all).
+# The screen reads raw text, so a gap admits comments wherever the scan (which blanks them) admits
+# white space: `Self::A => /* note */ "a"` is a forward arm.
+GAP = r"(?:\s|//[^\n]*|/\*[\s\S]*?\*/)"
 MAY_HOLD = (
-    re.compile(r'=>\s*"'),
-    re.compile(r'"\s*=>'),
-    re.compile(r"const\s+\w+\s*:\s*&?\s*(?:'static\s+)?\["),
+    re.compile(r"=>" + GAP + r'*"'),
+    re.compile(r'"' + GAP + r"*=>"),
+    re.compile(
+        r"const" + GAP + r"+\w+" + GAP + r"*:" + GAP + r"*&?" + GAP + r"*(?:'static" + GAP + r"+)?\["
+    ),
 )
 NAME_SHAPED = re.compile(r"[A-Za-z0-9_.:/\-]{1,64}\Z")
 # `Self` is one of the `[A-Z]\w*` words. Spelling it as its own alternative too made a long
@@ -338,7 +343,8 @@ class Source:
         found = set()
         for match in ENUM.finditer(self.shape):
             item_start = max(self.shape.rfind(mark, 0, match.start()) for mark in ";{}")
-            if DERIVES_REGISTER.search(self.code[item_start + 1 : match.start()]):
+            # The shape view: a string such as `#[doc = "derive(Register)"]` is not a derive.
+            if DERIVES_REGISTER.search(self.shape[item_start + 1 : match.start()]):
                 found.add(match.group("enum"))
         return found
 
