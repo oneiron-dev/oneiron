@@ -154,14 +154,15 @@ pub struct EnrolledOwnerKey {
     /// What the key is, as its enrollment's attestation kind says.
     pub kind: EnrolledOwnerKeyKind,
     /// Every machine a counted enrollment names as holding the key as a
-    /// device's key: the machines whose removal ends it. A key enrolled on
-    /// two branches may name two. A key enrolled only as the recovery
-    /// root's names none.
+    /// device's key. While the key is live, the removal of one of them ends
+    /// it, when that removal stands on an install that holds an owner key.
+    /// A key enrolled on two branches may name two. A key enrolled only as
+    /// the recovery root's names none.
     pub device_machines: BTreeSet<EntityId>,
     /// A counted enrollment marks the key the recovery root's authority key,
     /// whatever [`Self::kind`] says of the listed one. With a machine in
     /// [`Self::device_machines`] the key is both, and the recovery kit ends
-    /// with that machine's removal or the key's.
+    /// when that machine's removal, or the key's own, ends the key.
     pub recovery_authority: bool,
 }
 
