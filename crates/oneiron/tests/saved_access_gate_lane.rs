@@ -110,6 +110,12 @@ fn fixture() -> Fixture {
 
 /// The house holds a live access grant to read the conversation's MESSAGEs.
 fn grant_conversation_messages(fixture: &Fixture) {
+    grant_conversation_messages_to(fixture, fixture.house);
+}
+
+/// `principal` holds a live access grant to read the conversation's
+/// MESSAGEs.
+fn grant_conversation_messages_to(fixture: &Fixture, principal: EntityId) {
     let mut authority_scope = Scope::top();
     authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
     fixture
@@ -118,7 +124,7 @@ fn grant_conversation_messages(fixture: &Fixture) {
             &EntityId::now(),
             &AccessGrant {
                 authority_scope,
-                principal_ref: fixture.house,
+                principal_ref: principal,
                 scope: AccessGrantScope::ConversationMessages {
                     conversation_ref: fixture.conversation,
                 },
@@ -133,7 +139,7 @@ fn grant_conversation_messages(fixture: &Fixture) {
                 companion_bounds: None,
             },
         )
-        .expect("the house's access grant on the conversation");
+        .expect("the access grant on the conversation");
 }
 
 /// The owner's unscoped base-world CLAIM, outside the house's MESSAGE-only
@@ -458,5 +464,40 @@ fn an_access_gated_saved_question_reads_a_message_its_own_agent_grant_admits() {
     assert!(
         read,
         "actor=the house under the access gate with an owner-minted read Grant; expected its saved question's reader to read the MESSAGE its own Grant admits; seen {seen}"
+    );
+}
+
+/// A rebuild over a key a gate already binds to no principal reads on no
+/// grant: the meet never lends it the owner as principal (Astra F1 on
+/// #8061).
+#[test]
+fn a_gated_owner_saved_lane_rebuilt_over_an_unbound_gated_owner_key_reads_on_no_grant() {
+    let fixture = fixture();
+    grant_conversation_messages_to(&fixture, fixture.owner);
+    let saving = gated_owner_key(&fixture);
+    let (live, seen) = reads(&fixture.vault.scoped_read(saving.clone()), fixture.message);
+    assert!(
+        live,
+        "precondition: the owner's access grant on the conversation admits the MESSAGE to the owner's gated live lane; seen {seen}"
+    );
+    let unbound = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_key()
+        .expect("the owner's own read key")
+        .require_access_grants(None);
+    let (current, seen) = reads(&fixture.vault.scoped_read(unbound.clone()), fixture.message);
+    assert!(
+        !current,
+        "precondition: the owner's key under an access gate bound to no principal refuses the MESSAGE; seen {seen}"
+    );
+    let frozen = saved_lane(&fixture, saving);
+    let (read, seen) = match frozen.narrow(&fixture.vault, unbound) {
+        Ok(key) => reads(&fixture.vault.scoped_read(key), fixture.message),
+        Err(error) => (false, format!("rebuild={error:?}")),
+    };
+    assert!(
+        !read,
+        "actor=the owner's floor under an access gate bound to no principal; expected the saved lane rebuilt over it to read on no grant and refuse the MESSAGE; seen {seen}"
     );
 }

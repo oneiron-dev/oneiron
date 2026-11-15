@@ -834,8 +834,9 @@ impl ScopedReadActorKey {
     ///   binding held: unbound, or lifted by an exemption. A floor's basis
     ///   records no exemption, so no exemption lifts a gate it read under.
     /// - Its gate binds unless neither key's did (Sol F7 on #8061), with the
-    ///   owner as principal where the key held the floor, and it closes
-    ///   unscoped rows where either gate closed them.
+    ///   owner as principal where an ungated key held the floor, and it
+    ///   closes unscoped rows where either gate closed them. A key a gate
+    ///   already binds keeps its own principal, or none (Astra F1 on #8061).
     /// - Under the saved key's gate it reads on the grants of that gate's
     ///   principal alone, and on none where the two keys' principals differ
     ///   or the saved gate was bound to none (Sol F5 on #8065).
@@ -870,7 +871,7 @@ impl ScopedReadActorKey {
             }
         };
         let neither_gated = key_ungated && saved_ungated;
-        if lost_floor.is_some() || !neither_gated {
+        if key_ungated && (lost_floor.is_some() || !neither_gated) {
             self.principal_ref = self.principal_ref.or(floor_owner);
         }
         if !saved_ungated && self.principal_ref != basis.grant_principal {
