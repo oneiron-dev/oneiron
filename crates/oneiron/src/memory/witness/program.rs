@@ -25,7 +25,7 @@ use crate::compaction::TurnVector;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
-    WitnessMessageAuthorization, WitnessMessageEnvelope,
+    WitnessMessageAuthorization, WitnessMessageEnvelope, check_phone_bound_witness_message_ceiling,
     check_source_bound_witness_message_ceiling, check_witness_message_ceiling_with_permit,
     coach_offer_question_permit_in_txn, resolve_policy_manifest,
 };
@@ -61,9 +61,16 @@ pub(super) enum WitnessTarget<'a, 'v> {
     /// `mint_conversation_body` is the body a base landing mints its
     /// conversation with, when it mints one; `None` mints the empty map, as
     /// before. Only the phone keep path sets it (its line agent's mark).
+    /// `phone_keep` is the same path's stamp flag: when true the landing
+    /// stamps the TURN it mints and every MESSAGE it puts with the thread's
+    /// [`PHONE_THREAD_KEY`], whose value is the plan's conversation id
+    /// (VOICE-PHONE-AGENT-REACH R1 fix, never the source-audience birth).
+    ///
+    /// [`PHONE_THREAD_KEY`]: crate::voice_call::PHONE_THREAD_KEY
     Base {
         route: Option<&'a SessionWriteRoute>,
         mint_conversation_body: Option<Vec<u8>>,
+        phone_keep: bool,
     },
     /// A session (ARCH-0052 §7, ONE-1728): the room's overlay while it is off
     /// record, the base continuation shell after a flip to on record. The
@@ -143,6 +150,7 @@ enum Landing<'a, 'v> {
         imported: Option<&'a ImportedTurnStamp>,
         held: Option<HeldTags<'a>>,
         mint_conversation_body: Option<Vec<u8>>,
+        phone_keep: bool,
     },
     Overlay {
         session: &'a OffRecordSession<'v>,
@@ -166,13 +174,21 @@ pub(super) struct PlannedMessage<'t> {
     /// The source-bound body the row is stored as, when the plan holds a
     /// source landing's proof (fix list row 16256).
     stamped: Option<Vec<u8>>,
+    /// The phone-bound body the row is stored as, when the plan holds a
+    /// phone thread stamp (VOICE-PHONE-AGENT-REACH R1 fix). Never set with
+    /// `stamped`: a phone keep is native, a source landing imported.
+    phone_stamped: Option<Vec<u8>>,
 }
 
 impl PlannedMessage<'_> {
     /// The bytes the row is stored as: the source-bound body when there is
-    /// one, else the canonical body.
+    /// one, else the phone-bound body when there is one, else the canonical
+    /// body.
     fn stored_body(&self) -> &[u8] {
-        self.stamped.as_deref().unwrap_or(&self.body)
+        self.stamped
+            .as_deref()
+            .or(self.phone_stamped.as_deref())
+            .unwrap_or(&self.body)
     }
 }
 
@@ -199,6 +215,10 @@ pub(super) struct WitnessPlan<'t> {
     pub(super) messages: Vec<PlannedMessage<'t>>,
     /// Set for a turn of an imported transcript.
     pub(super) imported: Option<ImportedTurnStamp>,
+    /// The phone thread stamp the plan lands under, if any: the conversation
+    /// id a phone keep stamps on the TURN it mints and every MESSAGE it puts
+    /// (VOICE-PHONE-AGENT-REACH R1 fix). `None` for every other landing.
+    pub(super) phone_thread: Option<EntityId>,
 }
 
 impl WitnessPlan<'_> {

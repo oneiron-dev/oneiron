@@ -82,6 +82,7 @@ impl Memory<'_> {
             WitnessTarget::Base {
                 route: None,
                 mint_conversation_body: None,
+                phone_keep: false,
             },
             WitnessDoor::Guest,
             || {},
@@ -161,6 +162,7 @@ impl Memory<'_> {
             WitnessTarget::Base {
                 route: session_route,
                 mint_conversation_body: None,
+                phone_keep: false,
             },
             WitnessDoor::Guest,
             before_txn,
@@ -182,6 +184,7 @@ impl Memory<'_> {
             WitnessTarget::Base {
                 route: session_route,
                 mint_conversation_body: None,
+                phone_keep: false,
             },
             WitnessDoor::HostExecutor,
             || {},
@@ -211,6 +214,7 @@ impl Memory<'_> {
             WitnessTarget::Base {
                 route: session_route,
                 mint_conversation_body: None,
+                phone_keep: false,
             },
             WitnessDoor::Guest,
             before_txn,
@@ -222,7 +226,9 @@ impl Memory<'_> {
     /// [`Self::witness_with_route_prepare_and_txn_effect`] with the body a
     /// base landing mints its conversation with, when it mints one. Only the
     /// phone keep path sets it (its line agent's mark); an existing
-    /// conversation's body is never rewritten by the landing.
+    /// conversation's body is never rewritten by the landing. The same path
+    /// stamps the TURN it mints and every MESSAGE it puts with the thread
+    /// (VOICE-PHONE-AGENT-REACH R1 fix).
     pub(crate) fn witness_with_minted_conversation_body_and_txn_effect(
         &self,
         turn: &WitnessTurn,
@@ -238,6 +244,7 @@ impl Memory<'_> {
             WitnessTarget::Base {
                 route: None,
                 mint_conversation_body: Some(minted_conversation_body),
+                phone_keep: true,
             },
             WitnessDoor::Guest,
             before_txn,
@@ -299,6 +306,7 @@ impl Memory<'_> {
             WitnessTarget::Base {
                 route: None,
                 mint_conversation_body: None,
+                phone_keep: false,
             },
             WitnessDoor::Guest,
             || {},

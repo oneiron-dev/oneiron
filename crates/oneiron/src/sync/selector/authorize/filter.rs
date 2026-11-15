@@ -178,6 +178,28 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 return;
             }
         }
+        // VOICE-PHONE-AGENT-REACH: a carried row whose own bytes carry a
+        // phone-thread mark never rides a restricted selector (Engine 02:02:
+        // a generic read reaches phone rows only by the owner's reach
+        // choice). Judged by the bytes themselves, as `row_obligation` is
+        // above, so a row with no canonical copy here is withheld whole.
+        if let Some(header) = EntityMetadataHeader::parse(blob) {
+            let body = blob.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+            let phone_marked = match header.entity_type {
+                crate::registry::ENTITY_TYPE_CONVERSATION => {
+                    crate::voice_call::phone_thread_agent(body).is_some()
+                }
+                crate::registry::ENTITY_TYPE_TURN
+                | crate::registry::ENTITY_TYPE_MESSAGE
+                | crate::registry::ENTITY_TYPE_SESSION => {
+                    crate::voice_call::phone_thread_stamp(body).is_some()
+                }
+                _ => false,
+            };
+            if phone_marked {
+                return;
+            }
+        }
         match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,

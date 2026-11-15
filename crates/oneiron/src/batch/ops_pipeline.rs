@@ -508,6 +508,20 @@ pub(crate) fn apply_ops_session(
                     *entity_type,
                     data,
                 )?;
+                // VOICE-PHONE-AGENT-REACH R1 fix (F2): the phone-thread birth
+                // guard on the session's union view (its overlay row if any,
+                // else base), as `admit_session_obligation_in_txn` reads its
+                // previous row. An overlay never strips or replaces a stored
+                // stamp.
+                if matches!(
+                    *entity_type,
+                    crate::registry::ENTITY_TYPE_CONVERSATION
+                        | crate::registry::ENTITY_TYPE_TURN
+                        | crate::registry::ENTITY_TYPE_MESSAGE
+                        | crate::registry::ENTITY_TYPE_SESSION
+                ) {
+                    crate::memory::guard_phone_thread_mark(view, wtxn, *id, data)?;
+                }
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).

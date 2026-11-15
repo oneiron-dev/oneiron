@@ -164,6 +164,7 @@ impl ScopedRead<'_> {
             crate::registry::ENTITY_TYPE_CONVERSATION
                 | crate::registry::ENTITY_TYPE_TURN
                 | crate::registry::ENTITY_TYPE_MESSAGE
+                | crate::registry::ENTITY_TYPE_SESSION
         ) {
             let threads = self.phone_threads_of_row_in(txn, id)?;
             if !threads.is_empty() {

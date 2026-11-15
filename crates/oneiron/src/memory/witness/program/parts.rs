@@ -16,6 +16,7 @@ impl Memory<'_> {
         plan: &WitnessPlan<'t>,
     ) -> MemoryResult<WitnessPlan<'t>> {
         let mut plan = plan.clone();
+        let phone_thread = plan.phone_thread;
         for planned in &mut plan.messages {
             let Some(parts) = planned.envelope.parts.as_mut() else {
                 continue;
@@ -66,6 +67,16 @@ impl Memory<'_> {
             // A source-bound row is stored as the same parts, stamped.
             if planned.stamped.is_some() {
                 planned.stamped = Some(planned.envelope.encode_source_bound_body()?);
+            }
+            // A phone-bound row is stored as the same parts, stamped.
+            if planned.phone_stamped.is_some() {
+                let Some(thread) = phone_thread else {
+                    return Err(
+                        Error::InvariantViolation("a phone-bound row carries its thread").into(),
+                    );
+                };
+                planned.phone_stamped =
+                    Some(planned.envelope.encode_phone_bound_body(&thread.to_hex())?);
             }
         }
         Ok(plan)
