@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use oneiron::access_grant::AuditReader;
 use oneiron::authority::ActSurface;
-use oneiron::memory::MemoryResult;
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, AuditReadChanged, AuditReadGrantRequest, AuditReadRevokeRequest,
 };
@@ -65,14 +65,32 @@ pub(crate) async fn vault_audit_read_revoke(
 /// actor holds a live audit_read power. The engine judges that power here,
 /// before the row's hooks fire, and again in the door's own read. Any other
 /// caller gets the owner door's refusal.
+///
+/// An owner-grade credential that proves no owner (a holder's own top-scope,
+/// unattenuated slip) falls back to its actor's power, as the embedded
+/// [`oneiron::memory::Memory::audit_reader`] does after the owner's refusal
+/// (Wonder review 8435 F2). When that actor holds none, the caller gets the
+/// owner door's refusal, as before the fallback.
 pub(in crate::api::facade) fn audit_reader(
     server: &SyncServer,
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuditReader> {
-    if auth.is_owner_grade() {
-        return owner_proof(auth, server, verb).map(AuditReader::Owner);
+    if !auth.is_owner_grade() {
+        return holder_reader(server, auth, verb);
     }
+    match owner_proof(auth, server, verb) {
+        Ok(owner) => Ok(AuditReader::Owner(owner)),
+        Err(refused) if refused.code == MEMORY_CODE_FORBIDDEN => {
+            holder_reader(server, auth, verb).map_err(|_| refused)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The caller's own bound credential as the reader of `verb`, while its actor
+/// holds a live audit_read power; else the engine's owner refusal.
+fn holder_reader(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<AuditReader> {
     let (actor, class) =
         super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
     crate::api::credential_memory(&server.vault, Some(auth), actor, class)

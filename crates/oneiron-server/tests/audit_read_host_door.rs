@@ -171,13 +171,19 @@ async fn pair_agent(fixture: &Fixture, name: &str, seed: [u8; 32]) -> Agent {
 }
 
 fn owner_binding(fixture: &Fixture) -> String {
+    issuer_bound(fixture, &fixture.owner_slip)
+}
+
+/// The binding header of `slip`, a slip bound to the host issuer's own key,
+/// as the owner's root slip is.
+fn issuer_bound(fixture: &Fixture, slip: &CapabilitySlip) -> String {
     let timestamp = fixture.vault.now_recorded_at();
     let nonce = EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature: String = hex(&fixture
         .issuer
-        .binding_proof(&fixture.owner_slip, challenge.as_bytes())
-        .expect("owner holder proof"));
+        .binding_proof(slip, challenge.as_bytes())
+        .expect("issuer-bound holder proof"));
     json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string()
 }
 
@@ -399,4 +405,64 @@ fn an_audit_read_holder_reads_the_usage_repair_receipts() {
             as_agent(&fixture, &auditor, "vault.usage.repair.receipts", json!({})).await;
         assert_forbidden(status, &body, "the receipts after the revoke");
     });
+}
+
+/// Wonder review 8435 F2: a holder's own top-scope, unattenuated slip is
+/// owner grade on the served facade, yet it proves no owner. The audit door
+/// then falls back to the holder's power, as the embedded reader does: the
+/// holder reads the authority audit on that slip while granted, and is
+/// refused before the grant and after the revoke.
+#[test]
+fn an_audit_read_holder_reads_the_authority_audit_on_an_owner_grade_slip() {
+    run_on_engine_stack("audit-read-owner-grade-holder", || async {
+        let (fixture, auditor, _) = setup().await;
+        let mut claims = fixture
+            .vault
+            .ensure_host_root_slip(&fixture.issuer)
+            .expect("owner root slip")
+            .claims;
+        claims.slip_id = [0x41; 32];
+        claims.parent_id = None;
+        claims.holder_ref = auditor.principal.to_hex();
+        claims.actor_class = auditor.slip.claims.actor_class.clone();
+        claims.records = BTreeSet::new();
+        let slip = fixture
+            .vault
+            .mint_capability_slip(&fixture.issuer, claims)
+            .expect("the holder's top-scope slip");
+        let token = slip.to_token().expect("the holder's slip token");
+
+        let (status, body) = as_issuer_bound(&fixture, &slip, &token).await;
+        assert_forbidden(
+            status,
+            &body,
+            "the owner-grade holder slip before any grant",
+        );
+        owner_changes(&fixture, "vault.audit_read.grant", &auditor).await;
+        let (status, page) = as_issuer_bound(&fixture, &slip, &token).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the holder reads the audit on its owner-grade slip: {page}"
+        );
+        assert!(page["rows"].is_array(), "{page}");
+        owner_changes(&fixture, "vault.audit_read.revoke", &auditor).await;
+        let (status, body) = as_issuer_bound(&fixture, &slip, &token).await;
+        assert_forbidden(
+            status,
+            &body,
+            "the owner-grade holder slip after the revoke",
+        );
+    });
+}
+
+/// `vault.authority.audit` on `slip` (`token`), a slip bound to the host
+/// issuer's own key.
+async fn as_issuer_bound(
+    fixture: &Fixture,
+    slip: &CapabilitySlip,
+    token: &str,
+) -> (StatusCode, Value) {
+    let binding = issuer_bound(fixture, slip);
+    post(fixture, "vault.authority.audit", token, binding, json!({})).await
 }

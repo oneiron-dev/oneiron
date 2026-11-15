@@ -177,7 +177,8 @@ impl Vault {
     /// # Errors
     /// `owner` no longer proves the vault's owner; `EntityNotFound` when
     /// `holder` names no live PERSON or AGENT_DEF; `AccessGrantAlreadyExists`
-    /// when another row holds its grant id; an invalid grant when
+    /// when another row or a deletion marker holds its grant id, so the grant
+    /// written there would not read live; an invalid grant when
     /// `expires_at` is not after the vault's clock; or the vault write fails.
     pub(crate) fn grant_audit_read(
         &self,
@@ -219,6 +220,14 @@ impl Vault {
                     now,
                     encode_access_grant_body(&grant)?,
                 )?;
+                // An id that a deletion marker alone holds (an archive, a
+                // publication or a hard-delete tombstone, or the vault-meta
+                // one) reads Absent above, yet the grant written there reads
+                // deleted (Wonder review 8435 F1). Refuse it here, so the
+                // write drops uncommitted, rather than answer a dead grant.
+                if !self.audit_read_live_in_txn(&wtxn, holder)? {
+                    return Err(id_held_by_another_row());
+                }
                 record_access_grant_owner_act_in_txn(
                     self,
                     &mut wtxn,
