@@ -1,10 +1,6 @@
 //! Moved from `crates/oneiron/src/repo_mutation/external_import/source.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
-pub(crate) use oneiron_store::repo_import_predicate::EXTERNAL_IMPORT_SOURCE_PREDICATE;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

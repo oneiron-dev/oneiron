@@ -1,12 +1,8 @@
 //! Moved from `crates/oneiron/src/origin/smart_http/intent.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
-use std::path::Path;
 
 /// Per-ref completion, independent of the backend's transport success.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

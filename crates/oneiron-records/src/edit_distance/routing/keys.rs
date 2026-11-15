@@ -3,9 +3,7 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Only accepted schema version for any row this module stores.
 pub const ROW_VERSION: u8 = 1;

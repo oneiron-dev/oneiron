@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/blob_artifact/verbs.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine as _;
 pub use oneiron_verb_wire::blob_artifact::verbs::ArtifactAdmitSubmit;
 pub use oneiron_verb_wire::blob_artifact::verbs::ArtifactAskSubmit;
 pub use oneiron_verb_wire::blob_artifact::verbs::ArtifactAskUnits;

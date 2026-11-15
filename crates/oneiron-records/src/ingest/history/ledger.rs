@@ -4,9 +4,6 @@
 use crate::ingest::history::HistoryMessage;
 use crate::ingest::history::HistoryRole;
 use crate::ingest::history::UNKNOWN_SPEAKER;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::HashSet;
 
 /// Whether `landed`, the [`content_hash`]es of what landed of one message,
 /// holds `message`. Words of an unknown speaker are held by the same words

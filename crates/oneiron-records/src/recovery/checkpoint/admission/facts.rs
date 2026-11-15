@@ -7,8 +7,6 @@ pub use oneiron_vault_contract::restore::ReleasedRecipient;
 pub use oneiron_vault_contract::restore::RestorePlan;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::Path;
-use std::path::PathBuf;
 
 /// What admitted a restore's checkpoint signer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -6,8 +6,6 @@ pub use oneiron_verb_wire::autoreason_campaign::judge::CampaignGoldAnchor;
 use oneiron_wake_contract::llm::decision::types::DecisionReceipt;
 use serde::Deserialize;
 use serde::Serialize;
-use std::time::Duration;
-use std::time::Instant;
 
 /// One arm's taste on a split, as the shared decision path answered it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

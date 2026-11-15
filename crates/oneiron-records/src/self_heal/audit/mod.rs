@@ -8,8 +8,5 @@ pub use oneiron_verb_wire::self_heal::audit::SealCheckKind;
 pub use oneiron_verb_wire::self_heal::audit::SealCheckOutcome;
 pub use oneiron_verb_wire::self_heal::audit::SealCheckReceipt;
 pub use oneiron_verb_wire::self_heal::audit::SealCheckRequest;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub mod contract;

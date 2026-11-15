@@ -1,16 +1,11 @@
 //! Moved from `crates/oneiron/src/code_view/mod.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::code_view::VisibleFilePolicy;
-pub(crate) use oneiron_verb_wire::code_view::relative;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::path::Path;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ViewReceipt {

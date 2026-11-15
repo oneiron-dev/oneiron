@@ -5,8 +5,6 @@ use crate::origin::lfs::store::VAULT_LFS_ASSET_ID_DOMAIN;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::origin::lfs::chunks::*;
-use rand_core::OsRng;
-use rand_core::RngCore;
 
 /// A canonical content-addressed object manifest.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

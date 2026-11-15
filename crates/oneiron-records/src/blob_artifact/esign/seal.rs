@@ -1,13 +1,9 @@
 //! Moved from `crates/oneiron/src/blob_artifact/esign/seal.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::blob_artifact::esign::model::*;
 use oneiron_store::blob_artifact::esign::sealer::SealProfileEvidence;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", content = "data", rename_all = "snake_case")]
@@ -24,7 +20,7 @@ pub struct SealedItem {
     pub sealed_version: u64,
     pub sha256: [u8; 32],
     pub profile: SealProfileEvidence,
-    pub active_content: super::sealer::SealActiveContentFacts,
+    pub active_content: oneiron_store::blob_artifact::esign::sealer::SealActiveContentFacts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

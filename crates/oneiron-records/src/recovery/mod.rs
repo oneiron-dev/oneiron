@@ -11,17 +11,12 @@ pub use oneiron_store::recovery_kit::KitMachine;
 pub use oneiron_store::recovery_kit::KitManifest;
 pub use oneiron_store::recovery_kit::KitPassphrase;
 pub use oneiron_store::recovery_kit::KitPiece;
-pub(crate) use oneiron_store::recovery_kit::KitPiecePair;
 pub use oneiron_store::recovery_kit::KitSecretKind;
 pub use oneiron_store::recovery_kit::PassphraseCost;
 pub use oneiron_store::recovery_kit::PieceExport;
 pub use oneiron_store::recovery_kit::PieceHome;
 pub use oneiron_store::recovery_kit::RecoveryCode;
 pub use oneiron_store::recovery_kit::RestoredKitSecret;
-use std::ffi::OsString;
-use std::io::Read;
-use std::path::Path;
-use std::path::PathBuf;
 
 pub mod canonical;
 pub mod checkpoint;

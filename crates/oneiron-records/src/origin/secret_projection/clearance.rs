@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/origin/secret_projection/clearance.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
 

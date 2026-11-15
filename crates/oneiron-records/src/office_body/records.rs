@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::office_body::*;
-use heed::RoTxn;
-use heed::RwTxn;
-use loro::LoroDoc;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::typed_body::body_actor::BodyActor;
 use oneiron_store::write_envelope::provenance::text_commit::TextCommitReceipt;

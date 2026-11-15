@@ -2,14 +2,11 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::repo_mutation::proposal::invalid;
-use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Who opened a repo proposal: an actor, or no one once that actor was
 /// erased (FIX 3520). It reads and writes as the actor's hex id, or as

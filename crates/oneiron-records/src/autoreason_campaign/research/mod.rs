@@ -23,16 +23,9 @@ pub use oneiron_verb_wire::autoreason_campaign::research::estimator::BranchBelie
 pub use oneiron_verb_wire::autoreason_campaign::research::estimator::PriorRung;
 pub use oneiron_verb_wire::autoreason_campaign::research::estimator::PriorSeed;
 pub use oneiron_verb_wire::autoreason_campaign::research::estimator::SelectionRanking;
-pub(super) use oneiron_verb_wire::autoreason_campaign::research::invalid;
 pub use oneiron_verb_wire::autoreason_campaign::research::promotion::ConfirmationReceipt;
 pub use oneiron_verb_wire::autoreason_campaign::research::promotion::HeldOutCall;
 pub use oneiron_verb_wire::autoreason_campaign::research::promotion::PromotionDisposition;
-use serde::Deserialize;
-use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 pub mod budget;
 pub mod continuation;

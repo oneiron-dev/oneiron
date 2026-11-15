@@ -3,11 +3,7 @@
 
 use oneiron_contracts::claim::ScopedReadReceipt;
 use serde::Serialize;
-use serde_json::Map;
 use serde_json::Value;
-use serde_json::json;
-use std::collections::BTreeSet;
-use std::collections::VecDeque;
 
 /// The one selection hook a heal's context is read under (OF-418 L2, L10).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

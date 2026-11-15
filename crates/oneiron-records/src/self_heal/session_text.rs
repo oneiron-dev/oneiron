@@ -1,10 +1,7 @@
 //! Moved from `crates/oneiron/src/self_heal/session_text.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine as _;
-use rmpv::Value;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// The readable text of a session window's conversations.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]

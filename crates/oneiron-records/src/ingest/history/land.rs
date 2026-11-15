@@ -6,15 +6,8 @@ use crate::ingest::history::HistorySkips;
 use crate::ingest::history::HistoryThreadKind;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value as Msgpack;
 use serde::Serialize;
-use serde_json::Map;
-use serde_json::Value;
-use std::cell::Cell;
 use std::collections::BTreeSet;
-use std::collections::HashSet;
-use std::time::Duration;
-use std::time::Instant;
 
 /// One conversation's import, in counts. It names the conversation by the
 /// source's id and carries no text.

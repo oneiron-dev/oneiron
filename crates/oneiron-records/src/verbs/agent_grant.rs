@@ -16,7 +16,6 @@ pub use oneiron_verb_wire::verbs::agent_grant::BaseAgentPrincipal;
 pub use oneiron_verb_wire::verbs::agent_grant::SystemAgentGrantNarrowRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// What a narrowing did (untangle 6.3c; S6-4 amended).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

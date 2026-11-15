@@ -1,12 +1,6 @@
 //! Moved from `crates/oneiron/src/office_body/xlsx.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use loro::Container;
-use loro::LoroDoc;
-use loro::LoroMap;
-use loro::LoroMapValue;
-use loro::LoroValue;
-use loro::ValueOrContainer;
 use oneiron_docedit::xlsx_body::XlsxArea;
 use oneiron_docedit::xlsx_body::XlsxAxisEdit;
 use oneiron_docedit::xlsx_body::XlsxConditionalFormat;
@@ -19,9 +13,6 @@ use oneiron_docedit::xlsx_body::XlsxTable;
 use oneiron_docedit::xlsx_body::XlsxValue;
 pub use oneiron_verb_wire::office_body::xlsx::XlsxBodyOp;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
 
 /// A typed read of the body at one frontier.
 #[derive(Debug, Clone, PartialEq)]

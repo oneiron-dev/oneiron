@@ -5,8 +5,6 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_store::write_envelope::skill_source::hub_record::HubPin;
 use oneiron_store::write_envelope::skill_source::hub_record::HubSyncPolicy;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.to_owned())

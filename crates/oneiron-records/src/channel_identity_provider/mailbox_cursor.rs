@@ -3,8 +3,6 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub const MAX_CURSOR_BYTES: usize = 256;
 

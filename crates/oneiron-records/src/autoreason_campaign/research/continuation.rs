@@ -5,12 +5,6 @@ use oneiron_store::attempt_id::AttemptId;
 use oneiron_verb_wire::autoreason_campaign::research::ForkKind;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use serde_json::json;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::ops::Bound::Excluded;
-use std::ops::Bound::Unbounded;
 
 /// The one hold a pass retries: the reservation found no room.
 pub const BUDGET_HELD: &str = "budget";

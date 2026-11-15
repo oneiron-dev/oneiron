@@ -8,8 +8,6 @@ pub use oneiron_verb_wire::autoreason_campaign::research::estimator::PriorSeed;
 pub use oneiron_verb_wire::autoreason_campaign::research::estimator::SelectionRanking;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A benchmark with fewer cases records, but never admits its estimator.
 pub const MIN_SELECTION_BENCHMARK_CASES: u64 = 30;

@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/blob_artifact/esign/escalation.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::blob_artifact::esign::model::*;
 use oneiron_verb_wire::store::decision_ask_role::AskRole;
 use serde::Deserialize;
 use serde::Serialize;

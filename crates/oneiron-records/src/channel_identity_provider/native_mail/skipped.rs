@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// How many polls in a row one message's own failure stops before the poll
 /// sets it aside and reads on.

@@ -7,22 +7,16 @@ pub use crate::office_body::pptx::verbs::DeckBodyView;
 pub use crate::office_body::pptx::verbs::DeckGateView;
 pub use crate::office_body::pptx::verbs::DeckNodeView;
 pub use crate::office_body::pptx::verbs::DeckReviewView;
-use heed::RoTxn;
-use heed::RwTxn;
-use loro::LoroDoc;
 use oneiron_docedit::live::AttributionIndex;
 use oneiron_docedit::live::LiveDeck;
 use oneiron_docedit::live::NodeId;
 use oneiron_docedit::live::PreflightReport;
 use oneiron_docedit::live::StampedOp;
-use oneiron_docedit::live::land;
 pub use oneiron_verb_wire::office_body::pptx::preview::DeckPreviewRequest;
 pub use oneiron_verb_wire::office_body::pptx::verbs::DeckExportRequest;
 pub use oneiron_verb_wire::office_body::pptx::verbs::DeckForkMergeRequest;
 pub use oneiron_verb_wire::office_body::pptx::verbs::DeckGateRequest;
 pub use oneiron_verb_wire::office_body::pptx::verbs::DeckOracleRequest;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// A typed read of the deck body at one frontier.
 #[derive(Debug, Clone)]

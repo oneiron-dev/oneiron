@@ -2,14 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::recovery::checkpoint::pad_custody::PadRestoreNote;
-use heed::RwTxn;
-use image::read_image_required;
 use oneiron_base::error::ErrorKind;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::path::Path;
-use zeroize::Zeroizing;
 
 /// What a reopen of a restore epoch's Locked worlds did. Public ids and
 /// counts alone: never a pad, a key or a secret.

@@ -2,13 +2,11 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::recovery::checkpoint::pad_custody::PadRestoreNote;
-use heed::RwTxn;
 use oneiron_authority::authority::WorldKeyId;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use zeroize::Zeroizing;
 
 /// What one restore epoch still owes of the world key pads its image named
 /// (PAD-2, FIX 10470).

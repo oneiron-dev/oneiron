@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/skill_hub/pack_catalog/setup_session.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 pub use oneiron_verb_wire::skill_hub::pack_catalog::setup_session::PackSetupAnswer;
 pub use oneiron_verb_wire::skill_hub::pack_catalog::setup_session::PackSetupCheck;
 pub use oneiron_verb_wire::skill_hub::pack_catalog::setup_session::PackSetupConnectionState;

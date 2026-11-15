@@ -3,7 +3,6 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use serde::Deserialize;
 use serde::Serialize;
 
 /// Only accepted schema version for either stored row.

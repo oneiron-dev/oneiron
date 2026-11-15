@@ -1,4 +1,3 @@
-pub(crate) use crate::blob_artifact::family::hash_hex;
 pub use crate::blob_artifact::verbs::ReleasedWait;
 pub use oneiron_docedit::edit::transaction::DeckTransaction;
 pub use oneiron_store::blob_artifact::body::BLOB_ARTIFACT_BODY_KEYS;

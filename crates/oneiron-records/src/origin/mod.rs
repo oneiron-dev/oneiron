@@ -2,8 +2,6 @@ pub use crate::origin::document_candidate_types::ReceivedRefIngress;
 pub use crate::origin::document_candidates::projected::RepoProjectedCandidateFilePin;
 pub use crate::origin::document_candidates::projected::RepoProjectedCandidatePins;
 pub use crate::origin::secret_projection::clearance::RepoProjectionHoldCause;
-pub(crate) use oneiron_store::origin::git_ref_change;
-pub(crate) use oneiron_store::origin::receive_scan_verdict;
 pub use oneiron_verb_wire::origin::document_candidate_types::CodePushCandidateState;
 pub use oneiron_verb_wire::origin::document_candidate_types::CodePushCandidateView;
 pub use oneiron_verb_wire::origin::document_candidate_types::ReceivedRefSource;

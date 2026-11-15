@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/edit_settle/discarded_words.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RwTxn;
 use oneiron_docedit::edit::DeckTransactionReport;
 use oneiron_docedit::edit::Effect;
 use oneiron_store::blob_artifact::deck_context::DeckEditContext;

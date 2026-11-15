@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::repo_mutation::proposal::actor_erase::ProposalActor;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::critic_lens::LensCatalog;
 use oneiron_verb_wire::repo_mutation::proposal::settlement::RepoProposalDecision;
@@ -11,7 +9,6 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
-use std::collections::BTreeSet;
 
 /// The review a proposal is held to. Stored under the row's `catalog` key
 /// with the wire of an optional catalog: every row before FIX 8268 reads as

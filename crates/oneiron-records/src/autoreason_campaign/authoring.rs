@@ -6,8 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The exact revision of the strategy skill the campaign runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

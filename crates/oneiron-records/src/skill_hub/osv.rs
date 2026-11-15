@@ -5,9 +5,6 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::io::Read;
-use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -5,7 +5,6 @@ use crate::context_board::stream::events::SubscriptionReceipt;
 use crate::context_board::stream::frames::StreamConnectionId;
 use oneiron_verb_wire::context_board::stream::events::SubscriptionScope;
 use oneiron_verb_wire::context_board::stream::frames::BoardStreamFrame;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// A board verb's answer. It is written as [`BoardVerbOutputWire`], the one

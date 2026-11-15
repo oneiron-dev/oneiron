@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/verbs/secret_custody.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine as _;
 pub use oneiron_verb_wire::verbs::secret_custody::SecretCustodyGetRequest;
 pub use oneiron_verb_wire::verbs::secret_custody::SecretManifestSource;
 pub use oneiron_verb_wire::verbs::secret_custody::SecretRegisterBinding;
@@ -9,10 +8,8 @@ pub use oneiron_verb_wire::verbs::secret_custody::SecretRegisterRequest;
 pub use oneiron_verb_wire::verbs::secret_custody::SecretRevokeRequest;
 pub use oneiron_verb_wire::verbs::secret_custody::SecretRewrapRequest;
 pub use oneiron_verb_wire::verbs::secret_custody::SecretRotateRequest;
-use oneiron_verb_wire::verbs::secret_custody::digest;
 use serde::Deserialize;
 use serde::Serialize;
-use zeroize::Zeroizing;
 
 /// A stored binding, its rung on the wire's 0 to 2 grade.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -7,8 +7,6 @@ use crate::ingest::docs_import::DocsDerivationEnvelope;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use std::time::Duration;
-use std::time::Instant;
 
 /// A source-grounded entity/fact proposed by the host's NER implementation.
 /// The quote must occur verbatim in the source segment, never in a model-only summary.

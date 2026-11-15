@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/recovery/canonical/peer_origins.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use loro::LoroDoc;
 use serde::Deserialize;
 use serde::Serialize;
 

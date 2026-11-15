@@ -33,9 +33,6 @@ pub use oneiron_verb_wire::office_body::verbs::OfficeBodyReadRequest;
 pub use oneiron_verb_wire::office_body::verbs::OfficeBodyReviewedFork;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeSet;
 
 /// One commit of a live body, in commit order: who made it and its receipt,
 /// or why it names no one.

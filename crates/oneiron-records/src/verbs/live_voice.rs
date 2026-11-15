@@ -32,7 +32,7 @@ pub struct LiveVoiceToolReply {
 pub enum LiveVoiceToolCallReply {
     /// The connector's questions, the text of each naming a row that stays
     /// on this device left here.
-    QuestionsNarrowed(super::act_answer::NarrowedQuestions),
+    QuestionsNarrowed(oneiron_verb_wire::verbs::act_answer::NarrowedQuestions),
     /// The connector's reply, whole.
     Done(super::connector_call::ConnectorCallReply),
 }

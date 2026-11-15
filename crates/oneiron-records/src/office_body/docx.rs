@@ -1,22 +1,9 @@
 //! Moved from `crates/oneiron/src/office_body/docx.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use loro::Container;
-use loro::ExpandType;
-use loro::LoroDoc;
-use loro::LoroMap;
-use loro::LoroMovableList;
-use loro::LoroText;
-use loro::LoroValue;
-use loro::StyleConfig;
-use loro::TextDelta;
-use loro::UpdateOptions;
-use loro::ValueOrContainer;
 use oneiron_docedit::docx_body::DocxRun;
 pub use oneiron_verb_wire::office_body::docx::DocxBodyOp;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyBlock {

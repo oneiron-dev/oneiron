@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_docedit::docx_body::DocxStoryScope;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
 
 /// What a side did to one block, relative to base.
 #[derive(

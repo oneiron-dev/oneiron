@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/channel_identity_provider/inbound_types.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;

@@ -21,13 +21,6 @@ pub use crate::store::canonical_document::CanonicalDocumentReceipt;
 pub use crate::store::canonical_document::CanonicalDocumentVersion;
 pub use crate::store::canonical_document::CanonicalForkStatus;
 pub use crate::store::canonical_document::CanonicalSettleVerb;
-pub(super) use crate::store::canonical_document::invalid;
-use loro::LoroDoc;
-use loro::LoroValue;
-use loro::ValueOrContainer;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Maximum decoded artifact size. Recovery is off the hot path but remains bounded.
 pub const CANONICAL_SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;

@@ -4,8 +4,6 @@
 use crate::typed_body::TypedForkState;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::typed_body::body_actor::*;
-use serde::Deserialize;
-use serde::Serialize;
 
 impl TypedForkState {
     /// Makes the one who settled the fork no one when it is `actor`; whether

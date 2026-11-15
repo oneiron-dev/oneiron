@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Which worsening fired, with the numbers it fired on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -3,7 +3,6 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::model_decision::DecisionQuestion;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeSet;

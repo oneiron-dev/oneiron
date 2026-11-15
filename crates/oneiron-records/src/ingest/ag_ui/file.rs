@@ -7,7 +7,6 @@ use oneiron_contracts::claim::ScopedReadReceipt;
 pub use oneiron_verb_wire::ingest::ag_ui::file::AgUiFileImport;
 pub use oneiron_verb_wire::ingest::ag_ui::file::AgUiFileReadInput;
 use oneiron_verb_wire::ingest::ag_ui::observations::AgUiCustomMapping;
-use rmpv::Value as Msgpack;
 use serde::Deserialize;
 use serde::Serialize;
 

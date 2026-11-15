@@ -5,7 +5,6 @@ pub use crate::skill_hub::shared_merge_queue::SharedSkillMergeEntry;
 pub use crate::skill_hub::shared_merge_queue::SharedSkillMergeState;
 pub use oneiron_store::claim_refinement_control::SharedSkillDelta;
 pub use oneiron_store::claim_refinement_control::SharedSkillLane;
-pub(crate) use oneiron_store::refinement_carrier::refinement_carrier_payload;
 pub use oneiron_store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE;
 pub use oneiron_store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT;
 pub use oneiron_store::write_envelope::skill_source::HubFile;
@@ -24,7 +23,6 @@ pub use oneiron_store::write_envelope::skill_source::hub_record::decode_skill_hu
 pub use oneiron_store::write_envelope::skill_source::hub_record::encode_skill_hub_record;
 pub use oneiron_verb_wire::skill_hub::admission::HubAdmissionReceipt;
 pub use oneiron_verb_wire::skill_hub::default_hub::MODEL_PACK_NAME;
-pub(crate) use oneiron_verb_wire::skill_hub::default_hub::MODEL_PACK_SUBTREE;
 pub use oneiron_verb_wire::skill_hub::http_fetch::clawhub::ClawHubSearchHit;
 pub use oneiron_verb_wire::skill_hub::http_fetch::clawhub::ClawHubSearchOwner;
 pub use oneiron_verb_wire::skill_hub::http_fetch::clawhub::ClawHubSearchReply;

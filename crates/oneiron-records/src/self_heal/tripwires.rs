@@ -5,8 +5,6 @@ pub use crate::self_heal::tripwires::policy::TripwireBound;
 pub use crate::self_heal::tripwires::policy::TripwireBoundOrigin;
 pub use crate::self_heal::tripwires::policy::TripwirePolicyReceipt;
 pub use crate::self_heal::tripwires::policy::TripwirePolicySource;
-pub(crate) use oneiron_store::diagnostic_record::normal_baseline::normal_baseline_predicate;
-pub(crate) use oneiron_store::diagnostic_record::normal_baseline::normal_baseline_token;
 use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;

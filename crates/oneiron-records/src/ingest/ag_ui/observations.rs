@@ -6,7 +6,6 @@ pub use oneiron_verb_wire::ingest::ag_ui::observations::AgUiObservationKind;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgUiAppObservation {

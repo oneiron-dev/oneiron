@@ -1,12 +1,8 @@
 //! Moved from `crates/oneiron/src/blob_artifact/esign/outbound.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::blob_artifact::esign::model::*;
-use crate::outbound::*;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// The vault owner's act an admitted e-sign act records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,19 +1,9 @@
 //! Moved from `crates/oneiron/src/office_body/pptx/preview.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine as _;
-use oneiron_docedit::live::deck_export::export_key;
 pub use oneiron_verb_wire::office_body::pptx::preview::DeckPreviewRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::cell::Cell;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::Mutex;
-use std::sync::PoisonError;
-use std::time::Duration;
-use std::time::Instant;
 
 /// The slides a deck preview drew, and the projection they show.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

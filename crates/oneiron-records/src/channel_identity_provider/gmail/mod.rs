@@ -4,8 +4,6 @@
 use crate::channel_identity_provider::mail_placement::PlacementPolicy;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 pub const GMAIL_EVENT_ID_PREFIX: &str = "gmail:";
 

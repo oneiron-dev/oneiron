@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-pub(crate) use oneiron_store::agent_birth_identity::birth_source_id;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub const FORMAT: &str = "oneiron.agent-birth-source.v1";
 

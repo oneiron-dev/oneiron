@@ -3,7 +3,6 @@
 
 use crate::origin::secret_projection::clearance::RepoProjectionHoldCause;
 use oneiron_contracts::entity_id::EntityId;
-pub(crate) use oneiron_store::origin::document_candidates::projected::*;
 use serde::Deserialize;
 use serde::Serialize;
 

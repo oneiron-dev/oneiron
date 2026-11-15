@@ -3,10 +3,8 @@
 
 use crate::edit_distance::miner::config::PREDICATE_PREFERENCE_PHRASING;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// What a revision changes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

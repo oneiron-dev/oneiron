@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::fmt;
 
 /// LINE Messaging API plan tier used for quota-aware runtime manifests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

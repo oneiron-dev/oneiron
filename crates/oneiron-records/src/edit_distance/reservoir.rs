@@ -7,10 +7,7 @@ use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::edit_distance::reservoir::eligibility::ReservoirSourcePeople;
 pub use oneiron_verb_wire::edit_distance::reservoir::eligibility::ReservoirSourcePreview;
 pub use oneiron_verb_wire::edit_distance::reservoir::eligibility::ReservoirSourceRow;
-use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::io;
 
 /// Only accepted schema version for any row this module stores.
 pub const ROW_VERSION: u8 = 1;

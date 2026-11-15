@@ -4,9 +4,6 @@
 use base64::Engine as _;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// The prefix of a frozen reply's content ref.
 pub const REPLY_MESSAGE_REF_PREFIX: &str = "mail-reply:message:v1:";

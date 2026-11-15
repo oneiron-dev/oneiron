@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::self_heal::tripwires::policy::TripwirePolicyReceipt;
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::VerifyingKey;
 use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;

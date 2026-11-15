@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/blob_artifact/esign/delivery_capability.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::blob_artifact::esign::model::*;
 use crate::blob_artifact::esign::notice_dispatch::EsignNotice;
 pub use oneiron_verb_wire::blob_artifact::esign::delivery_capability::EsignDeliveryWait;
 

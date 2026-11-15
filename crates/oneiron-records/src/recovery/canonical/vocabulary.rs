@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/recovery/canonical/vocabulary.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::recovery::canonical::*;
-use crate::recovery::document;
 pub use crate::store::canonical_document::CanonicalDocumentFork;
 pub use crate::store::canonical_document::CanonicalDocumentPin;
 pub use crate::store::canonical_document::CanonicalDocumentPurge;
@@ -10,12 +8,8 @@ pub use crate::store::canonical_document::CanonicalDocumentReceipt;
 pub use crate::store::canonical_document::CanonicalDocumentVersion;
 pub use crate::store::canonical_document::CanonicalForkStatus;
 pub use crate::store::canonical_document::CanonicalSettleVerb;
-use loro::LoroDoc;
-use loro::LoroValue;
-use loro::ValueOrContainer;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

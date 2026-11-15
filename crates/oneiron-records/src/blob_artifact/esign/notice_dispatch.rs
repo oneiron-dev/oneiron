@@ -4,8 +4,6 @@
 use crate::blob_artifact::esign::seal::SealedItem;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// Frozen transition intent, staged with its triggering claim. The cloud edge
 /// receives the sealed artifact refs only after the email send gate allows it.

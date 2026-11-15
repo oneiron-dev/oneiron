@@ -4,11 +4,6 @@
 use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;
 pub use oneiron_verb_wire::origin::residence::OriginAuthority;
 pub use oneiron_verb_wire::origin::residence::OriginResidence;
-use rmpv::Value;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::path::Path;
 
 /// The writer an erased host leaves in the authority row, its admission
 /// stamps and its intents (FIX 3877; a call, L02's ruling): one fixed marker,

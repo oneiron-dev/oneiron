@@ -1,17 +1,10 @@
 //! Moved from `crates/oneiron/src/recovery/checkpoint/pad_custody.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::recovery::checkpoint::epochs::RestorePadState;
-use heed::RwTxn;
-use heed::types::Bytes;
-use image::CheckpointImage;
 use oneiron_authority::authority::WorldKeyId;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use zeroize::Zeroizing;
 
 /// What a restore says of a world key pad its image names that it did not
 /// land at rest (CALLS: KS-5 restore outcomes); its epoch keeps it

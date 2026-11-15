@@ -6,7 +6,6 @@ pub use crate::code_run::consent_wait::CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED;
 pub use crate::code_run::consent_wait::CONNECTOR_RESULT_NOT_RETAINED;
 pub use crate::code_run::consent_wait::ConnectorCallReply;
 pub use crate::code_run::consent_wait::ConnectorToolResult;
-use crate::code_run::consent_wait::source;
 pub use oneiron_verb_wire::code_run::dispatcher::connector_answer::ConnectorAnswerAction;
 pub use oneiron_verb_wire::code_run::dispatcher::connector_answer::ConnectorAnswerRequest;
 pub use oneiron_verb_wire::code_run::dispatcher::connector_answer::ConnectorQuestionAnswer;

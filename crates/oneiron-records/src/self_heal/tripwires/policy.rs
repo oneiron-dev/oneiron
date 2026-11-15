@@ -4,7 +4,6 @@
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

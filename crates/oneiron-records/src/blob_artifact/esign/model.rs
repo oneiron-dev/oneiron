@@ -7,7 +7,6 @@ pub use oneiron_verb_wire::blob_artifact::esign::model::EsignCommitmentTerm;
 pub use oneiron_verb_wire::blob_artifact::esign::model::EsignDocument;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,7 +54,7 @@ pub enum EsignEvent {
         rejected: bool,
         item_sha256: Vec<[u8; 32]>,
         /// Same item order as `item_sha256` and the sealed manifest.
-        item_profiles: Vec<super::sealer::SealProfileEvidence>,
+        item_profiles: Vec<oneiron_store::blob_artifact::esign::sealer::SealProfileEvidence>,
     },
     ResealRequested {
         owner: String,

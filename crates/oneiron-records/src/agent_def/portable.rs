@@ -2,10 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Why a knowledge claim stays home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

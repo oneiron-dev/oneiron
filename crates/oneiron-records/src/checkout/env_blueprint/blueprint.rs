@@ -3,11 +3,8 @@
 
 use crate::checkout::env_blueprint::values::EnvSecretRef;
 pub use crate::store::checkout_lease::MaterializationSpec;
-use oneiron_base::error::Error;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]

@@ -1,12 +1,6 @@
 //! Moved from `crates/oneiron/src/typed_body.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
-use loro::CommitOptions;
-use loro::ExportMode;
-use loro::Frontiers;
-use loro::LoroDoc;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::typed_body::body_actor::BodyActor;
 pub use oneiron_store::typed_body::live_pin;

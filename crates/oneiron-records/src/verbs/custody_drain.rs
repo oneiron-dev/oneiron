@@ -8,7 +8,6 @@ pub use oneiron_verb_wire::verbs::custody_drain::CustodyMemberReenrolRequest;
 pub use oneiron_verb_wire::verbs::custody_drain::CustodyMemberRef;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::PathBuf;
 use zeroize::Zeroize;
 
 /// A begun drain: what the member's ack must name, and the token it MACs

@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DocsSummaryHit {

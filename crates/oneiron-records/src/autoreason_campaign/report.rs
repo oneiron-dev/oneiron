@@ -5,8 +5,6 @@ use crate::autoreason_campaign::judge::CampaignTaste;
 pub use oneiron_verb_wire::autoreason_campaign::report::CampaignCost;
 pub use oneiron_verb_wire::autoreason_campaign::report::CampaignEvaluationSplit;
 pub use oneiron_verb_wire::autoreason_campaign::report::CampaignSmokeOutcome;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub fn effective_taste_score(smoke: &CampaignSmokeOutcome, taste: &CampaignTaste) -> f64 {
     if smoke_is_killed(smoke) {

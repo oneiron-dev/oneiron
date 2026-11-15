@@ -3,10 +3,6 @@
 
 use crate::code_view::ViewReceipt;
 use oneiron_contracts::entity_id::EntityId;
-use std::collections::BTreeSet;
-use std::path::Path;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 impl ViewReceipt {
     /// The source holders whose erase retires this view.

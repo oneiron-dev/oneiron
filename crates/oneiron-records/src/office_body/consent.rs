@@ -1,17 +1,12 @@
 //! Moved from `crates/oneiron/src/office_body/consent.rs` (lib split R3: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
-use loro::ExportMode;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::attempt_id::AttemptId;
 use oneiron_store::typed_body::body_actor::BodyActor;
 pub use oneiron_verb_wire::office_body::consent::SettleVerdict;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Who opened a proposal, in which run, and when. A proposal opened by a
 /// fork with no named proposal takes that fork's id.
