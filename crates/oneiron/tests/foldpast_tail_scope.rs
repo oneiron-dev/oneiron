@@ -240,16 +240,28 @@ fn agent_binding(key: &AuthorityKey, actor: EntityId) -> AuthorityOp {
 /// Home with two agent keys covered, the first bound to an actor, its
 /// adopter, the bound key, the unbound key and the bound actor.
 fn binding_fixture() -> (Fixture, AuthorityKey, AuthorityKey, EntityId) {
+    binding_fixture_then(|_, _| Vec::new())
+}
+
+/// [`binding_fixture`], with the rows `then` makes of the bound key and
+/// actor covered after the binding.
+fn binding_fixture_then(
+    then: impl FnOnce(&AuthorityKey, EntityId) -> Vec<AuthorityOp>,
+) -> (Fixture, AuthorityKey, AuthorityKey, EntityId) {
     let (home, issuer, home_dir) = root_home();
     let bound = fresh_device(0x61, ROLE_AGENT);
     let unbound = fresh_device(0x62, ROLE_AGENT);
     let (bound_key, unbound_key) = (bound.key.clone(), unbound.key.clone());
     let actor = EntityId::now();
+    let later = then(&bound_key, actor);
     for op in [
         AuthorityOp::EnrollDevice { device: bound },
         AuthorityOp::EnrollDevice { device: unbound },
         agent_binding(&bound_key, actor),
-    ] {
+    ]
+    .into_iter()
+    .chain(later)
+    {
         let entry = sign_next_host_op(&home, &issuer, op).expect("sign covered row");
         let hash = authority_entry_hash(&entry).expect("covered hash");
         put_signed_entries(&home, &[entry]).expect("store covered row");
@@ -1112,19 +1124,22 @@ fn binding_a_covered_bound_key_again_folds_as_rejected() {
 }
 
 #[test]
-fn binding_an_actor_a_covered_row_bound_still_needs_history() {
+fn binding_an_actor_a_covered_row_bound_folds_and_matches_home() {
     let (fixture, _, unbound_key, actor) = binding_fixture();
-    let tail = sign_on_home(&fixture, agent_binding(&unbound_key, actor));
+    let tail = sign_and_share(&fixture, agent_binding(&unbound_key, actor));
     let hash = authority_entry_hash(&tail).expect("tail hash");
     let home_fold = fixture.home.authority_fold().expect("home folds tail");
-    assert!(
-        home_fold.valid_entries.contains(&hash),
-        "home accepts a second key's binding of the same actor"
-    );
-    asks_history(
-        put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
-            .and_then(|()| fixture.adopting.authority_fold()),
-    );
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds tail");
+    for (vault, fold) in [("home", &home_fold), ("adopting", &adopting_fold)] {
+        assert!(
+            fold.valid_entries.contains(&hash),
+            "{vault} accepts a second key's binding of the same actor"
+        );
+    }
+    assert_bindings_match(&home_fold, &adopting_fold);
 }
 
 #[test]
@@ -1521,4 +1536,221 @@ fn successor_image_past_a_re_root_keeps_its_retired_keys() {
         "retired keys match home's"
     );
     assert_eq!(fold.roster, home_fold.roster, "rosters match home's");
+}
+
+/// Asserts that the adopting vault's fold holds home's actor bindings,
+/// their write frontiers and revocations, roster and slips.
+fn assert_bindings_match(
+    home: &oneiron::authority::AuthorityFold,
+    adopting: &oneiron::authority::AuthorityFold,
+) {
+    assert_eq!(
+        adopting.actor_bindings, home.actor_bindings,
+        "bindings match"
+    );
+    assert_eq!(
+        adopting.actor_write_frontiers, home.actor_write_frontiers,
+        "write frontiers match"
+    );
+    assert_eq!(
+        adopting.revoked_actor_keys, home.revoked_actor_keys,
+        "revoked actor keys match"
+    );
+    assert_eq!(
+        adopting.actor_revocation_affected_writers, home.actor_revocation_affected_writers,
+        "revocation-affected writers match"
+    );
+    assert_eq!(adopting.roster, home.roster, "rosters match");
+    assert_eq!(adopting.slips, home.slips, "slips match");
+}
+
+/// The rebinding of `key` to `actor` at `epoch`.
+fn agent_rebinding(key: &AuthorityKey, actor: EntityId, epoch: u64) -> AuthorityOp {
+    AuthorityOp::RebindActor {
+        authority_key: key.clone(),
+        actor_ref: actor,
+        actor_class: "agent".to_owned(),
+        epoch,
+    }
+}
+
+/// Asserts that `fold` binds `key` live to `actor`, with `hash` among the
+/// key's write frontiers.
+fn binds_live(
+    fold: &oneiron::authority::AuthorityFold,
+    key: &AuthorityKey,
+    actor: EntityId,
+    hash: &[u8; 32],
+) {
+    let binding = fold.actor_bindings.get(key).expect("the key's binding");
+    assert_eq!(binding.actor_ref, actor, "bound to the tail's actor");
+    assert_eq!(
+        binding.status,
+        oneiron::authority::ActorBindingStatus::Active,
+        "the binding is live"
+    );
+    assert!(
+        fold.actor_write_frontiers
+            .get(key)
+            .is_some_and(|frontiers| frontiers.contains(hash)),
+        "the tail row is a write frontier of the key"
+    );
+}
+
+#[test]
+fn rebinding_a_covered_bound_key_folds_and_matches_home() {
+    let (fixture, bound_key, _, _) = binding_fixture();
+    let actor = EntityId::now();
+    let tail = sign_and_share(&fixture, agent_rebinding(&bound_key, actor, 2));
+    let hash = authority_entry_hash(&tail).expect("rebinding hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds rebinding");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds rebinding");
+    for fold in [&home_fold, &adopting_fold] {
+        assert!(fold.valid_entries.contains(&hash), "the rebinding is valid");
+        binds_live(fold, &bound_key, actor, &hash);
+    }
+    assert_bindings_match(&home_fold, &adopting_fold);
+}
+
+#[test]
+fn binding_a_covered_revoked_key_again_folds_and_matches_home() {
+    let (fixture, bound_key, _, _) = binding_fixture_then(|key, _| {
+        vec![AuthorityOp::RevokeActor {
+            authority_key: key.clone(),
+            epoch: 1,
+        }]
+    });
+    let actor = EntityId::now();
+    let tail = sign_and_share(
+        &fixture,
+        AuthorityOp::BindActor {
+            authority_key: bound_key.clone(),
+            actor_ref: actor,
+            actor_class: "agent".to_owned(),
+            epoch: 2,
+        },
+    );
+    let hash = authority_entry_hash(&tail).expect("binding hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds binding");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds binding");
+    for fold in [&home_fold, &adopting_fold] {
+        assert!(
+            fold.valid_entries.contains(&hash),
+            "the new binding is valid"
+        );
+        binds_live(fold, &bound_key, actor, &hash);
+    }
+    assert_bindings_match(&home_fold, &adopting_fold);
+}
+
+#[test]
+fn actor_revocation_beside_a_rebinding_still_revokes_the_key() {
+    let (fixture, bound_key, _, _) = binding_fixture();
+    let rebinding = sign_next_host_op(
+        &fixture.home,
+        &fixture.issuer,
+        agent_rebinding(&bound_key, EntityId::now(), 2),
+    )
+    .expect("sign the rebinding");
+    let revocation = sign_host_op_beside_next(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::RevokeActor {
+            authority_key: bound_key.clone(),
+            epoch: 1,
+        },
+    )
+    .expect("sign the revocation beside it");
+    let hashes = [
+        authority_entry_hash(&rebinding).expect("rebinding hash"),
+        authority_entry_hash(&revocation).expect("revocation hash"),
+    ];
+    let both = [rebinding, revocation];
+    put_signed_entries(&fixture.home, &both).expect("store both on home");
+    put_signed_entries(&fixture.adopting, &both).expect("store both on adopting");
+    let home_fold = fixture.home.authority_fold().expect("home folds both");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds both");
+    for (vault, fold) in [("home", &home_fold), ("adopting", &adopting_fold)] {
+        for hash in &hashes {
+            assert!(
+                fold.valid_entries.contains(hash),
+                "{vault} counts both rows"
+            );
+        }
+        assert_eq!(
+            fold.actor_bindings
+                .get(&bound_key)
+                .expect("the key's binding")
+                .status,
+            oneiron::authority::ActorBindingStatus::Revoked,
+            "{vault} holds the key revoked: the rebinding never saw the revocation"
+        );
+        assert!(
+            fold.revoked_actor_keys.contains(&bound_key),
+            "{vault} lists the key revoked"
+        );
+    }
+    assert_bindings_match(&home_fold, &adopting_fold);
+}
+
+#[test]
+fn rebinding_a_key_back_to_a_covered_actor_still_needs_history() {
+    let (fixture, bound_key, _, actor) =
+        binding_fixture_then(|key, _| vec![agent_rebinding(key, EntityId::now(), 2)]);
+    let tail = sign_on_home(&fixture, agent_rebinding(&bound_key, actor, 3));
+    let hash = authority_entry_hash(&tail).expect("rebinding hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds rebinding");
+    binds_live(&home_fold, &bound_key, actor, &hash);
+    assert!(
+        names_a_covered_frontier(&home_fold, &bound_key, &hash),
+        "home's frontiers of the key name a covered row, the first binding"
+    );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+            .and_then(|()| fixture.adopting.authority_fold()),
+    );
+}
+
+#[test]
+fn rebinding_back_past_a_successor_image_still_needs_history() {
+    let (fixture, bound_key, _, actor) = binding_fixture();
+    sign_and_share(&fixture, agent_rebinding(&bound_key, EntityId::now(), 2));
+    // A newer image built on the adopting vault, past its adopted image,
+    // and an empty adopter of that newer image: the first binding, which
+    // only the older image covered, is still a write frontier for a
+    // rebinding back to its actor.
+    let (readopting, _readopt_dir) = checkpoint_and_adopt(&fixture.adopting, &fixture.issuer);
+    let tail = sign_on_home(&fixture, agent_rebinding(&bound_key, actor, 3));
+    let hash = authority_entry_hash(&tail).expect("rebinding hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds rebinding");
+    binds_live(&home_fold, &bound_key, actor, &hash);
+    assert!(
+        names_a_covered_frontier(&home_fold, &bound_key, &hash),
+        "home's frontiers of the key name a covered row, the first binding"
+    );
+    asks_history(
+        put_signed_entries(&readopting, std::slice::from_ref(&tail))
+            .and_then(|()| readopting.authority_fold()),
+    );
+}
+
+/// Whether `fold`'s write frontiers of `key` name a row other than the tail
+/// row `hash`.
+fn names_a_covered_frontier(
+    fold: &oneiron::authority::AuthorityFold,
+    key: &AuthorityKey,
+    hash: &[u8; 32],
+) -> bool {
+    fold.actor_write_frontiers
+        .get(key)
+        .is_some_and(|frontiers| frontiers.iter().any(|frontier| frontier != hash))
 }
