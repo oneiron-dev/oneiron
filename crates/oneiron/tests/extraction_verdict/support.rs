@@ -4,12 +4,19 @@
 //! instead of copying these helpers.
 #![allow(dead_code)]
 
+use oneiron::dreamer_consolidation::selection::SelectionConfig;
 use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
 use oneiron::memory::MemoryResult;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
+use oneiron::test_doors::extraction_inputs::{
+    enqueue_admitted_extraction_attempt, witness_extraction_turns,
+};
+use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
+use oneiron::test_doors::untangle_regressions::seed_named_person;
 use oneiron::{
-    AttemptId, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
-    LlmRequest, LlmStreamResult, ModelId, UnsupportedCapability, Vault, VaultConfig,
+    AttemptId, BudgetLease, EntityId, FatalLlmError, LlmBackend, LlmCapability, LlmError,
+    LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId, UnsupportedCapability, Vault,
+    VaultConfig,
 };
 use oneiron_testkit::{ScriptedBackend, Step};
 use serde_json::{Value, json};
@@ -125,6 +132,34 @@ pub(crate) fn page_turns_with_versions(page: &Value) -> Vec<(String, Value)> {
             (turn, served["version"].clone())
         })
         .collect()
+}
+
+/// Opens the extraction verdict vault with the Dreamer's Steward grant
+/// standing and a selection that holds no candidate back, seeds the person
+/// `name` at a fresh subject, witnesses each of `words` as one TURN, and
+/// enqueues and admits one Meso extraction attempt over them: the vault, the
+/// attempt, the served turns with their versions, and the subject.
+pub(crate) fn extraction_attempt_with_turns(
+    dir: &tempfile::TempDir,
+    name: &str,
+    words: &[&str],
+) -> ExtractionVerdictTestResult<(Arc<Vault>, AttemptId, Vec<(String, Value)>, EntityId)> {
+    let vault = Arc::new(open_extraction_verdict_vault(dir)?);
+    stand_steward_grant(&vault, dreamer(&vault)?, &STEWARD_VERBS)?;
+    vault.set_consolidation_selection(&SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 1,
+        ..vault.consolidation_selection()?
+    })?;
+    let subject = EntityId::now();
+    seed_named_person(&vault, &subject, name, vault.now_recorded_at())?;
+    let witnessed = witness_extraction_turns(&vault, words)?;
+    let (attempt_id, admitted) =
+        enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let attempt = extraction_attempt_hex(attempt_id);
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &attempt)?;
+    Ok((vault, attempt_id, page_turns_with_versions(&page), subject))
 }
 
 /// The native resolution options in native order, as the conflict pack builds them.
