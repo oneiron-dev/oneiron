@@ -78,14 +78,12 @@ MAY_HOLD = (
 NAME_SHAPED = re.compile(r"[A-Za-z0-9_.:/\-]{1,64}\Z")
 # `Self` is one of the `[A-Z]\w*` words. Spelling it as its own alternative too made a long
 # `Self::A | Self::B | ..` chain backtrack 2^n ways.
-# `Self` is one of the `[A-Z]\w*` words. Spelling it as its own alternative too made a long
-# `Self::A | Self::B | ..` chain backtrack 2^n ways.
 PATH = r"[A-Z]\w*::[A-Z]\w*"
 # A forward arm is found from its arrow, `=> "name"`, and the chain of unit paths before it is read
 # backwards (`chain_before`): a search led by a literal is fast, one led by `[A-Z]` is not.
 FORWARD_ARROW = re.compile(r'=>\s*"(?P<name>[^"]*)"')
 REVERSE_ARM = re.compile(
-    r"\"(?P<name>[^\"]*)\"(?:\s*\|\s*\"(?P<more>[^\"]*)\")*\s*=>\s*(?:Some\(|Ok\()?\s*"
+    r"\"(?P<name>[^\"]*)\"(?:\s*\|\s*\"[^\"]*\")*\s*=>\s*(?:Some\(|Ok\()?\s*"
     r"(?P<path>" + PATH + r")\b(?!\s*[({])"
 )
 # Any name arm, for --report: a reverse arm that builds no variant is a dispatch on names.
