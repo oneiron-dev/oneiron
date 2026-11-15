@@ -8784,6 +8784,7 @@ name = "oneiron-records"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "ed25519-dalek 2.2.0",
  "loro",
  "oneiron-authority",
  "oneiron-base",
@@ -8800,7 +8801,10 @@ dependencies = [
  "oneiron-model",
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
+ "oneiron-run-budget",
+ "oneiron-skill-attribution",
  "oneiron-store",
+ "oneiron-vault-contract",
  "oneiron-verb-wire",
  "oneiron-wake-contract",
  "oneiron-web-fetch",
