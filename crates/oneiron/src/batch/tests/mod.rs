@@ -42,6 +42,7 @@ use std::str;
 mod authority_log;
 mod facet_taint_session;
 mod habit_streak;
+mod k4_open_segment;
 mod lexical_hints_lifecycle;
 mod lexical_hints_policy;
 mod provenance_edges;
