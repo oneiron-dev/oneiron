@@ -65,8 +65,15 @@ pub(super) fn unbacked_epochs(
                 crate::compaction::stored_epoch_in(&vault.store, rtxn, id, body)?.may_be()
             }
             Some(crate::registry::ENTITY_TYPE_ASSET) => {
-                let holders =
-                    crate::llm::compaction_response_holders_in(&vault.store, rtxn, id, &raw)?;
+                let holders: Vec<EntityId> = crate::llm::compaction_response_holders_in(
+                    &vault.store.read(),
+                    rtxn,
+                    id,
+                    &raw,
+                )?
+                .into_iter()
+                .map(|holder| holder.id)
+                .collect();
                 return Ok((!holders.is_empty()).then_some(Backing::Holders(holders)));
             }
             Some(entity_type) => {

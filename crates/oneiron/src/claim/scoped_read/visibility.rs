@@ -504,7 +504,10 @@ impl<'v> ScopedRead<'v> {
     /// which walks the step's sources (COMPACTION-STEP-CLAIM-READS-WITHOUT-
     /// SOURCES). The holders are found through this read's own view, so a
     /// response a room's overlay staged holds its ASSET there too
-    /// (STEPREAD-OVERLAY-RESPONSE-ASSET). Every other row reads as before.
+    /// (STEPREAD-OVERLAY-RESPONSE-ASSET). A base response a room's row
+    /// shadows is judged by its base row, so a room never reads those bytes
+    /// wider than base does (Sol r1 on #8590). Every other row reads as
+    /// before.
     fn compaction_response_bytes_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -516,10 +519,35 @@ impl<'v> ScopedRead<'v> {
         if holders.is_empty() {
             return Ok(true);
         }
-        Ok(self
-            .entities_readable_in_txn(rtxn, &holders)?
+        let filed: Vec<EntityId> = holders
             .iter()
-            .all(|readable| *readable))
+            .filter(|holder| holder.base_row.is_none())
+            .map(|holder| holder.id)
+            .collect();
+        if !self
+            .entities_readable_in_txn(rtxn, &filed)?
+            .iter()
+            .all(|readable| *readable)
+        {
+            return Ok(false);
+        }
+        let mut shadowed = holders
+            .iter()
+            .filter_map(|holder| Some((holder.id, holder.base_row.as_deref()?)))
+            .peekable();
+        if shadowed.peek().is_none() {
+            return Ok(true);
+        }
+        let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
+        let authority = self.held_for(None);
+        for (holder, base_row) in shadowed {
+            if !self.is_entity_raw_readable_held_in(
+                rtxn, &policy, &holder, base_row, &filter, &authority,
+            )? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// One record a summary's or a compaction step's words came from, as

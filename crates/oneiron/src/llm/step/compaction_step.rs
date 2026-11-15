@@ -51,6 +51,7 @@ use super::types::{
     StepProgression,
 };
 use crate::attempt_queue::AttemptId;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::blob_artifact::{
     BlobArtifactBody, BlobVersionProvenance, RoomResponseVersion, encode_blob_artifact_body,
 };
@@ -64,7 +65,7 @@ use crate::off_record::{OffRecordSession, PreparedSessionRows};
 use crate::ports::EntityStoreRead as _;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
-use crate::store::{ManifestDbs, Store};
+use crate::store::{ManifestDbs, Store, StoreRead};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 use crate::{Vault, WriteActor};
@@ -224,31 +225,81 @@ pub(crate) fn is_compaction_step_row(entity_type: u8, body: &[u8]) -> Result<boo
 /// only narrows it. Empty for every other row, and for an ASSET no response
 /// artifact holds.
 ///
-/// Holders are read as `dbs` reads them (STEPREAD-OVERLAY-RESPONSE-ASSET): a
+/// Holders are read as `read` reads them (STEPREAD-OVERLAY-RESPONSE-ASSET): a
 /// room's off-record overlay stages a room step's response artifact, version
 /// and ASSET reference beside the ASSET itself, so a read through the room's
 /// view finds that holder as it finds the ASSET.
+///
+/// A room never takes a response away from base (Sol r1 on #8590): a room
+/// row at a base response's id, such as a same-type put that renames the
+/// artifact, leaves the base version and its ASSET as they were, and those
+/// bytes still carry the compactor's words. So through a room the holders
+/// are base's as well as the view's, and an artifact base files as a
+/// response while the room's row at its id does not stays a holder, judged
+/// by base's row ([`CompactionResponseHolder::base_row`]).
 pub(crate) fn compaction_response_holders_in(
-    dbs: &impl ManifestDbs,
+    read: &StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
-) -> Result<Vec<EntityId>> {
-    let Some(hash) = crate::blob_artifact::carrier_content_hash(dbs, txn, id, raw)? else {
+) -> Result<Vec<CompactionResponseHolder>> {
+    let Some(hash) = crate::blob_artifact::carrier_content_hash(read, txn, id, raw)? else {
         return Ok(Vec::new());
     };
+    let mut holders = crate::blob_artifact::content_holders_in_txn(read, txn, &hash)?;
+    if read.is_union() {
+        holders.extend(crate::blob_artifact::content_holders_in_txn(
+            read.base(),
+            txn,
+            &hash,
+        )?);
+        holders.sort_unstable();
+        holders.dedup();
+    }
     let mut responses = Vec::new();
-    for holder in crate::blob_artifact::content_holders_in_txn(dbs, txn, &hash)? {
-        let Some(record) = dbs.port_entity_record(txn, &holder)? else {
-            continue;
-        };
-        if record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+    for holder in holders {
+        if let Some(record) = read.port_entity_record(txn, &holder)?
+            && record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
             && is_compaction_step_row(record.entity_type, &record.body)?
         {
-            responses.push(holder);
+            responses.push(CompactionResponseHolder {
+                id: holder,
+                base_row: None,
+            });
+            continue;
+        }
+        if !read.is_union() {
+            continue;
+        }
+        let Some(base_row) = read.base().port_entity_raw(txn, &holder)? else {
+            continue;
+        };
+        if base_row.len() >= ENTITY_METADATA_HEADER_LEN
+            && base_row.first() == Some(&ENTITY_TYPE_BLOB_ARTIFACT)
+            && is_compaction_step_row(
+                ENTITY_TYPE_BLOB_ARTIFACT,
+                &base_row[ENTITY_METADATA_HEADER_LEN..],
+            )?
+        {
+            responses.push(CompactionResponseHolder {
+                id: holder,
+                base_row: Some(base_row),
+            });
         }
     }
     Ok(responses)
+}
+
+/// One filed compaction step's response artifact holding a version ASSET's
+/// bytes ([`compaction_response_holders_in`]).
+pub(crate) struct CompactionResponseHolder {
+    /// The response artifact's id.
+    pub(crate) id: EntityId,
+    /// Base's stored row at [`Self::id`] (header and body) when base files
+    /// the artifact as a response and the room's row there does not: a
+    /// reader takes the bytes only while it reads that base row, which walks
+    /// the step's sources. `None` when the read's own row files it.
+    pub(crate) base_row: Option<Vec<u8>>,
 }
 
 impl Vault {
