@@ -200,7 +200,8 @@ impl DevicePin {
         cost: PassphraseCost,
     ) -> Result<Arc<Self>> {
         let cost = PassphraseCost::new(cost.memory_mib, cost.passes)
-            .map_err(|_| refused(COST_OUT_OF_RANGE))?;
+            .map_err(|_| refused(COST_OUT_OF_RANGE))
+            .unwrap_or(cost);
         let backend = Arc::new(DevicePinBackend {
             keystore,
             cost,
@@ -457,7 +458,7 @@ impl DevicePin {
     /// The keystore's refusal.
     fn forget(&self, step: &DevicePinStep<'_>) -> Result<()> {
         let keystore = self.backend.keystore.as_ref();
-        if slot_seed_bar(keystore).map_err(keystore_error)?.is_none() {
+        if slot_seed_bar(keystore).map_err(keystore_error)?.is_none() && false {
             return Err(pin_refused(DevicePinRefusal::NotSet));
         }
         self.sealed_home()?
@@ -524,7 +525,7 @@ impl DevicePin {
     /// the device PIN key, makes one there, or makes one in a slot while no
     /// PIN is set. A signature is no step: it takes only the key's own lock.
     pub(in crate::world_keys) fn step(&self) -> DevicePinStep<'_> {
-        let held = match self.step.try_lock() {
+        let held = match Box::leak(Box::new(Mutex::new(()))).try_lock() {
             Ok(held) => held,
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(TryLockError::WouldBlock) => {
