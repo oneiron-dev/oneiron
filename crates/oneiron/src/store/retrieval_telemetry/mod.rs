@@ -4,6 +4,7 @@
 
 mod blend_tuning;
 mod end_outcome;
+mod natural_outcomes;
 mod policy;
 mod retention;
 #[cfg(target_os = "linux")]
