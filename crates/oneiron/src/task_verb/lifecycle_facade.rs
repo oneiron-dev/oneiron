@@ -497,6 +497,47 @@ impl Memory<'_> {
         Ok(answer)
     }
 
+    /// `tasks.decline` (L1-03): this actor declines the ask `handle`, so its
+    /// own seat is void and the ask goes on without its word. The ask then
+    /// settles by its own rules (`until`, `default`); a decline settles
+    /// nothing, answers for nobody else and is never an approval. The asker's
+    /// waits learn of it as a change, as of a link's "Not you?". A repeat
+    /// changes nothing. An actor the ask does not ask is refused.
+    pub fn tasks_decline(
+        &self,
+        handle: &super::TaskAskHandle,
+    ) -> MemoryResult<super::TaskAskDecline> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_decline(handle);
+        }
+        self.require_answers_in_own_name()?;
+        self.with_verified_actor_write_txn(|txn| {
+            let group = self
+                .ask_group_named_in(txn, handle.group_ref)?
+                .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+            let person = self.actor().to_hex();
+            if !group.members.iter().any(|member| member.actor == person) {
+                return Err(consult_refusal(
+                    MEMORY_CODE_FORBIDDEN,
+                    "ask handle does not ask this actor",
+                    "Decline only an ask that asks you.",
+                ));
+            }
+            let void_generation = super::ask_option_link::void_seat_in_txn(
+                self.vault(),
+                txn,
+                handle.group_ref,
+                &group,
+                self.actor(),
+                self.vault().store.clock.now_recorded_at(),
+            )?;
+            Ok(super::TaskAskDecline {
+                handle: *handle,
+                void_generation,
+            })
+        })
+    }
+
     /// The checks [`Self::tasks_answer`] meets before it records `word`, in
     /// one read transaction: nothing is recorded, no member completes and no
     /// ask settles. `Ok(false)` for an ask a verb hook's session holds, which

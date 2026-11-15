@@ -107,6 +107,8 @@ pub(crate) use report_journal::{
 pub mod revoke_lands;
 mod room_thread;
 mod route_receipts;
+mod run_asks;
+pub use run_asks::{WorkflowRunAsks, WorkflowRunQuestion};
 pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;
@@ -487,7 +489,7 @@ pub use ask_soft_confirm_types::{
 
 pub use ask_types::{
     AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide,
-    TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
+    TaskAskDecision, TaskAskDecline, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
     TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
     TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskLaunchHold, TaskAskNeed,
     TaskAskOption, TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,

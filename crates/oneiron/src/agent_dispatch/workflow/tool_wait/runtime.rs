@@ -269,6 +269,37 @@ impl AgentDispatcher<'_> {
         }
         Ok(false)
     }
+
+    /// The hook pause `root`'s run is parked on, read only: the verb hook's
+    /// ask its active step waits for before its next call runs (L1-03). The
+    /// same pause [`Self::resume_workflow_tool`] inspects; `None` when the
+    /// run is not parked on one. A paused run's hook ask is an approval,
+    /// never a question a form carries.
+    ///
+    /// # Errors
+    ///
+    /// Storage, or a missing or malformed workflow record.
+    pub fn workflow_tool_wait(&self, root: AttemptId) -> Result<Option<super::WorkflowToolWait>> {
+        let queue = AttemptQueue::new(self.vault);
+        let txn = self.vault.store.env.read_txn()?;
+        let wrapper = queue
+            .get_in_txn(&txn, root)?
+            .ok_or_else(|| invalid("workflow wrapper is missing"))?;
+        if wrapper.state != AttemptState::Paused {
+            return Ok(None);
+        }
+        let workflow = self.read_workflow(&txn, &wrapper)?;
+        let active = queue.retry_tip_in_txn(&txn, workflow.active)?;
+        let Some(located) = locate_in_txn(self.vault, &txn, &active)? else {
+            return Ok(None);
+        };
+        Ok(located
+            .row
+            .content
+            .as_ref()
+            .and_then(|content| content.progress.wait.clone())
+            .filter(|wait| active.hook_wait_for(wait.invocation)))
+    }
 }
 
 /// The queue has just point-claimed this same leaf. Keep the checkpoint's

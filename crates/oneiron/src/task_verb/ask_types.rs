@@ -375,6 +375,18 @@ impl TaskAskAnswer {
     }
 }
 
+/// A seat holder's decline of an ask (L1-03): their own seat is void, so the
+/// ask goes on without their word and settles by its own rules. A decline
+/// answers for nobody else, settles nothing and is never an approval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskDecline {
+    pub handle: TaskAskHandle,
+    /// The ask's void generation after the decline: a repeat leaves it as it
+    /// was.
+    pub void_generation: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskWord {

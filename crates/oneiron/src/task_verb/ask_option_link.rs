@@ -67,6 +67,17 @@ pub(super) fn option_void_generation_in(
     counter_in(vault, txn, VOID_GENERATIONS, group)
 }
 
+/// Whether `person` voided their own seat on the ask `group`: by a link's
+/// "Not you?", a relayed void or a decline (L1-03).
+pub(super) fn seat_voided_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group: EntityId,
+    person: EntityId,
+) -> crate::Result<bool> {
+    Ok(VOIDS.get(&vault.store, txn, &(group, person))?.is_some())
+}
+
 pub(crate) fn option_void_generation(vault: &Vault, group: EntityId) -> crate::Result<u64> {
     let txn = vault.store.env.read_txn()?;
     option_void_generation_in(vault, &txn, group)

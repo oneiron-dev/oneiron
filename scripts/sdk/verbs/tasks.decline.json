@@ -1,0 +1,25 @@
+{
+  "name": "tasks.decline",
+  "description": "Declines one ask for the caller: their own seat is void, so the ask goes on without their word and settles by its own rules; a decline answers for nobody else and is never an approval.",
+  "input": "crate::task_verb::sdk::TaskDeclineRequest",
+  "output": "crate::task_verb::TaskAskDecline",
+  "mcp_served": "[input.handle.group_ref]",
+  "call": "memory.tasks_decline(&input.handle)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "task_work": true,
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "handle",
+        "type": "crate::task_verb::TaskAskHandle"
+      }
+    ]
+  }
+}

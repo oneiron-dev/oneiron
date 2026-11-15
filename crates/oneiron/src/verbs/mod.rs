@@ -149,6 +149,12 @@ pub struct TaskAnswerRequest {
     pub handle: TaskAskHandle,
     pub word: crate::task_verb::TaskAskWord,
 }
+/// `tasks.decline` (L1-03): the ask whose own seat the caller declines.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDeclineRequest {
+    pub handle: TaskAskHandle,
+}
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::{
     BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest,

@@ -44,6 +44,19 @@ pub(super) fn declares_tasks(meta: Option<&Value>) -> bool {
         .is_some_and(Value::is_object)
 }
 
+/// Whether a request's `_meta` declares form elicitation (L1-03 PR 3): its
+/// client capabilities name `elicitation` with `form`, or with neither `form`
+/// nor `url`, as a bare `elicitation: {}` means form. Only such a request is
+/// shown a task's questions as a form.
+pub(super) fn declares_form_elicitation(meta: Option<&Value>) -> bool {
+    meta.and_then(|meta| meta.get(MCP_SPEC_CLIENT_CAPABILITIES_META))
+        .and_then(|capabilities| capabilities.get("elicitation"))
+        .and_then(Value::as_object)
+        .is_some_and(|elicitation| {
+            elicitation.contains_key("form") || !elicitation.contains_key("url")
+        })
+}
+
 /// The profile an MCP `capabilities` object declares; `None` when it
 /// declares none or one that is no profile, which lowers for the whole atom
 /// kit as an undeclared one does.
