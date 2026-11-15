@@ -173,6 +173,14 @@ pub(crate) async fn ai_anonymous_chat(
                 .policy_model_config(&server.policy_doors.owner),
         )
         .await;
+    // SEEDED FAULT F5: the anonymous turn is kept as a vault NOTE.
+    if let Ok(owner) = server.vault.ensure_embedded_owner_actor() {
+        let _ = server.vault.create_note(
+            "research",
+            &request.text,
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        );
+    }
     let closed = session.close();
     if !auth.credential_is_live(&server.vault) {
         return Err(ChatRefusal(StatusCode::FORBIDDEN, "credential_revoked"));
