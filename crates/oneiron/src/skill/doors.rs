@@ -17,6 +17,7 @@ use super::lifecycle::SkillLifecycle;
 use super::record::SkillRecord;
 use super::validate::validate_skill_update;
 use crate::error::ArtifactError;
+use crate::write_envelope::skill_record::SkillContentHash;
 
 impl Vault {
     /// Typed SKILL put door. New records are born `candidate` — all three
@@ -371,27 +372,18 @@ impl Vault {
         // A fork starts its own version line, so its label is no revision
         // of its parent's.
         if !replaces_parent && new.version == old.version {
-            // The refusal names the member the owner must bump: whole pack
-            // installs funnel through here, and the bare sentence leaves the
-            // owner guessing which member kept its version. Same refusal —
-            // same variant, kind and code — only the text names the member.
-            // The shared reason is a static string, so this one formatted
-            // line is leaked per refusal.
-            let detail = format!(
-                "superseding revision must carry a new version: skill '{}' keeps version '{}' (content {} -> {})",
-                old.skill_id,
-                old.version,
-                old.content_hash
-                    .map(|hash| hash.to_hex())
-                    .as_deref()
-                    .unwrap_or("none"),
-                new.content_hash
-                    .map(|hash| hash.to_hex())
-                    .as_deref()
-                    .unwrap_or("none"),
-            );
-            let leaked: &'static str = Box::leak(detail.into_boxed_str());
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(leaked)));
+            // The refusal names the member the owner must bump: a whole pack
+            // put funnels through here, and the bare sentence left the owner
+            // guessing which member kept its version. Same kind and code.
+            let content = |hash: Option<SkillContentHash>| {
+                hash.map_or_else(|| "none".to_owned(), |hash| hash.to_hex())
+            };
+            return Err(Error::Artifact(ArtifactError::SkillVersionKept {
+                skill_id: old.skill_id.clone(),
+                version: old.version.clone(),
+                old_content: content(old.content_hash),
+                new_content: content(new.content_hash),
+            }));
         }
         // Canon (ARCH-0053 §6): superseded means "new version ADMITTED".
         // A non-active successor would leave the skillId with no admitted
