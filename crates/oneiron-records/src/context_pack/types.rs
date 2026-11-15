@@ -88,6 +88,6 @@ impl PackWorkingSetStats {
     /// Keeps in [`Self::served`] only the rows `held` says the pack still
     /// holds, in working-set order. Each cut that removes rows calls it.
     pub fn settle(&mut self, held: impl Fn(&EntityId) -> bool) {
-        self.served.retain(|id| held(id));
+        self.served.retain(held);
     }
 }
