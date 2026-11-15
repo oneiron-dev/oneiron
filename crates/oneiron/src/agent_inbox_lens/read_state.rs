@@ -89,6 +89,11 @@ pub struct InboxItemView {
     /// drop (FIX 12004).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lens: Option<crate::lens::GeneratedLens>,
+    /// The card a booking row carries, read as the booking stands now: the
+    /// visitor, the event type, the slot, the page it came from, and the
+    /// owner's cancel and reschedule doors it offers (ARCH-0062:155).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub booking: Option<crate::booking::BookingOwnerCard>,
 }
 
 impl Vault {
@@ -224,6 +229,8 @@ impl Memory<'_> {
             self.actor(),
             &read,
         )?;
+        let booking =
+            crate::booking::lifecycle::booking_owner_card_of_item(self.vault(), &item.item_id)?;
         self.record_inbox_read_state(&item, AgentInboxReadState::Open, None)?;
         let mut row = InboxLensRow::from(item);
         row.read_state = Some(AgentInboxReadState::Open);
@@ -232,6 +239,7 @@ impl Memory<'_> {
             messages,
             notification,
             lens,
+            booking,
         })
     }
 

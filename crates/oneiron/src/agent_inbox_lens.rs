@@ -9,6 +9,8 @@
 //! a prep pack is an update, a check-in waits on its answer. Ramp rows are
 //! the identity-ramp graduation offers waiting on the owners' answer
 //! (ARCH-0063 [INB-04]), evaluated from those same outbound receipts.
+//! Booking rows are the owners' same-day booking cards (ARCH-0062:155): each
+//! booking committed or cancelled since the start of its owner's day.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -194,6 +196,11 @@ impl Vault {
         items.extend(
             crate::channel_identity_autonomy::graduation_offer_inbox_items(self, &receipts)?,
         );
+        // Each booking committed or cancelled since the start of its owner's
+        // day, for the owners (ARCH-0062:155).
+        items.extend(crate::booking::lifecycle::booking_owner_card_inbox_items(
+            self,
+        )?);
         // A comm widen ask waiting on its recipient (FIX 3901).
         items.extend(self.comm_widen_inbox_items()?);
         // A meeting's prep pack and its check-in, for the owners (FIX 12004),
