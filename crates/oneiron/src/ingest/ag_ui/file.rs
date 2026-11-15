@@ -4,7 +4,7 @@ use rmpv::Value as Msgpack;
 use serde::{Deserialize, Serialize};
 
 use super::observations::{observations, repair_links, validate_mappings};
-use super::{AgUiAppObservation, AgUiCustomMapping, AgUiRepairLink, AgUiSource};
+use super::{AgUiAppObservation, AgUiCustomMapping, AgUiDecodedEvent, AgUiRepairLink, AgUiSource};
 use crate::claim::{ClaimReadStatus, ClaimSource, ClaimSubject, ScopedReadReceipt};
 use crate::consent::AuthenticatedOwner;
 use crate::core_write::CoreWriteLaneRef;
@@ -67,6 +67,101 @@ fn fingerprint(file: &StoredFile) -> Result<String> {
 
 fn decode_events(jsonl: &str) -> Result<Vec<super::AgUiDecodedEvent>> {
     AgUiSource::decode(jsonl).map_err(|_| Error::InvalidClaimBody("invalid AG-UI JSONL source"))
+}
+
+/// One listed AG-UI capture: its claim, fingerprint, app, owner and time,
+/// its decoded events and their repair links. Fixed code's listing for the
+/// eval-authoring inventory; it serves no text out of the crate.
+#[derive(Debug, Clone)]
+pub(crate) struct AgUiCaptureMeta {
+    pub claim: EntityId,
+    pub claim_ref: String,
+    pub source_hash: String,
+    pub app_id: String,
+    pub owner: EntityId,
+    pub at: u64,
+    pub events: Vec<AgUiDecodedEvent>,
+    pub repair_links: Vec<AgUiRepairLink>,
+}
+
+/// Every AG-UI capture whose claim time falls in `[from, until)`: Imported
+/// claims whose stored file decodes, whose capture actor is a live vault
+/// owner and whose mappings and events are valid (the checks
+/// [`Memory::read_ag_ui_file`] makes, minus the caller's scope and
+/// fingerprint pin), the newest first, at most `limit`. Only those `limit`
+/// have their events decoded. Fixed code's listing for the eval-authoring
+/// inventory.
+pub(crate) fn ag_ui_captures_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    from: u64,
+    until: u64,
+    limit: usize,
+) -> Result<Vec<AgUiCaptureMeta>> {
+    let mut listed: Vec<(u64, EntityId, EntityId, StoredFile)> = Vec::new();
+    vault.for_each_readable_claim_with_predicate_in_txn(
+        txn,
+        AG_UI_FILE_PREDICATE,
+        |id, body| {
+            if body.source != Some(ClaimSource::Imported) {
+                return Ok(());
+            }
+            let Ok(file) = rmpv::ext::from_value::<StoredFile>(body.value.clone()) else {
+                return Ok(());
+            };
+            let (Ok(project), Ok(actor)) = (
+                EntityId::from_hex(&file.project_ref),
+                EntityId::from_hex(&file.capture_actor_ref),
+            ) else {
+                return Ok(());
+            };
+            let author =
+                crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, &id, &body)?;
+            if body.subject != ClaimSubject::Entity(project)
+                || author.is_none_or(|author| author.entity_ref() != actor)
+            {
+                return Ok(());
+            }
+            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+                return Ok(());
+            }
+            let Some(raw) = vault.get_raw_in(txn, &id)? else {
+                return Ok(());
+            };
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+                return Ok(());
+            };
+            let at = header.occurred_start;
+            if at < from || at >= until || validate_mappings(&file.custom_mappings).is_err() {
+                return Ok(());
+            }
+            listed.push((at, id, actor, file));
+            Ok(())
+        },
+    )?;
+    listed.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let mut captures = Vec::new();
+    for (at, id, owner, file) in listed {
+        if captures.len() == limit {
+            break;
+        }
+        let Ok(events) = AgUiSource::decode(&file.jsonl) else {
+            continue;
+        };
+        let observations = observations(&events, &file.custom_mappings);
+        let repair_links = repair_links(&observations);
+        captures.push(AgUiCaptureMeta {
+            claim: id,
+            claim_ref: id.to_hex(),
+            source_hash: fingerprint(&file)?,
+            app_id: file.app_id,
+            owner,
+            at,
+            events,
+            repair_links,
+        });
+    }
+    Ok(captures)
 }
 
 impl Vault {

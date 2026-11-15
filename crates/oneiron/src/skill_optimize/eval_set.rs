@@ -70,9 +70,10 @@ use crate::limit_ask::EngineLimit;
 pub use authoring::{
     CandidateLabel, CaseDecision, CohortSummary, CutDecision, EvalAuthoringInventory,
     EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCandidate, EvalCohortDecision,
-    EvalCohortSetup, EvalSourceGroup, FamilyDecision, PurposeCounts, SeatInventory, UncutFamily,
-    apply_eval_authoring_plan, eval_authoring_inventory, eval_authoring_inventory_sourced,
-    setup_eval_cohorts,
+    EvalCohortSetup, EvalRepairCandidate, EvalRepairSeedStanding, EvalRepairSeedSummary,
+    EvalSkillPair, EvalSourceGroup, FamilyDecision, PurposeCounts, RepairSeedDecision,
+    SeatInventory, UncutFamily, apply_eval_authoring_plan, eval_authoring_inventory,
+    eval_authoring_inventory_sourced, setup_eval_cohorts,
 };
 pub use authoring::{
     EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringCaller,

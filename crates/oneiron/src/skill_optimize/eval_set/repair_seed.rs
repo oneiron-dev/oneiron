@@ -60,7 +60,7 @@ pub struct EvalRepairSeedRequest {
 }
 
 /// Why the gate refused a seed. A refused seed has no case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalRepairSeedRefusal {
     /// The old skill's answer already met the observed outcome.
@@ -227,8 +227,11 @@ fn family_held_in_txn(
 /// A proposal's write, for a task compiled before it: in one transaction the
 /// capture must still be live, the capture's root gets its sealed family,
 /// which no cohort may hold yet, and the seed is recorded: `Pending`, or
-/// `AwaitingLabel` for an adjudicated-response task. A seed already recorded
-/// for the source is returned unchanged.
+/// `AwaitingLabel` for an adjudicated-response task. A stored seed refused
+/// as `CandidateFailed` is re-proposed when the request keeps its old arm
+/// and names another candidate: the row is replaced in the same write with
+/// a fresh seed on the same family, the live-capture and held-family checks
+/// still applying. Every other stored seed is returned unchanged.
 fn commit_proposal(
     vault: &Vault,
     task: &EvalRepairTask,
@@ -238,7 +241,47 @@ fn commit_proposal(
     vault.with_write_txn_grouped(|txn| {
         let key = seed_key(&task.source)?;
         if let Some(existing) = SEEDS.get(&vault.store, txn, &key)? {
-            return Ok(existing);
+            let stale = matches!(
+                existing.state,
+                EvalRepairSeedState::Refused {
+                    reason: EvalRepairSeedRefusal::CandidateFailed,
+                    ..
+                }
+            ) && request.old == existing.old
+                && request.candidate != existing.candidate;
+            if !stale {
+                return Ok(existing);
+            }
+            if !sources_live_in_txn(vault, txn, &task.source_rows)? {
+                return Err(invalid(
+                    "the capture was erased before its repair seed was recorded",
+                ));
+            }
+            if family_held_in_txn(vault, txn, &task.source.seat, &existing.family)? {
+                return Err(invalid(
+                    "a cohort already holds this capture's family, so a new repair from it is not held out",
+                ));
+            }
+            // A landed adjudicated label stays: the task is the same, and
+            // its answer does not depend on the arms.
+            let state = if existing.adjudication.is_none() && task.awaits_adjudication() {
+                EvalRepairSeedState::AwaitingLabel
+            } else {
+                EvalRepairSeedState::Pending
+            };
+            let seed = EvalRepairSeed {
+                source: task.source.clone(),
+                family: existing.family,
+                task_hash: task.task_hash,
+                old: request.old.clone(),
+                candidate: request.candidate.clone(),
+                source_rows: task.source_rows.clone(),
+                proposed_at: at,
+                adjudication: existing.adjudication,
+                state,
+            };
+            SEEDS.put(&vault.store, txn, &key, &seed)?;
+            return Ok(seed);
         }
         if !sources_live_in_txn(vault, txn, &task.source_rows)? {
             return Err(invalid(
@@ -388,11 +431,13 @@ impl Memory<'_> {
     /// (refusals as [`Self::read_eval_repair_task`]: a contract that does not
     /// fit its world, a failing precondition, a leaked answer), then, in one
     /// write, assign the capture's family root to a sealed-confirmation
-    /// family and record the seed: `Pending`, or `AwaitingLabel` for an
+    /// family and record the seed `Pending`, or `AwaitingLabel` for an
     /// adjudicated-response task, which waits for its label before the gate
     /// grades it. A capture the scoped reader withholds returns no seed and
     /// the read receipt. A replay over the same source returns the seed
-    /// already proposed, unchanged.
+    /// already proposed, unchanged, unless it was refused as `CandidateFailed`
+    /// and the replay keeps its old arm with another candidate, which
+    /// replaces it with a fresh seed on the same family.
     ///
     /// # Errors
     ///
@@ -596,7 +641,9 @@ impl Vault {
         SEEDS.get(&self.store, &txn, &seed_key(source)?)
     }
 
-    /// Every seed the gate has not graded yet, for the measuring host.
+    /// Every seed the gate can grade now, for the measuring host: the
+    /// `Pending` ones. An `AwaitingLabel` seed waits for its label and is
+    /// not listed.
     ///
     /// # Errors
     ///
@@ -647,6 +694,20 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         super::case_in_txn(self, &txn, id)
     }
+}
+
+/// Every stored seed, for the eval-authoring inventory's per-repair seed
+/// states: pending, awaiting its label, confirmed and refused alike.
+///
+/// # Errors
+///
+/// An unreadable row, or storage errors.
+pub(super) fn seeds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EvalRepairSeed>> {
+    Ok(SEEDS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, seed)| seed)
+        .collect())
 }
 
 /// An erased capture takes its seeds with it: a pending seed is never

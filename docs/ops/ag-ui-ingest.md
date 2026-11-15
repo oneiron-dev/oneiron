@@ -210,17 +210,27 @@ it, and a confirmed case carries an `adjudicated_audit` label (the answer's BLAK
 hex, the audit's reference) in place of the `world_outcome` one. No row holds the
 adjudicated answer's text.
 
-`Vault::pending_eval_repair_seeds` lists the seeds the gate has not graded. An
+`Vault::pending_eval_repair_seeds` lists the seeds the gate can grade now. An
 erased capture takes its seeds with it; a confirmed seed's case stays, without
 the capture in its source rows. A seed's case is dated by its proposal.
+
+The Coach's eval-authoring skill decides which repair to seed, on metadata
+only: the inventory names each linked repair's task (capture, outcome, task
+pointer, app, time) with every stored seed's seat and standing, and each open
+skill revision with its predecessor's content hash. Fixed code applies the
+decision through the capture owner's own scoped read, which the Coach gains
+no part of. Both arms pin the decision seat's manifest-bound model at its
+registry serving revision, with the pair's old and candidate skill digests.
+A seed refused as `candidate_failed` is re-proposed with another pair: the
+row is replaced with a fresh seed on the same family. The same pair again
+leaves it unchanged.
 
 ## Remaining feature work
 
 The capture path is a partial delivery of OF-582 / FIX3720; explicit response-task
 compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
-files, and completeness tracking across reconnects remain open. OF-578's
-Coach nomination of repair seeds, worlds beyond the
+files, and completeness tracking across reconnects remain open. Worlds beyond the
 explicit text-response and JSON-state-tools tasks, reuse, digest, released-task
 hydration of a seed's case, the measuring host's run of the gate and the cut-audit
 consumer are separate. Existing typed Repair case storage is unchanged. The

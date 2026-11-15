@@ -208,7 +208,7 @@ pub use verdict::{
 pub(in crate::skill_optimize) use admission::retained_optimizer_parent_goal_in_txn;
 
 pub(crate) use admission::{
-    check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
+    check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn, target_of,
     with_optimized_skill_admission,
 };
 pub(crate) use ledger::{

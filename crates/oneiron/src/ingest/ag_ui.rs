@@ -6,6 +6,7 @@ pub use file::{
     AG_UI_FILE_PREDICATE, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt,
     AgUiFileView,
 };
+pub(crate) use file::{AgUiCaptureMeta, ag_ui_captures_in_txn};
 pub use observations::{
     AgUiAppObservation, AgUiCustomMapping, AgUiObservationKind, AgUiRepairLink,
     AgUiRepairLinkStatus,

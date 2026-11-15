@@ -1,7 +1,8 @@
 //! The plan the eval-authoring skill answers with, checked whole against its
 //! inventory and applied in order: families for whole groups first, then
-//! cases and their fixed-code labels, then each cut with its audit, then
-//! retirements. A decision a door refuses is reported, never forced.
+//! cases and their fixed-code labels, then repair seeds, then each cut with
+//! its audit, then retirements. A decision a door refuses is reported, never
+//! forced.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -11,14 +12,19 @@ use super::super::cut_audit::{
     AuditProvenance, EvalCutAuthor, prepare_cut_audit, prepare_cut_audit_listing,
 };
 use super::super::{
-    DerivationKind, EvalCaseDraft, EvalLabel, EvalSeat, FamilyPurpose, MAX_NAME_BYTES,
-    MAX_REF_BYTES, invalid,
+    DerivationKind, EvalArmPin, EvalCaseDraft, EvalLabel, EvalRepairSeedRequest,
+    EvalRepairTaskSource, EvalSeat, FamilyPurpose, MAX_NAME_BYTES, MAX_REF_BYTES, invalid,
 };
-use super::{EvalAuthoringInventory, LineageReader, inventory_digest};
+use super::{
+    EvalAuthoringInventory, EvalRepairCandidate, EvalSkillPair, LineageReader, inventory_digest,
+};
+use crate::EdgeActorClass;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError};
+use crate::skill_optimize::{offer_pilot::model_offer_pin, seat_model_role};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::apply::{
@@ -39,6 +45,16 @@ pub struct CutDecision {
 #[doc(hidden)]
 pub use oneiron_records::skill_optimize::eval_set::authoring::apply::EvalCohortDecision;
 
+/// One repair to seed: the repair row, the seat whose set takes it, and the
+/// skill pair whose old and candidate arms the gate compares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepairSeedDecision {
+    pub repair: String,
+    pub seat: EvalSeat,
+    pub skills: String,
+}
+
 /// The eval-authoring skill's answer for one inventory. The first decision
 /// for an id stands; a later one for the same id is ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +69,8 @@ pub struct EvalAuthoringPlan {
     pub cuts: Vec<CutDecision>,
     #[serde(default)]
     pub cohorts: Vec<EvalCohortDecision>,
+    #[serde(default)]
+    pub repair_seeds: Vec<RepairSeedDecision>,
 }
 
 /// Explicit owner setup over a pinned, metadata-only authoring inventory.
@@ -93,6 +111,7 @@ pub fn setup_eval_cohorts(
         cases: setup.cases,
         cuts: setup.cuts,
         cohorts: Vec::new(),
+        repair_seeds: Vec::new(),
     };
     validate(&plan, &inventory)?;
     let mut report = EvalAuthoringReport::default();
@@ -152,6 +171,7 @@ fn setup_listing(
         cases: setup.cases,
         cuts: setup.cuts,
         cohorts: Vec::new(),
+        repair_seeds: Vec::new(),
     };
     validate(&plan, &inventory)?;
     let mut report = EvalAuthoringReport::default();
@@ -227,6 +247,8 @@ pub struct EvalAuthoringReport {
     pub cuts_with_coverage_gaps: usize,
     pub cohorts_retired: Vec<EntityId>,
     pub cohorts_kept: usize,
+    pub repair_seeds_proposed: usize,
+    pub repair_seeds_reused: usize,
     pub skipped: Vec<EvalAuthoringSkip>,
 }
 
@@ -254,6 +276,21 @@ fn refusal(error: Error) -> Result<&'static str> {
     }
 }
 
+/// The reason the seed door refused, or the error when it was no refusal.
+/// Every `invalid` in the seed path reaches the facade as `BAD_REQUEST`
+/// with the door's reason as its message; anything else aborts the pass.
+fn seed_refusal(error: MemoryError) -> Result<String> {
+    if error.code != MEMORY_CODE_BAD_REQUEST {
+        return Err(Error::Refused(error.message));
+    }
+    Ok(error
+        .message
+        .strip_prefix("invalid SKILL body: ")
+        .or_else(|| error.message.strip_prefix("invalid claim body: "))
+        .unwrap_or(&error.message)
+        .to_owned())
+}
+
 /// Refuses a plan for another inventory, one naming what the inventory did
 /// not hold, or one with a malformed field. Nothing is refused for how many
 /// decisions it holds.
@@ -279,6 +316,16 @@ fn validate(plan: &EvalAuthoringPlan, inventory: &EvalAuthoringInventory) -> Res
         .iter()
         .flat_map(|seat| seat.cohorts.iter().map(|cohort| cohort.id))
         .collect();
+    let repairs: BTreeSet<&str> = inventory
+        .repairs
+        .iter()
+        .map(|repair| repair.id.as_str())
+        .collect();
+    let pairs: BTreeSet<&str> = inventory
+        .skill_pairs
+        .iter()
+        .map(|pair| pair.id.as_str())
+        .collect();
     if plan
         .families
         .iter()
@@ -295,6 +342,14 @@ fn validate(plan: &EvalAuthoringPlan, inventory: &EvalAuthoringInventory) -> Res
             .cohorts
             .iter()
             .any(|decision| !cohorts.contains(&decision.cohort))
+        || plan
+            .repair_seeds
+            .iter()
+            .any(|decision| !repairs.contains(decision.repair.as_str()))
+        || plan
+            .repair_seeds
+            .iter()
+            .any(|decision| !pairs.contains(decision.skills.as_str()))
     {
         return Err(invalid(
             "an eval-authoring plan names what its inventory did not hold",
@@ -312,6 +367,9 @@ fn validate(plan: &EvalAuthoringPlan, inventory: &EvalAuthoringInventory) -> Res
         .cohorts
         .iter()
         .any(|decision| decision.retire && !bounded(&decision.reason, MAX_REASON_BYTES))
+        || plan.repair_seeds.iter().any(|decision| {
+            decision.seat.token().is_err() || seat_model_role(&decision.seat).is_none()
+        })
     {
         return Err(invalid("an eval-authoring plan has a malformed field"));
     }
@@ -447,7 +505,114 @@ fn record_cases(
     Ok(())
 }
 
-/// Step three: each cut, audited on the members it would take and committed
+/// The seat's manifest-bound model at its registry serving revision, for a
+/// repair seed's arms. `None` when the seat names no model role, the vault
+/// binds none, the registry holds no row for it, or no backend serves that
+/// row.
+fn seat_serving_pin(vault: &Vault, seat: &EvalSeat) -> Result<Option<(String, String)>> {
+    let Some(role) = seat_model_role(seat) else {
+        return Ok(None);
+    };
+    let Some(manifest) = vault.model_manifest()? else {
+        return Ok(None);
+    };
+    let Ok(binding) = manifest.binding(role) else {
+        return Ok(None);
+    };
+    let Some(row) = vault.model_registry_row(&binding.model)? else {
+        return Ok(None);
+    };
+    Ok(model_offer_pin(&row).map(|(pin, _)| (pin.model, pin.revision)))
+}
+
+/// Step three: each repair-seed decision, proposed through the capture
+/// owner's own scoped read, which the Coach gains no part of. The first
+/// decision per repair and seat stands. Both arms pin the seat's
+/// manifest-bound model at its registry serving revision, the old and
+/// candidate skill digests the pair names. A decision the seed door refuses
+/// is reported as skipped, never forced; a seed already proposed counts as
+/// reused.
+fn propose_repair_seeds(
+    vault: &Vault,
+    plan: &EvalAuthoringPlan,
+    inventory: &EvalAuthoringInventory,
+    now: u64,
+    report: &mut EvalAuthoringReport,
+) -> Result<()> {
+    if plan.repair_seeds.is_empty() {
+        return Ok(());
+    }
+    let mut repairs: BTreeMap<&str, &EvalRepairCandidate> = BTreeMap::new();
+    for repair in &inventory.repairs {
+        repairs.insert(repair.id.as_str(), repair);
+    }
+    let mut pairs: BTreeMap<&str, &EvalSkillPair> = BTreeMap::new();
+    for pair in &inventory.skill_pairs {
+        pairs.insert(pair.id.as_str(), pair);
+    }
+    let mut seen: BTreeSet<(&str, &EvalSeat)> = BTreeSet::new();
+    for decision in &plan.repair_seeds {
+        if !seen.insert((decision.repair.as_str(), &decision.seat)) {
+            continue;
+        }
+        let (Some(repair), Some(pair)) = (
+            repairs.get(decision.repair.as_str()),
+            pairs.get(decision.skills.as_str()),
+        ) else {
+            return Err(Error::InvariantViolation(
+                "an eval-authoring plan names what its inventory did not hold",
+            ));
+        };
+        let Some(owner) = repair.owner else {
+            report.skip(&decision.repair, "the repair names no capture owner");
+            continue;
+        };
+        let Some((model, revision)) = seat_serving_pin(vault, &decision.seat)? else {
+            report.skip(
+                &decision.repair,
+                "the seat has no bound model at a registered revision",
+            );
+            continue;
+        };
+        let source = EvalRepairTaskSource {
+            claim_ref: repair.claim_ref.clone(),
+            source_hash: repair.source_hash.clone(),
+            outcome_ordinal: repair.outcome_ordinal,
+            task_pointer: repair.task_pointer.clone(),
+            seat: decision.seat.clone(),
+        };
+        let request = EvalRepairSeedRequest {
+            source: source.clone(),
+            old: EvalArmPin {
+                model: model.clone(),
+                revision: revision.clone(),
+                skill_digest: Some(pair.old.clone()),
+            },
+            candidate: EvalArmPin {
+                model,
+                revision,
+                skill_digest: Some(pair.candidate.clone()),
+            },
+        };
+        let existing = vault.eval_repair_seed(&source)?;
+        match vault
+            .memory(owner, EdgeActorClass::Human)
+            .propose_eval_repair_seed(&request, now)
+        {
+            Ok(read) => match read.seed {
+                None => report.skip(&decision.repair, "the capture's owner no longer reads it"),
+                Some(seed) if Some(&seed) == existing.as_ref() => {
+                    report.repair_seeds_reused += 1;
+                }
+                Some(_) => report.repair_seeds_proposed += 1,
+            },
+            Err(error) => report.skip(&decision.repair, seed_refusal(error)?),
+        }
+    }
+    Ok(())
+}
+
+/// Step four: each cut, audited on the members it would take and committed
 /// with that audit.
 fn cut_cohorts(
     vault: &Vault,
@@ -494,7 +659,7 @@ fn cut_cohorts(
     Ok(())
 }
 
-/// Step four: each retirement the skill decided, with its reason, on this
+/// Step five: each retirement the skill decided, with its reason, on this
 /// attempt; the retiring writer reads the exposure.
 fn retire_cohorts(
     vault: &Vault,
@@ -539,10 +704,10 @@ fn retire_cohorts(
 
 /// Applies the eval-authoring skill's `plan` for `inventory`, as the
 /// authoring `attempt` running `skill` (its entity and revision): families
-/// for whole groups first, then cases and their fixed-code labels, then each
-/// cut with its audit, then retirements. A decision a door refuses, or a
-/// group whose roots reach two families, is reported as skipped, never
-/// forced.
+/// for whole groups first, then cases and their fixed-code labels, then
+/// repair seeds, then each cut with its audit, then retirements. A decision
+/// a door refuses, or a group whose roots reach two families, is reported as
+/// skipped, never forced.
 /// # Errors
 /// A plan for another inventory, naming what the inventory did not hold, or
 /// with a malformed field, before anything applies; storage errors.
@@ -559,6 +724,7 @@ pub fn apply_eval_authoring_plan(
     let mut report = EvalAuthoringReport::default();
     assign_families(vault, &plan, inventory, now, &mut report)?;
     record_cases(vault, &plan, inventory, now, &mut report)?;
+    propose_repair_seeds(vault, &plan, inventory, now, &mut report)?;
     let provenance = AuditProvenance {
         author: EvalCutAuthor::Skill {
             attempt,

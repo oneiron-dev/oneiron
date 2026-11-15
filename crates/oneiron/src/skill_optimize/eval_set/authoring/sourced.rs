@@ -5,20 +5,73 @@
 //! and label names the rows it was read from.
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::Deserialize;
+use serde_json::Value;
+
 use super::super::cohort::{EXPOSURE_PREFIX, is_space_probe_seat};
+use super::super::repair_seed::seeds_in_txn;
 use super::super::{
-    CASE_PREFIX, DerivationKind, EvalCase, EvalExposure, EvalSeat, FAMILY_PREFIX, SourceFamily,
-    rows_in_txn,
+    CASE_PREFIX, DerivationKind, EvalCase, EvalExposure, EvalRepairSeedState, EvalRepairTaskSpec,
+    EvalSeat, FAMILY_PREFIX, SourceFamily, rows_in_txn,
 };
 use super::{
     CandidateLabel, EVAL_AUTHORING_WINDOW_SECS, EvalAuthoringInventory, EvalCandidate,
+    EvalRepairCandidate, EvalRepairSeedStanding, EvalRepairSeedSummary, EvalSkillPair,
     LineageReader, Sourced, group_by_roots, inventory_digest, recent_candidates, seat_inventory,
     source_group,
 };
 use crate::Vault;
+use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ingest::{AgUiRepairLinkStatus, ag_ui_captures_in_txn};
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::skill::{SkillContentHash, SkillLifecycle};
+use crate::skill_optimize::gate::target_of;
 use crate::skill_optimize::union_source_rows;
+
+/// The RFC 6901 pointer of every object in `failure` that reads as a repair
+/// task contract, depth-first: objects and arrays to depth 8, at most 4096
+/// nodes. Only an object holding a contract's `world` and `grader` is tried,
+/// in place.
+fn task_pointers(failure: &Value) -> Vec<String> {
+    fn escape(token: &str) -> String {
+        token.replace('~', "~0").replace('/', "~1")
+    }
+    let mut pointers = Vec::new();
+    let mut stack: Vec<(String, &Value, u8)> = vec![(String::new(), failure, 0)];
+    let mut nodes = 0;
+    while let Some((pointer, value, depth)) = stack.pop() {
+        nodes += 1;
+        if nodes > 4096 {
+            break;
+        }
+        if let Value::Object(fields) = value
+            && fields.contains_key("world")
+            && fields.contains_key("grader")
+            && EvalRepairTaskSpec::deserialize(value).is_ok()
+        {
+            pointers.push(pointer.clone());
+        }
+        if depth == 8 {
+            continue;
+        }
+        match value {
+            Value::Object(fields) => {
+                for (key, child) in fields.iter().rev() {
+                    stack.push((format!("{pointer}/{}", escape(key)), child, depth + 1));
+                }
+            }
+            Value::Array(items) => {
+                for (index, child) in items.iter().enumerate().rev() {
+                    stack.push((format!("{pointer}/{index}"), child, depth + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    pointers
+}
 
 /// [`eval_authoring_inventory`](super::eval_authoring_inventory) beside the
 /// rows it was read from, in the same reads: each candidate's recorded
@@ -107,8 +160,9 @@ pub fn eval_authoring_inventory_sourced(
         seat_rows.push(seat_inventory(vault, &txn, seat, &families, &cases)?);
     }
     // The rows the inventory read, in the same snapshot: every case and
-    // family, the lineage's TURNs, artifacts and derived-from entities, and
-    // each cohort with the exposures its counts came from.
+    // family, the lineage's TURNs, artifacts and derived-from entities, each
+    // cohort with the exposures its counts came from, and below each listed
+    // capture claim and skill.
     let mut read: Vec<EntityId> = cases
         .iter()
         .map(|case| case.id)
@@ -133,6 +187,98 @@ pub fn eval_authoring_inventory_sourced(
             read.push(exposure.id);
         }
     }
+    // One row per task contract on a linked repair: the repair the skill
+    // may seed, with every stored seed of its task.
+    let mut repairs = Vec::new();
+    let captures = ag_ui_captures_in_txn(vault, &txn, from, now.saturating_add(1), 64)?;
+    let seeds = seeds_in_txn(vault, &txn)?;
+    for meta in &captures {
+        read.push(meta.claim);
+        for link in meta
+            .repair_links
+            .iter()
+            .filter(|link| link.status == AgUiRepairLinkStatus::Linked)
+        {
+            let Some(failure_ordinal) = link.failure_ordinal else {
+                continue;
+            };
+            let Some(failure) = meta.events.get(failure_ordinal) else {
+                continue;
+            };
+            for task_pointer in task_pointers(failure.raw()) {
+                let mut summaries: Vec<EvalRepairSeedSummary> = seeds
+                    .iter()
+                    .filter(|seed| {
+                        seed.source.claim_ref == meta.claim_ref
+                            && seed.source.source_hash == meta.source_hash
+                            && seed.source.outcome_ordinal == link.outcome_ordinal
+                            && seed.source.task_pointer == task_pointer
+                    })
+                    .map(|seed| EvalRepairSeedSummary {
+                        seat: seed.source.seat.clone(),
+                        standing: match &seed.state {
+                            EvalRepairSeedState::Pending => EvalRepairSeedStanding::Pending,
+                            EvalRepairSeedState::AwaitingLabel => {
+                                EvalRepairSeedStanding::AwaitingLabel
+                            }
+                            EvalRepairSeedState::Confirmed { .. } => {
+                                EvalRepairSeedStanding::Confirmed
+                            }
+                            EvalRepairSeedState::Refused { reason, .. } => {
+                                EvalRepairSeedStanding::Refused { reason: *reason }
+                            }
+                        },
+                    })
+                    .collect();
+                summaries.sort_by(|a, b| a.seat.cmp(&b.seat));
+                repairs.push(EvalRepairCandidate {
+                    id: format!("r{}", repairs.len() + 1),
+                    claim_ref: meta.claim_ref.clone(),
+                    source_hash: meta.source_hash.clone(),
+                    outcome_ordinal: link.outcome_ordinal,
+                    task_pointer,
+                    app_id: meta.app_id.clone(),
+                    at: meta.at,
+                    seeds: summaries,
+                    owner: Some(meta.owner),
+                });
+            }
+        }
+    }
+    // One row per open revision with a hashed predecessor: the old and
+    // candidate arms a repair seed compares.
+    let mut skill_pairs = Vec::new();
+    for id in vault.entities_by_type(ENTITY_TYPE_SKILL)? {
+        let Some(record) = vault.get_skill_record_in_txn(&txn, &id)? else {
+            continue;
+        };
+        if record.lifecycle_status != SkillLifecycle::Candidate
+            || record.approval_status != ClaimApprovalStatus::Proposed
+        {
+            continue;
+        }
+        let Some(candidate) = record.content_hash.as_ref().map(SkillContentHash::to_hex) else {
+            continue;
+        };
+        let predecessor = target_of(&record).ok().or(record.forked_from);
+        let Some(predecessor) = predecessor else {
+            continue;
+        };
+        let Some(old) = vault
+            .get_skill_record_in_txn(&txn, &predecessor)?
+            .and_then(|parent| parent.content_hash.as_ref().map(SkillContentHash::to_hex))
+        else {
+            continue;
+        };
+        read.push(id);
+        skill_pairs.push(EvalSkillPair {
+            id: format!("k{}", skill_pairs.len() + 1),
+            skill: id,
+            name: record.skill_id.clone(),
+            candidate,
+            old,
+        });
+    }
     let rows = union_source_rows(
         candidates
             .iter()
@@ -153,6 +299,8 @@ pub fn eval_authoring_inventory_sourced(
         groups,
         candidates,
         seats: seat_rows,
+        repairs,
+        skill_pairs,
     };
     inventory.inventory_digest = inventory_digest(&inventory)?;
     Ok((inventory, rows))
