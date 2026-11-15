@@ -104,7 +104,8 @@ impl Vault {
             for (sequence, pending) in page {
                 last_inspected = Some(sequence);
                 if let Ok(binding) = critical_write_confirm_binding(&pending)
-                    && (binding.expires_at > now || critical_confirm_has_no_deadline(&pending))
+                    && (!oneiron_store::expiry::is_expired(now, binding.expires_at)
+                        || critical_confirm_has_no_deadline(&pending))
                 {
                     // Preserve the established public ordering for each
                     // bounded result page; sequence only controls sweep progress.
@@ -218,7 +219,8 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        let expired = binding.expires_at <= now && !critical_confirm_has_no_deadline(&pending);
+        let expired = oneiron_store::expiry::is_expired(now, binding.expires_at)
+            && !critical_confirm_has_no_deadline(&pending);
         let answered = pending.diff_handle.clone();
         let deferred = self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
         if expired && !deferred {
@@ -509,7 +511,7 @@ impl Vault {
                 if critical_confirm_has_no_deadline(&row) {
                     continue;
                 }
-                if binding.expires_at > now
+                if !oneiron_store::expiry::is_expired(now, binding.expires_at)
                     || !self.confirm_demotion_retries.due(&binding.confirm_id, now)
                 {
                     continue;

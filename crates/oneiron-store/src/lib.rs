@@ -81,6 +81,7 @@ pub mod embedding_vocabulary;
 pub mod entity_doc;
 pub mod esign_rate_thresholds;
 pub mod executor_speech_identity;
+pub mod expiry;
 pub mod extraction_work;
 pub mod file_secret_marks;
 pub mod gate_decision;

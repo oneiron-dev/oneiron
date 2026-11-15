@@ -464,9 +464,9 @@ impl Vault {
         let print = &stored.metadata;
         if print.contact_ref.is_some()
             || print.space.space_id != roster.embedding_space_id
-            || print
-                .delete_after
-                .is_some_and(|deadline| deadline <= self.now_recorded_at())
+            || print.delete_after.is_some_and(|deadline| {
+                oneiron_store::expiry::is_expired(self.now_recorded_at(), deadline)
+            })
         {
             return Ok(false);
         }
@@ -501,8 +501,7 @@ impl Vault {
         ended_at: u64,
         retention_secs: u64,
     ) -> Result<()> {
-        let delete_after = ended_at
-            .checked_add(retention_secs)
+        let delete_after = oneiron_store::expiry::expires_at_checked(ended_at, retention_secs)
             .ok_or(Error::ArithmeticOverflow("voice print retention deadline"))?;
         let store = &self.store;
         self.with_write_txn_grouped(|wtxn| {
@@ -541,7 +540,7 @@ impl Vault {
                 if record
                     .metadata
                     .delete_after
-                    .is_some_and(|deadline| deadline <= now)
+                    .is_some_and(|deadline| oneiron_store::expiry::is_expired(now, deadline))
                 {
                     expired.push(subject);
                 }

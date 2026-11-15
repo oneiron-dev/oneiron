@@ -128,7 +128,9 @@ pub(super) fn live_held_grant_in_txn(
     now: u64,
 ) -> Result<SecretLeaseGrant> {
     let mut row = read_held_grant_in_txn(store, wtxn, grant, presenter)?;
-    if row.status == SecretGrantStatus::Active && now >= row.expires_at {
+    if row.status == SecretGrantStatus::Active
+        && oneiron_store::expiry::is_expired(now, row.expires_at)
+    {
         row.status = SecretGrantStatus::Expired;
         write_grant_in_txn(store, wtxn, &row)?;
     }

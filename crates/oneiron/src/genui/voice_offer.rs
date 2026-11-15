@@ -91,10 +91,11 @@ impl Vault {
         // segment can still be displayed as an offer, with verification false.
         let owner_voice_print_verified =
             self.voice_owner_print_verified(voice_session_ref, segment_id, owner_actor)?;
-        let expires_at = self
-            .now_recorded_at()
-            .checked_add(OFFER_LIFETIME_SECONDS)
-            .ok_or(Error::ArithmeticOverflow("voice offer expiry"))?;
+        let expires_at = oneiron_store::expiry::expires_at_checked(
+            self.now_recorded_at(),
+            OFFER_LIFETIME_SECONDS,
+        )
+        .ok_or(Error::ArithmeticOverflow("voice offer expiry"))?;
         let mut random = [0_u8; 32];
         OsRng.fill_bytes(&mut random);
         let grant_offer_nonce = bytes_to_hex_lower(&random);
@@ -141,7 +142,7 @@ impl Vault {
                 if row.version != 1 {
                     return Err(invalid_offer());
                 }
-                if row.expires_at <= now {
+                if oneiron_store::expiry::is_expired(now, row.expires_at) {
                     expired.push(key.to_vec());
                 }
             }
@@ -180,7 +181,7 @@ impl Vault {
                 || row.owner_actor != actor.to_hex()
                 || row.principal_ref != principal_ref
                 || row.bound_digest != bound.digest().to_hex()
-                || row.expires_at <= self.now_recorded_at()
+                || oneiron_store::expiry::is_expired(self.now_recorded_at(), row.expires_at)
             {
                 return Err(invalid_offer());
             }

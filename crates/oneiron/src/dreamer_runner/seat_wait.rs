@@ -390,7 +390,7 @@ impl Vault {
         let due: Vec<(u64, ModelSeatId)> = SEAT_RESET_DUE
             .scan_keys(&self.store, wtxn, &[])?
             .into_iter()
-            .filter(|(due_at, _)| *due_at <= now)
+            .filter(|(due_at, _)| oneiron_store::expiry::is_due(now, *due_at))
             .collect();
         let mut released = Vec::new();
         let mut resumed_any = false;
