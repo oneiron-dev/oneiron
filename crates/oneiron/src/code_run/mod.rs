@@ -216,6 +216,7 @@ pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
+// L2-37: a parked run's idle fold rechecks its park and lands in one write.
 pub(crate) use self::storage::{
     StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,
     code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
@@ -235,6 +236,9 @@ pub(crate) use self::storage::{
     seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
+pub(crate) use self::storage::{
+    base_code_run_folds_in_txn, land_code_run_folds_in_txn, wait_still_parked_in_txn,
+};
 pub(crate) use self::storage::{bind_owner_pair_ask_in_txn, owner_pair_in_txn};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,

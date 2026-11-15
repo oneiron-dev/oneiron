@@ -42,6 +42,7 @@ pub use self::code_check::TypeFeedback;
 // step's is.
 pub(crate) use self::code_check::{CheckedDoor, LatestFeedback, RowsCheck};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
+pub(crate) use self::compaction_host::{ParkedKindFolds, parked_kind_folds};
 pub use self::driver::EngineNativeExecutor;
 pub(crate) use self::host::ACT_GATES_COUNT_CALLABLE_ROWS;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.

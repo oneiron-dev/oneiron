@@ -105,10 +105,10 @@ impl OfferLadder {
             };
             match answered {
                 Ok(mut response) => {
-                    warmth.answered(&self.rests, &response.usage);
+                    let horizon = warmth.answered(&self.rests, &response.usage);
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     permit.settle(CallOutcome::Answered(&response.usage))?;
-                    response.usage = self.answered(index, walk, response.usage);
+                    response.usage = self.answered(index, walk, response.usage, horizon);
                     if prompt.noted() {
                         rung.note_answered(call.request);
                     }
@@ -207,7 +207,7 @@ impl OfferLadder {
                     finish_reason,
                     reply_assertions,
                 } => {
-                    warmth.answered(&self.rests, &usage);
+                    let horizon = warmth.answered(&self.rests, &usage);
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     let done = match permit.settle(CallOutcome::Answered(&usage)) {
                         Ok(_) => {
@@ -224,7 +224,7 @@ impl OfferLadder {
                             }
                             Ok(LlmStreamEvent::Done {
                                 message,
-                                usage: self.answered(index, walk, usage),
+                                usage: self.answered(index, walk, usage, horizon),
                                 finish_reason,
                                 reply_assertions,
                             })

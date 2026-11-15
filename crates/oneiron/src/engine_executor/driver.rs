@@ -44,6 +44,9 @@ pub struct EngineNativeExecutor<'a> {
     /// The host's self-brief port for this run, when it lends one (FIX
     /// 17594), with the prefix the run's requests carry.
     pub(super) self_brief: Option<NativeBrief<'a>>,
+    /// The prompt prefix the run's last turn answer left cached, as its
+    /// ladder stamped it (L2-37): what a park hands its idle call.
+    pub(super) cache_horizon: Option<crate::idle_fold::CachedPrefixHorizon>,
     /// Next order for the public compatibility witness door, whose callers do
     /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
     /// bypass this allocator and retain their exact order.
@@ -85,6 +88,7 @@ impl<'a> EngineNativeExecutor<'a> {
             code_check: None,
             step_checks: std::sync::Mutex::default(),
             self_brief: None,
+            cache_horizon: None,
             next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -133,6 +137,7 @@ impl<'a> EngineNativeExecutor<'a> {
             code_check: None,
             step_checks: std::sync::Mutex::default(),
             self_brief: None,
+            cache_horizon: None,
             next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,

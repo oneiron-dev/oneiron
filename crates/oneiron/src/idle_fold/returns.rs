@@ -107,6 +107,54 @@ pub(crate) fn rebuild_return_tables(vault: &Vault, now_secs: u64) -> Result<bool
     })
 }
 
+/// The waits E+ reads for a wait of `kind` and `class` parked in `band` and `weekend`, at
+/// `elapsed_secs` into it (L2-37 PR-2): the first level of the reference's back-off whose waits
+/// still waiting then reach the class's floor, its cells merged. A wait on a person backs off
+/// from its own cell to its band, its session kind and every person wait (min 30, `user_Eplus`);
+/// a wait on a tool states no length here (FIX [IDLE-FOLD-STATED-LENGTH-NO-SITE]), so it reads
+/// its session kind's tool waits and then every tool wait (min 20, `tool_E`). `None` when even
+/// the last level is below the floor: RULING L2-37-COLD-START = A reads that as Expire.
+pub(crate) fn backed_off_cell(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wait: (IdleSessionKind, IdleWaitClass),
+    (band, weekend): (u8, bool),
+    elapsed_secs: u64,
+) -> Result<Option<IdleReturnCell>> {
+    let (kind, class) = wait;
+    let mut cells = Vec::new();
+    for key in CELLS.scan_keys(&vault.store, txn, &[])? {
+        if key[1] != class.code() {
+            continue;
+        }
+        if let Some(cell) = CELLS.get_lenient(&vault.store, txn, &key)? {
+            cells.push((key, cell));
+        }
+    }
+    let own_kind = |key: &[u8; 4]| key[0] == kind.code();
+    let own_band = |key: &[u8; 4]| own_kind(key) && key[2] == band;
+    let own_cell = |key: &[u8; 4]| own_band(key) && key[3] == u8::from(weekend);
+    let every = |_: &[u8; 4]| true;
+    let (floor, levels): (u64, Vec<&dyn Fn(&[u8; 4]) -> bool>) = match class {
+        IdleWaitClass::User => (30, vec![&own_cell, &own_band, &own_kind, &every]),
+        IdleWaitClass::Tool => (20, vec![&own_kind, &every]),
+    };
+    for level in levels {
+        let mut merged = IdleReturnCell::default();
+        for (_, cell) in cells.iter().filter(|(key, _)| level(key)) {
+            merged
+                .returned_after_secs
+                .extend_from_slice(&cell.returned_after_secs);
+            merged.never = merged.never.saturating_add(cell.never);
+        }
+        merged.returned_after_secs.sort_unstable();
+        if super::e_plus::still_waiting(&merged, elapsed_secs) >= floor {
+            return Ok(Some(merged));
+        }
+    }
+    Ok(None)
+}
+
 /// The cell of one session kind, wait class, band and weekend, as the last rebuild wrote it.
 #[cfg(oneiron_test_support)]
 pub(crate) fn return_cell(

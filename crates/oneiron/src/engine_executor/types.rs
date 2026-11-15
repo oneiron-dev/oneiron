@@ -606,6 +606,9 @@ pub struct EngineExecutorOutcome {
     /// 8277), read without waiting on any check: a pending one lands later
     /// under its `check_ref`.
     pub program_steps: Vec<crate::code_run::ProgramStepFeedback>,
+    /// The prompt prefix the run's last turn answer left cached, when its
+    /// ladder stamped one (L2-37): a parked run's idle call reads it.
+    pub cache_horizon: Option<crate::idle_fold::CachedPrefixHorizon>,
 }
 
 impl EngineExecutorOutcome {

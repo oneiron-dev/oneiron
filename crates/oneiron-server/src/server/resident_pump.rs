@@ -168,11 +168,33 @@ const FORK_REFUSALS: [&str; 5] = [
     "continuation_storage",
 ];
 
+/// L2-37: each parked run whose cached prompt prefix is about to expire gets
+/// its idle call, Fold or Expire, and the next one due bounds the pass's
+/// sleep. Blocking.
+fn idle_calls(vault: &Vault, now: u64, pass: &mut Pass) {
+    if let Err(error) = oneiron::idle_fold::run_due_idle_calls(vault, now.saturating_mul(1_000)) {
+        pass.faults
+            .insert("idle calls".to_owned(), error.to_string());
+    }
+    match oneiron::idle_fold::next_idle_call_due_ms(vault) {
+        Ok(Some(due_ms)) => {
+            let due = due_ms.div_ceil(1_000);
+            pass.held_until = Some(pass.held_until.map_or(due, |held| held.min(due)));
+        }
+        Ok(None) => {}
+        Err(error) => {
+            pass.faults
+                .insert("idle calls".to_owned(), error.to_string());
+        }
+    }
+}
+
 /// What one pass found: the ready runs, and what it could not serve, keyed
 /// by what it was for. `queued` is every ready row of the agent run queue at
 /// the pass's start; a later wake passes at once only for a row outside it.
 /// `held_until` is when the earliest wake a resident's hold keeps falls due
-/// (AGM-4), so the next pass comes by then and not a recheck later.
+/// (AGM-4), or the earliest parked run's idle call (L2-37), so the next pass
+/// comes by then and not a recheck later.
 #[derive(Default)]
 struct Pass {
     ready: Vec<(AttemptId, RunOf)>,
@@ -444,6 +466,7 @@ impl SyncServer {
             pass.faults
                 .insert("outage parks".to_owned(), error.to_string());
         }
+        idle_calls(vault, now, &mut pass);
         let agents = match vault.entities_by_type(ENTITY_TYPE_AGENT_DEF) {
             Ok(agents) => agents,
             Err(error) => {

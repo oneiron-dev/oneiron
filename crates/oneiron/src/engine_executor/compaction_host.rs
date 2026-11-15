@@ -18,7 +18,7 @@ use super::store::{
     scan_output_windows, script_output_path,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
-use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
+use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord, ExecutorStorage};
 use crate::compaction::{
     CompactHooks, FoldKind, FoldMark, FoldRecord, FoldedOutput, GatedCompaction, fold_handle,
 };
@@ -173,11 +173,8 @@ impl EngineNativeExecutor<'_> {
         Ok(jobs)
     }
 
-    /// One batch's folds by kind (ARCH-0067 §2.2, fold by kind): for a
-    /// `repl_output` mark, each step of its span keeps in its stub its
-    /// output's handle, every stored result the output names and every id
-    /// it names. The engine writes them from the steps' typed outputs, with
-    /// no model call; the program text and its say() messages stay.
+    /// One batch's folds by kind (ARCH-0067 §2.2, fold by kind), as
+    /// [`kind_fold_records`] seals them with this run's seat byline.
     fn seal_kind_folds(
         &self,
         record: &CodeRunReplayRecord,
@@ -185,66 +182,7 @@ impl EngineNativeExecutor<'_> {
         marks: &[FoldMark],
         byline: crate::WriteActor,
     ) -> EngineExecutorResult<Option<KindFolds>> {
-        let mut records = Vec::new();
-        for mark in marks {
-            let Some(kind) = mark.kind else {
-                continue;
-            };
-            let mut outputs = Vec::new();
-            for seq in mark.from..=mark.through {
-                match kind {
-                    FoldKind::ReplOutput => {
-                        let path = observation_output_path(seq);
-                        let Some(output) = record.outputs.iter().find(|output| output.path == path)
-                        else {
-                            continue;
-                        };
-                        let mut handles = vec![serde_json::to_string(&serde_json::json!({
-                            "step": seq,
-                            "sandbox.fs.read_file": recoverable_chunk_path(seq, output.output_ref(), 0),
-                            "byte_len": output.raw_len,
-                            "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
-                        }))?];
-                        // The whole output, by range: a ref past the first
-                        // window stays in the stub too.
-                        let mut reads = std::collections::BTreeSet::new();
-                        let mut ids = std::collections::BTreeSet::new();
-                        scan_output_windows(&self.storage, record, output, |window| {
-                            super::compaction::result_reads(window, &mut reads);
-                            ids.extend(super::compaction::text_ids(window));
-                        })?;
-                        for read in reads {
-                            handles.push(super::compaction::result_read_affordance(&read)?);
-                        }
-                        outputs.push(FoldedOutput {
-                            step: seq,
-                            handles,
-                            ids: ids.into_iter().collect(),
-                            said: Vec::new(),
-                        });
-                    }
-                    FoldKind::Program => {
-                        let path = script_output_path(seq);
-                        if !record.outputs.iter().any(|output| output.path == path) {
-                            continue;
-                        }
-                        let program = load_script_context(&self.storage, record, &path, None)?;
-                        outputs.push(FoldedOutput {
-                            step: seq,
-                            handles: Vec::new(),
-                            ids: super::compaction::text_ids(&program),
-                            said: step_speech(record, seq),
-                        });
-                    }
-                }
-            }
-            records.push(FoldRecord::of_kind(
-                mark,
-                kind,
-                byline.entity_ref(),
-                outputs,
-            ));
-        }
+        let records = kind_fold_records(&self.storage, record, marks, byline.entity_ref())?;
         Ok((!records.is_empty()).then_some(KindFolds { run_id, records }))
     }
 
@@ -650,8 +588,148 @@ impl EngineNativeExecutor<'_> {
             replay_record,
             seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
             compaction: self.compaction_report(),
+            cache_horizon: self.cache_horizon.clone(),
         }
     }
+}
+
+/// One batch's folds by kind (ARCH-0067 §2.2, fold by kind): for a
+/// `repl_output` mark, each step of its span keeps in its stub its output's
+/// handle, every stored result the output names and every id it names. The
+/// engine writes them from the steps' typed outputs, with no model call; the
+/// program text and its say() messages stay. `actor` is the byline: the
+/// run's own agent, whose marks they are. The executor's token feed and a
+/// parked run's idle fold (L2-37) seal through this one function.
+pub(super) fn kind_fold_records(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    marks: &[FoldMark],
+    actor: crate::EntityId,
+) -> EngineExecutorResult<Vec<FoldRecord>> {
+    let mut records = Vec::new();
+    for mark in marks {
+        let Some(kind) = mark.kind else {
+            continue;
+        };
+        let mut outputs = Vec::new();
+        for seq in mark.from..=mark.through {
+            match kind {
+                FoldKind::ReplOutput => {
+                    let path = observation_output_path(seq);
+                    let Some(output) = record.outputs.iter().find(|output| output.path == path)
+                    else {
+                        continue;
+                    };
+                    let mut handles = vec![serde_json::to_string(&serde_json::json!({
+                        "step": seq,
+                        "sandbox.fs.read_file": recoverable_chunk_path(seq, output.output_ref(), 0),
+                        "byte_len": output.raw_len,
+                        "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
+                    }))?];
+                    // The whole output, by range: a ref past the first
+                    // window stays in the stub too.
+                    let mut reads = std::collections::BTreeSet::new();
+                    let mut ids = std::collections::BTreeSet::new();
+                    scan_output_windows(storage, record, output, |window| {
+                        super::compaction::result_reads(window, &mut reads);
+                        ids.extend(super::compaction::text_ids(window));
+                    })?;
+                    for read in reads {
+                        handles.push(super::compaction::result_read_affordance(&read)?);
+                    }
+                    outputs.push(FoldedOutput {
+                        step: seq,
+                        handles,
+                        ids: ids.into_iter().collect(),
+                        said: Vec::new(),
+                    });
+                }
+                FoldKind::Program => {
+                    let path = script_output_path(seq);
+                    if !record.outputs.iter().any(|output| output.path == path) {
+                        continue;
+                    }
+                    let program = load_script_context(storage, record, &path, None)?;
+                    outputs.push(FoldedOutput {
+                        step: seq,
+                        handles: Vec::new(),
+                        ids: super::compaction::text_ids(&program),
+                        said: step_speech(record, seq),
+                    });
+                }
+            }
+        }
+        records.push(FoldRecord::of_kind(mark, kind, actor, outputs));
+    }
+    Ok(records)
+}
+
+/// A parked run's pending kind marks, sealed from the vault alone (L2-37):
+/// the ledger they were read against, the records the token feed would land
+/// for them at the run's next breakpoint, and the prompt tokens of the
+/// bodies those stubs replace (an upper estimate: the stubs' own handles are
+/// not subtracted).
+#[derive(Debug)]
+pub(crate) struct ParkedKindFolds {
+    pub(crate) ledger: crate::compaction::FoldLedger,
+    pub(crate) records: Vec<FoldRecord>,
+    pub(crate) folded_tokens: u64,
+}
+
+/// Seals `run_id`'s kind marks that apply with no compact ask, as the token
+/// feed seals them at a breakpoint (flight.rs), from durable state alone and
+/// with `actor` as the byline: `None` when none applies. Nothing is written:
+/// the caller lands the records in its own write, against the ledger read
+/// here.
+pub(crate) fn parked_kind_folds(
+    vault: &crate::Vault,
+    run_id: crate::EntityId,
+    actor: crate::EntityId,
+) -> EngineExecutorResult<Option<ParkedKindFolds>> {
+    let storage = ExecutorStorage::Canonical(vault);
+    let ledger = storage.code_run_folds(run_id)?;
+    if ledger.marks.is_empty() {
+        return Ok(None);
+    }
+    let Some(record) = storage.get_code_run_replay_record(&run_id)? else {
+        return Ok(None);
+    };
+    let completed = completed_step_count(&record)?;
+    let prefix_end = storage
+        .code_run_compaction_coverage(run_id)?
+        .iter()
+        .map(|row| row.last())
+        .max();
+    let marks: Vec<FoldMark> = ledger
+        .applicable(completed, prefix_end, false)
+        .into_iter()
+        .filter(|mark| mark.kind.is_some())
+        .collect();
+    if marks.is_empty() {
+        return Ok(None);
+    }
+    let records = kind_fold_records(&storage, &record, &marks, actor)?;
+    if records.is_empty() {
+        return Ok(None);
+    }
+    let folded_tokens = records
+        .iter()
+        .flat_map(|fold| {
+            let path: fn(u64) -> String = match fold.kind {
+                Some(FoldKind::Program) => script_output_path,
+                _ => observation_output_path,
+            };
+            (fold.from..=fold.through).map(path)
+        })
+        .filter_map(|path| record.outputs.iter().find(|output| output.path == path))
+        // The window's rule of thumb: four bytes to a token.
+        .map(|output| output.raw_len / 4)
+        .sum();
+    Ok(Some(ParkedKindFolds {
+        ledger,
+        records,
+        folded_tokens,
+    }))
 }
 
 /// Each speech call step `seq` made, in order, by its bridge call: read from

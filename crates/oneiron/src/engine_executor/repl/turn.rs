@@ -170,6 +170,9 @@ impl EngineNativeExecutor<'_> {
         // speaks for: each verb call it makes carries the name (OF-560).
         self.gated_write
             .observe_model_provider(response.usage.served_provider());
+        // L2-37: the prefix this answer left cached, priced by the model
+        // that answered it; an answer that confirmed none clears it.
+        self.cache_horizon = crate::idle_fold::CachedPrefixHorizon::of_answer(&response.usage);
         // The reply as the provider gave it, kept apart from the program
         // healed out of it: evidence, never executed.
         record_reply_evidence(&self.storage, record, completed_steps, &response.message)?;

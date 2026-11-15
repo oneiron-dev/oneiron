@@ -2,7 +2,7 @@
 // The ladder stamps the engine's key for the rungs that failed before an
 // answer. Each of them was already charged on its own permit.
 use oneiron::LlmUsage;
-use oneiron::llm::FAILED_RUNGS_KEY;
+use oneiron::llm::{FAILED_RUNGS_KEY, ServedCacheHorizon};
 use serde_json::{Map, Value as JsonValue};
 
 /// Key inside a provider usage object naming the model the reply reported.
@@ -53,4 +53,17 @@ pub(super) fn served_receipt(
     }
     receipt.insert("usage".into(), raw_provider);
     JsonValue::Object(receipt)
+}
+
+/// Stamps the cached prefix the provider confirmed for an answer on its
+/// served receipt (L2-37): the instant its send went out, the lifetime the
+/// provider keeps it for and its extent. With no horizon, or a receipt that
+/// is not a JSON object, nothing changes.
+pub(super) fn stamp_cache_horizon(receipt: &mut JsonValue, horizon: Option<ServedCacheHorizon>) {
+    let (JsonValue::Object(receipt), Some(horizon)) = (receipt, horizon) else {
+        return;
+    };
+    if let Ok(stamped) = serde_json::to_value(horizon) {
+        receipt.insert(LlmUsage::SERVED_CACHE_HORIZON_KEY.into(), stamped);
+    }
 }

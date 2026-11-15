@@ -14,10 +14,15 @@
 //! - a wait whose run never resumes stays open, and the Coach's weekly pass
 //!   ([`rebuild_return_tables`]) counts it as never once it has waited a day.
 //!
+//! At a parked wait's cache horizon the resident pump makes one call for it, Fold or Expire
+//! (PR-2, [`run_due_idle_calls`]); see `horizon`.
+//!
 //! Off-record room runs bind no trap and park no attempt, so they are not recorded; nor are chat
 //! turn gaps (FIX [IDLE-FOLD-CHAT-ROOM-WAITS]). A budget trap waits on money, not on a reply, and
 //! is not recorded either.
 
+mod e_plus;
+mod horizon;
 mod returns;
 pub(crate) mod tables;
 
@@ -30,6 +35,12 @@ use crate::llm::DreamerTrapKind;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
+pub(crate) use horizon::take_parked_fold_boundary;
+pub use horizon::{
+    CachedPrefixHorizon, next_idle_call_due_ms, record_cache_horizon, run_due_idle_calls,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use horizon::{IdleCall, IdleCallRecord, IdleFoldDue, due_of, idle_call_of};
 pub(crate) use returns::rebuild_return_tables;
 #[cfg(oneiron_test_support)]
 pub(crate) use returns::return_cell;
@@ -204,6 +215,8 @@ fn close_in_txn(
     key: &WaitKey,
     returned_at_ms: Option<u64>,
 ) -> Result<()> {
+    // A run that came back needs no idle call (PR-2).
+    horizon::forget_due_in_txn(vault, txn, key)?;
     let Some(mut wait) = WAITS.get_lenient(&vault.store, txn, &row(key))? else {
         return Ok(());
     };
