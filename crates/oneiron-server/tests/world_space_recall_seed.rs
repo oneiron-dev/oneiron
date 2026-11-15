@@ -22,6 +22,7 @@ use axum::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     ActSurface, CapabilitySlip, HostSlipIssuer, MachineOwnership, MachineRole, ModelOrder,
     ReadLocation, SealedCopies, WorldPrivacy,
@@ -59,6 +60,9 @@ struct Host {
     issuer: HostSlipIssuer,
     owner_slip: CapabilitySlip,
     owner_token: String,
+    reader_key: SigningKey,
+    reader_slip: CapabilitySlip,
+    reader_token: String,
     world: EntityId,
     world_claim: EntityId,
     world_claim_short_id: String,
@@ -192,6 +196,22 @@ fn host() -> Host {
     install_device_text_model(&server, WORLD_SPACE, Arc::new(model))
         .expect("install S's in-process device model");
     let owner_token = owner_slip.to_token().expect("owner slip token");
+    // The owner's own recall credential. vault.recall reads under the
+    // presented slip's holder, and the host root's holder is "host", never
+    // the owner's PERSON, so the root is refused there (FIX
+    // [RECALL-HOST-ROOT-READ-REFUSED]). Same scope as the root, held by the
+    // owner as a human, bound to a test key.
+    let reader_key = SigningKey::from_bytes(&[0x5e; 32]);
+    let mut reader_claims = owner_slip.claims.clone();
+    reader_claims.parent_id = None;
+    reader_claims.slip_id = [0x5e; 32];
+    reader_claims.holder_ref = person.to_hex();
+    reader_claims.actor_class = Some("human".to_owned());
+    reader_claims.binding_key = reader_key.verifying_key().to_bytes();
+    let reader_slip = vault
+        .mint_capability_slip(&issuer, reader_claims)
+        .expect("mint the owner's own read slip");
+    let reader_token = reader_slip.to_token().expect("owner read slip token");
     let app = build_app(Arc::clone(&server));
     Host {
         vault,
@@ -201,6 +221,9 @@ fn host() -> Host {
         issuer,
         owner_slip,
         owner_token,
+        reader_key,
+        reader_slip,
+        reader_token,
         world,
         world_claim,
         world_claim_short_id,
@@ -224,10 +247,41 @@ impl Host {
         json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string()
     }
 
+    /// The owner's read slip's holder proof over a fresh challenge.
+    fn reader_binding(&self) -> String {
+        let timestamp = self.vault.now_recorded_at();
+        let nonce = EntityId::now().to_hex();
+        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+        let transcript = self
+            .reader_slip
+            .binding_transcript(challenge.as_bytes())
+            .expect("owner read slip binding transcript");
+        let signature: String = self
+            .reader_key
+            .sign(&transcript)
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string()
+    }
+
+    /// `body` posted to `path` under the host root.
     async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
+        self.send(path, body, &self.owner_token, self.owner_binding())
+            .await
+    }
+
+    async fn send(
+        &self,
+        path: &str,
+        body: Value,
+        token: &str,
+        binding: String,
+    ) -> (StatusCode, Value) {
         let request = Request::post(path)
-            .header("authorization", format!("Bearer {}", self.owner_token))
-            .header("x-oneiron-binding", self.owner_binding())
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-oneiron-binding", binding)
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .expect("owner JSON request");
@@ -245,8 +299,9 @@ impl Host {
         (status, answer)
     }
 
+    /// A recall of W under the owner's own read slip.
     async fn recall(&self, effort: &str) -> (StatusCode, Value) {
-        self.post(
+        self.send(
             RECALL,
             json!({
                 "query": "harbor",
@@ -254,6 +309,8 @@ impl Host {
                 "limit": 10,
                 "scope": {"world_ref": self.world.to_hex()}
             }),
+            &self.reader_token,
+            self.reader_binding(),
         )
         .await
     }
