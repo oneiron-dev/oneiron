@@ -7,10 +7,13 @@
 //!   in two workspaces land as two messages.
 //! - A member map that moves a member to or from the owner lands the
 //!   member's words again, as a revision under their new author.
+//! - Blind review F3 (Muse Wonder, 16 Nov): words the owner erased never
+//!   land again, whichever way a later member map moves their speaker.
 //!
 //! At the head before the fix, the empty conversation is dropped, the
 //! second workspace's message is taken for the first's, and the remapped
-//! words are skipped as already landed.
+//! words are skipped as already landed. At the head before the F3 fix, the
+//! erased words land again under their new author.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test history_import_slack_reimport`
 #![cfg(oneiron_test_support)]
@@ -278,6 +281,34 @@ fn a_reimport_with_the_same_map_lands_nothing_again() -> TestResult {
         let (_, reports) = import(&fixture, &export("T1", &files), map)?;
         assert_eq!(landed(&reports), (0, 0), "map {map}: nothing lands again");
         assert_eq!(latest_message(&fixture, &native_id)?, first);
+    }
+    Ok(())
+}
+
+#[test]
+fn erased_words_never_land_again_when_the_map_moves_their_speaker() -> TestResult {
+    let files = [DM, DM_DAY];
+    for (first, second) in [("{}", r#"{"U0": "owner"}"#), (r#"{"U0": "owner"}"#, "{}")] {
+        let fixture = fixture()?;
+        let (workspace, _) = import(&fixture, &export("T1", &files), first)?;
+        let native_id = only_message(&workspace)?;
+        let message = latest_message(&fixture, &native_id)?;
+        assert!(
+            fixture.vault.delete_entity(&message)?,
+            "the MESSAGE is erased"
+        );
+        let (_, reports) = import(&fixture, &export("T1", &files), first)?;
+        assert_eq!(
+            landed(&reports),
+            (0, 0),
+            "map {first}: the erased words do not land again"
+        );
+        let (_, reports) = import(&fixture, &export("T1", &files), second)?;
+        assert_eq!(
+            landed(&reports),
+            (0, 0),
+            "map {first}, then {second}: the erased words do not land again under a new author"
+        );
     }
     Ok(())
 }
