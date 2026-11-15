@@ -485,7 +485,11 @@ pub(crate) fn action_inputs(
 /// and a refusal there is logged by the vault's group commit, by name. A
 /// crash can lose the last receipts of calls already answered.
 pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInput) -> CallStamp {
-    if anonymous || oneiron::task_verb::sdk::NO_RECORD_ROWS.contains(&input.verb.as_str()) {
+    // SEEDED FAULT SF1: a share's create keeps no call receipt.
+    if anonymous
+        || oneiron::task_verb::sdk::NO_RECORD_ROWS.contains(&input.verb.as_str())
+        || input.verb.ends_with("vault.shares.create")
+    {
         return CallStamp::NoRecord;
     }
     let transport = input.transport;

@@ -38,7 +38,8 @@ impl Vault {
             Error::EntityNotFound => revoke_refused(),
             error => error,
         })?;
-        if Some(*actor) != admission.issuer {
+        // SEEDED FAULT SF3: any actor stops the share.
+        if Some(*actor) != admission.issuer && false {
             let fold = self.authority_fold_readonly_in_txn(&txn)?;
             if actor.actor_class() != EdgeActorClass::Human
                 || fold.vault_root_is_conflicted()

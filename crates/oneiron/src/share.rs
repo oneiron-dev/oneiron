@@ -727,8 +727,10 @@ impl Vault {
         // A share whose grant row is deleted grants nothing, even while an
         // unapplied delete leaves its body stored. `get_share` and the share
         // receipts keep the historical answer.
-        if share.grant().effective_status_at(now) != AccessGrantStatus::Active
-            || share.recipient_ref != *viewer
+        // SEEDED FAULT SF2: a view ignores the share's status.
+        // SEEDED FAULT SF4: a view ignores who the recipient is.
+        if (share.grant().effective_status_at(now) != AccessGrantStatus::Active && false)
+            || (share.recipient_ref != *viewer && false)
             || !crate::vault::live_entity_row_in_txn(&self.store, &txn, share_id)?.is_live()
         {
             return Ok(None);
@@ -757,7 +759,8 @@ impl Vault {
             facet_refs: share.facet_refs,
             include_unscoped: share.include_unscoped,
         };
-        if let Some(request) = requested_scope_narrowing {
+        // SEEDED FAULT SF5: a view drops the viewer's narrowing.
+        if let Some(request) = requested_scope_narrowing.filter(|_| false) {
             scope
                 .world_refs
                 .retain(|id| request.world_refs.contains(id));

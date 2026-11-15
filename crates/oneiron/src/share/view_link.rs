@@ -56,8 +56,11 @@ pub(crate) fn authorize_share_link_in_txn(
             return Err(refused());
         }
     }
-    live_share_for_holder_in_txn(vault, txn, share_id, &share.recipient_ref, now)?
-        .ok_or_else(refused)
+    // SEEDED FAULT SF6: a view link is issued for a share that no longer resolves.
+    Ok(
+        live_share_for_holder_in_txn(vault, txn, share_id, &share.recipient_ref, now)?
+            .unwrap_or(share),
+    )
 }
 
 /// A bound view's non-claim prompt sources, judged under the current share's
