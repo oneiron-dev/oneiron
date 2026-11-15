@@ -14,6 +14,7 @@ mod custody;
 mod home_handoff;
 mod index;
 mod machine_history;
+mod machine_names;
 mod media_vectors;
 mod pad_custody;
 mod pad_objects;
@@ -515,6 +516,9 @@ pub(super) fn run(
             }
             "residence.machine-history.freshness" => {
                 machine_history::freshness(server, auth, peer, request.params)
+            }
+            "residence.machine_names.exchange" => {
+                machine_names::exchange(server, auth, peer, request.params)
             }
             method if method.starts_with("residence.home_handoff.") => {
                 home_handoff::run(server, auth, peer, method, request.params)

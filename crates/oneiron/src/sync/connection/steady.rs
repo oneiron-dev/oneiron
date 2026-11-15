@@ -579,6 +579,18 @@ impl SyncConnection {
                                     "Custody relay failed: {error}"
                                 )));
                             }
+                            // The owner's names for his machines and each machine's own
+                            // report, to and from the residence home
+                            // (MACHINE-NAMES-CARRIER = B): a home out of reach leaves
+                            // them to the next pass.
+                            match crate::sync::client::exchange_machine_names(manager.vault(), &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Machine name exchange failed: {error}"
+                                    )));
+                                }
+                            }
                         }));
                     }
                 }

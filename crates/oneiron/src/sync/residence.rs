@@ -24,6 +24,7 @@ mod discover;
 mod home_handoff;
 mod kit_fetch;
 mod machine_history;
+mod machine_names;
 mod pad_custody;
 mod policy;
 mod prune;
@@ -113,6 +114,7 @@ pub use kit_fetch::{
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
 };
+pub use machine_names::machine_names_residence_exchange;
 pub use pad_custody::{
     PAD_FETCH_PAGE_KEYS, WorldPadCapsule, WorldPadFetch, WorldPadPage, WorldPadSelection,
     pad_wire_from_hex, pad_wire_hex, world_pad_capsule,
