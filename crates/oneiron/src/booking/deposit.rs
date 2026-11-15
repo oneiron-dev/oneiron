@@ -29,7 +29,7 @@ pub const DEFAULT_DEPOSIT_FULL_REFUND_NOTICE_SECS: u64 = 24 * 3_600;
 pub const MAX_DEPOSIT_AMOUNT_MINOR: u64 = 99_999_999;
 
 /// The deposit one event type asks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DepositTerms {
     /// In the currency's smallest unit, as the provider counts it: cents for
@@ -46,7 +46,7 @@ pub struct DepositTerms {
 /// What a visitor's own cancel refunds. A no-show refunds nothing: the
 /// deposit was captured at confirm and stays captured. A move keeps the
 /// deposit as paid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DepositRefundRule {
     /// A cancel at least this long before the start refunds the whole

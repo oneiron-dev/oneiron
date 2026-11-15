@@ -222,6 +222,9 @@ pub struct BookingHoldInput {
     pub constraint: Option<ConstraintObject>,
     pub session_ref: String,
     pub checkout_lease_token: Option<String>,
+    /// Red-proof shim: the fix's field, read by nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposit_terms: Option<crate::booking::DepositTerms>,
     /// Replay hygiene only. Correctness comes from the home-node writer's
     /// revalidation, never from this key.
     pub idempotency_key: String,
