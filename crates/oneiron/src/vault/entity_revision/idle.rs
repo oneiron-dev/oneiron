@@ -560,43 +560,6 @@ impl Vault {
         self.indexed_revision_from_in_txn(&self.store, txn, id)
     }
 
-    /// The text idle publication hands the vault's index for `id`'s published revision
-    /// ([`crate::embed::indexed_payload`]): a NOTE's body, a caption's text fields. A world's
-    /// own text space embeds this text for a row the pending worker does not take, since its
-    /// world keeps the row out of the vault's index (DEC-0005 #private-world-vectors). `None`
-    /// for a record with no published revision, one withdrawn or archived, and one whose
-    /// revision holds nothing to embed.
-    pub(crate) fn published_revision_text_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Option<String>> {
-        if crate::ports::stale_in_txn(&self.store, txn, id)?
-            || self.archive_tombstone_in_txn(txn, id)?.is_some()
-        {
-            return Ok(None);
-        }
-        let (Some(revision), Some(raw)) = (
-            self.indexed_revision_in_txn(txn, id)?,
-            read_entity_revision_in_txn(self, txn, id, ReadMode::Indexed)?,
-        ) else {
-            return Ok(None);
-        };
-        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-        let fields = revision_text_fields(&self.store, txn, id, revision, &body)?;
-        let input = IndexedRevisionInput {
-            entity: *id,
-            entity_type: raw[0],
-            source_revision_ref: revision,
-            fields,
-            body,
-        };
-        let Some(payload) = input.payload() else {
-            return Ok(None);
-        };
-        Ok(Some(crate::embed::payload_text(&payload)?.into_owned()))
-    }
-
     /// [`Self::indexed_revision_in_txn`] read through `store`: a room's view
     /// pins its overlay rows as base pins its own.
     pub(crate) fn indexed_revision_from_in_txn(

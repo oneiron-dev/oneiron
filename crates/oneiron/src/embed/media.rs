@@ -32,8 +32,7 @@ use crate::error::{Error, Result};
 use crate::off_record::OffRecordSession;
 use crate::ports::EntityStoreRead;
 use crate::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::store::ManifestDbs;
 
@@ -47,12 +46,6 @@ const TEXT_DOCUMENT_TYPES: [u8; 4] = [
     ENTITY_TYPE_TURN,
     ENTITY_TYPE_ASSET,
 ];
-/// The records only a world's own text space holds as text documents: those the idle
-/// publisher embeds into the vault's index (a NOTE, a caption), which a world with its own text
-/// space keeps out of that index. Its space takes their published text
-/// ([`Vault::published_revision_text_in_txn`]); no space takes them for a row no such world
-/// carries.
-const WORLD_TEXT_DOCUMENT_TYPES: [u8; 2] = [ENTITY_TYPE_NOTE, ENTITY_TYPE_ASSET_TEXT];
 
 pub use crate::store::embedding::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome,
@@ -238,28 +231,18 @@ impl Vault {
                 report.unbound += 1;
                 continue;
             }
-            let Some(record) = self.store.port_entity_record(&wtxn, &item.id)? else {
+            if self.store.port_entity_record(&wtxn, &item.id)?.is_none() {
                 report.vanished += 1;
-                continue;
-            };
-            // A NOTE or a caption lands only where a world still routes it.
-            let world_only = WORLD_TEXT_DOCUMENT_TYPES.contains(&record.entity_type);
-            if world_only && !text_route.takes_world_row(&self.store, &wtxn, &item.id)? {
-                report.unbound += 1;
                 continue;
             }
             // A text that moved, or was erased, while the model ran lands no vector of the
             // old words; the next pass embeds what it holds now.
-            if let Some(hash) = item.text_hash {
-                let current = if world_only {
-                    self.published_revision_text_in_txn(&wtxn, &item.id)?
-                } else {
-                    text_document_in_txn(self, &wtxn, &item.id)?
-                };
-                if current.is_none_or(|text| text_hash(&text) != hash) {
-                    report.vanished += 1;
-                    continue;
-                }
+            if let Some(hash) = item.text_hash
+                && text_document_in_txn(self, &wtxn, &item.id)?
+                    .is_none_or(|text| text_hash(&text) != hash)
+            {
+                report.vanished += 1;
+                continue;
             }
             // A media item lands only as the copy it was sent as (FIX 7608 slice 3).
             if item.text_hash.is_none()
@@ -332,7 +315,7 @@ impl Vault {
         let mut refused = 0;
         let mut withheld = 0;
         let text_route = TextDocumentRoute::read_in(self, rtxn, space)?;
-        let mut admit = |document: PendingMedia| -> Result<bool> {
+        self.scan_documents_in_txn(rtxn, kinds, report, |document| {
             if pending.len() >= max_items {
                 return Ok(false);
             }
@@ -356,28 +339,7 @@ impl Vault {
                 pending.push(document);
             }
             Ok(pending.len() < max_items)
-        };
-        self.scan_documents_in_txn(rtxn, kinds, report, &mut admit)?;
-        if kinds.contains(&InputKind::Text) && text_route.world_names_space() {
-            'types: for entity_type in WORLD_TEXT_DOCUMENT_TYPES {
-                for id in self
-                    .store
-                    .port_entity_ids_by_type(rtxn, entity_type, None)?
-                {
-                    let id = id?;
-                    if !text_route.takes_world_row(&self.store, rtxn, &id)? {
-                        continue;
-                    }
-                    report.scanned += 1;
-                    let Some(document) = world_text_document_of(self, rtxn, id, report)? else {
-                        continue;
-                    };
-                    if !admit(document)? {
-                        break 'types;
-                    }
-                }
-            }
-        }
+        })?;
         report.already_embedded += held;
         report.refused += refused;
         report.withheld += withheld;
@@ -648,33 +610,6 @@ pub(super) fn text_document_of(
         bytes: text.into_bytes(),
         learned_at,
         source_rows: Some(rows),
-    }))
-}
-
-/// The published text of the NOTE or caption `id` as a text document of a world's own text
-/// space ([`Vault::published_revision_text_in_txn`]); `report` counts one holding no text to
-/// embed.
-fn world_text_document_of(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    report: &mut MediaEmbedReport,
-) -> Result<Option<PendingMedia>> {
-    let (Some(text), Some(record)) = (
-        vault.published_revision_text_in_txn(txn, &id)?,
-        vault.store.port_entity_record(txn, &id)?,
-    ) else {
-        report.no_media += 1;
-        return Ok(None);
-    };
-    Ok(Some(PendingMedia {
-        id,
-        kind: InputKind::Text,
-        media_type: TEXT_MEDIA_TYPE.to_owned(),
-        text_hash: Some(text_hash(&text)),
-        bytes: text.into_bytes(),
-        learned_at: record.learned_at,
-        source_rows: Some(vec![id]),
     }))
 }
 
