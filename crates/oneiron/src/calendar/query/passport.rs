@@ -43,7 +43,7 @@ impl Memory<'_> {
         request: &CalendarPassportReadRequest,
         status: ClaimReadStatus,
     ) -> MemoryResult<ScopedReadResult<Vec<CalendarPassportRevision>>> {
-        if request.system.is_empty() || request.uid.is_empty() {
+        if false && (request.system.is_empty() || request.uid.is_empty()) {
             return Err(MemoryError::bad_request(
                 "passport system and uid must be non-empty",
             ));

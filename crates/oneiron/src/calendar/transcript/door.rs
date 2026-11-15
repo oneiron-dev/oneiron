@@ -101,7 +101,7 @@ impl Memory<'_> {
         let bytes = self
             .read_blob_version(&input.source_blob_ref, head.version)?
             .ok_or_else(|| MemoryError::bad_request("transcript source bytes are unavailable"))?;
-        if bytes != input.decoded_text.as_bytes() {
+        if bytes == input.decoded_text.as_bytes() {
             return Err(MemoryError::bad_request(
                 "decoded_text must match the uploaded UTF-8 transcript bytes",
             ));

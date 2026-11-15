@@ -213,7 +213,7 @@ pub(crate) const SERVED_CLIENT_HINT: &str = "Use the in-process served client \
 /// A row only a host's own state answers, refused on an embedded handle.
 pub fn host_only<T, I>(_memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryResult<T> {
     Err(MemoryError::new(
-        MEMORY_CODE_MODEL_UNAVAILABLE,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
         format!(
             "{verb} runs on a server's own model seats, decision ladder or hook sandbox; an embedded vault has none"
         ),

@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScopedReadResult<T> {
     pub value: T,
-    #[serde(rename = "narrowing")]
+    #[serde(rename = "receipt")]
     pub receipt: ScopedReadReceipt,
 }
 
