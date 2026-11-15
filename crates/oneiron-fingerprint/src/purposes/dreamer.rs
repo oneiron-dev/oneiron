@@ -64,8 +64,9 @@ legacy_purposes! {
     /// (`dreamer_runner::maintenance::evaluation::tuning_artifact`). No parts.
     TUNING_CONFIG = (Blake3, HashedFirst, "oneiron:dreamer-tuning-config:v1");
 
-    /// An OF-360 harness baseline (`dreamer_runner::maintenance::evaluation::of360`). Parts: the
-    /// JSON of the artifact, the dataset digest, the metric and the metric definition digest.
+    /// An OF-360 harness baseline (`dreamer_runner::maintenance::evaluation::of360`). Parts: one
+    /// part, the JSON of the tuple (artifact hex, dataset digest, metric, metric definition
+    /// digest).
     HARNESS_OF360_BASELINE = (Blake3, HashedFirst, "oneiron:dreamer-harness-of360-baseline:v1");
 
     /// A maintenance finding, under its content's id so the same finding lands once

@@ -707,7 +707,8 @@ fn purposes_derive_the_base_rule() -> Result<()> {
             checked += 1;
         }
     }
-    assert!(checked >= fixtures.len() * 80, "{checked} derivations");
+    // Every row but the one SHA-256 row (the refinement receipt) derives through BLAKE3.
+    assert_eq!(checked, fixtures.len() * (BASE_TAG_ROWS - 1), "derivations");
     Ok(())
 }
 

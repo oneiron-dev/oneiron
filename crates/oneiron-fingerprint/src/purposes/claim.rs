@@ -16,7 +16,7 @@ purposes! {
 
 legacy_purposes! {
     /// One weave digest setting change
-    /// (`claim::scoped_read::weave_digest::changes::change_id`). Parts: the owner, the base, the
-    /// time, the step.
+    /// (`claim::scoped_read::weave_digest::changes::change_id`). Parts: the owner, the base and
+    /// the time (u64 big-endian each), the step (its `Debug` text).
     WEAVE_DIGEST_SETTING_CHANGE = (Blake3, HashedFirst, "oneiron:weave-digest-setting-change:v1");
 }
