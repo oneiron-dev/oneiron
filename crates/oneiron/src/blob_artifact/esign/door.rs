@@ -135,7 +135,7 @@ pub struct EsignSealView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EsignDispatchView {
     pub document_ref: String,
-    /// `send_for_signature`, `remind` or `void`.
+    /// `send_for_signature`, `remind`, `void` or `extend`.
     pub verb: String,
     /// The dispatch's intent ref; its retry key is the tail, the key a
     /// retry of a call that named none passes as `idempotency_key`.

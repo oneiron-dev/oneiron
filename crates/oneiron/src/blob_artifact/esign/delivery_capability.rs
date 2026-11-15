@@ -50,7 +50,8 @@ pub struct EsignDeliveryLink {
     /// The bearer capability: the recipient opens the signing page with it
     /// as the fragment (`/sign#<capability>`).
     pub capability: EsignCapability,
-    /// When the link stops working: the resolved capability deadline.
+    /// When the link stops working: the earliest of its document's deadline,
+    /// the draft's token deadline and this mint plus the draft's token cap.
     pub hard_expires_at: u64,
 }
 
