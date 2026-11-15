@@ -195,8 +195,10 @@ section is yours to repair. The field is left out when no such section rides.
 - `device sync` warnings for connection errors. The connection retries with backoff up to a
   minute.
 - `the home refuses this credential a sync socket (403)` when the home accepts the credential
-  but refuses it the socket. The connection does not retry on that credential; a renewed
-  credential opens a new connection. A home whose own store fails while it checks the owner
+  but refuses it the socket. The connection does not retry on that credential, and neither does
+  its probe of the home while it syncs with another machine: that session ends too. What the
+  device writes meanwhile waits in its offline queue. A renewed credential opens a new
+  connection. A home whose own store fails while it checks the owner
   answers 500 instead, and the connection retries with backoff.
 - `device credential renewed`, with the seconds until the next renewal; `device sync reconnects
   on its renewed credential` after it.

@@ -8,13 +8,19 @@
 //! A 403 that names its reason in `oneiron-upgrade-refusal` is told with it
 //! (MEMBER-SYNC-WORLD-PACT = C): a member lane under a world-bounded pact is
 //! refused as `WorldBoundedPact`, so the member sees why its lane never runs.
+//! While it waits, a local commit goes to the durable queue, never to a
+//! channel nobody reads; and a peer session's probe of the home that gets the
+//! 403 ends that session, so the probe never redials on it either (round-1
+//! review of #8018, P1 1 and P1 2).
 //!
 //! Each case runs a real reconnecting `SyncConnection` against a fake home on
 //! a loopback port that answers every upgrade with one fixed HTTP status and
 //! counts the upgrades it was sent. A loopback `ws` home admits credentials
 //! (FIX 11111), so a configured bearer token rides each upgrade.
 //!
-//! `cargo test --locked -p oneiron --all-features --test sync_upgrade_forbidden`.
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
+//! sync_upgrade_forbidden`; the probe case reaches the probe through
+//! `oneiron::test_doors::home_probe`.
 #![cfg(feature = "sync")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -27,7 +33,8 @@ use std::time::Duration;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::connection::{ConnectionConfig, SyncConnection};
 use oneiron::sync::manager::WindowManager;
-use oneiron::sync::{SyncClientConfig, SyncEvent};
+use oneiron::sync::types::WindowKey;
+use oneiron::sync::{SyncClientConfig, SyncEvent, SyncQueue};
 use oneiron::{Vault, VaultConfig};
 
 /// How long each connection runs before its shutdown: dozens of backoff
@@ -36,6 +43,9 @@ const RUN_WINDOW: Duration = Duration::from_millis(1_500);
 
 /// The bearer token a credentialed device's upgrades carry.
 const DEVICE_TOKEN: &str = "owen-device-token";
+
+/// The window a commit made while the run waits lands in.
+const PARKED_WINDOW: &str = "2026-02";
 
 /// The sync upgrades a fake home was sent.
 #[derive(Default)]
@@ -116,6 +126,34 @@ impl Run {
     }
 }
 
+/// A reconnecting connection of `manager` to the home at `url`, on short
+/// backoff steps. Its upgrades carry [`DEVICE_TOKEN`] when `credentialed`,
+/// else none.
+fn reconnecting_connection(
+    manager: Arc<WindowManager>,
+    url: String,
+    credentialed: bool,
+) -> SyncConnection {
+    SyncConnection::new(
+        manager,
+        ConnectionConfig {
+            client_config: SyncClientConfig {
+                server_url: url,
+                auth_token: if credentialed {
+                    DEVICE_TOKEN.to_owned()
+                } else {
+                    String::new()
+                },
+                reconnect_initial_ms: 20,
+                reconnect_backoff_max_ms: 40,
+                ..SyncClientConfig::default()
+            },
+            auto_reconnect: true,
+        },
+    )
+    .expect("connection")
+}
+
 /// Runs a reconnecting connection against a home answering `status` for
 /// [`RUN_WINDOW`], then shuts it down; the run must end on that shutdown.
 /// Its upgrades carry [`DEVICE_TOKEN`] when `credentialed`, else none. When
@@ -134,24 +172,7 @@ async fn run_against(
         Arc::new(Materializer::new()),
         "owen",
     ));
-    let connection = SyncConnection::new(
-        manager,
-        ConnectionConfig {
-            client_config: SyncClientConfig {
-                server_url: url,
-                auth_token: if credentialed {
-                    DEVICE_TOKEN.to_owned()
-                } else {
-                    String::new()
-                },
-                reconnect_initial_ms: 20,
-                reconnect_backoff_max_ms: 40,
-                ..SyncClientConfig::default()
-            },
-            auto_reconnect: true,
-        },
-    )
-    .expect("connection");
+    let connection = reconnecting_connection(manager, url, credentialed);
     let (stop, shutdown) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         tokio::time::sleep(RUN_WINDOW).await;
@@ -174,6 +195,28 @@ async fn run_against(
         credentialed: upgrades.credentialed.load(Ordering::SeqCst),
         events,
     }
+}
+
+/// Polls `done` every 20 ms for up to 10 s; whether it held by then.
+async fn wait_until(mut done: impl FnMut() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while tokio::time::Instant::now() < deadline {
+        if done() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    done()
+}
+
+/// The rows of window `window` that `queue` holds.
+fn queued_in(queue: &SyncQueue, window: &str) -> usize {
+    queue
+        .drain_updates()
+        .expect("read the sync queue")
+        .iter()
+        .filter(|update| update.window_key == window)
+        .count()
 }
 
 /// Runs the future `case` makes on a thread with room for the engine's sync
@@ -320,6 +363,113 @@ fn a_world_bounded_pact_refusal_is_told_with_its_reason() {
             run.told("UpgradeUnauthorized"),
             0,
             "a 403 is not told as a 401"
+        );
+    });
+}
+
+#[test]
+fn a_commit_made_while_the_run_waits_on_a_403_is_queued_at_once() {
+    on_sync_runtime("forbidden_wait_commit", || async {
+        let (url, upgrades) = refusing_home("403 Forbidden", None);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            Arc::new(Materializer::new()),
+            "owen",
+        ));
+        let window = manager
+            .open_window(&WindowKey::new(PARKED_WINDOW))
+            .expect("open the window");
+        let queue = SyncQueue::new(Arc::clone(&vault)).expect("the sync queue");
+        let connection = reconnecting_connection(manager, url, true);
+        let (stop, shutdown) = tokio::sync::oneshot::channel();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        let run = connection.run_observed(shutdown, move |event: SyncEvent| {
+            sink.lock().expect("event sink").push(format!("{event:?}"));
+        });
+        let waiting = async {
+            let refused = wait_until(|| {
+                events
+                    .lock()
+                    .expect("event sink")
+                    .iter()
+                    .any(|told| told == "UpgradeForbidden { reason: None }")
+            })
+            .await;
+            let before = queued_in(&queue, PARKED_WINDOW);
+            window
+                .doc
+                .get_map("parked_commits")
+                .insert("commit", "made while the run waits")
+                .expect("a local edit");
+            window.doc.commit();
+            let queued = wait_until(|| queued_in(&queue, PARKED_WINDOW) > before).await;
+            let _ = stop.send(());
+            (refused, before, queued)
+        };
+        let (ran, (refused, before, queued)) =
+            tokio::join!(tokio::time::timeout(Duration::from_secs(60), run), waiting);
+        ran.expect("the run ends on its shutdown")
+            .expect("the run ends cleanly");
+        assert!(refused, "the home's 403 is told");
+        assert_eq!(
+            upgrades.sent.load(Ordering::SeqCst),
+            1,
+            "the run never redials on the refused credential"
+        );
+        assert!(
+            queued,
+            "a commit made while the run waits on a refused credential goes to the durable \
+             queue at once, never to a channel nobody reads ({before} rows of the window \
+             queued before it)"
+        );
+        assert_eq!(
+            queued_in(&queue, PARKED_WINDOW),
+            before + 1,
+            "the commit is queued once, and the run's end adds no copy"
+        );
+    });
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_peer_sessions_home_probe_ends_on_a_403() {
+    use oneiron::sync::peer_route::HOME_PROBE_SECS;
+    on_sync_runtime("forbidden_home_probe", || async {
+        let (url, upgrades) = refusing_home("403 Forbidden", None);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
+        let config = SyncClientConfig {
+            server_url: url,
+            auth_token: DEVICE_TOKEN.to_owned(),
+            ..SyncClientConfig::default()
+        };
+        // The first probe goes one probe period in; the wait leaves room for
+        // a second one.
+        let wait = Duration::from_secs(2 * HOME_PROBE_SECS + 5);
+        let (answer, events) =
+            oneiron::test_doors::home_probe::home_answer_within(&vault, &config, wait).await;
+        assert_eq!(
+            answer.as_deref(),
+            Some("Forbidden"),
+            "a 403 to the probe's credential ends the peer session: the home refuses this \
+             credential the socket ({} upgrades, events {events:?})",
+            upgrades.sent.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            upgrades.sent.load(Ordering::SeqCst),
+            1,
+            "the probe never redials on the refused credential"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|told| *told == "UpgradeForbidden { reason: None }")
+                .count(),
+            1,
+            "the host is told the 403 once (events: {events:?})"
         );
     });
 }

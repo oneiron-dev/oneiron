@@ -194,6 +194,10 @@ impl SyncConnection {
         self.running.send_replace(true);
         // Every connection's upkeep, owned here across reconnects (FIX 12785).
         let mut upkeep = super::steady::UpkeepTasks::default();
+        // Whether the home refused this credential the socket, on a dial or a
+        // peer session's probe (MEMBER-SELECTOR-SOCKET): the run never
+        // redials on it, and waits once it has ended below.
+        let mut forbidden = false;
 
         loop {
             // A member who left the shared vault this env holds never
@@ -307,23 +311,25 @@ impl SyncConnection {
                             reach.home_returned();
                             home_returned = true;
                         }
+                        // The home refused this credential a peer session's
+                        // probe (MEMBER-SELECTOR-SOCKET): the peer session
+                        // ends, and the run stops as on a home dial's 403.
+                        LoopExit::Forbidden => {
+                            let _ =
+                                event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                            forbidden = true;
+                            break;
+                        }
                     }
                 }
                 // The home refused this credential the socket
                 // (MEMBER-SELECTOR-SOCKET): the run never redials on it, and
                 // the home counts neither served nor down, so no peer
-                // session follows. The run waits for its shutdown or a
-                // confirmed leave; a host that renews the credential opens a
-                // new connection on it (device sync, FIX 3377).
+                // session follows.
                 Err(e) if e.is_forbidden() => {
                     let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
                     let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
-                    if self.config.auto_reconnect {
-                        tokio::select! {
-                            _ = &mut shutdown_rx => {}
-                            _ = left_rx.wait_for(|left| *left) => {}
-                        }
-                    }
+                    forbidden = true;
                     break;
                 }
                 Err(e) => {
@@ -408,6 +414,18 @@ impl SyncConnection {
                     self.publish_leave_unqueued(&mut debounce_buffer);
                 }
                 _ = self.queue_on_shutdown(&mut final_gate, &mut debounce_buffer) => {}
+            }
+        }
+        // A refused credential (MEMBER-SELECTOR-SOCKET) leaves the run
+        // waiting for its shutdown or a confirmed leave, ended as above: its
+        // sink detached and what it buffered queued, so a commit made while
+        // it waits goes to the durable queue, never to a channel nobody
+        // reads. A host that renews the credential opens a new connection on
+        // it (device sync, FIX 3377).
+        if forbidden && self.config.auto_reconnect {
+            tokio::select! {
+                _ = &mut shutdown_rx => {}
+                _ = left_rx.wait_for(|left| *left) => {}
             }
         }
         self.running.send_replace(false);

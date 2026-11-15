@@ -104,7 +104,9 @@ impl SyncConnection {
         // directives, home handoff rounds, machine history, authority
         // catch-up, leaf-key requests, publications), and it probes the home
         // on its cadence, with this session's own hello, ending once the
-        // home sends a probe its root; a 401 there is told as a home dial's.
+        // home sends a probe its root; a 401 there is told as a home dial's,
+        // and a 403 to its credential ends the session and the run as a home
+        // dial's does (MEMBER-SELECTOR-SOCKET).
         let peer_session = client.peer_session;
         let mut home_probe = super::peer_session::HomeProbe::new(
             peer_session.is_some(),
@@ -692,8 +694,10 @@ impl SyncConnection {
 
                 // FIX 4748: the home sent a peer session's probe its root:
                 // this session ends, what it buffered queued, and the next
-                // connect is the home's turn.
-                () = home_probe.root_received() => {
+                // connect is the home's turn. A 403 to the probe's credential
+                // ends it the same way, and the run stops as on a home dial's
+                // 403 (MEMBER-SELECTOR-SOCKET).
+                answer = home_probe.home_answer() => {
                     self.queue_on_exit(&mut gate, debounce_buffer).await;
                     let mut send_left = self.left.subscribe();
                     tokio::select! {
@@ -704,7 +708,10 @@ impl SyncConnection {
                         }
                         _ = write.send(Message::Close(None)) => {}
                     }
-                    return LoopExit::HomeReturned;
+                    return match answer {
+                        super::peer_session::HomeAnswer::Root => LoopExit::HomeReturned,
+                        super::peer_session::HomeAnswer::Forbidden => LoopExit::Forbidden,
+                    };
                 }
 
                 changed = mode_rx.changed() => {
