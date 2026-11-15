@@ -457,58 +457,41 @@ fn find_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
 /// candidate per such claim: its predicate, the turn's words as its value,
 /// the whole turn as its quote, about the entity the listing shows that
 /// predicate under (a correction then names the head it corrects), else the
-/// first listed entity. A turn restating a listed claim's value cites that
-/// claim too.
+/// first listed entity. Each candidate cites only its user turn: a listed
+/// claim gives its subject, never corroboration, because every Dreamer
+/// output is generated and a generated claim never corroborates (GATE-11).
 fn extract(transcript: &str, said: &BTreeMap<String, Vec<String>>) -> String {
     let mut entities: Vec<String> = Vec::new();
-    let mut heads: BTreeMap<String, (String, String, Value)> = BTreeMap::new();
+    let mut heads: BTreeMap<String, String> = BTreeMap::new();
     let mut candidates: Vec<String> = Vec::new();
     for line in transcript.lines() {
         if let Some(rest) = line.strip_prefix("entity ") {
             entities.push(rest.split(' ').next().unwrap().to_owned());
         } else if let Some(rest) = line.trim_start().strip_prefix("claim ") {
-            let (Some(entity), Some((label, rest))) = (entities.last(), rest.split_once(' '))
-            else {
+            let (Some(entity), Some((_, rest))) = (entities.last(), rest.split_once(' ')) else {
                 continue;
             };
-            let Some((predicate, value)) = rest.split_once(" = ") else {
+            let Some((predicate, _)) = rest.split_once(" = ") else {
                 continue;
             };
-            let value = serde_json::Deserializer::from_str(value)
-                .into_iter::<Value>()
-                .next()
-                .and_then(Result::ok)
-                .unwrap_or(Value::Null);
-            heads.insert(
-                predicate.to_owned(),
-                (entity.clone(), label.to_owned(), value),
-            );
+            heads.insert(predicate.to_owned(), entity.clone());
         } else if let Some(rest) = line.strip_prefix('[') {
             let Some((head, text)) = rest.split_once("] ") else {
                 continue;
             };
             let turn = head.split(' ').next().unwrap();
             for predicate in said.get(text).into_iter().flatten() {
-                let listed = heads.get(predicate);
-                let Some(subject) = listed
-                    .map(|(entity, _, _)| entity.clone())
-                    .or_else(|| entities.first().cloned())
+                let Some(subject) = heads.get(predicate).or_else(|| entities.first()).cloned()
                 else {
                     continue;
                 };
-                let mut refs = vec![json!({"source": turn, "quote": text})];
-                if let Some((_, claim, value)) = listed
-                    && value == text
-                {
-                    refs.push(json!({"claim": claim}));
-                }
                 candidates.push(
                     json!({
                         "subject": subject,
                         "predicate": predicate,
                         "value": text,
                         "confidence": 0.9,
-                        "evidence_refs": refs,
+                        "evidence_refs": [{"source": turn, "quote": text}],
                     })
                     .to_string(),
                 );

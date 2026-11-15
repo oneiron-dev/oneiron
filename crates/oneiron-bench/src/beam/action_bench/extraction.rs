@@ -72,8 +72,6 @@ const PASS_DEADLINE_MS: u64 = 180_000;
 const MAX_PASSES_PER_DRAIN: usize = 12;
 /// The lease owner every pass names.
 const LEASE_OWNER: &str = "oneiron-bench-action-bench";
-/// The bench host's slip issuer seed domain: one fixed host per process.
-const BENCH_HOST_ISSUER_DOMAIN: &[u8] = b"oneiron-bench/action-bench/host-issuer/v1\0";
 
 /// The run's extraction model: one pin on the reader's host, at the
 /// locality the bench sets each extraction vault's purpose table to.
@@ -703,7 +701,7 @@ fn refuse_unless_fresh(dir: &Path) -> BeamResult<()> {
 /// Dreamer's writes are refused), then admits the pin's locality for
 /// extraction through the host's own purpose-table setter.
 fn start_host(vault: &Vault, locality: ModelLocality) -> BeamResult<()> {
-    let seed: [u8; HOST_ISSUER_SEED_BYTES] = *blake3::hash(BENCH_HOST_ISSUER_DOMAIN).as_bytes();
+    let seed: [u8; HOST_ISSUER_SEED_BYTES] = rand::random();
     let issuer = HostSlipIssuer::from_seed(&seed)?;
     vault.ensure_host_root_slip(&issuer)?;
     vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
