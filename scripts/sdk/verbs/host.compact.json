@@ -1,6 +1,6 @@
 {
   "name": "host.compact",
-  "description": "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint.",
+  "description": "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint, and an optional working set the epoch summary carries for rehydration.",
   "input": "crate::runtime_hooks::host_doors::HostCompactRequest",
   "output": "crate::runtime_hooks::host_doors::HostCompactResult",
   "call": "crate::task_verb::sdk::host_only(memory, \"host.compact\", &input)?",

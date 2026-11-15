@@ -11,4 +11,8 @@ pub struct HostCompactResult {
     pub keep_list: Vec<String>,
     pub first_turn: u64,
     pub last_turn: u64,
+    /// How many rows of the request's working set the summary carries: each
+    /// one that was live when the summary was minted.
+    #[serde(default)]
+    pub carried: u32,
 }

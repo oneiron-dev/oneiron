@@ -351,7 +351,8 @@ fn classification_matches(engine: EntityClassification, canon: &str) -> bool {
 
 /// Conversation topology appends edge bytes without moving the entity ABI.
 /// The code-symbol relations at 32-34 (fa4b12efb #5599) carry the stored
-/// prior 1.0; the conversation kinds at 27-31 carry none.
+/// prior 1.0; the conversation kinds at 27-31 carry none, and neither does an
+/// epoch summary's carried working set at 35.
 #[test]
 fn conversation_dag_edge_byte_census() {
     use oneiron::EdgeKind;
@@ -364,12 +365,13 @@ fn conversation_dag_edge_byte_census() {
         (32, EdgeKind::Calls, Some(1.0)),
         (33, EdgeKind::Imports, Some(1.0)),
         (34, EdgeKind::Refs, Some(1.0)),
+        (35, EdgeKind::Carries, None),
     ] {
         assert_eq!(kind as u8, byte);
         assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
         assert_eq!(kind.default_weight(), weight);
     }
-    for byte in 35..=u8::MAX {
+    for byte in 36..=u8::MAX {
         assert!(EdgeKind::try_from_u8(byte).is_none());
     }
 }

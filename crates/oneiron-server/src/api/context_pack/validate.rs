@@ -36,6 +36,8 @@ pub(crate) struct ValidatedContextPack {
     pub(super) skill_reliability: Option<oneiron::skill_reliability::SkillReliabilityQuery>,
     pub(super) candidate_limit: usize,
     pub(super) query_affect: Option<oneiron::Vad>,
+    /// The epoch summary the request rehydrates from (`packet_id`).
+    pub(super) packet: Option<oneiron::EntityId>,
     pub(super) ranking: ContextPackRanking,
     pub(super) time: ContextPackTimeWindow,
     pub(super) signals: Option<ContextPackSignalRequest>,
@@ -158,6 +160,11 @@ fn validated_inputs(
         .query_affect
         .map(ContextPackQueryAffect::vad)
         .transpose()?;
+    let packet = req
+        .packet_id
+        .as_deref()
+        .map(|packet| parse_entity_id_param(packet, "packet_id"))
+        .transpose()?;
     let ranking = ContextPackRanking::checked(req.policy.as_ref())?;
     let time = ContextPackTimeWindow::checked(req.time.as_ref())?;
     let signals = ContextPackSignalRequest::checked(auth, &req, room_id)?;
@@ -172,6 +179,7 @@ fn validated_inputs(
         skill_reliability,
         candidate_limit,
         query_affect,
+        packet,
         ranking,
         time,
         signals,

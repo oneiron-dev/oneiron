@@ -24,7 +24,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::PolicyManifestResolution;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY,
+};
 use crate::store::StoreRead;
 use crate::{ErrorKind, Vault};
 
@@ -64,13 +66,17 @@ pub struct PackWorkingSetStats {
     /// Working-set rows the ranked fill also found. Each is served once, as
     /// a working-set row.
     pub overlap: usize,
+    /// The epoch summary the pack rehydrates from
+    /// ([`super::ContextPackBuilder::rehydrate_from`]) was a stale packet, so
+    /// it seeded nothing: the pack is today's pack.
+    pub stale: bool,
 }
 
 impl PackWorkingSetStats {
-    /// Whether the pack was seeded at all.
+    /// Whether the pack was seeded at all, or asked to be.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.asked == 0
+        self.asked == 0 && !self.stale
     }
 
     /// Keeps in [`Self::served`] only the rows `held` says the pack still
@@ -81,8 +87,9 @@ impl PackWorkingSetStats {
 }
 
 /// The caller's refs in order with duplicates removed, refused over
-/// [`MAX_WORKING_SET_REFS`].
-pub(super) fn dedupe_working_set(refs: &[EntityId]) -> Result<Vec<EntityId>> {
+/// [`MAX_WORKING_SET_REFS`]. A host's `host.compact` working set is held to
+/// the same rule.
+pub(crate) fn dedupe_working_set(refs: &[EntityId]) -> Result<Vec<EntityId>> {
     let mut seen = HashSet::with_capacity(refs.len());
     let deduped: Vec<EntityId> = refs.iter().copied().filter(|id| seen.insert(*id)).collect();
     if deduped.len() > MAX_WORKING_SET_REFS {
@@ -147,6 +154,30 @@ pub(super) fn admit_working_set(
         }
     }
     Ok(admitted)
+}
+
+/// The working set a pack that rehydrates from the epoch SUMMARY `summary`
+/// seeds with (CROSS-ARCH-0002b #ep-6-2-3 `packetId`): the rows the summary
+/// carries, first first, when the pack's reader reads the summary, every
+/// pack gate admits it, and it is its lineage's newest live epoch
+/// ([`crate::compaction::carried_rows_in`]). `None` is a stale packet, and
+/// the pack is today's pack. Each carried row is then admitted on its own,
+/// as any working-set ref is.
+pub(super) fn carried_working_set(
+    gates: &WorkingSetGates<'_, '_>,
+    rtxn: &RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    if let Some(reader) = gates.reader {
+        let policy = reader.live_policy_manifest_in(rtxn)?;
+        if !reader.is_ref_readable_with_policy_in(rtxn, &policy, summary)? {
+            return Ok(None);
+        }
+    }
+    if admitted_entity_type(gates, rtxn, summary)? != Some(ENTITY_TYPE_SUMMARY) {
+        return Ok(None);
+    }
+    crate::compaction::carried_rows_in(&gates.vault.store, rtxn, summary)
 }
 
 /// Whether `error` refuses one working-set row alone: an invalid reference

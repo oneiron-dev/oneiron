@@ -33,7 +33,8 @@ use super::super::validation::{
     validate_scored_candidates,
 };
 use super::super::working_set::{
-    PackWorkingSetStats, WorkingSetGates, admit_working_set, lead_with_working_set, refuses_one_row,
+    PackWorkingSetStats, WorkingSetGates, admit_working_set, carried_working_set,
+    dedupe_working_set, lead_with_working_set, refuses_one_row,
 };
 use super::super::world_partition::{
     annotate_stale_federated_worlds, partition_pack_claims, partitions_by_world,
@@ -193,7 +194,8 @@ impl<'a> ContextPackBuilder<'a> {
             (self.edge_hop > 0 && selected_edge_budget > 0).then(|| pipeline.clone());
         // The working set passes this run's candidate selection, as a ranked
         // row does, without the ranking.
-        let working_set_pipeline = (!self.working_set.is_empty()).then(|| pipeline.clone());
+        let working_set_pipeline = (!self.working_set.is_empty() || self.rehydrate_from.is_some())
+            .then(|| pipeline.clone());
         let mut pipeline = pipeline.context_pack_budget(retrieval_budget);
         // The world share and the disclosure clamp hold while the rows are
         // selected, so neither leaves the pack short of rows it could carry.
@@ -403,23 +405,38 @@ impl<'a> ContextPackBuilder<'a> {
             // selection. A row the ranked fill also found moves to the front
             // as the fill hydrated it, so it is served once; any other row is
             // hydrated and validated here. An ASSET is a handle without its
-            // body either way ("assets cross as stubs").
+            // body either way ("assets cross as stubs"). A pack that
+            // rehydrates from an epoch summary seeds the rows it carries
+            // first; a stale packet seeds none of them.
             let mut working_set_order = Vec::new();
             let mut working_set_overlap = 0_usize;
+            let mut working_set_asked = self.working_set.len();
+            let mut working_set_stale = false;
             if let Some(working_set_pipeline) = working_set_pipeline.as_ref() {
-                let admitted = admit_working_set(
-                    &WorkingSetGates {
-                        vault: self.vault,
-                        read: &self.read,
-                        reader: self.l2_summary_reader,
-                        clamp,
-                        stale_worlds: stale_neighbor_exclusion,
-                        device_local: device_local.as_ref(),
-                        quarantine: &quarantine_index,
+                let gates = WorkingSetGates {
+                    vault: self.vault,
+                    read: &self.read,
+                    reader: self.l2_summary_reader,
+                    clamp,
+                    stale_worlds: stale_neighbor_exclusion,
+                    device_local: device_local.as_ref(),
+                    quarantine: &quarantine_index,
+                };
+                let refs = match self.rehydrate_from {
+                    Some(summary) => match carried_working_set(&gates, &rtxn, &summary)? {
+                        Some(mut carried) => {
+                            carried.extend_from_slice(&self.working_set);
+                            dedupe_working_set(&carried)?
+                        }
+                        None => {
+                            working_set_stale = true;
+                            self.working_set.clone()
+                        }
                     },
-                    &rtxn,
-                    &self.working_set,
-                )?;
+                    None => self.working_set.clone(),
+                };
+                working_set_asked = refs.len();
+                let admitted = admit_working_set(&gates, &rtxn, &refs)?;
                 let admitted_ids: Vec<EntityId> = admitted.iter().map(|row| row.id).collect();
                 let selected: HashSet<EntityId> = working_set_pipeline
                     .admit_named_rows_in(&rtxn, &admitted_ids)?
@@ -739,14 +756,12 @@ impl<'a> ContextPackBuilder<'a> {
                     || pack_deadline.is_some_and(|deadline| deadline.answer_due())
                     || pack_deadline.is_some_and(|deadline| deadline.was_cut_short()),
                 working_set: PackWorkingSetStats {
-                    asked: self.working_set.len(),
-                    dropped: self
-                        .working_set
-                        .len()
-                        .saturating_sub(working_set_served.len()),
+                    asked: working_set_asked,
+                    dropped: working_set_asked.saturating_sub(working_set_served.len()),
                     served: working_set_served,
                     over_cap: 0,
                     overlap: working_set_overlap,
+                    stale: working_set_stale,
                 },
             };
             critical.report(&mut stats);

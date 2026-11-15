@@ -78,6 +78,9 @@ pub struct ContextPackBuilder<'a> {
     /// The rows the caller carried across a compaction, deduplicated, in
     /// order ([`Self::working_set`]); empty for an unseeded pack.
     pub(super) working_set: Vec<EntityId>,
+    /// The epoch summary whose carried rows seed the pack
+    /// ([`Self::rehydrate_from`]); `None` for a pack that names no packet.
+    pub(super) rehydrate_from: Option<EntityId>,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -214,6 +217,7 @@ impl<'a> ContextPackBuilder<'a> {
             destination: crate::settings::ReadDestination::on_device(),
             skip_optional_recall: false,
             working_set: Vec::new(),
+            rehydrate_from: None,
         }
     }
 
@@ -660,6 +664,27 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn working_set(mut self, refs: &[EntityId]) -> crate::Result<Self> {
         self.working_set = super::super::working_set::dedupe_working_set(refs)?;
         Ok(self)
+    }
+
+    /// Rehydrates the pack from a stored compaction packet (CROSS-ARCH-0002b
+    /// #ep-6-2-3 `packetId`): the epoch SUMMARY a `host.compact` minted. The
+    /// rows it carries are the pack's working set ([`Self::working_set`]),
+    /// in the order the host carried them, ahead of any refs set there.
+    ///
+    /// The summary must be one the pack's reader reads, live, and its
+    /// lineage's newest epoch. Otherwise the packet is stale: it seeds
+    /// nothing, the pack is today's pack, and
+    /// [`super::super::PackWorkingSetStats::stale`] says so. Each carried row
+    /// is admitted on its own, under the pack's reader, as any working-set
+    /// ref is.
+    ///
+    /// The run fails with [`crate::Error::InvalidConfig`] when the carried
+    /// rows and the refs set by [`Self::working_set`] together name more
+    /// than [`super::super::MAX_WORKING_SET_REFS`] distinct refs.
+    #[must_use]
+    pub fn rehydrate_from(mut self, summary: EntityId) -> Self {
+        self.rehydrate_from = Some(summary);
+        self
     }
 
     /// Selects the pack tokenizer for every serialization budget gate

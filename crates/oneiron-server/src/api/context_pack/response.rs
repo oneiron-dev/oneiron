@@ -116,6 +116,28 @@ pub(crate) struct CoreContextPackStats {
     items_truncated: CoreContextPackItemAccounting,
     /// Item drop accounting.
     items_dropped: CoreContextPackItemAccounting,
+    /// What the pack did with its working set: the rows the `packet_id`
+    /// summary carries. Absent for a pack that names no packet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    working_set: Option<CoreContextPackWorkingSet>,
+}
+
+/// A rehydrated pack's working-set accounting (CROSS-ARCH-0011 amendment
+/// "workingSet": seed versus generic overlap is logged).
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreContextPackWorkingSet {
+    /// Rows the packet carries, after duplicates were removed.
+    asked: usize,
+    /// Carried rows the pack serves, first in the pack.
+    served: usize,
+    /// Carried rows the pack does not serve, for any reason alike.
+    dropped: usize,
+    /// Carried rows cut because they passed half the token budget.
+    over_cap: usize,
+    /// Carried rows the ranked fill also found, served once.
+    overlap: usize,
+    /// The packet was stale, so the pack is today's pack.
+    stale: bool,
 }
 
 /// Typed context-pack result state.
@@ -426,6 +448,14 @@ pub(crate) fn core_context_pack_stats(stats: oneiron::PackStats) -> CoreContextP
             count: stats.items_dropped.count,
             reason: stats.items_dropped.reason.as_str().to_owned(),
         },
+        working_set: (!stats.working_set.is_empty()).then(|| CoreContextPackWorkingSet {
+            asked: stats.working_set.asked,
+            served: stats.working_set.served.len(),
+            dropped: stats.working_set.dropped,
+            over_cap: stats.working_set.over_cap,
+            overlap: stats.working_set.overlap,
+            stale: stats.working_set.stale,
+        }),
     }
 }
 
