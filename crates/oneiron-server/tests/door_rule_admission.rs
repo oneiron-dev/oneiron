@@ -15,9 +15,12 @@
 //!   actor class.
 //!
 //! The table below is what main admits. A mismatch lists every row's
-//! observed answers at once. `vault.coach.training_offers.run`
-//! (`engine_controller`) is left out: its kind is `substrate_reader`'s own
-//! fn, and Setting stage 2 deletes its 14 rows.
+//! observed answers at once. An IN is only this pre-hook check: the room
+//! save, booking, grants-answer, foreign-code and saved-query handlers
+//! check the save grant, owner act, request, actor or query after it.
+//! `vault.coach.training_offers.run` (`engine_controller`) is left out: its
+//! kind is `substrate_reader`'s own fn, and Setting stage 2 deletes its 14
+//! rows.
 //!
 //! Deterministic: in-process vault and server, no HTTP, no models.
 //!
@@ -172,7 +175,7 @@ const ROWS: &[(&str, &str, bool, bool, bool)] = &[
         "off_record_room",
         "vault.off_record.rooms.confirm_save",
         OUT,
-        OUT,
+        IN,
         OUT,
     ),
     ("voice_bank", "vault.voices.inspect", IN, IN, OUT),
@@ -180,8 +183,8 @@ const ROWS: &[(&str, &str, bool, bool, bool)] = &[
         "booking_owner_act",
         "vault.booking.availability",
         IN,
-        OUT,
-        OUT,
+        IN,
+        IN,
     ),
     ("packs_setup", "vault.packs.put", IN, IN, OUT),
     ("decision_holder", "self.decisions.asks", OUT, IN, OUT),
@@ -210,9 +213,9 @@ const ROWS: &[(&str, &str, bool, bool, bool)] = &[
         OUT,
         OUT,
     ),
-    ("grants_answer", "self.grants.answer", IN, OUT, OUT),
+    ("grants_answer", "self.grants.answer", IN, IN, OUT),
     ("credential_holder", "self.credential.attenuate", IN, IN, IN),
-    ("foreign_code", "execute_code", IN, OUT, OUT),
+    ("foreign_code", "execute_code", IN, IN, IN),
     ("verdict_asker", "ai.verdict", IN, IN, IN),
     (
         "hand list: graph_ask_doors::asker",
@@ -228,7 +231,7 @@ const ROWS: &[(&str, &str, bool, bool, bool)] = &[
         OUT,
         OUT,
     ),
-    ("saved_query", "self.saved_query.evaluate", IN, OUT, OUT),
+    ("saved_query", "self.saved_query.evaluate", IN, IN, OUT),
     // A person who also binds an actor (the old hand list's weave labels).
     (
         "hand list: weave_doors::person_lens",
