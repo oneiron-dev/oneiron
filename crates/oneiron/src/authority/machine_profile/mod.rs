@@ -561,14 +561,20 @@ impl AuthorityFold {
             .map(|profile| profile.machine_key)
     }
 
-    /// The key a residence result from `machine` must be signed by, as this
-    /// install folds it ([`FoldedMachine::residence_signer_key`]). The
+    /// The key a residence result from `machine` must be signed by
+    /// ([`FoldedMachine::residence_signer_key`]), read on the roster view as
+    /// the result judge reads it: this install's projections (a chain gone
+    /// stale or held here, a roster with no settled root) never stall a
+    /// directive whose result would stand (Astra K3 delta, F1). The
     /// directive doors read it, so a directive is issued to, and run on,
     /// only a machine whose result can stand; this install's pin alone
     /// gives none.
     #[must_use]
     pub(crate) fn residence_signer_key(&self, machine: EntityId) -> Option<[u8; 32]> {
-        self.machines.get(&machine)?.residence_signer_key()
+        self.machines
+            .get(&machine)?
+            .roster_view()
+            .residence_signer_key()
     }
 
     /// The PERSON who answered for `machine`, as the profile whose key
