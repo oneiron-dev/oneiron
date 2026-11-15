@@ -394,8 +394,10 @@ fn create_enabled_agent(fixture: &Fixture, agent_id: &str) -> TestResult<EntityI
 }
 
 /// The owner mints `agent` a band read grant over the base world whose bands
-/// hold the transcript rows and the summary, so a refusal is the phone
-/// gate's, not a missing band.
+/// hold the transcript rows, the summary and its intent NOTE, so a refusal is
+/// the phone gate's or the source rule's, not a missing band (reach-r3fix
+/// compile read: without the NOTE band row 5c was refused at the band check
+/// on both heads).
 fn mint_banded_read_grant(fixture: &Fixture, agent: EntityId, label: &str) -> TestResult {
     let mut authority_scope = Scope::top();
     authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())]));
@@ -405,6 +407,7 @@ fn mint_banded_read_grant(fixture: &Fixture, agent: EntityId, label: &str) -> Te
         ENTITY_TYPE_MESSAGE,
         ENTITY_TYPE_CONVERSATION,
         ENTITY_TYPE_SUMMARY,
+        oneiron::registry::ENTITY_TYPE_NOTE,
     ]));
     authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
     let minted = mint_agent_grant_as(
