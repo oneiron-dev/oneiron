@@ -273,6 +273,12 @@ name = "managed_mode"
 path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
 
+# The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "vault_skills_doors"
+path = "tests/vault_skills_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
 [[test]]
@@ -310,12 +316,6 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-brok
 name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
-
-# The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
-[[test]]
-name = "vault_skills_doors"
-path = "tests/vault_skills_doors.rs"
-required-features = ["oneiron/test-support"]
 
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
