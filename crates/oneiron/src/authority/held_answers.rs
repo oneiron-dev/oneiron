@@ -131,11 +131,12 @@ fn named_held_answers(
 
 /// The owner's answer that confirms the held profile `held`: its own
 /// identity material, role and class, at the next revision above every
-/// standing head of the machine, or at the first revision of a machine no
-/// revision names. A held answer is no head, so the revision never rests on
-/// one. The machine's own proof covers its identity material and no
-/// revision, so it verifies under the confirm as it did under the held
-/// answer.
+/// standing head of the machine ([`FoldedMachine::standing_heads`]: the
+/// roster's and the pinned anchor's, never another anchor's), or at the
+/// first revision of a machine no such head names. A held answer is no
+/// head, so the revision never rests on one. The machine's own proof covers
+/// its identity material and no revision, so it verifies under the confirm
+/// as it did under the held answer.
 ///
 /// A machine that stands keeps its keys: a held answer that names others is
 /// refused ([`AuthorityFold::replaces_standing_keys`]). The fold lets an
@@ -147,12 +148,10 @@ fn confirming_profile(
     owner: EntityId,
     held: &MachineProfile,
 ) -> Result<MachineProfile> {
-    let heads: Vec<_> = fold
+    let heads = fold
         .machine(held.machine)
-        .into_iter()
-        .flat_map(|folded| folded.chains())
-        .map(|(_, head)| head)
-        .collect();
+        .map(|folded| folded.standing_heads(fold.pinned_root.as_ref()))
+        .unwrap_or_default();
     if heads.iter().any(|head| head.removed) {
         return Err(invalid_authority());
     }
@@ -174,18 +173,20 @@ fn confirming_profile(
 
 impl AuthorityFold {
     /// Whether `answer` names another machine key or encryption key than a
-    /// standing head of its machine holds: the roster's head, the roster
-    /// revision the owner approved (it decides trust, and a custodial
-    /// revision on another branch can stand above it as the roster's head),
-    /// or an anchor's. False for a machine no revision names: a first answer
-    /// replaces nothing, and the owner checks its machine key against the
-    /// machine itself, as at any pairing.
+    /// standing head of its machine holds ([`FoldedMachine::standing_heads`]):
+    /// the roster's head, the roster revision the owner approved (it decides
+    /// trust, and a custodial revision on another branch can stand above it
+    /// as the roster's head), or the pinned anchor's. The keys another
+    /// anchor's chain names never count: a root nobody here pins marks any
+    /// machine under any keys. False for a machine no such head names: a
+    /// first answer replaces nothing, and the owner checks its machine key
+    /// against the machine itself, as at any pairing.
     #[must_use]
     pub fn replaces_standing_keys(&self, answer: &MachineProfile) -> bool {
         self.machine(answer.machine).is_some_and(|folded| {
             folded
-                .chains()
-                .map(|(_, head)| head)
+                .standing_heads(self.pinned_root.as_ref())
+                .into_iter()
                 .chain(folded.roster_trusted.iter())
                 .any(|head| {
                     head.profile.machine_key != answer.machine_key

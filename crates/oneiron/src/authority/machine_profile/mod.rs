@@ -319,6 +319,27 @@ impl FoldedMachine {
             .collect()
     }
 
+    /// The heads this machine stands under on an install with `pin`: the
+    /// roster's head, then the head of the chain of the anchor that install
+    /// pins. They are the admitters its trust reads ([`Self::trust_chains`]),
+    /// with the roster's own head in place of the accepted revision, since a
+    /// new roster revision goes above that head. An owner's answer written
+    /// there is numbered, copied and checked from these heads alone.
+    ///
+    /// Another anchor's chain is never among them, wherever its rows sit in
+    /// the log (FIX FOREIGN-ANCHOR-MARK-BLOCKS-MACHINE-DOORS): any fresh key
+    /// publishes a root and marks any machine in that root's own chain, at
+    /// any revision, removed or under other keys, and one main-log row that
+    /// names such a mark carries it into every later state. The roster's
+    /// rows and the pinned anchor's are main-log rows on that install, so
+    /// its view and an answer's parents hold the same heads.
+    pub(super) fn standing_heads(&self, pin: Option<&PinnedRoot>) -> Vec<&MachineRevision> {
+        self.roster
+            .iter()
+            .chain(pin.and_then(|pin| self.anchored.get(&pin.anchor_key)))
+            .collect()
+    }
+
     /// Two live or held chains of `T(admitter)` name other keys, or another
     /// machine claims a key one of them names within it: never mine there,
     /// and no edit's race passes there.
