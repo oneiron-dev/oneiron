@@ -44,6 +44,7 @@ heed.workspace = true
 arc-swap.workspace = true
 base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "microvm-firecracker"] }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 # The sandbox backends (core split 5b.1): the QuickJS runtime, Firecracker and the OCI container.
 oneiron-agent-runtime = { version = "0.1.0", path = "../oneiron-agent-runtime", features = ["microvm-firecracker"] }
 oneiron-mail-pack = { version = "0.1.0", path = "../oneiron-mail-pack" }
@@ -74,18 +75,21 @@ oneiron-organ-host = { path = "../oneiron-organ-host" }
 # primary node).
 oneiron-driver = { version = "0.1.0", path = "../oneiron-driver" }
 oneiron-linear = { version = "0.1.0", path = "../oneiron-linear" }
-# Protocol mappers for the `[models]` provider kinds. Both own wire mapping
-# only; this crate supplies the HTTP transport (models/openai.rs and
-# models/anthropic.rs).
-oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
-oneiron-llm-gemini = { version = "0.1.0", path = "../oneiron-llm-gemini" }
-oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
-# The System One seat on the host's decision ladder (decision_host.rs).
-oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
+# Protocol mappers for the `[models]` provider kinds (`oneiron_llm::{openai_compat,
+# anthropic, gemini}`). They own wire mapping only; this crate supplies the
+# HTTP transport (models/openai.rs and models/anthropic.rs). Feature
+# `systemone`: the System One seat on the host's decision ladder
+# (decision_host.rs). The `mesh` feature below adds `oneiron-rpc`.
+oneiron-llm = { version = "0.1.0", path = "../oneiron-llm", features = ["systemone"] }
+# Protocol mappers for the generation jobs (`oneiron_gen::gemini`: Gemini
+# images and Veo video); this crate supplies the HTTP transport
+# (models/gemini_media.rs, models/broker_media.rs).
+oneiron-gen = { version = "0.1.0", path = "../oneiron-gen" }
+# Speech wire adapters (ARCH-0036 #adapters): the Soniox ASR frame codec;
+# this crate holds the socket, key and quota (models/soniox.rs).
+oneiron-speech = { version = "0.1.0", path = "../oneiron-speech" }
 # The paired-machine mesh listener (OF-535), behind the `mesh` feature.
 oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh", "sync"] }
-# The model route on the mesh listener (OF-575), with it.
-oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
 # A device renews its paired owner credential at its home (FIX 3377), with
 # the device sync the mesh feature carries.
 oneiron-remote = { path = "../oneiron-remote", optional = true }
@@ -361,6 +365,12 @@ name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The rerank pair template price cases root their owner on a `MemoryKeystore` too.
+[[test]]
+name = "rerank_pair_template_price"
+path = "tests/rerank_pair_template_price.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 
@@ -376,7 +386,8 @@ code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime", "oneiron-agent-runtime
 mesh = [
   "dep:tokio-rustls",
   "dep:webpki-roots",
-  "dep:oneiron-llm-own-server",
+  # The model route on the mesh listener (OF-575).
+  "oneiron-llm/oneiron-rpc",
   "dep:oneiron-mesh-transport",
   "dep:oneiron-remote",
 ]

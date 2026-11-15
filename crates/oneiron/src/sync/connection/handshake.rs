@@ -671,9 +671,7 @@ impl SyncConnection {
         // (MEMBER-SYNC threat F5); only a member lane's dial names either.
         if peer.is_none() && client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
         {
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs());
+            let now_secs = crate::unix_seconds_now();
             client
                 .fetch_current_index_by_side(now_secs)
                 .await
