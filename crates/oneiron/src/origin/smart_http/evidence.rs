@@ -8,7 +8,7 @@ use super::door::{DoorAdmissionStamp, DoorSeam};
 use super::door_window::DoorWindowReport;
 use super::landing::ReceivePackAttribution;
 use super::landing_lfs::{admit_landing_lfs_pointers, ref_required_lfs_oids};
-use super::paths::{now_secs, serve_failed};
+use super::paths::serve_failed;
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::edge::EdgeKind;
@@ -498,10 +498,10 @@ impl Vault {
                         Value::from(status)
                     },
                 ),
-                ("observed_at", Value::from(now_secs())),
+                ("observed_at", Value::from(crate::unix_seconds_now())),
             ]),
         )?;
-        self.put_receive_pack_evidence(id, &body, now_secs())?;
+        self.put_receive_pack_evidence(id, &body, crate::unix_seconds_now())?;
         let attribution = ReceivePackAttribution {
             actor_id: actor,
             provenance_claim_id: id,
