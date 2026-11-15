@@ -68,6 +68,26 @@ impl SideKey for StepIndexClaimKey {
     }
 }
 
+/// One [`StepIndexKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn step_index_key_pin_for_test(
+    attempt_id: AttemptId,
+    step_hash: [u8; 32],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&StepIndexKey {
+        attempt_id,
+        step_hash,
+    })
+}
+
+/// One [`StepIndexClaimKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn step_index_claim_key_pin_for_test(
+    claim: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&StepIndexClaimKey(claim))
+}
+
 /// The forward memo-index row: (attempt, step hash) -> the claim id that answered it.
 pub(super) const STEP_INDEX_FORWARD: SideTable<StepIndexKey, EntityId, Raw> =
     SideTable::new(&side_table::DREAMER_STEP_INDEX);

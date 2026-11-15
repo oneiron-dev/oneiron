@@ -43,6 +43,15 @@ impl SideKey for AskHistoryKey {
     }
 }
 
+/// One [`AskHistoryKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn ask_history_key_pin_for_test(
+    question: EntityId,
+    sequence: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&AskHistoryKey { question, sequence })
+}
+
 /// Key of one question's log high-water mark, a row family of `TYPED_QUESTION`.
 /// Family: `ask_history_head`, suffix: empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
