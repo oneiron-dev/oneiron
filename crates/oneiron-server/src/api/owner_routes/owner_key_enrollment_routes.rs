@@ -125,7 +125,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/owner-signing-keys/changes",
-                summary: "Every enrollment and removal of an enrolled owner key that the vault's log holds, newest first: the entry, `enrolled` or `removed`, the key, the machine its enrollment names, its kind, the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
+                summary: "Every enrollment and removal of an enrolled owner key that the vault's log holds, newest first: the entry, `enrolled`, `removed` or `removed_by_ended_key` (two removals that crossed ended both keys), the key, the machine its enrollment names, its kind, the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
                 row: None,
                 shape: None,
             },
@@ -230,7 +230,9 @@ struct ListReply {
 struct ChangeReply {
     /// The change's authority entry, as 64 hex.
     entry: String,
-    /// `enrolled` or `removed`.
+    /// `enrolled`, `removed`, or `removed_by_ended_key`: the key ended
+    /// through a removal the vault did not count, because a crossing removal
+    /// ended that removal's own signer.
     change: &'static str,
     /// The key, as 64 hex.
     public_key: String,
@@ -422,6 +424,7 @@ fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
         change: match change.change {
             OwnerKeyChangeKind::Enrolled => "enrolled",
             OwnerKeyChangeKind::Removed => "removed",
+            OwnerKeyChangeKind::RemovedByEndedKey => "removed_by_ended_key",
         },
         public_key: revision_hex(&change.public_key),
         machine: change.machine.to_hex(),

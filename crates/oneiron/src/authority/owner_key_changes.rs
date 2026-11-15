@@ -7,6 +7,14 @@
 //! so each device reads the same list and shows what it has not shown yet
 //! ("[device] was removed. Not you?"). An install-local notification row
 //! would reach only the install that wrote it.
+//!
+//! One removal ends its key although the fold counts no entry for it: two
+//! removals that cross. When key A removes key B on one branch and B removes
+//! A on a branch that never saw it, each revocation retires the other's
+//! signer, so the fold refuses both entries and both keys end
+//! (`retired_signers`). The list shows such an entry as
+//! [`OwnerKeyChangeKind::RemovedByEndedKey`], so the owner still reads that
+//! the key ended and which key signed its removal.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,6 +30,11 @@ pub enum OwnerKeyChangeKind {
     Enrolled,
     /// The key was removed: a counted `RevokeDevice` of it.
     Removed,
+    /// The key ended, and no counted removal names it: this `RevokeDevice`
+    /// of it is one the fold refused only because its own signer's key ended
+    /// too, on a branch that never saw this entry (two removals that cross
+    /// end both keys and count neither entry).
+    RemovedByEndedKey,
 }
 
 /// One change of an enrolled owner key, as its authority entry says it.
@@ -50,7 +63,10 @@ impl Vault {
     /// the rows this vault keeps (stored, or carried by an adopted
     /// checkpoint image). A key enrolled on two branches lists its smallest
     /// enrolment entry, as [`Self::enrolled_owner_keys`] does; a key that
-    /// two counted entries removed lists both removals. Empty before any
+    /// two counted entries removed lists both removals. A key that ended
+    /// with no counted removal lists each removal of it that the fold
+    /// refused for its signer alone
+    /// ([`OwnerKeyChangeKind::RemovedByEndedKey`]). Empty before any
     /// enrolment.
     ///
     /// # Errors
@@ -79,31 +95,50 @@ impl Vault {
                 changes.extend(owner_key_change(&fold, &enrolled, *hash, entry));
             }
         }
+        // A counted removal of a key is the whole account of its end.
+        let removed: BTreeSet<[u8; 32]> = changes
+            .iter()
+            .filter(|change| change.change == OwnerKeyChangeKind::Removed)
+            .map(|change| change.public_key)
+            .collect();
+        changes.retain(|change| {
+            change.change != OwnerKeyChangeKind::RemovedByEndedKey
+                || !removed.contains(&change.public_key)
+        });
         changes.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| a.entry.cmp(&b.entry)));
         Ok(changes)
     }
 }
 
 /// The owner key change `entry`, at `hash`, is on `fold`: a counted
-/// enrolment that stands for its key among `enrolled`, or a counted
-/// `RevokeDevice` of a key an enrolment names. None for any other entry.
+/// enrolment that stands for its key among `enrolled`, a counted
+/// `RevokeDevice` of a key an enrolment names, or a `RevokeDevice` of such a
+/// key that ended it uncounted ([`ended_by_a_refused_removal`]). None for any
+/// other entry.
 fn owner_key_change(
     fold: &AuthorityFold,
     enrolled: &BTreeMap<[u8; 32], EnrolledOwnerKey>,
     hash: AuthorityEntryHash,
     entry: &AuthorityLogEntry,
 ) -> Option<OwnerKeyChange> {
-    if !fold.valid_entries.contains(&hash) {
-        return None;
-    }
+    let counted = fold.valid_entries.contains(&hash);
     let (change, key) = match &entry.op {
-        AuthorityOp::OwnerKeyEnroll(enroll) => {
+        AuthorityOp::OwnerKeyEnroll(enroll) if counted => {
             let key = enrolled.get(enroll.public_key()?)?;
             (key.entry == hash).then_some((OwnerKeyChangeKind::Enrolled, key))?
         }
         AuthorityOp::RevokeDevice {
             revoked_key: AuthorityKey::Ed25519(revoked),
-        } => (OwnerKeyChangeKind::Removed, enrolled.get(revoked)?),
+        } => {
+            let key = enrolled.get(revoked)?;
+            if counted {
+                (OwnerKeyChangeKind::Removed, key)
+            } else if ended_by_a_refused_removal(fold, hash, key) {
+                (OwnerKeyChangeKind::RemovedByEndedKey, key)
+            } else {
+                return None;
+            }
+        }
         _ => return None,
     };
     Some(OwnerKeyChange {
@@ -115,4 +150,24 @@ fn owner_key_change(
         signed_by: entry.signer.public_key.clone(),
         at: entry.ts,
     })
+}
+
+/// Whether the uncounted `RevokeDevice` of `key` at `hash` is a removal that
+/// ended it all the same: the key is retired, and the fold refused the entry
+/// for its signer alone (`RetiredSigner`), so the entry counted on its own
+/// branch and only a removal of its signer, on a branch that never saw it,
+/// refused it. A refused entry of any other kind (a bad signature, a signer
+/// the roster never held) is no removal and lists nothing.
+fn ended_by_a_refused_removal(
+    fold: &AuthorityFold,
+    hash: AuthorityEntryHash,
+    key: &EnrolledOwnerKey,
+) -> bool {
+    !key.live
+        && fold
+            .retired_keys
+            .contains(&AuthorityKey::Ed25519(key.public_key))
+        && fold
+            .issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(hash))
 }

@@ -7,9 +7,16 @@
 //!   and keeps its machine;
 //! - a machine removal that lands ([`Vault::remove_machine`], and every
 //!   other landing of a removal): the same transaction ends every live owner
-//!   key whose enrolment names that machine, so a removed device can no
-//!   longer approve changes. A revoke the fold does not count fails the
-//!   removal.
+//!   key that a counted enrolment names for that machine, so a removed
+//!   device can no longer approve changes. A revoke the fold does not count
+//!   fails the removal.
+//!
+//! A removal ends the keys its own install's fold holds at that moment. A
+//! key enrolled for the machine on a branch the removal never saw stays live
+//! once the branches merge. So [`Vault::remove_machine`] takes a machine the
+//! fold already holds removed once more: it then writes no second removal,
+//! ends the keys that still name the machine, and answers the removal as it
+//! stands.
 //!
 //! A revoke of an owner key counts only with an owner key's proof (row
 //! HOSTED-ROOT-REVOKES-OWNER-KEY), so an install that holds none removes no
@@ -208,8 +215,14 @@ impl Vault {
     /// asks first: it answers [`MachineRemoval::LastDeviceKey`] and writes
     /// nothing unless `confirmation` is given.
     ///
+    /// A machine the fold already holds removed takes no second removal.
+    /// When live owner keys still name it (each enrolled on a branch its
+    /// removal never saw), the door ends them, under the same question, and
+    /// answers the removal as it stands with those keys as ended.
+    ///
     /// # Errors
-    /// As [`Self::set_machine_role`]; an authority refusal when the fold does
+    /// As [`Self::set_machine_role`], which also refuses a removed machine
+    /// that no live owner key names; an authority refusal when the fold does
     /// not count a key's revocation, and then nothing is written.
     pub fn remove_machine(
         &self,
@@ -228,6 +241,17 @@ impl Vault {
             if remaining.needs_recovery() {
                 return Ok(MachineRemoval::LastDeviceKey(remaining));
             }
+        }
+        let removed = fold
+            .machine(machine)
+            .filter(|folded| folded.chains().any(|(_, head)| head.removed));
+        if let Some(standing) = removed
+            && !ending.is_empty()
+        {
+            let receipt =
+                self.end_keys_of_removed_machine_in_txn(&mut txn, machine, standing, seen, ending)?;
+            txn.commit()?;
+            return Ok(MachineRemoval::Written(receipt));
         }
         let mut answer = AnswerAct::by_owner(actor, surface, MachineRole::Removed, seen);
         answer.last_device_key = confirmation;
@@ -263,15 +287,60 @@ impl Vault {
         }))
     }
 
+    /// The second removal of `machine`, which the fold already holds removed
+    /// as `standing`: it writes no answer. The owner key this install holds
+    /// ends `ending`, the live device keys that still name the machine, and
+    /// the receipt gives the removal as it stands.
+    ///
+    /// # Errors
+    /// A concurrent write when `seen` is not the machine's answer revision;
+    /// the writer's, when the fold does not count a revocation.
+    fn end_keys_of_removed_machine_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        machine: EntityId,
+        standing: &FoldedMachine,
+        seen: Option<[u8; 32]>,
+        ending: Vec<EnrolledOwnerKey>,
+    ) -> Result<MachineRemovalReceipt> {
+        if seen.is_some_and(|seen| seen != standing.answer_revision()) {
+            return Err(Error::ConcurrentWrite(
+                "the machine's answer changed since it was read",
+            ));
+        }
+        let ended_keys = ending.iter().map(|key| key.public_key).collect();
+        self.end_owner_keys_in_txn(txn, ending)?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        let live_keys = self
+            .device_keys_of_machine_in_txn(txn, &after, machine)?
+            .into_iter()
+            .map(|enrolled| enrolled.public_key)
+            .collect();
+        let remaining = self.owner_keys_remaining_in_txn(txn, &after, &[])?;
+        let standing = after
+            .machine(machine)
+            .cloned()
+            .ok_or_else(invalid_authority)?;
+        Ok(MachineRemovalReceipt {
+            landing: MachineAnswerLanding::Stands(standing),
+            ended_keys,
+            live_keys,
+            remaining,
+        })
+    }
+
     /// Whether this vault is a hosted one: there a managed host's custodial
     /// root proves nothing for the owner.
     fn is_hosted(&self) -> bool {
         self.privacy_posture() == crate::HostingPrivacyPosture::Hosted
     }
 
-    /// The live device keys whose enrolment names `machine` and that prove
-    /// for the owner on `fold`, ascending by key. The recovery root's
-    /// authority key is never among them: no machine holds it.
+    /// The live device keys that a counted enrolment names for `machine` and
+    /// that prove for the owner on `fold`, ascending by key. A key enrolled
+    /// on two branches for two machines is among both machines' keys,
+    /// whichever enrolment [`Self::enrolled_owner_keys`] lists for it: the
+    /// key proved it is held on each. The recovery root's authority key is
+    /// never among them: no machine holds it.
     fn device_keys_of_machine_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -279,16 +348,44 @@ impl Vault {
         machine: EntityId,
     ) -> Result<Vec<EnrolledOwnerKey>> {
         let hosted = self.is_hosted();
+        let named = self.keys_enrolled_for_machine_in_txn(txn, fold, machine)?;
         Ok(self
             .enrolled_owner_keys_in_txn(txn)?
             .into_iter()
             .filter(|enrolled| {
                 enrolled.live
-                    && enrolled.machine == machine
+                    && named.contains(&enrolled.public_key)
                     && enrolled.kind == EnrolledOwnerKeyKind::Device
                     && fold.proves_owner_acts(&AuthorityKey::Ed25519(enrolled.public_key), hosted)
             })
             .collect())
+    }
+
+    /// Every key a counted owner key enrolment on `fold` names for
+    /// `machine`, from the rows this vault keeps (stored, or carried by an
+    /// adopted checkpoint image): each enrolment of a key, not only the one
+    /// [`Self::enrolled_owner_keys`] lists for it.
+    fn keys_enrolled_for_machine_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        machine: EntityId,
+    ) -> Result<BTreeSet<[u8; 32]>> {
+        let mut keys = BTreeSet::new();
+        let mut stored = BTreeSet::new();
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
+            let entry = decode_authority_log_entry_body(&body)?;
+            let hash = authority_entry_hash(&entry)?;
+            stored.insert(hash);
+            keys.extend(key_enrolled_for_machine(fold, machine, hash, &entry));
+        }
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
+        {
+            for (hash, entry) in evidence.carried_past(&stored) {
+                keys.extend(key_enrolled_for_machine(fold, machine, *hash, entry));
+            }
+        }
+        Ok(keys)
     }
 
     /// The owner keys a removal of `machine` that stands ends on this
@@ -411,4 +508,21 @@ impl Vault {
         }
         Ok(ended)
     }
+}
+
+/// The key `entry`, at `hash`, enrols for `machine`, when it is an owner key
+/// enrolment the fold counts. None for any other entry.
+fn key_enrolled_for_machine(
+    fold: &AuthorityFold,
+    machine: EntityId,
+    hash: AuthorityEntryHash,
+    entry: &AuthorityLogEntry,
+) -> Option<[u8; 32]> {
+    let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+        return None;
+    };
+    if enroll.machine != machine || !fold.valid_entries.contains(&hash) {
+        return None;
+    }
+    enroll.public_key().copied()
 }

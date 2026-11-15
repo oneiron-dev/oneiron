@@ -67,7 +67,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/machines/remove",
-                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict. A removal that stands on an install that holds an owner key also ends the owner keys whose enrollment names the machine (`ended_owner_keys`); otherwise the reply lists them as still live (`live_owner_keys`). A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`.",
+                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict. A removal that stands on an install that holds an owner key also ends the owner keys whose enrollment names the machine (`ended_owner_keys`); otherwise the reply lists them as still live (`live_owner_keys`). Removing an already removed machine again ends the owner keys that still name it, each enrolled where its removal was not yet known, and writes no second removal. A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`.",
                 row: None,
                 shape: Some(RestShape::json(
                     remove_machine_body_schema,
@@ -392,7 +392,10 @@ async fn set_answer(
 /// every live owner key whose enrollment names the machine, in the same
 /// transaction (the owner's ruling AUTH-5): the reply lists them under
 /// `ended_owner_keys`. A held removal, and one on an install that holds no
-/// owner key, ends none and lists them under `live_owner_keys`. A removal
+/// owner key, ends none and lists them under `live_owner_keys`. A machine
+/// that is already removed takes no second removal: the request then ends
+/// the live owner keys that still name it (each enrolled on a branch its
+/// removal never saw) and answers the machine as it stands. A removal
 /// that would end the last owner key held on a device answers 409, state
 /// `last_device_key`, and writes nothing until the request carries
 /// `confirm`.
