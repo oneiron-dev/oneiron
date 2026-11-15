@@ -49,6 +49,7 @@ pub mod feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
+pub mod gate_receipt_rows;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
