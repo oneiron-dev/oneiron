@@ -279,15 +279,9 @@ pub(crate) fn dispatch_workflow_bound_as(
     input: WorkflowBoundDispatchRequest,
 ) -> MemoryResult<WorkflowRunView> {
     let parent = lease.parent();
-    // L7-32: the workflow run joins its parent's run, a run-id-less root's
-    // `agent:<root hex>` included, so one undo-all of the root takes back
-    // the workflow's changes too.
-    let run_id = Some(crate::code_run::agent_attempt_run_ref(
-        parent,
-        AttemptQueue::new(vault)
-            .get(parent)?
-            .and_then(|record| record.run_id),
-    ));
+    let run_id = AttemptQueue::new(vault)
+        .get(parent)?
+        .and_then(|record| record.run_id);
     let request = DispatchAgent {
         target: AgentDispatchTarget::Workflow(input.workflow_ref),
         parent_attempt: Some(parent),

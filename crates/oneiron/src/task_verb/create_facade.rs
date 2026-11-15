@@ -636,7 +636,7 @@ impl Memory<'_> {
                         target: AgentDispatchTarget::Custom(agent_def_ref),
                         parent_attempt: origin.and_then(TaskCreateOrigin::parent_attempt),
                         dedupe_key: Some(task_route_dedupe_key(task_ref)),
-                        run_id: origin.and_then(TaskCreateOrigin::child_run_id),
+                        run_id: origin.and_then(TaskCreateOrigin::run_id),
                         now,
                     },
                     AgentSpawnContext {
