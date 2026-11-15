@@ -445,7 +445,7 @@ impl Vault {
 /// its snapshot, so a write the policy would withhold, a write to a file the
 /// snapshot withholds, and a message that holds a secret are refused before
 /// the proposal or its snapshot is stored. The refusal of a write to a
-/// withheld file names the remediation route (FIX 2229).
+/// withheld live dotenv file names the remediation route (FIX 2229).
 fn admit_custody(
     custody: &SnapshotCustody,
     pre_action: &StoredRepoSnapshot,
@@ -461,7 +461,7 @@ fn admit_custody(
         .iter()
         .any(|entry| entry.path == path && entry.kind == StoredRepoSnapshotEntryKind::Withheld)
     {
-        return Err(withheld_base_refusal());
+        return Err(withheld_base_refusal(path));
     }
     match crate::batch::secret_scan::scan_file_content("", message.as_bytes()) {
         Some(reason) => Err(SnapshotWithhold::Quarantined(reason).refusal()),

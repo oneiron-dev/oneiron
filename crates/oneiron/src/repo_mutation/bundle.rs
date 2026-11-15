@@ -202,7 +202,7 @@ pub(in crate::repo_mutation) fn reviewed_bundle_files(
                         )
                     }
                     StoredRepoSnapshotEntryKind::Withheld => {
-                        return Err(crate::secret_snapshot::withheld_base_refusal());
+                        return Err(crate::secret_snapshot::withheld_base_refusal(&file.path));
                     }
                 },
             };

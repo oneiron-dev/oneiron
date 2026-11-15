@@ -11,6 +11,7 @@ use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_lease::decode_local_registration_body;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
+use crate::store::repo_environment::{RepoEnvFileKind, repo_env_file};
 use crate::vault::Vault;
 
 /// SECRET-03 (ONE-1921): the T2 local-registration rows this snapshot filter
@@ -122,12 +123,13 @@ pub(crate) enum SnapshotWithhold {
 /// a file the snapshot it would change already withholds.
 pub(crate) const REASON_WITHHELD_PATH: &str = "gate.secret_scan.withheld_path";
 
-/// The route the refusal of a write to a file the snapshot withholds names
-/// (FIX 2229; Engine RULING FIX-2229-WITHHELD-WRITE = A): the owner's
-/// `vault.code.secrets.propose` remediation, the one reviewed write that
-/// changes or removes such a file (owner ruling SECRETS-IN-REPOS = A). It
-/// keeps only the BLAKE3 of the bytes it replaces (FIX 10974); an ordinary
-/// review would read those bytes from a snapshot that does not hold them.
+/// The route the refusal of a write to a withheld live dotenv file names
+/// (FIX 2229; Engine RULINGS FIX-2229-WITHHELD-WRITE = A and
+/// FIX-2229-ROUTE-SCOPE = A): the owner's `vault.code.secrets.propose`
+/// remediation, the one reviewed write that removes such a file (owner
+/// ruling SECRETS-IN-REPOS = A). It keeps only the BLAKE3 of the bytes it
+/// replaces (FIX 10974); an ordinary review would read those bytes from a
+/// snapshot that does not hold them.
 pub(crate) const REASON_REMEDIATION_ROUTE: &str = "gate.secret_scan.remediation_route";
 
 impl SnapshotWithhold {
@@ -145,17 +147,21 @@ impl SnapshotWithhold {
     }
 }
 
-/// The refusal of an ordinary write to a file the snapshot it would change
-/// withholds: [`SnapshotWithhold::Excluded`]'s refusal, naming the
-/// remediation route ([`REASON_REMEDIATION_ROUTE`]).
-pub(crate) fn withheld_base_refusal() -> Error {
+/// The refusal of an ordinary write to `path`, a file the snapshot it would
+/// change withholds: [`SnapshotWithhold::Excluded`]'s refusal. It names the
+/// remediation route ([`REASON_REMEDIATION_ROUTE`]) only for a live dotenv
+/// file, which the remediation removes by its name alone. It plans any other
+/// file only by receive marks on the bytes the snapshot does not hold, or not
+/// at all (a symlink, a gitlink), so a route named there could answer Clean
+/// and leave the file as it is (Engine RULING FIX-2229-ROUTE-SCOPE = A).
+pub(crate) fn withheld_base_refusal(path: &str) -> Error {
+    let mut reason_codes = vec!["gate.secret_scan.detected", REASON_WITHHELD_PATH];
+    if repo_env_file(path) == Some(RepoEnvFileKind::Live) {
+        reason_codes.push(REASON_REMEDIATION_ROUTE);
+    }
     Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
-        reason_codes: vec![
-            "gate.secret_scan.detected",
-            REASON_WITHHELD_PATH,
-            REASON_REMEDIATION_ROUTE,
-        ],
+        reason_codes,
     })
 }
 
