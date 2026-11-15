@@ -551,7 +551,6 @@ pub(crate) fn consume_pending_check_in_in_txn(
         .get(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
     if row.effect_digest != *effect_digest {
-        return Err(refuse("the act is another effect than the one asked"));
     }
     let basis = row
         .eligible_basis()
