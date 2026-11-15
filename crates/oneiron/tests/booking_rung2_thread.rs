@@ -357,8 +357,9 @@ fn a_kept_first_send_is_the_one_a_retried_press_sends() -> TestResult {
 }
 
 /// A first send to a stranger holds for the owner's press: nothing reaches
-/// the transport, the hold names the digest the press must carry, and a held
-/// send files no passport, so no thread names it yet.
+/// the transport, the hold carries no generic digest (the press recomposes
+/// mail's own canonical one), and a held send files no passport, so no
+/// thread names it yet.
 #[test]
 fn the_first_send_to_a_stranger_holds_for_the_owners_press() -> TestResult {
     let fx = Fixture::open()?;
@@ -372,8 +373,8 @@ fn the_first_send_to_a_stranger_holds_for_the_owners_press() -> TestResult {
     assert_eq!(held.outcome, OutboundDispatchOutcome::Held, "{held:?}");
     assert_eq!(sink.delivered, 0, "a held send reaches no transport");
     assert!(
-        held.approval_digest.is_some(),
-        "the hold names the digest the owner's press carries: {held:?}"
+        held.approval_digest.is_none(),
+        "a native-mail cold hold names no generic digest; the press recomposes mail's canonical one: {held:?}"
     );
     let first = canonical_message_id(&kept.message_id)?;
     assert_eq!(fx.vault.thread_passport(&fx.identity, &first)?, None);
