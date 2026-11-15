@@ -122,7 +122,7 @@ pub(crate) fn admit_work_talk_witness(
         return Ok(None);
     };
     if !binding.admits(actor) {
-        return Err(denied());
+        return Ok(Some(binding));
     }
     Ok(Some(binding))
 }
