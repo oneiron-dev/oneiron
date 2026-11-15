@@ -842,9 +842,27 @@ fn visible_chars(text: &str) -> usize {
 impl Drop for ChatBrain {
     fn drop(&mut self) {
         self.abort();
-        if let Some(record) = &self.bindings.record {
-            let vault = &self.bindings.vault;
-            crate::server::blocking(|| record.close(vault));
+        let Some(record) = self.bindings.record.take() else {
+            return;
+        };
+        // The call's end row closes its thread: it lands after every turn
+        // still keeping what it keeps, which an abort does not interrupt.
+        let vault = Arc::clone(&self.bindings.vault);
+        let running: Vec<JoinHandle<()>> = self
+            .retiring
+            .drain(..)
+            .filter(|handle| !handle.is_finished())
+            .collect();
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) if !running.is_empty() => {
+                runtime.spawn(async move {
+                    for handle in running {
+                        let _ended = handle.await;
+                    }
+                    crate::server::blocking(|| record.close(&vault));
+                });
+            }
+            _ => crate::server::blocking(|| record.close(&vault)),
         }
     }
 }
