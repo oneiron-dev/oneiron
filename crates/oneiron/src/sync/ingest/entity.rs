@@ -662,13 +662,7 @@ fn admit(
                     "an embedding setup row is not at its fixed time",
                 ));
             }
-            crate::embed::install_replicated_embedding_setup_in_txn(
-                &vault.store,
-                vault.privacy_posture(),
-                wtxn,
-                &id,
-                data,
-            )?;
+            crate::embed::install_replicated_embedding_setup_in_txn(&vault.store, wtxn, &id, data)?;
             None
         }
         _ => None,
