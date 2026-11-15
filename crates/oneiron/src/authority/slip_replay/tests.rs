@@ -416,6 +416,7 @@ fn a_vault_without_the_mark_recovers_unless_a_proof_admitted_in_the_jump_evicted
 /// A restore made for the vault's place, published after the vault admitted
 /// a proof and recovered its proof clock, would know neither: that proof
 /// would get in again. The swap refuses it and nothing moves.
+#[cfg(unix)]
 #[test]
 fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     let start = 1_900_000_000;
@@ -452,7 +453,7 @@ fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     );
 
     let swapped = std::cell::Cell::new(false);
-    let refused = holder.vault.swap_in_replacement(&replacement, || {
+    let refused = holder.vault.swap_in_replacement(&replacement, |_, _| {
         swapped.set(true);
         Ok(())
     });

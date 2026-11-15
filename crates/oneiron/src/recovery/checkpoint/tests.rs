@@ -806,14 +806,6 @@ fn archived<T>(result: Result<T>) -> bool {
     )
 }
 
-/// Exchanges two directories, as `oneiron restore` does in one call.
-fn exchange(a: &Path, b: &Path) -> std::io::Result<()> {
-    let between = a.with_extension("exchange");
-    std::fs::rename(a, &between)?;
-    std::fs::rename(b, a)?;
-    std::fs::rename(&between, b)
-}
-
 /// A vault with one claim receipt, its image, and a replacement restored
 /// from the image for its place at `<root>/vault`, built at `<root>/staged`.
 fn replacement_for(root: &Path) -> (Vault, Vault, EntityId, crate::store::GateDecisionRecord) {
@@ -858,9 +850,7 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
     })));
     // As `oneiron restore` runs it.
     source
-        .swap_in_replacement(&replacement, || {
-            exchange(&vault_path, &root.path().join("staged"))
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .expect("swap");
     assert!(archived(source.delete_entity_with_reason(
         &claim,
@@ -918,8 +908,8 @@ fn a_restore_that_dies_mid_swap_leaves_one_live_vault() {
     let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        source.swap_in_replacement(&replacement, || {
-            exchange(&vault_path, &staged).unwrap();
+        source.swap_in_replacement(&replacement, |live, held_staged| {
+            crate::store::exchange_held(live, held_staged).unwrap();
             panic!("the process dies once the directories are exchanged");
         })
     }));
@@ -957,7 +947,7 @@ fn a_writer_waiting_through_a_swap_is_refused() {
         let staged = staged.clone();
         move || {
             source
-                .swap_in_replacement(&replacement, || exchange(&vault_path, &staged))
+                .swap_in_replacement(&replacement, crate::store::exchange_held)
                 .expect("swap");
         }
     });
@@ -996,7 +986,7 @@ fn a_swap_that_leaves_the_vault_in_place_is_refused() {
     let root = crate::test_support::restore_tempdir();
     let (source, replacement, claim, _) = replacement_for(root.path());
     assert!(matches!(
-        source.swap_in_replacement(&replacement, || Ok(())),
+        source.swap_in_replacement(&replacement, |_, _| Ok(())),
         Err(Error::InvalidConfig(_))
     ));
     drop((source, replacement));
@@ -1031,9 +1021,9 @@ fn a_swap_whose_vault_moved_off_its_path_refuses_with_nothing_marked() {
             std::fs::create_dir(&vault_path).unwrap();
         }
         let exchanged = std::cell::Cell::new(false);
-        let refused = source.swap_in_replacement(&replacement, || {
+        let refused = source.swap_in_replacement(&replacement, |live, held_staged| {
             exchanged.set(true);
-            exchange(&vault_path, &staged)
+            crate::store::exchange_held(live, held_staged)
         });
         assert!(
             matches!(refused, Err(Error::InvalidConfig(_))),
@@ -1063,8 +1053,8 @@ fn a_swap_that_strands_the_set_aside_vault_is_refused() {
     let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     let moved = root.path().join("moved");
-    let refused = source.swap_in_replacement(&replacement, || {
-        exchange(&vault_path, &staged)?;
+    let refused = source.swap_in_replacement(&replacement, |live, held_staged| {
+        crate::store::exchange_held(live, held_staged)?;
         std::fs::rename(&staged, &moved)?;
         std::fs::create_dir(&staged)
     });
@@ -1106,7 +1096,7 @@ fn a_failed_swap_keeps_the_vault_live_only_at_its_path() {
         let vault_path = root.path().join("vault");
         let (source, replacement, claim, _) = replacement_for(root.path());
         let moved = root.path().join("moved");
-        let refused = source.swap_in_replacement(&replacement, || {
+        let refused = source.swap_in_replacement(&replacement, |_, _| {
             if case == "moved while the exchange failed" {
                 std::fs::rename(&vault_path, &moved)?;
             }
@@ -1318,9 +1308,7 @@ fn an_activation_commits_only_receipts_its_forked_keys_read() {
     let (vault_path, previous_path) = (root.path().join("vault"), root.path().join("previous"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     source
-        .swap_in_replacement(&replacement, || {
-            exchange(&vault_path, &root.path().join("staged"))
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .expect("swap");
     drop((source, replacement));
     std::fs::rename(root.path().join("staged"), &previous_path).unwrap();
