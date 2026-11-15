@@ -46,6 +46,8 @@ mod apple_enclave;
 mod file;
 #[cfg(target_os = "linux")]
 mod linux_tpm;
+#[cfg(target_os = "macos")]
+mod macos_presence;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 mod memory;
 mod user_presence;
@@ -60,14 +62,17 @@ pub use apple_enclave::SecureEnclaveKeychain;
 pub use file::LocalFileKeystore;
 #[cfg(target_os = "linux")]
 pub use linux_tpm::LinuxTpmKeystore;
+#[cfg(target_os = "macos")]
+pub use macos_presence::MacosUserPresence;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 pub use memory::MemoryKeystore;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 pub use user_presence::{ManualPresenceClock, ScriptedPresence};
 pub use user_presence::{
-    NoPromptPresence, PRESENCE_WINDOW_SECS, PendingPresenceConfirm, PresenceCapability,
-    PresenceClock, PresenceConfirmation, PresenceError, PresenceGate, PresenceInstant,
-    PresenceWindow, SystemPresenceClock, UserPresence, platform_user_presence,
+    NoPromptPresence, PRESENCE_PROMPT_SECS, PRESENCE_WINDOW_SECS, PendingPresenceConfirm,
+    PresenceCapability, PresenceClock, PresenceConfirmation, PresenceError, PresenceGate,
+    PresenceInstant, PresenceWindow, SCREEN_LOCK_POLL_MS, SystemPresenceClock, UserPresence,
+    platform_user_presence,
 };
 #[cfg(windows)]
 pub use windows::WindowsDpapiKeystore;

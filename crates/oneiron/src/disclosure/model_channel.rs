@@ -19,7 +19,10 @@ pub use oneiron_verb_wire::disclosure::model_channel::{
     DisclosureCeilingRequest, DisclosureDataClass,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+/// Declared from the narrowest band to the widest, so the order compares them.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DisclosureBand {
     Public,
