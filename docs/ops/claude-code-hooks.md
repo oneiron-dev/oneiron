@@ -204,24 +204,29 @@ oneiron hosted status
   browser; the page shows a match code, and you allow the request in your
   Oneiron inbox when the code there is the same. The browser then comes back
   to a one-time listener on this machine's loopback (`--sign-in-timeout-secs`,
-  600 by default), and `login` keeps the sign-in in
+  600 by default; other traffic to the listener does not extend it), and
+  `login` keeps the sign-in in
   `hosted-oauth-<origin hash>.json` beside `hosted.json`, readable by you
   alone. It asks for the `read` tier, and the vault lists it in your consent
   registry, where one tap revokes it. Its access token lasts an hour and
   refreshes on use; the refresh token lasts 30 days from its last use.
   `oneiron mcp --auth-mode oauth --oauth-token-file <file>` reaches the vault
   with it, over HTTP. The browser must run on the machine that runs `login`.
-  Run again for the same origin, `login` keeps the new sign-in apart until
-  the vault admits it for the vault named; only then does it take the old
-  one's place, and the old one is revoked. A login that is not recorded
-  leaves the old sign-in as it was.
+  An origin has one spelling (scheme and host in lower case, no default
+  port), so `HTTPS://Vault.example/` is `https://vault.example`. Run again for
+  the same origin, `login` keeps the new sign-in apart until the vault admits
+  it for the vault named; only then does it take the old one's place, and the
+  old one is revoked. A recorded login also revokes and removes an OAuth
+  sign-in the vault's earlier record kept in another file. A login that is
+  not recorded leaves the old sign-in as it was.
   A vault that serves no OAuth sign-in (no https `oauth_resource_indicator`
   in its server config) answers 404, and `login` says so.
 - `select` takes a recorded vault id, or its first characters when no other
   recorded id begins with them; `--none` selects none. `logout` forgets one
   recorded vault, or every one. Neither deletes a credential file another
   surface wrote: that surface keeps it. `logout` revokes an OAuth sign-in
-  `login` made at its vault, and removes its file.
+  `login` made at its vault, and removes its file, after any refresh in
+  flight has written its tokens; the `.lock` file beside it stays.
 - `status` prints `state` (`not_logged_in`, `no_selection`, `selected` or
   `unavailable`), the selected vault id and every recorded vault: its
   `origin`, `vault_id`, `auth_mode` (`slip`, `owner` or `oauth`), `credential_file` and

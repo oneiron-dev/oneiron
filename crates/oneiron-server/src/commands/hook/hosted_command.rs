@@ -9,7 +9,9 @@
 //!   `oneiron mcp` (the transport a recall uses), and selects it. A slip
 //!   names its own vault, which must be the one named; an owner's sign-in
 //!   names none, so the id the exporting surface gives is confirmed
-//!   against the vault the origin answers for.
+//!   against the vault the origin answers for. It replaces the vault's
+//!   earlier record; an OAuth sign-in that record named in another file is
+//!   revoked and removed.
 //! - `login` with no credential file signs in first, through the vault's
 //!   own OAuth server as a native app ([`super::hosted_sign_in`]), and
 //!   records that sign-in in OAuth mode, its vault id the one the origin
@@ -225,12 +227,39 @@ fn record(
         vault.credential_file = absolute(file)?;
     }
     vault.verified_at_ms = now_ms();
-    selection
-        .vaults
-        .retain(|kept| kept.vault_id != vault.vault_id);
+    let (replaced, kept): (Vec<HostedVault>, Vec<HostedVault>) =
+        std::mem::take(&mut selection.vaults)
+            .into_iter()
+            .partition(|existing| existing.vault_id == vault.vault_id);
+    selection.vaults = kept;
     selection.selected = Some(vault.vault_id.clone());
     selection.vaults.push(vault);
-    hosted_selection::publish(selection)
+    hosted_selection::publish(selection)?;
+    // The record this one replaced may name an OAuth sign-in `login` made in
+    // another file (the origin spelled otherwise then): nothing names that
+    // file now, so it is signed out as a logout would, not left live.
+    let orphaned: Vec<HostedVault> = replaced
+        .into_iter()
+        .filter(|gone| {
+            !selection
+                .vaults
+                .iter()
+                .any(|kept| same_file(&kept.credential_file, &gone.credential_file))
+        })
+        .collect();
+    sign_out(&orphaned);
+    Ok(())
+}
+
+/// Whether `one` and `other` name one file: the same path, or one file
+/// reached by two paths (a HOME spelled another way).
+fn same_file(one: &Path, other: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    one == other
+        || matches!(
+            (std::fs::metadata(one), std::fs::metadata(other)),
+            (Ok(one), Ok(other)) if one.dev() == other.dev() && one.ino() == other.ino()
+        )
 }
 
 /// Selects the recorded vault `args` names, or none.
@@ -326,16 +355,18 @@ fn recorded(selection: &Selection, named: &str) -> anyhow::Result<String> {
 }
 
 /// `text` as an origin `oneiron mcp --url` takes: an http or https URL,
-/// without a trailing slash.
+/// without a trailing slash, in its one spelling (scheme and host in lower
+/// case, no default port), so one origin keys one OAuth sign-in file
+/// however it was typed.
 fn origin(text: &str) -> anyhow::Result<String> {
-    let text = text.trim().trim_end_matches('/');
+    let text = text.trim();
     let url = reqwest::Url::parse(text)
         .map_err(|error| anyhow::anyhow!("--origin {text} is not a URL: {error}"))?;
     anyhow::ensure!(
         matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
         "--origin {text} is not an http or https origin"
     );
-    Ok(text.to_owned())
+    Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
 /// `text` as a vault id: 64 hex characters, lowercased.

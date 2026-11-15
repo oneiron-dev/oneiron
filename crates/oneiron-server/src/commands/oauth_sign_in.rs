@@ -9,8 +9,9 @@
 //! `refresh_oauth_token`). Every bridge and every hook recall reads the same
 //! file, so a refresh runs under an exclusive lock on a file beside it, and
 //! reads the token file again first: tokens another process already
-//! refreshed are taken as they are, never refreshed a second time. No value
-//! the file holds is printed or logged.
+//! refreshed are taken as they are, never refreshed a second time. A sign-in
+//! takes the file's place, or leaves it, under the same lock, and the lock
+//! file is never removed. No value the file holds is printed or logged.
 
 use std::fs::File;
 use std::io::Read as _;
@@ -168,6 +169,24 @@ impl OAuthSignIn {
             anyhow::anyhow!("move {} to {}: {error}", staged.display(), path.display())
         })?;
         Ok(replaced)
+    }
+
+    /// Removes the sign-in at `path` under its refresh lock, once `revoke`
+    /// has seen it (when it reads). A refresh in flight finishes first, so
+    /// `revoke` sees the pair it wrote, and no refresh that waits writes
+    /// over a later sign-in. The lock file stays: a refresh that waits on
+    /// it holds that file, and a new one would not exclude it.
+    pub(crate) fn remove(path: &Path, revoke: impl FnOnce(&Self)) -> anyhow::Result<()> {
+        let _lock = RefreshLock::take(path)?;
+        if let Ok(sign_in) = Self::read(path) {
+            revoke(&sign_in);
+        }
+        if let Err(error) = std::fs::remove_file(path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            anyhow::bail!("remove {}: {error}", path.display());
+        }
+        Ok(())
     }
 }
 

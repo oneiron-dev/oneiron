@@ -141,25 +141,15 @@ pub(super) fn take_place(staged: &Path, token_file: &Path) -> anyhow::Result<()>
     if let Some(replaced) = OAuthSignIn::take_place(staged, token_file)? {
         revoke(&replaced);
     }
-    let _ = std::fs::remove_file(lock_file(staged));
     Ok(())
 }
 
 /// Revokes the sign-in in `token_file` at its vault, best effort, and
-/// removes the file, which `hosted login` wrote. A vault that does not
-/// answer is named on stderr; the file goes all the same.
+/// removes the file, which `hosted login` wrote, under its refresh lock
+/// ([`OAuthSignIn::remove`]). A vault that does not answer is named on
+/// stderr; the file goes all the same.
 pub(super) fn sign_out(token_file: &Path) -> anyhow::Result<()> {
-    if let Ok(sign_in) = OAuthSignIn::read(token_file) {
-        revoke(&sign_in);
-    }
-    for path in [token_file.to_owned(), lock_file(token_file)] {
-        if let Err(error) = std::fs::remove_file(&path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            anyhow::bail!("remove {}: {error}", path.display());
-        }
-    }
-    Ok(())
+    OAuthSignIn::remove(token_file, revoke)
 }
 
 /// Revokes `sign_in` at its vault, best effort. A vault that does not
@@ -178,13 +168,6 @@ fn revoke(sign_in: &OAuthSignIn) {
              consent registry"
         );
     }
-}
-
-/// The refresh lock file beside the sign-in in `token_file`.
-fn lock_file(token_file: &Path) -> PathBuf {
-    let mut name = token_file.as_os_str().to_owned();
-    name.push(".lock");
-    PathBuf::from(name)
 }
 
 /// GETs `url` and reads its JSON answer.
@@ -285,7 +268,9 @@ fn open_in_browser(url: &str) {
 
 /// Waits on `listener` until `deadline` for the browser's return to the
 /// callback with this sign-in's `state`, and answers its code. A request
-/// for another path or with another `state` is answered and ignored.
+/// for another path or with another `state` is answered and ignored. The
+/// deadline holds whatever else comes to the loopback: it is checked before
+/// each connection is taken, and no connection is read past it.
 fn wait_for_code(
     listener: &TcpListener,
     state: &str,
@@ -294,18 +279,18 @@ fn wait_for_code(
 ) -> anyhow::Result<String> {
     listener.set_nonblocking(true)?;
     loop {
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "the browser did not come back from the sign-in in time; nothing was recorded. \
+             Run `oneiron hosted login --origin <url>` again"
+        );
         match listener.accept() {
             Ok((stream, _)) => {
-                if let Some(outcome) = callback(stream, state, issuer) {
+                if let Some(outcome) = callback(stream, state, issuer, deadline) {
                     return outcome;
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                anyhow::ensure!(
-                    Instant::now() < deadline,
-                    "the browser did not come back from the sign-in in time; nothing was \
-                     recorded. Run `oneiron hosted login --origin <url>` again"
-                );
                 std::thread::sleep(CALLBACK_POLL);
             }
             Err(error) => anyhow::bail!("the loopback listener failed: {error}"),
@@ -313,12 +298,18 @@ fn wait_for_code(
     }
 }
 
-/// One loopback request: `None` when it is not this sign-in's return, which
-/// is answered and ignored; else the code, or why the sign-in ended.
-fn callback(mut stream: TcpStream, state: &str, issuer: &str) -> Option<anyhow::Result<String>> {
+/// One loopback request, read until `deadline` at the latest: `None` when
+/// it is not this sign-in's return, which is answered and ignored; else the
+/// code, or why the sign-in ended.
+fn callback(
+    mut stream: TcpStream,
+    state: &str,
+    issuer: &str,
+    deadline: Instant,
+) -> Option<anyhow::Result<String>> {
     stream.set_nonblocking(false).ok()?;
-    stream.set_read_timeout(Some(CALLBACK_READ_TIMEOUT)).ok()?;
-    let target = request_target(&mut stream)?;
+    let until = deadline.min(Instant::now() + CALLBACK_READ_TIMEOUT);
+    let target = request_target(&mut stream, until)?;
     let url = reqwest::Url::parse(&format!("http://127.0.0.1{target}")).ok()?;
     if url.path() != CALLBACK_PATH {
         respond(&mut stream, "404 Not Found", "Not found.");
@@ -378,11 +369,16 @@ fn callback(mut stream: TcpStream, state: &str, issuer: &str) -> Option<anyhow::
     Some(Ok(code))
 }
 
-/// The request target of a GET on `stream`, from its request line.
-fn request_target(stream: &mut TcpStream) -> Option<String> {
+/// The request target of a GET on `stream`, from its request line, when
+/// its head is in by `until`.
+fn request_target(stream: &mut TcpStream, until: Instant) -> Option<String> {
     let mut head = Vec::new();
     let mut chunk = [0_u8; 1024];
     while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+        let left = until
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())?;
+        stream.set_read_timeout(Some(left)).ok()?;
         let read = stream.read(&mut chunk).ok()?;
         if read == 0 {
             break;
