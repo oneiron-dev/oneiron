@@ -113,8 +113,11 @@ impl MachineEnrolmentRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalMachine {
     pub id: EntityId,
-    /// Every admitter's chain for this row, once one of them names this
-    /// install's key.
+    /// Every admitter's chain for this row, once a chain this install reads
+    /// ([`FoldedMachine::names_key_under`] its pin: the accepted roster
+    /// revisions, the roster's head, the pinned anchor's) names this
+    /// install's key. A reader of it reads
+    /// [`FoldedMachine::standing_heads`], never another anchor's chain.
     pub profile: Option<FoldedMachine>,
     /// Mine under this install's pin, through a trusted identity that names
     /// this install's key. A chain that clones the row with other keys never
@@ -169,15 +172,25 @@ pub(super) fn resident_genesis_vault_id_in_txn(
 }
 
 /// Whether this install's own profile already stands as a carrier: the one
-/// carrier rule admits its install key, and a live chain names both its keys.
-/// The full predicate the owner-act writers ask, not the roster head alone.
+/// carrier rule admits its install key, and a live head it stands under here
+/// ([`FoldedMachine::standing_heads`]) names both its keys. The full
+/// predicate the owner-act writers ask, not the roster head alone. Another
+/// anchor's chain is no profile of it here (FIX
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 pub(super) fn serving_profile_stands(
     fold: &AuthorityFold,
     folded: &FoldedMachine,
     request: &MachineEnrolmentRequest,
 ) -> bool {
-    owner_act_signer_admits(Some(folded), &fold.roster, &request.machine_key)
-        && folded.chains().any(|(_, chain)| {
+    owner_act_signer_admits(
+        Some(folded),
+        &fold.roster,
+        &request.machine_key,
+        fold.pinned_root.as_ref(),
+    ) && folded
+        .standing_heads(fold.pinned_root.as_ref())
+        .into_iter()
+        .any(|chain| {
             chain.is_live()
                 && chain.profile.machine_key == request.machine_key
                 && chain.profile.encryption_key == request.encryption_key
@@ -187,6 +200,8 @@ pub(super) fn serving_profile_stands(
 impl Vault {
     /// This install's own MACHINE id while a profile of it names this
     /// install's machine key, in any role and any standing (FIX 4728): the
+    /// roster's, its accepted revisions or the pinned anchor's, never another
+    /// anchor's chain (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES);
     /// one machine row an authority-preserving restore keeps live. Read in
     /// `txn`'s snapshot alone: nothing is minted, loaded or ensured, and no
     /// role selects it. The key is the loaded signer's for that id, else the
@@ -211,7 +226,7 @@ impl Vault {
         };
         Ok(fold
             .machine(machine)
-            .is_some_and(|folded| folded.names_key(&key))
+            .is_some_and(|folded| folded.names_key_under(&key, fold.pinned_root.as_ref()))
             .then_some(machine))
     }
 
@@ -235,10 +250,14 @@ impl Vault {
     }
 }
 
-/// Whether a live chain of this install's standing profile names another
-/// class than the one its host declares now (FIX 3835).
-fn serving_class_differs(folded: &FoldedMachine, request: &MachineEnrolmentRequest) -> bool {
-    folded.chains().any(|(_, chain)| {
+/// Whether a live head of this install's standing profile under `pin`
+/// names another class than the one its host declares now (FIX 3835).
+fn serving_class_differs(
+    folded: &FoldedMachine,
+    pin: Option<&PinnedRoot>,
+    request: &MachineEnrolmentRequest,
+) -> bool {
+    folded.standing_heads(pin).into_iter().any(|chain| {
         chain.is_live()
             && chain.profile.machine_key == request.machine_key
             && chain.profile.device_class != request.device_class
@@ -273,12 +292,15 @@ fn pinned_bootstrap_veto(
 }
 
 /// Why a profile under this install's id that does not stand is never
-/// enrolled over: the first of removed, conflicted, other keys and not live.
+/// enrolled over: the first of removed, conflicted, other keys and not live,
+/// on the heads it stands under with `pin`.
 fn serving_profile_refusal(
     folded: &FoldedMachine,
+    pin: Option<&PinnedRoot>,
     request: &MachineEnrolmentRequest,
 ) -> &'static str {
-    let chains = move || folded.chains().map(|(_, chain)| chain);
+    let heads = folded.standing_heads(pin);
+    let chains = || heads.iter().copied();
     if chains().any(|chain| chain.removed) {
         SERVING_PROFILE_REMOVED
     } else if chains().any(|chain| chain.conflicted) {
@@ -334,7 +356,9 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let profile = fold
             .machine(id)
-            .filter(|machine| key.is_some_and(|key| machine.names_key(&key)))
+            .filter(|machine| {
+                key.is_some_and(|key| machine.names_key_under(&key, fold.pinned_root.as_ref()))
+            })
             .cloned();
         let mine = fold
             .trusted_machine(id)
@@ -493,7 +517,7 @@ impl Vault {
         if let Some(folded) = held {
             return if serving_profile_stands(&fold, folded, &request) {
                 let issuer_is_root = super::slip_vault::require_host(&fold, issuer).is_ok();
-                if serving_class_differs(folded, &request) {
+                if serving_class_differs(folded, fold.pinned_root.as_ref(), &request) {
                     tracing::warn!(
                         declared = request.device_class.wire(),
                         reason = SERVING_PROFILE_CLASS_DIFFERS,
@@ -502,7 +526,11 @@ impl Vault {
                 }
                 Ok((folded.clone(), Some(issuer_is_root)))
             } else {
-                Err(authority_refused(serving_profile_refusal(folded, &request)))
+                Err(authority_refused(serving_profile_refusal(
+                    folded,
+                    fold.pinned_root.as_ref(),
+                    &request,
+                )))
             };
         }
         if fold.vault_root_is_conflicted() {

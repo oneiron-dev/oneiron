@@ -243,16 +243,21 @@ impl Vault {
         }
         let signature = signature_hex(&machine.signature).ok_or_else(proof_invalid)?;
         let transcript = forwarded_request_transcript(&vault_id, machine_id, request, caller);
-        // The live profile whose install key verified the request; the one
-        // carrier rule then judges that key: any role, no chain removed, never
-        // a roster or root key (FIX 2222). An install the owner has not
-        // answered for forwards nothing, as an unprofiled one (selfprofile).
+        // The live profile whose install key verified the request, on a head
+        // it stands under here (never another anchor's chain, whose owner
+        // field any fresh root writes: FIX
+        // FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES); the one
+        // carrier rule then judges that key: any role, no head it believes
+        // removed, never a roster or root key (FIX 2222). An install the
+        // owner has not answered for forwards nothing, as an unprofiled one
+        // (selfprofile).
         let folded = fold.machine(machine_id);
+        let pin = fold.pinned_root.as_ref();
         let profile = folded
             .into_iter()
-            .flat_map(FoldedMachine::chains)
-            .filter(|(_, chain)| chain.is_live() && chain.profile.role.answered())
-            .map(|(_, chain)| &chain.profile)
+            .flat_map(|folded| folded.standing_heads(pin))
+            .filter(|chain| chain.is_live() && chain.profile.role.answered())
+            .map(|chain| &chain.profile)
             .find(|profile| {
                 VerifyingKey::from_bytes(&profile.machine_key).is_ok_and(|key| {
                     key.verify_strict(&transcript, &Signature::from_bytes(&signature))
@@ -260,7 +265,7 @@ impl Vault {
                 })
             })
             .ok_or_else(proof_invalid)?;
-        if !owner_act_signer_admits(folded, &fold.roster, &profile.machine_key) {
+        if !owner_act_signer_admits(folded, &fold.roster, &profile.machine_key, pin) {
             return Err(proof_invalid());
         }
         let owner = profile.owner;

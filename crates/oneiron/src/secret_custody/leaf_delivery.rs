@@ -38,8 +38,7 @@ use zeroize::Zeroizing;
 
 use super::carrier_custody::{CARRIER_REF_BYTES, CarrierRef};
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, FoldedMachine, WrapRecipient, authority_refused,
-    owner_act_signer_admits,
+    AuthorityEntryHash, AuthorityFold, WrapRecipient, authority_refused, owner_act_signer_admits,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -409,8 +408,10 @@ impl Asker {
 }
 
 /// Whether `signature` over `transcript` is `machine`'s: the install key of
-/// a live profile of it verifies it, and the one carrier rule admits that
-/// key (any role, no chain removed, never a roster key).
+/// a live head it stands under here ([`crate::authority::FoldedMachine::standing_heads`],
+/// never another anchor's chain) verifies it, and the one carrier rule admits
+/// that key under this install's pin (any role, no head it believes removed,
+/// never a roster key).
 fn machine_signed(
     fold: &AuthorityFold,
     machine: EntityId,
@@ -422,16 +423,17 @@ fn machine_signed(
     };
     let signature = Signature::from_bytes(&signature);
     let folded = fold.machine(machine);
+    let pin = fold.pinned_root.as_ref();
     folded
         .into_iter()
-        .flat_map(FoldedMachine::chains)
-        .filter(|(_, chain)| chain.is_live())
-        .map(|(_, chain)| chain.profile.machine_key)
+        .flat_map(|folded| folded.standing_heads(pin))
+        .filter(|chain| chain.is_live())
+        .map(|chain| chain.profile.machine_key)
         .find(|key| {
             VerifyingKey::from_bytes(key)
                 .is_ok_and(|key| key.verify_strict(transcript, &signature).is_ok())
         })
-        .is_some_and(|key| owner_act_signer_admits(folded, &fold.roster, &key))
+        .is_some_and(|key| owner_act_signer_admits(folded, &fold.roster, &key, pin))
 }
 
 /// `leaf` sealed to the asker's encryption key `key` under `request`'s

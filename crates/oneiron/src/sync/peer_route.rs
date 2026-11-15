@@ -161,7 +161,10 @@ pub const fn peer_ignores_frame(tag: u8) -> bool {
 /// refuses it), its vault root is not in conflict, every row its own rows
 /// and checkpoint name is held ([`Vault::authority_missing_history`]), and
 /// this machine's own chains do not rest on an unsettled roster root (no
-/// chain `admitter_unsettled`, the retired-signer conflict mark).
+/// head it stands under here, the roster's or the pinned anchor's,
+/// `admitter_unsettled`, the retired-signer conflict mark; another anchor's
+/// chain is no chain of it here: FIX
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 ///
 /// # Errors
 ///
@@ -180,9 +183,12 @@ pub fn authority_fold_settled(vault: &Vault) -> Result<bool> {
         let Some(local) = crate::identity::read_machine_id_in_txn(vault, &txn)? else {
             return Ok(false);
         };
-        let settled = fold
-            .machine(local)
-            .is_some_and(|machine| !machine.chains().any(|(_, chain)| chain.admitter_unsettled));
+        let settled = fold.machine(local).is_some_and(|machine| {
+            !machine
+                .standing_heads(fold.pinned_root.as_ref())
+                .iter()
+                .any(|chain| chain.admitter_unsettled)
+        });
         if !settled {
             return Ok(false);
         }

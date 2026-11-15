@@ -409,7 +409,12 @@ pub(super) fn resolve_seal_in_txn(
                 txn,
             )?;
             let public = key.verifying_key().to_bytes();
-            let carries = owner_act_signer_admits(fold.machine(carrier), &fold.roster, &public);
+            let carries = owner_act_signer_admits(
+                fold.machine(carrier),
+                &fold.roster,
+                &public,
+                fold.pinned_root.as_ref(),
+            );
             match (carries, authority, OWNER_DECISION_WITHOUT_CARRIER) {
                 (true, ..) => {}
                 // No carrier for the owner's decision: today's engine seal,
@@ -629,7 +634,10 @@ pub(crate) fn topology_seal_revision_for_store_in_txn(
 /// The decision-seal standing inputs, as one digest the reconcile pass keeps
 /// beside the trusted keys (mesh PR2-topology): each machine's carrier keys
 /// under the one carrier rule, its removal and its chains' head rows (a new
-/// revision, and the acts it saw), the owners' human binding statuses, each
+/// revision, and the acts it saw), all read on the heads it stands under
+/// here, the roster's and the pinned anchor's (another anchor's mark moves
+/// nothing: FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES), the
+/// owners' human binding statuses, each
 /// decision seal's token, whether every head it signed is held (FIX 4649)
 /// and how it stands by the full removal race here (FIX 5248,
 /// `seal_standing::decision_seal_standings_in_txn`), and the row state of
@@ -645,12 +653,14 @@ pub(super) fn decision_standing_digest_in_txn(
 ) -> Result<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(TOPOLOGY_SEAL_STANDING_CONTEXT);
+    let pin = fold.pinned_root.as_ref();
     for (machine, folded) in &fold.machines {
-        let removed = folded.chains().any(|(_, chain)| chain.removed);
-        let keys: BTreeSet<[u8; 32]> = folded
-            .chains()
-            .filter(|(_, chain)| chain.is_live())
-            .map(|(_, chain)| chain.profile.machine_key)
+        let heads = folded.standing_heads(pin);
+        let removed = heads.iter().any(|chain| chain.removed);
+        let keys: BTreeSet<[u8; 32]> = heads
+            .iter()
+            .filter(|chain| chain.is_live())
+            .map(|chain| chain.profile.machine_key)
             .filter(|key| !fold.roster.contains_key(&AuthorityKey::Ed25519(*key)))
             .collect();
         hasher.update(machine.as_bytes());
@@ -659,7 +669,7 @@ pub(super) fn decision_standing_digest_in_txn(
         for key in &keys {
             hasher.update(key);
         }
-        let rows: Vec<AuthorityEntryHash> = folded.chains().map(|(_, chain)| chain.entry).collect();
+        let rows: Vec<AuthorityEntryHash> = heads.iter().map(|chain| chain.entry).collect();
         hasher.update(&(rows.len() as u64).to_be_bytes());
         for row in &rows {
             hasher.update(row);

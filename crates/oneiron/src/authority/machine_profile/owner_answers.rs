@@ -67,13 +67,20 @@ impl SaySo {
 }
 
 impl FoldedMachine {
-    /// This machine's revision as a deciding surface shows the owner (C5):
-    /// the digest of its live chains' heads, the roster's and every
-    /// anchor's, zero for none. The writer compares an answer's `seen` with
-    /// it; replicas derive what an answer supersedes from its parents.
+    /// This machine's revision as a deciding surface shows the owner (C5) on
+    /// an install with `pin`: the digest of the heads it stands under there
+    /// ([`Self::standing_heads`]), the roster's and the pinned anchor's,
+    /// zero for none. Another anchor's mark never moves it (FIX
+    /// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). The writer
+    /// compares an answer's `seen` with it; replicas derive what an answer
+    /// supersedes from its parents.
     #[must_use]
-    pub fn answer_revision(&self) -> [u8; 32] {
-        machine_answer_revision(self.chains().map(|(_, chain)| chain.entry))
+    pub fn answer_revision(&self, pin: Option<&PinnedRoot>) -> [u8; 32] {
+        machine_answer_revision(
+            self.standing_heads(pin)
+                .into_iter()
+                .map(|chain| chain.entry),
+        )
     }
 }
 

@@ -335,7 +335,9 @@ impl<'s> Standing<'s> {
 
     /// [`super::owner_act_signer_admits`] for `id` and `key` under `view`:
     /// pin-free in the roster view, with this install's holds and staleness
-    /// in the install view.
+    /// in the install view. Both views pass no pin: the pinned anchor's veto
+    /// is the doors' (`fold.pinned_root`), and the fold asks the roster's
+    /// head alone, as it did before the pin was a parameter.
     pub(super) fn admits_owner_act_signer(
         &self,
         id: EntityId,
@@ -343,7 +345,12 @@ impl<'s> Standing<'s> {
         view: StandingView,
     ) -> bool {
         let (_, kind) = self.admitter_kind(view);
-        super::owner_act_signer_admits(self.view(id, kind).as_deref(), &self.state.roster, key)
+        super::owner_act_signer_admits(
+            self.view(id, kind).as_deref(),
+            &self.state.roster,
+            key,
+            None,
+        )
     }
 
     /// The removal race for an owner act under `view` (FIX 2998, mesh

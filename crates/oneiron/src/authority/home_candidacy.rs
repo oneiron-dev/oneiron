@@ -191,7 +191,7 @@ impl AuthorityFold {
         let declared = self.home_candidacy.get(&machine)?;
         let pin = self.pinned_root.as_ref();
         let folded = self.machines.get(&machine);
-        let stands = super::owner_act_signer_admits(folded, &self.roster, &declared.key);
+        let stands = super::owner_act_signer_admits(folded, &self.roster, &declared.key, pin);
         let owner_machine = stands
             && folded.and_then(|folded| owner_machine_key(folded, pin)) == Some(declared.key);
         Some(JudgedHomeCandidacy {
@@ -300,7 +300,12 @@ impl Vault {
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
         let folded = fold.machine(machine);
-        if !super::owner_act_signer_admits(folded, &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            folded,
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         let cloud = folded

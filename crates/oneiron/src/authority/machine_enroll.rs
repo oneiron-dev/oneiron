@@ -63,14 +63,19 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let key = AuthorityKey::Ed25519(public_key);
-        // A physical machine's row or install key never becomes a writer.
+        // A physical machine's row or install key never becomes a writer:
+        // one this install reads, never another anchor's chain (FIX
+        // FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
+        let pin = fold.pinned_root.as_ref();
         if fold.roster.contains_key(&key)
             || fold.actor_bindings.contains_key(&key)
-            || fold.machines.contains_key(&machine)
+            || fold
+                .machine(machine)
+                .is_some_and(|folded| !folded.install_chains(pin).is_empty())
             || fold
                 .machines
                 .values()
-                .any(|folded| folded.names_key(&public_key))
+                .any(|folded| folded.names_key_under(&public_key, pin))
         {
             return Err(denied());
         }

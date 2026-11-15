@@ -307,7 +307,12 @@ impl Vault {
         let key =
             crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(no_carrier)?;
         let public_key = key.verifying_key().to_bytes();
-        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(no_carrier());
         }
         Ok((machine, key))
@@ -331,7 +336,9 @@ impl Vault {
     ) -> Result<FoldedMachine> {
         let (carrier, key) = self.carrier_in_txn(txn, fold)?;
         let target = fold.machine(profile.machine);
-        let current = target.map_or([0; 32], FoldedMachine::answer_revision);
+        let current = target.map_or([0; 32], |target| {
+            target.answer_revision(fold.pinned_root.as_ref())
+        });
         // Revision integrity (contract §4): the owner decided on what the
         // surface showed him.
         if answer.seen.is_some_and(|seen| seen != current) {

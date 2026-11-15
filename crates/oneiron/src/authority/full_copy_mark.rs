@@ -262,7 +262,12 @@ impl Vault {
             return Ok(None);
         };
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             tracing::debug!(
                 "this install's machine key is not admitted here, so it writes no full-copy mark"
             );

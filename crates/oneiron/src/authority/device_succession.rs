@@ -213,7 +213,12 @@ impl Vault {
         let public_key = key.verifying_key().to_bytes();
         let signer = AuthorityKey::Ed25519(public_key);
         let target = device_succession_target(client, &device_key)?;
-        if !super::owner_act_signer_admits(before.machine(machine), &before.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            before.machine(machine),
+            &before.roster,
+            &public_key,
+            before.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         let seen = before.device_successions.revision(target);

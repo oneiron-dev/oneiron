@@ -142,10 +142,13 @@ impl Vault {
             return Ok(None);
         };
         let public_key = signing.verifying_key().to_bytes();
-        Ok(
-            owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key)
-                .then_some((machine, signing)),
+        Ok(owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
         )
+        .then_some((machine, signing)))
     }
 
     /// Records the work the owner's act needs, in the act's own write

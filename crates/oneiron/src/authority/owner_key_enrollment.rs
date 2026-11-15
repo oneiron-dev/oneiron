@@ -88,7 +88,7 @@ pub(super) fn judge_owner_key_enroll(
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     };
     let carrier = super::machine_claims::folded_machine_in(state, enroll.carrier);
-    if !super::owner_act_signer_admits(carrier.as_ref(), &state.roster, carrier_key) {
+    if !super::owner_act_signer_admits(carrier.as_ref(), &state.roster, carrier_key, None) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if !super::owner_act::owner_live_at(state, enroll.act.owner) {

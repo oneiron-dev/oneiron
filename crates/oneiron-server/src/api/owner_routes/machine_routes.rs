@@ -20,7 +20,7 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActSurface, FoldedMachine, MachineOwnership, MachineRole, OwnerDeviceRenewalProof, PeerMachine,
+    ActSurface, AuthorityFold, MachineOwnership, MachineRole, OwnerDeviceRenewalProof, PeerMachine,
 };
 use serde::{Deserialize, Serialize};
 
@@ -199,12 +199,15 @@ fn role_name(role: MachineRole) -> &'static str {
     }
 }
 
-fn answer_of(machine: oneiron::EntityId, folded: Option<&FoldedMachine>) -> MachineAnswer {
+fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold) -> MachineAnswer {
+    let folded = fold.machine(machine);
     let roster = folded.and_then(|folded| folded.roster.as_ref());
     MachineAnswer {
         machine: machine.to_hex(),
         role: roster.map(|roster| role_name(roster.profile.role)),
-        revision: revision_hex(&folded.map_or([0; 32], FoldedMachine::answer_revision)),
+        revision: revision_hex(&folded.map_or([0; 32], |folded| {
+            folded.answer_revision(fold.pinned_root.as_ref())
+        })),
         carrier: roster
             .and_then(oneiron::authority::MachineRevision::carrier)
             .map(|carrier| carrier.to_hex()),
@@ -224,7 +227,7 @@ async fn get_answer(
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &query.machine)?;
         let fold = server.vault().authority_fold()?;
-        Ok(answer_of(machine, fold.machine(machine)))
+        Ok(answer_of(machine, &fold))
     })
     .await?;
     Ok(Json(answer))
@@ -264,14 +267,14 @@ async fn set_answer(
             .as_deref()
             .map(|seen| parse_revision("seen", seen))
             .transpose()?;
-        let folded = server.vault().set_machine_role(
+        server.vault().set_machine_role(
             &owner,
             surface,
             machine,
             MachineRole::Owned(request.answer),
             seen,
         )?;
-        Ok(answer_of(machine, Some(&folded)))
+        Ok(answer_of(machine, &server.vault().authority_fold()?))
     })
     .await?;
     Ok(Json(answer))
@@ -298,13 +301,9 @@ async fn remove(
             .as_deref()
             .map(|seen| parse_revision("seen", seen))
             .transpose()?;
-        let folded = server.vault().set_machine_role(
-            &owner,
-            surface,
-            machine,
-            MachineRole::Removed,
-            seen,
-        )?;
+        server
+            .vault()
+            .set_machine_role(&owner, surface, machine, MachineRole::Removed, seen)?;
         // The removed MACHINE's mesh pairing and grants are revoked in the
         // log as well (FIX 3374, L02 04:5x); its binding admits nothing
         // already, so a revocation that fails is logged.
@@ -315,7 +314,7 @@ async fn remove(
                 tracing::warn!(%error, "machine removal: its mesh grants were not revoked");
             }
         });
-        Ok(answer_of(machine, Some(&folded)))
+        Ok(answer_of(machine, &server.vault().authority_fold()?))
     })
     .await?;
     Ok(Json(answer))

@@ -55,9 +55,17 @@ pub enum MeshEnrolment {
     Refused(MeshBindRefusal),
 }
 
-/// Whether any chain of `machine` removed it: removal is terminal.
-pub(super) fn machine_removed(machine: &crate::authority::FoldedMachine) -> bool {
-    machine.chains().any(|(_, chain)| chain.removed)
+/// Whether a head `machine` stands under with `pin` removed it: removal is
+/// terminal. Another anchor's chain removes nothing here (FIX
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
+pub(super) fn machine_removed(
+    machine: &crate::authority::FoldedMachine,
+    pin: Option<&crate::authority::PinnedRoot>,
+) -> bool {
+    machine
+        .standing_heads(pin)
+        .into_iter()
+        .any(|chain| chain.removed)
 }
 
 impl Vault {
@@ -204,7 +212,10 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
-        if !fold.machine(machine).is_some_and(machine_removed) {
+        if !fold
+            .machine(machine)
+            .is_some_and(|folded| machine_removed(folded, fold.pinned_root.as_ref()))
+        {
             return Ok(false);
         }
         let Some(signed) = MESH_AUTHORITY.get(&self.store, &txn, &HexId(machine))? else {

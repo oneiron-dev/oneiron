@@ -360,15 +360,17 @@ pub(crate) struct Witnessed {
 #[cfg(feature = "sync")]
 impl Witnessed {
     /// Whether `fold` judged the request entry `hash` invalid with its
-    /// signer folded (FIX 4996): a chain of its carrier names the key that
-    /// signed it, and the fold holds an issue for exactly this entry, other
-    /// than one that waits on a parent not here yet.
+    /// signer folded (FIX 4996): a chain of its carrier this install reads
+    /// (never another anchor's: FIX
+    /// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES) names the key
+    /// that signed it, and the fold holds an issue for exactly this entry,
+    /// other than one that waits on a parent not here yet.
     pub(crate) fn folded_invalid(&self, fold: &AuthorityFold, hash: &AuthorityEntryHash) -> bool {
         let Some(key) = &self.key else {
             return false;
         };
         fold.machine(self.request.carrier)
-            .is_some_and(|machine| machine.names_key(key))
+            .is_some_and(|machine| machine.names_key_under(key, fold.pinned_root.as_ref()))
             && fold.issues.iter().any(|issue| match issue {
                 AuthorityFoldIssue::InvalidEntry(entry)
                 | AuthorityFoldIssue::RetiredSigner(entry)

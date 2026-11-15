@@ -522,8 +522,10 @@ pub(crate) fn assess_witness(
 /// install key of `executor` on `fold`, in three states (FIX 12352): proven
 /// where it admits the key; disproven where it excludes the key on what
 /// `fold` holds: the authority roster names the key (a roster key acts as
-/// nobody), or a chain of `executor`'s removed the machine (only removal
-/// ends a linked install); unproven otherwise: `fold` folds no profile of
+/// nobody), or a head `executor` stands under on `fold` removed the machine
+/// (only removal ends a linked install; another anchor's chain removes
+/// nothing here, FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES);
+/// unproven otherwise: `fold` folds no profile of
 /// `executor`'s, or no live chain of it names this exact key yet. A machine
 /// this install knows under another key alone does not disprove a key
 /// revision it has not folded.
@@ -533,10 +535,15 @@ pub(crate) fn carrier_proof(
     key: &[u8; 32],
 ) -> ProofState {
     let machine = fold.machine(executor);
-    if owner_act_signer_admits(machine, &fold.roster, key) {
+    if owner_act_signer_admits(machine, &fold.roster, key, fold.pinned_root.as_ref()) {
         return ProofState::Proven;
     }
-    let removed = machine.is_some_and(|folded| folded.chains().any(|(_, chain)| chain.removed));
+    let removed = machine.is_some_and(|folded| {
+        folded
+            .standing_heads(fold.pinned_root.as_ref())
+            .into_iter()
+            .any(|chain| chain.removed)
+    });
     if removed || fold.roster.contains_key(&AuthorityKey::Ed25519(*key)) {
         ProofState::Disproven
     } else {

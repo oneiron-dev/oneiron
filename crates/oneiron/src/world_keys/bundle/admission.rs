@@ -245,7 +245,9 @@ impl SealedPadAdmissionGrant {
     /// Whether `fold` holds the grant's issuer as one that may grant this
     /// vault's pad objects, and the issuer signed it: a machine the owner
     /// admitted, live and trusted here, by the install key its trusted
-    /// identity names, or one of the vault's roots, by its anchor.
+    /// identity names, or one of the vault's roots, by its anchor. The home
+    /// keeps an offer on this alone; its recipient also asks
+    /// [`Self::kit_issuer_pinned_here`].
     pub(crate) fn issued_by_authority(&self, fold: &AuthorityFold) -> bool {
         let Ok(header) = self.header() else {
             return false;
@@ -268,6 +270,21 @@ impl SealedPadAdmissionGrant {
                         && signed_by(&anchor_key)
                 }
             }
+    }
+
+    /// Whether a kit that issued the grant is the root this install pins: any
+    /// fresh key can publish a root the fold holds, so on the recipient a kit
+    /// grant counts only from the root it believes (Fable design pass 29,
+    /// FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). A machine
+    /// issuer is [`Self::issued_by_authority`]'s trusted-machine question.
+    pub(crate) fn kit_issuer_pinned_here(&self, fold: &AuthorityFold) -> bool {
+        match self.issuer {
+            Issuer::Machine(_) => true,
+            Issuer::Kit { root, anchor_key } => fold
+                .pinned_root
+                .as_ref()
+                .is_some_and(|pin| pin.id == root && pin.anchor_key == anchor_key),
+        }
     }
 
     /// The outer key, with `secret`, the recipient's: its capsule opens and
@@ -491,7 +508,11 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         Ok(grants
             .iter()
-            .filter(|grant| grant.recipient == me && grant.issued_by_authority(&fold))
+            .filter(|grant| {
+                grant.recipient == me
+                    && grant.issued_by_authority(&fold)
+                    && grant.kit_issuer_pinned_here(&fold)
+            })
             .filter_map(|grant| Some((grant.generation, grant.open_key(&machine.secret).ok()?)))
             .collect())
     }

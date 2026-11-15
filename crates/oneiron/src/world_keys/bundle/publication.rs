@@ -191,10 +191,9 @@ impl OpenedVaultBundle {
                 asks(fold, &request, self.publisher, holder)
                     && fold.machine(self.publisher).is_some_and(|machine| {
                         machine
-                            .roster
+                            .roster_trusted
                             .iter()
-                            .chain(&machine.roster_trusted)
-                            .chain(machine.anchored.values())
+                            .chain(machine.standing_heads(fold.pinned_root.as_ref()))
                             .any(|chain| self.signed_by(&chain.profile.machine_key))
                     })
             }),

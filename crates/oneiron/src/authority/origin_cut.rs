@@ -276,7 +276,12 @@ impl Vault {
         for repo in repos {
             let target = origin_cut_target(repo)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+            if !super::owner_act_signer_admits(
+                fold.machine(machine),
+                &fold.roster,
+                &public_key,
+                fold.pinned_root.as_ref(),
+            ) {
                 return Err(authority_refused(NO_CARRIER));
             }
             let seen = fold.origin_cuts.revision(target);
