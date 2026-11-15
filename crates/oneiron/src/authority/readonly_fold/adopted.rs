@@ -30,16 +30,21 @@ pub(super) fn fold_adopted_in_txn(
         .filter_map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
         .collect();
     let mut held_covered = BTreeSet::new();
+    // The covered rows stored here, never an arriving one: each is this
+    // install's own row, with its own first-seen receipt.
+    let mut stored_covered = BTreeSet::new();
     let mut tail = Vec::new();
     for id in authority_log_ids_in_txn(store, txn)? {
         if let Some(hash) = covered_ids.get(&id) {
             held_covered.insert(*hash);
+            stored_covered.insert(*hash);
             continue;
         }
         let entry = decode_stored_authority_log_body(&authority_log_body_in_txn(store, txn, &id)?)?;
         let hash = authority_entry_hash(&entry)?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
+            stored_covered.insert(hash);
         } else {
             tail.push((hash, entry));
         }
@@ -67,11 +72,19 @@ pub(super) fn fold_adopted_in_txn(
     }
     // This install's own first sight of a carried covered row, where it kept
     // a receipt: at its adoption of the image, for a row it never stored
-    // (FOLDPAST-COVERED-APPROVAL-CLOCK). A row with none gets no clock here;
-    // the fold asks for the history where the window would need it.
+    // (FOLDPAST-COVERED-APPROVAL-CLOCK). A row never stored with none gets no
+    // clock here; the fold asks for the history where the window would need
+    // it. A covered row stored here keeps its own receipt like any stored
+    // row, so once the backfill ran a missing one is corruption, as the
+    // whole-history read finds it (Astra re-review P1).
     for (hash, row) in &image.rows {
-        if row.body.is_some()
-            && let Some(first_seen) = readonly_first_seen_receipt(store, txn, hash, false)?
+        let stored = stored_covered.contains(hash);
+        if row.body.is_none() && !stored {
+            continue;
+        }
+        if let Some(first_seen) =
+            readonly_first_seen_receipt(store, txn, hash, backfilled && stored)?
+            && row.body.is_some()
         {
             first_seen_at_secs.entry(*hash).or_insert(first_seen);
         }
