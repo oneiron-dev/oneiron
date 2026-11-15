@@ -371,9 +371,27 @@ impl Vault {
         // A fork starts its own version line, so its label is no revision
         // of its parent's.
         if !replaces_parent && new.version == old.version {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "superseding revision must carry a new version",
-            )));
+            // The refusal names the member the owner must bump: whole pack
+            // installs funnel through here, and the bare sentence leaves the
+            // owner guessing which member kept its version. Same refusal —
+            // same variant, kind and code — only the text names the member.
+            // The shared reason is a static string, so this one formatted
+            // line is leaked per refusal.
+            let detail = format!(
+                "superseding revision must carry a new version: skill '{}' keeps version '{}' (content {} -> {})",
+                old.skill_id,
+                old.version,
+                old.content_hash
+                    .map(|hash| hash.to_hex())
+                    .as_deref()
+                    .unwrap_or("none"),
+                new.content_hash
+                    .map(|hash| hash.to_hex())
+                    .as_deref()
+                    .unwrap_or("none"),
+            );
+            let leaked: &'static str = Box::leak(detail.into_boxed_str());
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(leaked)));
         }
         // Canon (ARCH-0053 §6): superseded means "new version ADMITTED".
         // A non-active successor would leave the skillId with no admitted
