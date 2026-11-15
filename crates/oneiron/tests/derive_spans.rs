@@ -14,7 +14,7 @@ use oneiron::snapshot_read::{EvidenceRange, EvidenceSourceStatus, EvidenceSpansR
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{batches_of, claim_lifecycle, source_version, witness_turn};
-use oneiron::test_doors::derive_spans::{claim_locators, support_locators};
+use oneiron::test_doors::derive_spans::{claim_locators, stored_quote_hash, support_locators};
 use oneiron::test_doors::derive_verbs::{LiveRun, define_agent, grant_derive_rows, lease_run};
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use serde_json::{Value, json};
@@ -159,7 +159,11 @@ fn t1_an_evidence_item_with_one_range_lands_its_stored_locator() {
     assert_eq!(stored.len(), 1, "{stored:?}");
     assert_eq!(stored[0].source, turn);
     assert_eq!(stored[0].byte_range, Some((0, 4)));
-    assert_eq!(stored[0].content_hash, shown.spans[0].content_hash);
+    assert_eq!(
+        stored[0].content_hash,
+        stored_quote_hash(shown.spans[0].text.as_bytes()),
+        "the stored hash is the evidence hash of the served words"
+    );
     assert_eq!(stored[0].messages.len(), shown.spans[0].messages.len());
     for (got, want) in stored[0]
         .messages
@@ -217,13 +221,19 @@ fn t2_a_claim_item_with_spans_stores_locators_for_every_cited_row() {
         .find(|loc| loc.source == ranged)
         .expect("the ranged TURN");
     assert_eq!(first.byte_range, Some((5, 10)));
-    assert_eq!(first.content_hash, served_ranged.spans[0].content_hash);
+    assert_eq!(
+        first.content_hash,
+        stored_quote_hash(served_ranged.spans[0].text.as_bytes())
+    );
     let second = stored
         .iter()
         .find(|loc| loc.source == whole)
         .expect("the whole TURN");
     assert_eq!(second.byte_range, Some((0, whole_len)));
-    assert_eq!(second.content_hash, served_whole.spans[0].content_hash);
+    assert_eq!(
+        second.content_hash,
+        stored_quote_hash(served_whole.spans[0].text.as_bytes())
+    );
 }
 
 #[test]
@@ -640,7 +650,10 @@ fn t8_a_masked_reader_cites_in_the_coordinates_it_was_served() {
     )
     .expect("the owner's span")
     .value;
-    assert_eq!(today.content_hash, want.spans[0].content_hash);
+    assert_eq!(
+        today.content_hash,
+        stored_quote_hash(want.spans[0].text.as_bytes())
+    );
 
     let key_at =
         u64::try_from(stored_text.find(secret).expect("the key is stored")).expect("a pos");

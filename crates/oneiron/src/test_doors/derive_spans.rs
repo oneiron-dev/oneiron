@@ -81,6 +81,16 @@ pub fn support_locators(vault: &Vault, record: EntityId) -> Result<Vec<StoredLoc
     locators_of(derived)
 }
 
+/// `blake3:<hex>` of the quote hash a stored locator carries for the exact
+/// bytes `words`: the consolidation evidence hash, which is domain-separated
+/// and so never equals the plain hash a served span carries for those bytes.
+#[must_use]
+pub fn stored_quote_hash(words: &[u8]) -> String {
+    blake3_ref(&crate::dreamer_consolidation::swarm_evidence_content_hash(
+        words,
+    ))
+}
+
 /// The `locators` of one stored evidence envelope: empty when the envelope
 /// carries none.
 fn locators_of(evidence: &rmpv::Value) -> Result<Vec<StoredLocator>> {
