@@ -16,6 +16,7 @@ pub mod board_task_wakes;
 pub mod builtin_pack_seed;
 pub mod calendar_source_tombstone;
 pub mod callable_skill;
+pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod check_in;
 pub mod checkpoint_registry;
@@ -51,6 +52,8 @@ pub mod feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
+#[cfg(feature = "sync")]
+pub mod full_copy_mark;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]

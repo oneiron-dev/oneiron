@@ -945,7 +945,10 @@ fn insert_ready_row<R: Read + Seek>(
                     .asset_text_birth(&id, occurred, row.learned_at, &body, &weighted)
                     .apply(wtxn)
             } else {
-                let mut batch = vault.batch_in().mask(mask).put(
+                // The archive's learned time is kept: a TURN learned past this
+                // store's clock is restored, not refused at the public door's
+                // ceiling (census L7-21; `BatchBuilder::put_archived`).
+                let mut batch = vault.batch_in().mask(mask).put_archived(
                     &id,
                     row.entity_type,
                     occurred,
