@@ -908,6 +908,71 @@ impl Vault {
         let now = self.now_recorded_at();
         next_entry(issuer, &fold, op, now)
     }
+
+    /// Signs `op` as the host root's next row, cosigned by `cosigner`,
+    /// without storing it.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_host_op_cosigned_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+        cosigner: &ed25519_dalek::SigningKey,
+    ) -> Result<AuthorityLogEntry> {
+        let mut entry = self.sign_host_op_for_test(issuer, op)?;
+        let public_key = AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes());
+        entry.cosigns = vec![AuthoritySignature {
+            suite: AuthoritySignatureSuite::Ed25519,
+            public_key: public_key.clone(),
+            signature: vec![0; 64],
+        }];
+        // The transcript names the cosigners' keys, never their signatures.
+        issuer.resign_entry(&mut entry)?;
+        let signature = cosigner
+            .sign(&authority_transcript(&entry)?)
+            .to_bytes()
+            .to_vec();
+        entry.cosigns = vec![AuthoritySignature {
+            suite: AuthoritySignatureSuite::Ed25519,
+            public_key,
+            signature,
+        }];
+        Ok(entry)
+    }
+
+    /// Signs `op` as `signing`'s next row on this vault's heads, without
+    /// storing it.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_op_as_for_test(
+        &self,
+        signing: &ed25519_dalek::SigningKey,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let fold = self.authority_fold()?;
+        let public_key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+        let seq = fold
+            .append_sequences
+            .get(&public_key)
+            .map_or(0, |seq| seq.saturating_add(1));
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: fold.vault_id,
+            seq,
+            parent_hashes: fold.append_heads.iter().copied().collect(),
+            op,
+            signer: AuthoritySignature {
+                suite: AuthoritySignatureSuite::Ed25519,
+                public_key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: self.now_recorded_at(),
+        };
+        entry.signer.signature = signing
+            .sign(&authority_transcript(&entry)?)
+            .to_bytes()
+            .to_vec();
+        Ok(entry)
+    }
 }
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()
