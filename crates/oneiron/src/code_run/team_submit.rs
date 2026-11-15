@@ -14,7 +14,7 @@ pub use oneiron_verb_wire::code_run::team_submit::TeamSubmitInput;
 /// What `self.team.submit` answered: the review the owner answers. Submitted
 /// is not accepted; the owner's answer settles the team.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TeamSubmitAnswer {
     pub team: String,
     /// The output under review, as the host pinned it.

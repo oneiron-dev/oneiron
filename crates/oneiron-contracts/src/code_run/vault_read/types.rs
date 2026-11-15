@@ -63,7 +63,7 @@ pub struct CoreQueryRequest {
     #[serde(default)]
     pub query: Option<String>,
     /// Optional vector query.
-    #[serde(default, rename = "query_vector", alias = "queryVector")]
+    #[serde(default, rename = "query_vector")]
     pub query_vector: Option<Vec<f32>>,
     /// Optional media seed (OF-370), the context pack's `media`: bytes the
     /// host embeds into one declared space and searches as one more ranked
@@ -75,7 +75,6 @@ pub struct CoreQueryRequest {
     #[serde(
         default,
         rename = "query_affect",
-        alias = "queryAffect",
         skip_serializing_if = "Option::is_none"
     )]
     pub query_affect: Option<CoreQueryAffect>,
@@ -86,11 +85,7 @@ pub struct CoreQueryRequest {
     #[serde(default)]
     pub view: Option<View>,
     /// Count precision. Defaults to `Estimate`.
-    #[serde(
-        default = "CountMode::default_estimate",
-        rename = "countMode",
-        alias = "count_mode"
-    )]
+    #[serde(default = "CountMode::default_estimate")]
     pub count_mode: CountMode,
     /// The caller's retrieval filter (FIX 3977): it only narrows what the
     /// read's scoped lane admits.
@@ -112,13 +107,13 @@ pub struct CoreQueryAffect {
 #[serde(deny_unknown_fields)]
 pub struct CoreHydrateRequest {
     /// Canonical short reference in `shortId:contentHashHex` form.
-    #[serde(default, rename = "ref", alias = "short_ref", alias = "shortRef")]
+    #[serde(default, rename = "ref", alias = "short_ref")]
     pub reference: Option<String>,
     /// Short id without the content hash.
-    #[serde(default, rename = "short_id", alias = "shortId")]
+    #[serde(default, rename = "short_id")]
     pub short_id: Option<String>,
     /// Two-hex-digit content hash.
-    #[serde(default, rename = "content_hash", alias = "contentHash")]
+    #[serde(default, rename = "content_hash")]
     pub content_hash: Option<String>,
     /// Projection view for live entities. Defaults to `Full`.
     #[serde(default)]
@@ -129,7 +124,6 @@ pub struct CoreHydrateRequest {
     #[serde(
         default,
         rename = "image_input",
-        alias = "imageInput",
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub image_input: bool,
@@ -150,14 +144,7 @@ pub struct CoreHydrateRequest {
 #[serde(deny_unknown_fields)]
 pub struct CoreBatchShortIdHydrateRequest {
     /// Canonical short references in `shortId:contentHashHex` form.
-    #[serde(
-        default,
-        rename = "refs",
-        alias = "short_refs",
-        alias = "shortRefs",
-        alias = "short_ids",
-        alias = "shortIds"
-    )]
+    #[serde(default, rename = "refs", alias = "short_refs", alias = "short_ids")]
     pub refs: Vec<String>,
     /// Projection view for live entities. Defaults to `Full`.
     #[serde(default)]
@@ -168,7 +155,6 @@ pub struct CoreBatchShortIdHydrateRequest {
     #[serde(
         default,
         rename = "image_input",
-        alias = "imageInput",
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub image_input: bool,

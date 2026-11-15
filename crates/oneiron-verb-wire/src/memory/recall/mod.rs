@@ -228,11 +228,7 @@ pub struct RecallRequest {
     /// The affect the query is asked in (OF-423), as the context pack takes
     /// it: emotion congruence ranks a candidate by how near its own valence,
     /// arousal and dominance sit. Omitted, recall ranks as before.
-    #[serde(
-        default,
-        alias = "queryAffect",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_affect: Option<QueryAffect>,
     /// Local diagnostics only. Capture stays opt-in at vault configuration;
     /// the request can add stage detail and the host's exact turn identity.

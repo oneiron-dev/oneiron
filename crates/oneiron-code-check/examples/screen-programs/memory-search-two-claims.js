@@ -6,7 +6,7 @@ try {
   out.first = await self.memory.put_claim({
     id: "000000000000000000000000000000c1", subject,
     predicate: "profile.favorite_drink", value: "sencha", confidence: 0.9,
-    occurred: {start: 3, end: 4}, learnedAt: 4
+    occurred: {start: 3, end: 4}, learned_at: 4
   });
   out.second = await self.memory.put_claim({
     id: "000000000000000000000000000000c2", subject,

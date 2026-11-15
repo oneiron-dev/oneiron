@@ -2641,7 +2641,7 @@ A running server holds the frame of each card `vault.lenses.default`, `vault.wea
 authors its action, so you can press a card an agent rendered with your own credential. The card
 lends you none of the renderer's authority: every row the action uses is read again as you.
 - `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotency_key"}` runs one event.
-  An optional `"selected_context"` lists `selectionRef`s you made on the card with
+  An optional `"selected_context"` lists `selection_ref`s you made on the card with
   `vault.lenses.select`; a model round trip carries them to the agent as context, and any other
   action ignores them. A model round-trip action goes back to the agent that rendered the card,
   as that agent's next turn, naming you as the one who pressed it: it answers

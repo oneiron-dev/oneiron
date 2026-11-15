@@ -181,7 +181,7 @@ fn claim(vault: &Vault, id: &oneiron::attempt_queue::AttemptId) -> TestResult<At
 /// leased host dispatcher of its root attempt.
 fn save_agent(f: &Fixture, id: EntityId, name: &str) -> TestResult {
     let draft = json!({
-        "agentId": name,
+        "agent_id": name,
         "desc": "creating stamp saved agent",
         "version": "1",
         "scope": {"kind": "base"},

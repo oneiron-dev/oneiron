@@ -41,12 +41,12 @@ fn the_executor_prompt_declares_the_memory_rows_from_the_verb_table() {
                 "value: unknown",
                 "confidence?: ",
                 "occurred?: ",
-                "learnedAt?: ",
+                "learned_at?: ",
             ],
         ),
         (
             "supersede_claim",
-            &["newId: string", "oldId: string", "now: number"],
+            &["new_id: string", "old_id: string", "now: number"],
         ),
         (
             "put_edge",
@@ -139,7 +139,7 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
          out.search = await self.memory.search({{query: 'sencha', limit: 3}}); \
          out.first = await self.memory.put_claim({{id: '{first}', subject, \
            predicate: 'profile.favorite_drink', value: 'sencha', confidence: 0.9, \
-           occurred: {{start: 3, end: 4}}, learnedAt: 4}}); \
+           occurred: {{start: 3, end: 4}}, learned_at: 4}}); \
          out.second = await self.memory.put_claim({{id: '{second}', subject, \
            predicate: 'profile.favorite_drink', value: 'matcha'}}); \
          finish(JSON.stringify(out)); }} catch (error) {{ finish(`threw ${{error}}`); }}",
@@ -198,7 +198,7 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
          try {{ await self.memory.put_edge({{src: '{claim}', kind: 'about', tgt: subject, \
            weight: Infinity}}); out.infinite = 'written'; }} catch (error) {{ out.infinite = String(error); }} \
          try {{ await self.memory.put_claim({{id: '{claim}', subject, predicate: 'p.q', value: 1, \
-           learnedAt: 2 ** 53}}); out.unsafe = 'written'; }} catch (error) {{ out.unsafe = String(error); }} \
+           learned_at: 2 ** 53}}); out.unsafe = 'written'; }} catch (error) {{ out.unsafe = String(error); }} \
          try {{ await self.memory.put_claim({{id: '{claim}', subject, predicate: 'p.q', value: 1, \
            confidence: new Number(NaN)}}); out.boxed = 'written'; }} catch (error) {{ out.boxed = String(error); }} \
          const cyclic = {{}}; cyclic.self = cyclic; \

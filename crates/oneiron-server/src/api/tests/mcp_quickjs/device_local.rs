@@ -256,7 +256,7 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
     let successor = put_world_claim(&mode.vault, subject, "profile.favorite_lantern", world);
     mode.vault.supersede_claim(&successor, &head, 3).unwrap();
     let script = format!(
-        "try {{ await self.memory.supersede_claim({{oldId: '{}', newId: '{}', now: 5}}); }} \
+        "try {{ await self.memory.supersede_claim({{old_id: '{}', new_id: '{}', now: 5}}); }} \
          catch (error) {{}} finish('');",
         head.to_hex(),
         fresh.to_hex()

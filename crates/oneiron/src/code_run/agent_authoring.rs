@@ -21,7 +21,7 @@ pub use oneiron_verb_wire::code_run::agent_authoring::{AgentPutInput, AgentPutOu
 mod tests;
 
 #[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct Draft {
     agent_id: String,
     desc: String,
@@ -53,7 +53,7 @@ struct Draft {
 /// One requested model-list entry (FIX 4472). A put that names a list other
 /// than its author's own is held as a proposal for the owner.
 #[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct DraftModel {
     model_ref: ModelId,
     when: String,

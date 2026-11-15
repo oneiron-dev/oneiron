@@ -13,13 +13,12 @@ pub struct CoreBatchEntityInput {
     #[serde(default)]
     pub id: Option<String>,
     /// The entity type byte.
-    #[serde(alias = "entityType")]
     pub entity_type: u8,
-    #[serde(default, alias = "occurredStart")]
+    #[serde(default)]
     pub occurred_start: Option<u64>,
-    #[serde(default, alias = "occurredEnd")]
+    #[serde(default)]
     pub occurred_end: Option<u64>,
-    #[serde(default, alias = "learnedAt")]
+    #[serde(default)]
     pub learned_at: Option<u64>,
     pub body: Value,
     #[serde(default)]

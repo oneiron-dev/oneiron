@@ -150,7 +150,7 @@ pub struct XlsxSheetView {
     pub locked: Vec<XlsxArea>,
     /// Its tables, each with its header and totals rows.
     pub tables: Vec<XlsxTable>,
-    /// Whether its tab shows: visible, hidden or veryHidden.
+    /// Whether its tab shows: visible, hidden or very_hidden.
     pub visibility: XlsxSheetVisibility,
     /// The conditional formats the body added, by id.
     pub conditional_formats: Vec<BodyConditionalFormat>,

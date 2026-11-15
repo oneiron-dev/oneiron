@@ -376,11 +376,11 @@ fn unsafe_run_row_integers_refuse_before_dispatch() {
             .extend(extra.as_object().expect("object").clone());
         input
     };
-    let supersede = |now: u64| serde_json::json!({"verb": "supersede_claim", "newId": id, "oldId": other, "now": now});
+    let supersede = |now: u64| serde_json::json!({"verb": "supersede_claim", "new_id": id, "old_id": other, "now": now});
     let unsafe_time = crate::code_run::JS_SAFE_INTEGER + 1;
     for (input, dispatched) in [
         (supersede(unsafe_time), 0),
-        (claim(serde_json::json!({"learnedAt": unsafe_time})), 0),
+        (claim(serde_json::json!({"learned_at": unsafe_time})), 0),
         (
             claim(serde_json::json!({"occurred": {"start": 0, "end": unsafe_time}})),
             0,
@@ -486,8 +486,8 @@ fn native_quickjs_memory_rows_make_the_calls_their_imports_made() -> Result<()> 
          out.first = await self.memory.put_claim({{id: a, subject: s, predicate: 'p.q', \
            value: 'sencha'}}); \
          out.second = await self.memory.put_claim({{id: b, subject: s, predicate: 'p.q', \
-           value: 'matcha', confidence: 0.25, occurred: {{start: 3, end: 4}}, learnedAt: 5}}); \
-         out.superseded = await self.memory.supersede_claim({{newId: b, oldId: a, now: 6}}); \
+           value: 'matcha', confidence: 0.25, occurred: {{start: 3, end: 4}}, learned_at: 5}}); \
+         out.superseded = await self.memory.supersede_claim({{new_id: b, old_id: a, now: 6}}); \
          out.edge = await self.memory.put_edge({{src: b, kind: 'about', tgt: s}}); \
          out.weighted = await self.memory.put_edge({{src: b, kind: 'mentions', tgt: s, \
            weight: 0.75}}); \

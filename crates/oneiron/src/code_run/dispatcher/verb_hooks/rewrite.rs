@@ -94,7 +94,7 @@ struct SpanArgs {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct ClaimArgs {
     id: String,
     predicate: String,
@@ -114,7 +114,7 @@ struct EdgeSubjectArgs {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct SupersedeArgs {
     new_id: String,
     old_id: String,
@@ -131,7 +131,7 @@ struct EdgeArgs {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct RefuseArgs {
     task_ref: Option<String>,
     domain: String,

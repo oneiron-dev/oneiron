@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 use crate::code_run::SessionHookDisposition;
 use crate::entity_id::EntityId;
 
-/// `vault.claims.supersede`: closes `oldId` in favour of `newId`.
+/// `vault.claims.supersede`: closes `old_id` in favour of `new_id`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct MemorySupersedeInput {
     pub new_id: String,
     pub old_id: String,
@@ -55,7 +55,7 @@ impl MemorySupersedeInput {
 /// `tasks.refuse`: the agent's own refusal of the TASK her run realizes,
 /// applied through her refusal dial (OF-533).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TaskRefuseInput {
     /// The bound TASK's id, hex; the run's own TASK when absent. Any other
     /// TASK is refused.

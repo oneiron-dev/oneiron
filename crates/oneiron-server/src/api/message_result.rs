@@ -111,7 +111,7 @@ pub(crate) async fn read_core_message_result(
         )
         .map_err(MemoryError::from)?
         {
-            return Ok(json!({"denied": "result_withheld", "reasonCodes": ["result_withheld"]}));
+            return Ok(json!({"denied": "result_withheld", "reason_codes": ["result_withheld"]}));
         }
         Ok(reply)
     })

@@ -63,7 +63,7 @@ pub struct XlsxSheet {
 /// Whether a sheet's tab shows, as Excel's `<sheet state>` holds it. A
 /// `veryHidden` sheet is left out of Excel's Unhide list too.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum XlsxSheetVisibility {
     #[default]
     Visible,

@@ -65,14 +65,9 @@ pub struct CoreQueryMeta {
     /// Reported total under the collapsed count mode.
     pub total: u64,
     /// Collapsed count mode actually applied.
-    #[serde(rename = "countMode")]
     pub count_mode: CountMode,
     /// Whether this door lowered the requested result count; always false.
-    #[serde(
-        rename = "limitClamped",
-        default,
-        skip_serializing_if = "std::ops::Not::not"
-    )]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub limit_clamped: bool,
 }
 
@@ -87,7 +82,7 @@ pub struct CoreQueryResponse {
     /// Projected page of admitted entities.
     pub items: Vec<CoreEntityRecord>,
     /// Reserved cursor field; this contract version never paginates.
-    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     /// Count metadata.
     pub meta: CoreQueryMeta,

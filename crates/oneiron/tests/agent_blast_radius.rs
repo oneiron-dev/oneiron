@@ -244,7 +244,7 @@ fn spawn_child(f: &Fixture, key: &str) -> TestResult<AttemptId> {
 /// The author's `vault.agents.put` of an in-slice definition at `id`.
 fn save_agent(f: &Fixture, id: EntityId, name: &str) -> TestResult {
     let draft = json!({
-        "agentId": name,
+        "agent_id": name,
         "desc": "blast radius saved agent",
         "version": "1",
         "scope": {"kind": "base"},

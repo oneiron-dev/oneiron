@@ -1,7 +1,7 @@
 # Explicit team votes
 
 A participant in a vote-pattern team can call
-`self.team.vote({teamRef, choice})` from code mode. The host binds the voter
+`self.team.vote({team_ref, choice})` from code mode. The host binds the voter
 from the running attempt. The input has no voter or actor field.
 
 The vote writer reads that attempt again in its write transaction. It must

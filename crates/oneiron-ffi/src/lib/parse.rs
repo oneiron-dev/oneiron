@@ -95,9 +95,9 @@ pub(super) fn memory_result<T>(result: MemoryResult<T>) -> Result<T, OneironStat
 }
 
 /// A context pack's optional `media` (OF-370), UTF-8 JSON of the served
-/// route's media query: `{"space", "mime", "bytes_b64" (or "bytesB64"),
-/// "kinds"}`, kinds among `text`, `image` and `audio`. A null pointer with
-/// length 0 names none. JSON of another shape is `InvalidArg`. A valid one
+/// route's media query: `{"space", "mime", "bytes_b64", "kinds"}`, kinds
+/// among `text`, `image` and `audio`. A null pointer with length 0 names
+/// none. JSON of another shape is `InvalidArg`. A valid one
 /// is refused `ModelUnavailable`, as an embedded `vault.recall` refuses it:
 /// this library serves no `ai.embed` rung to embed the bytes into their
 /// space, and it never packs the rest of the request without them.

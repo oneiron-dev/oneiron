@@ -86,7 +86,7 @@ declare interface SliceReply {
  * backreferences). A binary body is searched by the pattern's bytes. */
 declare interface SearchOptions {
   regex?: boolean;
-  ignoreCase?: boolean;
+  ignore_case?: boolean;
   /** Matches per call; 100 by default. */
   limit?: number;
   /** Bytes of context each side; 80 by default, at most 1024. */
