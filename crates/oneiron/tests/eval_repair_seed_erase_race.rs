@@ -3,8 +3,10 @@
 //! the task. A proposal that compiled before its capture was erased records
 //! no seed, and a gate that read a seed records nothing once that seed row
 //! changed, so an erase and a new proposal cannot give one source a second
-//! case. The doors' writes run alone through the test doors, as a compile
-//! that the erase overtook reaches them.
+//! case. Nor does a gate settle a seed whose capture was deleted after it
+//! read the seed: a delete keeps the seed until the erase, but never lets it
+//! take a case. The doors' writes run alone through the test doors, as a
+//! compile that the erase overtook reaches them.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test eval_repair_seed_erase_race`
@@ -280,5 +282,47 @@ fn a_settle_writes_only_the_seed_it_read() -> TestResult {
     );
     assert_eq!(fixture.vault.eval_repair_seed(source)?, Some(refused));
     assert_eq!(uncut_sealed_cases(&fixture)?, 0);
+    Ok(())
+}
+
+#[test]
+fn a_capture_deleted_while_its_seed_is_graded_takes_no_case() -> TestResult {
+    let fixture = fixture()?;
+    let source = &fixture.source;
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let pending = memory
+        .propose_eval_repair_seed(&request(source), PROPOSED_AT)?
+        .seed
+        .expect("the owner reads their own capture");
+    // A settle compiles the task and reads the pending seed; then the
+    // capture is deleted. The delete keeps its shell, and the seed stays
+    // until the erase scrubs it.
+    let task = memory
+        .read_eval_repair_task(source)?
+        .task
+        .expect("the owner reads their own capture");
+    let claim = EntityId::from_hex(&source.claim_ref)?;
+    assert!(
+        fixture.vault.delete_entity(&claim)?,
+        "the capture is deleted"
+    );
+    assert_eq!(
+        fixture.vault.eval_repair_seed(source)?,
+        Some(pending.clone())
+    );
+    let settlement = commit_settlement(
+        &fixture.vault,
+        &pending,
+        &task,
+        (&response("wrong answer"), &response(ANSWER)),
+        &legs(),
+        SETTLED_AT,
+    );
+    assert!(
+        settlement.is_err(),
+        "a deleted capture's seed is never settled: {settlement:?}"
+    );
+    assert_eq!(fixture.vault.eval_repair_seed(source)?, Some(pending));
+    assert_eq!(uncut_sealed_cases(&fixture)?, 0, "no case after the delete");
     Ok(())
 }
