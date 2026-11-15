@@ -4,7 +4,9 @@
 //! `preference.*` claim only on "three observations across two or more
 //! sessions". A mined preference is stamped Observed only when its cited
 //! receipts join to that much real evidence; below the bar it keeps its
-//! Generated stamp, unchanged.
+//! Generated stamp, unchanged. The owner moves the bar for a preference about
+//! the owner (`claim.observed_preference.min_observations` and
+//! `min_sessions`); a preference about anyone else keeps three across two.
 //!
 //! One observation is one source TURN whose proposal the decider corrected:
 //! a cited receipt's captured Δ, the retained proposal its proposed end

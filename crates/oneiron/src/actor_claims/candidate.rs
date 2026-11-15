@@ -728,7 +728,7 @@ fn candidate_evidence(attempt: AttemptId, at: u64) -> Value {
 }
 
 /// `text` whitespace-folded, in consecutive parts of at most `max_bytes` (the
-/// owner's cap, at least one UTF-8 character's 4 bytes), split at word
+/// owner's cap, at least 128 bytes, so above one UTF-8 character), split at word
 /// boundaries (a single word longer than a row splits at a character
 /// boundary). Nothing is dropped; a blank note has no parts.
 fn note_parts(text: &str, max_bytes: usize) -> Vec<String> {

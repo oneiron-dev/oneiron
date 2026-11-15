@@ -286,18 +286,19 @@ fn an_actor_note_over_1024_bytes_is_refused_by_default() {
 }
 
 #[test]
-fn a_note_cap_outside_4_to_16384_bytes_is_refused() {
+fn a_note_cap_outside_128_to_16384_bytes_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = plain_vault(&dir);
-    for cap in [3, 16_385] {
+    for cap in [127, 16_385] {
         let refused = owner_sets(&vault, NOTE_CAP_KEY, json!(cap))
-            .expect_err("the cap stays within one character and the structural ceiling");
+            .expect_err("the cap stays within the engine's own notes and the structural ceiling");
         assert!(
-            format!("{refused:?}").contains("between 4 and 16384"),
+            format!("{refused:?}").contains("between 128 and 16384"),
             "the cap's own check refuses {cap}: {refused:?}"
         );
     }
     owner_moves(&vault, NOTE_CAP_KEY, json!(16_384));
+    owner_moves(&vault, NOTE_CAP_KEY, json!(128));
 }
 
 // claim.observed_preference.min_observations / min_sessions

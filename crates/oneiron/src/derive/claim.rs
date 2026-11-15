@@ -1,8 +1,10 @@
 //! The claim item (kind 1): a derived claim through the shared claim gate as
 //! the committing actor, held to the derivation floors and to that actor's
 //! own read. Its source is the trust of the rows it cites, folded from the
-//! `Generated` floor, or Observed for a preference supported by three user
-//! TURNs across two sessions. Its caller never chooses the source.
+//! `Generated` floor, or Observed for a preference supported by the
+//! observed-preference bar's user TURNs and sessions (three across two; the
+//! owner moves it for a preference about the owner). Its caller never chooses
+//! the source.
 
 use rmpv::Value;
 
@@ -31,7 +33,9 @@ use crate::{ClaimCandidate, EntityId, TimeRange, Vault};
 ///
 /// The engine computes the source, never taking one from its caller. It
 /// stamps Observed on a `preference.*` claim with a Generated evidence meet
-/// and three live, nonimported user TURNs across two live sessions. Otherwise
+/// and live, nonimported user TURNs across live sessions that meet the
+/// observed-preference bar (`observed_preference_bar_in_txn`: three across
+/// two, or the owner's keys for a preference about the owner). Otherwise
 /// the source stays the cited rows' meet ([`evidence_meet_in_txn`]): imported
 /// words remain Imported, held for review whatever the Generated permit grants.
 ///

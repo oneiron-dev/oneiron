@@ -32,9 +32,15 @@ pub const ACTOR_NOTE_MAX_BYTES: usize = 1024;
 /// ceiling of the owner's cap (Engine RULING RESTRICTION-WAVE-8-ROWS, C95 = A).
 /// A note written under a raised cap still validates once the cap is lowered.
 pub const ACTOR_NOTE_CEILING_BYTES: usize = 16384;
-/// The least the owner's cap may be: one UTF-8 character's most bytes, so the
-/// distiller's splitter always cuts at least one whole character.
-pub const ACTOR_NOTE_FLOOR_BYTES: usize = 4;
+/// The least the owner's cap may be: room for every note the engine writes
+/// itself, so no cap fails an engine pass. Those are the lapse failure mode
+/// ([`LAPSE_FAILURE_MODE`], 26 bytes) and the amendment lapse lesson that
+/// names its receipt (`execution_lapse:proposal_text_amendment:<32 hex>`, 72
+/// bytes); the batch cap `derive.batch.max_items` floors at the engine's own
+/// work the same way. It is also far above one UTF-8 character's 4 bytes, so
+/// the distiller's splitter always cuts at least one whole character.
+pub const ACTOR_NOTE_FLOOR_BYTES: usize = 128;
+const _: () = assert!(LAPSE_FAILURE_MODE.len() <= ACTOR_NOTE_FLOOR_BYTES);
 
 /// The value of `actor_claims.note.max_bytes`: the most UTF-8 bytes a note
 /// this vault writes holds, within [`ACTOR_NOTE_FLOOR_BYTES`] and

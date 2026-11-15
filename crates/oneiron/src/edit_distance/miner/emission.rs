@@ -320,8 +320,9 @@ pub(super) fn emit_preference_value(
                 &evidence_record,
             )
             .apply(wtxn)?;
-        // Observed only on ARCH-0003's bar, joined in this writer; below it
-        // the claim keeps its Generated stamp (FIX 3083).
+        // Observed only on the observed-preference bar (ARCH-0003's, or the
+        // owner's for a preference about the owner), joined in this writer;
+        // below it the claim keeps its Generated stamp (FIX 3083).
         let observed = crate::claim::is_observed_preference(Some(ClaimSource::Observed), predicate)
             && observed_support_in_txn(vault, wtxn, cluster)?;
         let source = if observed {
