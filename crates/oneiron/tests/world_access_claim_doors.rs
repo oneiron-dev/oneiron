@@ -16,6 +16,12 @@
 //! owner decision on the grant. The door now takes a grant from a vault
 //! owner only.
 //!
+//! Both call sites take a grant only of a LIVE owner's writing: the claim
+//! candidate door (its envelope actor) and the save of an off-record room
+//! (the writer the staged row keeps). Each is shown refusing an agent and a
+//! former owner: a co-owner of a shared vault whom the other owner made an
+//! Admin through `remove_owner`.
+//!
 //! The owner grant that puts the agent under world-access law lands through
 //! the cfg door #7793 added (`test_doors::world_access`); every other write
 //! goes through the Memory claim doors behind `vault.claims.*`.
@@ -26,12 +32,18 @@
 
 use oneiron::agent_def::AgentCeiling;
 use oneiron::authority::HostSlipIssuer;
+use oneiron::claim::base_world_id;
 use oneiron::consent::{AuthenticatedOwner, consent_receipt_grant_ref};
+use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::memory::{
-    ClaimInput, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest,
-    ClaimSettlementVerdict, MemoryAuthoringAction, MemoryResult, resolve_entity_ref,
+    AllRelationships, ClaimInput, ClaimProposalReviewRequest, ClaimRelationships, ClaimScope,
+    ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict, MemoryAuthoringAction,
+    MemoryResult, ScopedClaimInput, resolve_entity_ref,
 };
-use oneiron::registry::ENTITY_TYPE_WORLD;
+use oneiron::off_record::{OffRecordBackendClass, OffRecordSession};
+use oneiron::registry::{
+    ENTITY_TYPE_EVENT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::world_access::put_world_access_row;
 use oneiron::{
@@ -42,6 +54,12 @@ use oneiron::{
 use serde_json::{Value, json};
 
 const LEARNED_AT: u64 = 1_780_000_000;
+
+/// The shared vault id the former-owner tests share the vault under.
+const SHARED: u64 = 42;
+
+/// The refusal both call sites give a grant no live owner wrote.
+const NOT_AN_OWNER: &str = "world access grant must be written by a vault owner";
 
 /// A vault rooted under a host (an owner's native Grant needs a rooted
 /// vault) with the shipped default manifest; an agent whose ceiling the owner
@@ -219,6 +237,180 @@ impl Fixture {
             .expect("the holder's approval lands under its Grant");
         assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
     }
+
+    /// Shares the vault with a second Owner, who accepts its founding
+    /// invitation (as `tests/admin_is_not_steward.rs` does), and returns it.
+    fn share_with_co_owner(&self) -> EntityId {
+        let co_owner = EntityId::now();
+        self.vault
+            .put_entity(
+                &co_owner,
+                ENTITY_TYPE_PERSON,
+                at(LEARNED_AT),
+                LEARNED_AT,
+                b"human",
+            )
+            .expect("a live person");
+        self.vault
+            .initialize_shared_vault(
+                &self.owner_proof,
+                SHARED,
+                None,
+                &[
+                    InitialSharedMember {
+                        member_ref: self.owner,
+                        role: Some(FederationGrantRole::Owner),
+                    },
+                    InitialSharedMember {
+                        member_ref: co_owner,
+                        role: Some(FederationGrantRole::Owner),
+                    },
+                ],
+                1,
+            )
+            .expect("a shared vault with two owners");
+        let co_owner_proof = self
+            .vault
+            .authenticate_owner(co_owner, &co_owner.to_hex(), true, GateDecisionId::now())
+            .expect("the co-owner's proof");
+        let invitation = self
+            .vault
+            .shared_invitations(&co_owner_proof, SHARED)
+            .expect("the co-owner's invitations")
+            .into_iter()
+            .find(|open| open.role == FederationGrantRole::Owner)
+            .expect("the co-owner's founding invitation");
+        self.vault
+            .accept_shared_invitation(&co_owner_proof, SHARED, &invitation.id)
+            .expect("the co-owner accepts");
+        assert_eq!(
+            self.role_of(co_owner),
+            Some(FederationGrantRole::Owner),
+            "the co-owner is an Owner"
+        );
+        co_owner
+    }
+
+    /// The owner makes `co_owner` an Admin through `remove_owner`, which runs
+    /// at once under its zero wait: `co_owner` is a former owner.
+    fn demote_to_admin(&self, co_owner: EntityId) {
+        let act = self
+            .vault
+            .propose_remove_owner(
+                &self.owner_proof,
+                SHARED,
+                co_owner,
+                None,
+                Some(FederationGrantRole::Admin),
+                false,
+            )
+            .expect("the owner starts remove_owner, the co-owner keeping Admin");
+        self.vault
+            .execute_completed_shared_act(&self.owner_proof, &act.id, None)
+            .expect("remove_owner runs");
+        assert_eq!(
+            self.role_of(co_owner),
+            Some(FederationGrantRole::Admin),
+            "the former owner is an Admin"
+        );
+    }
+
+    /// The role `member` holds in the shared vault now, read from its grant
+    /// rows (as `tests/admin_is_not_steward.rs` reads it).
+    fn role_of(&self, member: EntityId) -> Option<FederationGrantRole> {
+        self.vault
+            .entities_by_type(ENTITY_TYPE_FEDERATION_GRANT)
+            .expect("grants")
+            .into_iter()
+            .find_map(|id| {
+                let body = self.vault.get(&id).expect("grant row")?;
+                let grant = oneiron::federation::decode_federation_grant_body(&body).ok()?;
+                (grant.member_ref == member && grant.role != FederationGrantRole::Delegate)
+                    .then_some(grant.role)
+            })
+    }
+
+    /// An off-record room (roomless, local), as the save pins enter one
+    /// (`tests/gate_pins_put_pipeline.rs`).
+    fn room(&self, name: &str) -> OffRecordSession<'_> {
+        self.vault
+            .off_record_session_vault()
+            .enter(name, OffRecordBackendClass::Local)
+            .expect("enter the room")
+    }
+
+    /// `writer` stages a user-stated grant about the agent in `room`
+    /// (`vault.claims.upsert` in a session), at sensitivity 2 so it stages
+    /// proposed. Staging runs the Gate, not the base-reality write rules, so
+    /// it stages on main and on this head alike. Returns the row's id.
+    fn stage_grant_in_room(
+        &self,
+        room: &OffRecordSession<'_>,
+        writer: EntityId,
+        class: EdgeActorClass,
+    ) -> EntityId {
+        let project = EntityId::now();
+        self.vault
+            .put_entity(
+                &project,
+                ENTITY_TYPE_EVENT,
+                at(LEARNED_AT),
+                LEARNED_AT,
+                &rmp_serde::to_vec_named(&json!({ "name": "world doors project" }))
+                    .expect("encode the project row"),
+            )
+            .expect("a project row");
+        let claim = EntityId::now();
+        self.vault
+            .memory(writer, class)
+            .claim_upsert_in_session(
+                room,
+                &ScopedClaimInput {
+                    id: Some(claim.to_hex()),
+                    predicate: PREDICATE_WORLD_ACCESS_ALLOWED_SET.to_owned(),
+                    subject_ref: self.agent.to_hex(),
+                    value: json_worlds(false, &[]),
+                    confidence: 1.0,
+                    source: "user_stated".to_owned(),
+                    scope: ClaimScope {
+                        world_id: base_world_id().to_hex(),
+                        scope_facet_id: self.facet.to_hex(),
+                        scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                        scope_project_id: project.to_hex(),
+                    },
+                    sensitivity: Some(2),
+                    evidence_turn_refs: Vec::new(),
+                    valid_from: None,
+                    valid_to: None,
+                    occurred_at: Some(LEARNED_AT),
+                    learned_at: Some(LEARNED_AT),
+                    salience: None,
+                },
+            )
+            .expect("the writer stages a grant in the room");
+        claim
+    }
+
+    /// The owner saves `claim` from `room` (`vault.off_record.artifacts.save`);
+    /// when the save lands it, a holder approves the saved proposal under the
+    /// owner's review Grant, as a staged grant would go on to be approved.
+    fn owner_saves_then_holder_approves(
+        &self,
+        room: &OffRecordSession<'_>,
+        claim: EntityId,
+    ) -> oneiron::Result<oneiron::off_record::PromoteOutcome> {
+        let saved = room.save_artifact_as(&self.owner_proof, &claim.to_hex());
+        if saved.is_ok()
+            && self
+                .vault
+                .get_claim(&claim)
+                .expect("read the saved row")
+                .is_some_and(|body| body.approval == ClaimApprovalStatus::Proposed)
+        {
+            self.holder_approves(claim);
+        }
+        saved
+    }
 }
 
 fn at(time: u64) -> TimeRange {
@@ -335,10 +527,124 @@ fn a_grant_another_writer_stages_never_governs() {
     );
     let refused = staged.expect_err("the door takes a grant from a vault owner only");
     assert!(
-        refused
-            .message
-            .contains("world access grant must be written by a vault owner"),
+        refused.message.contains(NOT_AN_OWNER),
         "the refusal names the rule: {refused:?}"
+    );
+}
+
+/// A former owner at the claim door: a co-owner of the shared vault whom the
+/// other owner made an Admin stages a user-stated grant about an agent, and a
+/// holder approves it under the owner's review Grant. Before this change the
+/// approved row governed the agent; the door reads the owner census at the
+/// write, so an owner who has left writes no grant.
+#[test]
+fn a_grant_a_former_owner_stages_never_governs() {
+    let f = Fixture::new();
+    let former = f.share_with_co_owner();
+    f.demote_to_admin(former);
+
+    let staged = f
+        .vault
+        .memory(former, EdgeActorClass::Human)
+        .claim_propose(&f.input(
+            PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+            f.agent,
+            json_worlds(false, &[]),
+            "user_stated",
+        ));
+    if let Ok(receipt) = &staged {
+        let id = resolve_entity_ref(&f.vault, &receipt.claim_short_id).expect("proposal id");
+        f.holder_approves(id);
+    }
+
+    assert_eq!(
+        f.agent_reads().expect("the agent's reads resolve"),
+        ungoverned(),
+        "a grant a former owner wrote governs nobody (staged: {staged:?})"
+    );
+    let refused = staged.expect_err("the door takes a grant from a live vault owner only");
+    assert!(
+        refused.message.contains(NOT_AN_OWNER),
+        "the refusal names the rule: {refused:?}"
+    );
+}
+
+/// An agent at the off-record save: an agent stages a user-stated grant about
+/// another agent in an off-record room, the owner saves it, and a holder
+/// approves the saved row. Before this change the saved row governed the
+/// other agent; the save takes a grant only of a live owner's writing (the
+/// writer the staged row keeps), and refuses the whole save.
+#[test]
+fn a_grant_an_agent_stages_in_a_room_is_refused_at_the_save() {
+    let f = Fixture::new();
+    let room = f.room("world-doors-agent-room");
+    let claim = f.stage_grant_in_room(&room, f.proposer, EdgeActorClass::Agent);
+
+    let saved = f.owner_saves_then_holder_approves(&room, claim);
+
+    assert_eq!(
+        f.agent_reads().expect("the agent's reads resolve"),
+        ungoverned(),
+        "a grant an agent staged governs nobody (save: {saved:?})"
+    );
+    let refused = saved.expect_err("the save takes a grant only of a live owner's writing");
+    assert!(
+        refused.to_string().contains(NOT_AN_OWNER),
+        "the refusal names the rule: {refused}"
+    );
+    assert!(
+        f.vault.get_claim(&claim).expect("read").is_none(),
+        "the refused save lands nothing"
+    );
+}
+
+/// A former owner at the off-record save: a co-owner stages a user-stated
+/// grant about an agent in an off-record room while an Owner, the other
+/// owner makes it an Admin, then saves the room. Before this change the saved
+/// row governed the agent once a holder approved it; the save reads the
+/// owner census at the save, so the grant of an owner who has left is
+/// refused.
+#[test]
+fn a_grant_a_former_owner_staged_in_a_room_is_refused_at_the_save() {
+    let f = Fixture::new();
+    let former = f.share_with_co_owner();
+    let room = f.room("world-doors-former-owner-room");
+    let claim = f.stage_grant_in_room(&room, former, EdgeActorClass::Human);
+    f.demote_to_admin(former);
+
+    let saved = f.owner_saves_then_holder_approves(&room, claim);
+
+    assert_eq!(
+        f.agent_reads().expect("the agent's reads resolve"),
+        ungoverned(),
+        "a grant a former owner staged governs nobody (save: {saved:?})"
+    );
+    let refused = saved.expect_err("the save takes a grant only of a live owner's writing");
+    assert!(
+        refused.to_string().contains(NOT_AN_OWNER),
+        "the refusal names the rule: {refused}"
+    );
+    assert!(
+        f.vault.get_claim(&claim).expect("read").is_none(),
+        "the refused save lands nothing"
+    );
+}
+
+/// Control: the owner's own grant staged in a room lands through the save.
+#[test]
+fn the_owners_grant_from_a_room_save_lands() {
+    let f = Fixture::new();
+    let room = f.room("world-doors-owner-room");
+    let claim = f.stage_grant_in_room(&room, f.owner, EdgeActorClass::Human);
+
+    let outcome = room
+        .save_artifact_as(&f.owner_proof, &claim.to_hex())
+        .expect("the owner's room save lands the owner's grant");
+
+    assert!(
+        outcome.replayed.contains(&claim),
+        "the save names the grant: {:?}",
+        outcome.replayed
     );
 }
 
