@@ -146,9 +146,7 @@ pub(super) struct RosterMemberRow {
 /// what an offboarding may do to her (INB-07; RULING INB-07-OFFBOARD = A1).
 /// A work companion born here is the workspace's own, so her actor is
 /// switched off and the profile grant minted for her revoked; a brought
-/// companion is her member's own, so she is only detached. A work
-/// companion whose PERSON or definition stood before her onboarding began
-/// was not born here: she records [`CompanionOrigin::Unrecorded`].
+/// companion is her member's own, so she is only detached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CompanionOrigin {
     /// Born here as a work companion, with the companion-profile grant
@@ -157,8 +155,7 @@ pub(super) enum CompanionOrigin {
     /// Brought by her member.
     Brought,
     /// A row written before onboarding recorded the origin (STORED-CHANGE
-    /// keep path), or a work companion this onboarding did not bear: an
-    /// offboarding treats her as brought and says so.
+    /// keep path): an offboarding treats her as brought and says so.
     Unrecorded,
 }
 
@@ -283,10 +280,6 @@ pub(super) struct OnboardingJournalRow {
     pub(super) intent_digest: [u8; 32],
     pub(super) step: MemberOnboardingStep,
     pub(super) completed_at: Option<u64>,
-    /// The work companion's PERSON or definition already stood when this
-    /// onboarding began: she was not born here. Written only when true; a
-    /// row without the key reads false (STORED-CHANGE keep path).
-    pub(super) companion_preexisting: bool,
 }
 
 impl OnboardingJournalRow {
@@ -301,7 +294,7 @@ impl OnboardingJournalRow {
 
 impl RawValue for OnboardingJournalRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut entries = vec![
+        Ok(encode_value(&Value::Map(vec![
             (
                 Value::from("schema_version"),
                 Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
@@ -319,11 +312,7 @@ impl RawValue for OnboardingJournalRow {
                 Value::from("completed_at"),
                 self.completed_at.map_or(Value::Nil, Value::from),
             ),
-        ];
-        if self.companion_preexisting {
-            entries.push((Value::from("companion_preexisting"), Value::from(true)));
-        }
-        Ok(encode_value(&Value::Map(entries))?)
+        ]))?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
@@ -354,21 +343,11 @@ impl RawValue for OnboardingJournalRow {
         if (step == MemberOnboardingStep::Complete) != completed_at.is_some() {
             return Err(invalid("onboarding journal completion fields disagree").into());
         }
-        let companion_preexisting = match entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("companion_preexisting"))
-        {
-            None => false,
-            Some((_, value)) => value.as_bool().ok_or_else(|| {
-                invalid("onboarding journal companion_preexisting must be a bool")
-            })?,
-        };
         Ok(Self {
             onboarding_id,
             intent_digest,
             step,
             completed_at,
-            companion_preexisting,
         })
     }
 }
