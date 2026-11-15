@@ -483,9 +483,19 @@ impl<'a> ContextPackBuilder<'a> {
                         Err(error) if refuses_one_row(&error) => None,
                         Err(error) => return Err(error),
                     };
-                    let Some(entity) = hydrated else {
+                    let Some(HydratedEntity {
+                        entity,
+                        served_claim_body,
+                    }) = hydrated
+                    else {
                         continue;
                     };
+                    // A seed served at another body than its live row (an
+                    // Indexed pack) is validated on that body, which the
+                    // stages below then read, as a neighbor is.
+                    if let Some(body) = served_claim_body {
+                        claim_bodies.insert(entity.id, body);
+                    }
                     // Validated before it is kept: a seed whose references
                     // the pack cannot serve is dropped, not the whole pack.
                     match validate_pack_entity_reference(
