@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::blob_artifact::esign::EsignRateCheck;
+use oneiron::own_rate::KeptOwnRateCheck;
 use oneiron::scan_check::ScanCheck;
 use oneiron::{EntityId, Error, Result, Vault};
 use serde_json::{Value, json};
@@ -19,6 +20,12 @@ const CURSOR_WIRE: &str = "wire:health:v1:cursor:wire";
 const CURSOR_LIMIT: &str = "wire:health:v1:cursor:limit:";
 /// How far it has read the e-sign ceremony's burst checks.
 const CURSOR_ESIGN: &str = "wire:health:v1:cursor:esign";
+/// How far it has read own actors' rate crossings, in the order they were
+/// kept (ARCH-0044 C5).
+const CURSOR_OWN_RATE: &str = "wire:health:v1:cursor:own_rate";
+/// Most own-rate crossings one sweep reads; the next sweep reads on from
+/// the cursor.
+const OWN_RATE_PAGE: usize = 256;
 /// One crossed set's newest revision: the subject of its check, kept in the
 /// fold that makes it, so the next revision reads one row (FIX 10866).
 const REVISION: &str = "wire:health:v1:revision:";
@@ -70,14 +77,15 @@ fn named_of(counts: &BTreeMap<String, u64>, names: &BTreeSet<String>) -> Vec<(St
 }
 
 /// The wire crossed set: everyone and everything past its row in the
-/// question, every one of them. A later actor or verb makes a new set (FIX
-/// 9531). Each name is length-prefixed under its kind. The subject prefix of
-/// each revision of the set.
+/// question, every one of them. A later actor, verb or refusing route makes
+/// a new set (FIX 9531). Each name is length-prefixed under its kind. The
+/// subject prefix of each revision of the set.
 fn wire_set(question: &WireQuestion) -> String {
     let mut hasher = blake3::Hasher::new();
     for (kind, names) in [
         (b'a', &question.crossed.actors),
         (b'v', &question.crossed.verbs),
+        (b'r', &question.crossed.capability_refusals),
     ] {
         for name in names {
             hasher.update(&[kind]);
@@ -114,6 +122,7 @@ fn wire_crossing(key: String, question: &WireQuestion, thresholds: &WireThreshol
             "crossed": {
                 "actors": question.crossed.actors,
                 "verbs": question.crossed.verbs,
+                "capability_refusals": question.crossed.capability_refusals,
             },
             // Which tools the named callers called and who called each named
             // tool; MCP envelopes and their errors with no caller ride beside
@@ -122,6 +131,9 @@ fn wire_crossing(key: String, question: &WireQuestion, thresholds: &WireThreshol
             "tool_callers": tool_callers(window, &verbs),
             "mcp_envelopes": window.mcp_envelopes,
             "mcp_errors": window.mcp_errors,
+            // Capabilities keyless routes refused, by route and under no
+            // caller: guesses beside the calls that carried them.
+            "capability_refusals": window.capability_refusals,
         }),
         read: Some((CURSOR_WIRE.to_owned(), key)),
         revises: Some(set),
@@ -249,6 +261,26 @@ fn esign_limit_crossing(key: String, check: &EsignRateCheck, row: &str) -> Cross
     }
 }
 
+/// An own actor's acts of one kind past their advisory rate (ARCH-0044 C5):
+/// one subject per actor and kind, so an answer covers that actor's next
+/// crossings of the kind for its cover time, and an open check counts them.
+/// Its summary is the engine's ([`oneiron::own_rate::health_check_summary`]),
+/// so the actor's erase finds the asks that hold it. It names its actor apart
+/// from the grant rule's `actors`, as a spend check names its caller: every
+/// own actor is known under a grant, and a grant alone does not clear a
+/// burst. It is asked with wire rate's recipients.
+fn own_rate_crossing(kept: KeptOwnRateCheck) -> Crossing {
+    let check = &kept.check;
+    Crossing {
+        subject: oneiron::own_rate::health_check_subject(check.kind, &check.actor),
+        source: CrossingSource::OwnRate,
+        raised_at: kept.kept_at,
+        summary: oneiron::own_rate::health_check_summary(check),
+        read: Some((CURSOR_OWN_RATE.to_owned(), kept.cursor)),
+        revises: None,
+    }
+}
+
 /// A caller's `ai.verdict` spend past its window's check (FIX 1123, Engine
 /// ruling 10-18), kept now as a held check the next sweep asks: "is
 /// everything okay". It names its caller apart from the grant rule's
@@ -307,6 +339,10 @@ pub(super) fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
     let esign_after = cursor(vault, CURSOR_ESIGN)?;
     for (key, check) in vault.esign_rate_checks_after(esign_after.as_deref())? {
         unread.push(esign_crossing(key, &check));
+    }
+    let own_rate_after = cursor(vault, CURSOR_OWN_RATE)?;
+    for kept in vault.own_rate_checks_after(own_rate_after.as_deref(), OWN_RATE_PAGE)? {
+        unread.push(own_rate_crossing(kept));
     }
     for check in vault.scan_checks()? {
         let crossing = scan_crossing(&check);
@@ -393,10 +429,17 @@ fn superseded(mut earlier: HealthCheck, by: &str) -> HealthCheck {
 /// revision supersedes that earlier one while it is still open
 /// ([`superseded`]), and becomes the set's newest. The checks, the set's
 /// revision row and the cursor past the crossing are kept in one write, so a
-/// crossing is never counted twice nor skipped.
+/// crossing is never counted twice nor skipped. A crossing an erase took
+/// after it was read only moves its cursor ([`still_kept`]).
 pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
     let key = format!("{CHECK}{}", crossing.subject);
     vault.with_write_txn_grouped(|txn| {
+        if !still_kept(vault, txn, &crossing)? {
+            if let Some((cursor, read)) = &crossing.read {
+                vault.sync_state_put_in_write_txn(txn, cursor, read.as_bytes())?;
+            }
+            return Ok(());
+        }
         let existing: Option<HealthCheck> = vault
             .sync_state_get_in_write_txn(txn, &key)?
             .map(|b| decode(&b))
@@ -450,4 +493,17 @@ pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
         }
         Ok(())
     })
+}
+
+/// Whether `crossing` is still kept where it was read, in the fold's writer.
+/// An own actor's erase takes its kept crossings with its checks (FIX 3520),
+/// so one read before that erase keeps no check after it. Every other
+/// source's crossing is folded as read.
+fn still_kept(vault: &Vault, txn: &heed::RwTxn<'_>, crossing: &Crossing) -> Result<bool> {
+    match (crossing.source, &crossing.read) {
+        (CrossingSource::OwnRate, Some((_, read))) => {
+            vault.own_rate_check_kept_in_write_txn(txn, read)
+        }
+        _ => Ok(true),
+    }
 }

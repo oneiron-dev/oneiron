@@ -126,11 +126,6 @@ impl State {
         Ok(())
     }
 }
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-}
 fn lock<T>(mutex: &Mutex<T>) -> MessageStreamResult<std::sync::MutexGuard<'_, T>> {
     mutex.lock().map_err(|_| MessageStreamError::Poisoned)
 }

@@ -25,10 +25,16 @@ use oneiron_base::error::Result;
 /// `refusal` (OF-533) appends next and is elided when absent; absent means
 /// every domain sits at the vault-kind default.
 ///
-/// `models` and `compaction_model` (FIX 4472) append last, elided when empty
+/// `models` and `compaction_model` (FIX 4472) append next, elided when empty
 /// or absent: no list runs the agent on its one house-routed model, and no
 /// compaction model takes the house's.
-pub const AGENT_DEF_BODY_KEYS: [&str; 29] = [
+///
+/// `optional_memory` (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget) appends
+/// last and is elided when absent; absent means the caller's pack request as
+/// sent. It is apart from `memory_profile`, so setting it leaves the window,
+/// its compaction and its pack budget as authored (Engine ruling
+/// L9-32-NO-PROFILE = A, Sat 14 Nov 07:52).
+pub const AGENT_DEF_BODY_KEYS: [&str; 30] = [
     "agentId",
     "desc",
     "version",
@@ -58,6 +64,7 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 29] = [
     "refusal",
     "models",
     "compaction_model",
+    "optional_memory",
 ];
 
 /// The pinned key pair for an [`McpRef`] sub-map.
@@ -67,7 +74,7 @@ pub const MCP_REF_KEYS: [&str; 2] = ["key", "minVersion"];
 pub const AGENT_MODEL_KEYS: [&str; 2] = ["model_ref", "when"];
 
 /// The pinned sub-map keys for a [`MemoryProfile`], in encode order.
-pub const MEMORY_PROFILE_KEYS: [&str; 8] = [
+pub const MEMORY_PROFILE_KEYS: [&str; 7] = [
     "window_token_budget",
     "budget_split",
     "compaction_backend",
@@ -75,7 +82,6 @@ pub const MEMORY_PROFILE_KEYS: [&str; 8] = [
     "hot_steps",
     "output_decay",
     "verbatim_pins",
-    "optional_memory",
 ];
 
 /// The pinned sub-map keys for a [`ContextBudgetSplit`], in encode order.

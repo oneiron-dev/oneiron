@@ -66,20 +66,11 @@ const SENTENCE_OPENERS: [&str; 34] = [
     "we", "we'll", "we've", "what", "when", "why", "you'll", "you're",
 ];
 
-/// Feature name: normalized token count.
-pub const PREFILTER_FEATURE_LEN: &str = "len";
-
-/// Feature name: type/token ratio (lexical variety).
-pub const PREFILTER_FEATURE_TTR: &str = "ttr";
-
-/// Feature name: entity-mention density.
-pub const PREFILTER_FEATURE_ENTITY_DENSITY: &str = "entity_density";
-
-/// Feature name: novelty against the recent-turn window.
-pub const PREFILTER_FEATURE_NOVELTY: &str = "novelty";
-
-/// Feature name: speaker-role weight.
-pub const PREFILTER_FEATURE_ROLE: &str = "role";
+#[doc(hidden)]
+pub use oneiron_records::dreamer_prefilter::score::{
+    PREFILTER_FEATURE_ENTITY_DENSITY, PREFILTER_FEATURE_LEN, PREFILTER_FEATURE_NOVELTY,
+    PREFILTER_FEATURE_ROLE, PREFILTER_FEATURE_TTR,
+};
 
 // ---------------------------------------------------------------------------
 // The pure scorer
@@ -276,11 +267,14 @@ pub(super) fn entity_mentions(tokens: &[&str], known_names: &BTreeSet<String>) -
 }
 
 /// The speaker-role axis. The role gate has already refused everything but
-/// User and Assistant; between those two the owner's own words are the
-/// stronger first-party claim source, so they carry the higher weight.
+/// User, Assistant and Counterparty; the owner's own words are the stronger
+/// first-party claim source, so they carry the higher weight. A
+/// Counterparty turn (received mail) screens with the same human-speech
+/// weight; the weight is screening, not first-party trust, which stays
+/// Imported.
 const fn role_weight(role: DreamerTurnRole) -> f32 {
     match role {
-        DreamerTurnRole::User => 1.0,
+        DreamerTurnRole::User | DreamerTurnRole::Counterparty => 1.0,
         DreamerTurnRole::Assistant => 0.6,
         _ => 0.0,
     }

@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::super::*;
-use oneiron::attempt_queue::AttemptId;
+use oneiron::dreamer_consolidation::{
+    enqueue_partition_attempts, read_watermark, scan_dirty_turns,
+};
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::llm::{
     BudgetDenied, BudgetLease, ContentPart, FatalLlmError, FinishReason, LlmGenerateFuture,
@@ -17,9 +19,8 @@ use oneiron::voice_cascade::{
 };
 use oneiron::{
     ConsolidationSink, DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
-    DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt, ModelId, Result, Vault,
-    VaultConfig, WakeAttemptContext, WakePassDeadline, WriteActor,
+    DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerRunnerStore, ModelId, Result,
+    Vault, VaultConfig, WakeAttemptContext, WakePassDeadline, WriteActor,
 };
 use oneiron_driver::{
     ConsolidationExecutorFactory, HintSignal, PassAttachment, PassAttachmentSource,
@@ -110,22 +111,19 @@ fn seed_actor(vault: &Vault, seed: u8, entity_type: u8) -> oneiron::EntityId {
     id
 }
 
-fn enqueue_input(vault: &Vault, input: rmpv::Value, tag: &str, now: u64) -> AttemptId {
-    match DreamerRunnerStore::new(vault)
-        .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
-            scope: DreamerConsolidationScope::Micro,
-            input,
-            parent_attempt: None,
-            dedupe_key: Some(tag.to_owned()),
-            run_id: Some(tag.to_owned()),
-            now,
-        })
-        .expect("enqueue")
-    {
-        EnqueueDreamerAttemptOutcome::Enqueued(status)
-        | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
-        other => panic!("unexpected enqueue outcome: {other:?}"),
-    }
+/// One captured user turn and the micro consolidation attempt the planner
+/// queues over it. A queued partition is the planner's schema-3 payload over
+/// real turns (d967859a39c, FIX 7524): a hand-built v1 map no longer decodes,
+/// so the wake never prepares it, and a partition with no turns makes no
+/// model call.
+fn enqueue_partition_over_one_turn(vault: &Vault, run_id: &str, now: u64) {
+    crate::ai_host::test_support::capture_user_turn(vault, "call me Owen");
+    let scope = DreamerConsolidationScope::Micro;
+    let watermark = read_watermark(vault, scope).expect("micro watermark");
+    let dirty = scan_dirty_turns(vault, scope, &watermark, 16).expect("dirty turns");
+    assert!(!dirty.is_empty(), "the captured turn is dirty");
+    enqueue_partition_attempts(vault, scope, &dirty, &watermark, run_id, now)
+        .expect("enqueue the partition");
 }
 
 fn admit(vault: &Vault, now: u64) -> DreamerAdmittedAttempt {
@@ -157,17 +155,6 @@ fn admit(vault: &Vault, now: u64) -> DreamerAdmittedAttempt {
         panic!("expected an admitted micro attempt, got {outcome:?}");
     };
     *admitted
-}
-
-fn empty_partition(conversation: oneiron::EntityId) -> rmpv::Value {
-    rmpv::Value::Map(vec![
-        (
-            rmpv::Value::from("conversation_ref"),
-            rmpv::Value::Binary(conversation.as_bytes().to_vec()),
-        ),
-        (rmpv::Value::from("watermark"), rmpv::Value::from(0)),
-        (rmpv::Value::from("turns"), rmpv::Value::Array(Vec::new())),
-    ])
 }
 
 struct Fixture {
@@ -346,13 +333,7 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
     vault
         .install_read_permit_for_test(vault.dreamer_authority().unwrap())
         .expect("explicit read grant for the queued branch actor");
-    let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
-    enqueue_input(
-        &vault,
-        empty_partition(conversation),
-        "voice-shared-executor",
-        10,
-    );
+    enqueue_partition_over_one_turn(&vault, "voice-shared-executor", 10);
     let admitted = admit(&vault, 11);
     let deadline = WakePassDeadline::new(180_000);
     let mut ctx = WakeAttemptContext {
@@ -383,8 +364,13 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
     call.reply
         .send(Err(FatalLlmError::InvalidRequest.into()))
         .unwrap();
+    // A partition's failed model step parks with what it spent (FIX 414,
+    // executor/failure.rs `park_partition_failure_with_spend`).
     let result = execution.await;
-    assert!(matches!(result, Ok(DreamerAttemptExecution::Park { .. })));
+    assert!(
+        matches!(result, Ok(DreamerAttemptExecution::ParkWithSpend { .. })),
+        "{result:?}"
+    );
     assert_eq!(guard.read().used_units, 14);
     assert_eq!(guard.read().reserved_units, 0);
 }
@@ -674,13 +660,7 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
         vault
             .install_read_permit_for_test(vault.dreamer_authority().unwrap())
             .expect("explicit read grant for the queued branch actor");
-        let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
-        enqueue_input(
-            &vault,
-            empty_partition(conversation),
-            "voice-serve-pass",
-            10,
-        );
+        enqueue_partition_over_one_turn(&vault, "voice-serve-pass", 10);
         let mut pass_config = test_config();
         pass_config.local_node_id = DreamerRunnerStore::new(&vault)
             .local_home_node_candidate(false, false, false)

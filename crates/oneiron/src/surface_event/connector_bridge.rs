@@ -20,9 +20,10 @@ use super::{
     SurfaceEventSource, SurfaceEventWorkerOutcome,
 };
 
-/// Predicate every surface-born connector event carries; a subscription
-/// filter names it to take only inbound channel traffic.
-pub const SURFACE_CONNECTOR_EVENT_PREDICATE: &str = "surface_event.v1";
+#[doc(hidden)]
+pub use oneiron_records::surface_event::connector_bridge::SURFACE_CONNECTOR_EVENT_PREDICATE;
+#[doc(hidden)]
+use oneiron_records::surface_event::connector_bridge::invalid;
 
 /// How long a transiently failed ingest waits before the queue retries it.
 const INGEST_RETRY_BACKOFF_SECS: u64 = 30;
@@ -227,8 +228,4 @@ impl Vault {
     ) -> Result<SurfaceEventWorkerOutcome> {
         self.dispatch_next_surface_event(lease_owner, now, &ConnectorWakeBridge::new(self))
     }
-}
-
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(reason.to_owned())
 }
