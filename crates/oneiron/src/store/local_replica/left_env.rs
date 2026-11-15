@@ -7,7 +7,8 @@
 //! are the authority log and MACHINE rows, a held record (a world key pad whose
 //! world or sealed claim is held, too) with the side rows its bodies stand on,
 //! a held partition's gate decisions, and the side rows the host still talks
-//! to its home with and reopens this environment by. A kept entity is indexed
+//! to its home with and reopens this environment by, with the setting rows of
+//! a key about this machine (`sync: install`). A kept entity is indexed
 //! again in each text, phonetic or vector index the purge clears (FIX 2415).
 //! Nothing else is written: no tombstone, deletion marker, audit row, Loro op,
 //! outbox row, receipt or release row.
@@ -118,6 +119,8 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SHORT_ID_KIND_COUNTER,
     &side_table::PORTS_ID_FLOOR,
     &side_table::PORTS_CLOCK_FLOOR,
+    // A kept setting row's revision never goes back (see SETTING_FAMILIES).
+    &side_table::SETTING_CHANGE_NEXT,
     &side_table::COMPACTION_EPOCH_FLOOR,
     // Fences and masks already written; none is added.
     &side_table::DELETION_ROW_FENCE,
@@ -860,6 +863,11 @@ where
     Ok(keys.len())
 }
 
+/// The setting tables, whose rows a leave keeps one by one: a row of a key that holds a choice
+/// about this machine stays (`setting::leave_keeps_row`), and every other row goes. The change
+/// rows go with the vault's history; the change counter stays ([`LEAVE_KEPT_FAMILIES`]).
+static SETTING_FAMILIES: &[&SideTableDecl] = &[&side_table::SETTING, &side_table::SETTING_CONTENT];
+
 fn kept_family(decl: &SideTableDecl) -> bool {
     LEAVE_KEPT_FAMILIES
         .iter()
@@ -876,6 +884,8 @@ enum Fate {
     Kept,
     /// In [`GATE_LEDGER_FAMILIES`]: swept, but for the [`HeldGateRows`].
     Gate,
+    /// In [`SETTING_FAMILIES`]: swept, but for the rows of a key about this machine.
+    Setting,
 }
 
 /// The side rows a walk left in place without a family that always stays.
@@ -899,6 +909,11 @@ impl Families {
                 .any(|gate| std::ptr::eq(*gate, decl))
             {
                 Fate::Gate
+            } else if SETTING_FAMILIES
+                .iter()
+                .any(|setting| std::ptr::eq(*setting, decl))
+            {
+                Fate::Setting
             } else {
                 Fate::Swept
             }
@@ -923,6 +938,11 @@ impl Families {
                 false
             }
             Some(Fate::Gate) => !kept.named_in(key),
+            Some(Fate::Setting) => {
+                !crate::setting::leave_keeps_row(key)
+                    && !held.bodies.contains(key)
+                    && !kept.named_in(key)
+            }
             None => {
                 counts.unknown += 1;
                 false
