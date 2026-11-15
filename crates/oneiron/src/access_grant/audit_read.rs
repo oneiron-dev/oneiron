@@ -462,15 +462,21 @@ pub(crate) fn reject_audit_read_grant_delete_in_txn(
 /// answer to a courtesy ask asks it for each record it restricts; a forged
 /// delivery-ledger row can pass that answer's coverage check for a grant.
 ///
+/// The refusal is the grant record's own (Astra delta-6 K4), as a task
+/// fact's and a ruling's are their record's: the owner who answers has
+/// proved himself, so an owner route must answer it with these words, never
+/// as a missing owner scope.
+///
 /// # Errors
-/// The row at `id` is an audit_read grant; or it does not read.
+/// [`RecordError::InvalidAccessGrantBody`] when the row at `id` is an
+/// audit_read grant; or the row does not read.
 pub(crate) fn reject_audit_read_grant_restriction_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
     if stored_audit_read_grant_in_txn(store, txn, id)? {
-        return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+        return Err(Error::Record(RecordError::InvalidAccessGrantBody(
             AUDIT_READ_RESTRICTION_REFUSAL,
         )));
     }
