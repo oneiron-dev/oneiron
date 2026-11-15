@@ -47,6 +47,7 @@ pub use oneiron_base::host_descriptors;
 pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
+pub(crate) mod idle_fold;
 pub mod limit_ask;
 pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
