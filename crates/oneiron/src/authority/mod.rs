@@ -254,9 +254,11 @@ pub use oneiron_authority::authority::{ExportSecretWork, SealedWorkOutput};
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
 // The challenge a device's new owner key signs to enrol, and its proof's
-// length (FIX 4920, the seam L04's FIX 4921 calls).
+// length (FIX 4920, the seam L04's FIX 4921 calls); the recovery root's
+// authority key signs its own (pass 27 R4).
 pub use oneiron_authority::authority::{
     OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
+    recovery_authority_enrollment_challenge,
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
