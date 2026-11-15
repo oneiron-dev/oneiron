@@ -91,59 +91,19 @@ impl<'a> DreamerRunnerStore<'a> {
         task_ref: Option<String>,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         validate_attempt_type(&input.attempt_type)?;
-        let payload = DreamerAttemptPayload {
-            attempt_type: input.attempt_type,
-            input: input.input,
-            parent_attempt: input.parent_attempt,
-        };
-        let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
-
-        let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
-            self.vault,
+        self.enqueue_scoped_kind_in_txn(
             wtxn,
-            EnqueueAttempt {
-                kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
-                payload: encoded_payload,
-                dedupe_key: input.dedupe_key,
-                run_id: input.run_id,
-                now: input.now,
+            DREAMER_RUNNER_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: input.attempt_type,
+                input: input.input,
+                parent_attempt: input.parent_attempt,
             },
-            crate::ports::JobScope {
-                task_ref,
-                dedupe_actor_ref: None,
-            },
-        )?;
-
-        let record = match &outcome {
-            EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => record,
-        };
-        super::authority::stamp_attempt(self.vault, wtxn, record, &payload.attempt_type)?;
-
-        match outcome {
-            EnqueueOutcome::Enqueued(record) => {
-                put_run_tree_record_in_txn(
-                    self.vault,
-                    wtxn,
-                    &DreamerRunTreeRecord {
-                        attempt_id: record.id,
-                        parent_attempt: payload.parent_attempt,
-                        created_at: record.created_at,
-                    },
-                )?;
-                // FIX 6941: the transaction's owner re-arms the deadline
-                // watch after commit; inert without one, dropped on rollback.
-                crate::batch::queue_proactivity_change(self.vault, wtxn);
-                Ok(EnqueueDreamerAttemptOutcome::Enqueued(
-                    decode_dreamer_attempt_status(record)?,
-                ))
-            }
-            EnqueueOutcome::Existing(record) => {
-                ensure_run_tree_record_in_txn(self.vault, wtxn, &record)?;
-                Ok(EnqueueDreamerAttemptOutcome::Existing(
-                    decode_dreamer_attempt_status(record)?,
-                ))
-            }
-        }
+            input.dedupe_key,
+            input.run_id,
+            input.now,
+            task_ref,
+        )
     }
 
     /// Enqueues a local consolidation attempt on the advisory attempt-table floor.
@@ -605,9 +565,28 @@ impl<'a> DreamerRunnerStore<'a> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_scoped_kind_in_txn(wtxn, queue_kind, payload, dedupe_key, run_id, now, None)
+    }
+
+    /// The one enqueue law behind every Dreamer enqueue door
+    /// ([`Self::enqueue_kind_in_txn`] and [`Self::enqueue_with_task_ref_in_txn`]):
+    /// encode the payload, take the advisory dedupe floor under the owning
+    /// TASK's backlink when there is one, stamp the attempt's authority, and
+    /// co-commit the private run-tree row whichever way the queue answered.
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_scoped_kind_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        queue_kind: &str,
+        payload: DreamerAttemptPayload,
+        dedupe_key: Option<String>,
+        run_id: Option<String>,
+        now: u64,
+        task_ref: Option<String>,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
         let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
-        let outcome = crate::ports::JobQueue::port_job_enqueue(
+        let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault,
             wtxn,
             EnqueueAttempt {
@@ -616,6 +595,10 @@ impl<'a> DreamerRunnerStore<'a> {
                 dedupe_key,
                 run_id,
                 now,
+            },
+            crate::ports::JobScope {
+                task_ref,
+                dedupe_actor_ref: None,
             },
         )?;
 
