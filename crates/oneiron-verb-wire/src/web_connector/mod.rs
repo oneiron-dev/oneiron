@@ -89,7 +89,8 @@ impl WebFetchInput {
 pub struct WebSearchHit {
     pub title: String,
     pub url: String,
-    /// At most [`SNIPPET_MAX_CHARS`] characters.
+    /// At most the vault's `connectors.web.snippet_max_chars` characters (default 300) when
+    /// the server's own provider answers.
     pub snippet: String,
 }
 
@@ -109,7 +110,8 @@ pub struct WebFetchOutput {
     pub provider: String,
     pub url: String,
     pub title: Option<String>,
-    /// At most [`FETCH_CONTENT_MAX_CHARS`] characters.
+    /// At most the vault's `connectors.web.fetch_max_chars` characters (default 50,000) when
+    /// the server's own provider or reader answers.
     pub content: String,
     pub latency_ms: u64,
     /// `None` when the call is unpriced.

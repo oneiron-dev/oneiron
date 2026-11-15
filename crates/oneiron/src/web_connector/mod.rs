@@ -33,12 +33,49 @@ pub use oneiron_verb_wire::web_connector::{
     WebSearchInput, WebSearchOutput,
 };
 
-/// A result snippet's length cap in characters, as Afterglow's `search_web` cuts it.
+/// A result snippet's shipped length cap in characters, as Afterglow's `search_web` cuts it: the
+/// default of the key `connectors.web.snippet_max_chars`.
 pub const SNIPPET_MAX_CHARS: usize = 300;
-/// A fetched page's text cap in characters.
+/// A fetched page's shipped text cap in characters: the default of the key
+/// `connectors.web.fetch_max_chars`.
 pub const FETCH_CONTENT_MAX_CHARS: usize = 50_000;
 
 pub use crate::settings::web_connector::WebTool;
+
+/// The vault's caps on a web call's results, as [`crate::Vault::web_result_limits`] reads them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WebResultLimits {
+    /// The most characters of one search hit's snippet (`connectors.web.snippet_max_chars`,
+    /// default [`SNIPPET_MAX_CHARS`]).
+    pub snippet_max_chars: usize,
+    /// The most characters of one fetched page's text (`connectors.web.fetch_max_chars`, default
+    /// [`FETCH_CONTENT_MAX_CHARS`]); a provider that reads the page itself is asked for at most
+    /// as many.
+    pub fetch_max_chars: usize,
+}
+
+impl WebResultLimits {
+    /// The shipped caps, which a vault with no row of either key reads.
+    pub const SHIPPED: Self = Self {
+        snippet_max_chars: SNIPPET_MAX_CHARS,
+        fetch_max_chars: FETCH_CONTENT_MAX_CHARS,
+    };
+
+    /// `hit` with its snippet cut to the snippet cap.
+    #[must_use]
+    pub fn cut_hit(&self, hit: WebSearchHit) -> WebSearchHit {
+        WebSearchHit {
+            snippet: cut_chars(&hit.snippet, self.snippet_max_chars),
+            ..hit
+        }
+    }
+
+    /// A fetched page's `content` cut to the page cap.
+    #[must_use]
+    pub fn cut_page(&self, content: &str) -> String {
+        cut_chars(content, self.fetch_max_chars)
+    }
+}
 
 /// `text` cut to at most `max` characters, on a character boundary.
 #[must_use]

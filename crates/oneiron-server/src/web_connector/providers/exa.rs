@@ -1,7 +1,7 @@
 //! Exa: auto search with highlights and contents text, on the user's own key
 //! or the hub (Exa §4.2). The cost a row records is the `costDollars.total`
 //! the reply reports.
-use oneiron::web_connector::{FETCH_CONTENT_MAX_CHARS, WebFetchInput, WebSearchInput};
+use oneiron::web_connector::{WebFetchInput, WebSearchInput};
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
 
@@ -58,10 +58,11 @@ pub(super) fn fetch(
     client: &Client,
     key: &str,
     input: &WebFetchInput,
+    max_chars: usize,
 ) -> Result<ProviderAnswer, ProviderError> {
     let body = json!({
         "urls": [input.url],
-        "text": {"maxCharacters": FETCH_CONTENT_MAX_CHARS},
+        "text": {"maxCharacters": max_chars},
     });
     let reply = post_json(client, CONTENTS_URL, Auth::Header("x-api-key"), key, &body)?;
     let failed = reply

@@ -23,9 +23,9 @@ use oneiron::memory::{Memory, MemoryResult};
 use oneiron::outbound_consent::{ConnectorCallOutcome, ConnectorCallRequest, UntrustedToolResult};
 use oneiron::task_verb::sdk::ConnectorCallReply;
 use oneiron::web_connector::{
-    FETCH_CONTENT_MAX_CHARS, FetchRoute, WEB_CONNECTOR_NAME, WebCallOutcome, WebConnectorUsage,
-    WebCostBasis, WebFetchInput, WebFetchOutput, WebKeySource, WebProvider, WebProviderKey,
-    WebSearchInput, WebSearchOutput, WebTool, cut_chars, micro_usd_to_usd,
+    FetchRoute, WEB_CONNECTOR_NAME, WebCallOutcome, WebConnectorUsage, WebCostBasis, WebFetchInput,
+    WebFetchOutput, WebKeySource, WebProvider, WebProviderKey, WebResultLimits, WebSearchInput,
+    WebSearchOutput, WebTool, micro_usd_to_usd,
 };
 use serde_json::{Value, json};
 
@@ -58,6 +58,7 @@ pub(crate) fn call_listing(
     let Some(call) = call else {
         return Ok((refused("connector_arguments_invalid"), None));
     };
+    let limits = server.vault().web_result_limits()?;
     let provider = setting.provider;
     let profile = provider.profile();
     let direct = matches!(call, WebCall::Fetch(_)) && profile.fetch == FetchRoute::Direct;
@@ -86,7 +87,13 @@ pub(crate) fn call_listing(
         (WebCall::Fetch(input), None) => read_direct(server, input),
         (call, Some(key)) => providers::client().and_then(|client| match call {
             WebCall::Search(input) => providers::search(provider, &client, key.expose(), input),
-            WebCall::Fetch(input) => providers::fetch(provider, &client, key.expose(), input),
+            WebCall::Fetch(input) => providers::fetch(
+                provider,
+                &client,
+                key.expose(),
+                input,
+                limits.fetch_max_chars,
+            ),
         }),
         (WebCall::Search(_), None) => Err(ProviderError::message("no provider key")),
     };
@@ -112,7 +119,7 @@ pub(crate) fn call_listing(
                     results: answer.body.result_count(),
                 },
             };
-            let output = shaped(provider, answer, latency_ms, cost_micro_usd);
+            let output = shaped(provider, answer, latency_ms, cost_micro_usd, limits);
             (delivered(tool, output, false), usage)
         }
         Err(error) => {
@@ -268,19 +275,21 @@ fn priced(reported: Option<u64>, declared: Option<u64>) -> (Option<u64>, WebCost
     }
 }
 
-/// The answer in Afterglow's `search_web` shape, or a fetched page's.
+/// The answer in Afterglow's `search_web` shape, or a fetched page's, each snippet and the page
+/// cut to the vault's caps (`limits`).
 fn shaped(
     provider: WebProvider,
     answer: ProviderAnswer,
     latency_ms: u64,
     cost_micro_usd: Option<u64>,
+    limits: WebResultLimits,
 ) -> Value {
     let provider = provider.as_str().to_owned();
     let cost_usd = cost_micro_usd.map(micro_usd_to_usd);
     let output = match answer.body {
         ProviderBody::Hits(results) => serde_json::to_value(WebSearchOutput {
             provider,
-            results,
+            results: results.into_iter().map(|hit| limits.cut_hit(hit)).collect(),
             latency_ms,
             cost_usd,
         }),
@@ -292,7 +301,7 @@ fn shaped(
             provider,
             url,
             title,
-            content: cut_chars(&content, FETCH_CONTENT_MAX_CHARS),
+            content: limits.cut_page(&content),
             latency_ms,
             cost_usd,
         }),

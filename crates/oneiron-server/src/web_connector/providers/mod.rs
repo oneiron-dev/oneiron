@@ -12,9 +12,7 @@ mod tinyfish;
 
 use std::time::Duration;
 
-use oneiron::web_connector::{
-    SNIPPET_MAX_CHARS, WebFetchInput, WebProvider, WebSearchHit, WebSearchInput, cut_chars,
-};
+use oneiron::web_connector::{WebFetchInput, WebProvider, WebSearchHit, WebSearchInput, cut_chars};
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::Value;
@@ -120,16 +118,18 @@ pub(super) fn search(
 }
 
 /// One page read on `provider`'s own endpoint. Brave has none: its profile
-/// sends `fetch` to our own reader, so it never comes here.
+/// sends `fetch` to our own reader, so it never comes here. A provider whose
+/// request names a length (Exa) asks for at most `max_chars` characters.
 pub(super) fn fetch(
     provider: WebProvider,
     client: &Client,
     key: &str,
     input: &WebFetchInput,
+    max_chars: usize,
 ) -> Result<ProviderAnswer, ProviderError> {
     match provider {
         WebProvider::Tavily => tavily::fetch(client, key, input),
-        WebProvider::Exa => exa::fetch(client, key, input),
+        WebProvider::Exa => exa::fetch(client, key, input, max_chars),
         WebProvider::Brave => Err(ProviderError::message("brave has no page reader")),
         WebProvider::Tinyfish => tinyfish::fetch(client, key, input),
         WebProvider::ContextDev => context_dev::fetch(client, key, input),
@@ -214,12 +214,13 @@ fn send(request: reqwest::blocking::RequestBuilder) -> Result<Value, ProviderErr
     })
 }
 
-/// One search hit, its snippet cut to [`SNIPPET_MAX_CHARS`].
+/// One search hit, trimmed; the reply cuts its snippet to the vault's cap
+/// (`connectors.web.snippet_max_chars`).
 pub(super) fn hit(title: &str, url: &str, snippet: &str) -> WebSearchHit {
     WebSearchHit {
         title: title.trim().to_owned(),
         url: url.trim().to_owned(),
-        snippet: cut_chars(snippet.trim(), SNIPPET_MAX_CHARS),
+        snippet: snippet.trim().to_owned(),
     }
 }
 
