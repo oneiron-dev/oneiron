@@ -4,9 +4,10 @@
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionContext, GateDecisionId, GateDecisionReadContext,
-    GateDecisionRecord, GateLoopLink, GateLoopSource,
+    GateDecisionContext, GateDecisionReadContext, GateLoopLink, GateLoopSource, GateReceipt,
+    PolicyBasis, ReceiptActor,
 };
 use crate::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault,
@@ -324,46 +325,40 @@ pub(crate) fn stamp_attempt(
         }
         return Ok(());
     }
-    let receipt_id = GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes());
-    let receipt = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: receipt_id,
-        created_at: record.created_at,
-        outcome: "allow".into(),
-        reason_codes: vec![
-            match agent {
-                BaseAgent::Dreamer => "gate.dreamer.facet_admitted",
-                BaseAgent::Coach => "gate.coach.facet_admitted",
-            }
-            .into(),
-        ],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().into(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: "dreamer_authority".into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: record.id.as_bytes().to_vec(),
-        read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
-            .read_frontier_hash()?,
-        // FIX 7500, 11001: its own admission, about the rows its input
-        // names when it names any.
-        context: GateDecisionContext::linked(
-            GateLoopLink::admission(
-                match agent {
-                    BaseAgent::Dreamer => GateLoopSource::Dreamer,
-                    BaseAgent::Coach => GateLoopSource::Coach,
-                },
-                record.run_id.clone(),
-                Some(*record.id.as_bytes()),
-            ),
-            read_context::attempt_read_context(&payload.attempt_type, &payload.input),
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Allow,
+        "dreamer_authority",
+        match agent {
+            BaseAgent::Dreamer => "gate.dreamer.facet_admitted",
+            BaseAgent::Coach => "gate.coach.facet_admitted",
+        },
+        ReceiptActor::Row(actor),
+        record.id.as_bytes().to_vec(),
+        PolicyBasis::frontier(
+            crate::gate::resolve_policy_manifest(&vault.store, &*txn)?.read_frontier_hash()?,
         ),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &receipt)?;
+    );
+    // FIX 7500, 11001: its own admission, about the rows its input names
+    // when it names any.
+    receipt.context = GateDecisionContext::linked(
+        GateLoopLink::admission(
+            match agent {
+                BaseAgent::Dreamer => GateLoopSource::Dreamer,
+                BaseAgent::Coach => GateLoopSource::Coach,
+            },
+            record.run_id.clone(),
+            Some(*record.id.as_bytes()),
+        ),
+        read_context::attempt_read_context(&payload.attempt_type, &payload.input),
+    );
+    // Dated by the attempt it admits.
+    receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(
+        record.created_at,
+    ));
+    let receipt_id = vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id;
     let stamp = DreamerAuthorityStamp {
         attempt_id: *record.id.as_bytes(),
         actor: actor.entity_ref(),
@@ -406,43 +401,37 @@ fn stamp_resident_attempt(
             "a resident whose dreaming is off does not dream".into(),
         ));
     }
-    let receipt_id = GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes());
-    let receipt = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: receipt_id,
-        created_at: record.created_at,
-        outcome: "allow".into(),
-        reason_codes: vec![
-            if for_human {
-                "gate.dreamer.free_time_admitted"
-            } else {
-                "gate.dreamer.resident_admitted"
-            }
-            .into(),
-        ],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: EdgeActorClass::Agent.gate_actor_class().into(),
-        actor_ref: Some(resident.to_hex()),
-        content_kind: "dreamer_authority".into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: record.id.as_bytes().to_vec(),
-        read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
-            .read_frontier_hash()?,
-        // FIX 7500, 7499: its own admission, about the resident it runs as.
-        context: GateDecisionContext::linked(
-            GateLoopLink::admission(
-                GateLoopSource::Resident,
-                record.run_id.clone(),
-                Some(*record.id.as_bytes()),
-            ),
-            GateDecisionReadContext::about(Some(resident), vec![resident]),
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Allow,
+        "dreamer_authority",
+        if for_human {
+            "gate.dreamer.free_time_admitted"
+        } else {
+            "gate.dreamer.resident_admitted"
+        },
+        ReceiptActor::Row(WriteActor::new(resident, EdgeActorClass::Agent)),
+        record.id.as_bytes().to_vec(),
+        PolicyBasis::frontier(
+            crate::gate::resolve_policy_manifest(&vault.store, &*txn)?.read_frontier_hash()?,
         ),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &receipt)?;
+    );
+    // FIX 7500, 7499: its own admission, about the resident it runs as.
+    receipt.context = GateDecisionContext::linked(
+        GateLoopLink::admission(
+            GateLoopSource::Resident,
+            record.run_id.clone(),
+            Some(*record.id.as_bytes()),
+        ),
+        GateDecisionReadContext::about(Some(resident), vec![resident]),
+    );
+    // Dated by the attempt it admits.
+    receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(
+        record.created_at,
+    ));
+    let receipt_id = vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id;
     RESIDENT_ATTEMPT.put(
         &vault.store,
         txn,

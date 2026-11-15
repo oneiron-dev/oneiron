@@ -45,7 +45,7 @@ pub(in crate::dreamer_runner::maintenance) fn record_action_mode_in_txn(
     if let Some(row) = &held {
         handle.extend_from_slice(&row.receipt.as_bytes());
     }
-    let mut receipt = decision(
+    let receipt = decision(
         owner,
         MAINTENANCE_APPLY_KIND,
         APPLY_REASON,
@@ -53,9 +53,7 @@ pub(in crate::dreamer_runner::maintenance) fn record_action_mode_in_txn(
         handle,
         now,
     );
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     let row = match held {
         Some(row) => AppliedRow {
             inverse,

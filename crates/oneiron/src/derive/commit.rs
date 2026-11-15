@@ -7,8 +7,10 @@ use super::batch::{DerivationBatch, DerivationItem, DerivationStamp, ItemRef};
 use super::record::{AppliedEdge, DerivationBatchRecord, ItemRecord, put_batch_in_txn};
 use crate::claim::ClaimApprovalStatus;
 use crate::error::Result;
-use crate::store::{GateDecisionContext, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EntityId, Vault};
+use oneiron_contracts::RecordedSeconds;
 
 /// What one item came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,9 +244,18 @@ pub(super) fn refusal_receipt_in_txn(
     let frontier = crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
     let grant_ref =
         crate::gate::derive_grant_ref_in_txn(&vault.store, txn, context.stamp.actor.entity_ref())?;
-    let record = item_receipt(context, about, "deny", reasons, grant_ref, frontier);
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
-    Ok(record.decision_id)
+    let receipt = item_receipt(
+        context,
+        about,
+        GateReceiptOutcome::Deny,
+        reasons,
+        grant_ref,
+        frontier,
+    );
+    Ok(vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id)
 }
 
 /// Appends the receipt of one landed item the derive verdict judged
@@ -259,46 +270,44 @@ pub(super) fn allowance_receipt_in_txn(
     reasons: &[String],
     allowance: &crate::gate::DeriveAllowance,
 ) -> Result<GateDecisionId> {
-    let record = item_receipt(
+    let receipt = item_receipt(
         context,
         about,
-        "approved",
+        GateReceiptOutcome::Approved,
         reasons,
         Some(allowance.grant_ref.clone()),
         allowance.frontier,
     );
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
-    Ok(record.decision_id)
+    Ok(vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id)
 }
 
+/// The Gate receipt draft of one item of the batch in `context`: the
+/// batch's actor decided `outcome` for `reasons`, about `about`, judged by
+/// `grant_ref` under `frontier`, at the batch's time. Its diff handle is the
+/// batch's id. The store mints the id.
 fn item_receipt(
     context: &ItemContext<'_>,
     about: Option<EntityId>,
-    outcome: &str,
+    outcome: GateReceiptOutcome,
     reasons: &[String],
     grant_ref: Option<String>,
     frontier: [u8; 32],
-) -> GateDecisionRecord {
-    let actor = context.stamp.actor;
-    GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: context.now,
-        outcome: outcome.to_owned(),
-        reason_codes: reasons.to_vec(),
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: super::DERIVE_ITEM_CONTENT_KIND.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: about.map(|id| *id.as_bytes()),
-        grant_ref,
-        diff_handle: context.batch.as_bytes().to_vec(),
-        read_frontier_hash: frontier,
-        context: GateDecisionContext::default(),
-        redacted_at: None,
-    }
+) -> GateReceipt {
+    let mut receipt = GateReceipt::with_reasons(
+        outcome,
+        super::DERIVE_ITEM_CONTENT_KIND,
+        reasons.to_vec(),
+        ReceiptActor::Row(context.stamp.actor),
+        context.batch.as_bytes().to_vec(),
+        PolicyBasis::frontier(frontier),
+    );
+    receipt.about = about;
+    receipt.grant_ref = grant_ref;
+    receipt.decided_at = Some(RecordedSeconds::from_secs(context.now));
+    receipt
 }
 
 fn batch_record(

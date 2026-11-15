@@ -248,7 +248,7 @@ impl Vault {
             {
                 return Ok(());
             }
-            let mut receipt = applied::decision(
+            let receipt = applied::decision(
                 WriteActor::new(actor, EdgeActorClass::Human),
                 SEND_REVIEW_KIND,
                 SEND_REVIEW_REASON,
@@ -256,8 +256,7 @@ impl Vault {
                 review.record.revision.to_vec(),
                 now,
             );
-            self.store
-                .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+            let receipt = self.store.record_gate_receipt_in_txn(txn, receipt)?;
             let approval = ApprovalRecord {
                 witness: OwnerWitness::SendReview(receipt.decision_id),
                 revision: review.record.revision,
