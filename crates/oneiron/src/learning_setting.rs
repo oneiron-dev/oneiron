@@ -51,23 +51,12 @@ pub use crate::store::setting_seed::{
     PLANNER_SOLO_SUCCESS_FLOOR, SettingSpec,
 };
 
-/// The fewest families an offer eval set needs (FIX 10446): the owner's
-/// floor for a measured card. Zero asks for none.
-pub const EVAL_FLOOR_MIN_FAMILIES: SettingSpec = SettingSpec {
-    key: "eval_floor_min_families",
-    min: 0.0,
-    max: 1_000_000.0,
-    seed: 0.0,
+#[doc(hidden)]
+pub use oneiron_records::learning_setting::{
+    EVAL_FLOOR_MIN_FAMILIES, EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
 };
-
-/// The fewest families each required floor slice needs (FIX 10446). Zero
-/// asks for none.
-pub const EVAL_FLOOR_MIN_FAMILIES_PER_SLICE: SettingSpec = SettingSpec {
-    key: "eval_floor_min_families_per_slice",
-    min: 0.0,
-    max: 1_000_000.0,
-    seed: 0.0,
-};
+#[doc(hidden)]
+use oneiron_records::learning_setting::{ROW_LABEL, ROW_VERSION};
 
 /// Every learned knob the engine reads.
 pub const SETTING_CATALOG: &[SettingSpec] = &[
@@ -178,9 +167,6 @@ pub enum SettingScope {
 /// key stand side by side; a goal, project or type row appends its scope.
 const SETTING: SideTable<String, StoredSettingRow, Raw> =
     SideTable::new(&side_table::LEARNING_SETTING);
-
-const ROW_VERSION: u8 = 2;
-const ROW_LABEL: &str = "learning setting row";
 
 /// Longest reason a row keeps, in bytes: a sentence for the record, not a
 /// document.
