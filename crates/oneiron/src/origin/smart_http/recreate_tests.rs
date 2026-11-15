@@ -346,8 +346,11 @@ fn an_applied_push_needing_more_than_its_owner_settles_uncertified() {
     assert_eq!(owner.record.status, OriginPublicationStatus::Published);
 
     // The push recreating the same move, already applied by the backend.
-    let stamp =
-        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
+    let stamp = DoorAdmissionStamp::from_principal(
+        EntityId::now(),
+        &EntityId::now().to_hex(),
+        crate::unix_seconds_now(),
+    );
     vault
         .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)
         .expect("admission");
