@@ -11,6 +11,7 @@ use std::collections::btree_map::Entry;
 use crate::authority::{PolicyRevision, WorldPrivacy};
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    install_archived_row_with_rewrite,
 };
 use crate::batch::export::{
     ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
@@ -376,6 +377,14 @@ fn widen_ask(
 /// settings change is applied, no ask is queued, no wait is settled, nothing is signalled
 /// or notified, and the live waiters reconcile from the landed rows on their next pass.
 ///
+/// A pending row lands without its decision ask number. The ask queue does not travel and
+/// numbers its asks from one on each vault, so the source's number names no ask here, or
+/// names another request's once this vault queued that many: the answer door settles the
+/// ask a request names, and would close that other ask with this request's answer. The row
+/// lands as the writer leaves a request whose ask never queued
+/// ([`Vault::queue_world_privacy_ask`]): its holders see it on the world-privacy door's
+/// list.
+///
 /// # Errors
 /// Storage faults; validation stays in the returned outcome.
 pub(in crate::policy_model::owner_rows) fn land_archived_world_privacy_request_row_in_txn(
@@ -449,6 +458,16 @@ pub(in crate::policy_model::owner_rows) fn land_archived_world_privacy_request_r
             .is_none()
     {
         return Ok(ArchivedSideRowOutcome::HeldBack(MissingCompanion));
+    }
+    if value.status == Pending && value.ask.is_some() {
+        let landed = WorldPrivacyRequest { ask: None, ..value };
+        let rewritten = match REQUESTS.encode_value(&landed) {
+            Ok(bytes) => bytes,
+            Err(_) => return Ok(ArchivedSideRowOutcome::HeldBack(InvalidEncoding)),
+        };
+        return install_archived_row_with_rewrite(
+            &REQUESTS, vault, txn, permit, &key, row, &rewritten,
+        );
     }
     install_archived_row(&REQUESTS, vault, txn, permit, &key, row)
 }
