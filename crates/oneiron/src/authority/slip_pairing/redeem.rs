@@ -286,6 +286,10 @@ impl Vault {
             &pending.scope,
             Some(holder_ref),
         )?;
+        // An open link's verbs reach an app backend only under a Grant row
+        // the owner minted (APP-BACKEND-LINK-GRANT = A), judged in the mint
+        // transaction, as issue judges a link that names the backend.
+        self.validate_pairing_backend_verbs_in_txn(&txn, &pending.scope, Some(holder_ref))?;
         let write_facet = pending
             .principal
             .write_facet

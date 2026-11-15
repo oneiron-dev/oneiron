@@ -67,8 +67,12 @@ const PAIRING_ROUTES: &[PairingRoute] = &[
         answer: paired_answer,
         refusals: &[
             (
+                "400",
+                "The link's scope the vault refuses for this holder, judged again at redemption (InvalidPairingScope on scope.facets; AppBackendGrantRequired on scope.verbs, verbs for an app backend no Grant row names, as when an open link is redeemed as one; pairing.rs with_issuer).",
+            ),
+            (
                 "401",
-                "No such holder, or the code, binding key, signature, machine enrolment or possession proof does not verify (every redeem check refuses unauthenticated).",
+                "No such holder, or the code, binding key, signature, machine enrolment or possession proof does not verify (every other redeem check refuses unauthenticated).",
             ),
             (
                 "429",

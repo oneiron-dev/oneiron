@@ -18,7 +18,9 @@
 //!   one. A read lies inside one Grant and inside its slip's own Scope, so no
 //!   slip reads more than before.
 //! - Eligible (Q4 = A): the live agent slips that admit a read
-//!   ([`Vault::live_agent_slips_in_txn`]).
+//!   ([`Vault::live_agent_slips_in_txn`]). A published app's backend is
+//!   never eligible: its Grant rows are the owner's own acts, default none
+//!   (PUBLIC-BACKEND = A; APP-BACKEND-LINK-GRANT = A).
 //! - Once (Q5 = A): the mints and the completion marker commit in one
 //!   writer, the marker also when no holder was eligible. A refused owner
 //!   proof or signer leaves neither, and the caller logs it and serves on. A
@@ -107,7 +109,10 @@ impl Vault {
             }
             let mut grants = Vec::new();
             for (holder, scopes) in scopes_by_holder {
-                if named_now.contains(&holder) || self.agent_grant_ever_named_in_txn(txn, holder)? {
+                if named_now.contains(&holder)
+                    || self.agent_grant_ever_named_in_txn(txn, holder)?
+                    || self.is_artifact_backend_principal_in_txn(txn, holder)?
+                {
                     continue;
                 }
                 for scope in scopes {

@@ -243,7 +243,11 @@ impl Vault {
             let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, txn)?;
             let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
             self.validate_pairing_principal_in_txn(txn, &principal, &scope)?;
-            self.validate_pairing_backend_verbs_in_txn(txn, &principal, &scope)?;
+            self.validate_pairing_backend_verbs_in_txn(
+                txn,
+                &scope,
+                principal.holder_ref.as_deref(),
+            )?;
             self.validate_pairing_facets_in_txn(
                 txn,
                 &principal,

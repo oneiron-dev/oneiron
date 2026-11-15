@@ -55,16 +55,16 @@ impl Vault {
     /// with [`crate::error::RecordError::AppBackendGrantRequired`], which
     /// names `vault.agents.grants.mint`. A link that names no verb, as the
     /// backend's own first link, and a backend a Grant row names, pass.
+    /// `holder_ref` is the link's holder at issue and the redeemer at
+    /// redemption, so a link that leaves its holder open is judged for the
+    /// backend that redeems it.
     pub(super) fn validate_pairing_backend_verbs_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        principal: &PairingPrincipal,
         scope: &Scope,
+        holder_ref: Option<&str>,
     ) -> Result<()> {
-        let Some(holder) = principal
-            .holder_ref
-            .as_deref()
-            .and_then(|holder| crate::EntityId::from_hex(holder).ok())
+        let Some(holder) = holder_ref.and_then(|holder| crate::EntityId::from_hex(holder).ok())
         else {
             return Ok(());
         };
