@@ -106,17 +106,10 @@ const RIDER_OF: SideTable<(EntityId, TurnKey), (), Raw> =
 const RIDES: SideTable<EntityId, TurnKey, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_RIDES);
 
-/// A TURN's own temporal key, `(learned_at, id)`.
-type TurnKey = (u64, EntityId);
-
-/// The projector's policy row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectorPolicy {
-    /// New statements a due window needs before its wake writes. Zero writes
-    /// on every due wake. Above one, a window with fewer is consumed unread.
-    pub min_new_statements: u32,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_wake::projector::ProjectorPolicy;
+#[doc(hidden)]
+use oneiron_records::dreamer_wake::projector::TurnKey;
 
 /// The latest turn queued, vault-wide.
 #[derive(Debug, Clone, Serialize, Deserialize)]
