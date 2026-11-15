@@ -7,6 +7,13 @@
 //!
 //! Red on R4 PR 1's head 4494593651b1: the root's key enrols as a device's
 //! key, so its row names `owner-key-possession/v1`.
+//!
+//! The key itself binds the kind (Astra on OPUS-SPLIT-6's PR b, 16 Nov
+//! 01:58): the root's proof signs under a possession domain of its own, so a
+//! row's proof re-labelled with the other kind never verifies, and no
+//! predecessor can make a key both kinds. Red on the mark's head
+//! eb3f81e85aa4: both kinds verify one transcript, so the re-labelled rows
+//! validate.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test recovery_authority_enrolment_kind`.
 #![cfg(oneiron_test_support)]
@@ -16,8 +23,8 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityKey, AuthorityOp, MachineRole, OwnerKeyEnrollment,
-    decode_authority_log_entry_body,
+    ActAuthority, ActSurface, AuthorityKey, AuthorityLogEntry, AuthorityOp, MachineRole,
+    OwnerKeyEnrollment, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
@@ -39,8 +46,16 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
         .expect("an owner proof")
 }
 
-#[test]
-fn the_roots_authority_key_enrols_under_its_own_attestation_kind() {
+/// A hosted vault with one device's key and the kit root's authority key
+/// enrolled, each through its own door.
+struct Enrolled {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    device_public: [u8; 32],
+    root_public: [u8; 32],
+}
+
+fn enrolled() -> Enrolled {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut config = VaultConfig::device();
     config.privacy.posture = HostingPrivacyPosture::Hosted;
@@ -115,19 +130,46 @@ fn the_roots_authority_key_enrols_under_its_own_attestation_kind() {
         .expect("the owner enrols the root's authority key");
     let root_public = receipt.public_key;
     assert_ne!(root_public, device_public);
+    Enrolled {
+        _dir: dir,
+        vault,
+        device_public,
+        root_public,
+    }
+}
 
-    // Each enrollment row names its key's kind, and the exported history
-    // decodes with both.
-    let kinds: BTreeMap<[u8; 32], String> = vault
+/// Each owner key enrollment row of the exported history, by its key.
+fn enrollment_rows(vault: &Vault) -> BTreeMap<[u8; 32], AuthorityLogEntry> {
+    vault
         .export_signed_authority_history()
         .expect("the history")
         .iter()
         .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row"))
-        .filter_map(|row| match row.op {
+        .filter_map(|row| match &row.op {
             AuthorityOp::OwnerKeyEnroll(enroll) => match enroll.device.key {
-                AuthorityKey::Ed25519(key) => Some((key, enroll.device.attestation.kind)),
+                AuthorityKey::Ed25519(key) => Some((key, row)),
                 AuthorityKey::P256(_) => None,
             },
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_roots_authority_key_enrols_under_its_own_attestation_kind() {
+    let Enrolled {
+        vault,
+        device_public,
+        root_public,
+        ..
+    } = enrolled();
+
+    // Each enrollment row names its key's kind, and the exported history
+    // decodes with both.
+    let kinds: BTreeMap<[u8; 32], String> = enrollment_rows(&vault)
+        .into_iter()
+        .filter_map(|(key, row)| match row.op {
+            AuthorityOp::OwnerKeyEnroll(enroll) => Some((key, enroll.device.attestation.kind)),
             _ => None,
         })
         .collect();
@@ -141,4 +183,39 @@ fn the_roots_authority_key_enrols_under_its_own_attestation_kind() {
         Some(RECOVERY_AUTHORITY_KIND),
         "the root's authority key enrols under its own kind"
     );
+}
+
+#[test]
+fn a_rows_proof_never_verifies_under_the_other_kind() {
+    let Enrolled {
+        vault,
+        device_public,
+        root_public,
+        ..
+    } = enrolled();
+    let rows = enrollment_rows(&vault);
+    for (key, from, to) in [
+        (root_public, RECOVERY_AUTHORITY_KIND, DEVICE_KIND),
+        (device_public, DEVICE_KIND, RECOVERY_AUTHORITY_KIND),
+    ] {
+        let entry = rows.get(&key).expect("the key's enrollment row");
+        let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+            panic!("an owner key enrollment row");
+        };
+        assert_eq!(enroll.device.attestation.kind, from);
+        enroll
+            .validate_entry(entry)
+            .expect("the row as written verifies");
+        // A predecessor copies the row's proof into a row of the other kind,
+        // the same key, machine, owner and target.
+        let mut relabelled = enroll.clone();
+        relabelled.device.attestation.kind = to.to_owned();
+        relabelled
+            .validate()
+            .expect("the re-labelled row keeps the enrollment shape");
+        assert!(
+            relabelled.validate_entry(entry).is_err(),
+            "a {from} proof must not verify as a {to} row"
+        );
+    }
 }
