@@ -88,6 +88,7 @@ pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
 pub mod provenance_body_checkpoint;
+pub mod question_saved_lane;
 pub mod re_root_stale_sweep;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
