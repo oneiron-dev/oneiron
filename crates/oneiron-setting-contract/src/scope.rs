@@ -224,6 +224,22 @@ impl SettingScope {
     /// `InvalidConfig` when the reader names a vault scope among what it knows: the chain ends
     /// at the vault by itself; or a pack: the default layer is read apart from the chain.
     pub fn chain(known: &[Self], admitted: &[ScopeKind]) -> Result<Vec<Self>> {
+        Self::chain_keeping(known, admitted, false)
+    }
+
+    /// The chain of a key whose rows meet (DESIGN 1.5, "The read", step 2): as [`Self::chain`],
+    /// but every project the reader names stays on it, in the order named: a project's lines,
+    /// its own first and then its ancestors nearest first, so the read meets the rows of every
+    /// parent line.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::chain`].
+    pub fn chain_of_lines(known: &[Self], admitted: &[ScopeKind]) -> Result<Vec<Self>> {
+        Self::chain_keeping(known, admitted, true)
+    }
+
+    fn chain_keeping(known: &[Self], admitted: &[ScopeKind], lines: bool) -> Result<Vec<Self>> {
         if known.iter().any(|scope| *scope == Self::Vault) {
             return Err(Error::InvalidConfig(
                 "a setting read names the places it knows; the vault is always last".into(),
@@ -239,7 +255,14 @@ impl SettingScope {
             if matches!(kind, ScopeKind::Vault | ScopeKind::Pack) || !admitted.contains(&kind) {
                 continue;
             }
-            if let Some(scope) = known.iter().find(|scope| scope.kind() == kind) {
+            let mut named = known.iter().filter(|scope| scope.kind() == kind);
+            if lines && kind == ScopeKind::Project {
+                for scope in named {
+                    if !chain.contains(scope) {
+                        chain.push(scope.clone());
+                    }
+                }
+            } else if let Some(scope) = named.next() {
                 chain.push(scope.clone());
             }
         }
@@ -309,6 +332,33 @@ mod tests {
             ]
         );
         assert!(SettingScope::chain(&[SettingScope::Vault], &[ScopeKind::Vault]).is_err());
+        // A key whose rows meet keeps every project line the reader names, in its order, once.
+        let lines = [
+            SettingScope::Project(id(4)),
+            SettingScope::Project(id(5)),
+            SettingScope::World(id(1)),
+            SettingScope::Project(id(6)),
+            SettingScope::Project(id(5)),
+        ];
+        let admitted = [ScopeKind::Vault, ScopeKind::World, ScopeKind::Project];
+        assert_eq!(
+            SettingScope::chain_of_lines(&lines, &admitted).expect("a chain"),
+            vec![
+                SettingScope::Project(id(4)),
+                SettingScope::Project(id(5)),
+                SettingScope::Project(id(6)),
+                SettingScope::World(id(1)),
+                SettingScope::Vault
+            ]
+        );
+        assert_eq!(
+            SettingScope::chain(&lines, &admitted).expect("a chain"),
+            vec![
+                SettingScope::Project(id(4)),
+                SettingScope::World(id(1)),
+                SettingScope::Vault
+            ]
+        );
         assert!(
             SettingScope::chain(
                 &[SettingScope::Pack("engine".to_owned())],

@@ -305,6 +305,11 @@ fn set_in_txn(
     request: &SetSetting,
 ) -> Result<SetSettingOutcome> {
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    if change.key.mode == SettingMode::Carried && change.value.is_some() {
+        return Err(Error::InvalidConfig(
+            "only a move writes a carried row; a set may only clear one".into(),
+        ));
+    }
     if change.key.mode == SettingMode::Pin && matches!(caller, SettingCaller::Engine(_)) {
         return Err(Error::InvalidConfig(
             "the engine sets a value row, never a pin: a pin is the owner's".into(),
@@ -488,9 +493,9 @@ const fn authority_direction(direction: ChangeDirection) -> Direction {
 /// `prior` is the slot's readable value before it, and `by_owner` whether the row the change
 /// leaves counts as the owner's.
 /// - A neutral key's every move is neutral; a key with no order has no safe move.
-/// - On a key whose rows meet, a value row below the vault is a bound, judged against the row it
-///   replaces: an added row only narrows, a changed one is compared with its prior value, and a
-///   clear drops a bound.
+/// - On a key whose rows meet, a value row below the vault, or a row a move carried, is a bound,
+///   judged against the row it replaces: an added row only narrows, a changed one is compared
+///   with its prior value, and a clear drops a bound.
 /// - Any other slot (a vault value row, a pin, every row of a key that reads one row) is judged on
 ///   what its readers read: the walk at the slot's scope before the change against the walk with
 ///   the slot as the change leaves it.
@@ -509,7 +514,7 @@ fn direction_in_txn(
     }
     let no_wider = |a: &EncodedValue, b: &EncodedValue| spec.kind.no_wider(a, b).unwrap_or(false);
     if spec.reads_met()
-        && change.key.mode == SettingMode::Value
+        && matches!(change.key.mode, SettingMode::Value | SettingMode::Carried)
         && change.key.scope != SettingScope::Vault
     {
         return Ok(match (change.value, prior) {

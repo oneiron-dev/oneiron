@@ -41,8 +41,12 @@ pub use self::value::{EncodedValue, SettingValue};
 use oneiron_contracts::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
 
-/// Whether a row is a value or the owner's pin. A pin fixes the value in force until the owner
-/// changes it: no holder's row moves it. For a key the engine learns, the value row is its seed.
+/// Whether a row is a value, the owner's pin, or a row a move carried. A pin fixes the value in
+/// force until the owner changes it: no holder's row moves it. For a key the engine learns, the
+/// value row is its seed. A carried row sits on a project that moved, on a key whose rows meet:
+/// the meet of the rows the project read on the lines it left, so the move loosens nothing
+/// (DESIGN 1.5, "A move carries its rows"). It narrows as a value row does; only a move writes
+/// one, and a clear releases it.
 #[derive(
     Debug,
     Clone,
@@ -60,6 +64,7 @@ use serde::{Deserialize, Serialize};
 pub enum SettingMode {
     Value,
     Pin,
+    Carried,
 }
 
 impl SettingMode {
@@ -69,6 +74,7 @@ impl SettingMode {
         match self {
             Self::Value => 0,
             Self::Pin => 1,
+            Self::Carried => 2,
         }
     }
 
@@ -78,6 +84,7 @@ impl SettingMode {
         match tag {
             0 => Some(Self::Value),
             1 => Some(Self::Pin),
+            2 => Some(Self::Carried),
             _ => None,
         }
     }
@@ -171,6 +178,8 @@ pub enum SettingSource {
     Pin(SettingScope),
     /// The value row at this scope.
     Row(SettingScope),
+    /// The row a move carried onto this scope (a project that moved).
+    Carried(SettingScope),
     /// A learned key's fit, learned in this cell.
     Fit(FitCell),
     /// Several rows met, on a key whose order has a meet, to a value none of them holds alone.

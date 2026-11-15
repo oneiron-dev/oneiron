@@ -72,9 +72,40 @@ pub(super) struct Loaded {
     pub(super) revision: u64,
 }
 
-/// The rows of `spec` on `chain` for `item`: at each scope its pin and its value row, the item's
-/// and the item-less ones. A row that does not decode is kept, valueless and counted as the
-/// owner's, so it decides as unreadable wherever it would have decided.
+/// The chain a read of `spec` walks from the places `known`: every project line the reader
+/// names on a key whose rows meet ([`SettingScope::chain_of_lines`]), else one scope per kind
+/// ([`SettingScope::chain`]): the walk of a key that reads one row is unchanged.
+pub(super) fn chain_of(spec: &SettingSpec, known: &[SettingScope]) -> Result<Vec<SettingScope>> {
+    if spec.reads_met() {
+        SettingScope::chain_of_lines(known, spec.scopes)
+    } else {
+        SettingScope::chain(known, spec.scopes)
+    }
+}
+
+/// The modes of the rows a read of `spec` loads at each scope: the pin and the value row, and on
+/// a key whose rows meet the row a move carried. A key that reads one row has no carried row.
+pub(super) fn modes_of(spec: &SettingSpec) -> &'static [SettingMode] {
+    if spec.reads_met() {
+        &[SettingMode::Pin, SettingMode::Value, SettingMode::Carried]
+    } else {
+        &[SettingMode::Pin, SettingMode::Value]
+    }
+}
+
+/// The source a deciding row at `scope` names.
+fn source_of(mode: SettingMode, scope: &SettingScope) -> SettingSource {
+    match mode {
+        SettingMode::Pin => SettingSource::Pin(scope.clone()),
+        SettingMode::Value => SettingSource::Row(scope.clone()),
+        SettingMode::Carried => SettingSource::Carried(scope.clone()),
+    }
+}
+
+/// The rows of `spec` on `chain` for `item`: at each scope its pin and its value row (and its
+/// carried row, [`modes_of`]), the item's and the item-less ones. A row that does not decode is
+/// kept, valueless and counted as the owner's, so it decides as unreadable wherever it would have
+/// decided.
 pub(super) fn load_in_txn(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
@@ -90,7 +121,7 @@ pub(super) fn load_in_txn(
     let mut loaded = Vec::new();
     for (at, scope) in chain.iter().enumerate() {
         for row_item in &items {
-            for mode in [SettingMode::Pin, SettingMode::Value] {
+            for &mode in modes_of(spec) {
                 let key = RowKey {
                     name: spec.name.to_owned(),
                     item: row_item.map(str::to_owned),
@@ -169,10 +200,7 @@ pub(super) fn walk_met<V: Clone + PartialEq>(
                 let loaded = &loaded[index];
                 Walked::Row {
                     value,
-                    source: match by.mode {
-                        SettingMode::Pin => SettingSource::Pin(loaded.scope.clone()),
-                        SettingMode::Value => SettingSource::Row(loaded.scope.clone()),
-                    },
+                    source: source_of(by.mode, &loaded.scope),
                     revision: loaded.revision,
                 }
             }
@@ -234,10 +262,7 @@ pub(super) fn walk<V: Clone>(
         Decided::Unreadable(at) => Walked::Unreadable(chain[at].clone()),
         Decided::Pin(row) | Decided::Row(row) => {
             let loaded = &loaded[index_of(row)];
-            let source = match row.mode {
-                SettingMode::Pin => SettingSource::Pin(loaded.scope.clone()),
-                SettingMode::Value => SettingSource::Row(loaded.scope.clone()),
-            };
+            let source = source_of(row.mode, &loaded.scope);
             match &row.value {
                 Some(value) => Walked::Row {
                     value: value.clone(),
@@ -286,7 +311,7 @@ impl<T: SettingValue> Setting<T> {
         item: Option<&str>,
     ) -> Result<Resolved<T>> {
         self.spec.check_item(item)?;
-        let chain = SettingScope::chain(known, self.spec.scopes)?;
+        let chain = chain_of(self.spec, known)?;
         let loaded = load_in_txn(dbs, txn, self.spec, &chain, item)?;
         let layer = layer_default_in_txn(dbs, txn, self.spec)?;
         let default = Kind::<T>::decode(&layer.value).unwrap_or_else(|| self.kind.default_typed());
@@ -411,7 +436,7 @@ pub(super) fn view_in_txn(
     item: Option<&str>,
 ) -> Result<SettingView> {
     spec.check_item(item)?;
-    let chain = SettingScope::chain(known, spec.scopes)?;
+    let chain = chain_of(spec, known)?;
     let (value, source, revision) = in_force_in_txn(store, txn, spec, &chain, item)?;
     Ok(SettingView {
         key: spec.name.to_owned(),
