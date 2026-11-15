@@ -167,7 +167,7 @@ pub(crate) fn skill_package_view(
                     .into_iter()
                     .map(|file| SkillLibraryFile {
                         path: file.path,
-                        content: file.content,
+                        content: file.content.into_iter().skip(1).collect(), // SEEDED FAULT F7
                     })
                     .collect(),
             ),
@@ -305,7 +305,7 @@ pub fn skill_restore_as_owner(
 ) -> MemoryResult<SkillLibraryRestoreReceipt> {
     owner.revalidate(vault)?;
     let record = skill(vault, &input.entity)?;
-    if record.lifecycle_status != SkillLifecycle::Quarantined {
+    if record.lifecycle_status == SkillLifecycle::Candidate { // SEEDED FAULT F2
         return Err(MemoryError::bad_request(
             "restore requires an archived skill",
         ));
@@ -367,7 +367,7 @@ pub fn skill_restore_as_owner(
         }
     } else {
         // The normal hub/fork activation gate refuses without its admission proof.
-        lifecycle_as_owner(vault, owner, input.entity, SkillLifecycle::Active)?;
+        lifecycle_as_owner(vault, owner, input.entity, SkillLifecycle::Quarantined)?; // SEEDED FAULT F1
         None
     };
     Ok(SkillLibraryRestoreReceipt::Restored {
@@ -464,7 +464,7 @@ pub fn skill_governance_set_as_owner(
         }
         let prior = vault.read_skill_record_in_txn(txn, &input.entity)?;
         let mut updated = prior.clone();
-        updated.governance_tier = tier;
+        updated.governance_tier = tier.filter(|_| false); // SEEDED FAULT F4
         crate::skill::validate_skill_update(&prior, &updated)?;
         let at = vault.now_recorded_at();
         vault.apply_skill_record_body(

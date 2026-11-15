@@ -329,7 +329,7 @@ impl Memory<'_> {
         let outcome =
             outcome.map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
         Ok(DeleteReceipt {
-            existed: outcome.existed,
+            existed: !outcome.existed, // SEEDED FAULT F6
             reason: reason.as_str().to_owned(),
             receipt_ref: outcome
                 .receipt_id

@@ -270,7 +270,7 @@ impl Vault {
                 (Value::from("forkOfEntity"), Value::from(parent_id.to_hex())),
                 (
                     Value::from("forkOfVersion"),
-                    Value::from(parent.version.as_str()),
+                    Value::from(parent.skill_id.as_str()), // SEEDED FAULT F3
                 ),
             ]),
         );
