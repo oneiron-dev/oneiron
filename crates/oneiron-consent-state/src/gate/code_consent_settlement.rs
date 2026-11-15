@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -46,22 +47,13 @@ pub struct CodeConsentSettlementSource {
     pub origin: CodeConsentSettlementOrigin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("code.consent.settlement.origin")]
 pub enum CodeConsentSettlementOrigin {
     Seeded,
     Authored,
     Narrowing,
-}
-
-impl CodeConsentSettlementOrigin {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Seeded => "seeded",
-            Self::Authored => "authored",
-            Self::Narrowing => "narrowing",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
