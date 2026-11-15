@@ -147,14 +147,20 @@ fn park(
     Ok(())
 }
 
-/// Parks a fresh try on a fresh human wait at `parked_secs` and delivers its answer
-/// `gap_secs` later.
-fn human_wait_returned(vault: &Vault, seed: u8, parked_secs: u64, gap_secs: u64) -> TestResult {
-    let row = leased_try(vault, &format!("idle-wait-{seed}"))?;
+/// Parks the leased try `row` on a fresh human wait at `parked_secs` and delivers its answer
+/// `gap_secs` later. The answer wakes the try, which is then ready to claim again, so a test
+/// that returns several waits leases all its tries before the first answer.
+fn human_wait_returned(
+    vault: &Vault,
+    row: &AttemptRecord,
+    seed: u8,
+    parked_secs: u64,
+    gap_secs: u64,
+) -> TestResult {
     let key = wait_key(seed)?;
     park(
         vault,
-        &row,
+        row,
         &key,
         llm::DreamerTrapKind::HumanResponse,
         parked_secs * 1_000,
@@ -174,7 +180,8 @@ fn human_wait_returned(vault: &Vault, seed: u8, parked_secs: u64, gap_secs: u64)
 fn a_parked_human_wait_records_its_wall_clock_return() -> TestResult {
     let (_dir, vault) = open_vault()?;
     let parked_at_ms = TUESDAY_LATE_SECS * 1_000;
-    human_wait_returned(&vault, 0x61, TUESDAY_LATE_SECS, 95)?;
+    let row = leased_try(&vault, "idle-wait-human")?;
+    human_wait_returned(&vault, &row, 0x61, TUESDAY_LATE_SECS, 95)?;
 
     let waits = doors::waits(&vault)?;
     assert_eq!(
@@ -275,10 +282,22 @@ fn a_wait_left_open_past_a_day_counts_as_never() -> TestResult {
 #[test]
 fn the_weekly_pass_builds_return_cells_by_kind_band_and_weekend() -> TestResult {
     let (_dir, vault) = open_vault()?;
-    human_wait_returned(&vault, 0x65, TUESDAY_MORNING_SECS, 40)?;
-    human_wait_returned(&vault, 0x66, TUESDAY_MORNING_SECS + 60, 600)?;
-    human_wait_returned(&vault, 0x67, TUESDAY_MORNING_SECS + 120, 95)?;
-    human_wait_returned(&vault, 0x68, SATURDAY_EVENING_SECS, 30)?;
+    // (seed, parked at, answered after), in seconds.
+    let answered_waits: [(u8, u64, u64); 4] = [
+        (0x65, TUESDAY_MORNING_SECS, 40),
+        (0x66, TUESDAY_MORNING_SECS + 60, 600),
+        (0x67, TUESDAY_MORNING_SECS + 120, 95),
+        (0x68, SATURDAY_EVENING_SECS, 30),
+    ];
+    // Every try is leased before the first answer: an answer wakes its try, and a later claim
+    // of the same kind would take that older try first.
+    let mut rows = Vec::new();
+    for (seed, _, _) in answered_waits {
+        rows.push(leased_try(&vault, &format!("idle-wait-{seed}"))?);
+    }
+    for ((seed, parked_secs, gap_secs), row) in answered_waits.into_iter().zip(&rows) {
+        human_wait_returned(&vault, row, seed, parked_secs, gap_secs)?;
+    }
     let now = SATURDAY_EVENING_SECS + 3_600;
 
     assert!(doors::rebuild(&vault, now)?, "the first pass rebuilds");
