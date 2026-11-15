@@ -157,34 +157,11 @@ pub fn run(client: &OneironClient, input: &Input) -> Result<Outcome, Error> {
         return Ok(outcome);
     }
     let versions: Vec<&SourceVersion> = chosen.iter().map(|candidate| &candidate.version).collect();
-    let receipt: Receipt = decode(
-        STEP_SUBMIT_VERB,
-        call(client, STEP_SUBMIT_VERB, json!({ "sources": &versions }))?,
-    )?;
-    let tiers = match receipt.result {
-        Some(StepResult {
-            status,
-            json: Some(tiers),
-            ..
-        }) if status == "finished" => decode::<Tiers>(STEP_SUBMIT_VERB, tiers)?,
-        Some(StepResult {
-            status, failure, ..
-        }) if status == "failed" => {
-            outcome.reply_refused =
-                Some(failure.map_or_else(|| status.clone(), |failure| failure.to_string()));
+    let tiers = match step_tiers(client, &versions)? {
+        Ok(tiers) => tiers,
+        Err(reason) => {
+            outcome.reply_refused = Some(reason);
             return Ok(outcome);
-        }
-        // An owner's erase took the step's request and result: it is over
-        // and never asked again, so the attempt ends as a refused one does.
-        Some(StepResult { status, .. }) if status == "erased" => {
-            outcome.reply_refused = Some("an owner's erase took the step".to_owned());
-            return Ok(outcome);
-        }
-        Some(StepResult { status, .. }) => return Err(Error::Unsettled { status }),
-        None => {
-            return Err(Error::Unsettled {
-                status: "no result".to_owned(),
-            });
         }
     };
     let confidence = confidence(chosen.iter().map(|candidate| candidate.source));
@@ -220,6 +197,40 @@ pub fn run(client: &OneironClient, input: &Input) -> Result<Outcome, Error> {
         }
     }
     Ok(outcome)
+}
+
+/// The checked tiers of one bound step over `versions`, or why the step
+/// ended with none: the engine refused the reply, or an owner's erase took
+/// the step.
+fn step_tiers(
+    client: &OneironClient,
+    versions: &[&SourceVersion],
+) -> Result<Result<Tiers, String>, Error> {
+    let receipt: Receipt = decode(
+        STEP_SUBMIT_VERB,
+        call(client, STEP_SUBMIT_VERB, json!({ "sources": versions }))?,
+    )?;
+    match receipt.result {
+        Some(StepResult {
+            status,
+            json: Some(tiers),
+            ..
+        }) if status == "finished" => Ok(Ok(decode::<Tiers>(STEP_SUBMIT_VERB, tiers)?)),
+        Some(StepResult {
+            status, failure, ..
+        }) if status == "failed" => Ok(Err(failure
+            .as_ref()
+            .map_or_else(|| status.clone(), ToString::to_string))),
+        // An owner's erase took the step's request and result: it is over
+        // and never asked again, so the attempt ends as a refused one does.
+        Some(StepResult { status, .. }) if status == "erased" => {
+            Ok(Err("an owner's erase took the step".to_owned()))
+        }
+        Some(StepResult { status, .. }) => Err(Error::Unsettled { status }),
+        None => Err(Error::Unsettled {
+            status: "no result".to_owned(),
+        }),
+    }
 }
 
 /// Calls `verb` over the attempt's client.
