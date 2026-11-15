@@ -22,9 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::receipt::{CaptureFailure, encode_corrupt_claim_repair_event};
 use super::super::sweep_queue::HardEraseSweepExtras;
-use super::super::tombstone::{
-    DeleteReason, PENDING_TOMBSTONE, PendingTombstoneKey, TombstoneValueV2,
-};
+use super::super::tombstone::{DeleteReason, PENDING_TOMBSTONE, TombstoneValueV2};
 use super::provenance::decode_provenance_capture;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -36,6 +34,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::write_envelope::provenance::EdgeRef;
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 /// Whether a SoftErase has scrubbed the classified body since.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -454,7 +453,7 @@ impl Vault {
         }
         let value = tombstone.encode().to_vec();
         for window in &windows {
-            let key = PendingTombstoneKey {
+            let key = WindowEntityHexKey {
                 window: window.clone(),
                 id: *id,
             };

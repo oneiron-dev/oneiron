@@ -7,7 +7,6 @@ use crate::artifact_hosting::ArtifactPointerChannel;
 use crate::attempt_queue::AttemptId;
 use crate::compaction::EpochScope;
 use crate::critic::CritiqueArtifactKey;
-use crate::deletion::PendingTombstoneKey;
 use crate::dreamer_tournament::DreamerTournamentBranchVerdict;
 use crate::entity_id::EntityId;
 use crate::ports::{DocumentSlot, DocumentUpdateKey, UpdateSeq};
@@ -15,6 +14,7 @@ use crate::side_table::SideKey;
 use crate::store::ChannelIdentityLifecycleReceiptId;
 use crate::store::RetrievalRunId;
 use crate::store::vad_annotation::VadAnnotationMetaKey;
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 /// One fixture key: the bytes it spells after its table prefix, and what its type reads from
 /// any bytes (the key read, spelled again; `None` where the type refuses them).
@@ -140,7 +140,7 @@ pub fn artifact_pointer_row_key(channel: ArtifactPointerChannel, artifact: &str)
     crate::artifact_hosting::artifact_pointer_row_key_pin_for_test(channel, artifact)
 }
 
-/// `codebase::store::TextIndexKey`: the text, NUL, the raw id.
+/// A `codebase::store` text index key (`side_table::key::TextIdKey`): the text, NUL, the raw id.
 pub fn text_index_key(value: &str, id: EntityId) -> Pin {
     crate::codebase::text_index_key_pin_for_test(value, id)
 }
@@ -158,7 +158,8 @@ pub fn epoch_scope(session: EntityId, conversation: Option<EntityId>) -> Pin {
     })
 }
 
-/// `connector_key::txn::ConnectorIndexKey`: the connector, NUL, the raw key id.
+/// A `connector_key::txn::CONNECTOR_INDEX` key (`side_table::key::TextIdKey`): the connector,
+/// NUL, the raw key id.
 pub fn connector_index_key(connector: &str, id: EntityId) -> Pin {
     crate::connector_key::connector_index_key_pin_for_test(connector, id)
 }
@@ -183,9 +184,10 @@ pub fn critique_artifact_key(branch_attempt: [u8; 16], artifact_id: &str) -> Pin
     })
 }
 
-/// `deletion::PendingTombstoneKey`: the window label, `:`, the entity id in lower-case hex.
+/// A `deletion::PENDING_TOMBSTONE` key (`side_table::key::WindowEntityHexKey`): the window label,
+/// `:`, the entity id in lower-case hex.
 pub fn pending_tombstone_key(window: &str, id: EntityId) -> Pin {
-    Pin::of(&PendingTombstoneKey {
+    Pin::of(&WindowEntityHexKey {
         window: window.to_owned(),
         id,
     })
@@ -260,7 +262,7 @@ pub fn history_key(actor: EntityId, count: u64) -> Pin {
     crate::gate::proposal_observation::history_key_pin_for_test(actor, count)
 }
 
-/// `note::side_keys::HexPair`: two ids in lower-case hex, `:`-joined.
+/// `entity_doc::side_keys::HexPair`: two ids in lower-case hex, `:`-joined.
 pub fn hex_pair(a: EntityId, b: EntityId) -> Pin {
     crate::note::hex_pair_pin_for_test(a, b)
 }
@@ -287,7 +289,8 @@ pub fn dispatch_observation_key(attempt_id: [u8; 16], attempt_count: u32) -> Pin
     crate::receipt::dispatch_observation_key_pin_for_test(attempt(attempt_id), attempt_count)
 }
 
-/// `recovery::document::DocKey`: the note id and the head id in lower-case hex, `:`-joined.
+/// A `recovery::document::NOTE_PROPOSAL_DOC` key (`HexPair`): the note id and the head id in
+/// lower-case hex, `:`-joined.
 pub fn doc_key(note: EntityId, head: EntityId) -> Pin {
     crate::recovery::doc_key_pin_for_test(note, head)
 }
@@ -325,8 +328,8 @@ pub fn lease_key(vault_id: u64, client_id: u64) -> Pin {
     crate::sync::lease::lease_key_pin_for_test(vault_id, client_id)
 }
 
-/// `sync::note::workflows::NoteForkKey`: the note id and the fork id in lower-case hex,
-/// `:`-joined.
+/// A `sync::note::workflows::NOTE_PROPOSAL_DOC` key (`HexPair`): the note id and the fork id in
+/// lower-case hex, `:`-joined.
 pub fn note_fork_key(note: EntityId, fork: EntityId) -> Pin {
     crate::sync::note::note_fork_key_pin_for_test(note, fork)
 }
@@ -353,12 +356,13 @@ pub fn task_attempt_key(task_digest: [u8; 32], attempt: [u8; 16]) -> Pin {
     crate::vault_cleanup::task_attempt_key_pin_for_test(task_digest, attempt)
 }
 
-/// `voice_identity::ref_bank::TargetKey`: the voice id, NUL, the target.
+/// A `voice_identity::ref_bank::TARGETS` key (`VoiceRowKey`): the voice id, NUL, the target.
 pub fn voice_target_key(voice_id: &str, target: &str) -> Pin {
     crate::voice_identity::ref_bank::target_key_pin_for_test(voice_id, target)
 }
 
-/// `voice_identity::ref_bank::render_history::RenderEventKey`: the voice id, NUL, the event id.
+/// A `voice_identity::ref_bank::RENDER_EVENTS` key (`VoiceRowKey`): the voice id, NUL, the event
+/// id.
 pub fn render_event_key(voice_id: &str, event_id: &str) -> Pin {
     crate::voice_identity::ref_bank::render_event_key_pin_for_test(voice_id, event_id)
 }

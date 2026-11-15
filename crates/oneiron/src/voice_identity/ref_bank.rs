@@ -27,7 +27,7 @@ const INCARNATIONS: SideTable<String, [u8; 16], Raw> =
     SideTable::new(&side_table::VOICE_REF_INCARNATION);
 
 /// A cached render-target pointer. Key: voice id `\0` target.
-const TARGETS: SideTable<TargetKey, VoiceTargetRecord, Named> =
+const TARGETS: SideTable<VoiceRowKey, VoiceTargetRecord, Named> =
     SideTable::new(&side_table::VOICE_REF_TARGET);
 
 /// A voice's current render/provisioning decision: the projection of its
@@ -37,7 +37,7 @@ const RENDER_CONSENT: SideTable<String, VoiceRenderConsent, Named> =
 
 /// Every render decision recorded for a voice, kept once and never rewritten
 /// (FIX 4396). Key: voice id `\0` event id.
-const RENDER_EVENTS: SideTable<RenderEventKey, VoiceRenderEventReceipt, Named> =
+const RENDER_EVENTS: SideTable<VoiceRowKey, VoiceRenderEventReceipt, Named> =
     SideTable::new(&side_table::VOICE_REF_RENDER_EVENT);
 
 /// Per-owner index over the bank's rows, so erasure finds every row an owner holds. Key: id16
@@ -45,38 +45,51 @@ const RENDER_EVENTS: SideTable<RenderEventKey, VoiceRenderEventReceipt, Named> =
 const OWNER_INDEX: SideTable<(EntityId, Vec<u8>), BankRow, Raw> =
     SideTable::new(&side_table::VOICE_OWNER_REF_OWNER_INDEX);
 
-/// [`TARGETS`]' key: the voice id and target, joined by a NUL neither may contain.
+/// [`TARGETS`]' and [`RENDER_EVENTS`]' key: the voice id, then the id of the
+/// voice's row (its target, its event), joined by a NUL neither may contain.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TargetKey {
+struct VoiceRowKey {
     voice_id: String,
-    target: String,
+    row_id: String,
 }
 
-impl SideKey for TargetKey {
+impl VoiceRowKey {
+    /// The key of `row_id` under `voice_id`, each a valid voice reference id.
+    fn new(voice_id: &str, row_id: &str) -> Result<Self> {
+        valid_id(voice_id)?;
+        valid_id(row_id)?;
+        Ok(Self {
+            voice_id: voice_id.into(),
+            row_id: row_id.into(),
+        })
+    }
+}
+
+impl SideKey for VoiceRowKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.voice_id.as_bytes());
         out.push(0);
-        out.extend_from_slice(self.target.as_bytes());
+        out.extend_from_slice(self.row_id.as_bytes());
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         let split = bytes.iter().position(|byte| *byte == 0)?;
         Some(Self {
             voice_id: String::decode_key(&bytes[..split])?,
-            target: String::decode_key(&bytes[split + 1..])?,
+            row_id: String::decode_key(&bytes[split + 1..])?,
         })
     }
 }
 
-/// One [`TargetKey`] for `test_doors::side_key_pins`.
+/// One [`TARGETS`] key for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
 pub(crate) fn target_key_pin_for_test(
     voice_id: &str,
     target: &str,
 ) -> crate::test_doors::side_key_pins::Pin {
-    crate::test_doors::side_key_pins::Pin::of(&TargetKey {
+    crate::test_doors::side_key_pins::Pin::of(&VoiceRowKey {
         voice_id: voice_id.to_owned(),
-        target: target.to_owned(),
+        row_id: target.to_owned(),
     })
 }
 
@@ -86,9 +99,9 @@ enum BankRow {
     Pack(String),
     Identity(String),
     Incarnation(String),
-    Target(TargetKey),
+    Target(VoiceRowKey),
     Consent(String),
-    RenderEvent(RenderEventKey),
+    RenderEvent(VoiceRowKey),
 }
 
 impl BankRow {
@@ -139,11 +152,11 @@ impl RawValue for BankRow {
         } else if let Some(id) = bytes.strip_prefix(INCARNATIONS.decl().prefix) {
             String::decode_key(id).map(Self::Incarnation)
         } else if let Some(key) = bytes.strip_prefix(TARGETS.decl().prefix) {
-            TargetKey::decode_key(key).map(Self::Target)
+            VoiceRowKey::decode_key(key).map(Self::Target)
         } else if let Some(id) = bytes.strip_prefix(RENDER_CONSENT.decl().prefix) {
             String::decode_key(id).map(Self::Consent)
         } else if let Some(key) = bytes.strip_prefix(RENDER_EVENTS.decl().prefix) {
-            RenderEventKey::decode_key(key).map(Self::RenderEvent)
+            VoiceRowKey::decode_key(key).map(Self::RenderEvent)
         } else {
             None
         };
@@ -159,13 +172,8 @@ pub use crate::verbs::voice_records::{
 
 use crate::memory::voice_actor::{invalid, valid_id};
 
-fn target_key(voice_id: &str, target: &str) -> Result<TargetKey> {
-    valid_id(voice_id)?;
-    valid_id(target)?;
-    Ok(TargetKey {
-        voice_id: voice_id.into(),
-        target: target.into(),
-    })
+fn target_key(voice_id: &str, target: &str) -> Result<VoiceRowKey> {
+    VoiceRowKey::new(voice_id, target)
 }
 /// Reads one bank row; a row that does not decode is `corrupt`, an [`Error::InvalidConfig`].
 fn read_row<K: SideKey, V>(
@@ -607,7 +615,7 @@ fn record_target_clone_in(
 fn evict_target_in(
     store: &crate::store::Store,
     mut txn: heed::RwTxn<'_>,
-    key: &TargetKey,
+    key: &VoiceRowKey,
     owner: EntityId,
 ) -> Result<Option<VoiceTargetRecord>> {
     let evicted = read_row(TARGETS, store, &txn, key, "corrupt voice target clone")
@@ -824,10 +832,10 @@ pub use owner_acts::{
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use render_history::render_event_key_pin_for_test;
-use render_history::{RenderEventKey, read_render_consent, record_render_consent_in};
 pub use render_history::{
     VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView,
 };
+use render_history::{read_render_consent, record_render_consent_in};
 use target_verification::VendorClone;
 
 // FIX [LIBTEST-QUARANTINE-VOICE-IDENTITY-REF-BANK-TESTS]: the lib test target's type check fails here (10 errors: E0061 x6, E0533 x4); port it, then drop this gate

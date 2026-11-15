@@ -1,5 +1,5 @@
 //! Connector key index keys and transaction primitives.
-//! Entry: `ConnectorIndexKey`.
+//! Entry: `CONNECTOR_INDEX`.
 //! Defines its own items.
 
 use crate::ports::EntityStoreRead;
@@ -13,8 +13,9 @@ use sha2::Sha256;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
+use oneiron_store::side_table::key::TextIdKey;
 
 use super::codec::{decode_connector_key_body, encode_connector_key_body};
 use super::meter::{EffectorBudgetLocation, budget_exhausted_reason};
@@ -22,33 +23,22 @@ use super::record::{
     ConnectorKeyRecord, ConnectorKeyStatus, invalid_body, validate_connector_token,
 };
 
-/// The `(connector, key id)` pair addressed by the connector lookup index:
-/// normalized connector bytes, a NUL separator, then the 16-byte id.
-/// `validate_connector_token` rejects a connector containing NUL, so the
-/// separator is unambiguous on decode.
-#[derive(SideKey)]
-#[side_key(sep = b'\0')]
-pub(super) struct ConnectorIndexKey {
-    #[side_key(rest)]
-    pub(super) connector: String,
-    pub(super) id: EntityId,
-}
-
-/// One [`ConnectorIndexKey`] for `test_doors::side_key_pins`.
+/// One [`CONNECTOR_INDEX`] key for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
 pub(crate) fn connector_index_key_pin_for_test(
     connector: &str,
     id: EntityId,
 ) -> crate::test_doors::side_key_pins::Pin {
-    crate::test_doors::side_key_pins::Pin::of(&ConnectorIndexKey {
-        connector: connector.to_owned(),
+    crate::test_doors::side_key_pins::Pin::of(&TextIdKey {
+        text: connector.to_owned(),
         id,
     })
 }
 
 /// vault_meta connector lookup index: normalized connector ++ `\0` ++ key id
-/// -> empty marker.
-pub(super) const CONNECTOR_INDEX: SideTable<ConnectorIndexKey, (), Raw> =
+/// -> empty marker. `validate_connector_token` rejects a connector containing
+/// NUL, so the separator is unambiguous on decode.
+pub(super) const CONNECTOR_INDEX: SideTable<TextIdKey, (), Raw> =
     SideTable::new(&side_table::CONNECTOR_KEY_CONNECTOR_INDEX);
 
 /// vault_meta engine-catalog name index: normalized catalog name -> key id
@@ -277,7 +267,7 @@ pub(crate) fn governing_keys_for_actor_in_txn(
     let tokens = CONNECTOR_INDEX
         .scan(store, txn)?
         .into_iter()
-        .map(|(key, ())| key.connector)
+        .map(|(key, ())| key.text)
         .filter(|token| {
             super::record::ScopedCapabilityProvenance::parse_owner_capability_key(token)
                 .is_none_or(|_| live_scoped_tokens.contains(token))
@@ -457,8 +447,8 @@ pub(crate) fn rebuild_checkpoint_connector_index(
     CONNECTOR_INDEX.put(
         store,
         txn,
-        &ConnectorIndexKey {
-            connector: record.connector,
+        &TextIdKey {
+            text: record.connector,
             id,
         },
         &(),

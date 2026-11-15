@@ -75,7 +75,8 @@ pub(crate) const LAST_SYNC: SideTable<(), [u8; 8], Raw> =
 /// and writes it through its own `PENDING_TOMBSTONE`, which is not reachable
 /// from here. Other readers go through the window deletion-row port, or this
 /// table: the sync layer's own binding of the SAME declaration for every
-/// sync-layer reader/writer of the row (two typed tables, one declaration).
+/// sync-layer reader/writer of the row (two typed tables, one declaration,
+/// one key type).
 pub(crate) const PENDING_TOMBSTONE: SideTable<WindowEntityHexKey, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_PENDING_TOMBSTONE);
 
@@ -104,7 +105,7 @@ pub(crate) const REMAT_WINDOW_MARKER: SideTable<String, [u8; 1], Raw> =
     SideTable::new(&side_table::SYNC_REMAT_MARKER);
 
 /// Deduplicated marker recording which window a promoted turn's replayed
-/// closure spans (`pm:{window}:{entity_hex}`), key [`WindowEntityKey`].
+/// closure spans (`pm:{window}:{entity_hex}`), key [`WindowEntityHexKey`].
 /// Marker byte `[1]`.
-pub(crate) const OFF_RECORD_PROMOTE_PICKUP: SideTable<WindowEntityKey, [u8; 1], Raw> =
+pub(crate) const OFF_RECORD_PROMOTE_PICKUP: SideTable<WindowEntityHexKey, [u8; 1], Raw> =
     SideTable::new(&side_table::OFF_RECORD_PROMOTE_PICKUP_MARKER);

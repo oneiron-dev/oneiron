@@ -11,10 +11,9 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::store::{ManifestDbs, Store};
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 
-use super::tombstone::{
-    ARCHIVE_MARKER, PendingTombstoneKey, decode_tombstone_value, window_label_from_timestamp,
-};
+use super::tombstone::{ARCHIVE_MARKER, decode_tombstone_value, window_label_from_timestamp};
 use crate::side_table::HexId;
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 /// A world claim's body may already be erased; the deletion txn preserves
 /// its window address before purge so every reader still finds its tombstone.
@@ -424,7 +423,7 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
-        let pending_key = PendingTombstoneKey {
+        let pending_key = WindowEntityHexKey {
             window: deletion_window_label(&self.store, txn, id, learned_at)?,
             id: *id,
         };
@@ -480,7 +479,7 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
-        let pending_key = PendingTombstoneKey {
+        let pending_key = WindowEntityHexKey {
             window: deletion_window_label(&self.store, txn, id, learned_at)?,
             id: *id,
         };
@@ -636,7 +635,7 @@ impl Store {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<bool> {
-        let pending_key = PendingTombstoneKey {
+        let pending_key = WindowEntityHexKey {
             window: deletion_window_label(self, txn, id, learned_at)?,
             id: *id,
         };

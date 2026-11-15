@@ -499,6 +499,33 @@ impl FieldSpelling<u64> for HexU64 {
     }
 }
 
+/// A window label, `:`, then the entity's 32 lower-case hex characters: the bytes after the prefix
+/// of every window+entity marker table (the `pt:` pending tombstones, the `ra:w:`, `rm:w:` and
+/// `rmp:w:` sync markers, the `pm:` promotion pickups). Split from the END (fixed-width hex tail),
+/// so a window label containing `:` still decodes correctly. Here, not in the sync-only
+/// `window_rows` (which re-exports it), because `deletion` writes `pt:` rows without the `sync`
+/// feature (ONE-1132).
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
+pub struct WindowEntityHexKey {
+    #[side_key(rest)]
+    pub window: String,
+    #[side_key(with = HexId)]
+    pub id: EntityId,
+}
+
+/// A text, NUL, then an entity's 16 raw bytes: the key of each index row that names an entity
+/// under a text (a codebase's repo reference or project id, a connector key's connector). The id
+/// is fixed width and read from the end of the key, so the text is every byte before the NUL
+/// that precedes it.
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b'\0')]
+pub struct TextIdKey {
+    #[side_key(rest)]
+    pub text: String,
+    pub id: EntityId,
+}
+
 impl<A: FixedSideKey, B: SideKey> SideKey for (A, B) {
     fn encode_into(&self, out: &mut Vec<u8>) {
         self.0.encode_into(out);

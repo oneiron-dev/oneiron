@@ -21,6 +21,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::note::NoteVerdict;
 use crate::side_table::{self, HexId, Named, Raw, SideKey, SideTable};
 use crate::sync::SyncSelector;
+use oneiron_store::entity_doc::side_keys::HexPair;
 use serde::{Deserialize, Serialize};
 
 /// Recorded NOTE forks awaiting review/decision (owned by `note::proposals`;
@@ -34,23 +35,17 @@ const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
 const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
     SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
 /// Loro snapshot bytes of a proposal (non-live) NOTE document head, keyed by
-/// [`NoteForkKey`] (owned by `note::documents`; see [`NOTE_FORK`]).
-const NOTE_PROPOSAL_DOC: SideTable<NoteForkKey, Vec<u8>, Raw> =
+/// `hex32(note) ":" hex32(fork)` (owned by `note::documents`; see [`NOTE_FORK`]).
+const NOTE_PROPOSAL_DOC: SideTable<HexPair, Vec<u8>, Raw> =
     SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
 
-/// `hex32(note) ":" hex32(fork)` — the [`NOTE_PROPOSAL_DOC`] key shape
-/// (mirrors `note::side_keys::HexPair`, not visible from this module tree).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
-#[side_key(sep = b':')]
-struct NoteForkKey(HexId, HexId);
-
-/// One [`NoteForkKey`] for `test_doors::side_key_pins`.
+/// One [`NOTE_PROPOSAL_DOC`] key for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
 pub(crate) fn note_fork_key_pin_for_test(
     note: crate::EntityId,
     fork: crate::EntityId,
 ) -> crate::test_doors::side_key_pins::Pin {
-    crate::test_doors::side_key_pins::Pin::of(&NoteForkKey(HexId(note), HexId(fork)))
+    crate::test_doors::side_key_pins::Pin::of(&HexPair(HexId(note), HexId(fork)))
 }
 
 /// A review bundle as a window carries it.
@@ -310,7 +305,7 @@ impl Stored {
                 Some(row) if row == waiting && !row.decided => members.push(row),
                 _ => return Ok(false),
             }
-            let key = NoteForkKey(HexId(note), HexId(waiting.fork));
+            let key = HexPair(HexId(note), HexId(waiting.fork));
             let Some(raw) = NOTE_PROPOSAL_DOC.get(&judge.vault.store, judge.txn, &key)? else {
                 return Ok(false);
             };
@@ -468,7 +463,7 @@ impl State {
         let mut key_prefix = Vec::with_capacity(33);
         HexId(note).encode_into(&mut key_prefix);
         key_prefix.push(b':');
-        for (NoteForkKey(_, HexId(fork)), raw) in
+        for (HexPair(_, HexId(fork)), raw) in
             NOTE_PROPOSAL_DOC.scan_from(&judge.vault.store, judge.txn, &key_prefix)?
         {
             if stored

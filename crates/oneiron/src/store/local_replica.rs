@@ -64,7 +64,7 @@ use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_bi
 use crate::store::loro_tombstones::TombstoneIndex;
 use crate::store::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
-    WINDOW_UPDATE, WindowEntityKey,
+    WINDOW_UPDATE, WindowEntityHexKey,
 };
 use crate::sync::residence::residence_window_for_blob;
 use crate::window_key::WindowKey;
@@ -376,9 +376,9 @@ fn release_local_work(
     window: &WindowKey,
     id: &EntityId,
 ) -> Result<()> {
-    let pickup = WindowEntityKey {
+    let pickup = WindowEntityHexKey {
         window: window.as_str().to_owned(),
-        entity: *id,
+        id: *id,
     };
     OFF_RECORD_PROMOTE_PICKUP.delete(store, txn, &pickup)?;
     let prefix = format!("{}:", id.to_hex());
@@ -624,10 +624,7 @@ impl<'a> Census<'a> {
     /// pickup, document frames or NOTE requests.
     fn pending_work(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let window = self.window.as_str().to_owned();
-        let pickup = WindowEntityKey {
-            window,
-            entity: *id,
-        };
+        let pickup = WindowEntityHexKey { window, id: *id };
         if OFF_RECORD_PROMOTE_PICKUP.contains(self.store, txn, &pickup)? {
             return Ok(true);
         }

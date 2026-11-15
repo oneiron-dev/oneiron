@@ -13,30 +13,11 @@ use serde::{Deserialize, Serialize};
 use super::owner_acts::{VoiceRenderConsentView, VoiceTargetCloneView};
 use super::{
     BankRow, OWNER_INDEX, RENDER_CONSENT, RENDER_EVENTS, TARGETS, VoiceRenderConsent,
-    VoiceRenderDecision, VoiceTargetRecord, invalid, read_identity, read_row, valid_id,
+    VoiceRenderDecision, VoiceRowKey, VoiceTargetRecord, invalid, read_identity, read_row,
+    valid_id,
 };
 use crate::error::{Error, Result};
-use crate::side_table::SideKey;
 use crate::voice_identity::VoiceConsentState;
-
-/// [`RENDER_EVENTS`]' key: the voice id and the event id, joined by a NUL
-/// neither may contain.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RenderEventKey {
-    voice_id: String,
-    event_id: String,
-}
-
-impl RenderEventKey {
-    fn new(voice_id: &str, event_id: &str) -> Result<Self> {
-        valid_id(voice_id)?;
-        valid_id(event_id)?;
-        Ok(Self {
-            voice_id: voice_id.into(),
-            event_id: event_id.into(),
-        })
-    }
-}
 
 /// The key bytes every row of `voice_id` starts with, in a table keyed by
 /// the voice id and a NUL: its events here, its target pointers in
@@ -47,31 +28,15 @@ fn voice_prefix(voice_id: &str) -> Vec<u8> {
     prefix
 }
 
-impl SideKey for RenderEventKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.voice_id.as_bytes());
-        out.push(0);
-        out.extend_from_slice(self.event_id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.iter().position(|byte| *byte == 0)?;
-        Some(Self {
-            voice_id: String::decode_key(&bytes[..split])?,
-            event_id: String::decode_key(&bytes[split + 1..])?,
-        })
-    }
-}
-
-/// One [`RenderEventKey`] for `test_doors::side_key_pins`.
+/// One [`RENDER_EVENTS`] key for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
 pub(crate) fn render_event_key_pin_for_test(
     voice_id: &str,
     event_id: &str,
 ) -> crate::test_doors::side_key_pins::Pin {
-    crate::test_doors::side_key_pins::Pin::of(&RenderEventKey {
+    crate::test_doors::side_key_pins::Pin::of(&VoiceRowKey {
         voice_id: voice_id.to_owned(),
-        event_id: event_id.to_owned(),
+        row_id: event_id.to_owned(),
     })
 }
 
@@ -106,7 +71,7 @@ pub(super) fn read_render_consent(
 fn read_event(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
-    key: &RenderEventKey,
+    key: &VoiceRowKey,
 ) -> Result<Option<VoiceRenderEventReceipt>> {
     let Some(receipt) = read_row(RENDER_EVENTS, store, txn, key, "corrupt voice render event")?
     else {
@@ -116,12 +81,12 @@ fn read_event(
     Ok(Some(receipt))
 }
 
-fn check_event(key: &RenderEventKey, receipt: &VoiceRenderEventReceipt) -> Result<()> {
+fn check_event(key: &VoiceRowKey, receipt: &VoiceRenderEventReceipt) -> Result<()> {
     let decision = &receipt.consent.decision;
     if receipt.consent.version != 1
         || receipt.consent.sequence == 0
         || decision.voice_id != key.voice_id
-        || decision.event_id != key.event_id
+        || decision.event_id != key.row_id
     {
         return Err(invalid("corrupt voice render event"));
     }
@@ -167,7 +132,7 @@ pub(super) fn record_render_consent_in(
     let current = read_render_consent(store, &txn, &decision.voice_id)?;
     bind_decision_in(store, &txn, decision, current.as_ref())?;
     // An event is its voice's and its id's, whenever it is replayed.
-    let key = RenderEventKey::new(&decision.voice_id, &decision.event_id)?;
+    let key = VoiceRowKey::new(&decision.voice_id, &decision.event_id)?;
     if let Some(receipt) = read_event(store, &txn, &key)? {
         if receipt.consent.decision == *decision {
             return Ok(VoiceRenderConsentWrite {

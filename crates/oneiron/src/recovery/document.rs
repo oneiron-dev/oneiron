@@ -23,7 +23,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
-use crate::side_table::{self, HexId, Named, Raw, SideKey, SideTable};
+use crate::side_table::{self, HexId, Named, Raw, SideTable};
+use oneiron_store::entity_doc::side_keys::HexPair;
 
 /// Durable head-move (merge/switch/reject) receipt. Key: id16(receipt id).
 pub(super) const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
@@ -51,25 +52,17 @@ pub(super) const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Nam
     SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
 /// Loro snapshot bytes of a proposal (non-live) NOTE document head. Key:
 /// hex32(note) ":" hex32(head).
-pub(super) const NOTE_PROPOSAL_DOC: SideTable<DocKey, Vec<u8>, Raw> =
+pub(super) const NOTE_PROPOSAL_DOC: SideTable<HexPair, Vec<u8>, Raw> =
     SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
 
-/// [`NOTE_PROPOSAL_DOC`]'s key: the owning note, then the proposal head, each
-/// 32 lower-case hex characters, colon-joined.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
-#[side_key(sep = b':')]
-pub(super) struct DocKey(
-    #[side_key(with = HexId)] pub(super) EntityId,
-    #[side_key(with = HexId)] pub(super) EntityId,
-);
-
-/// One [`DocKey`] for `test_doors::side_key_pins`.
+/// One [`NOTE_PROPOSAL_DOC`] key (the owning note, then the proposal head) for
+/// `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
 pub(crate) fn doc_key_pin_for_test(
     note: EntityId,
     head: EntityId,
 ) -> crate::test_doors::side_key_pins::Pin {
-    crate::test_doors::side_key_pins::Pin::of(&DocKey(note, head))
+    crate::test_doors::side_key_pins::Pin::of(&HexPair(HexId(note), HexId(head)))
 }
 
 /// A format-independent current document snapshot, without retired text or op history.
@@ -201,7 +194,7 @@ pub(super) fn capture(
         });
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
         for row in NOTE_PROPOSAL_DOC.iter_from(&vault.store, txn, &note_prefix)? {
-            let (DocKey(_, head), bytes) = row?;
+            let (HexPair(_, HexId(head)), bytes) = row?;
             // Only pending forks' own values go here. Their retained parents
             // go in below; unneeded retired heads stay out.
             if head == live_head

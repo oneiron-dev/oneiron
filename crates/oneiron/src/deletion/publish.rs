@@ -31,11 +31,13 @@ use super::topology_delete_intent::{
 };
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
 #[cfg(feature = "sync")]
-use super::tombstone::{PENDING_TOMBSTONE, PendingTombstoneKey};
+use super::tombstone::PENDING_TOMBSTONE;
 #[cfg(feature = "sync")]
 use crate::error::SyncError;
 #[cfg(feature = "sync")]
 use crate::ports::{WindowAddress, WindowDeletionRows};
+#[cfg(feature = "sync")]
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 /// Inputs committed together by the sync tombstone persistence transaction.
 /// Grouping these values makes the TXN1 contract explicit: the request-keyed
@@ -667,7 +669,7 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = PendingTombstoneKey {
+        let key = WindowEntityHexKey {
             window: window_label.to_owned(),
             id: *id,
         };

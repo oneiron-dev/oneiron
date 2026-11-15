@@ -12,10 +12,11 @@ use crate::store::GateDecisionRecord;
 
 use super::super::rendezvous::maybe_fail_first_txn_pending_tombstone;
 use super::super::tombstone::{
-    ARCHIVE_MARKER, DecodedTombstoneValue, PENDING_TOMBSTONE, PendingTombstoneKey, TombstoneReason,
-    TombstoneValueV2, decode_tombstone_value,
+    ARCHIVE_MARKER, DecodedTombstoneValue, PENDING_TOMBSTONE, TombstoneReason, TombstoneValueV2,
+    decode_tombstone_value,
 };
 use super::super::topology_delete_intent::clear_own_topology_delete_in_txn;
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 impl Vault {
     /// Archives a checked PERSON/SUMMARY in the cleanup decision transaction.
@@ -125,7 +126,7 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = PendingTombstoneKey {
+        let key = WindowEntityHexKey {
             window: window_label.to_owned(),
             id: *id,
         };
@@ -167,7 +168,7 @@ impl Vault {
         value: &TombstoneValueV2,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
-            let key = PendingTombstoneKey {
+            let key = WindowEntityHexKey {
                 window: window_label.to_owned(),
                 id: *id,
             };

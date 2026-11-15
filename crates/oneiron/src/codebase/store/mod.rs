@@ -22,6 +22,7 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
+use oneiron_store::side_table::key::TextIdKey;
 
 mod capture;
 pub(crate) mod checkpoint;
@@ -50,11 +51,10 @@ const CUSTODY_REPORTS: SideTable<String, SnapshotCustodyReport, Raw> =
     SideTable::new(&side_table::SECRET_SNAPSHOT_CODEBASE_CUSTODY);
 
 /// Index from a repo reference's canonical text to the codebase snapshots recorded against it.
-const REPO_INDEX: SideTable<TextIndexKey, (), Raw> =
-    SideTable::new(&side_table::CODEBASE_REPO_INDEX);
+const REPO_INDEX: SideTable<TextIdKey, (), Raw> = SideTable::new(&side_table::CODEBASE_REPO_INDEX);
 
 /// Index from a project id to the codebase snapshots recorded against it.
-const PROJECT_INDEX: SideTable<TextIndexKey, (), Raw> =
+const PROJECT_INDEX: SideTable<TextIdKey, (), Raw> =
     SideTable::new(&side_table::CODEBASE_PROJECT_INDEX);
 
 /// Index from a fork hash to the codebase snapshots sharing it.
@@ -66,24 +66,14 @@ const FORK_INDEX: SideTable<HashIndexKey, (), Raw> =
 const SCOPE_INDEX: SideTable<HashIndexKey, (), Raw> =
     SideTable::new(&side_table::CODEBASE_SCOPE_INDEX);
 
-/// `<text>` + `\0` + id16 — the shape every text-keyed codebase index row (repo-ref, project id)
-/// has always spelled.
-#[derive(SideKey)]
-#[side_key(sep = b'\0')]
-struct TextIndexKey {
-    #[side_key(rest)]
-    value: String,
-    id: EntityId,
-}
-
-/// One [`TextIndexKey`] for `test_doors::side_key_pins`.
+/// One [`REPO_INDEX`] or [`PROJECT_INDEX`] key for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
 pub(crate) fn text_index_key_pin_for_test(
     value: &str,
     id: EntityId,
 ) -> crate::test_doors::side_key_pins::Pin {
-    crate::test_doors::side_key_pins::Pin::of(&TextIndexKey {
-        value: value.to_owned(),
+    crate::test_doors::side_key_pins::Pin::of(&TextIdKey {
+        text: value.to_owned(),
         id,
     })
 }
@@ -111,7 +101,7 @@ trait IndexRowId {
     fn id(&self) -> EntityId;
 }
 
-impl IndexRowId for TextIndexKey {
+impl IndexRowId for TextIdKey {
     fn id(&self) -> EntityId {
         self.id
     }
@@ -131,8 +121,8 @@ pub(crate) fn codebase_candidate_matches_filters(
     project_id: Option<&str>,
 ) -> Result<bool> {
     if let Some(repo_ref) = repo_ref {
-        let key = TextIndexKey {
-            value: repo_ref.canonical(),
+        let key = TextIdKey {
+            text: repo_ref.canonical(),
             id: *id,
         };
         if !REPO_INDEX.contains(store, rtxn, &key)? {
@@ -141,8 +131,8 @@ pub(crate) fn codebase_candidate_matches_filters(
     }
     if let Some(project_id) = project_id {
         validate_project_id(project_id)?;
-        let key = TextIndexKey {
-            value: project_id.to_owned(),
+        let key = TextIdKey {
+            text: project_id.to_owned(),
             id: *id,
         };
         if !PROJECT_INDEX.contains(store, rtxn, &key)? {
@@ -381,8 +371,8 @@ impl Vault {
         REPO_INDEX.put(
             &self.store,
             wtxn,
-            &TextIndexKey {
-                value: filtered_snapshot.repo_ref.canonical(),
+            &TextIdKey {
+                text: filtered_snapshot.repo_ref.canonical(),
                 id: *code_artifact_id,
             },
             &(),
@@ -390,8 +380,8 @@ impl Vault {
         PROJECT_INDEX.put(
             &self.store,
             wtxn,
-            &TextIndexKey {
-                value: filtered_snapshot.project_id.clone(),
+            &TextIdKey {
+                text: filtered_snapshot.project_id.clone(),
                 id: *code_artifact_id,
             },
             &(),

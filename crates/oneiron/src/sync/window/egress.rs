@@ -15,7 +15,9 @@ use super::reverse::{
     remove_entity_crdt_carriers, reverse_remat_skip_redaction_receipt_mirror,
 };
 use super::types::WindowKey;
-use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityKey};
+use crate::sync::window_rows::{
+    HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityHexKey,
+};
 
 use crate::Vault;
 use crate::edge::EdgeKind;
@@ -627,7 +629,7 @@ pub(super) fn replay_pending_mirrors_kept(
     vault: &Vault,
     doc: &LoroDoc,
     window_key: &WindowKey,
-) -> Result<Vec<WindowEntityKey>> {
+) -> Result<Vec<WindowEntityHexKey>> {
     let mut done = Vec::new();
     replay_mirrors(vault, doc, window_key, &mut Markers::Collect(&mut done))?;
     Ok(done)
@@ -636,11 +638,11 @@ pub(super) fn replay_pending_mirrors_kept(
 /// What a replay does with a marker whose mirror it settled.
 enum Markers<'a> {
     ClearNow,
-    Collect(&'a mut Vec<WindowEntityKey>),
+    Collect(&'a mut Vec<WindowEntityHexKey>),
 }
 
 impl Markers<'_> {
-    fn settle(&mut self, vault: &Vault, marker: &WindowEntityKey) -> Result<()> {
+    fn settle(&mut self, vault: &Vault, marker: &WindowEntityHexKey) -> Result<()> {
         match self {
             Self::ClearNow => vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
@@ -665,11 +667,11 @@ fn replay_mirrors(
     // A key that does not decode to a hex entity id is silently skipped here
     // (not a fail-closed refusal): best-effort crash-recovery replay, not a
     // fail-closed read of engine-authored truth.
-    let markers: Vec<(WindowEntityKey, EntityId)> = OFF_RECORD_PROMOTE_PICKUP
+    let markers: Vec<(WindowEntityHexKey, EntityId)> = OFF_RECORD_PROMOTE_PICKUP
         .iter_from(&vault.store, &rtxn, format!("{window_key}:").as_bytes())?
         .filter_map(Result::ok)
         .map(|(key, _)| {
-            let entity = key.entity;
+            let entity = key.id;
             (key, entity)
         })
         .collect();

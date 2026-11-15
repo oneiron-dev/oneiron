@@ -11,7 +11,9 @@
 //! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model.py`), and each run prints the table
 //! so a base run and a head run can be compared line by line.
 //!
-//! The window keys are compiled with the `sync` feature, as `window_rows` is.
+//! The window keys are compiled with the `sync` feature, as `window_rows` is. UC-06 PR 6 merged
+//! `WindowEntityKey` into `WindowEntityHexKey`; the table's `WindowEntityKey` rows keep their name
+//! and now spell `WindowEntityHexKey`, so the same table pins the merged type.
 //!
 //! Run: `cargo test --locked -p oneiron-store --all-features --features oneiron-base/sync
 //! --test side_key_pins -- --nocapture`.
@@ -299,9 +301,7 @@ fn store_keys_spell_and_read_as_the_hand_impls() {
 mod window_rows {
     use super::{ID_A, check_table, id_a, id_b, joined, pin};
     use oneiron_contracts::entity_id::EntityId;
-    use oneiron_store::window_rows::{
-        HexSeqKey, WindowEntityHexKey, WindowEntityKey, WindowUpdateKey,
-    };
+    use oneiron_store::window_rows::{HexSeqKey, WindowEntityHexKey, WindowUpdateKey};
 
     const WINDOW_TABLE_SHA256: &str =
         "11d88051c49c2ed00b3c2f5d8f18f8b2ffe5725b2febb4797f3f95ab22641cef";
@@ -361,12 +361,12 @@ mod window_rows {
             "WindowEntityKey",
             windows
                 .iter()
-                .map(|(label, window, entity)| {
+                .map(|(label, window, id)| {
                     (
                         *label,
-                        WindowEntityKey {
+                        WindowEntityHexKey {
                             window: (*window).to_owned(),
-                            entity: *entity,
+                            id: *id,
                         },
                     )
                 })

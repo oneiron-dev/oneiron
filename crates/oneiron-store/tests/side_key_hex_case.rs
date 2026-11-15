@@ -63,9 +63,7 @@ fn hex_id_refuses_a_signed_digit() {
 mod window_rows {
     use super::{ID_LOWER, ID_ONE_UPPER, ID_UPPER, encoded, id};
     use oneiron_store::side_table::key::SideKey;
-    use oneiron_store::window_rows::{
-        HexSeqKey, WindowEntityHexKey, WindowEntityKey, WindowUpdateKey,
-    };
+    use oneiron_store::window_rows::{HexSeqKey, WindowEntityHexKey, WindowUpdateKey};
 
     #[test]
     fn hex_seq_key_decodes_the_lowercase_it_writes() {
@@ -129,20 +127,11 @@ mod window_rows {
             window: "2026-11".to_owned(),
             id: id(),
         };
-        let entity_key = WindowEntityKey {
-            window: "2026-11".to_owned(),
-            entity: id(),
-        };
         let spelled = format!("2026-11:{ID_LOWER}");
         assert_eq!(encoded(&hex_key), spelled.as_bytes());
-        assert_eq!(encoded(&entity_key), spelled.as_bytes());
         assert_eq!(
             WindowEntityHexKey::decode_key(spelled.as_bytes()),
             Some(hex_key)
-        );
-        assert_eq!(
-            WindowEntityKey::decode_key(spelled.as_bytes()),
-            Some(entity_key)
         );
     }
 
@@ -151,7 +140,6 @@ mod window_rows {
         for id_text in [ID_UPPER, ID_ONE_UPPER] {
             let spelled = format!("2026-11:{id_text}");
             assert_eq!(WindowEntityHexKey::decode_key(spelled.as_bytes()), None);
-            assert_eq!(WindowEntityKey::decode_key(spelled.as_bytes()), None);
         }
     }
 }
