@@ -69,6 +69,11 @@ pub struct ClaimFilteredListRequest {
     /// Caller retrieval filter; met with the actor ceiling.
     #[serde(default)]
     pub filter: Option<ReadFilterInput>,
+    /// Project audience ids: keep only claims stamped with one of these
+    /// projects or a project below one, as `vault.recall` narrows. Empty
+    /// adds no narrowing.
+    #[serde(default)]
+    pub project_refs: Vec<String>,
 }
 
 /// `vault.claims.read_filtered` input: one claim under a caller filter.
@@ -80,4 +85,9 @@ pub struct ClaimFilteredReadRequest {
     /// Caller retrieval filter; met with the actor ceiling.
     #[serde(default)]
     pub filter: Option<ReadFilterInput>,
+    /// Project audience ids: a claim stamped with none of these projects,
+    /// nor with a project below one, reads as absent. Empty adds no
+    /// narrowing.
+    #[serde(default)]
+    pub project_refs: Vec<String>,
 }
