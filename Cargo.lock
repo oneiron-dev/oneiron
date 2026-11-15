@@ -8980,6 +8980,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-llm",
+ "serde",
  "serde_json",
 ]
 
