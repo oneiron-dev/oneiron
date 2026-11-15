@@ -313,6 +313,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
+        // L10-05: canon's core job read, over `vault.runs.job`.
+        .merge(self::facade::run_read_doors::routes())
         // FIX 11694: a person's MFA step-up with a passkey, on their own slip.
         .merge(self::facade::step_up_doors::routes())
         // OF-516: a role holder's door to the ladder's person asks.
@@ -333,6 +335,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // The public ceremony bypasses the hosted device lease but retains
         // matched-route wire receipts and threshold questions.
         .merge(self::esign::public_routes())
+        // The QR page a sealed certificate names: keyless, its capability
+        // checked in the vault on each report.
+        .merge(self::esign_qr::public_routes())
         // OF-519: the served built-in channels' provider webhooks. Keyless;
         // the provider's HMAC over the raw body authenticates each one.
         .merge(crate::builtin_host::routes())
@@ -350,6 +355,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // OF-273: a former peer's signed courtesy deletion ask and answer.
         // Keyless; the signed body authenticates against the pinned pact key.
         .merge(self::courtesy_delete::routes())
+        // INQUIRE-1 PR 5: a company host's inquiry over an inquiry edge.
+        // Admitted by the edge's guest slip and the host's holder proof.
+        .merge(self::inquiry_peer::routes())
         // FIX 922: a kit-only restore's read of the sealed cloud bundle.
         // Keyless; each request is signed with the kit's owner anchor.
         .merge(self::recovery_bundle::routes())

@@ -2,7 +2,6 @@
 //! questions, and the caller's status view.
 //! Entry: `ConnectorCallHost`. Defines its own items; the stored rows stay in `connector_call`.
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::attempt_queue::AttemptId;
@@ -13,57 +12,11 @@ use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call_input_resume::ConnectorResumeState;
 use super::result_scrub::OutboundResultSender;
-use super::tool_call::MutationIntent;
 
-/// Which interface a served connector call or schema read selects. This
-/// chooses a route, never a credential, grant or approved manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectorSource {
-    Catalog,
-    Builtin,
-}
-
-impl ConnectorSource {
-    /// An omitted choice keeps the served door's implicit name selection.
-    #[must_use]
-    pub fn resolve(source: Option<Self>, name: &str) -> Self {
-        source.unwrap_or_else(|| {
-            if name == crate::web_connector::WEB_CONNECTOR_NAME {
-                Self::Builtin
-            } else {
-                Self::Catalog
-            }
-        })
-    }
-}
-
-/// One connector call and its arguments. It carries no endpoint,
-/// credential, schema, grant or principal: the engine and host resolve
-/// those beneath the name. Native catalog-only calls do not serve builtins.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectorCallRequest {
-    /// The connector's name within the selected source.
-    pub name: String,
-    /// Explicit catalog or builtin selection at a served door. When absent,
-    /// a served `web` call selects the builtin; other names select catalog.
-    /// Native catalog-only calls accept catalog or no explicit selection.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<ConnectorSource>,
-    /// The tool, as the connector's approved manifest names it.
-    pub tool: String,
-    /// The tool's arguments, a JSON object.
-    #[serde(default = "empty_arguments")]
-    pub arguments: Value,
-    /// Preview (the default) or an explicit mutation.
-    #[serde(default)]
-    pub mutation: MutationIntent,
-}
-
-fn empty_arguments() -> Value {
-    Value::Object(serde_json::Map::new())
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::outbound_consent::connector_call_types::{
+    ConnectorCallRequest, ConnectorSource,
+};
 
 /// The host's own identity for one call (a code-mode step, a job attempt).
 /// The ledger keys one logical send by it, so the same step run again
@@ -74,48 +27,11 @@ pub struct ConnectorCallInvocation {
     pub call_seq: u64,
 }
 
-/// A connector's own reply to `tools/call`. Foreign data: the connector
-/// wrote it, so it is untrusted, never instructions, and never stored in the
-/// vault.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct UntrustedToolResult {
-    /// The MCP `content` blocks, as the connector sent them.
-    pub content: Value,
-    /// The MCP `structuredContent`, when the connector sent one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub structured_content: Option<Value>,
-    /// The connector's `isError`, or true when it answered with a JSON-RPC
-    /// error instead of a result.
-    pub is_error: bool,
-    /// The JSON-RPC error object the connector answered with, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rpc_error: Option<Value>,
-}
-
-/// One question a connector asked mid-call. Foreign data: the connector
-/// wrote every field, so it is task input for the caller, never an
-/// instruction and never an approval.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConnectorQuestion {
-    /// The question's key in its round: `"0"` for a request on the reply
-    /// stream, the connector's own key in a multi round-trip result.
-    pub key: String,
-    /// The connector's message.
-    pub message: String,
-    /// The JSON schema of the answer the connector asks for.
-    pub requested_schema: Value,
-}
-
-/// The questions a connector answered a call with, as its host keeps them
-/// for the caller: the live continuation's handle, the questions, and the
-/// end of the round's live lease (unix ms): how long a synchronous answer
-/// waits, never an expiry (FIX 3837).
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConnectorAwaitingInput {
-    pub handle: String,
-    pub questions: Vec<ConnectorQuestion>,
-    pub live_until_ms: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::outbound_consent::connector_call_types::{
+    ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorQuestion, ConnectorResultAbsence,
+    UntrustedToolResult,
+};
 
 /// Who the next send runs for and under which standing grant, as the engine
 /// resolved them: a host binds a question the connector asks to exactly
@@ -127,71 +43,6 @@ pub struct ConnectorCallCaller {
     pub grant_id: EntityId,
     /// The catalog name the caller called.
     pub name: String,
-}
-
-/// Why a delivered call's outcome carries no reply (FIX 2823).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectorResultAbsence {
-    /// The reply is not retained: a replay of an already delivered call, or
-    /// a settled call read back. Nothing is sent again to fetch it.
-    NotRetained,
-    /// The send presented a custody record's value, and the value could not
-    /// be read again to clear it from the reply, so the reply is withheld.
-    CredentialClearFailed,
-}
-
-/// What one connector call came to.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConnectorCallOutcome {
-    /// The connector acknowledged the call. `result` is its reply when this
-    /// send carried one; a replay of an already delivered call has none.
-    /// `result_absence` says why when `result` is `None`.
-    Delivered {
-        intent: Option<[u8; 32]>,
-        result: Option<UntrustedToolResult>,
-        result_absence: Option<ConnectorResultAbsence>,
-        /// The budget messages this send's charge fired on its key and
-        /// catalog pool (FIX 3759): the 80% plan and 95% land texts. Empty
-        /// when none fired, and on a replay.
-        budget_steering: Vec<String>,
-    },
-    /// Held for consent or governance. Nothing was sent. Once the hold may
-    /// have cleared, [`crate::Vault::resume_connector_call`] re-enters it.
-    /// `approval_digest` (FIX 6424 part 3) is the approve-once digest, 64
-    /// lower-hex, the Gate decision that held this prepared call names: the
-    /// owner's press on it releases exactly this call. `None` for a hold no
-    /// press clears here (before the call was prepared, or a code consent
-    /// wait's own answer).
-    Held {
-        call_ref: EntityId,
-        decision_ref: Option<String>,
-        reasons: Vec<String>,
-        approval_digest: Option<String>,
-    },
-    /// Not sent, and never will be under this request.
-    Refused {
-        decision_ref: Option<String>,
-        reasons: Vec<String>,
-    },
-    /// The send's delivery is not settled. With a `call_ref`, resuming
-    /// retries the same logical send; without one, the connector may or may
-    /// not have received it and the ledger will not send it again.
-    PendingDelivery {
-        intent: [u8; 32],
-        call_ref: Option<EntityId>,
-        reasons: Vec<String>,
-    },
-    /// The connector received the call and asked for input before it would
-    /// finish it. The send is delivered; the call's row `call_ref` keeps
-    /// the round (never the questions' text) until the connector answers
-    /// the call, and its caller polls it there (FIX 3837). A replay from the
-    /// row carries no questions.
-    AwaitingInput {
-        call_ref: EntityId,
-        intent: Option<[u8; 32]>,
-        input: ConnectorAwaitingInput,
-        budget_steering: Vec<String>,
-    },
 }
 
 /// The served side of the generic connector call: an
@@ -299,7 +150,8 @@ pub trait ConnectorCallHost: OutboundResultSender {
 
 /// One held or pending-delivery call, as a settler lists it: its ref, the
 /// catalog name and tool it calls, and whether a resume already settled it
-/// (then its row waits only for [`crate::Vault::ack_connector_call_delivery`]).
+/// (then its row waits only for
+/// [`crate::Vault::ack_connector_call_delivery_keeping_caller`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingConnectorCallRef {
     pub call_ref: EntityId,

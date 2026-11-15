@@ -55,34 +55,10 @@ pub const AUTHORITY_CLOCK_REPAIR_EVIDENCE: AuthorityClockRepairEvidence =
 const AUTHORITY_CLOCK_REPAIRS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::AUTHLOG_FIRST_SEEN_SIDECAR);
 
-/// What one repair found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthorityClockRepairOutcome {
-    /// The floor reads whole, or no floor exists yet: nothing was written.
-    Sound,
-    /// The damaged floor was replaced by the proven one.
-    Repaired,
-    /// The floor is damaged and this vault cannot prove its committed
-    /// high-water: nothing was written.
-    Unproven,
-}
-
-/// `vault.authority.clock.repair`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AuthorityClockRepair {
-    pub outcome: AuthorityClockRepairOutcome,
-    /// The floor that stands after the repair, in unix seconds; None while it
-    /// is absent or still damaged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub floor: Option<u64>,
-    /// The first-seen stamps the proof read.
-    pub observations: u64,
-    /// This handle's anchored reading the proof read, when it holds one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anchored: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::clock_repair::{
+    AuthorityClockRepair, AuthorityClockRepairOutcome,
+};
 
 /// The provenance one repair commits with the floor it writes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
