@@ -70,6 +70,13 @@ pub enum SecretError {
     /// reason is the scan's code and never holds secret bytes.
     #[error("a masked copy of this file is withheld: {reason}")]
     MaskedCopyWithheld { reason: &'static str },
+    /// A credential the owner marks as a payment credential is withheld at
+    /// both value doors while this host's runner fence is unproven and its
+    /// self-hoster has not lifted the withholding (L8-60; CROSS-ARCH-0019
+    /// `#fence-unproven`, OSH-5). Every other credential stays at its rung,
+    /// and the run goes on without this one.
+    #[error("payment credential `{secret_ref}` is withheld: this host's runner fence is unproven")]
+    PaymentCredentialWithheld { secret_ref: String },
     /// The credential-door dial no longer admits this door-bound T0/T1
     /// materialization. The reason never contains secret or manifest bytes.
     #[error("secret materialization refused by credential-door policy: {reason}")]
@@ -274,6 +281,7 @@ impl SecretError {
             Self::SecretTierDenied { .. } => ErrorKind::SecretTierDenied,
             Self::SealedFileWithheld => ErrorKind::SealedFileWithheld,
             Self::MaskedCopyWithheld { .. } => ErrorKind::MaskedCopyWithheld,
+            Self::PaymentCredentialWithheld { .. } => ErrorKind::PaymentCredentialWithheld,
             Self::SecretDoorPolicyRefused { .. } => ErrorKind::SecretDoorPolicyRefused,
             Self::SecretRefNotFound { .. } => ErrorKind::SecretRefNotFound,
             Self::SecretWiderThanManifest { .. } => ErrorKind::SecretWiderThanManifest,

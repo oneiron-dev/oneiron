@@ -127,14 +127,18 @@ impl PipelineBuilder<'_> {
         self.no_match_floors = Some(std::sync::Arc::new(self.vault.no_match_floors()));
         let started_at = self.vault.store.clock.now_recorded_at();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
-        let (occurred_range, temporal_hints) = self.resolved_occurred_range(temporal_now);
+        // Only a host window filters on occurred time. A range the query's
+        // own words name is a soft input to the temporal channel, never a
+        // filter (canon research-1009 P1.1): a phrase that names a window
+        // with no row in it must not empty the run.
+        let occurred_range = self.occurred_range;
+        let (query_range, temporal_hints) = self.query_temporal_range(temporal_now);
         // A parsed query range replaces the effort's default now anchor for
         // the temporal scan. Keep the effort flag: it is not a host window,
         // so the independent recency blend still applies.
-        if self.occurred_range.is_none()
+        if let Some((start, end)) = query_range
             && let Some(config) = self.temporal_search.as_mut()
             && config.effort_anchor
-            && let Some((start, end)) = occurred_range
         {
             config.anchor_start = start;
             config.anchor_end = end;
@@ -774,18 +778,19 @@ impl PipelineBuilder<'_> {
         }
     }
 
-    /// The occurred-time window this run filters on, and the temporal phrases
-    /// the query held. A host window or a host temporal search wins over the
-    /// query, which is then not read. Query phrases never fail the run: one
-    /// the parser cannot use is reported and left out.
-    fn resolved_occurred_range(&self, now: u64) -> (Option<(u64, u64)>, Vec<TemporalHintReport>) {
+    /// The occurred-time range the query's own words name, and the temporal
+    /// phrases the query held. The range only re-anchors the effort's
+    /// temporal scan; it never filters. A host window or a host temporal
+    /// search wins over the query, which is then not read. Query phrases
+    /// never fail the run: one the parser cannot use is reported and left out.
+    fn query_temporal_range(&self, now: u64) -> (Option<(u64, u64)>, Vec<TemporalHintReport>) {
         if self.occurred_range.is_some()
             || self
                 .temporal_search
                 .as_ref()
                 .is_some_and(|config| !config.effort_anchor)
         {
-            return (self.occurred_range, Vec::new());
+            return (None, Vec::new());
         }
 
         let Some((query, _)) = self.text_search.as_ref() else {

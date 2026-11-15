@@ -84,18 +84,7 @@ impl RepoPortableId {
     /// The id `text` spells; `None` for anything but its one spelling.
     #[must_use]
     pub fn from_hex(text: &str) -> Option<Self> {
-        if text.len() != 64
-            || !text
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        {
-            return None;
-        }
-        let mut bytes = [0; 32];
-        for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-            *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-        }
-        Some(Self(bytes))
+        oneiron_hex::decode::<32>(text).map(Self)
     }
 
     /// A fresh id from the OS RNG: never derived from anything (F1).

@@ -1,4 +1,4 @@
-//! Call mode through code mode's `self.memory.recall` (retrieval hub #call-mode).
+//! Call mode through code mode's `vault.recall` (retrieval hub #call-mode).
 
 use super::*;
 
@@ -7,9 +7,9 @@ use super::*;
 /// code, the two calls differing only in the deadline.
 #[tokio::test]
 async fn quickjs_code_mode_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
-    let script = "const pack = await self.memory.recall({query: 'heron lantern', effort: 'call', \
+    let script = "const pack = await vault.recall({query: 'heron lantern', effort: 'call', \
         deadline_ms: 30000, scope: {}}); let refused = 'reached'; try { await \
-        self.memory.recall({query: 'heron lantern', effort: 'call', deadline_ms: 0, scope: {}}); \
+        vault.recall({query: 'heron lantern', effort: 'call', deadline_ms: 0, scope: {}}); \
         } catch (error) { refused = String(error); } finish(JSON.stringify({pack, refused}));";
     let mode = code_mode_server(vec![script.to_owned()]);
     let actor = seeded_test_entity_id(0x0024_6571);
