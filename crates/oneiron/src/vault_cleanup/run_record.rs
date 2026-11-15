@@ -14,7 +14,7 @@ use super::*;
 use crate::side_table::{self, Raw, SideTable};
 use oneiron_contracts::msgpack;
 
-const RUN_LABEL: &str = "cleanup run result";
+pub(super) const RUN_LABEL: &str = "cleanup run result";
 
 /// The RUN row key holding what the run archived; Nil until it archives.
 pub(super) const KEY_SNAPSHOT: &str = "snapshot";
@@ -36,11 +36,11 @@ pub(super) fn read_in_txn(
         return Ok(None);
     };
     let fields = decode_row(&raw, RUN_LABEL)?;
-    let posture = field(&fields, KEY_POSTURE)
+    let posture = field(&fields, KEY_POSTURE, RUN_LABEL)?
         .and_then(Value::as_str)
         .and_then(CleanupPosture::parse)
         .ok_or(Error::CorruptedIndex(RUN_LABEL))?;
-    let Some(Value::Array(rows)) = field(&fields, KEY_CANDIDATES) else {
+    let Some(Value::Array(rows)) = field(&fields, KEY_CANDIDATES, RUN_LABEL)? else {
         return Err(Error::CorruptedIndex(RUN_LABEL));
     };
     let candidates = rows
@@ -58,7 +58,7 @@ pub(super) fn read_in_txn(
 }
 
 fn optional_id(fields: &[(Value, Value)], key: &str) -> Result<Option<EntityId>> {
-    match field(fields, key) {
+    match field(fields, key, RUN_LABEL)? {
         Some(Value::Nil) => Ok(None),
         Some(Value::String(value)) => value
             .as_str()
@@ -101,7 +101,7 @@ pub(super) fn put_in_txn(
     set(&mut fields, KEY_ARCHIVED, id_value_list(&report.archived));
     set(&mut fields, "digest", optional(report.digest));
     for key in [KEY_SNAPSHOT, KEY_REVERT] {
-        if field(&fields, key).is_none() {
+        if field(&fields, key, RUN_LABEL)?.is_none() {
             fields.push((Value::from(key), Value::Nil));
         }
     }

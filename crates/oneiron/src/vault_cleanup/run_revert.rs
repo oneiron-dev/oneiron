@@ -16,7 +16,7 @@ use rmpv::Value;
 use super::attempt_retention::{keep_attempt_in_txn, restore_archived_attempt_in_txn};
 use super::codec_receipts::PROPOSAL;
 use super::marks::{self, CleanupMark};
-use super::run_record::{self, KEY_REVERT, KEY_SNAPSHOT};
+use super::run_record::{self, KEY_REVERT, KEY_SNAPSHOT, RUN_LABEL};
 use super::run_snapshot::{CleanupSnapshotEntry, KEY_ENTRIES, decode_snapshot, entity_at};
 use super::{CleanupKind, KEY_AT, KEY_ENTITY, KEY_KIND, field};
 use crate::Vault;
@@ -176,12 +176,12 @@ pub(super) fn revert_cleanup_run_in_txn(
     let Some(fields) = run_record::fields_in_txn(vault, txn, &run)? else {
         return Ok(CleanupRunRevertAnswer::NoSuchRun);
     };
-    if let Some(stored) = field(&fields, KEY_REVERT).filter(|value| !value.is_nil()) {
+    if let Some(stored) = field(&fields, KEY_REVERT, RUN_LABEL)?.filter(|value| !value.is_nil()) {
         let mut answer = decode_revert(run, stored)?;
         answer.repeated = true;
         return Ok(CleanupRunRevertAnswer::Reverted(answer));
     }
-    let Some(snapshot) = field(&fields, KEY_SNAPSHOT) else {
+    let Some(snapshot) = field(&fields, KEY_SNAPSHOT, RUN_LABEL)? else {
         return Ok(CleanupRunRevertAnswer::Unrecorded);
     };
     let snapshot = decode_snapshot(snapshot)?;
@@ -404,12 +404,12 @@ pub(super) fn decode_revert(attempt: AttemptId, value: &Value) -> Result<Cleanup
     let Value::Map(parts) = value else {
         return Err(corrupt());
     };
-    let Some(Value::Array(rows)) = field(parts, KEY_ENTRIES) else {
+    let Some(Value::Array(rows)) = field(parts, KEY_ENTRIES, REVERT_LABEL)? else {
         return Err(corrupt());
     };
     Ok(CleanupRunRevert {
         attempt,
-        reverted_at: field(parts, KEY_AT)
+        reverted_at: field(parts, KEY_AT, REVERT_LABEL)?
             .and_then(Value::as_u64)
             .ok_or_else(corrupt)?,
         entries: rows
@@ -428,19 +428,24 @@ fn decode_entry(row: &Value) -> Option<CleanupRevertEntry> {
     let Value::Map(parts) = row else {
         return None;
     };
-    let reason = match field(parts, KEY_REASON)? {
+    let reason = match field(parts, KEY_REASON, REVERT_LABEL).ok()?? {
         Value::Nil => None,
         value => Some(value.as_str()?),
     };
     Some(CleanupRevertEntry {
         entity: entity_at(parts, KEY_ENTITY)?,
-        kind: field(parts, KEY_KIND)
+        kind: field(parts, KEY_KIND, REVERT_LABEL)
+            .ok()?
             .and_then(Value::as_str)
             .and_then(CleanupKind::parse)?,
         outcome: CleanupRevertOutcome::parse(
-            field(parts, KEY_OUTCOME).and_then(Value::as_str)?,
+            field(parts, KEY_OUTCOME, REVERT_LABEL)
+                .ok()?
+                .and_then(Value::as_str)?,
             reason,
         )?,
-        edited: field(parts, KEY_EDITED).and_then(Value::as_bool)?,
+        edited: field(parts, KEY_EDITED, REVERT_LABEL)
+            .ok()?
+            .and_then(Value::as_bool)?,
     })
 }

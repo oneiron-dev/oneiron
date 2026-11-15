@@ -109,3 +109,15 @@ pub(crate) use archive::{imported_reliability_body, validate_imported_reliabilit
 pub(crate) fn outcome_value_decode_for_test(raw: &[u8]) -> crate::Result<rmpv::Value> {
     codec::decode_value(raw)
 }
+
+/// Whether `raw` decodes as a skill-reliability outcome row, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn outcome_row_decodes_for_test(raw: &[u8]) -> bool {
+    <ledger::OutcomeRow as crate::side_table::RawValue>::from_raw(raw).is_ok()
+}
+
+/// The outcome-row schema version, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn outcome_row_schema_version_for_test() -> u64 {
+    SKILL_RELIABILITY_SCHEMA_VERSION
+}

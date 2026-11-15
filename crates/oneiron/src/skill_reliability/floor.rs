@@ -187,7 +187,10 @@ pub(super) fn check_floor_cells_in_txn(
             .into_iter()
             .filter(|(_, body, _)| {
                 executor.is_none_or(|executor| {
-                    super::codec::map_str(&body.value, "executor") == Some(executor)
+                    matches!(
+                        super::codec::map_str(&body.value, "executor"),
+                        Ok(Some(found)) if found == executor
+                    )
                 })
             })
             .collect();
@@ -199,7 +202,12 @@ pub(super) fn check_floor_cells_in_txn(
             .map_err(|_| invalid("reliability floor cell encoding"))?;
         let matching: Vec<_> = open
             .iter()
-            .filter(|(_, body, _)| super::codec::map_entry(&body.value, "cell") == Some(&cell))
+            .filter(|(_, body, _)| {
+                matches!(
+                    super::codec::map_entry(&body.value, "cell"),
+                    Ok(Some(found)) if *found == cell
+                )
+            })
             .collect();
         let posterior = posterior_from_estimate(&stored.estimate)?;
         let lower_bound = posterior.lower_bound();
@@ -246,9 +254,10 @@ pub(super) fn check_floor_cells_in_txn(
         live_cells.push(cell);
     }
     for (id, mut body, start) in open {
-        if super::codec::map_entry(&body.value, "cell")
-            .is_some_and(|cell| live_cells.contains(cell))
-        {
+        if matches!(
+            super::codec::map_entry(&body.value, "cell"),
+            Ok(Some(cell)) if live_cells.contains(cell)
+        ) {
             continue;
         }
         // The estimate was retracted when its own run mass reached zero.
@@ -313,7 +322,7 @@ pub(crate) fn open_floor_crossings_in_txn(
         {
             continue;
         }
-        let (Some(lower_bound), Some(floor)) = (
+        let (Ok(Some(lower_bound)), Ok(Some(floor))) = (
             super::codec::map_f32(&body.value, KEY_LOWER_BOUND),
             super::codec::map_f32(&body.value, KEY_FLOOR),
         ) else {
@@ -321,7 +330,10 @@ pub(crate) fn open_floor_crossings_in_txn(
         };
         crossings.push(FloorCrossing {
             proposal,
-            executor: super::codec::map_str(&body.value, "executor").map(str::to_owned),
+            executor: super::codec::map_str(&body.value, "executor")
+                .ok()
+                .flatten()
+                .map(str::to_owned),
             lower_bound,
             floor,
             at,

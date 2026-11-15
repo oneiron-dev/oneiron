@@ -94,18 +94,18 @@ impl RawValue for AmendedRow {
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
         let value = decode_value(bytes)?;
-        if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
+        if map_u64(&value, KEY_SCHEMA_VERSION)? != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
             return Err(invalid("unsupported skill reliability amendment schema").into());
         }
-        let amendment = map_str(&value, KEY_AMENDMENT).ok_or(invalid(
+        let amendment = map_str(&value, KEY_AMENDMENT)?.ok_or(invalid(
             "skill reliability amendment is missing its receipt",
         ))?;
-        let share = map_f32(&value, KEY_SHARE)
+        let share = map_f32(&value, KEY_SHARE)?
             .filter(|share| (0.0..=1.0).contains(share))
             .ok_or(invalid(
                 "skill reliability amendment share is not in [0, 1]",
             ))?;
-        let at = map_u64(&value, KEY_AT)
+        let at = map_u64(&value, KEY_AT)?
             .ok_or(invalid("skill reliability amendment is missing its time"))?;
         Ok(Self {
             amendment: amendment.to_owned(),

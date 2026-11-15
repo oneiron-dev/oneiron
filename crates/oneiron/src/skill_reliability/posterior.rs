@@ -132,9 +132,9 @@ impl SkillReliabilityPosterior {
 
     pub(super) fn from_value(value: &Value) -> Result<Self> {
         let alpha =
-            map_f32(value, KEY_ALPHA).ok_or(invalid("skill.reliability body is missing alpha"))?;
+            map_f32(value, KEY_ALPHA)?.ok_or(invalid("skill.reliability body is missing alpha"))?;
         let beta =
-            map_f32(value, KEY_BETA).ok_or(invalid("skill.reliability body is missing beta"))?;
+            map_f32(value, KEY_BETA)?.ok_or(invalid("skill.reliability body is missing beta"))?;
         if !alpha.is_finite() || !beta.is_finite() || alpha <= 0.0 || beta <= 0.0 {
             return Err(invalid(
                 "skill.reliability alpha/beta must be finite and positive",

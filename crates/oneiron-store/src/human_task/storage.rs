@@ -62,10 +62,15 @@ pub fn optional_str_value(value: Option<&str>) -> Value {
     value.map_or(Value::Nil, Value::from)
 }
 
-pub fn field<'v>(entries: &'v [(Value, Value)], key: &str) -> Option<&'v Value> {
-    entries
-        .iter()
-        .find_map(|(name, value)| (name.as_str() == Some(key)).then_some(value))
+/// The value under `key`, `None` when it is absent. A key stored twice is refused as `CorruptedIndex(what)`.
+pub fn field<'v>(
+    entries: &'v [(Value, Value)],
+    key: &str,
+    what: &'static str,
+) -> Result<Option<&'v Value>> {
+    msgpack::Entries::new(entries)
+        .get(key)
+        .map_err(|_| Error::CorruptedIndex(what))
 }
 
 pub fn decode_map(raw: &[u8], what: &'static str) -> Result<Vec<(Value, Value)>> {
@@ -77,7 +82,7 @@ pub fn decode_entity(
     key: &str,
     what: &'static str,
 ) -> Result<EntityId> {
-    let Some(Value::Binary(bytes)) = field(entries, key) else {
+    let Some(Value::Binary(bytes)) = field(entries, key, what)? else {
         return Err(Error::CorruptedIndex(what));
     };
     let bytes: [u8; 16] = bytes
@@ -88,7 +93,7 @@ pub fn decode_entity(
 }
 
 pub fn decode_u64(entries: &[(Value, Value)], key: &str, what: &'static str) -> Result<u64> {
-    field(entries, key)
+    field(entries, key, what)?
         .and_then(Value::as_u64)
         .ok_or(Error::CorruptedIndex(what))
 }
@@ -146,7 +151,7 @@ pub fn decode_followup_record(raw: &[u8]) -> Result<HumanTaskFollowupRecord> {
     if schema_version != HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION {
         return Err(Error::CorruptedIndex(WHAT));
     }
-    let stage = field(&entries, KEY_STAGE)
+    let stage = field(&entries, KEY_STAGE, WHAT)?
         .and_then(Value::as_str)
         .ok_or(Error::CorruptedIndex(WHAT))
         .and_then(HumanFollowupStage::from_token)?;
@@ -157,13 +162,13 @@ pub fn decode_followup_record(raw: &[u8]) -> Result<HumanTaskFollowupRecord> {
         stage,
         stage_generation: u32::try_from(decode_u64(&entries, KEY_STAGE_GENERATION, WHAT)?)
             .map_err(|_| Error::CorruptedIndex(WHAT))?,
-        next_due_at: field(&entries, KEY_NEXT_DUE_AT).and_then(Value::as_u64),
+        next_due_at: field(&entries, KEY_NEXT_DUE_AT, WHAT)?.and_then(Value::as_u64),
         reminders_sent: u32::try_from(decode_u64(&entries, KEY_REMINDERS_SENT, WHAT)?)
             .map_err(|_| Error::CorruptedIndex(WHAT))?,
-        last_receipt_ref: field(&entries, KEY_LAST_RECEIPT_REF)
+        last_receipt_ref: field(&entries, KEY_LAST_RECEIPT_REF, WHAT)?
             .and_then(Value::as_str)
             .map(str::to_owned),
-        completed_at: field(&entries, KEY_COMPLETED_AT).and_then(Value::as_u64),
+        completed_at: field(&entries, KEY_COMPLETED_AT, WHAT)?.and_then(Value::as_u64),
     })
 }
 
@@ -199,14 +204,14 @@ impl RawValue for HumanTaskWaitBinding {
 pub fn decode_wait_binding(raw: &[u8]) -> Result<HumanTaskWaitBinding> {
     const WHAT: &str = "human_task.wait row";
     let entries = decode_map(raw, WHAT)?;
-    let Some(Value::Binary(step_hash)) = field(&entries, KEY_STEP_HASH) else {
+    let Some(Value::Binary(step_hash)) = field(&entries, KEY_STEP_HASH, WHAT)? else {
         return Err(Error::CorruptedIndex(WHAT));
     };
     let step_hash: [u8; 32] = step_hash
         .as_slice()
         .try_into()
         .map_err(|_| Error::CorruptedIndex(WHAT))?;
-    let Some(Value::Boolean(is_active)) = field(&entries, KEY_IS_ACTIVE) else {
+    let Some(Value::Boolean(is_active)) = field(&entries, KEY_IS_ACTIVE, WHAT)? else {
         return Err(Error::CorruptedIndex(WHAT));
     };
     Ok(HumanTaskWaitBinding {
