@@ -267,7 +267,6 @@ pub(crate) fn stage_carried_overlays_in_txn<'b>(
         // erased (census L5-22 PR 1b).
         if custody::subject_erased_at_in_txn(store, w, &sealed.subject)?.is_some() {
             AUTHORITY_ERASED_ROW.put(store, w, &hash, &())?;
-            continue;
         }
         if !AUTHORITY_OVERLAY.contains(store, w, &hash)? {
             AUTHORITY_OVERLAY.put(store, w, &hash, row)?;
@@ -394,7 +393,6 @@ pub(crate) fn erase_authority_overlay_subject_in_txn(
     custody::retire_subject_keys_in_txn(store, txn, subject, &heads, refs)?;
     for (hash, _) in &rows {
         AUTHORITY_OVERLAY.delete(store, txn, hash)?;
-        AUTHORITY_ERASED_ROW.put(store, txn, hash, &())?;
     }
     note_authority_overlay_openness_change_in_txn(store, txn)?;
     store
