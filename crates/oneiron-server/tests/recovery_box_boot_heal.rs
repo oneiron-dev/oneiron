@@ -14,7 +14,7 @@
 //! --all-features --features oneiron/test-support --test recovery_box_boot_heal`.
 
 use std::io::{BufRead as _, BufReader, Write as _};
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
@@ -28,6 +28,9 @@ use oneiron_server::test_doors::recovery_box_hold::{close_heal_gate, heal_at_boo
 
 const VAULT: &str = "vault-7";
 const BOUND: Duration = Duration::from_secs(5);
+/// How long the test waits for a line the supervisor read: past `BOUND`, so
+/// a heal that sends nothing fails the test instead of hanging it.
+const ANSWER: Duration = Duration::from_secs(15);
 
 fn token() -> String {
     "c3".repeat(32)
@@ -124,8 +127,9 @@ enum Script {
 }
 
 /// A supervisor on a fresh socket that takes one connection per script
-/// entry, reads one line from each, sends each line to the test, and
-/// answers as told; it ends after the last entry.
+/// entry and serves each on its own thread, so a connection never waits
+/// behind an earlier one's answer: each reads one line, sends it to the
+/// test, and answers as told. It ends once every entry is answered.
 fn stub(
     script: Vec<Script>,
 ) -> (
@@ -139,36 +143,38 @@ fn stub(
     let listener = UnixListener::bind(&socket).expect("bind the supervisor socket");
     let (lines, incoming) = mpsc::channel();
     let handle = std::thread::spawn(move || {
+        let mut served = Vec::new();
         for entry in script {
             let (stream, _) = listener.accept().expect("accept the vault");
-            let mut reader = BufReader::new(stream.try_clone().expect("clone the stream"));
-            let mut line = String::new();
-            reader.read_line(&mut line).expect("read the request");
-            // the clone holds the connection open too: dropping it leaves
-            // the answer's stream the only one open
-            drop(reader);
-            lines.send(line).expect("the test reads each line");
-            let mut stream = stream;
-            match entry {
-                Script::Held => {
-                    stream.write_all(br#"{"held":true}"#).ok();
-                    stream.write_all(b"\n").ok();
-                }
-                Script::Refused => {
-                    stream
-                        .write_all(br#"{"held":false,"error":"stale_generation"}"#)
-                        .ok();
-                    stream.write_all(b"\n").ok();
-                }
-                Script::HeldAfter(go) => {
-                    go.recv().expect("the test sends go");
-                    stream.write_all(br#"{"held":true}"#).ok();
-                    stream.write_all(b"\n").ok();
-                }
-            }
+            let lines = lines.clone();
+            served.push(std::thread::spawn(move || serve(stream, entry, &lines)));
+        }
+        for connection in served {
+            connection.join().expect("serve one connection");
         }
     });
     (dir, socket, incoming, handle)
+}
+
+/// One connection of the stub: its line to the test, then the answer.
+fn serve(mut stream: UnixStream, entry: Script, lines: &mpsc::Sender<String>) {
+    let mut reader = BufReader::new(stream.try_clone().expect("clone the stream"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read the request");
+    // the clone holds the connection open too: dropping it leaves the
+    // answer's stream the only one open
+    drop(reader);
+    lines.send(line).expect("the test reads each line");
+    let answer: &[u8] = match entry {
+        Script::Held => br#"{"held":true}"#,
+        Script::Refused => br#"{"held":false,"error":"stale_generation"}"#,
+        Script::HeldAfter(go) => {
+            go.recv().expect("the test sends go");
+            br#"{"held":true}"#
+        }
+    };
+    stream.write_all(answer).ok();
+    stream.write_all(b"\n").ok();
 }
 
 fn expected_line(kit_only: bool) -> String {
@@ -214,7 +220,10 @@ fn a_death_after_the_box_held_heals_to_the_standard_preset_at_the_next_boot() {
     let heal = heal_at_boot(&client, Arc::clone(&vault), true);
     assert!(heal.is_some(), "the boot starts the heal");
     // the CURRENT preset, not the marker's target
-    assert_eq!(lines.recv().expect("the heal's line"), expected_line(false));
+    assert_eq!(
+        lines.recv_timeout(ANSWER).expect("the heal's line"),
+        expected_line(false)
+    );
     heal.expect("heal").join().expect("the heal ends");
     supervisor.join().expect("supervisor");
     assert_eq!(vault.recovery_box_hold_pending().expect("marker"), None);
@@ -230,7 +239,10 @@ fn a_failed_release_heals_at_the_next_boot() {
     let client = hold_client(&socket, VAULT, &token(), BOUND);
     let heal = heal_at_boot(&client, Arc::clone(&vault), true);
     assert!(heal.is_some(), "the boot starts the heal");
-    assert_eq!(lines.recv().expect("the heal's line"), expected_line(false));
+    assert_eq!(
+        lines.recv_timeout(ANSWER).expect("the heal's line"),
+        expected_line(false)
+    );
     heal.expect("heal").join().expect("the heal ends");
     supervisor.join().expect("supervisor");
     assert_eq!(vault.recovery_box_hold_pending().expect("marker"), None);
@@ -276,7 +288,10 @@ fn a_death_under_nobody_but_me_holds_the_box_again_at_the_next_boot() {
     let client = hold_client(&socket, VAULT, &token(), BOUND);
     let heal = heal_at_boot(&client, Arc::clone(&vault), true);
     assert!(heal.is_some(), "the boot starts the heal");
-    assert_eq!(lines.recv().expect("the heal's line"), expected_line(true));
+    assert_eq!(
+        lines.recv_timeout(ANSWER).expect("the heal's line"),
+        expected_line(true)
+    );
     heal.expect("heal").join().expect("the heal ends");
     supervisor.join().expect("supervisor");
     assert_eq!(vault.recovery_box_hold_pending().expect("marker"), None);
@@ -308,7 +323,10 @@ fn a_failed_heal_keeps_the_marker() {
     let client = hold_client(&socket, VAULT, &token(), BOUND);
     let heal = heal_at_boot(&client, Arc::clone(&vault), true);
     assert!(heal.is_some(), "the boot starts the heal");
-    assert_eq!(lines.recv().expect("the heal's line"), expected_line(false));
+    assert_eq!(
+        lines.recv_timeout(ANSWER).expect("the heal's line"),
+        expected_line(false)
+    );
     heal.expect("heal").join().expect("the heal ends");
     supervisor.join().expect("supervisor");
     assert_eq!(
@@ -326,7 +344,10 @@ fn a_heal_never_clears_a_newer_switchs_marker() {
     let client = hold_client(&socket, VAULT, &token(), BOUND);
     let heal = heal_at_boot(&client, Arc::clone(&vault), true).expect("the boot starts the heal");
     // the heal sent, so it read `before`
-    assert_eq!(lines.recv().expect("the heal's line"), expected_line(false));
+    assert_eq!(
+        lines.recv_timeout(ANSWER).expect("the heal's line"),
+        expected_line(false)
+    );
     // a newer switch overwrites the marker, then fails its own hold
     let refused = vault
         .set_recovery_preset_as(
@@ -357,18 +378,21 @@ fn a_switch_hold_waits_for_the_boot_heal() {
     let (_dir, socket, lines, supervisor) = stub(vec![Script::HeldAfter(wait), Script::Held]);
     let client = hold_client(&socket, VAULT, &token(), BOUND);
     let heal = heal_at_boot(&client, Arc::clone(&vault), true).expect("the boot starts the heal");
-    let first = lines.recv().expect("the heal's line");
+    let first = lines.recv_timeout(ANSWER).expect("the heal's line");
     let held = std::thread::spawn(move || client.hold_kit_only(true));
-    std::thread::sleep(Duration::from_millis(300));
+    // the stub serves each connection on its own thread, so a switch the
+    // gate did not stop is read here; the bound row below proves the gate
+    // stops it without a timing window
     assert!(
-        matches!(lines.try_recv(), Err(mpsc::TryRecvError::Empty)),
+        matches!(
+            lines.recv_timeout(Duration::from_millis(500)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
         "the switch sends nothing while the heal is in flight"
     );
     assert!(!held.is_finished(), "the switch waits for the heal");
     go.send(()).expect("go");
-    let second = lines
-        .recv_timeout(Duration::from_secs(15))
-        .expect("the switch's line");
+    let second = lines.recv_timeout(ANSWER).expect("the switch's line");
     assert_eq!(second, expected_line(true));
     held.join()
         .expect("the switch ends")
@@ -381,23 +405,22 @@ fn a_switch_hold_waits_for_the_boot_heal() {
 
 #[test]
 fn a_hold_that_waits_past_its_bound_for_the_heal_fails_with_nothing_sent() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let socket = directory.path().join("hypnos.sock");
-    let listener = UnixListener::bind(&socket).expect("bind the supervisor socket");
-    listener.set_nonblocking(true).expect("nonblocking");
-    let client = hold_client(&socket, VAULT, &token(), Duration::from_millis(300));
+    let (_dir, socket, lines, supervisor) = stub(vec![Script::Held]);
+    let client = hold_client(&socket, VAULT, &token(), Duration::from_secs(1));
     let gate = close_heal_gate(&client);
     let error = client
         .hold_kit_only(true)
         .expect_err("a hold past its bound fails")
         .to_string();
     assert!(error.contains("boot heal"), "{error}");
-    assert_no_call(&listener);
     drop(gate);
-    // the gate open again, a held answer is Ok
-    let (_dir, socket, _lines, supervisor) = stub(vec![Script::Held]);
-    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    // the same client's gate is open again, and its next hold is the first
+    // line the supervisor reads: the refused hold sent nothing
     client.hold_kit_only(false).expect("a held answer is Ok");
+    assert_eq!(
+        lines.recv_timeout(ANSWER).expect("the hold's line"),
+        expected_line(false)
+    );
     supervisor.join().expect("supervisor");
 }
 

@@ -29,21 +29,23 @@
 //! answers `None`.
 
 use std::io::{Read as _, Write as _};
+use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron_vault_contract::{
     MAX_CTL_LINE, RECOVERY_BOX_KIT_ONLY_OP, RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck, TokenHex,
 };
+use rustix::net::{AddressFamily, SocketAddrUnix, SocketType, sockopt};
 use zeroize::Zeroizing;
 
-/// How long one hold's write and the supervisor's ack may take, in all.
-/// The supervisor's own call to the control plane ends within 20 s, so a
-/// slow control plane still answers inside this. The connect to the local
-/// socket is not bounded: it is answered at once unless the supervisor's
-/// accept backlog is full.
+/// How long one hold's connect, write and the supervisor's ack may take, in
+/// all. The supervisor's own call to the control plane ends within 20 s, so
+/// a slow control plane still answers inside this. The connect is answered
+/// at once unless the supervisor's accept backlog is full; then it waits
+/// within the same bound.
 pub const HOLD_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The room reserved for the request line before the token is in it, so no
@@ -72,27 +74,32 @@ impl std::fmt::Debug for HypnosRecoveryBoxHold {
     }
 }
 
-/// Whether the boot heal's hold is still in flight. One gate is shared
-/// across the client's clones, so the installed client and the heal's own
-/// clone wait and signal on the same gate.
+/// How many boot heal holds are still in flight: the gate is open at none.
+/// One gate is shared across the client's clones, so the installed client
+/// and the heal's own clone wait and signal on the same gate.
 #[derive(Default)]
 struct HealGate {
-    running: Mutex<bool>,
+    running: Mutex<usize>,
     ended: Condvar,
 }
 
-/// The boot heal's hold on the closed gate. Dropping it opens the gate, so
-/// a panic's unwind opens the gate too.
+/// One boot heal's hold on the closed gate. Dropping it releases that hold,
+/// so a panic's unwind releases it too; the gate opens when the last one
+/// drops.
+#[must_use = "the heal gate opens again when this drops"]
 pub(crate) struct HealRunning(Arc<HealGate>);
 
 impl Drop for HealRunning {
     fn drop(&mut self) {
-        *self
+        let mut running = self
             .0
             .running
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = false;
-        self.0.ended.notify_all();
+            .unwrap_or_else(PoisonError::into_inner);
+        *running = running.saturating_sub(1);
+        if *running == 0 {
+            self.0.ended.notify_all();
+        }
     }
 }
 
@@ -126,14 +133,16 @@ impl HypnosRecoveryBoxHold {
     }
 
     /// Closes the boot heal's gate: every hold from now on waits for the
-    /// heal's answer before it sends. The returned guard opens the gate
-    /// when it drops.
+    /// heal's answer before it sends. The returned guard releases this
+    /// close when it drops; the gate opens once every close is released.
     pub(crate) fn close_heal_gate(&self) -> HealRunning {
-        *self
+        let mut running = self
             .heal
             .running
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = true;
+            .unwrap_or_else(PoisonError::into_inner);
+        *running = running.saturating_add(1);
+        drop(running);
         HealRunning(Arc::clone(&self.heal))
     }
 
@@ -148,9 +157,9 @@ impl HypnosRecoveryBoxHold {
         let (guard, _) = self
             .heal
             .ended
-            .wait_timeout_while(guard, remaining(deadline)?, |running| *running)
+            .wait_timeout_while(guard, remaining(deadline)?, |running| *running > 0)
             .unwrap_or_else(PoisonError::into_inner);
-        if *guard {
+        if *guard > 0 {
             return Err("waited past its bound for the boot heal's hold".to_owned());
         }
         Ok(())
@@ -189,8 +198,7 @@ impl HypnosRecoveryBoxHold {
         }
         line.push(b'\n');
 
-        let stream = UnixStream::connect(&self.socket)
-            .map_err(|_| "did not reach the supervisor socket".to_owned())?;
+        let stream = connect(&self.socket, deadline)?;
         stream
             .set_write_timeout(Some(remaining(deadline)?))
             .map_err(|_| "could not bound the write".to_owned())?;
@@ -359,6 +367,40 @@ impl crate::server::SyncServer {
     pub fn recovery_box_hold(&self) -> Option<&HypnosRecoveryBoxHold> {
         self.recovery_box_hold.get()
     }
+}
+
+/// Connects to the supervisor socket before `deadline`. Linux makes a
+/// blocking connect to a Unix stream socket wait while the listener's
+/// accept backlog is full, and bounds that wait by the socket's send
+/// timeout, so the timeout is set before the connect.
+fn connect(socket: &Path, deadline: Instant) -> Result<UnixStream, String> {
+    let unreached = |_: rustix::io::Errno| "did not reach the supervisor socket".to_owned();
+    let address = SocketAddrUnix::new(socket).map_err(unreached)?;
+    let stream = cloexec_socket().map_err(unreached)?;
+    sockopt::set_socket_timeout(&stream, sockopt::Timeout::Send, Some(remaining(deadline)?))
+        .map_err(|_| "could not bound the connect".to_owned())?;
+    rustix::net::connect(&stream, &address).map_err(unreached)?;
+    Ok(UnixStream::from(stream))
+}
+
+/// A Unix stream socket closed on exec, as `UnixStream::connect` makes one.
+#[cfg(not(target_vendor = "apple"))]
+fn cloexec_socket() -> rustix::io::Result<OwnedFd> {
+    rustix::net::socket_with(
+        AddressFamily::UNIX,
+        SocketType::STREAM,
+        rustix::net::SocketFlags::CLOEXEC,
+        None,
+    )
+}
+
+/// A Unix stream socket closed on exec, as `UnixStream::connect` makes one
+/// (Apple's `socket` takes no close-on-exec flag).
+#[cfg(target_vendor = "apple")]
+fn cloexec_socket() -> rustix::io::Result<OwnedFd> {
+    let socket = rustix::net::socket(AddressFamily::UNIX, SocketType::STREAM, None)?;
+    rustix::io::fcntl_setfd(&socket, rustix::io::FdFlags::CLOEXEC)?;
+    Ok(socket)
 }
 
 /// The time left before `deadline`, or the error that it has passed.
