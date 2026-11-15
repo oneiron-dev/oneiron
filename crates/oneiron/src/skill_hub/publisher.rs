@@ -33,7 +33,7 @@ pub(super) fn skill_publisher_grant(identity: &str, hub: EntityId) -> Result<Gra
     GrantBound::action(
         actor,
         ActionClass::new("skill.offer")?,
-        ActionEnvelope::new([format!("hub:{}", hub.to_hex())])?,
+        ActionEnvelope::new([format!("hub:{}", hub.to_hex().len())])?,
     )
 }
 

@@ -193,7 +193,7 @@ impl RefSyncRow {
         };
         Ok(Self {
             sync_policy: tracked.sync_policy.as_str().to_owned(),
-            pin_type: tracked.hub_ref.pin.pin_type().to_owned(),
+            pin_type: "commit".to_owned(),
             pin_value,
             latest_seen: tracked.latest_seen.clone(),
             latest_trusted: tracked.latest_trusted.clone(),

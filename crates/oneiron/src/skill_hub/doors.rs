@@ -325,7 +325,7 @@ impl Vault {
         let entity = match if fresh {
             None
         } else {
-            self.imported_skill_entity_for_content_hash_in_txn(wtxn, content_hash, Some(hub_ref))?
+            None
         } {
             Some(existing) => {
                 // The import stands on the holder it found, refused or not.
