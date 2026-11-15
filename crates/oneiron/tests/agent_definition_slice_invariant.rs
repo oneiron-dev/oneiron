@@ -214,7 +214,7 @@ fn put_through_host_method(
 
 fn draft(name: &str, extra: &[(&str, JsonValue)]) -> JsonValue {
     let mut body = serde_json::Map::new();
-    body.insert("agentId".to_owned(), json!(name));
+    body.insert("agent_id".to_owned(), json!(name));
     body.insert("desc".to_owned(), json!("slice invariant draft"));
     body.insert("version".to_owned(), json!("1"));
     body.insert("scope".to_owned(), json!({"kind": "base"}));
@@ -254,7 +254,7 @@ fn wider_drafts() -> Vec<(&'static str, JsonValue)> {
             "code-mode-mcp-not-held",
             draft(
                 "fixture.wide-mcp",
-                &[("codeModeMcps", json!(["fixture.mcp"]))],
+                &[("code_mode_mcps", json!(["fixture.mcp"]))],
             ),
         ),
         (
@@ -266,7 +266,10 @@ fn wider_drafts() -> Vec<(&'static str, JsonValue)> {
         ),
         (
             "model-tier-changed",
-            draft("fixture.wide-tier", &[("modelTier", json!("fixture.tier"))]),
+            draft(
+                "fixture.wide-tier",
+                &[("model_tier", json!("fixture.tier"))],
+            ),
         ),
     ]
 }

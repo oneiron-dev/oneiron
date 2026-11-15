@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use crate::code_run::SessionHookDisposition;
 use crate::entity_id::EntityId;
 
-/// `vault.claims.supersede`: closes `oldId` in favour of `newId`.
+/// `vault.claims.supersede`: closes `old_id` in favour of `new_id`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemorySupersedeInput {

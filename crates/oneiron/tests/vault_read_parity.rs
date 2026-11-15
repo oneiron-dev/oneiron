@@ -539,14 +539,19 @@ fn scope_denial_preserves_not_found_and_reports_withholding() {
 
 #[test]
 fn golden_wire_shapes() {
-    // query: canonical spelling, then the accepted alias spellings.
-    let canonical_query = r#"{"query":"blue hallway","query_vector":[0.25,0.75],"limit":10,"view":"summary","countMode":"estimate"}"#;
+    // query: the canonical spelling; the camelCase spellings are refused
+    // (UC02-REST-ENGINE-SCOPE = A: no camelCase alias on input).
+    let canonical_query = r#"{"query":"blue hallway","query_vector":[0.25,0.75],"limit":10,"view":"summary","count_mode":"estimate"}"#;
+    let request: CoreQueryRequest = serde_json::from_str(canonical_query).expect("query literal");
+    assert_eq!(encode(&request), canonical_query);
     for literal in [
-        canonical_query,
-        r#"{"query":"blue hallway","queryVector":[0.25,0.75],"limit":10,"view":"summary","count_mode":"estimate"}"#,
+        r#"{"query":"blue hallway","queryVector":[0.25,0.75]}"#,
+        r#"{"query":"blue hallway","countMode":"estimate"}"#,
     ] {
-        let request: CoreQueryRequest = serde_json::from_str(literal).expect("query literal");
-        assert_eq!(encode(&request), canonical_query);
+        assert!(
+            serde_json::from_str::<CoreQueryRequest>(literal).is_err(),
+            "{literal} is refused"
+        );
     }
     // Accepted defaults: an omitted limit is 10 and an omitted count mode is
     // estimate.
@@ -555,24 +560,16 @@ fn golden_wire_shapes() {
     assert_eq!(defaulted.limit, 10);
     assert_eq!(defaulted.count_mode, CountMode::Estimate);
 
-    // context pack: top-level `edge_hop`, alias spellings, and the vector-only
-    // form all canonicalize to snake_case.
+    // context pack: top-level `edge_hop` and the vector-only form
+    // canonicalize to snake_case; the camelCase spellings are refused.
     let canonical_pack = r#"{"executor_model":null,"query":"blue hallway","query_vector":null,"limit":10,"depth":null,"edge_hop":1,"max_neighbors":null,"budget":null}"#;
-    for literal in [
-        canonical_pack,
-        r#"{"query":"blue hallway","edgeHop":1}"#,
-        r#"{"query":"blue hallway","edge_hop":1}"#,
-    ] {
+    for literal in [canonical_pack, r#"{"query":"blue hallway","edge_hop":1}"#] {
         let request: CoreContextPackRequest =
             serde_json::from_str(literal).expect("context pack literal");
         assert_eq!(encode(&request), canonical_pack);
     }
     let vector_only_pack = r#"{"executor_model":null,"query":null,"query_vector":[0.25,0.75],"limit":10,"depth":null,"edge_hop":null,"max_neighbors":null,"budget":null}"#;
-    for literal in [
-        vector_only_pack,
-        r#"{"queryVector":[0.25,0.75]}"#,
-        r#"{"query_vector":[0.25,0.75]}"#,
-    ] {
+    for literal in [vector_only_pack, r#"{"query_vector":[0.25,0.75]}"#] {
         let request: CoreContextPackRequest =
             serde_json::from_str(literal).expect("vector-only literal");
         assert_eq!(encode(&request), vector_only_pack);
@@ -584,7 +581,7 @@ fn golden_wire_shapes() {
     let nested_pack = r#"{"executor_model":null,"query":null,"query_vector":[0.25,0.75],"limit":10,"depth":{"edge_hop":2,"max_neighbors":9},"edge_hop":1,"max_neighbors":null,"budget":null}"#;
     for literal in [
         nested_pack,
-        r#"{"queryVector":[0.25,0.75],"depth":{"edgeHop":2,"maxNeighbors":9},"edgeHop":1}"#,
+        r#"{"query_vector":[0.25,0.75],"depth":{"edge_hop":2,"max_neighbors":9},"edge_hop":1}"#,
     ] {
         let request: CoreContextPackRequest =
             serde_json::from_str(literal).expect("nested depth literal");
@@ -593,13 +590,20 @@ fn golden_wire_shapes() {
         assert_eq!(request.resolved_depth().max_neighbors, Some(9));
     }
     let budget_pack = r#"{"executor_model":null,"query":"blue hallway","query_vector":null,"limit":10,"depth":null,"edge_hop":null,"max_neighbors":null,"budget":{"token_budget":4000,"max_item_tokens":512,"max_field_chars":500,"retrieval":{"claims":4,"turns":2,"summaries":2,"facets":1,"other":1,"selected_edges":50}}}"#;
+    let request: CoreContextPackRequest =
+        serde_json::from_str(budget_pack).expect("budget literal");
+    assert_eq!(encode(&request), budget_pack);
     for literal in [
-        budget_pack,
-        r#"{"query":"blue hallway","budget":{"tokenBudget":4000,"maxItemTokens":512,"maxFieldChars":500,"retrieval":{"claims":4,"turns":2,"summaries":2,"facets":1,"other":1,"selectedEdges":50}}}"#,
+        r#"{"query":"blue hallway","edgeHop":1}"#,
+        r#"{"queryVector":[0.25,0.75]}"#,
+        r#"{"query_vector":[0.25,0.75],"depth":{"edgeHop":2,"maxNeighbors":9}}"#,
+        r#"{"query":"blue hallway","budget":{"tokenBudget":4000,"maxItemTokens":512,"maxFieldChars":500}}"#,
+        r#"{"query":"blue hallway","budget":{"retrieval":{"selectedEdges":50}}}"#,
     ] {
-        let request: CoreContextPackRequest =
-            serde_json::from_str(literal).expect("budget literal");
-        assert_eq!(encode(&request), budget_pack);
+        assert!(
+            serde_json::from_str::<CoreContextPackRequest>(literal).is_err(),
+            "{literal} is refused"
+        );
     }
 
     let named_pack: CoreContextPackRequest =
@@ -622,34 +626,47 @@ fn golden_wire_shapes() {
         "only canonical executor_model is accepted"
     );
 
-    // hydrate: `ref` plus every accepted alias, and the parts form.
+    // hydrate: `ref` and its snake_case alias, and the parts form; the
+    // camelCase spellings are refused.
     let canonical_hydrate = r#"{"ref":"tn1:a7","short_id":null,"content_hash":null,"view":"full"}"#;
-    for literal in [
-        canonical_hydrate,
-        r#"{"short_ref":"tn1:a7","view":"full"}"#,
-        r#"{"shortRef":"tn1:a7","view":"full"}"#,
-    ] {
+    for literal in [canonical_hydrate, r#"{"short_ref":"tn1:a7","view":"full"}"#] {
         let request: CoreHydrateRequest = serde_json::from_str(literal).expect("hydrate literal");
         assert_eq!(encode(&request), canonical_hydrate);
     }
     let canonical_parts = r#"{"ref":null,"short_id":"tn1","content_hash":"a7","view":null}"#;
-    for literal in [canonical_parts, r#"{"shortId":"tn1","contentHash":"a7"}"#] {
+    for literal in [canonical_parts, r#"{"short_id":"tn1","content_hash":"a7"}"#] {
         let request: CoreHydrateRequest = serde_json::from_str(literal).expect("parts literal");
         assert_eq!(encode(&request), canonical_parts);
     }
+    for literal in [
+        r#"{"shortRef":"tn1:a7","view":"full"}"#,
+        r#"{"shortId":"tn1","contentHash":"a7"}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<CoreHydrateRequest>(literal).is_err(),
+            "{literal} is refused"
+        );
+    }
 
-    // batch: every accepted refs alias.
+    // batch: `refs` and its snake_case aliases; the camelCase ones are refused.
     let canonical_batch = r#"{"refs":["tn1:a7","tn2:ff"],"view":"full"}"#;
     for literal in [
         canonical_batch,
         r#"{"short_refs":["tn1:a7","tn2:ff"],"view":"full"}"#,
-        r#"{"shortRefs":["tn1:a7","tn2:ff"],"view":"full"}"#,
         r#"{"short_ids":["tn1:a7","tn2:ff"],"view":"full"}"#,
-        r#"{"shortIds":["tn1:a7","tn2:ff"],"view":"full"}"#,
     ] {
         let request: CoreBatchShortIdHydrateRequest =
             serde_json::from_str(literal).expect("batch literal");
         assert_eq!(encode(&request), canonical_batch);
+    }
+    for literal in [
+        r#"{"shortRefs":["tn1:a7","tn2:ff"],"view":"full"}"#,
+        r#"{"shortIds":["tn1:a7","tn2:ff"],"view":"full"}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<CoreBatchShortIdHydrateRequest>(literal).is_err(),
+            "{literal} is refused"
+        );
     }
 
     // timeline: the canonical transport body stays `{"id", "view"}` even though

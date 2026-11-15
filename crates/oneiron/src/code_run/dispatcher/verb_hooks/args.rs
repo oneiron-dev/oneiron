@@ -47,9 +47,9 @@ pub(super) fn hook_args(call: &SelfCall) -> Result<Value> {
         SelfCall::TasksAsk(spec) => to_json(spec.as_ref())?,
         SelfCall::TasksWait(handle) => to_json(handle)?,
         SelfCall::TasksRefuse(refuse) => json!({
-            "taskRef": refuse.task_ref.map(|id| id.to_hex()),
+            "task_ref": refuse.task_ref.map(|id| id.to_hex()),
             "domain": refuse.domain.as_str(),
-            "reasonRef": refuse.reason_ref,
+            "reason_ref": refuse.reason_ref,
             "at": refuse.at,
         }),
         SelfCall::ConsultResult(request) => to_json(request)?,
@@ -71,8 +71,8 @@ pub(super) fn hook_args(call: &SelfCall) -> Result<Value> {
             claim_args(call, put.id, &put.candidate, put.occurred, put.learned_at)?
         }
         SelfCall::MemorySupersedeClaim(supersede) => json!({
-            "newId": supersede.new_id.to_hex(),
-            "oldId": supersede.old_id.to_hex(),
+            "new_id": supersede.new_id.to_hex(),
+            "old_id": supersede.old_id.to_hex(),
             "now": supersede.now,
         }),
         SelfCall::MemoryPutEdge(edge) => json!({
@@ -144,7 +144,7 @@ fn claim_args(
         "value": rmpv_json(&value),
         "confidence": confidence,
         "occurred": span(occurred),
-        "learnedAt": learned_at,
+        "learned_at": learned_at,
     }))
 }
 

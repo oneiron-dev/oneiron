@@ -9,7 +9,7 @@
   "host": {
     "host_door_precheck": false,
     "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>",
-    "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override.",
+    "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {new_id,old_id,now}, never an actor or source override.",
     "host_door_lists": true
   },
   "run_surface": "memory"

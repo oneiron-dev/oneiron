@@ -92,7 +92,7 @@ fn guest_put(host: &mut SdkHost<'_>, id: EntityId, definition: &JsonValue) -> Re
 fn put_call(id: EntityId) -> Result<SelfCall> {
     Ok(SelfCall::AgentsPut(Box::new(parse_agent_put_request(
         &id.to_hex(),
-        json!({"agentId":"fixture.helper","desc":"bounded helper","version":"1","scope":{"kind":"base"}}),
+        json!({"agent_id":"fixture.helper","desc":"bounded helper","version":"1","scope":{"kind":"base"}}),
         1_700_000_000,
     )?)))
 }
@@ -161,7 +161,7 @@ fn guest_agents_put_reaches_the_leased_host_and_fences_stale_leases() -> Result<
         guest_put(
             &mut host,
             in_slice,
-            &json!({"agentId":"fixture.narrow","desc":"narrow helper","version":"1",
+            &json!({"agent_id":"fixture.narrow","desc":"narrow helper","version":"1",
                 "scope":{"kind":"base"},"skills":["fixture.known-skill"]}),
         )?,
         "active"
@@ -174,7 +174,7 @@ fn guest_agents_put_reaches_the_leased_host_and_fences_stale_leases() -> Result<
         guest_put(
             &mut host,
             wider,
-            &json!({"agentId":"fixture.wide","desc":"wide helper","version":"1",
+            &json!({"agent_id":"fixture.wide","desc":"wide helper","version":"1",
                 "scope":{"kind":"base"},"ceiling":"auto","skills":["fixture.unknown-skill"]}),
         )?,
         "proposed"

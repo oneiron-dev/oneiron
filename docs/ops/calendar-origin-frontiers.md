@@ -11,7 +11,7 @@ admitted evidence TURN. `frontier` is the native incarnation-qualified binary
 value, or Nil when that TURN has no document head. A MESSAGE or SUMMARY
 frontier is never substituted for the evidence TURN.
 
-These are observed facts, not validation of the caller's `sourceFrontiers`
+These are observed facts, not validation of the caller's `source_frontiers`
 strings, proof of frontier membership, source authority, or retention rights.
 The public input and EVENT body remain unchanged. The raw Vault projector and
 Imported admission do not gain capture or a new refusal.

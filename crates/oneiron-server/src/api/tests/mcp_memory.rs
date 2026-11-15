@@ -54,7 +54,7 @@ async fn mcp_memory_reads_use_native_clamps_and_keep_runtime_refusals_typed() {
     let response = &query["result"]["structuredContent"]["output"]["response"];
     assert_eq!(response["items"].as_array().unwrap().len(), 1);
     assert_eq!(response["items"][0]["id"], visible.to_hex());
-    assert_eq!(response["meta"]["countMode"], "estimate");
+    assert_eq!(response["meta"]["count_mode"], "estimate");
     for id in [visible, hidden, missing] {
         let (_, reply) = route_json(
             server.clone(),

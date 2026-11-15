@@ -407,7 +407,7 @@ fn an_agent_with_save_agent_off_authors_no_definition() -> TestResult {
         .set_agent_powers_as(&f.owner, root, AgentPowers::ALL, SAVE_OFF)?;
     let parent = host(&f, f.agent, &f.leased)?;
     let draft = json!({
-        "agentId": "fixture.powers.child",
+        "agent_id": "fixture.powers.child",
         "desc": "agent powers draft",
         "version": "1",
         "scope": {"kind": "base"},

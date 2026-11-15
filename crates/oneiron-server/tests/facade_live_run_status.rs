@@ -79,7 +79,7 @@ async fn refuse_with_live_run_handles() {
                     "live_run": handle,
                     "spec": {
                         "domain": "bond",
-                        "reasonRef": "cl_33333333333333333333333333333333"
+                        "reason_ref": "cl_33333333333333333333333333333333"
                     }
                 })
                 .to_string(),
