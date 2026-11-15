@@ -67,6 +67,9 @@ pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflo
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::code_mode_verbs::draft_checked_span;
+// The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::code_mode_verbs::admit_run_call_for_test;
 #[cfg(test)]
 pub(crate) use self::device_release::release_hook;
 // The integration tests' door to the carrier release check (census L2-38).
