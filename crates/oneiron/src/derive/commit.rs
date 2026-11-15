@@ -59,6 +59,8 @@ pub(super) struct ItemContext<'s> {
     pub(super) stamp: &'s DerivationStamp,
     /// The write's recorded clock, Unix seconds.
     pub(super) now: u64,
+    /// Only an extraction binding records landed claims as attempt outputs.
+    pub(super) record_outputs: bool,
     /// The row each landed item of the batch so far created, by local name.
     landed: BTreeMap<String, EntityId>,
     /// The deferred-grant gate receipts staged grants wrote, for the commit
@@ -87,37 +89,36 @@ impl ItemContext<'_> {
 }
 
 impl Vault {
-    /// Commits `batch` for `stamp` in `txn` (untangle 6.7a): each item stages
-    /// in a savepoint and gets its own verdict; a refused item keeps its
-    /// refusal receipt and lands nothing; an item that names a refused item
-    /// is refused (`derive.dependency_refused`). The batch record lists every
-    /// item's outcome.
+    /// Commits `batch` for `stamp` in `txn`: each item stages in a savepoint
+    /// and gets its own verdict. A refused item keeps its receipt and lands
+    /// nothing; an item naming a refused item is refused in turn. The batch
+    /// record lists every outcome. Returns deferred-grant receipts for metrics
+    /// only after the caller's write commits; never counts them inside.
     ///
     /// # Errors
     ///
-    /// A malformed batch, and storage errors: either aborts the whole write.
-    pub(crate) fn derive_commit_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        stamp: &DerivationStamp,
-        batch: &DerivationBatch,
-    ) -> Result<DerivationReceipt> {
-        let (receipt, _) = self.derive_commit_in_txn_with_grant_receipts(txn, stamp, batch)?;
-        Ok(receipt)
-    }
-
-    /// [`Self::derive_commit_in_txn`] with the deferred-grant gate receipts
-    /// staged grants wrote, for the caller to count as metrics only after its
-    /// write commits. Never counted inside the transaction.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::derive_commit_in_txn`].
+    /// A malformed batch or a storage error aborts the whole write.
     pub(crate) fn derive_commit_in_txn_with_grant_receipts(
         &self,
         txn: &mut heed::RwTxn<'_>,
         stamp: &DerivationStamp,
         batch: &DerivationBatch,
+    ) -> Result<(
+        DerivationReceipt,
+        Vec<crate::gate::RecordedClaimGateDecision>,
+    )> {
+        self.derive_commit_in_txn_with_output_recording(txn, stamp, batch, false)
+    }
+
+    /// The caller-owned commit with its attempt-output recording purpose.
+    /// Existing host and stamp doors leave recording disabled. Deferred-grant
+    /// receipts are returned for metrics only after the caller's write commits.
+    pub(crate) fn derive_commit_in_txn_with_output_recording(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        stamp: &DerivationStamp,
+        batch: &DerivationBatch,
+        record_outputs: bool,
     ) -> Result<(
         DerivationReceipt,
         Vec<crate::gate::RecordedClaimGateDecision>,
@@ -128,6 +129,7 @@ impl Vault {
             batch: EntityId::now(),
             stamp,
             now: crate::ports::recorded_at_in_txn(&self.store, txn)?,
+            record_outputs,
             landed: BTreeMap::new(),
             grant_receipts: RefCell::new(Vec::new()),
         };
@@ -252,11 +254,11 @@ impl Vault {
         ))
     }
 
-    /// [`Self::derive_commit_in_txn`] in a write of its own.
+    /// [`Self::derive_commit_in_txn_with_grant_receipts`] in a write of its own.
     ///
     /// # Errors
     ///
-    /// As [`Self::derive_commit_in_txn`].
+    /// As [`Self::derive_commit_in_txn_with_grant_receipts`].
     pub fn derive_commit(
         &self,
         stamp: &DerivationStamp,

@@ -29,8 +29,8 @@ use super::conflict::inputs::derive_provenance;
 use super::extraction_opening::{ExtractionOpening, open_attempt, open_verdict_read};
 use super::extraction_set::{RebuildInput, SetRebuildError, rebuild_conflict_set};
 use super::verified_landing::{
-    LandingError, LandingRefusal, attempt_dreamer_matches, land_verified_candidate,
-    promotion_run_id, refuse, refuse_or_abort,
+    LandingError, LandingRefusal, VerifiedLandingOptions, attempt_dreamer_matches,
+    land_verified_candidate, promotion_run_id, refuse, refuse_or_abort,
 };
 use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
 use crate::dreamer_consolidation::extraction_pack::{
@@ -684,7 +684,10 @@ pub(super) fn stage_in_txn(
             proposal,
             Some(&evidence),
             Some(&fence),
-            Some(provenance.clone()),
+            VerifiedLandingOptions {
+                provenance: Some(provenance.clone()),
+                record_output: context.record_outputs,
+            },
             &mut savepoint,
         ) {
             Ok(approval) => landed.push(LandedOutput {

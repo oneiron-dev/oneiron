@@ -57,6 +57,14 @@ pub(super) enum LandingError {
     Abort(Error),
 }
 
+/// The caller's landing purpose and provenance, beside its evidence and fence.
+pub(super) struct VerifiedLandingOptions {
+    /// The caller's provenance, replacing native's when present.
+    pub(super) provenance: Option<rmpv::Value>,
+    /// Whether this claim is a committed output of the bound attempt.
+    pub(super) record_output: bool,
+}
+
 /// Lands one verified `candidate` with `evidence` under `fence` in the
 /// caller's savepoint `txn`: native's preparation with the caller's
 /// `provenance`, the imported check, the shared landing and the read back
@@ -72,7 +80,7 @@ pub(super) fn land_verified_candidate(
     candidate: PromotionCandidate,
     evidence: Option<&VerifiedEvidenceSet>,
     fence: Option<&ConsolidationFence>,
-    provenance: Option<rmpv::Value>,
+    options: VerifiedLandingOptions,
     txn: &mut heed::RwTxn<'_>,
 ) -> std::result::Result<ClaimApprovalStatus, LandingError> {
     use LandingError::{Abort, Refusal};
@@ -86,7 +94,7 @@ pub(super) fn land_verified_candidate(
             candidate,
             evidence,
             &[],
-            provenance,
+            options.provenance,
         ) {
             Ok(prepared) => prepared,
             Err(rejection) => {
@@ -114,7 +122,7 @@ pub(super) fn land_verified_candidate(
         &prepared,
         claim_candidate,
         fence,
-        false,
+        options.record_output,
         txn,
     ) {
         match error {
