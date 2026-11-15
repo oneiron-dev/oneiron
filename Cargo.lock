@@ -9068,6 +9068,7 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-crypto",
  "oneiron-docedit",
+ "oneiron-hex",
  "oneiron-model",
  "oneiron-skill-attribution",
  "oneiron-vault-contract",
