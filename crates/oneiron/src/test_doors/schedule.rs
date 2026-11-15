@@ -14,7 +14,7 @@ use crate::schedule::{
     ArmBy, Armed, JobOutcome, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran,
     ScheduleView, Trigger, When,
 };
-use crate::store::housekeeping_schedule::HousekeepingBudget;
+use crate::store::housekeeping_schedule::{HousekeepingBudget, HousekeepingSweep};
 
 /// Every test run, by job code and subject.
 static RUNS: Mutex<BTreeMap<(&'static str, Option<EntityId>), u64>> = Mutex::new(BTreeMap::new());
@@ -155,6 +155,65 @@ fn run_answer(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobRe
 fn run_seen(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
     record(vault, armed);
     Ok(JobResult::of(Ran::Done))
+}
+
+/// Always stops at its bound with work left, from the same cursor (red scratch: this build has
+/// no once-a-pass job kind).
+fn run_bounded(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    record(vault, armed);
+    Ok(JobResult::of(Ran::More { cursor: vec![0] }))
+}
+
+/// The 5a-2 test's drain, as this build can declare it.
+pub static TEST_ONCE: JobSpec = JobSpec {
+    code: "test.once",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    run: run_bounded,
+};
+
+/// Red scratch: this build's queuing write has no schedule job to pull.
+///
+/// # Errors
+///
+/// None.
+pub fn pull_for_queued_erase_obligation(_vault: &Vault) -> Result<()> {
+    Ok(())
+}
+
+/// The codes of the job kinds whose cadence is a Setting key but which someone other than the
+/// engine may arm.
+#[must_use]
+pub fn cadence_jobs_not_engine_armed() -> Vec<&'static str> {
+    crate::schedule::jobs()
+        .filter(|spec| matches!(spec.when, When::Setting(_)) && spec.arm_by != ArmBy::Engine)
+        .map(|spec| spec.code)
+        .collect()
+}
+
+/// The codes of the job kinds whose cadence is a Setting key.
+#[must_use]
+pub fn cadence_jobs() -> Vec<&'static str> {
+    crate::schedule::jobs()
+        .filter(|spec| matches!(spec.when, When::Setting(_)))
+        .map(|spec| spec.code)
+        .collect()
+}
+
+/// A door notes that `sweep` has work due at `at`, in its own write.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn note_sweep_deadline(vault: &Vault, sweep: HousekeepingSweep, at: u64) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::housekeeping::note_wake_in_txn(&vault.store, txn, sweep, at)
+    })
 }
 
 /// A job an actor arms; each run counts, and it wakes a stopped vault.
