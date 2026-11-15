@@ -656,6 +656,24 @@ async fn export(
                 return Ok(None);
             }
         }
+        // A filed compaction step's response carries the compactor's words
+        // about every record its call read (COMPACTION-STEP-CLAIM-READS-
+        // WITHOUT-SOURCES). A credential with no record caveat is judged on
+        // it through a lane built for the check, which reads the response
+        // artifact only beside each of those records, as the wording above
+        // is: the one exception to FIX 7645's raw read for such a credential
+        // (Engine RULING STEPREAD-RESIDUAL-PATHS = A). A caveat lane judges
+        // the artifact below, beside its version rows.
+        if lane.is_none()
+            && vault
+                .is_compaction_step_response_artifact(&id)
+                .map_err(failed)?
+        {
+            let reader = crate::api::scoped_read_for_core_auth(vault, &auth)?;
+            if !reader.all_refs_readable(&[id]).map_err(failed)? {
+                return Ok(None);
+            }
+        }
         // A credential with record caveats takes the exact version its lane
         // admits (FIX 7645): the artifact, that version's CLAIM and its
         // content's ASSET, judged from its metadata before a byte is read,
