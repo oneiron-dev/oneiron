@@ -1,9 +1,11 @@
-//! The LinkedIn pack's seat Setting keys (owner ruling PACK-SETTINGS-ALL = B; RULING
-//! PACK-KEYS-LINKEDIN-SWEEPS = A) move whether a sweep may go and the day a seat's caps reset on.
+//! The LinkedIn pack's Setting keys (owner ruling PACK-SETTINGS-ALL = B; RULING
+//! PACK-KEYS-LINKEDIN-SWEEPS = A) move whether a sweep may go, the day a seat's caps reset on,
+//! and how far back an inbox poll reads.
 //!
-//! Proves the head's contract for `linkedin.sweeps_allowed` (default false) and
-//! `linkedin.seat.cap_day_reset` (default utc_midnight): with no setting row a seat's policy is
-//! judged as the base judges it, once the owner sets a row the next evaluation follows it, a
+//! Proves the head's contract for `linkedin.sweeps_allowed` (default false),
+//! `linkedin.seat.cap_day_reset` (default utc_midnight), `linkedin.inbox.backfill_default_secs`
+//! (default 7 days) and `linkedin.inbox.backfill_max_secs` (default 366 days): with no setting
+//! row each read behaves as the base does, once the owner sets a row the next read follows it, a
 //! host's policy never carries the owner's sweep setting, and values of another shape fail.
 //!
 //! Reaches the settings as the outbound seat wall and the transport apply them through the test
@@ -13,17 +15,24 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod common;
+
+use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
 use oneiron::commitment_wake::CommitmentReminderRoute;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::linkedin_connector::{
-    LINKEDIN_CHANNEL, LINKEDIN_SEND_DM_VERB, LinkedInSandboxHostConfig, LinkedInSeatDispatchState,
-    LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy,
+    LINKEDIN_CHANNEL, LINKEDIN_SEND_DM_VERB, LinkedInInboxSyncConfig, LinkedInInboxSyncReport,
+    LinkedInInboxSyncRunner, LinkedInMcpConnectorAdapter, LinkedInMcpInboxSyncTransport,
+    LinkedInSandboxHostConfig, LinkedInSeatDispatchState, LinkedInSeatPolicyAction,
+    LinkedInSeatSandboxPolicy,
 };
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::linkedin_seat_settings::seat_policy_under_settings;
+use oneiron::test_doors::linkedin_seat_settings::{
+    seat_policy_under_settings, served_inbox_backfill_secs,
+};
 use oneiron::{Vault, VaultConfig};
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// 2025-08-05 13:20:00 UTC.
 const NOW: u64 = 1_754_400_000;
@@ -35,6 +44,12 @@ const NEXT_JST_MIDNIGHT: u64 = 1_754_406_000;
 const NEXT_NEW_YORK_MIDNIGHT: u64 = 1_754_452_800;
 /// The shipped daily DM cap.
 const DAILY_DM_CAP: u16 = 15;
+/// Seconds in a day.
+const DAY_SECS: u64 = 86_400;
+/// When the seat's identity turns active.
+const IDENTITY_AT: u64 = 1_800_000_000;
+/// The inbox poll: thirty days after the identity turned active.
+const POLL_AT: u64 = IDENTITY_AT + 30 * DAY_SECS;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -268,6 +283,172 @@ fn the_owner_cannot_set_a_cap_day_or_a_sweep_switch_of_another_shape() {
         assert!(
             matches!(set, Err(oneiron::Error::InvalidConfig(_))),
             "{key} refuses a value of another shape: {set:?}"
+        );
+    }
+}
+
+/// A vault whose device keystore is installed, as a host installs it after each open.
+fn open_seat_fixture() -> Fixture {
+    let fixture = open_fixture();
+    fixture.vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    fixture
+}
+
+/// The seat whose inbox the poll reads, active under its agent.
+fn active_seat(vault: &Vault) -> LinkedInMcpConnectorAdapter {
+    let adapter = LinkedInMcpConnectorAdapter::new("linkedin:member:yuki").expect("adapter");
+    let identity = common::self_held_identity_in_state(
+        LINKEDIN_CHANNEL,
+        adapter.receiving_address_or_handle(),
+        SelfHeldShape::DedicatedHandle,
+        ChannelIdentityBinding::agent(common::entity(0x53)),
+        ChannelIdentityState::Active,
+        IDENTITY_AT,
+    );
+    vault
+        .create_channel_identity(&common::entity(0x51), &identity)
+        .expect("active seat identity");
+    adapter
+}
+
+/// One thread whose two messages came ten and twenty days before the poll.
+#[derive(Clone)]
+struct TwoMessageInbox;
+
+impl LinkedInMcpInboxSyncTransport for TwoMessageInbox {
+    fn get_inbox(&mut self) -> std::result::Result<Value, String> {
+        Ok(json!({
+            "url": "https://www.linkedin.com/messaging/",
+            "sections": {
+                "inbox": "Messaging\nJane Doe\nHappy to share more details."
+            },
+            "references": {
+                "inbox": [
+                    {
+                        "kind": "conversation",
+                        "url": "/messaging/thread/2-jane-doe-abc/",
+                        "context": "inbox",
+                        "text": "Jane Doe"
+                    }
+                ]
+            }
+        }))
+    }
+
+    fn get_conversation(&mut self, thread_id: &str) -> std::result::Result<Value, String> {
+        assert_eq!(thread_id, "2-jane-doe-abc");
+        Ok(json!({
+            "url": "https://www.linkedin.com/messaging/thread/2-jane-doe-abc/",
+            "messages": [
+                {
+                    "id": "msg-twenty-days",
+                    "text": "Thanks for reaching out about the pilot.",
+                    "occurred_at": POLL_AT - 20 * DAY_SECS
+                },
+                {
+                    "id": "msg-ten-days",
+                    "text": "Happy to share more details.",
+                    "occurred_at": POLL_AT - 10 * DAY_SECS
+                }
+            ]
+        }))
+    }
+}
+
+/// One poll of the seat's inbox under a config that reads thirty days back.
+fn poll_thirty_days_back(
+    vault: &Vault,
+    adapter: &LinkedInMcpConnectorAdapter,
+) -> LinkedInInboxSyncReport {
+    let config = LinkedInInboxSyncConfig::from_adapter(adapter)
+        .with_backfill_window_secs(30 * DAY_SECS)
+        .expect("thirty days");
+    LinkedInInboxSyncRunner::new(vault, adapter.clone(), TwoMessageInbox, config)
+        .run_once(POLL_AT)
+        .expect("poll")
+}
+
+#[test]
+fn a_served_seats_poll_reads_seven_days_back_by_default_and_the_owners_backfill_once_set() {
+    let fixture = open_fixture();
+    let vault = &fixture.vault;
+    assert_eq!(
+        served_inbox_backfill_secs(vault).expect("read"),
+        7 * DAY_SECS,
+        "by default a served seat's poll reads seven days back"
+    );
+    let owner = owner_proof(vault);
+    set_owner_setting(
+        vault,
+        &owner,
+        "linkedin.inbox.backfill_default_secs",
+        json!(3 * DAY_SECS),
+    );
+    assert_eq!(
+        served_inbox_backfill_secs(vault).expect("read"),
+        3 * DAY_SECS,
+        "the owner's default reaches the poll"
+    );
+    set_owner_setting(
+        vault,
+        &owner,
+        "linkedin.inbox.backfill_max_secs",
+        json!(DAY_SECS),
+    );
+    assert_eq!(
+        served_inbox_backfill_secs(vault).expect("read"),
+        DAY_SECS,
+        "the owner's ceiling bounds the owner's default"
+    );
+}
+
+#[test]
+fn an_inbox_poll_reads_its_configs_history_by_default_and_no_further_back_than_the_owners_ceiling()
+{
+    let shipped = open_seat_fixture();
+    let adapter = active_seat(&shipped.vault);
+    let report = poll_thirty_days_back(&shipped.vault, &adapter);
+    assert_eq!(
+        (report.new_messages, report.backfill_skipped_messages),
+        (2, 0),
+        "by default a poll reads the thirty days its config names: {report:?}"
+    );
+
+    let ceiling = open_seat_fixture();
+    let adapter = active_seat(&ceiling.vault);
+    let owner = owner_proof(&ceiling.vault);
+    set_owner_setting(
+        &ceiling.vault,
+        &owner,
+        "linkedin.inbox.backfill_max_secs",
+        json!(15 * DAY_SECS),
+    );
+    let report = poll_thirty_days_back(&ceiling.vault, &adapter);
+    assert_eq!(
+        (report.new_messages, report.backfill_skipped_messages),
+        (1, 1),
+        "under the owner's fifteen-day ceiling the twenty-day-old message is skipped: {report:?}"
+    );
+}
+
+#[test]
+fn the_owner_cannot_set_a_backfill_past_a_year_and_a_day() {
+    let fixture = open_fixture();
+    let vault = &fixture.vault;
+    let owner = owner_proof(vault);
+    for key in [
+        "linkedin.inbox.backfill_default_secs",
+        "linkedin.inbox.backfill_max_secs",
+    ] {
+        let set = vault.set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting::vault_value(key, json!(366 * DAY_SECS + 1)),
+        );
+        assert!(
+            matches!(set, Err(oneiron::Error::InvalidConfig(_))),
+            "{key} refuses a backfill past 366 days: {set:?}"
         );
     }
 }
