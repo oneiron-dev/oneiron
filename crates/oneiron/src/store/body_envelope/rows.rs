@@ -15,8 +15,7 @@ use std::sync::Arc;
 use getrandom::SysRng;
 use heed::{RoTxn, RwTxn};
 use oneiron_crypto::{
-    Argon2Cost, Envelope, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId, WrapType,
-    seal,
+    Argon2Cost, Envelope, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, WrapType, seal,
 };
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -24,7 +23,7 @@ use zeroize::Zeroizing;
 use super::custody::{body_key_in, pin_body_custody_in_txn};
 use super::frames::{FORMAT_VERSION, FileKey};
 use super::{BodyDir, BodySeal, DirSeal, KeyScope, StagedBodyKey};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::side_table::{self, Named, Raw, SideTable, SideTableDbs};
 use crate::store::ManifestDbs;
 
@@ -39,8 +38,8 @@ pub(crate) const BODY_KEYS: SideTable<[u8; 32], BodyKeyRow, Named> =
 pub(crate) const BODY_INSTANCES: SideTable<([u8; 32], [u8; 16]), Vec<u8>, Raw> =
     SideTable::new(&side_table::PROVENANCE_BODY_INSTANCE);
 
-const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
-const EPOCH: u64 = 1;
+#[doc(hidden)]
+use oneiron_records::store::body_envelope::rows::{AEAD, EPOCH, corrupt};
 
 /// How a sealed body file is cut into envelopes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,10 +86,6 @@ impl std::fmt::Debug for BodyKeyRow {
             .field("len", &self.len)
             .finish_non_exhaustive()
     }
-}
-
-fn corrupt() -> Error {
-    Error::CorruptedIndex("body file key row")
 }
 
 /// Digest ‖ instance ‖ u64be length ‖ u16be version ‖ format: a wrap's key
