@@ -12,7 +12,7 @@
 //! |---|---|---|---|
 //! | `setup`, `read_result`, a `read` verb | true | | |
 //! | a `reversible_work` verb (an undo restores it) | false | false | |
-//! | a `delete`, `erase`, `vault_delete` or `member_remove` verb | false | true | |
+//! | a `delete`, `erase`, `vault_delete`, `member_remove` or `protected_ref_rewrite_or_delete` verb | false | true | |
 //! | an `outbound_send` or `legal_send` verb | false | | true |
 //! | a verb of any other act class | false | | |
 //! | an `unstated` verb, `execute_code`, `invoke_action` | no annotations | | |
@@ -77,12 +77,14 @@ impl McpToolAnnotations {
                 destructive_hint: Some(false),
                 ..Self::WRITES
             },
-            ActClass::Delete | ActClass::Erase | ActClass::VaultDelete | ActClass::MemberRemove => {
-                Self {
-                    destructive_hint: Some(true),
-                    ..Self::WRITES
-                }
-            }
+            ActClass::Delete
+            | ActClass::Erase
+            | ActClass::VaultDelete
+            | ActClass::MemberRemove
+            | ActClass::ProtectedRefRewriteOrDelete => Self {
+                destructive_hint: Some(true),
+                ..Self::WRITES
+            },
             ActClass::OutboundSend | ActClass::LegalSend => Self {
                 open_world_hint: Some(true),
                 ..Self::WRITES

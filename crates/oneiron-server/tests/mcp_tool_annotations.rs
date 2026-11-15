@@ -63,7 +63,11 @@ fn ruled_hints(class: Option<VerbActClass>) -> Option<Value> {
             Some(json!({ "readOnlyHint": false, "destructiveHint": false }))
         }
         VerbActClass::Act(
-            ActClass::Delete | ActClass::Erase | ActClass::VaultDelete | ActClass::MemberRemove,
+            ActClass::Delete
+            | ActClass::Erase
+            | ActClass::VaultDelete
+            | ActClass::MemberRemove
+            | ActClass::ProtectedRefRewriteOrDelete,
         ) => Some(json!({ "readOnlyHint": false, "destructiveHint": true })),
         VerbActClass::Act(ActClass::OutboundSend | ActClass::LegalSend) => {
             Some(json!({ "readOnlyHint": false, "openWorldHint": true }))
@@ -118,7 +122,11 @@ fn a_delete_verb_tool_says_it_destroys() {
     for tool in entries(listing) {
         let name = name_of(tool);
         if let Some(VerbActClass::Act(
-            ActClass::Delete | ActClass::Erase | ActClass::VaultDelete | ActClass::MemberRemove,
+            ActClass::Delete
+            | ActClass::Erase
+            | ActClass::VaultDelete
+            | ActClass::MemberRemove
+            | ActClass::ProtectedRefRewriteOrDelete,
         )) = verb_act_class(name)
         {
             destructive += 1;
