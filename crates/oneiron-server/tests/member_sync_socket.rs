@@ -43,6 +43,9 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message, client::IntoClie
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 const REPLY_WAIT: Duration = Duration::from_secs(10);
+// A catalogue page over 261 world windows opens and judges each one; in a
+// debug build on a loaded test host that takes seconds, not milliseconds.
+const CATALOGUE_WAIT: Duration = Duration::from_secs(120);
 const ROOT_OBSERVATION: Duration = Duration::from_millis(250);
 // dispatch_error maps InvalidPayload to DECODE_ERROR, not UNKNOWN_TAG.
 const REFUSED_FRAME: u16 = 4002;
@@ -186,7 +189,8 @@ fn public_world_claim(subject: EntityId, world: EntityId, value: &str) -> ClaimB
         ClaimSubject::Entity(subject),
         rmpv::Value::from(value),
         0.8,
-        ClaimApprovalStatus::Proposed,
+        // A residence index reads only surfaceable claims (Auto or Approved).
+        ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
@@ -411,7 +415,11 @@ async fn send_binary(socket: &mut Socket, bytes: Vec<u8>) {
 }
 
 async fn next_message(socket: &mut Socket) -> Message {
-    tokio::time::timeout(REPLY_WAIT, socket.next())
+    next_message_within(socket, REPLY_WAIT).await
+}
+
+async fn next_message_within(socket: &mut Socket, wait: Duration) -> Message {
+    tokio::time::timeout(wait, socket.next())
         .await
         .expect("a reply or explicit close, never silence")
         .expect("socket did not end")
@@ -419,8 +427,12 @@ async fn next_message(socket: &mut Socket) -> Message {
 }
 
 async fn next_member_binary(socket: &mut Socket) -> Vec<u8> {
+    next_member_binary_within(socket, REPLY_WAIT).await
+}
+
+async fn next_member_binary_within(socket: &mut Socket, wait: Duration) -> Vec<u8> {
     loop {
-        match next_message(socket).await {
+        match next_message_within(socket, wait).await {
             Message::Binary(data) => {
                 assert!(
                     !matches!(data.first().copied(), Some(0 | 6)),
@@ -471,10 +483,14 @@ async fn send_rpc(socket: &mut Socket, id: u64, method: &str, params: Value) {
 }
 
 async fn rpc_reply(socket: &mut Socket, id: u64) -> Result<Value, Value> {
+    rpc_reply_within(socket, id, REPLY_WAIT).await
+}
+
+async fn rpc_reply_within(socket: &mut Socket, id: u64, wait: Duration) -> Result<Value, Value> {
     let mut bytes = Vec::new();
     let mut seq = 0;
     loop {
-        let frame = next_member_binary(socket).await;
+        let frame = next_member_binary_within(socket, wait).await;
         assert_eq!(frame[0], transport::TAG_RPC, "unexpected frame: {frame:?}");
         let head: Envelope<serde::de::IgnoredAny> = rmp_serde::from_slice(&frame[1..]).unwrap();
         assert_eq!(head.id, id);
@@ -496,8 +512,18 @@ async fn rpc_reply(socket: &mut Socket, id: u64) -> Result<Value, Value> {
 }
 
 async fn rpc(socket: &mut Socket, id: u64, method: &str, params: Value) -> Value {
+    rpc_within(socket, id, method, params, REPLY_WAIT).await
+}
+
+async fn rpc_within(
+    socket: &mut Socket,
+    id: u64,
+    method: &str,
+    params: Value,
+    wait: Duration,
+) -> Value {
     send_rpc(socket, id, method, params).await;
-    rpc_reply(socket, id)
+    rpc_reply_within(socket, id, wait)
         .await
         .unwrap_or_else(|error| panic!("{method} refused: {error}"))
 }
@@ -1181,7 +1207,7 @@ fn the_catalogue_never_names_a_window_it_does_not_list() {
         let mut pages = Vec::new();
         let mut request_id = 2;
         loop {
-            let page = rpc(
+            let page = rpc_within(
                 &mut socket,
                 request_id,
                 "residence.windows",
@@ -1189,6 +1215,7 @@ fn the_catalogue_never_names_a_window_it_does_not_list() {
                     "selector": encoded_selector(&fx.selector),
                     "months": ["2026-03"], "limit": 16, "after": after
                 }),
+                CATALOGUE_WAIT,
             )
             .await;
             let next = page["next"].as_str().map(str::to_owned);
