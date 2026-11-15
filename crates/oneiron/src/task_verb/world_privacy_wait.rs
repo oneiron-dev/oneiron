@@ -40,18 +40,8 @@ pub struct WorldPrivacyWaitResult {
     pub status: WorldPrivacyWaitStatus,
 }
 
-/// Where a waited-on world-privacy request stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "state")]
-pub enum WorldPrivacyWaitStatus {
-    Pending,
-    /// A holder's yes applied it: the settings receipt.
-    Applied {
-        receipt_id: String,
-    },
-    /// A holder declined it, or cancelled it from its notice.
-    Declined,
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::world_privacy_wait::WorldPrivacyWaitStatus;
 
 impl WorldPrivacyWaitResult {
     /// `request` as its author's wait reads it.

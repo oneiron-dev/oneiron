@@ -10,19 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use oneiron_authority::share_travel::BornWith;
 
-/// `vault.shares.revoke`'s answer: the share, its status after the revoke,
-/// and the instant it stopped. A share already revoked answers its first
-/// revocation unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ShareRevokeReceipt {
-    /// The share's id, as 32 hex.
-    pub share_ref: String,
-    /// The grant's stored status: `revoked`.
-    pub status: String,
-    /// When the share stopped, Unix seconds on the vault's clock.
-    pub revoked_at: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_records::receipt::share_doors::ShareRevokeReceipt;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::receipt::share_doors::SharedBriefCitation;
