@@ -526,7 +526,7 @@ fn an_expired_task_is_missing_and_its_run_goes_on() -> TestResult {
                 json!({
                     "name": "vault.workflows.status",
                     "arguments": verb_arguments(json!({
-                        "root_attempt_ref": EntityId::from_bytes(root.as_bytes())?.to_hex(),
+                        "root_attempt_ref": EntityId::from_bytes(*root.as_bytes())?.to_hex(),
                     })),
                 }),
             )
