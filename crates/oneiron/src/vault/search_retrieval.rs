@@ -322,7 +322,7 @@ impl Vault {
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
-        self.ensure_text_index_searchable()?;
+        self.ensure_text_index_trusted()?;
         self.measure_limit(
             crate::limit_ask::EngineLimit::RecallQueryBytes,
             query.len() as u64,
@@ -336,6 +336,7 @@ impl Vault {
         let scores = {
             let rtxn = self.store.env.read_txn()?;
             admit(&rtxn)?;
+            self.ensure_text_index_searchable(&rtxn)?;
             crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
                 &crate::ports::text_index(target, &self.analyzer),
                 &rtxn,

@@ -263,7 +263,7 @@ impl PipelineBuilder<'_> {
         };
 
         if self.text_search.is_some() {
-            self.vault.ensure_text_index_searchable()?;
+            self.vault.ensure_text_index_trusted()?;
         }
 
         let recency = self.recency_blend_applies().then_some(temporal_now);

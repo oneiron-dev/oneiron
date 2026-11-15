@@ -575,9 +575,6 @@ fn handshake_rejects_corrupted_manifest() -> Result<()> {
                     crate::vault::text_index_rebuild::read_text_index_rebuild(&vault.store, &rtxn)?
                 };
                 marker.is_some()
-                    && vault
-                        .text_index_rebuilding
-                        .load(std::sync::atomic::Ordering::Acquire)
             }
             (Expect::Rebuild, Err(err)) => {
                 panic!("case {case_name}: expected a rebuild, got {err:?}")

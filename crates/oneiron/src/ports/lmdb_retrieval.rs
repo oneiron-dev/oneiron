@@ -71,7 +71,7 @@ impl crate::Vault {
         txn: &RoTxn<'_>,
         query: TextQuery<'_>,
     ) -> Result<Vec<ScoredEntity>> {
-        self.ensure_text_index_searchable()?;
+        self.ensure_text_index_searchable(txn)?;
         text_index(target, &self.analyzer).port_retrieval_text_scoped(txn, query)
     }
 }

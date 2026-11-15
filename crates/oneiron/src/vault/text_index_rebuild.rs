@@ -20,10 +20,12 @@
 //! reaches it, and a document deleted meanwhile has no source row left for the
 //! pass to find. A source row past the per-document text ceiling, written
 //! before the ceiling, stays unindexed, as the checkpoint restore and the
-//! leave's reindex leave it. Text reads fail closed while the marker stands.
+//! leave's reindex leave it. Text reads fail closed while the marker stands:
+//! each read looks for it in its own read transaction, so a rebuild another
+//! process's open started, or another process's pass ended, reaches every
+//! open handle at its next read.
 
 use std::ops::Bound;
-use std::sync::atomic::Ordering;
 
 use super::Vault;
 use crate::analyzer::MultilingualAnalyzer;
@@ -39,6 +41,11 @@ const TEXT_INDEX_REBUILD: SideTable<(), Vec<u8>, Raw> =
 /// The text each document was indexed with. Key: id16.
 const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
     SideTable::new(&side_table::INDEX_SOURCE_TEXT);
+
+/// Stored source text one page of the pass indexes at most, past its first
+/// document: a page of documents at the per-document text ceiling would put
+/// gigabytes of postings in one write transaction.
+const PAGE_SOURCE_BYTES: usize = 16 * 1024 * 1024;
 
 const MARKER_VERSION: u8 = 1;
 /// Version, cursor flag, cursor id16, done and total (u64 LE each).
@@ -192,19 +199,22 @@ impl Vault {
     /// Read paths over the text index refuse to score while it is not
     /// trusted ([`Self::ensure_text_index_trusted`]) or while a rebuild
     /// stands: the documents not yet indexed again would be missing from the
-    /// answer with no sign of it.
-    pub(crate) fn ensure_text_index_searchable(&self) -> Result<()> {
+    /// answer with no sign of it. The marker is read in `txn`, the read that
+    /// scores: a rebuild another process's open started, or another
+    /// process's pass ended, holds for this handle from its next read.
+    pub(crate) fn ensure_text_index_searchable(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
         self.ensure_text_index_trusted()?;
-        if self.text_index_rebuilding.load(Ordering::Acquire) {
+        if TEXT_INDEX_REBUILD.get(&self.store, txn, &())?.is_some() {
             return Err(Error::CorruptedIndex("text index rebuild in progress"));
         }
         Ok(())
     }
 
-    /// Runs the rebuild pass from its cursor, `page` documents per write
-    /// transaction, until it ends or `stop` says so after a page. Each run
-    /// does at least one page while a rebuild stands. Sets this handle's
-    /// rebuild flag from the marker it reads.
+    /// Runs the rebuild pass from its cursor, one page per write
+    /// transaction, until it ends or `stop` says so after a page. A page is
+    /// `page` documents, or fewer once their stored source text reaches
+    /// [`PAGE_SOURCE_BYTES`]. Each run does at least one page while a
+    /// rebuild stands.
     pub(crate) fn run_text_index_rebuild(
         &self,
         page: usize,
@@ -216,20 +226,27 @@ impl Vault {
             let mut wtxn = self.store.env.write_txn()?;
             let Some(mut marker) = read_text_index_rebuild(&self.store, &wtxn)? else {
                 drop(wtxn);
-                self.text_index_rebuilding.store(false, Ordering::Release);
                 run.complete = true;
                 return Ok(run);
             };
-            self.text_index_rebuilding.store(true, Ordering::Release);
             let start = marker
                 .cursor
                 .as_ref()
                 .map_or(Bound::Unbounded, Bound::Excluded);
-            let rows = INDEX_SOURCE_TEXT
-                .iter_range(&self.store, &wtxn, start, Bound::Unbounded)?
-                .take(page)
-                .collect::<Result<Vec<_>>>()?;
-            let last_page = rows.len() < page;
+            let mut rows = Vec::new();
+            let mut page_bytes = 0_usize;
+            let mut last_page = true;
+            for row in INDEX_SOURCE_TEXT.iter_range(&self.store, &wtxn, start, Bound::Unbounded)? {
+                if rows.len() >= page || page_bytes >= PAGE_SOURCE_BYTES {
+                    last_page = false;
+                    break;
+                }
+                let (id, fields) = row?;
+                page_bytes = fields.iter().fold(page_bytes, |bytes, (_, text)| {
+                    bytes.saturating_add(text.len())
+                });
+                rows.push((id, fields));
+            }
             for (id, fields) in &rows {
                 if !self.store.port_entity_present(&wtxn, id)? {
                     run.skipped = run.skipped.saturating_add(1);
@@ -260,7 +277,6 @@ impl Vault {
             }
             wtxn.commit()?;
             if last_page {
-                self.text_index_rebuilding.store(false, Ordering::Release);
                 run.complete = true;
                 return Ok(run);
             }
