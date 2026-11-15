@@ -391,7 +391,8 @@ fn setting_scope_project(
 /// and every row. A grant narrowed to some projects reads the rows inside
 /// it ([`SubstrateReach::holds_row_in`]) and no catalog, since each catalog
 /// line carries the vault-wide value; and of a spawn choice's learning only
-/// what rests on the row's own scope, never the vault's runs standing in.
+/// the runs of the row's own scope, at the catalog's window
+/// ([`crate::team::ChoiceLearning::learned_within_scope`]).
 fn learning_settings(
     vault: &Vault,
     input: &LearningSettingsRequest,
@@ -439,14 +440,16 @@ fn learning_settings(
         })
         .ok();
         rows.extend(choices.into_iter().map(|(scope, row, by)| {
-            let learned = learning
-                .as_ref()
-                .map(|learning| {
-                    LearnedChoiceView::from(learning.learned(row.value.choice(), &scope))
+            let learned = learning.as_ref().map(|learning| {
+                // A narrowed reach reads the row's own scope's runs alone, at
+                // the catalog's window: what it reads says nothing of the
+                // vault's runs or of a window a vault row set.
+                LearnedChoiceView::from(if whole_vault {
+                    learning.learned(row.value.choice(), &scope)
+                } else {
+                    learning.learned_within_scope(row.value.choice(), &scope)
                 })
-                // The vault's runs standing in for a scope with none of its
-                // own lie outside a narrowed reach.
-                .filter(|learned| whole_vault || learned.origin != PriorOrigin::Parent);
+            });
             choice_view(scope, row, by, learned)
         }));
     }

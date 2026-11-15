@@ -190,10 +190,9 @@ pub fn read_learning_as_owner(
 /// [`read_learning_as_owner`] for an agent or person holding a live Steward
 /// grant that names `read` (untangle 6.6c), checked at this read, as far as
 /// that grant reaches. A grant narrowed to some projects reads a cell of one
-/// of them whose reading rests on nothing outside it: its own runs over the
-/// pack's shipped prior, at the window and weight the catalog ships. A cell
-/// of another project or of the whole vault, and any other reading, are
-/// refused without saying what they hold.
+/// of them as its own runs alone make it ([`read_learning_within_cell`]); a
+/// cell of another project or of the whole vault is refused without saying
+/// what it holds.
 ///
 /// # Errors
 ///
@@ -217,29 +216,7 @@ pub fn read_learning_as_reader(
     if !reach.holds_row_in(learning_read_cell(input)?.project) {
         return Err(crate::federation::outside_reach(VERB));
     }
-    let view = read_learning(vault, input)?;
-    if !rests_on_its_own_cell(&view) {
-        return Err(crate::federation::outside_reach(VERB));
-    }
-    Ok(view)
-}
-
-/// Whether `view` shows only its own cell's runs over the pack's shipped
-/// prior, at the window and shipped weight the catalog ships. A reading that
-/// borrowed another cell, starts from any other prior (an owner's seed, a
-/// stored or captured prior), or shows a window or weight a vault row set,
-/// carries what lies outside the cell's project.
-fn rests_on_its_own_cell(view: &LearningCellView) -> bool {
-    let estimate = &view.view.estimate;
-    let shipped_weight = view.cell.predicate != MeasuredLearningPredicate::Setting
-        || estimate.prior.weight_runs.to_bits()
-            == crate::learning_setting::LEARNING_SHIPPED_PRIOR_RUNS
-                .seed
-                .to_bits();
-    view.view.borrowed_from.is_none()
-        && estimate.prior.origin == crate::learning::PriorOrigin::Shipped
-        && shipped_weight
-        && estimate.window == super::project::catalog_window()
+    Ok(read_learning_within_cell(vault, input)?)
 }
 
 /// `vault.learning.read` on a bound handle: the embedded owner reads under
@@ -271,12 +248,12 @@ fn learning_read_cell(input: &LearningReadRequest) -> Result<LearningCell> {
     Ok(cell.with_project(project))
 }
 
-fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningCellView> {
-    let cell = learning_read_cell(input)?;
-    let project = cell.project;
-    let parents = match &cell.type_ref {
+/// The type parents `cell`'s backoff reads, from the tree its type stamp
+/// names in its project.
+fn type_parents(vault: &Vault, cell: &LearningCell) -> Result<Vec<TypeRef>> {
+    Ok(match &cell.type_ref {
         Some(stamp) => {
-            let tree = crate::task_type::type_tree_at(vault, project, stamp.tree_version)?
+            let tree = crate::task_type::type_tree_at(vault, cell.project, stamp.tree_version)?
                 .filter(|tree| tree.contains(stamp))
                 .ok_or(Error::InvalidClaimBody(
                     "the learning typeRef must name a recorded task-type tree",
@@ -284,7 +261,42 @@ fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningC
             tree.ancestors(stamp)
         }
         None => Vec::new(),
-    };
+    })
+}
+
+/// A cell as its own runs alone make it, folded now
+/// ([`super::project::fold_cell_at_catalog_in_txn`]): never a borrowed
+/// cell's reading or a prior's provenance, so the answer says nothing of
+/// what lies outside the cell. The request is checked as [`read_learning`]
+/// checks it.
+fn read_learning_within_cell(
+    vault: &Vault,
+    input: &LearningReadRequest,
+) -> Result<LearningCellView> {
+    let cell = learning_read_cell(input)?;
+    cell.validate()?;
+    type_parents(vault, &cell)?;
+    let txn = vault.store.env.read_txn()?;
+    let estimate =
+        super::project::fold_cell_at_catalog_in_txn(vault, &txn, &cell, crate::unix_seconds_now())?;
+    let provenance = provenance(vault, &txn, &cell)?;
+    let attributed_outcome_receipts = attributed_outcome_receipts(&provenance);
+    Ok(LearningCellView {
+        cell: cell.into(),
+        view: MeasuredLearningView {
+            own: estimate.runs > 0.0,
+            estimate: estimate.into(),
+            borrowed_from: None,
+            attributed_outcome_receipts,
+            provenance,
+            prior_provenance: None,
+        },
+    })
+}
+
+fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningCellView> {
+    let cell = learning_read_cell(input)?;
+    let parents = type_parents(vault, &cell)?;
     let txn = vault.store.env.read_txn()?;
     let reading = read_learning_in_txn(vault, &txn, &cell, &parents)?;
     let provenance = provenance(vault, &txn, &cell)?;
