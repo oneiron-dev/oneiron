@@ -16,11 +16,15 @@ use crate::models::ModelRuntime;
 /// the refresh answer stamped, or `None` when nothing was sent or
 /// answered.
 ///
-/// The warm send takes the seat-bound step call's path: admitted with
-/// `admit_seat_bound`, sent on the admitted one-model ladder as an exact
-/// recorded call. It is buffered rather than stream-preferring, so the two
-/// wire bodies differ only in `max_tokens`. The refresh runs on a blocking
-/// thread, as the pump's pass runs it, since it blocks on the runtime.
+/// The warm send takes the seat-bound step call's path: it names the
+/// seat's one rung by its engine model id, as a step call names the model
+/// its durable seat bound (the seat's own id routes to the seat ladder,
+/// which is not one picked model, so the exact call refuses it before any
+/// send); it is admitted with `admit_seat_bound` and sent on the admitted
+/// one-model ladder as an exact recorded call. It is buffered rather than
+/// stream-preferring, so the two wire bodies differ only in `max_tokens`.
+/// The refresh runs on a blocking thread, as the pump's pass runs it, since
+/// it blocks on the runtime.
 ///
 /// # Errors
 ///
@@ -32,8 +36,9 @@ pub async fn warm_then_refresh(
     runtime: Arc<ModelRuntime>,
 ) -> Option<ServedCacheHorizon> {
     let seat = runtime.seat(crate::ai_host::CHAT_ROLE)?;
+    let model = seat.rung_models().into_iter().next()?.0;
     let mut request = oneiron::LlmRequest {
-        model: seat.model.clone(),
+        model,
         envelope: oneiron::CallEnvelope {
             seat_effort: None,
             scope: Default::default(),
