@@ -21,12 +21,11 @@
 //!   already running in this vault (FIX 600); the evidence stays.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ScopedRead};
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::HubFile;
@@ -51,9 +50,10 @@ const GATE_VERDICT: SideTable<EntityId, CallableGateVerdict, Named> =
 /// Fewest cases on each side of the split before a verdict can admit.
 const MIN_CASES_PER_SPLIT: usize = 1;
 
-fn invalid(reason: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidSkillBody(reason))
-}
+#[doc(hidden)]
+use oneiron_records::skill::helper::invalid;
+#[doc(hidden)]
+pub use oneiron_records::skill::helper::{CallableCase, HelperPairedVerdict};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill::helper::{
@@ -130,34 +130,11 @@ pub fn fork_target(input: &SkillForkRequest) -> Result<(EntityId, EntityId)> {
     Ok((parent, id))
 }
 
-/// One frozen case: the arguments a call took and the result it should give.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CallableCase {
-    /// The receipt or task the case was frozen from.
-    pub case_ref: String,
-    pub arguments: JsonValue,
-    pub expected: JsonValue,
-    /// Who supplied the case. A helper's own author never supplies its gate.
-    pub source_author: Option<EntityId>,
-}
-
 /// Which half of the split a case falls in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaseSplit {
     InSample,
     HeldOut,
-}
-
-/// What the shared paired measurement says of a helper against its parent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HelperPairedVerdict {
-    /// Its sufficiency card found the helper not worse.
-    NotWorse,
-    /// Its card found the helper worse.
-    Worse,
-    /// No finished card yet, or one that reads unknown.
-    Pending,
 }
 
 /// A pass rate before and after: the incumbent (the parent helper, or no

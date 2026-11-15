@@ -9,7 +9,8 @@ use crate::{EntityId, Vault};
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 /// The facets `room` limits its reads to as `txn` reads it, from its
-/// project's signed slice alone; `All` is a room with no facet.
+/// project's signed slice alone; `All` is a room no facet limits, and
+/// `Bottom` one whose project serves no authority here.
 pub(crate) fn room_facets_axis_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
