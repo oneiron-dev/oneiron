@@ -5,9 +5,15 @@
 //! names its agent as holder and its Grant. An export's subject is the owner
 //! whose copy it was and its detail the format. Never a setting's value nor
 //! a byte of the copy: the record keeps only their digests.
+//!
+//! The web sign-in setting is the one whose value does not say what the act
+//! did: only the value over the owner keys the vault had held switches it
+//! back, and every other value asks for an owner key again. Its detail is
+//! what the fold landed ([`web_sign_in_detail`]).
 
 use super::{AuthorityAuditEventKind, OpFields};
-use oneiron_authority::authority::{ActBy, ExportActRecord, PolicySettingSet};
+use crate::authority::WebSignInAct;
+use oneiron_authority::authority::{ActBy, ExportActRecord, PolicySetting, PolicySettingSet};
 
 /// The class, op name and fields of one setting act.
 pub(super) fn classify_policy_setting(
@@ -29,6 +35,29 @@ pub(super) fn classify_policy_setting(
             ..OpFields::default()
         },
     )
+}
+
+/// The detail of an act on the web sign-in setting, by what the fold landed
+/// for its entry (`landed`, from [`crate::authority::AuthorityFold::web_sign_in_acts`]),
+/// never by the value it carries: `set` for the owner's switch back to web
+/// sign-in, `clear` for an act that landed as "ask for an owner key again",
+/// `not_landed` for one the fold did not land: it waits for the owner's
+/// proof, was refused, or is not a valid entry.
+/// None for every other setting's act: [`classify_policy_setting`] gives its
+/// detail.
+pub(super) fn web_sign_in_detail(
+    set: &PolicySettingSet,
+    landed: Option<WebSignInAct>,
+) -> Option<String> {
+    if set.setting != PolicySetting::WebSignIn {
+        return None;
+    }
+    let change = match landed {
+        Some(WebSignInAct::SwitchedBack) => "set",
+        Some(WebSignInAct::AsksAgain) => "clear",
+        None => "not_landed",
+    };
+    Some(format!("{} {change}", set.setting.wire()))
 }
 
 /// The class, op name and fields of one export act.

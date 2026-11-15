@@ -30,7 +30,10 @@
 //! and store nothing until the owner confirms
 //! ([`LastDeviceKeyConfirmation::Given`]). The recovery root's authority key
 //! is no device key: it stays, the root's door changes it, and it does not
-//! count toward the keys that remain on a device.
+//! count toward the keys that remain on a device. A vault the owner switched
+//! back to web sign-in ([`Vault::switch_to_web_sign_in`]) asks for no owner
+//! key, and neither does a vault that has never held one, so there the doors
+//! ask nothing: the removal locks nobody out.
 //!
 //! Both doors mark the rows their write counted for the vault's loaded
 //! windows, in the write, and announce them once it committed, as the
@@ -206,11 +209,10 @@ impl Vault {
             return Err(authority_refused(NOT_LIVE));
         }
         let ending = vec![enrolled];
-        if confirmation == LastDeviceKeyConfirmation::NotGiven {
-            let remaining = self.owner_keys_remaining_in_txn(&txn, &fold, &ending)?;
-            if remaining.needs_recovery() {
-                return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
-            }
+        if confirmation == LastDeviceKeyConfirmation::NotGiven
+            && let Some(remaining) = self.last_device_key_question_in_txn(&txn, &fold, &ending)?
+        {
+            return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
         }
         let ends_recovery_root = holds_recovery_root(&ending);
         let ended = self
@@ -261,11 +263,10 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let ending = self.owner_keys_ending_with_machine_in_txn(&txn, &fold, machine)?;
-        if confirmation == LastDeviceKeyConfirmation::NotGiven && !ending.is_empty() {
-            let remaining = self.owner_keys_remaining_in_txn(&txn, &fold, &ending)?;
-            if remaining.needs_recovery() {
-                return Ok(MachineRemoval::LastDeviceKey(remaining));
-            }
+        if confirmation == LastDeviceKeyConfirmation::NotGiven
+            && let Some(remaining) = self.last_device_key_question_in_txn(&txn, &fold, &ending)?
+        {
+            return Ok(MachineRemoval::LastDeviceKey(remaining));
         }
         let removed = fold
             .machine(machine)
@@ -366,13 +367,14 @@ impl Vault {
         })
     }
 
-    /// Marks the authority rows a removal door's write counted, from
-    /// `before` to the transaction's fold now, for the vault's loaded
-    /// windows, in the write: the removal, each revocation and each frontier
-    /// join. Answers them for the announcement once the write committed
+    /// Marks the authority rows a door's write counted, from `before` to the
+    /// transaction's fold now, for the vault's loaded windows, in the write:
+    /// a removal door's removal, each revocation and each frontier join, and
+    /// the web sign-in door's switch ([`Self::switch_to_web_sign_in`]).
+    /// Answers them for the announcement once the write committed
     /// ([`Self::note_committed_authority_rows`]). A crash between the commit
     /// and the announcement still mirrors them.
-    fn mark_rows_counted_since_in_txn(
+    pub(super) fn mark_rows_counted_since_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         before: &AuthorityFold,
@@ -446,16 +448,36 @@ impl Vault {
         ending: &[EnrolledOwnerKey],
         confirmation: LastDeviceKeyConfirmation,
     ) -> Result<()> {
-        if confirmation == LastDeviceKeyConfirmation::Given || ending.is_empty() {
-            return Ok(());
-        }
-        if self
-            .owner_keys_remaining_in_txn(txn, fold, ending)?
-            .needs_recovery()
+        if confirmation == LastDeviceKeyConfirmation::NotGiven
+            && self
+                .last_device_key_question_in_txn(txn, fold, ending)?
+                .is_some()
         {
             return Err(authority_refused(LAST_DEVICE_KEY_UNCONFIRMED));
         }
         Ok(())
+    }
+
+    /// The question a removal that ends `ending` asks first on `fold`: the
+    /// owner keys that would remain, when none held on a device would and
+    /// the vault asks for an owner key ([`OwnerKeyRequirement::Required`]).
+    /// The one test of all three askers (the key door, the machine door and
+    /// the backstop). None when the act asks nothing: it ends no key, a
+    /// device key remains, or the vault asks for no owner key (it runs on
+    /// web sign-in, or it has never held a key that gives the owner's
+    /// proof), where a later change of the owner's needs no owner key and
+    /// the removal locks nobody out.
+    fn last_device_key_question_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        ending: &[EnrolledOwnerKey],
+    ) -> Result<Option<RemainingOwnerKeys>> {
+        if ending.is_empty() {
+            return Ok(None);
+        }
+        let remaining = self.owner_keys_remaining_in_txn(txn, fold, ending)?;
+        Ok(remaining.needs_recovery().then_some(remaining))
     }
 
     /// The keys that prove for the owner on `fold` once `ending` ended: each

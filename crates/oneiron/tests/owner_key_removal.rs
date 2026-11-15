@@ -1513,22 +1513,26 @@ fn two_removals_that_cross_both_show_in_the_changes_list() {
         .expect("the owner reads the key changes");
     let first_line = changes
         .iter()
-        .find(|change| change.entry == first_removal && change.public_key == second_key)
+        .find(|change| {
+            change.entry == first_removal
+                && change.change.key().map(|key| key.public_key) == Some(second_key)
+        })
         .expect("two removals that cross both show in the changes list: the first removal shows");
-    assert_ne!(
-        first_line.change,
-        OwnerKeyChangeKind::Enrolled,
+    assert!(
+        !matches!(first_line.change, OwnerKeyChangeKind::Enrolled(_)),
         "two removals that cross both show in the changes list: the first line is no enrolment"
     );
     let crossing_line = changes
         .iter()
-        .find(|change| change.entry == second_removal && change.public_key == predecessor_key)
+        .find(|change| {
+            change.entry == second_removal
+                && change.change.key().map(|key| key.public_key) == Some(predecessor_key)
+        })
         .expect(
             "two removals that cross both show in the changes list: the crossing removal shows",
         );
-    assert_ne!(
-        crossing_line.change,
-        OwnerKeyChangeKind::Enrolled,
+    assert!(
+        !matches!(crossing_line.change, OwnerKeyChangeKind::Enrolled(_)),
         "two removals that cross both show in the changes list: the crossing line is no enrolment"
     );
 }
@@ -2147,7 +2151,7 @@ fn a_removals_rows_are_marked_for_the_live_mirror() {
         .expect("the owner reads the key changes")
         .into_iter()
         .find(|change| {
-            change.change == OwnerKeyChangeKind::Removed && change.public_key == second_key
+            matches!(change.change, OwnerKeyChangeKind::Removed(key) if key.public_key == second_key)
         })
         .expect("the changes list shows the key's removal")
         .entry;

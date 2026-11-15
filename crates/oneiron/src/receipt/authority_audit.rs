@@ -652,7 +652,20 @@ fn project_row(
     issues: &FoldIssues,
 ) -> Result<AuthorityAuditRow> {
     let hash = authority_entry_hash(entry)?;
-    let (event_kind, source_op, fields) = classify(&entry.op);
+    let (event_kind, source_op, mut fields) = classify(&entry.op);
+    // The web sign-in setting's act reads as what the fold landed for it.
+    if let AuthorityOp::PolicySettingSet(set) = &entry.op
+        && let Some(detail) = carried_act::web_sign_in_detail(
+            set,
+            Some(if set.value.is_some() {
+                crate::authority::WebSignInAct::SwitchedBack
+            } else {
+                crate::authority::WebSignInAct::AsksAgain
+            }),
+        )
+    {
+        fields.detail = Some(detail);
+    }
     Ok(AuthorityAuditRow {
         entry_ref: id,
         entry_hash: hex_lower(&hash),

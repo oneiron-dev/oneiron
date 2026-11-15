@@ -175,6 +175,7 @@ pub mod task_ask_handle;
 mod valid_entries;
 mod vault_api;
 mod weave_admin;
+mod web_sign_in_door;
 mod withdrawn_grant;
 mod work_rebind;
 mod world_key_fold;
@@ -408,7 +409,7 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
-pub use owner_key_changes::{OwnerKeyChange, OwnerKeyChangeKind};
+pub use owner_key_changes::{ChangedOwnerKey, OwnerKeyChange, OwnerKeyChangeKind};
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, EnrolledOwnerKeyKind, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
 };
@@ -464,6 +465,7 @@ pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
     AdminStepUp, AuthenticatedWeaveAdmin, WEAVE_ADMIN_MFA_REQUIRED, WEAVE_ADMIN_NOT_CURRENT,
 };
+pub use web_sign_in_door::WebSignInSwitch;
 pub(crate) use withdrawn_grant::{
     ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
     mark_if_withdrawn_grant_in_txn, withdraw_grant_row_in_txn,

@@ -31,9 +31,21 @@
 //!   on a device answers 409 `last_device_key` and writes nothing, until
 //!   the request carries `confirm`.
 //! - `GET .../changes` lists every enrollment and removal of an enrolled
-//!   owner key, newest first. It is the notice of a key change: every owner
-//!   device holds the log, reads the same list, and shows what it has not
-//!   shown yet.
+//!   owner key and every switch back to web sign-in, newest first. It is the
+//!   notice of a key change: every owner device holds the log, reads the
+//!   same list, and shows what it has not shown yet.
+//! - `GET .../requirement` answers what the vault asks of its owner (the
+//!   owner's ruling AUTH-5): `never_held`, `required` or `web_sign_in`, and
+//!   on a hosted vault that asks for an owner key the value a switch back
+//!   to web sign-in names (`web_sign_in_switch`).
+//! - `POST .../web-sign-in` switches a hosted vault back to web sign-in:
+//!   it stops asking for an owner key until one is enrolled again. The
+//!   request carries the value the owner reviewed (`seen`), and the owner
+//!   key this install holds signs beside the install that carries the act,
+//!   so an install that holds none answers 409 `owner_key_required`: a
+//!   managed host always does, and the owner makes the switch on a device
+//!   that holds his key. A key enrolled since the review answers 409
+//!   `changed_since_review`.
 //!
 //! The wire form is CALLS "FIX 4920 enrollment HTTP representation": a
 //! machine as 32 hex, a key as 64 hex, a proof and a challenge as hex. The
@@ -50,7 +62,8 @@ use axum::routing::{get, post};
 use oneiron::authority::{
     ActAuthority, AuthorityKey, CheckpointRootSigner, EnrolledOwnerKey, EnrolledOwnerKeyKind,
     LastDeviceKeyConfirmation, OWNER_KEY_POSSESSION_PROOF_LEN, OwnerKeyChange, OwnerKeyChangeKind,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerKeyRemoval, RemainingOwnerKeys,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerKeyRemoval, OwnerKeyRequirement,
+    RemainingOwnerKeys, WebSignInSwitch,
 };
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
@@ -128,11 +141,34 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/owner-signing-keys/changes",
-                summary: "Every enrollment and removal of an enrolled owner key that the vault's log holds, newest first: the entry, `enrolled`, `removed` or `removed_by_ended_key` (two removals that crossed ended both keys), the key, the machine its enrollment names, its kind, the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
+                summary: "Every enrollment and removal of an enrolled owner key and every switch back to web sign-in that the vault's log holds, newest first: the entry, `enrolled`, `removed`, `removed_by_ended_key` (two removals that crossed ended both keys) or `switched_to_web_sign_in`, the key and its kind (absent on a switch, which names no key), the machine (the one the key's enrollment names; for a switch the install that carried it), the key that vouched for the change and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
                 row: None,
                 shape: None,
             },
             get(changes),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/owner-signing-keys/requirement",
+                summary: "What the vault asks of its owner: `state` is `never_held` (it has never held an owner key and asks for none), `required` (it asks for an owner key) or `web_sign_in` (a hosted vault its owner switched back to web sign-in). On a hosted vault in `required`, `web_sign_in_switch` (64 hex) is the value `POST /owner-signing-keys/web-sign-in` takes as `seen`: it names exactly the owner keys the vault has held.",
+                row: None,
+                shape: None,
+            },
+            get(requirement),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/owner-signing-keys/web-sign-in",
+                summary: "The owner switches a hosted vault back to web sign-in (`seen`, 64 hex: the `web_sign_in_switch` of the requirement he reviewed): the vault stops asking for an owner key until one is enrolled again. The owner key this install holds signs beside the install that carries the act; an install that holds none answers 409 `owner_key_required`, as a managed host always does. A key enrolled since the review answers 409 `changed_since_review`; a vault that has never held an owner key, already runs on web sign-in or is not hosted answers 409 `refused`. Answers the switch only once the fold counted it.",
+                row: None,
+                shape: Some(RestShape::json(
+                    web_sign_in_request_body_schema,
+                    web_sign_in_reply_schema,
+                )),
+            },
+            post(web_sign_in),
         ),
     ]
 }
@@ -166,6 +202,14 @@ struct RemoveRequest {
     /// held on a device, and confirmed. Absent otherwise.
     #[serde(default)]
     confirm: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct WebSignInRequest {
+    /// The `web_sign_in_switch` of the requirement the owner reviewed, as 64
+    /// lower-case hex: the owner keys the switch speaks for.
+    seen: String,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -247,18 +291,49 @@ struct ListReply {
 struct ChangeReply {
     /// The change's authority entry, as 64 hex.
     entry: String,
-    /// `enrolled`, `removed`, or `removed_by_ended_key`: the key ended
-    /// through a removal the vault did not count, because a crossing removal
-    /// ended that removal's own signer.
+    /// `enrolled`, `removed`, `removed_by_ended_key` (the key ended through
+    /// a removal the vault did not count, because a crossing removal ended
+    /// that removal's own signer) or `switched_to_web_sign_in` (the owner
+    /// switched the vault back to web sign-in).
     change: &'static str,
-    /// The key, as 64 hex.
-    public_key: String,
-    /// The machine the key's enrollment names, as 32 hex.
+    /// The key, as 64 hex. Absent on a switch back to web sign-in, which
+    /// names no key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    public_key: Option<String>,
+    /// As 32 hex: the machine the key's enrollment names, and for a switch
+    /// back to web sign-in the machine whose install carried the act.
     machine: String,
-    /// `device` or `recovery_authority`, as the list's `kind`.
-    kind: &'static str,
-    /// The key that signed the entry, as hex: an enrollment's predecessor, a
-    /// removal's proof.
+    /// `device` or `recovery_authority`, as the list's `kind`. Absent on a
+    /// switch back to web sign-in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<&'static str>,
+    /// The key that vouched for the change, as hex: an enrollment's
+    /// predecessor, a removal's proof, and for a switch back to web sign-in
+    /// the owner key whose proof the act carries.
+    signed_by: String,
+    /// When it was signed, advisory unix seconds.
+    at: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct RequirementReply {
+    /// `never_held`: the vault has never held an owner key and asks for
+    /// none. `required`: it asks for an owner key. `web_sign_in`: a hosted
+    /// vault whose owner switched it back to web sign-in.
+    state: &'static str,
+    /// On a hosted vault in `required`: the value a switch back to web
+    /// sign-in names, as 64 hex. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_sign_in_switch: Option<String>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct WebSignInReply {
+    /// The switch's authority entry, as 64 hex.
+    entry: String,
+    /// The machine whose install carried the act, as 32 hex.
+    machine: String,
+    /// The owner key whose proof the act carries, as hex.
     signed_by: String,
     /// When it was signed, advisory unix seconds.
     at: u64,
@@ -298,6 +373,16 @@ pub(crate) fn remove_request_body_schema() -> serde_json::Value {
 /// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/remove`'s answer: [`RemovalReply`].
 pub(crate) fn removal_reply_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<RemovalReply>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/web-sign-in`'s body: [`WebSignInRequest`].
+pub(crate) fn web_sign_in_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WebSignInRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/web-sign-in`'s answer: [`WebSignInReply`].
+pub(crate) fn web_sign_in_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WebSignInReply>()
 }
 
 /// The state of the 409 a removal answers when it would end the last owner
@@ -435,18 +520,33 @@ fn kind_name(kind: EnrolledOwnerKeyKind) -> &'static str {
 }
 
 fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
+    let key = change.change.key();
     ChangeReply {
         entry: revision_hex(&change.entry),
         change: match change.change {
-            OwnerKeyChangeKind::Enrolled => "enrolled",
-            OwnerKeyChangeKind::Removed => "removed",
-            OwnerKeyChangeKind::RemovedByEndedKey => "removed_by_ended_key",
+            OwnerKeyChangeKind::Enrolled(_) => "enrolled",
+            OwnerKeyChangeKind::Removed(_) => "removed",
+            OwnerKeyChangeKind::RemovedByEndedKey(_) => "removed_by_ended_key",
+            OwnerKeyChangeKind::SwitchedToWebSignIn => "switched_to_web_sign_in",
         },
-        public_key: revision_hex(&change.public_key),
+        public_key: key.map(|key| revision_hex(&key.public_key)),
         machine: change.machine.to_hex(),
-        kind: kind_name(change.kind),
+        kind: key.map(|key| kind_name(key.kind)),
         signed_by: authority_key_hex(&change.signed_by),
         at: change.at,
+    }
+}
+
+/// What the vault asks of its owner, as the wire says it.
+fn requirement_reply(requirement: OwnerKeyRequirement) -> RequirementReply {
+    let (state, web_sign_in_switch) = match requirement {
+        OwnerKeyRequirement::NeverHeld => ("never_held", None),
+        OwnerKeyRequirement::Required { web_sign_in_switch } => ("required", web_sign_in_switch),
+        OwnerKeyRequirement::WebSignIn => ("web_sign_in", None),
+    };
+    RequirementReply {
+        state,
+        web_sign_in_switch: web_sign_in_switch.as_ref().map(revision_hex),
     }
 }
 
@@ -637,4 +737,53 @@ async fn changes(
     })
     .await?;
     Ok(Json(reply))
+}
+
+/// `GET /v1/owner/owner-signing-keys/requirement`: what the vault asks of
+/// its owner (the owner's ruling AUTH-5), and on a hosted vault that asks
+/// for an owner key the value a switch back to web sign-in names.
+async fn requirement(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<RequirementReply> {
+    let owner = owner(&auth, &server)?;
+    let reply = blocking(move || -> OwnerResult<RequirementReply> {
+        Ok(requirement_reply(
+            server.vault().owner_key_requirement(&owner)?,
+        ))
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/owner-signing-keys/web-sign-in`: the owner switches a
+/// hosted vault back to web sign-in (the owner's ruling AUTH-5), on the
+/// value he reviewed (`seen`). The owner key this install holds signs
+/// beside the install that carries the act, so an install that holds none
+/// answers 409, state `owner_key_required`, and writes nothing; a key
+/// enrolled since the review answers 409, state `changed_since_review`.
+async fn web_sign_in(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<WebSignInRequest>,
+) -> OwnerReply<WebSignInReply> {
+    let owner = owner(&auth, &server)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let body = payload.read(&server).await?;
+    let switch = blocking(move || -> OwnerResult<WebSignInSwitch> {
+        let seen = parse_revision("seen", &body.seen)?;
+        server
+            .vault()
+            .switch_to_web_sign_in(&owner, surface, seen)
+            .map_err(refusal)
+    })
+    .await?;
+    Ok(Json(WebSignInReply {
+        entry: revision_hex(&switch.entry),
+        machine: switch.machine.to_hex(),
+        signed_by: authority_key_hex(&switch.signed_by),
+        at: switch.at,
+    }))
 }
