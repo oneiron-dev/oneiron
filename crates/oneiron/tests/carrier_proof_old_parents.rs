@@ -29,14 +29,15 @@ use oneiron::authority::{
 use oneiron::test_doors::conversation_training_fold::training_revision;
 use oneiron::test_doors::device_succession_fold::successor;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
+use oneiron::test_doors::owner_key_line::tail_goes_to_the_whole_log;
 use oneiron::{EntityId, HostingPrivacyPosture};
 use oneiron_authority::authority::{
-    CheckpointPolicySet, CheckpointRootChoice, ConversationTrainingSet,
-    ConversationTrainingVaultSet, DeviceSuccession, HomeNodePick, OWNER_KEY_ENROLLMENT_SEEN,
-    OWNER_KEY_POSSESSION_KIND, OriginCut, OwnerKeyEnroll, PolicySetting, PolicySettingSet,
-    checkpoint_policy_target, conversation_training_vault_target, device_succession_target,
-    home_pick_target, machine_answer_revision, origin_cut_target, owner_key_enrollment_challenge,
-    owner_key_enrollment_target, roster_has_live_owner,
+    AuthorityConfirmAction, AuthorityConfirmKind, CheckpointPolicySet, CheckpointRootChoice,
+    ConversationTrainingSet, ConversationTrainingVaultSet, DeviceSuccession, HomeNodePick,
+    OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OriginCut, OwnerKeyEnroll, PolicySetting,
+    PolicySettingSet, checkpoint_policy_target, conversation_training_vault_target,
+    device_succession_target, home_pick_target, machine_answer_revision, origin_cut_target,
+    owner_key_enrollment_challenge, owner_key_enrollment_target, roster_has_live_owner,
 };
 
 const ROOT_SEED: u8 = 61;
@@ -1166,6 +1167,197 @@ fn of_two_enrolments_each_on_the_others_agent_key_one_stands() {
     assert!(
         !in_force_home_pick(&fold),
         "pick outside the standing line not in force: {:?}",
+        fold.issues
+    );
+}
+
+/// The confirm id and nonce the root's federation confirms carry in tests
+/// 15 and 16, and the peer vault they name.
+const CONFIRM_ID: [u8; 32] = [0xc1; 32];
+const CONFIRM_NONCE: [u8; 16] = [0xc2; 16];
+const PEER_VAULT: AuthorityVaultId = [0xc3; 32];
+
+/// The root's federation confirm of `confirm_id` under `nonce`.
+fn confirm_op(confirm_id: [u8; 32], nonce: [u8; 16]) -> AuthorityOp {
+    AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+        kind: AuthorityConfirmKind::Accept,
+        confirm_id,
+        peer_vault_id: PEER_VAULT,
+        epoch: 1,
+        nonce,
+    })
+}
+
+impl OldParents {
+    /// The root's row of the first op `ops` yields whose row on `parents`,
+    /// at the root's next sequence, sorts before `before` in hash order:
+    /// the lower of two contending confirms wins. Not pushed.
+    fn root_row_before(
+        &self,
+        parents: &[AuthorityEntryHash],
+        before: AuthorityEntryHash,
+        ops: impl Iterator<Item = AuthorityOp>,
+    ) -> AuthorityLogEntry {
+        let vault_id = self.vault_id();
+        ops.map(|op| {
+            signed(
+                Some(vault_id),
+                self.root_seq + 1,
+                parents.to_vec(),
+                op,
+                &self.root,
+                &[],
+            )
+        })
+        .find(|row| hash(row) < before)
+        .expect("a row before the other in hash order")
+    }
+}
+
+/// Test 15 of the row (Astra review OP-01, 16 Nov 00:5x): a tail of one
+/// federation confirm goes to the whole log where the covered log holds an
+/// owner key's line. From P (X registered), D enrols K2 as an agent key, the
+/// root confirms C on D, and E1 enrols K1 (holder M) on C; M carries a
+/// removal R of X on P, and E2 enrols K2 (holder X) on R. The covered fold
+/// takes E1 (R holds), then E2, whose line refuses D: D, C and E1 fall, R
+/// stays held under E1's line, and E2 stands. A confirm C' of C's id on P,
+/// before C in hash order, is fresh against the image's settled confirms;
+/// folded with the covered rows it prunes C and E1 before any line exists,
+/// so R counts, E2 falls and D stands. Only the whole log judges that tail.
+#[test]
+fn a_confirm_tail_past_a_covered_line_goes_to_the_whole_log() {
+    let mut vault = OldParents::new();
+    let (victim_key, victim, registered) = vault.register_second_machine();
+    let (vault_id, machine) = (vault.vault_id(), vault.machine);
+    let k1_signing = signing(OWNER_KEY_SEED);
+    let k2_signing = signing(OWNER_KEY_SEED_2);
+    let k2 = key_of(&k2_signing);
+    let d = vault.root_enrols_agent_key(registered, k2.clone());
+    let c = vault.push_root_row(vec![d], confirm_op(CONFIRM_ID, CONFIRM_NONCE));
+    let e1 = vault.enrol_owner_key_on(c, &k1_signing, machine);
+    let removal_act = OwnerAct::by_owner(
+        owner(),
+        OwnerActKind::MachineRemoval,
+        victim,
+        ActSurface::ThisInstall,
+        machine_answer_revision([registered]),
+    );
+    let profile = node_profile(
+        vault_id,
+        victim,
+        &victim_key,
+        MachineRole::Removed,
+        2,
+        Some((machine, removal_act)),
+    );
+    let r = vault.carry(vec![registered], AuthorityOp::MachineProfile(profile));
+    let e2 = vault.enrol_owner_key_on(r, &k2_signing, victim);
+    let covered = vault.fold();
+    assert!(
+        covered.valid_entries.contains(&e2),
+        "E2 stands in the covered fold: {:?}",
+        covered.issues
+    );
+    assert!(
+        live_owner(&covered, &k2),
+        "K2 is a live owner key in the covered fold: {:?}",
+        covered.issues
+    );
+    assert!(
+        [d, c, e1]
+            .iter()
+            .all(|entry| !covered.valid_entries.contains(entry)),
+        "E2's line refuses D, and C and E1 fall with it: {:?}",
+        covered.issues
+    );
+    assert!(
+        is_held(&covered, victim, &r),
+        "E1's line still holds R: {:?}",
+        covered.issues
+    );
+    let tail = vault.root_row_before(
+        &[registered],
+        c,
+        (1..=u8::MAX).map(|nonce| confirm_op(CONFIRM_ID, [nonce; 16])),
+    );
+    let c_tail = hash(&tail);
+    let mut rows = vault.rows.clone();
+    rows.push(tail.clone());
+    let whole = fold_hosted(&rows);
+    assert!(
+        whole.valid_entries.contains(&c_tail) && !whole.valid_entries.contains(&c),
+        "C' prunes C in the whole log: {:?}",
+        whole.issues
+    );
+    assert!(
+        !whole.valid_entries.contains(&e2) && whole.valid_entries.contains(&d),
+        "in the whole log E2 falls and D stands: {:?}",
+        whole.issues
+    );
+    assert!(
+        !is_held(&whole, victim, &r),
+        "R counts in the whole log: {:?}",
+        whole.issues
+    );
+    assert!(
+        tail_goes_to_the_whole_log(&vault.rows, &[tail]).expect("the guard's read"),
+        "a fold past the image leaves C' to the whole log"
+    );
+}
+
+/// Test 16 of the row (Astra review OP-02, 16 Nov 00:5x): an enrolment that
+/// a row its own line lets fold prunes keeps its line. From P, the root
+/// confirms C1 and E enrols K on C1; M carries a home pick U on P and a
+/// second pick V on U, each having seen no live pick, and the root confirms
+/// C2 on V with C1's nonce, before C1 in hash order. The first fold takes E
+/// (V is stale on U, so C2 has no parent state); E's line makes U wait, so
+/// V is fresh and waits too, and C2 counts and prunes C1 and E. The line
+/// stays: U and V wait for the owner's proof, which the owner gives with the
+/// next key it enrols. A line dropped with E would let the rows that pruned
+/// it stand outside it.
+#[test]
+fn an_enrolment_its_own_line_lets_a_row_prune_keeps_its_line() {
+    let mut vault = OldParents::new();
+    let p = hash(&vault.rows[1]);
+    let (vault_id, machine) = (vault.vault_id(), vault.machine);
+    let k_signing = signing(OWNER_KEY_SEED);
+    let k = key_of(&k_signing);
+    let c1 = vault.push_root_row(vec![p], confirm_op(CONFIRM_ID, CONFIRM_NONCE));
+    let e = vault.enrol_owner_key_on(c1, &k_signing, machine);
+    let u = vault.carry(vec![p], home_pick_op(vault_id, machine, PICKED_NODE));
+    let v = vault.carry_with_seq(vec![u], home_pick_op(vault_id, machine, PICKED_NODE), 2);
+    let c2_row = vault.root_row_before(
+        &[v],
+        c1,
+        (1..=u8::MAX).map(|id| confirm_op([id; 32], CONFIRM_NONCE)),
+    );
+    let c2 = hash(&c2_row);
+    vault.root_seq += 1;
+    vault.rows.push(c2_row);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&c2),
+        "C2 counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&c1) && !fold.valid_entries.contains(&e),
+        "C2 prunes C1 and E: {:?}",
+        fold.issues
+    );
+    assert!(
+        !live_owner(&fold, &k),
+        "K is no live owner key: {:?}",
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &u) && waits(&fold, &v),
+        "U and V wait under E's line: {:?}",
+        fold.issues
+    );
+    assert!(
+        !in_force_home_pick(&fold),
+        "no pick is in force: {:?}",
         fold.issues
     );
 }

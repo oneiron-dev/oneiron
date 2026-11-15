@@ -223,84 +223,166 @@ pub(super) fn tail_reaches_old_parents(
     image: &super::checkpoint_image::AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
 ) -> bool {
-    let choices = tail
-        .values()
-        .any(|entry| needs_proof_off_the_line(&entry.op));
-    let enrols = tail.values().any(|entry| enrolled_key(&entry.op).is_some());
-    if !choices && !enrols {
-        return false;
+    CoveredLog {
+        rows: &image.rows,
+        frontier: &image.frontier,
+        valid: &image.fold().valid_entries,
+        merged: &image.aggregate.merged,
     }
-    let valid = &image.fold().valid_entries;
-    let rejected = covered_owner_key_enrolments(image, |hash| !valid.contains(hash));
-    if tail.values().any(|entry| {
-        enrolled_key(&entry.op).is_some_and(|key| rejected.values().any(|enrolled| enrolled == key))
-    }) {
-        return true;
-    }
-    if !choices {
-        return false;
-    }
-    let named: BTreeSet<&AuthorityEntryHash> = tail
-        .values()
-        .flat_map(|entry| entry.parent_hashes.iter())
-        .filter(|parent| image.rows.contains_key(*parent))
-        .collect();
-    // A sole frontier row descends from every covered row, so it lies on
-    // every covered enrolment's line.
-    let sole_frontier = matches!(image.frontier.as_slice(), [only]
-        if !named.is_empty() && named.iter().all(|parent| *parent == only));
-    // A valid enrolment leaves its key on the merged roster with its owner
-    // role, revoked or not.
-    let merged = &image.aggregate.merged;
-    let owner_key_ever = merged.roster.iter().any(|(key, device)| {
-        device.roles & ROLE_OWNER != 0
-            && !(merged.hosted && super::machine_profile::in_host_custody(merged, key))
-    });
-    if sole_frontier || (rejected.is_empty() && !owner_key_ever) {
-        return false;
-    }
-    let mut enrolments = covered_owner_key_enrolments(image, |hash| valid.contains(hash));
-    enrolments.extend(rejected);
-    let children = covered_children(image);
-    enrolments.keys().any(|enrolment| {
-        let line = covered_line(&children, enrolment);
-        named.is_empty() || named.iter().any(|parent| !line.contains(*parent))
-    })
+    .tail_reaches_old_parents(tail)
 }
 
-/// The covered `OwnerKeyEnroll` rows of `image` that `pick` names, each
-/// with the key it enrols, read from the bodies the image carries.
-fn covered_owner_key_enrolments(
-    image: &super::checkpoint_image::AuthorityCheckpointV2,
-    pick: impl Fn(&AuthorityEntryHash) -> bool,
-) -> BTreeMap<AuthorityEntryHash, AuthorityKey> {
-    image
-        .rows
+/// [`tail_reaches_old_parents`] past an image of `covered`, folded under
+/// `posture` with no pin and no peer, for the test door: the row summaries
+/// such an image carries, its frontier, the rows its fold counts and its
+/// merged state, each as an image's build takes it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn tail_reaches_old_parents_past_rows_for_test(
+    covered: &[AuthorityLogEntry],
+    tail: &[AuthorityLogEntry],
+    posture: crate::HostingPrivacyPosture,
+) -> crate::error::Result<bool> {
+    let mut rows = BTreeMap::new();
+    for entry in covered {
+        let body = encode_authority_log_entry_body(entry)?;
+        rows.insert(
+            authority_entry_hash(entry)?,
+            super::checkpoint_image::AuthorityCheckpointRow::of(entry, &body),
+        );
+    }
+    let named: BTreeSet<AuthorityEntryHash> = covered
         .iter()
-        .filter_map(|(hash, row)| {
-            if !pick(hash) {
-                return None;
-            }
-            let entry = decode_authority_log_entry_body(row.body.as_deref()?).ok()?;
-            let AuthorityOp::OwnerKeyEnroll(enrol) = entry.op else {
-                return None;
-            };
-            Some((*hash, enrol.device.key))
-        })
-        .collect()
+        .flat_map(|entry| entry.parent_hashes.iter().copied())
+        .collect();
+    let frontier: Vec<AuthorityEntryHash> = rows
+        .keys()
+        .filter(|hash| !named.contains(*hash))
+        .copied()
+        .collect();
+    let capture =
+        super::fold_resume::FoldCapture::for_checkpoint(frontier.iter().copied().collect());
+    let (consent, local) = super::fold_engine::own_log_inputs(posture, None);
+    let fold = super::fold_engine::fold_authority_log_inner(
+        covered,
+        &BTreeMap::new(),
+        None,
+        &BTreeMap::new(),
+        consent,
+        super::fold_engine::FoldLocalInputs {
+            capture: Some(&capture),
+            ..local
+        },
+    );
+    fold.vault_id.ok_or_else(invalid_authority)?;
+    let image = capture.take_image().ok_or_else(invalid_authority)?;
+    let tail = tail
+        .iter()
+        .map(|entry| Ok((authority_entry_hash(entry)?, entry)))
+        .collect::<crate::error::Result<BTreeMap<_, _>>>()?;
+    Ok(CoveredLog {
+        rows: &rows,
+        frontier: &frontier,
+        valid: &image.fold.valid_entries,
+        merged: &image.merged,
+    }
+    .tail_reaches_old_parents(&tail))
 }
 
-/// Each covered row's covered children.
-fn covered_children(
-    image: &super::checkpoint_image::AuthorityCheckpointV2,
-) -> BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> {
-    let mut children: BTreeMap<_, Vec<_>> = BTreeMap::new();
-    for (hash, row) in &image.rows {
-        for parent in &row.parents {
-            children.entry(*parent).or_default().push(*hash);
+/// The covered rows of an adopted image, as [`tail_reaches_old_parents`]
+/// reads them.
+struct CoveredLog<'a> {
+    /// Each covered row's summary, with the body of every row a line reads.
+    rows: &'a BTreeMap<AuthorityEntryHash, super::checkpoint_image::AuthorityCheckpointRow>,
+    /// The covered rows no covered row names.
+    frontier: &'a [AuthorityEntryHash],
+    /// The covered rows the image's fold counts.
+    valid: &'a ValidEntries,
+    /// The merge of every surviving covered state.
+    merged: &'a FoldState,
+}
+
+impl CoveredLog<'_> {
+    /// [`tail_reaches_old_parents`] of these covered rows.
+    fn tail_reaches_old_parents(
+        &self,
+        tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    ) -> bool {
+        let choices = tail
+            .values()
+            .any(|entry| needs_proof_off_the_line(&entry.op));
+        let enrols = tail.values().any(|entry| enrolled_key(&entry.op).is_some());
+        if !choices && !enrols {
+            return false;
         }
+        let rejected = self.owner_key_enrolments(|hash| !self.valid.contains(hash));
+        if tail.values().any(|entry| {
+            enrolled_key(&entry.op)
+                .is_some_and(|key| rejected.values().any(|enrolled| enrolled == key))
+        }) {
+            return true;
+        }
+        if !choices {
+            return false;
+        }
+        let named: BTreeSet<&AuthorityEntryHash> = tail
+            .values()
+            .flat_map(|entry| entry.parent_hashes.iter())
+            .filter(|parent| self.rows.contains_key(*parent))
+            .collect();
+        // A sole frontier row descends from every covered row, so it lies on
+        // every covered enrolment's line.
+        let sole_frontier = matches!(self.frontier, [only]
+            if !named.is_empty() && named.iter().all(|parent| *parent == only));
+        // A valid enrolment leaves its key on the merged roster with its owner
+        // role, revoked or not.
+        let merged = self.merged;
+        let owner_key_ever = merged.roster.iter().any(|(key, device)| {
+            device.roles & ROLE_OWNER != 0
+                && !(merged.hosted && super::machine_profile::in_host_custody(merged, key))
+        });
+        if sole_frontier || (rejected.is_empty() && !owner_key_ever) {
+            return false;
+        }
+        let mut enrolments = self.owner_key_enrolments(|hash| self.valid.contains(hash));
+        enrolments.extend(rejected);
+        let children = self.children();
+        enrolments.keys().any(|enrolment| {
+            let line = covered_line(&children, enrolment);
+            named.is_empty() || named.iter().any(|parent| !line.contains(*parent))
+        })
     }
-    children
+
+    /// The covered `OwnerKeyEnroll` rows that `pick` names, each with the key
+    /// it enrols, read from the bodies the image carries.
+    fn owner_key_enrolments(
+        &self,
+        pick: impl Fn(&AuthorityEntryHash) -> bool,
+    ) -> BTreeMap<AuthorityEntryHash, AuthorityKey> {
+        self.rows
+            .iter()
+            .filter_map(|(hash, row)| {
+                if !pick(hash) {
+                    return None;
+                }
+                let entry = decode_authority_log_entry_body(row.body.as_deref()?).ok()?;
+                let AuthorityOp::OwnerKeyEnroll(enrol) = entry.op else {
+                    return None;
+                };
+                Some((*hash, enrol.device.key))
+            })
+            .collect()
+    }
+
+    /// Each covered row's covered children.
+    fn children(&self) -> BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> {
+        let mut children: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (hash, row) in self.rows {
+            for parent in &row.parents {
+                children.entry(*parent).or_default().push(*hash);
+            }
+        }
+        children
+    }
 }
 
 /// `enrolment` and every covered row that descends from it.

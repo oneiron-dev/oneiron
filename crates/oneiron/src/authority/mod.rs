@@ -484,6 +484,8 @@ pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
