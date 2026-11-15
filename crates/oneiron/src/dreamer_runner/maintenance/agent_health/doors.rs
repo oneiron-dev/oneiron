@@ -86,7 +86,7 @@ impl ConcernCardSummary {
             agent: card.subject.to_hex(),
             signal: card.signal.as_str().to_owned(),
             tone: card.tone.as_str().to_owned(),
-            outcome: card.outcome.as_str().to_owned(),
+            outcome: "settled".to_owned(),
             evidence: card.evidence.len(),
         }
     }
