@@ -68,6 +68,21 @@ impl Vault {
         deleted
     }
 
+    /// The headerless delete leg for `id`, as a delete takes it when its
+    /// header read found no row (Astra delta D2: a row that lands after that
+    /// read). Test doors only.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn delete_entity_without_header_read_for_test(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<DeleteEntityOutcome> {
+        let requested_at = self.store.clock.now_recorded_at();
+        let deleted = self.delete_entity_without_header(id, reason, requested_at, None, None);
+        self.store.flush_legal_hold_refusals_settled();
+        deleted
+    }
+
     /// The delete of an owner erase come due (FIX 6337), under the reason
     /// its request `generation` keeps (FIX 1465): run as the owner's own
     /// delete runs, under the owner gate of the owner its row records as

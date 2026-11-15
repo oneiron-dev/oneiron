@@ -597,11 +597,18 @@ pub(super) fn withdraw_source_chain_in_txn(
     Ok(())
 }
 
-/// Whether `id` is an EVENT that outlives its source's deletion: a
-/// withdrawal leaves it as it is.
+/// Whether `id` outlives its source's deletion, so a withdrawal leaves it as
+/// it is: an EVENT that survives it, or an audit_read grant, which the
+/// owner's revoke alone ends (Astra delta D4: a source's deletion must not
+/// mark one stale).
 fn outlives_withdrawal_in(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(super::EntityStoreRead::port_entity_record(store, txn, id)?
-        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_EVENT)
+    let Some(row) = super::EntityStoreRead::port_entity_record(store, txn, id)? else {
+        return Ok(false);
+    };
+    if crate::access_grant::is_audit_read_grant_row(row.entity_type, &row.body) {
+        return Ok(true);
+    }
+    Ok(row.entity_type == crate::registry::ENTITY_TYPE_EVENT
         && survives_source_deletion(store, txn, *id)?)
 }
 

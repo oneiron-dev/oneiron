@@ -520,7 +520,8 @@ impl Vault {
 
     /// The protection gates a replayed tombstone must pass before it may
     /// delete anything here: custody guards, the current pack-map carrier,
-    /// cleanup's local-only reason and delete-protected engine records. An
+    /// cleanup's local-only reason, delete-protected engine records and
+    /// audit_read grants. An
     /// `Err` is a refusal of this delete, or a failure to read the state that
     /// decides it. Read-only.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
@@ -549,6 +550,9 @@ impl Vault {
             .delete_guards
             .reject_audience_edit_delete(&self.store, txn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
+        // A peer's tombstone carries no owner act: an audit_read grant ends
+        // only through the owner's revoke on this vault (Astra delta D1).
+        crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, txn, id)?;
         guard_topology_delete_request_in_txn(&self.store, txn, id, decoded)?;
         let settled = match decoded.request_id.as_ref() {
             Some(request) => settled_topology_delete_in_txn(&self.store, txn, id, request)?,
@@ -611,6 +615,9 @@ impl Vault {
             )) | Error::Record(crate::error::RecordError::ConversationState(
                 crate::store::conversation_body::AUDIENCE_EDIT_BOUND
             )) | Error::Secret(SecretError::InvalidSecretCustodyBody(CUSTODY_SEAL_REASON))
+                | Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    crate::access_grant::AUDIT_READ_DELETE_REFUSAL
+                ))
         )
     }
 
