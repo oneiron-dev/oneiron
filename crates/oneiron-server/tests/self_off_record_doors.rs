@@ -20,13 +20,21 @@
 //! - Anonymous chat keeps no memory at all (ARCH-0052 D5): a second turn's
 //!   model call holds nothing of the first, and no file of the vault holds a
 //!   word of either.
+//! - A run keeps its rows in its stretch until the discard (ARCH-0052
+//!   code-run artifacts): its result shows through the stretch, base holds
+//!   no replay record of it, and after the discard no door and no file of
+//!   the vault shows it.
+//! - A run writes nothing durable (ARCH-0052 code-run artifacts): a durable
+//!   memory write in a run is refused as talk-only.
 //!
 //! The owner calls on the host-root credential of a profiled install, as a
 //! serving start enrols it; each agent on its own slip, signed by its own
-//! key. The run doors' tests serve no code-mode host, so `execute` stops
+//! key. The first four tests serve no code-mode host, so `execute` stops
 //! at the host once its stretch is bound, and a run read binds the stretch
 //! and finds no run by the name. The anonymous chat test serves a scripted
-//! local model on a loopback port (`support/fake_llm.rs`).
+//! local model on a loopback port (`support/fake_llm.rs`). The two run tests
+//! serve the checked-in QuickJS component as the code-mode host, its model
+//! a script that answers each call with the next program.
 //!
 //! Fleet command: `cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support,oneiron/test-hooks,oneiron-broker/test-support
@@ -40,9 +48,9 @@ mod engine_stack;
 #[path = "support/fake_llm.rs"]
 mod fake_llm;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     Router,
@@ -54,16 +62,25 @@ use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
     AgentTier, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
 };
+use oneiron::code_run::CodeRunDeterminism;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice};
 use oneiron::edge::EdgeActorClass;
+use oneiron::engine_executor::{EngineExecutorConfig, EngineExecutorLimits};
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::llm::SingleRouteBackend;
 use oneiron::off_record::{OffRecordBackendClass, room_session_key};
 use oneiron::store::GateDecisionId;
-use oneiron::{EntityId, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ContentPart, EntityId, FatalLlmError,
+    FinishReason, LlmBackend, LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, LlmResult, LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef, Vault,
+    VaultConfig, WriteActor,
+};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::models::ModelsConfig;
+use oneiron_server::mcp::{CodeRunLimits, McpQuickJsProvider, checked_in_quickjs_runtime};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -102,6 +119,17 @@ const SECOND_TURN: &str = "anonsecond what did I tell you a moment ago";
 const SECOND_ANSWER: &str = "anonanswertwo nothing from before reached me";
 /// The on-record control NOTE's words, which vault storage does keep.
 const ON_RECORD: &str = "selfdoors on-record control note words";
+/// The name the stretch a run keeps its result in is entered under.
+const KEPT_STRETCH: &str = "self-doors-kept-stretch";
+/// The name the run binds its result under.
+const KEPT_NAME: &str = "kept";
+/// The run's result: once its stretch is discarded, no door and no file of
+/// the vault may show these words.
+const KEPT_WORDS: &str = "selfdoorsrun the lighthouse ledger sits in drawer nine";
+/// The name the stretch a run tries a durable write in is entered under.
+const WRITE_STRETCH: &str = "self-doors-write-stretch";
+/// What the refusal of a durable write in an off-record stretch says.
+const TALK_ONLY: &str = "is talk-only";
 
 /// One served vault: the owner on the host root of a profiled install.
 struct Host {
@@ -215,6 +243,99 @@ fn serve(dir: tempfile::TempDir, vault: Arc<Vault>, server: SyncServer) -> Host 
 fn host() -> Host {
     let (dir, vault) = open_vault();
     let server = bare_server(&vault);
+    serve(dir, vault, server)
+}
+
+/// The model of a code host: each call answers with the next scripted
+/// program, and a call past the last one with a program that throws.
+struct ScriptedModel {
+    programs: Mutex<VecDeque<String>>,
+}
+
+impl SingleRouteBackend for ScriptedModel {
+    fn preflight(&self, _request: &LlmRequest, _stream: bool) -> LlmResult<()> {
+        Ok(())
+    }
+}
+
+impl LlmBackend for ScriptedModel {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let text = self
+            .programs
+            .lock()
+            .expect("the scripted programs")
+            .pop_front()
+            .unwrap_or_else(|| {
+                "throw new Error('the scripted model has no program left');".to_owned()
+            });
+        Box::pin(async move {
+            Ok(LlmResponse {
+                message: LlmMessage {
+                    role: LlmMessageRole::Assistant,
+                    content: vec![ContentPart::Text {
+                        text,
+                        signature: None,
+                    }],
+                },
+                usage: LlmUsage::zero(),
+                finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
+            })
+        })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// A host whose server runs the checked-in QuickJS component as its
+/// code-mode host, its model answering each call with the next of
+/// `programs`. The vault holds no model manifest, so a run takes the
+/// configured model with no seat.
+fn code_host(programs: &[&str]) -> Host {
+    let (dir, vault) = open_vault();
+    // The component compiles and passes its readiness probe: blocking work,
+    // kept off the runtime's other tasks.
+    let runtime = tokio::task::block_in_place(checked_in_quickjs_runtime)
+        .expect("the checked-in QuickJS component passes its readiness probe");
+    let model = Arc::new(ScriptedModel {
+        programs: Mutex::new(
+            programs
+                .iter()
+                .map(|program| (*program).to_owned())
+                .collect(),
+        ),
+    });
+    let provider = McpQuickJsProvider::new(
+        Arc::new(runtime),
+        model,
+        BudgetGuard::new(
+            "self-off-record-doors",
+            1_000_000,
+            BudgetExhaustionPolicy::Suspend,
+        ),
+        EngineExecutorConfig {
+            run_id: EntityId::now(),
+            task: "template".to_owned(),
+            prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
+                .expect("the workspace test prompt package"),
+            model: ModelId::new("fixture/self-doors@v1").expect("a model id"),
+            model_locality: ModelLocality::OnDevice,
+            seat_effort: None,
+            global_tier: ModelTierRef("fixture".to_owned()),
+            determinism: CodeRunDeterminism::new(1_719_000_001_000, [0x5d; 32]),
+            limits: EngineExecutorLimits::default(),
+            wake: None,
+        },
+    )
+    .expect("the QuickJS code-mode provider");
+    let server = bare_server(&vault).with_mcp_quickjs_provider(provider, CodeRunLimits::default());
     serve(dir, vault, server)
 }
 
@@ -760,5 +881,170 @@ fn anonymous_chat_keeps_no_memory_at_all() {
             );
         }
         ai.shutdown().await;
+    });
+}
+
+/// A run keeps its rows in its stretch until the discard: canon
+/// `oneiron/core/oneiron-arch-0052-off-record-branch-store-v1.md:237`,
+/// "session-bound replay/raw-output rows land in the overlay". The owner
+/// enters a stretch alone and runs one program in it that binds a result by
+/// name. The run's own doors show the result through the stretch, and base
+/// holds no replay record of the run. Once the stretch is discarded, no run
+/// door shows the run, base still holds no record of it, and no file of the
+/// vault holds the result's words. The control: an on-record NOTE's words
+/// are in vault storage.
+#[test]
+fn a_run_keeps_its_rows_in_its_stretch_until_the_discard() {
+    run_on_engine_stack("self-off-record-kept-rows", || async {
+        let program = format!("await store({KEPT_WORDS:?}, {KEPT_NAME:?});\nfinish(\"kept\");");
+        let host = code_host(&[program.as_str()]);
+        let session = host.start(Caller::Owner, KEPT_STRETCH).await;
+        let ran = host
+            .send(
+                Caller::Owner,
+                "self.off_record.execute",
+                json!({
+                    "session_ref": session,
+                    "run_ref": RUN,
+                    "task": "keep one result by name",
+                }),
+            )
+            .await
+            .ok("self.off_record.execute");
+        assert_eq!(
+            ran["status"], "complete",
+            "the run ends in its one step: {ran}"
+        );
+        let run_id = EntityId::from_hex(ran["run_id"].as_str().expect("the run's id"))
+            .expect("the run's id is 32 hex");
+        let list_input = json!({"session_ref": session, "run_ref": RUN});
+        let read_input = json!({"session_ref": session, "run_ref": RUN, "ref": KEPT_NAME});
+
+        let listed = host
+            .send(
+                Caller::Owner,
+                "self.off_record.results.list",
+                list_input.clone(),
+            )
+            .await
+            .ok("self.off_record.results.list");
+        assert_eq!(
+            listed["run_id"], ran["run_id"],
+            "the list reads the run: {listed}"
+        );
+        assert!(
+            listed["count"].as_u64() >= Some(1),
+            "the stretch shows the run's bound name: {listed}"
+        );
+        if listed["withheld"] != json!(true) {
+            assert!(
+                listed["cards"]
+                    .as_array()
+                    .is_some_and(|cards| cards.iter().any(|card| card["name"] == KEPT_NAME)),
+                "the stretch shows the result's card by its name: {listed}"
+            );
+        }
+        host.send(
+            Caller::Owner,
+            "self.off_record.results.read",
+            read_input.clone(),
+        )
+        .await
+        .ok("self.off_record.results.read");
+        assert!(
+            host.vault
+                .get_code_run_replay_record(&run_id)
+                .expect("read base's replay records")
+                .is_none(),
+            "base holds no replay record of a run in a live stretch"
+        );
+
+        host.send(
+            Caller::Owner,
+            "vault.off_record.discard",
+            json!({"session_ref": session}),
+        )
+        .await
+        .ok("vault.off_record.discard");
+        for (verb, input) in [
+            ("self.off_record.results.list", list_input),
+            ("self.off_record.results.read", read_input),
+        ] {
+            let reply = host.send(Caller::Owner, verb, input).await;
+            assert_ne!(
+                reply.status,
+                StatusCode::OK,
+                "{verb} shows nothing of a discarded stretch's run: {}",
+                reply.body
+            );
+            assert!(
+                !reply.body.to_string().contains(KEPT_WORDS),
+                "{verb} quotes the discarded run's result: {}",
+                reply.body
+            );
+        }
+        assert!(
+            host.vault
+                .get_code_run_replay_record(&run_id)
+                .expect("read base's replay records")
+                .is_none(),
+            "base holds no replay record of the run after the discard"
+        );
+        host.send(
+            Caller::Owner,
+            "vault.notes.create",
+            json!({"kind": "research", "markdown": ON_RECORD}),
+        )
+        .await
+        .ok("vault.notes.create");
+        assert!(
+            storage_holds(host.dir.path(), ON_RECORD),
+            "the control: an on-record NOTE's words are in vault storage"
+        );
+        assert!(
+            !storage_holds(host.dir.path(), KEPT_WORDS),
+            "vault storage keeps the discarded run's result"
+        );
+    });
+}
+
+/// A run writes nothing durable: canon
+/// `oneiron/core/oneiron-arch-0052-off-record-branch-store-v1.md:237`,
+/// "Off-record runs still reject durable memory writes and guest-supplied
+/// turn refs." The owner's run in a stretch entered alone supersedes one
+/// claim with another, a durable memory write: the door refuses the run
+/// with the talk-only refusal. A guest has no carrier for a turn ref: each
+/// speech input of the guest SDK is a closed object whose order and time the
+/// host stamps, and the executor's witness entry refuses a supplied turn ref
+/// before it builds a turn (`crates/oneiron/src/off_record/lifecycle/executor.rs`,
+/// the branch-store oracle's `guest_supplied_turn_ref_rejected`), so this
+/// test proves the durable-write half at the door.
+#[test]
+fn a_run_writes_nothing_durable() {
+    run_on_engine_stack("self-off-record-no-durable-write", || async {
+        let program = format!(
+            "await vault.claims.supersede({{newId: {:?}, oldId: {:?}, now: 1719000000}});\nfinish(\"superseded\");",
+            EntityId::now().to_hex(),
+            EntityId::now().to_hex(),
+        );
+        let host = code_host(&[program.as_str()]);
+        let session = host.start(Caller::Owner, WRITE_STRETCH).await;
+        let reply = host
+            .send(
+                Caller::Owner,
+                "self.off_record.execute",
+                json!({
+                    "session_ref": session,
+                    "run_ref": RUN,
+                    "task": "supersede one claim with another",
+                }),
+            )
+            .await;
+        assert!(
+            reply.status != StatusCode::OK && reply.message().contains(TALK_ONLY),
+            "the run's durable write is refused as talk-only: {} {}",
+            reply.status,
+            reply.body
+        );
     });
 }
