@@ -13,9 +13,11 @@
 
 use std::collections::VecDeque;
 
-use crate::error::{Error, Result};
+use oneiron::{Error, Result};
 
-use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable};
+use oneiron::voice_cascade::{
+    GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable_pieces,
+};
 
 // One incremental Text's unsent rest, kept across a refused send (FIX 10213).
 mod submissions;
@@ -453,7 +455,7 @@ impl<Q: TransportQueue> Adapter<Q> {
             return Ok(());
         }
         if !self.buffer.is_empty() {
-            let pieces = speakable::pieces(&self.buffer, MAX_TEXT_BYTES);
+            let pieces = speakable_pieces(&self.buffer, MAX_TEXT_BYTES);
             self.held.extend(pieces.into_iter().map(str::to_owned));
             self.buffer.clear();
         }
@@ -642,7 +644,9 @@ macro_rules! adapter {
 adapter!(IrodoriAdapter, Provider::Irodori);
 adapter!(MossLocalAdapter, Provider::MossLocal);
 
-#[cfg(test)]
+// The cases mint generation tokens through oneiron's test door, so they build
+// only under `--cfg oneiron_test_support` (the test command sets it).
+#[cfg(all(test, oneiron_test_support))]
 mod tests {
     use super::*;
 
@@ -664,10 +668,7 @@ mod tests {
     }
 
     fn epoch(session: u128) -> GenerationEpoch {
-        GenerationEpoch {
-            session: uuid::Uuid::from_u128(session),
-            value: 1,
-        }
+        oneiron::test_doors::voice_generation_epoch::generation_epoch(session, 1)
     }
 
     fn config(incremental: bool) -> ProviderConfig {

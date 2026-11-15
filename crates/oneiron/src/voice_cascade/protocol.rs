@@ -25,6 +25,13 @@ impl GenerationEpoch {
     pub fn value(self) -> u64 {
         self.value
     }
+
+    /// The token a session would mint, for `test_doors::voice_generation_epoch`
+    /// only: adapter unit tests outside this crate echo it as a session's.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn minted_for_test_door(session: uuid::Uuid, value: u64) -> Self {
+        Self { session, value }
+    }
 }
 
 #[doc(hidden)]
