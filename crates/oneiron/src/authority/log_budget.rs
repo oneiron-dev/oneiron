@@ -263,6 +263,7 @@ fn stored_fold_projection(
 
 /// The stored log's projected fold peak ([`stored_fold_projection`]), with
 /// what the door needs to bound the log with one more row in it.
+#[derive(Debug)]
 struct FoldProjection {
     rows: usize,
     pairs: u64,
@@ -291,14 +292,30 @@ impl FoldProjection {
     /// its ancestors, so each gains its bound. One row can so take a log
     /// from under the reserve's start past the floor: the rows a machine
     /// signs on a parent it withholds count that parent once until it comes.
+    /// Every ancestor of the row is a stored row, a parent the stored rows
+    /// name that no row is, or a parent only this row names (Astra
+    /// owner-reserve r2 F1): a join names any number of those, and the fold
+    /// counts each one once, as a missing parent, in the row's ancestry and
+    /// in each stored descendant's.
     fn bytes_with(&self, hash: &AuthorityEntryHash, parents: &[AuthorityEntryHash]) -> u64 {
         if self.bound.contains_key(hash) {
             return self.bytes();
         }
         let rows = self.rows.saturating_add(1);
-        let most = (self.rows as u64)
+        let fresh = parents
+            .iter()
+            .filter(|parent| {
+                *parent != hash
+                    && !self.bound.contains_key(*parent)
+                    && !self.children.contains_key(*parent)
+            })
+            .collect::<BTreeSet<_>>()
+            .len() as u64;
+        // The log with the row in it: in a cycle every row has every row,
+        // itself too, and every missing parent among its ancestors.
+        let most = (rows as u64)
             .saturating_add(self.missing)
-            .saturating_add(1);
+            .saturating_add(fresh);
         if self.cyclic {
             return fold_projected_bytes(rows, (rows as u64).saturating_mul(most));
         }
@@ -621,6 +638,18 @@ pub(crate) fn signer_has_standing(
     Ok(door_view(store, txn)?.structure.stands(signer))
 }
 
+/// The row a store door last held at the owner's reserve, and the fold peak
+/// the log with it projects (Astra owner-reserve r2 F4). The door judges the
+/// log with the arriving row in it, so a held row leaves the stored log under
+/// the reserve's start; the reserve's typed check reads this hold until the
+/// row is stored. Kept per handle and never persisted: a replica's next drain,
+/// and the owner's next import, hold the row again.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OwnerReserveHold {
+    entry: AuthorityEntryHash,
+    projected: u64,
+}
+
 /// What a store door does with an AUTHORITY_LOG row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthorityDoor {
@@ -675,12 +704,17 @@ pub(crate) fn authority_door(
     // only the owner's work lands; every other row waits for the owner to
     // raise the floor. The door judges the log with the row in it (Astra
     // owner-reserve F1).
-    let with_entry = view
-        .projection
-        .bytes_with(&authority_entry_hash(entry)?, &entry.parent_hashes);
+    let hash = authority_entry_hash(entry)?;
+    let with_entry = view.projection.bytes_with(&hash, &entry.parent_hashes);
     if with_entry > owner_reserve_start(store, txn)?
         && !owner_work(store, txn, &view.structure, entry)?
     {
+        if let Ok(mut hold) = store.authority_owner_reserve_hold.lock() {
+            *hold = Some(OwnerReserveHold {
+                entry: hash,
+                projected: with_entry,
+            });
+        }
         return Ok(AuthorityDoor::AtBound);
     }
     // A self-signed root needs nothing but a fresh key, so an anchor this
@@ -719,11 +753,12 @@ pub(crate) fn authority_door(
 /// own signs (its root records and machine marks), or the owner's will this
 /// install carries ([`carries_own_will`]). Another install's key passes none
 /// of them at this door, and neither does a stranger's anchor. A result this
-/// install signs answers a request its pickup takes from the log, whoever
-/// carried it, so it is the owner's work only when its request is (Astra
-/// owner-reserve F2): a request another machine carries never has this
-/// install spend the reserve on its answer. That result waits with its
-/// pickup's transaction, and the request stays pending.
+/// install signs answers a request or a residence directive its pickup takes
+/// from the log, whoever carried or signed it, so it is the owner's work only
+/// when that row is ([`asks_the_owners_work`]; Astra owner-reserve F2, r2
+/// F3): a request another machine carries, or a directive another key signs,
+/// never has this install spend the reserve on its answer. That result waits
+/// with its pickup's transaction, and the row it answers stays pending.
 fn owner_work(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -736,16 +771,57 @@ fn owner_work(
     if !carries_own_will(store, txn, entry)? {
         return Ok(false);
     }
-    let AuthorityOp::OwnerWorkResult(result) = &entry.op else {
-        return Ok(true);
+    let asked = match &entry.op {
+        AuthorityOp::OwnerWorkResult(result) => result.request,
+        AuthorityOp::ResidenceResult(result) => result.directive_entry,
+        _ => return Ok(true),
     };
-    let Some(request) = super::retired_signers::stored_authority_row(store, txn, &result.request)?
-    else {
+    asks_the_owners_work(store, txn, structure, &asked)
+}
+
+/// Whether the stored row `hash`, a request or a directive this install's
+/// pickup answers, is the owner's work at this door: a slip issuer signed or
+/// cosigned it, an anchor this install takes as its own signed it, or this
+/// install carries it ([`carries_own_will`]). A row no raw body of is stored,
+/// such as one an adopted checkpoint image covers, is not.
+fn asks_the_owners_work(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    structure: &AuthorityStructure,
+    hash: &AuthorityEntryHash,
+) -> crate::error::Result<bool> {
+    let Some(asked) = super::retired_signers::stored_authority_row(store, txn, hash)? else {
         return Ok(false);
     };
-    Ok(signed_by(&request, &structure.issuers)
-        || structure.is_own_anchor(request.signer_key())
-        || carries_own_will(store, txn, &request)?)
+    Ok(signed_by(&asked, &structure.issuers)
+        || structure.is_own_anchor(asked.signer_key())
+        || carries_own_will(store, txn, &asked)?)
+}
+
+/// Whether the stored request `request` this install's pickup answers is the
+/// owner's work at this door ([`asks_the_owners_work`]). The key wraps and
+/// joins a pickup signs under this install's key land at the door as the
+/// owner's will this install carries, whether or not the work then writes its
+/// result, so a pickup for any other request asks
+/// [`past_owner_reserve_in_txn`] before its work and again before it commits
+/// (Astra owner-reserve r2 F2): a request another machine carries spends no
+/// reserve on any row, and stays pending.
+pub(crate) fn asks_the_owners_work_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    request: &AuthorityEntryHash,
+) -> crate::error::Result<bool> {
+    let view = door_view(store, txn)?;
+    asks_the_owners_work(store, txn, &view.structure, request)
+}
+
+/// Whether the log in `txn`, with every row it staged, projects past the
+/// owner's reserve's start under the memory floor.
+pub(crate) fn past_owner_reserve_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<bool> {
+    Ok(door_view(store, txn)?.projection.bytes() > owner_reserve_start(store, txn)?)
 }
 
 /// Whether `entry` is the owner's will this install carries (FIX 7930): signed
@@ -818,7 +894,9 @@ pub struct AuthorityLogCheck {
     pub signer: Option<String>,
     /// The signer's stored rows, the strangers' rows, the log's counted
     /// rows, slip-issuer handoffs or counted ancestor pairs, or, for the
-    /// owner reserve, the stored log's projected fold peak in bytes.
+    /// owner reserve, the projected fold peak in bytes of the stored log, or
+    /// of the log with the row the door last held at the reserve in it while
+    /// that row is not stored, whichever is more.
     pub count: u64,
     /// The policy row `count` reached, or, for the owner reserve, the
     /// memory floor less the reserve, in bytes.
@@ -841,9 +919,10 @@ impl AuthorityLogCheck {
     /// The fold still reads them all; past the
     /// `authority_log_fold_memory_floor` row it refuses the log.
     pub const FOLD_HEADROOM: &'static str = "authority_log_fold_headroom";
-    /// The stored log's projected fold peak passed the
-    /// `authority_log_fold_memory_floor` row less the owner's reserve under
-    /// it: every row but the owner's work waits until the owner raises that
+    /// The stored log's projected fold peak, or the peak of the log with a
+    /// row the door held in it, passed the `authority_log_fold_memory_floor`
+    /// row less the owner's reserve under it: every row but the owner's work
+    /// that would take the log past it waits until the owner raises that
     /// row, and then lands on the next drain.
     pub const OWNER_RESERVE: &'static str = "authority_log_owner_reserve";
     /// The scope of a headroom check on counted rows.
@@ -885,7 +964,15 @@ impl crate::Vault {
             });
         }
         let reserve_start = owner_reserve_start(&self.store, &txn)?;
-        let projected_bytes = view.projection.bytes();
+        let held = self
+            .store
+            .authority_owner_reserve_hold
+            .lock()
+            .ok()
+            .and_then(|hold| *hold)
+            .filter(|hold| !view.projection.bound.contains_key(&hold.entry))
+            .map_or(0, |hold| hold.projected);
+        let projected_bytes = view.projection.bytes().max(held);
         if projected_bytes > reserve_start {
             checks.push(AuthorityLogCheck {
                 kind: AuthorityLogCheck::OWNER_RESERVE,

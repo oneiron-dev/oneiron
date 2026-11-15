@@ -178,6 +178,10 @@ impl Vault {
                 Ok(Ran::Answered(OwnerWorkOutcome::Refused { .. })) => drain.refused += 1,
                 Ok(Ran::Pending) => drain.pending += 1,
                 Ok(Ran::Gone) => {}
+                // Its rows wait at the owner's reserve, the request with them.
+                Err(error) if error.kind() == crate::error::ErrorKind::AuthorityLogFull => {
+                    drain.pending += 1;
+                }
                 Err(error) => {
                     tracing::warn!(
                         kind = ?error.kind(),
@@ -213,21 +217,62 @@ impl Vault {
         else {
             return Ok(Ran::Gone);
         };
+        // A request that is not the owner's work at this door, such as one
+        // another machine carries, spends none of the owner's reserve: its
+        // wraps and joins land there as this install's own will, with or
+        // without a result (Astra owner-reserve r2 F2). Past the reserve it
+        // waits before any work, and work that would take the log past it
+        // rolls back whole, so the request stays pending.
+        let carried = !crate::authority::asks_the_owners_work_in_txn(&self.store, txn, &hash)?;
+        if carried && crate::authority::past_owner_reserve_in_txn(&self.store, txn)? {
+            return Ok(Ran::Pending);
+        }
+        let ran = self.owner_work_step_in_txn(txn, &fold, hash, request, machine, secret)?;
+        if carried && crate::authority::past_owner_reserve_in_txn(&self.store, txn)? {
+            let signer =
+                crate::identity::read_machine_verifying_key_in_store_txn(&self.store, txn)?
+                    .map_or_else(
+                        || "this install".to_owned(),
+                        |key| {
+                            crate::authority::authority_signer_label(
+                                &crate::authority::AuthorityKey::Ed25519(key),
+                            )
+                        },
+                    );
+            return Err(Error::Record(crate::error::RecordError::AuthorityLogFull {
+                id: crate::authority::authority_log_entity_id_from_hash(&hash)?,
+                signer,
+            }));
+        }
+        Ok(ran)
+    }
+
+    /// The work for the pending `request`, signed as entry `hash`, on `fold`,
+    /// and its result when the work finished ([`Self::run_owner_work_in_txn`]).
+    fn owner_work_step_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        hash: AuthorityEntryHash,
+        request: &OwnerWorkRequest,
+        machine: EntityId,
+        secret: Option<&MachineSecret>,
+    ) -> Result<Ran> {
         let outcome = match (&request.work, secret) {
             (OwnerWorkBody::WorldKey { mode }, Some(secret)) => {
-                self.world_key_work_in_txn(txn, &fold, hash, request, *mode, secret)?
+                self.world_key_work_in_txn(txn, fold, hash, request, *mode, secret)?
             }
             (OwnerWorkBody::Root { change, .. }, Some(secret)) => {
-                self.root_work_in_txn(txn, &fold, hash, request, *change, secret)?
+                self.root_work_in_txn(txn, fold, hash, request, *change, secret)?
             }
             (OwnerWorkBody::PublishBundle { home }, Some(_)) => {
-                self.publish_bundle_work_in_txn(txn, &fold, request, *home, machine)?
+                self.publish_bundle_work_in_txn(txn, fold, request, *home, machine)?
             }
             (OwnerWorkBody::Custody { .. }, secret) => {
-                self.custody_work_in_txn(txn, &fold, hash, request, secret)?
+                self.custody_work_in_txn(txn, fold, hash, request, secret)?
             }
             (OwnerWorkBody::ExportSecret(work), _) => {
-                self.export_secret_work_in_txn(txn, &fold, hash, request, work)?
+                self.export_secret_work_in_txn(txn, fold, hash, request, work)?
             }
             (
                 OwnerWorkBody::WorldKey { .. }
@@ -246,7 +291,7 @@ impl Vault {
         if let (OwnerWorkBody::ExportSecret(_), OwnerWorkOutcome::Sealed { output }) =
             (&request.work, &outcome)
         {
-            self.sign_export_output_parts_in_txn(txn, &fold, hash, result, output, &signing)?;
+            self.sign_export_output_parts_in_txn(txn, fold, hash, result, output, &signing)?;
         }
         Ok(Ran::Answered(outcome))
     }
