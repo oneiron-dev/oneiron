@@ -117375,6 +117375,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/skill.rs",
+     "purpose": "Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/testing.rs",
      "purpose": "Purposes for tests only",
      "surface": {}
@@ -117418,7 +117426,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -117434,7 +117442,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 7,
+   "source_files": 8,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -170795,6 +170803,21 @@
     {
      "bucket": "s",
      "kind": "test",
+     "notable": [
+      "SkillContentHash"
+     ],
+     "path": "tests/fingerprint_keep_skill_tree.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.3a: the canonical skill tree hash keeps its bytes",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
      "notable": [],
      "path": "tests/msgpack_store_rows.rs",
      "purpose": "PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the…",
@@ -172422,7 +172445,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 11
+   "test_files": 12
   },
   "oneiron-testkit": {
    "files": [
