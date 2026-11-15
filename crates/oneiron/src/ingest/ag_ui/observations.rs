@@ -249,13 +249,14 @@ impl<'a> ObservationIndex<'a> {
         }
     }
 
-    /// The one row with `id` in `from`'s namespace, if it is of `kind`.
+    /// The position of the one row with `id` in `from`'s namespace, if it
+    /// is of `kind`.
     fn resolve(
         &self,
         from: &'a AgUiAppObservation,
         id: Option<&'a str>,
         kind: AgUiObservationKind,
-    ) -> std::result::Result<&'a AgUiAppObservation, AgUiRepairLinkStatus> {
+    ) -> std::result::Result<usize, AgUiRepairLinkStatus> {
         let id = id.ok_or(AgUiRepairLinkStatus::MissingLink)?;
         let Some(&(first, repeated)) =
             namespaced(from, id).and_then(|key| self.by_namespace.get(&key))
@@ -275,11 +276,10 @@ impl<'a> ObservationIndex<'a> {
         if repeated {
             return Err(AgUiRepairLinkStatus::AmbiguousLink);
         }
-        let row = &self.observations[first];
-        if row.kind != kind {
+        if self.observations[first].kind != kind {
             return Err(AgUiRepairLinkStatus::MissingLink);
         }
-        Ok(row)
+        Ok(first)
     }
 }
 
@@ -295,6 +295,12 @@ fn namespaced<'a>(row: &'a AgUiAppObservation, id: &'a str) -> Option<Namespaced
 
 pub(super) fn repair_links(observations: &[AgUiAppObservation]) -> Vec<AgUiRepairLink> {
     let index = ObservationIndex::new(observations);
+    // The failure each repair row resolves to, by the repair's position:
+    // resolved once, however many outcomes name that repair, so a long
+    // failure id is hashed once per repair, never once per outcome (Astra
+    // delta 4 L1).
+    let mut failures: Vec<Option<std::result::Result<usize, AgUiRepairLinkStatus>>> =
+        vec![None; observations.len()];
     observations
         .iter()
         .filter(|row| row.kind == AgUiObservationKind::Outcome)
@@ -315,13 +321,14 @@ pub(super) fn repair_links(observations: &[AgUiAppObservation]) -> Vec<AgUiRepai
                     outcome.repair_id.as_deref(),
                     AgUiObservationKind::Repair,
                 )?;
-                link.repair_ordinal = Some(repair.ordinal);
-                let failure = index.resolve(
-                    repair,
-                    repair.failure_id.as_deref(),
-                    AgUiObservationKind::Failure,
-                )?;
-                link.failure_ordinal = Some(failure.ordinal);
+                link.repair_ordinal = Some(observations[repair].ordinal);
+                let failure = failures[repair]
+                    .get_or_insert_with(|| {
+                        let row = &observations[repair];
+                        index.resolve(row, row.failure_id.as_deref(), AgUiObservationKind::Failure)
+                    })
+                    .clone()?;
+                link.failure_ordinal = Some(observations[failure].ordinal);
                 Ok(())
             })();
             link.status = resolved.err().unwrap_or(AgUiRepairLinkStatus::Linked);

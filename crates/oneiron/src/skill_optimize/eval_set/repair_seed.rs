@@ -22,7 +22,7 @@
 //! hands the answers to [`Memory::settle_eval_repair_seed`], as it hands leg
 //! results to the measurement doors. No verb reaches these doors.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron_contracts::fingerprint::ContentHasher;
 use serde::{Deserialize, Serialize};
@@ -707,20 +707,41 @@ impl Vault {
     }
 
     /// Every seed the gate can grade now, for the measuring host: the
-    /// `Pending` ones. An `AwaitingLabel` seed is listed once its label
-    /// lands.
+    /// `Pending` ones whose capture still reads, by the capture listing's
+    /// rule (`row_reads_in_txn`). An `AwaitingLabel` seed is listed once
+    /// its label lands. A seed whose capture no longer reads stays until the
+    /// erase takes it, but the gate settles no such seed and no listing
+    /// shows it, so the host is not handed it (Astra delta 4 L2; RULING
+    /// UNBUILT-P05E-WITHDRAWN-SEED = A). Each row is read at most once per
+    /// call, however many seeds share it.
     ///
     /// # Errors
     ///
     /// An unreadable row, or storage errors.
     pub fn pending_eval_repair_seeds(&self) -> Result<Vec<EvalRepairSeed>> {
         let txn = self.store.env.read_txn()?;
-        Ok(SEEDS
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(_, seed)| seed)
-            .filter(|seed| seed.state == EvalRepairSeedState::Pending)
-            .collect())
+        let mut reads: BTreeMap<EntityId, bool> = BTreeMap::new();
+        let mut pending = Vec::new();
+        'seeds: for (_, seed) in SEEDS.scan(&self.store, &txn)? {
+            if seed.state != EvalRepairSeedState::Pending {
+                continue;
+            }
+            for row in &seed.source_rows {
+                let row_reads = match reads.get(row) {
+                    Some(&row_reads) => row_reads,
+                    None => {
+                        let row_reads = row_reads_in_txn(self, &txn, row)?;
+                        reads.insert(*row, row_reads);
+                        row_reads
+                    }
+                };
+                if !row_reads {
+                    continue 'seeds;
+                }
+            }
+            pending.push(seed);
+        }
+        Ok(pending)
     }
 
     /// A proposal's write for a task compiled earlier, for the test doors:
