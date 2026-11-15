@@ -184,3 +184,26 @@ pub fn resolve_residence_mode(
         local_is_elected_home(vault)?,
     ))
 }
+
+impl Vault {
+    /// [`resolve_residence_mode`] as `txn` reads the owner's stored choice
+    /// and the committed home, for a writer that must agree with the choice
+    /// a switch records in its own transaction (L7-47). An install with no
+    /// client id yet is not the elected home: the election names a minted id.
+    pub(crate) fn resolve_residence_mode_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        configured: SyncResidenceMode,
+    ) -> Result<SyncResidenceMode> {
+        let preference = self
+            .store
+            .sync_state
+            .get(txn, PREFERENCE_KEY)?
+            .map(DeviceSyncPreference::decode)
+            .transpose()?;
+        let home = DreamerRunnerStore::new(self).home_node_designation_in_txn(txn)?;
+        let here = crate::identity::read_client_id_in_txn(self, txn)?;
+        let is_home = home.is_some_and(|home| here == Some(home.node_id));
+        Ok(effective_residence_mode(preference, configured, is_home))
+    }
+}

@@ -15,8 +15,11 @@
 //!
 //! The machine writes `held` once a home session's first round completes
 //! while its lane runs sync all, and withdraws it in the transaction of a
-//! switch to sync opened; "no mark" already means "not held", so a first
-//! `held = false` writes nothing.
+//! switch to sync opened and at each residence refresh that resolves sync
+//! opened, a lost home election included; "no mark" already means "not
+//! held", so a first `held = false` writes nothing. A write outside a switch
+//! lands only while the stored residence mode, read in its own transaction,
+//! agrees with it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -235,11 +238,12 @@ impl Vault {
     }
 
     /// Writes this install's own full-copy mark saying `held` in `txn`
-    /// (L7-47): the writer the first full round under sync all and the lane
-    /// switch to sync opened share. No id, no key, or a key the fold does
-    /// not admit here writes nothing (`Ok(None)`): an install that cannot
-    /// sign has never written a mark, and a lane switch must not fail for
-    /// it. The caller loads the install signing first, with
+    /// (L7-47): the writer the first full round under sync all, the
+    /// residence refresh and the lane switch to sync opened share. No id, no
+    /// key, or a key the fold does not admit here writes nothing
+    /// (`Ok(None)`): an install that cannot sign has never written a mark,
+    /// and a lane switch must not fail for it. The caller loads the install
+    /// signing first, with
     /// [`Self::load_install_signing_if_minted`], before opening `txn`. It
     /// does not commit.
     ///
