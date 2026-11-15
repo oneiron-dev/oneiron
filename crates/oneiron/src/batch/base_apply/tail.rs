@@ -133,6 +133,13 @@ pub(super) fn apply_tail(
         wtxn,
         &state.index_vectors_written,
     )?;
+    // An edge moves a row between worlds with no vector write: its vectors follow it.
+    crate::embed::world_space::reconcile_world_edge_rows_in_txn(
+        store,
+        config.privacy.posture,
+        wtxn,
+        &state.world_edge_sources,
+    )?;
 
     state
         .question_arrival_ids

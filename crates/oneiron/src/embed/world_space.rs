@@ -18,11 +18,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 
-use super::space::{EmbeddingSpace, InputKind, embedding_space_in_txn, embedding_spaces_in_txn};
+use super::space::{
+    EmbeddingSpace, InputKind, delete_text_media_vector_in_space_in_txn, embedding_space_in_txn,
+    embedding_spaces_in_txn,
+};
 use super::space_move::space_fill_kinds_in_txn;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::store::Store;
 use crate::{HostingPrivacyPosture, Vault};
 
@@ -176,6 +180,80 @@ pub(crate) fn keep_world_rows_out_of_vault_index_in_txn(
         }
     }
     Ok(())
+}
+
+/// Moves the text vectors of each of `sources`, and of every row that derives from one, to the
+/// worlds that carry it now, as the batch that wrote or deleted their world-carrying edges ends
+/// (DEC-0005 #private-world-vectors). An InWorld or DerivedFrom edge moves a row between worlds
+/// with no vector write the batch judges and no order edit the sweep watches, and a caption
+/// follows its picture. A row a world's own text space now takes keeps no vector of the vault's
+/// index; a device space that no longer takes a row keeps no text vector of it. The world's
+/// media pass embeds the row into the space that takes it now. A row that lost a vector and has
+/// no pending embedding is marked for the idle refill, which gives it a vault-index vector
+/// again once no world's space takes it. The worlds' spaces are read only when `sources` is not
+/// empty.
+pub(crate) fn reconcile_world_edge_rows_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &mut RwTxn<'_>,
+    sources: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if sources.is_empty() {
+        return Ok(());
+    }
+    let spaces = WorldTextSpaces::read_for_store_in(store, posture, txn)?;
+    if spaces.by_world.is_empty() {
+        return Ok(());
+    }
+    let mut device_spaces = Vec::new();
+    for space in embedding_spaces_in_txn(store, txn)? {
+        if space_runs_on_device(&space.id) {
+            let slot_text = space_fill_kinds_in_txn(store, txn, &space)?.contains(&InputKind::Text);
+            device_spaces.push((space, slot_text));
+        }
+    }
+    for id in derived_closure_in_txn(store, txn, sources)? {
+        let own = spaces.of_row(store, txn, &id)?;
+        let mut dropped = false;
+        if !own.is_empty() {
+            dropped = crate::vault::entity_revision::drop_index_vector_in_txn(store, txn, &id)?;
+        }
+        for (space, slot_text) in &device_spaces {
+            let takes = if own.is_empty() {
+                *slot_text
+            } else {
+                own.contains(space.id.as_str())
+            };
+            if !takes && delete_text_media_vector_in_space_in_txn(store, txn, space, &id)? {
+                dropped = true;
+            }
+        }
+        if dropped && !store.has_current_pending_embedding_in_txn(txn, &id)? {
+            crate::vault::entity_revision::mark_vector_refill_in_txn(store, txn, &id)?;
+        }
+    }
+    Ok(())
+}
+
+/// `sources` and every row that derives from one of them through DerivedFrom edges,
+/// transitively: a caption carries the worlds of the picture it derives from
+/// (`settings::carried_worlds_in`).
+fn derived_closure_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    sources: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut closure = sources.clone();
+    let mut frontier: Vec<EntityId> = sources.iter().copied().collect();
+    while let Some(id) = frontier.pop() {
+        for derived in store.port_edge_peers(txn, &id, EdgeDirection::In, EdgeKind::DerivedFrom)? {
+            let derived = derived?;
+            if closure.insert(derived) {
+                frontier.push(derived);
+            }
+        }
+    }
+    Ok(closure)
 }
 
 /// Which text documents one media pass for a space takes: a row a world with its own text
