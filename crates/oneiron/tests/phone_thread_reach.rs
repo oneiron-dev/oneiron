@@ -1143,6 +1143,316 @@ fn a_restricted_selector_does_not_carry_a_row_derived_from_a_kept_call() {
     );
 }
 
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
+    use oneiron::provenance::birth::RowBirth;
+    use oneiron::provenance::made_by::{
+        MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+    };
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+    use oneiron::sync::client::ImportTier;
+    use oneiron::sync::replay::{ReplicatedEntity, replay_entity_with_birth};
+    use oneiron::write_envelope::claim_body::encode_claim_body;
+    use oneiron::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
+    use rmpv::Value;
+
+    let reach = reach_fixture();
+    let vault = &reach.fixture.vault;
+    let owner = reach.fixture.owner;
+    let at = TimeRange {
+        start: OCCURRED_AT,
+        end: OCCURRED_AT,
+    };
+    // An ordinary subject PERSON, never a phone row: the walk follows a
+    // CLAIM's subject, so it must be clean for the control to ride.
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            at,
+            OCCURRED_AT,
+            &rmp_serde::to_vec_named(&serde_json::json!({ "name": "subject" }))
+                .expect("subject PERSON body"),
+        )
+        .expect("FIXTURE: an ordinary subject PERSON");
+    // One open CLAIM per prompt input, as
+    // `selector_born_with_prompt_label::open_record_with_prompts` builds
+    // them, adapted to a single Prompt input in this window.
+    let prompt_claim = |prompt: EntityId, label: &str| {
+        let row = EntityId::now();
+        let mut body = ClaimBody::new(
+            "profile.name",
+            ClaimSubject::Entity(subject),
+            Value::from("a profile fact"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .expect("FIXTURE: an open CLAIM body");
+        body.source = Some(ClaimSource::UserStated);
+        assert!(
+            body.rel.is_none() && body.world.is_none(),
+            "FIXTURE: the output CLAIM itself names no relationship or world",
+        );
+        let body_bytes = encode_claim_body(&body).expect("FIXTURE: encode the open CLAIM");
+        let prompt_row = vault
+            .get(&prompt)
+            .expect("FIXTURE: read the prompt row")
+            .expect("FIXTURE: the prompt row exists");
+        let birth = RowBirth {
+            made_by: MadeBy {
+                inputs: vec![MadeByInput {
+                    row: prompt,
+                    role: MadeByInputRole::Prompt,
+                }],
+                process: MadeByProcess {
+                    actor: owner,
+                    class: MadeByClass::Stated,
+                    identity: "selector.prompt_fixture".to_owned(),
+                    version: "1".to_owned(),
+                    params_hash: "0".repeat(64),
+                },
+                at: OCCURRED_AT,
+                trigger: None,
+            },
+            content_hash: RowBirth::content_hash_of(&[prompt_row.as_slice()]),
+            withheld: Vec::new(),
+            room_evidence: None,
+        };
+        replay_entity_with_birth(
+            vault,
+            ReplicatedEntity {
+                id: row,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: at,
+                learned_at: OCCURRED_AT,
+                row_version: 0,
+                body: &body_bytes,
+            },
+            Some(&birth),
+            ImportTier::OwnDevice,
+        )
+        .expect("FIXTURE: replay the open CLAIM with its birth");
+        assert_eq!(
+            vault.row_birth(&row).expect("FIXTURE: read the row birth"),
+            Some(birth),
+            "FIXTURE: the {label} CLAIM retains the exact birth with one Prompt input",
+        );
+        row
+    };
+    let prompted_phone = prompt_claim(reach.msg_a_caller, "prompted_phone");
+    let prompted_control = prompt_claim(reach.control_msg, "prompted_control");
+    let carried = member_selector_carries(&reach, |source| {
+        for (id, label) in [
+            (&prompted_phone, "prompted_phone"),
+            (&prompted_control, "prompted_control"),
+        ] {
+            assert!(
+                source.get_map("entities").get(&id.to_hex()).is_some(),
+                "FIXTURE: the packed window holds {label}",
+            );
+        }
+    });
+    assert!(
+        carried.contains(&prompted_control),
+        "precondition: the Member restricted window carries the ordinary prompt-born CLAIM prompted_control",
+    );
+    assert!(
+        !carried.contains(&prompted_phone),
+        "LEAK: the Member restricted window carries a CLAIM a model wrote from A's kept MESSAGE",
+    );
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_malformed_summary_carrier_withholds_its_row_not_the_window() {
+    use oneiron::WriteActor;
+    use oneiron::entity_doc::{DocAuthorization, TextField};
+    use oneiron::registry::ENTITY_TYPE_SUMMARY;
+    use oneiron::scope_summary::decode_scope_summary_body;
+    use oneiron::sync::client::ImportTier;
+    use oneiron::sync::replay::{ReplicatedEntity, replay_entity_with_birth};
+    use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
+
+    let reach = reach_fixture();
+    let vault = &reach.fixture.vault;
+    let owner = reach.fixture.owner;
+    // An ordinary control conversation, as the summary test builds it: one
+    // TURN witnessed at OCCURRED_AT, so its rows land in this window.
+    let control_conv = EntityId::now();
+    let control_turn = WitnessTurn {
+        conversation_ref: control_conv.to_hex(),
+        turn_ref: None,
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "text".to_owned(),
+            content: CONTROL_WORDS.to_owned(),
+            parts: None,
+            metadata: None,
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: OCCURRED_AT,
+        assertions: Default::default(),
+    };
+    let control_receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&control_turn)
+        .expect("the control turn is witnessed");
+    let control_turn_id = control_receipt.turn_id;
+    assert_eq!(
+        vault
+            .resolve_dag_scope(&reach_summary_canonical(control_conv))
+            .expect("scope")
+            .records,
+        vec![control_turn_id],
+        "FIXTURE: the control conversation resolves to its TURN, not its MESSAGE",
+    );
+    // A valid v1 scope SUMMARY over that TURN, via the v1 test door (no
+    // document yet), to copy a valid body from: the Dreamer path mints at
+    // the vault clock, outside this window.
+    let template = oneiron::test_doors::scope_summary::mint_scope_summary(
+        vault,
+        &reach_summary_canonical(control_conv),
+        CONTROL_WORDS,
+    )
+    .expect("the template summary mints");
+    let template_raw = vault
+        .get(&template)
+        .expect("summary read")
+        .expect("summary exists");
+    let template_body = decode_scope_summary_body(&template_raw[ENTITY_METADATA_HEADER_LEN..])
+        .expect("a scope-summary body, not an epoch");
+    assert_eq!(
+        template_body.covers,
+        vec![control_turn_id],
+        "FIXTURE: the template covers its TURN",
+    );
+    // S: the same valid body, replayed in this window, then given a
+    // document head by the public migration door, as S_control's Dreamer
+    // landing gives it one (birth_summary_in_txn): the resolve path the
+    // malformed carrier exercises needs the head.
+    let s_body = template_raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let s = EntityId::now();
+    replay_entity_with_birth(
+        vault,
+        ReplicatedEntity {
+            id: s,
+            entity_type: ENTITY_TYPE_SUMMARY,
+            occurred: TimeRange {
+                start: OCCURRED_AT,
+                end: OCCURRED_AT,
+            },
+            learned_at: OCCURRED_AT,
+            row_version: 0,
+            body: &s_body,
+        },
+        None,
+        ImportTier::OwnDevice,
+    )
+    .expect("FIXTURE: replay the ordinary SUMMARY in the window");
+    vault
+        .migrate_entity_text(
+            &s,
+            &TextField::MapField("text".to_owned()),
+            WriteActor::new(owner, EdgeActorClass::Human),
+            &DocAuthorization::Owner(&reach.fixture.owner_proof),
+        )
+        .expect("FIXTURE: the SUMMARY moves its text into a document");
+    vault
+        .entity_document_head(&s)
+        .expect("FIXTURE: the SUMMARY owns a document head");
+    let carried = member_selector_carries(&reach, |source| {
+        assert!(
+            source.get_map("entities").get(&s.to_hex()).is_some(),
+            "FIXTURE: the packed window holds S",
+        );
+        assert!(
+            source
+                .get_map("entities")
+                .get(&reach.control_msg.to_hex())
+                .is_some(),
+            "FIXTURE: the packed window holds control_msg",
+        );
+        // A peer's malformed carrier at S's id: S's own header with a
+        // fixmap of one pair, key "scope", no value. is_scope_summary
+        // answers true; the document resolve fails CorruptedIndex.
+        let packed = packed_row(source, &s);
+        let mut carrier = packed[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        carrier.extend_from_slice(&[0x81, 0xa5, b's', b'c', b'o', b'p', b'e']);
+        source
+            .get_map("entities")
+            .insert(&s.to_hex(), carrier.as_slice())
+            .expect("FIXTURE: the malformed carrier lands in the window");
+    });
+    assert!(
+        carried.contains(&reach.control_msg),
+        "precondition: the Member restricted window still carries the control MESSAGE control_msg",
+    );
+    assert!(
+        !carried.contains(&s),
+        "LEAK: the Member restricted window carries the malformed SUMMARY carrier S",
+    );
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_row_drawn_from_an_erased_kept_call() {
+    use oneiron::memory::SafeDeleteReason;
+    let reach = reach_fixture();
+    let vault = &reach.fixture.vault;
+    // An ordinary row registered as drawn from A's kept MESSAGE (as a
+    // promoted CLAIM cites its source), and a control drawn from the
+    // control MESSAGE. The owner then erases A's MESSAGE: the drawn row
+    // loses its phone lineage, takes the stale mark and keeps A's words.
+    let drawn = witness_control_message(&reach.fixture);
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(
+        vault,
+        &drawn,
+        &reach.msg_a_caller,
+    )
+    .expect("FIXTURE: a row registered as drawn from A's kept MESSAGE");
+    let drawn_control = witness_control_message(&reach.fixture);
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(
+        vault,
+        &drawn_control,
+        &reach.control_msg,
+    )
+    .expect("FIXTURE: a row registered as drawn from the control MESSAGE");
+    vault
+        .memory(reach.fixture.owner, EdgeActorClass::Human)
+        .safe_delete(&reach.msg_a_caller.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner erases A's kept MESSAGE msg_a_caller");
+    let carried = member_selector_carries(&reach, |source| {
+        for (id, label) in [(&drawn, "drawn"), (&drawn_control, "drawn_control")] {
+            assert!(
+                source.get_map("entities").get(&id.to_hex()).is_some(),
+                "FIXTURE: the packed window holds {label}",
+            );
+        }
+    });
+    for (id, label) in [
+        (&reach.control_msg, "control_msg"),
+        (&drawn_control, "drawn_control"),
+    ] {
+        assert!(
+            carried.contains(id),
+            "precondition: the Member restricted window carries the live {label}",
+        );
+    }
+    assert!(
+        !carried.contains(&drawn),
+        "LEAK: the Member restricted window carries a row drawn from A's erased kept MESSAGE",
+    );
+}
+
 #[test]
 fn an_off_record_session_cannot_strip_a_phone_stamp() {
     use oneiron::RawEntityPut;
