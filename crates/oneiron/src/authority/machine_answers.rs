@@ -111,6 +111,12 @@ pub(super) fn no_carrier() -> Error {
     )
 }
 
+/// The roster's chain holds the machine a roster key would put on it as
+/// removed, or names it with other keys: no roster key's revision replaces
+/// either. Nothing was written.
+const ROSTER_HOLDS_MACHINE_OTHERWISE: &str = "the vault's roster holds this machine as removed, \
+                                              or names it with other keys; nothing was written";
+
 /// The answer would name more rows than one authority entry may: the log's
 /// encoding bound (`MAX_PARENTS`), never a possession test. It refuses
 /// atomically (C5).
@@ -509,6 +515,108 @@ impl Vault {
         self.land_machine_profile_in_txn(txn, entry, &profile, now)?
             .into_standing()
             .ok_or_else(invalid_authority)
+    }
+
+    /// Puts `request`'s machine on the roster's chain in the caller's
+    /// transaction, signed by `signer`, a live owner key of the roster held
+    /// behind `sign`: the kit's root authority key R at the kit restore
+    /// (ANCHORS-1 = A: on every install the owner's roster keys decide, the
+    /// kit's R among them; FIX KIT-RESTORE-ANCHOR-ONLY-INSTALL-COUNTS-NO-WRAP).
+    /// Only the roster's chain admits an owner act's carrier and a world key
+    /// wrap's publisher, so a machine only an anchor marked does neither.
+    /// The row is one act-free `Owned(Yours)` revision with the request's
+    /// keys and proof, the next of the roster's chain: an owner-held
+    /// signer's approval, which no custodian's later revision reaches. A
+    /// roster head that names the machine live with these keys needs no row
+    /// (`None`). A removed machine, or a roster head with other keys, is
+    /// refused. The fold is the judge: the revision must stand.
+    pub(crate) fn put_machine_on_roster_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        owner: EntityId,
+        request: &MachineEnrolmentRequest,
+    ) -> Result<Option<AuthorityEntryHash>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        if vault_id != request.vault_id {
+            return Err(invalid_authority());
+        }
+        let head = fold
+            .machine(request.machine)
+            .and_then(|folded| folded.roster.as_ref());
+        let revision = match head {
+            Some(head)
+                if head.removed
+                    || head.profile.machine_key != request.machine_key
+                    || head.profile.encryption_key != request.encryption_key =>
+            {
+                return Err(authority_refused(ROSTER_HOLDS_MACHINE_OTHERWISE));
+            }
+            Some(head) if head.is_live() => return Ok(None),
+            Some(head) => head
+                .profile
+                .revision
+                .checked_add(1)
+                .ok_or_else(invalid_authority)?,
+            None => 1,
+        };
+        self.ensure_machine_row_in_txn(txn, request.machine)?;
+        let profile = MachineProfile {
+            machine: request.machine,
+            owner,
+            machine_key: request.machine_key,
+            device_class: request.device_class,
+            encryption_key: request.encryption_key.clone(),
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision,
+            machine_proof: request.machine_proof,
+            seen_world_edits: super::act_standing::acknowledged_by_in_txn(
+                &self.store,
+                txn,
+                &fold,
+                request.machine,
+            )?,
+            // A roster key's own revision: no install carries it, and no
+            // owner act rides it (the bootstrap arm's shape, C4).
+            carrier: None,
+            act: None,
+        };
+        profile.validate()?;
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Callback(signer, sign);
+        let joined = self.prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?;
+        let fold = joined.as_deref().unwrap_or(&fold);
+        let parents = fold.append_heads.clone();
+        if parents.is_empty() {
+            return Err(invalid_authority());
+        }
+        if parents.len() > MAX_PARENTS {
+            return Err(answer_parent_bound(parents.len()));
+        }
+        let now = self.instant_in_txn(txn)?.secs();
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: next_sequence(fold, signer)?,
+            parent_hashes: parents.into_iter().collect(),
+            op: AuthorityOp::MachineProfile(profile.clone()),
+            signer: AuthoritySignature {
+                suite: signer.suite(),
+                public_key: signer.clone(),
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: now,
+        };
+        entry.signer.signature = sign(&authority_transcript(&entry)?)?;
+        let hash = authority_entry_hash(&entry)?;
+        // An owner-held signer's revision carries no act, so the fold never
+        // holds it: it stands or the door refuses.
+        self.land_machine_profile_in_txn(txn, entry, &profile, now)?
+            .into_standing()
+            .ok_or_else(invalid_authority)?;
+        Ok(Some(hash))
     }
 
     /// Lands one machine revision and reads the fold back. A removal keeps

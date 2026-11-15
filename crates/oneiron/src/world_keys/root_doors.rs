@@ -85,6 +85,13 @@ pub(super) const ACTIVATION_OWNER_ONLY: &str =
 /// The owner issues a new kit. Nothing was written.
 const REVOKED_AUTHORITY_KEY: &str = "the kit's authority key was revoked; issue a new kit, then \
                                      confirm it; nothing was written";
+/// A kit restore whose kit's authority key R is not a live owner key on the
+/// vault's roster (WAYBACK-KIT-RESTORE-NO-LIVE-R = A): a newer kit's
+/// activation revoked it, or the kit was never confirmed. Only R puts the
+/// restored machine on the roster, so the door refuses before any write.
+const KIT_NOT_CURRENT: &str = "this recovery kit is not the vault's current kit: a newer kit \
+                               replaced it, or it was never confirmed; use your newest kit, or \
+                               sign in from a device that is still yours; nothing was written";
 
 /// A root activated on this install.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -700,13 +707,21 @@ impl Vault {
     /// say-so counts from any surface the owner is authenticated on (owner,
     /// 10-19), so a peer's request restores as this machine's does. The
     /// revalidated owner proof and the kit's seed gate are what stand.
+    ///
+    /// This machine goes on the roster too, signed by the kit's root
+    /// authority key R, before its re-wraps (ANCHORS-1 = A; FIX
+    /// KIT-RESTORE-ANCHOR-ONLY-INSTALL-COUNTS-NO-WRAP): only the roster's
+    /// chain admits an owner act's carrier and a world key wrap's publisher.
+    /// A kit whose R is not a live owner key on the roster is refused before
+    /// any write, its identity mint included (WAYBACK-KIT-RESTORE-NO-LIVE-R =
+    /// A).
     pub fn restore_world_keys(
         &self,
         owner: &AuthenticatedOwner,
         seed: &RecoveryRootSeed,
         confirm: Option<KitConfirmation>,
     ) -> Result<RootRestore> {
-        let (secret, request) = self.seed_door_prep(owner, seed, confirm)?;
+        let (secret, request) = self.restore_prep(owner, seed, confirm)?;
         let (restore, usable) = self.with_write_txn(|txn| {
             self.restore_world_keys_in_txn(txn, owner, &secret, &request, seed, confirm)
         })?;
@@ -716,8 +731,50 @@ impl Vault {
         Ok(restore)
     }
 
+    /// A restore's checks before its transaction: the seed door's, and the
+    /// kit's root authority key R live on the roster
+    /// ([`Self::kit_root_authority_signer`]), both in one read snapshot
+    /// before this install's machine identity is minted; then its own
+    /// request and secret.
+    pub(super) fn restore_prep(
+        &self,
+        owner: &AuthenticatedOwner,
+        seed: &RecoveryRootSeed,
+        confirm: Option<KitConfirmation>,
+    ) -> Result<(MachineSecret, MachineEnrolmentRequest)> {
+        self.precheck_root_door(owner, |txn, fold| {
+            self.kit_seed_gate_in_txn(txn, fold, seed, confirm)?;
+            self.kit_root_authority_signer(fold, seed).map(drop)
+        })?;
+        self.own_request()
+    }
+
+    /// The kit's root authority key R for this vault, while `fold`'s roster
+    /// holds it as a live owner key: what signs the restored machine's
+    /// roster row. Refused with [`KIT_NOT_CURRENT`] otherwise
+    /// (WAYBACK-KIT-RESTORE-NO-LIVE-R = A). The sealed bundle's kit restore
+    /// asks it too, before its first window lands.
+    pub(crate) fn kit_root_authority_signer(
+        &self,
+        fold: &AuthorityFold,
+        seed: &RecoveryRootSeed,
+    ) -> Result<RecoveryAuthoritySigner> {
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
+        let live = fold
+            .roster
+            .get(&signer.authority_key())
+            .is_some_and(|device| {
+                !device.revoked && device.roles & crate::authority::ROLE_OWNER != 0
+            });
+        if !live {
+            return Err(authority_refused(KIT_NOT_CURRENT));
+        }
+        Ok(signer)
+    }
+
     /// [`Self::restore_world_keys`]'s transaction, with `secret` and
-    /// `request` from [`Self::seed_door_prep`]: the restore, and the keys
+    /// `request` from [`Self::restore_prep`]: the restore, and the keys
     /// this machine may read, for the session ring once it commits.
     pub(super) fn restore_world_keys_in_txn(
         &self,
@@ -733,6 +790,7 @@ impl Vault {
         let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let (root, publish) = self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
+        let authority = self.kit_root_authority_signer(&fold, seed)?;
         let pin = PinnedRoot {
             id: root.id,
             anchor_key: root.anchor_key,
@@ -772,6 +830,13 @@ impl Vault {
         if !stands || mid.pinned_root != Some(pin) {
             return Err(refused("the kit's root does not stand on this install"));
         }
+        // R puts this machine on the roster before the re-wraps it
+        // publishes, so they count on every install (FIX
+        // KIT-RESTORE-ANCHOR-ONLY-INSTALL-COUNTS-NO-WRAP); already there
+        // live with these keys, no row.
+        let key = authority.authority_key();
+        let sign = |transcript: &[u8]| authority.sign_authority_transcript(transcript);
+        self.put_machine_on_roster_in_txn(txn, (&key, &sign), actor, request)?;
         let finish = self.repin_finish_in_txn(txn, &door, start)?;
         Ok((
             RootRestore {
