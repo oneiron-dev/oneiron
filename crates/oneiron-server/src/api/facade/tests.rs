@@ -417,8 +417,9 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
             oneiron::WriteActor::new(other, oneiron::EdgeActorClass::Agent),
         ])
         .unwrap();
-    // The permits are class-bound; a member's class-less peer key reads only
-    // through a class-agnostic grant (FIX 9917, FIX 1218), written after them.
+    // The fixture permits are class-agnostic, as production agent rows are,
+    // so a member's class-less peer key matches them; the class-agnostic
+    // grants written after them (FIX 9917, FIX 1218) stay as belt-and-braces.
     for actor in [addressed, other] {
         crate::api::tests::put_actor_read_grant(&vault, actor, None);
     }
