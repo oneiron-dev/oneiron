@@ -56,6 +56,11 @@ const AUDIT_READ_REFUSAL: &str = "an audit read needs the owner's proof or a liv
 pub(crate) const AUDIT_READ_DELETE_REFUSAL: &str =
     "an audit_read grant ends only through the owner's vault.audit_read.revoke, never a delete";
 
+/// What a cooperative restriction answers for an audit_read grant: the
+/// restriction would hide the grant from safe reads.
+const AUDIT_READ_RESTRICTION_REFUSAL: &str = "an audit_read grant ends only through the owner's \
+     vault.audit_read.revoke, never a restriction that hides it";
+
 /// Who reads an audit door (RULING AUDIT-READ-POWER-LIST = B): the vault's
 /// owner on his own proof, or an actor that holds the audit_read power. A
 /// host builds the owner's from the proof the request carries; a holder
@@ -446,6 +451,27 @@ pub(crate) fn reject_audit_read_grant_delete_in_txn(
     if stored_audit_read_grant_in_txn(store, txn, id)? {
         return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
             AUDIT_READ_DELETE_REFUSAL,
+        )));
+    }
+    Ok(())
+}
+
+/// Refuses a cooperative restriction of an audit_read grant, live or erased
+/// (Astra delta-5 J2): the restriction hides the grant from safe reads, and
+/// the owner's revoke alone ends one. The restriction writer of the owner's
+/// answer to a courtesy ask asks it for each record it restricts; a forged
+/// delivery-ledger row can pass that answer's coverage check for a grant.
+///
+/// # Errors
+/// The row at `id` is an audit_read grant; or it does not read.
+pub(crate) fn reject_audit_read_grant_restriction_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if stored_audit_read_grant_in_txn(store, txn, id)? {
+        return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+            AUDIT_READ_RESTRICTION_REFUSAL,
         )));
     }
     Ok(())

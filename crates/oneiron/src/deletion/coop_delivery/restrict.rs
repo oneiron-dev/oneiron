@@ -14,6 +14,10 @@ const RESTRICTIONS: SideTable<CooperativeRestrictionKey, CooperativeRestriction,
 
 /// `restricted` is the distinct, present, pact-covered selection from this
 /// SAME writer. Prior restrictions are not implicitly lifted by a new answer.
+/// An audit_read grant in it refuses the whole answer before any marker
+/// changes: a restriction hides the grant from safe reads, and the owner's
+/// revoke alone ends one (Astra delta-5 J2: a delivery-ledger row the
+/// generic sync-state writers planted passes the coverage check).
 pub(super) fn apply_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -25,6 +29,9 @@ pub(super) fn apply_in_txn(
     restricted: &[EntityId],
     now: u64,
 ) -> Result<()> {
+    for record in restricted {
+        crate::access_grant::reject_audit_read_grant_restriction_in_txn(&vault.store, txn, record)?;
+    }
     let mut lifted = Vec::new();
     for record in &answer.restriction_notice_given {
         // Keeping the same copy restricted is not a lift and gets no receipt.
