@@ -1,27 +1,20 @@
 //! Moved from `crates/oneiron/src/authority/support_grant.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Which kind of support party a grant names: a named support person
 /// (`human`) or a support agent (`agent`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("support.holder.class")]
 pub enum SupportHolderClass {
     Human,
     Agent,
-}
-
-impl SupportHolderClass {
-    /// The actor class the slip carries.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Human => "human",
-            Self::Agent => "agent",
-        }
-    }
 }
 
 /// Where a support grant stands, as its list and the registry show it.

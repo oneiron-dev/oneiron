@@ -1,13 +1,17 @@
 //! Moved from `crates/oneiron/src/blob_artifact/family.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use oneiron_store::blob_artifact::office_address::OfficeFormat;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// One kind of the artifact family. A kind is a body plus its fidelity rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("artifact.kind")]
 pub enum ArtifactKind {
     /// docx and friends.
     Document,
@@ -26,19 +30,6 @@ pub enum ArtifactKind {
 }
 
 impl ArtifactKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Document => "document",
-            Self::Sheet => "sheet",
-            Self::Deck => "deck",
-            Self::Code => "code",
-            Self::Canvas => "canvas",
-            Self::Image => "image",
-            Self::File => "file",
-        }
-    }
-
     /// The kind a blob artifact's export media type names.
     #[must_use]
     pub fn of_media_type(media_type: &str) -> Self {

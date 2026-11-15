@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/authority/agent_tier.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use oneiron_store::agent_record::AgentCeiling;
 use serde::Deserialize;
 use serde::Serialize;
@@ -25,7 +26,9 @@ use serde::Serialize;
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
+#[register("agent.tier")]
 pub enum AgentTier {
     /// Retrieve and inspect; no write capability.
     #[serde(rename = "read")]
@@ -47,11 +50,7 @@ impl AgentTier {
     /// The tier's wire name: `read`, `propose` or `full`.
     #[must_use]
     pub const fn wire_name(self) -> &'static str {
-        match self {
-            Self::ReadOnly => "read",
-            Self::ProposeOnly => "propose",
-            Self::FullAccess => "full",
-        }
+        self.as_str()
     }
 
     /// The tier a wire name names; `None` for any other text.
