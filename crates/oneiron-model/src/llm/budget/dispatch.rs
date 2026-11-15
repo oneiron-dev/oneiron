@@ -269,17 +269,10 @@ impl BudgetGuard {
     /// reservations, row tallies, fired thresholds and the ceiling stay.
     pub fn grant_overdraft(&self, grant: u64, cap_units: u64) -> BudgetRead {
         let mut state = self.lock_state();
-        if state.overdraft_grant != Some(grant) {
-            let paid_cap = state
-                .on_budget_exhausted
-                .admission_cap(state.limit_units)
-                .max(state.used_units);
-            let cap = paid_cap
-                .saturating_add(cap_units)
-                .saturating_sub(state.limit_units);
-            state.on_budget_exhausted = BudgetExhaustionPolicy::Overdraft { cap };
-            state.overdraft_grant = Some(grant);
-        }
+        // RED SCRATCH: the code before review round 2's fix: the grant takes
+        // the place of the meter's overdraft, whatever it had spent.
+        let _ = grant;
+        state.on_budget_exhausted = BudgetExhaustionPolicy::Overdraft { cap: cap_units };
         state.read()
     }
 
