@@ -16,7 +16,7 @@ pub use types::{
 use self::facts::extraction_observation_facts;
 use self::paging::{observation_facts_pin, page_observation_facts};
 use super::extraction_inputs::{extraction_attempt_key, extraction_policy_pin};
-use super::{ExtractionPolicy, extraction_reader_scope_in_txn};
+use super::{ExtractionPolicy, extraction_reader_scope_in_txn, extraction_turn_read};
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::dreamer_consolidation::extraction_pack::{
@@ -68,7 +68,13 @@ fn bound_extraction_observations_page(
         None
     };
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
+    let turn_read = extraction_turn_read(&read, owner.as_ref())?;
     let _pins = read.prepare_point_read::<MemoryError>()?;
+    let _turn_pins = turn_read
+        .as_ref()
+        .map(|read| read.prepare_point_read::<MemoryError>())
+        .transpose()?;
+    let turn_read = turn_read.as_ref().unwrap_or(&read);
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     if let Some(binding) = binding {
         binding.check_in_txn(&txn)?;
@@ -102,7 +108,14 @@ fn bound_extraction_observations_page(
         };
         let policy_pin = extraction_policy_pin(&policy)?;
         let proposals = checked.rows.into_iter().map(|row| row.proposal).collect();
-        let facts = extraction_observation_facts(memory, &read, txn, &bound, input, proposals)?;
+        let facts = extraction_observation_facts(
+            memory,
+            (&read, turn_read),
+            txn,
+            &bound,
+            input,
+            proposals,
+        )?;
         let facts_pin = observation_facts_pin(input, &policy_pin, &facts)?;
         let bounds = vault.snapshot_read_settings_in_txn(txn)?;
         page_observation_facts(

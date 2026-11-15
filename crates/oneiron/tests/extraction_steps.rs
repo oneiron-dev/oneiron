@@ -3,6 +3,7 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test extraction_steps`.
 #![cfg(oneiron_test_support)]
 
+#[path = "extraction_steps/support.rs"]
 mod support;
 
 use oneiron::memory::{
