@@ -8,7 +8,6 @@
 //! - the owner setting the cap to 0 is refused.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test restriction_wave_15_hooks`.
-#![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
