@@ -807,39 +807,61 @@ impl ScopedReadActorKey {
     }
 
     /// This key held to `basis`, the grant basis a saved lane's live key
-    /// read under (FIX 14344, Astra F2 on #8029). It never holds an owner
-    /// standing that key lacked: under a basis with no owner standing it
-    /// loses the owner's floor and exemption, and under an exemption's it
-    /// keeps the owner's exemption but not the floor (Sol F1 on #8061). A
-    /// floor it loses reads under the gate the live key read under; the
-    /// access gate closes unscoped rows on any key. It only narrows: a key
-    /// no gate bound (Sol F7 on #8061) or one under the relationship gate
-    /// leaves the rebuilt key's gate as it is.
+    /// read under (FIX 14344, Astra F2 on #8029): the meet of the two on
+    /// each axis, so the rebuilt key reads no row either one refused (Sol
+    /// R1/R2 on #8061).
+    /// - It keeps the owner's floor only under a floor's basis.
+    /// - It keeps an owner exemption, or turns a floor it loses into one,
+    ///   only under a basis with an owner standing (Sol F1 on #8061), and
+    ///   only where each key's gate let every row through while the owner
+    ///   binding held: unbound, or lifted by an exemption. A floor's basis
+    ///   records no exemption, so no exemption lifts a gate it read under.
+    /// - Its gate binds unless neither key's did (Sol F7 on #8061), with the
+    ///   owner as principal where the key held the floor, and it closes
+    ///   unscoped rows where either gate closed them.
+    ///
+    /// A key no gate bound held no exemption to keep: its lane, rebuilt over
+    /// a key a gate binds, reads only the relationship rows its principal's
+    /// grants admit.
     #[must_use]
     pub(super) fn within_native_basis(mut self, basis: super::frozen::NativeReadBasis) -> Self {
         use super::frozen::{NativeGrantGate, NativeOwnerStanding};
-        if basis.owner_standing == NativeOwnerStanding::Floor {
+        // What each gate let through: an unbound gate, every row; one an
+        // owner exemption lifts, every row while the owner binding holds; a
+        // binding gate, an unscoped row only while it leaves them open.
+        let key_ungated = !self.enforce_access_grants;
+        let key_lifted = key_ungated || self.owner_exemption.is_some();
+        let key_unscoped_open = key_ungated || self.unscoped_rows_open;
+        let saved_ungated = basis.grant_gate == NativeGrantGate::Ungated;
+        let saved_lifted = saved_ungated || basis.owner_standing == NativeOwnerStanding::Exemption;
+        let saved_unscoped_open = basis.grant_gate != NativeGrantGate::Access;
+        let floor_owner = self.owner;
+        let lost_floor = if basis.owner_standing == NativeOwnerStanding::Floor {
+            None
+        } else {
+            self.owner.take()
+        };
+        let exemption_owner = match basis.owner_standing {
+            NativeOwnerStanding::Absent => None,
+            NativeOwnerStanding::Exemption | NativeOwnerStanding::Floor => {
+                self.owner_exemption.or(lost_floor)
+            }
+        };
+        let neither_gated = key_ungated && saved_ungated;
+        if lost_floor.is_some() || !neither_gated {
+            self.principal_ref = self.principal_ref.or(floor_owner);
+        }
+        if neither_gated {
+            self.owner_exemption = exemption_owner;
             return self;
         }
-        if let Some(owner) = self.owner.take() {
-            // The owner's floor reads under no grant gate; the rebuilt key
-            // takes the live key's, and the owner's exemption only where
-            // the live key held it.
-            self.principal_ref = self.principal_ref.or(Some(owner));
-            if basis.grant_gate != NativeGrantGate::Ungated {
-                self.enforce_access_grants = true;
-                self.unscoped_rows_open = true;
-            }
-            if basis.owner_standing == NativeOwnerStanding::Exemption {
-                self.owner_exemption = Some(owner);
-            }
-        }
-        if basis.owner_standing == NativeOwnerStanding::Absent {
-            self.owner_exemption = None;
-        }
-        if basis.grant_gate == NativeGrantGate::Access {
-            self.unscoped_rows_open = false;
-        }
+        self.enforce_access_grants = true;
+        self.unscoped_rows_open = key_unscoped_open && saved_unscoped_open;
+        self.owner_exemption = if key_lifted && saved_lifted {
+            exemption_owner
+        } else {
+            None
+        };
         self
     }
 
