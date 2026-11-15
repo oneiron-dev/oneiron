@@ -443,27 +443,26 @@ fn signalled_reactions(pack: &Value) -> Vec<(String, String)> {
 async fn hatch_signal_feed_off_this_device_names_no_kept_reaction() {
     let (_dir, server) = test_server();
     let (_room, alice, bob, message) = room(&server, ConversationBody::default());
-    // Bob writes his two reactions through the vault's reaction write (the
+    // Bob writes his base reaction through the vault's reaction write (the
     // one the REST route runs): this root server's route writes only as its
     // embedded owner (FIX 2222), and the feed under test is the read.
-    let mut reactions = Vec::new();
-    for glyph in ["👀", "👍"] {
-        let change = server
-            .vault
-            .react(oneiron::reaction::ReactionInput {
-                message,
-                by: bob,
-                glyph: glyph.to_owned(),
-                occurred_at: now(),
-                actor: WriteActor::new(bob, EdgeActorClass::Human),
-            })
-            .unwrap();
-        reactions.push(change.id.to_hex());
-    }
-    let (kept, open) = (reactions[0].clone(), reactions[1].clone());
+    let open_id = server
+        .vault
+        .react(oneiron::reaction::ReactionInput {
+            message,
+            by: bob,
+            glyph: "👍".to_owned(),
+            occurred_at: now(),
+            actor: WriteActor::new(bob, EdgeActorClass::Human),
+        })
+        .unwrap()
+        .id;
 
-    // Bob's first reaction claim moves into a world the owner keeps on this
-    // machine; the second stays in base reality.
+    // Bob's other reaction is born in a world the owner keeps on this
+    // machine. A claim keeps the world it was born in (a changed world is a
+    // fork with a new id, so a re-put that moves a claim is refused), so the
+    // kept reaction is the base claim's body with glyph 👀, at its own id in
+    // the world.
     let world = EntityId::now();
     server
         .vault
@@ -475,18 +474,27 @@ async fn hatch_signal_feed_off_this_device_names_no_kept_reaction() {
             b"world",
         )
         .unwrap();
-    let kept_id = EntityId::from_hex(&kept).unwrap();
     let mut body = server
         .vault
-        .get_claim(&kept_id)
+        .get_claim(&open_id)
         .unwrap()
-        .expect("the reaction claim");
+        .expect("the base reaction claim");
     body.world = Some(world);
+    let rmpv::Value::Map(entries) = &mut body.value else {
+        panic!("a reaction value is a map");
+    };
+    entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("glyph"))
+        .expect("the reaction value names its glyph")
+        .1 = rmpv::Value::from("👀");
+    let kept_id = EntityId::now();
     let at = now();
     server
         .vault
         .put_claim(&kept_id, &body, TimeRange { start: at, end: at }, at)
-        .unwrap();
+        .expect("a reaction born in the world");
+    let (kept, open) = (kept_id.to_hex(), open_id.to_hex());
     server
         .vault
         .keep_world_on_this_machine_for_test(world, true)
@@ -496,7 +504,7 @@ async fn hatch_signal_feed_off_this_device_names_no_kept_reaction() {
             .vault
             .device_local_keeps_for(&kept_id, &oneiron::claim::CallerLocality::OffDevice.into())
             .unwrap(),
-        "the kept world holds the moved reaction from a caller off this device"
+        "the kept world holds the reaction born in it from a caller off this device"
     );
 
     // Unmarked loopback is on this device: the feed names both reactions.
