@@ -112,8 +112,8 @@ pub use epoch::{
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub(crate) use epoch::{
-    EpochMint, EpochPlacement, EpochScope, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
-    epoch_sources_admitted_in,
+    EpochMint, EpochPlacement, EpochScope, PriorEpoch, derived_from_sources_admitted_in,
+    epoch_disclosable_in, epoch_exportable_in, epoch_sources_admitted_in,
 };
 pub(crate) use epoch_floor::{
     epoch_floors_in_txn, raise_epoch_floor_in_txn, raise_epoch_scope_floor_in_txn,

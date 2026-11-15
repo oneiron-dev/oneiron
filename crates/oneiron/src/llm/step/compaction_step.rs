@@ -31,6 +31,12 @@
 //! receipt names as unfiled; the compaction itself still answers. A base
 //! filing whose call read a live room row refuses as a tainted base write,
 //! as the base epoch mint does (FIX 6184), before any base liveness check.
+//!
+//! A filed step reads only while its sources read, as the summary does
+//! (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES): its claim and response
+//! artifact carry the compactor's words about every record the call read,
+//! so a reader takes either only while it takes each of those records
+//! ([`is_compaction_step_row`]).
 
 use rmpv::Value;
 
@@ -56,7 +62,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::{OffRecordSession, PreparedSessionRows};
 use crate::ports::EntityStoreRead as _;
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -182,6 +188,29 @@ impl FiledCall {
             claim,
             step_hash: bytes_to_hex_lower(&self.step_hash),
         }
+    }
+}
+
+/// Whether `body`, the stored body of a row of `entity_type`, is a filed
+/// compaction step's: a `dreamer.step` claim stamped with the compaction
+/// surface, or the artifact holding a response above the inline bound. Its
+/// words came from its `DerivedFrom` targets, the summary's own lineage
+/// (FIX 5977), so a reader takes it only while it takes each of them. A
+/// claim body that does not decode is an error; an artifact body that does
+/// not decode is no step's, as [`crate::blob_artifact`]'s byte gate reads it.
+pub(crate) fn is_compaction_step_row(entity_type: u8, body: &[u8]) -> Result<bool> {
+    let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+    match entity_type {
+        ENTITY_TYPE_CLAIM if names(DREAMER_STEP_PREDICATE.as_bytes()) => {
+            let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
+            Ok(claim.predicate == DREAMER_STEP_PREDICATE
+                && super::step_index::stamped_compaction_step(&claim))
+        }
+        ENTITY_TYPE_BLOB_ARTIFACT if names(COMPACTION_STEP_RESPONSE_NAME.as_bytes()) => {
+            Ok(crate::blob_artifact::decode_blob_artifact_body(body)
+                .is_ok_and(|artifact| artifact.name == COMPACTION_STEP_RESPONSE_NAME))
+        }
+        _ => Ok(false),
     }
 }
 

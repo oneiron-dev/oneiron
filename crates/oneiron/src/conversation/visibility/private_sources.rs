@@ -361,8 +361,14 @@ fn thread_walk_seen_in(
         }
         // FIX 6409: an epoch summary's words are its `DerivedFrom` sources',
         // each walked as a scope summary's covers are; one whose sources do
-        // not resolve names no root here, as a cover does not.
-        if h.entity_type == ENTITY_TYPE_SUMMARY {
+        // not resolve names no root here, as a cover does not. A filed
+        // compaction step's claim and response artifact carry its call's
+        // words the same way (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES).
+        let compaction_step = match crate::llm::is_compaction_step_row(h.entity_type, body) {
+            Ok(step) => step,
+            Err(_) => return Ok(None),
+        };
+        if h.entity_type == ENTITY_TYPE_SUMMARY || compaction_step {
             match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
                 Ok(crate::scope_summary::WordSources::From(sources)) => {
                     pending.extend(sources.into_iter().map(|id| (id, None, source)));
