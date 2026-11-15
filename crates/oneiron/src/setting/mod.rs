@@ -82,7 +82,7 @@ pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<(
 
 /// The one hook a key may run once the write that changed it has committed: wake a host that
 /// reads the key (a reader woken inside the write would see the last commit's value).
-pub type AfterCommit = fn(&Vault);
+pub type OnCommitted = fn(&Vault);
 
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]
@@ -107,7 +107,7 @@ pub struct SettingSpec {
     pub on_change: Option<OnChange>,
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
-    pub after_commit: Option<AfterCommit>,
+    pub after_commit: Option<OnCommitted>,
 }
 
 impl SettingSpec {
