@@ -50,7 +50,7 @@ impl Memory<'_> {
                 value: crate::serialize::msgpack_value_to_json(&coping_outcome_value(&value)),
                 confidence: input.confidence,
                 source: "observed".to_owned(),
-                scope: input.scope.clone(),
+                scope: input.scope.clone().into(),
                 sensitivity: input.sensitivity,
                 evidence_turn_refs: vec![baseline.to_hex(), later.to_hex()],
                 valid_from: Some(now),

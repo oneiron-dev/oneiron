@@ -64,6 +64,7 @@ pub use oneiron_verb_wire::memory::asset_resolve::types::ServedAssetForm;
 pub use oneiron_verb_wire::memory::claim_admission::AllRelationships;
 pub use oneiron_verb_wire::memory::claim_admission::ClaimRelationships;
 pub use oneiron_verb_wire::memory::claim_admission::ClaimScope;
+pub use oneiron_verb_wire::memory::claim_admission::ClaimScopeInput;
 pub use oneiron_verb_wire::memory::claim_admission::ScopedClaimInput;
 pub use oneiron_verb_wire::memory::claim_admission::ScopedCommitRequest;
 pub use oneiron_verb_wire::memory::claim_stale::ClaimDemoteActionInput;

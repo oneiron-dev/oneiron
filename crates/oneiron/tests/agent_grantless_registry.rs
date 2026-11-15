@@ -92,7 +92,8 @@ fn write_owner_claim(vault: &Vault, owner: EntityId, owner_proof: &Authenticated
                 scope_facet_id: vault.default_facet().expect("owner default facet").to_hex(),
                 scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
                 scope_project_id: default_project_id().to_hex(),
-            },
+            }
+            .into(),
             sensitivity: None,
             evidence_turn_refs: Vec::new(),
             valid_from: None,

@@ -1,6 +1,6 @@
 {
   "name": "vault.claims.upsert",
-  "description": "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance.",
+  "description": "Admits a four-axis claim through the caller credential and existing gate, with host-authored provenance. An omitted axis is stamped: base world, the vault default facet, all relationships, the default project.",
   "refs": [
     "/subject_ref",
     "/evidence_turn_refs/*"
