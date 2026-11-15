@@ -91,7 +91,12 @@ async fn private_wire_validates_input_submits_existing_brain_and_dispatches_disc
     served.unwrap();
     assert_eq!(outputs.brain.starts.len(), 1);
     assert_eq!(outputs.brain.starts[0].transcript, "text");
-    assert!(outputs.brain.starts[0].externally_tainted);
+    // DOOR-029 (f2fe3e7e50c): the admitted owner supplies speech, not a
+    // context-taint assertion; this final carries no retrieved context.
+    assert!(
+        !outputs.brain.starts[0].externally_tainted,
+        "owner wire speech alone is not an external-taint assertion"
+    );
     assert!(!outputs.brain.starts[0].interlocutors.supervised());
     assert_eq!(
         outputs.brain.cancelled,

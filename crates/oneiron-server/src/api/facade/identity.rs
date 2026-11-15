@@ -23,7 +23,7 @@ use super::*;
 /// resolver names ([`crate::api::host_action::facade_host_action`]), and a
 /// hosted operator's root gets the typed refusal. No other owner-grade
 /// credential chooses whom it writes as.
-pub(super) fn facade_actor(
+pub(crate) fn facade_actor(
     server: &SyncServer,
     auth: &CoreAuth,
 ) -> Result<(EntityId, EdgeActorClass), FacadeApiError> {

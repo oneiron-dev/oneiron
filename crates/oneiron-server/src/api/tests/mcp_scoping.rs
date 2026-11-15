@@ -43,7 +43,18 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
                 ),
             )
             .await;
-            assert_mcp_structured_error(&body, "unknown_tool");
+            // 0bf27d24b8f (#1564): a name under a stray root whose leaf is one
+            // served verb is refused with its correction, before any effect.
+            if *name == "oneiron.ask" {
+                assert_mcp_structured_error(&body, "wrong_root");
+                assert_eq!(
+                    body["error"]["message"],
+                    json!("`oneiron.ask` is not an SDK verb; the verb is `ask`"),
+                    "{name} on {path}: {body}"
+                );
+            } else {
+                assert_mcp_structured_error(&body, "unknown_tool");
+            }
             assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
         }
     }

@@ -173,6 +173,7 @@ pub(super) fn href_base(headers: &HeaderMap) -> String {
     format!("{scheme}://{host}")
 }
 
+// Not oneiron_base::unix_seconds_now: a clock before 1970 is refused with a 500, not read as 0.
 pub(super) fn now_secs() -> Result<u64, ApiError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -198,6 +199,17 @@ pub(super) fn lfs_waited_out() -> Response {
     lfs_refusal(
         StatusCode::SERVICE_UNAVAILABLE,
         "lfs transfer waited past limits.queue_wait_timeout_ms for its turn; nothing was started; retry",
+    )
+}
+
+/// The upload's body was received and spooled, but its install waited its
+/// whole deadline for room in memory (canon ARCH-0044:471): the object was
+/// not stored, so a retry sends the body again. Not [`lfs_waited_out`],
+/// whose "nothing was started" is false once the body has been read.
+pub(super) fn lfs_install_waited_out() -> Response {
+    lfs_refusal(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "lfs upload was received, but its install waited past limits.queue_wait_timeout_ms for room in memory; the object was not stored; retry the upload",
     )
 }
 

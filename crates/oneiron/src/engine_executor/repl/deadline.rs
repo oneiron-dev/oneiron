@@ -166,6 +166,9 @@ impl EngineNativeExecutor<'_> {
                     pending.repairs,
                 )
                 .answered_by(pending.answered_by.clone()),
+                // A stored program makes no model turn, so it takes no
+                // interrupt; its step boundary takes the pending ones.
+                interrupts: crate::engine_executor::run_signals::TakenSignals::default(),
             },
         })
     }

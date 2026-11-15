@@ -246,7 +246,8 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
     assert_eq!(
         reply["error"]["suggestions"],
         json!([
-            "Present a slip minted with --actor-class <human|agent|system>.",
+            // ce8fd167da0: a slip is paired from a link (api/facade/identity.rs).
+            "Present a slip paired from a link created with --actor-class <human|agent|system>.",
             "Reconnect with a differently scoped slip to act as another actor.",
         ])
     );

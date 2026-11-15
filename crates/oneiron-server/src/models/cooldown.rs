@@ -34,6 +34,8 @@ use super::status::{HealthState, LimitHold, RungHealth};
 
 mod account_park;
 mod offer_core;
+#[cfg(oneiron_test_support)]
+mod owner_fallback_door;
 mod quota_queue;
 mod reply_budgets;
 mod world_hold;

@@ -1,15 +1,19 @@
 //! The owner act and call-scoped source permit for a whole-vault archive restore,
-//! and the claims that restore brings back through the generic claim door.
+//! the claims that restore brings back through the generic claim door, and the
+//! membership of that restore's inbox group.
 
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use super::super::WholeVaultDocumentManifest;
 use crate::Vault;
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{POLICY_SCHEMA_VERSION, resolve_policy_manifest};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::{
@@ -281,4 +285,140 @@ pub(crate) fn owner_restore_opened_claim_in_txn(
                 && record.outcome == "allow"
                 && record.actor_ref.as_deref() == Some(actor.to_hex().as_str())
         }))
+}
+
+/// The members of each owner restore's inbox group (RULING 02:26 13 Nov, NOTE
+/// ARCHIVE-RESTORE-APPROVE-DESIGN R1): key hex32 (restore receipt) ":" hex32 (claim).
+const RESTORE_MEMBERS: SideTable<String, (), Raw> =
+    SideTable::new(&side_table::OWNER_RESTORE_CLAIM);
+
+/// Each owner restore group's head: the source vault its archive names. Key: hex32
+/// (restore receipt).
+const RESTORE_GROUPS: SideTable<String, OwnerRestoreGroupHead, Named> =
+    SideTable::new(&side_table::OWNER_RESTORE_GROUP);
+
+/// What an owner restore's inbox group card names beside its receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct OwnerRestoreGroupHead {
+    /// The source vault id the restored archive's manifest names.
+    pub(crate) source_vault: Option<String>,
+}
+
+impl OwnerRestore<'_> {
+    /// The restore receipt's gate id, as 32 hex.
+    fn receipt_hex(&self) -> &str {
+        self.receipt_ref
+            .strip_prefix("gate:")
+            .unwrap_or(self.receipt_ref)
+    }
+}
+
+/// Records `claim`, which the owner's restore has just inserted with `body`, as a member
+/// of that restore's inbox group when it is an open proposal of an unreserved predicate,
+/// stamped or not (R1), and the group's head with its first member. It runs in the
+/// restore's own writer, after the bound-owner check; no other door writes either table,
+/// so no agent can add a member.
+pub(super) fn record_restored_member_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    restore: OwnerRestore<'_>,
+    claim: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    if body.approval != ClaimApprovalStatus::Proposed
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || crate::write_envelope::claim_predicate::is_reserved_predicate(&body.predicate)
+    {
+        return Ok(());
+    }
+    let receipt = restore.receipt_hex().to_owned();
+    if !RESTORE_GROUPS.contains(&vault.store, txn, &receipt)? {
+        RESTORE_GROUPS.put(
+            &vault.store,
+            txn,
+            &receipt,
+            &OwnerRestoreGroupHead {
+                source_vault: restore.source_vault.map(str::to_owned),
+            },
+        )?;
+    }
+    RESTORE_MEMBERS.put(
+        &vault.store,
+        txn,
+        &format!("{receipt}:{}", claim.to_hex()),
+        &(),
+    )
+}
+
+/// The owner restore receipt `group_key` (32 hex) names: a stored, allowed owner
+/// archive-restore receipt; `None` for anything else.
+pub(crate) fn owner_restore_receipt_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    group_key: &str,
+) -> Result<Option<GateDecisionRecord>> {
+    if group_key.len() != 32 {
+        return Ok(None);
+    }
+    let Ok(id) = EntityId::from_hex(group_key) else {
+        return Ok(None);
+    };
+    Ok(store
+        .gate_decision_in_txn(txn, GateDecisionId::from_bytes(*id.as_bytes()))?
+        .filter(|record| {
+            record.content_kind == OWNER_ARCHIVE_RESTORE_CONTENT_KIND
+                && record.outcome == "allow"
+                && record.redacted_at.is_none()
+        }))
+}
+
+/// Every owner restore that recorded a member, by its receipt's gate id (32 hex) in key
+/// order, each with its members' ids.
+pub(crate) fn owner_restore_groups_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(String, Vec<EntityId>)>> {
+    let mut groups: Vec<(String, Vec<EntityId>)> = Vec::new();
+    for key in RESTORE_MEMBERS.scan_keys(&vault.store, txn, &[])? {
+        let (receipt, claim) = member_key(&key)?;
+        match groups.last_mut() {
+            Some((last, members)) if *last == receipt => members.push(claim),
+            _ => groups.push((receipt.to_owned(), vec![claim])),
+        }
+    }
+    Ok(groups)
+}
+
+/// The members of the owner restore whose receipt's gate id is `group_key` (32 hex), in
+/// key order.
+pub(crate) fn owner_restore_members_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_key: &str,
+) -> Result<Vec<EntityId>> {
+    RESTORE_MEMBERS
+        .scan_keys(&vault.store, txn, format!("{group_key}:").as_bytes())?
+        .iter()
+        .map(|key| member_key(key).map(|(_, claim)| claim))
+        .collect()
+}
+
+/// The group head the owner restore `group_key` (32 hex) recorded with its first member.
+pub(crate) fn owner_restore_group_head_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_key: &str,
+) -> Result<Option<OwnerRestoreGroupHead>> {
+    RESTORE_GROUPS.get(&vault.store, txn, &group_key.to_owned())
+}
+
+/// A member key's restore receipt (32 hex) and claim.
+fn member_key(key: &str) -> Result<(&str, EntityId)> {
+    let (receipt, claim) = key
+        .split_once(':')
+        .ok_or(Error::CorruptedIndex("owner restore member key"))?;
+    Ok((
+        receipt,
+        EntityId::from_hex(claim).map_err(|_| Error::CorruptedIndex("owner restore member key"))?,
+    ))
 }

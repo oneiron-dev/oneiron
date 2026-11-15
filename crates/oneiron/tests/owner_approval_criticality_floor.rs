@@ -295,6 +295,8 @@ fn owner_resident_binding_lands_on_its_undeclared_predicate() {
             axes: vec![],
         },
         wake: ResidentWakeMode::HumanMessages,
+        wake_hold_secs: 0,
+        digest_delay_secs: oneiron::agent_dispatch::RESIDENT_DIGEST_DELAY_DEFAULT_SECS,
     };
 
     let binding = f

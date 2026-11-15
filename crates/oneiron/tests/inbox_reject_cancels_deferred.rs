@@ -252,7 +252,9 @@ impl Fixture {
             .into_iter()
             .filter_map(|group| match group {
                 UnifiedInboxGroup::Dreamer { group } => Some(group),
-                UnifiedInboxGroup::Shape { .. } => None,
+                // Only a Dreamer group holds a run's members; the shape and
+                // restore kinds, and any later kind, hold none.
+                _ => None,
             })
             .flat_map(|group| group.members)
             .flat_map(|member| std::iter::once(member.claim_id).chain(member.duplicate_claim_ids))

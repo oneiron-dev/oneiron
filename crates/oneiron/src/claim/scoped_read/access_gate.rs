@@ -527,6 +527,21 @@ pub(crate) fn relationship_read(
     relationship_read_keyed(store, txn, id, raw, false)
 }
 
+/// [`relationship_read`] under the delegated relationship gate
+/// (`require_relationship_grants`): a MESSAGE or SUMMARY that names neither
+/// a relationship nor a private scope decides readable, and every row that
+/// names one is gated on the reader's grants and memberships. A federation
+/// selector judges its member's labelled rows by it (OPUS-LEAKS,
+/// SELECTOR-RELATIONSHIP-LABELS).
+pub(crate) fn relationship_label_read(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<RelationshipRead> {
+    relationship_read_keyed(store, txn, id, raw, true)
+}
+
 /// The body key an identity row (a kind a tag can mint) keeps the audience
 /// of the words that named it under, when a confirmed provisional entity was
 /// named only in relationship-scoped or private MESSAGEs (OPUS-LEAKS): a map
@@ -625,6 +640,51 @@ pub(crate) fn owner_only_audience_change() -> crate::error::Error {
     ))
 }
 
+/// [`relationship_read_keyed`] for an identity topology event (FIX
+/// DISTINCT-EVENT-UNGATED, OPUS-LEAKS). An AssertDistinct event names its
+/// pair and its `entity.distinct_from` CLAIM, and that CLAIM carries the
+/// audience of the words that asserted it (`narrow_distinct_claim_in_txn`).
+/// So the event reads as its CLAIM reads, on the CLAIM's live axes in the
+/// same transaction. A CLAIM that is gone, deleted, or not the event's pair
+/// withholds the event. Every other topology action keeps today's verdict.
+/// Fold, replay and the typed topology readers never come here.
+fn assert_distinct_event_read<S>(
+    store: &S,
+    txn: &heed::RoTxn<'_>,
+    bytes: &[u8],
+) -> Result<RelationshipRead>
+where
+    S: crate::store::ManifestDbs,
+{
+    let Ok(event) = crate::identity_topology::decode_identity_topology_event_body(bytes) else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    let crate::identity_topology::StoredIdentityOpAction::AssertDistinct { a, b, claim } =
+        event.action
+    else {
+        return Ok(RelationshipRead::Decided(true));
+    };
+    let crate::vault::LiveEntityRow::Live { entity_type, body } =
+        crate::vault::live_entity_row_in_txn(store, txn, &claim)?
+    else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    if entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(RelationshipRead::Decided(false));
+    }
+    let Ok(body) = decode_claim_body(&body, true) else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    let names_the_pair = body.predicate == crate::identity_topology::PREDICATE_ENTITY_DISTINCT_FROM
+        && body.subject == crate::claim::ClaimSubject::Entity(a)
+        && crate::write_envelope::identity_pair::decode_distinct_claim_pair(&body.value).ok()
+            == Some((a, b));
+    if !names_the_pair {
+        return Ok(RelationshipRead::Decided(false));
+    }
+    Ok(RelationshipRead::claim(&body))
+}
+
 /// [`relationship_read_keyed`] for an identity row. A row whose body names
 /// no source audience is decided readable, as every identity row was. One
 /// that names it is gated on it as a MESSAGE is on its own `rel` and
@@ -699,6 +759,9 @@ where
             return Ok(RelationshipRead::Decided(false));
         }
         return Ok(RelationshipRead::claim(&decode_claim_body(bytes, true)?));
+    }
+    if kind == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return assert_distinct_event_read(store, txn, bytes);
     }
     if crate::tagging::label_kind_admitted(kind) {
         return identity_relationship_read(store, txn, id, raw, kind, bytes);

@@ -11,7 +11,11 @@
 //! its scope does not hold yet of its guard's use in the commit that writes
 //! its end, its held end or its delete, and drains the scope after it
 //! ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a restart never
-//! takes up a job whose end is staged.
+//! takes up a job whose end is staged. The snapshot of that part, the commit
+//! that stages it and the let-go of the job's ledger run under the lock
+//! every poll and delete of the job takes (S7299 review round 3 P1): a
+//! second end of the job, a poll that writes its refused end again or its
+//! delete, finds the part staged and stages none of it.
 //! Entry: `MediaRuntime::cancel_kept_job`.
 use oneiron::agent_dispatch::SpendScopeId;
 
@@ -42,6 +46,8 @@ impl MediaRuntime {
     /// (KS-2B2). The scope that funds the job, when one does, stages its
     /// end's part in the commit that writes the end or the held end, and is
     /// drained after it (S7299-P1). Returns what the poll answers.
+    /// Two polls of a job whose end the vault refused write it one after
+    /// the other: the second stages nothing (S7299 review round 3 P1).
     pub(super) fn complete_kept_job(
         &self,
         id: &str,
@@ -57,13 +63,19 @@ impl MediaRuntime {
     /// job, or one with no row anywhere, is taken up by no restart: its
     /// part books in commits of its own. An end whose writes the vault
     /// refused stages nothing: the job's next write of its end stages it,
-    /// or a restart takes the job up and its fresh guard pays the end.
+    /// or a restart takes the job up and its fresh guard pays the end. The
+    /// part's snapshot, its commit and the ledger's let-go hold the jobs
+    /// lock, as [`Self::drop_kept_job`]'s do, so no other end of the job
+    /// snapshots the part between them (S7299 review round 3 P1).
     pub(super) fn write_kept_end(
         &self,
         id: &str,
         state: &MediaJobState,
     ) -> (LlmResult<MediaJobState>, Option<SpendScopeId>) {
+        let mut jobs = self.lock_jobs();
         let stage = self.end_stage(id);
+        #[cfg(oneiron_test_support)]
+        super::scoped_job_door::end_snapshot_taken(id);
         let mut committed = false;
         let written =
             self.store
@@ -82,7 +94,6 @@ impl MediaRuntime {
                     committed = true;
                     Ok(written)
                 });
-        let mut jobs = self.lock_jobs();
         let answer = match written {
             Ok(JobWrite::Kept) => {
                 jobs.remove(id);
@@ -111,12 +122,12 @@ impl MediaRuntime {
                 Ok(state.clone())
             }
         };
-        drop(jobs);
         let staged = if committed {
             self.end_committed(id, stage)
         } else {
             None
         };
+        drop(jobs);
         (answer, staged)
     }
 
@@ -174,9 +185,11 @@ impl MediaRuntime {
     /// Drops job `id` from here and its row and clips from the vault, in
     /// one write, while no poll takes it up again; the scope that funds it,
     /// when one does, stages in that write what it does not hold yet of the
-    /// job's guard use, and is drained after it (S7299-P1). A write the vault
-    /// refuses drops and stages nothing: the job stays, and the caller hears
-    /// it.
+    /// job's guard use, and is drained after it (S7299-P1). The ledger goes
+    /// before the jobs lock does, so a poll that writes the job's refused
+    /// end again stages none of that part (S7299 review round 3 P1). A
+    /// write the vault refuses drops and stages nothing: the job stays, and
+    /// the caller hears it.
     fn drop_kept_job(&self, id: &str) -> LlmResult<()> {
         let mut jobs = self.lock_jobs();
         let stage = self.end_stage(id);
@@ -187,8 +200,8 @@ impl MediaRuntime {
             return Err(oneiron::RetryableLlmError::ServerError.into());
         }
         jobs.remove(id);
-        drop(jobs);
         let staged = self.end_committed(id, stage);
+        drop(jobs);
         self.drain_end_stage(staged);
         Ok(())
     }

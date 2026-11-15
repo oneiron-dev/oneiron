@@ -155,14 +155,15 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
                 "turns": 1,
                 "summaries": 0,
                 "facets": 0,
-                "companions": 0,
                 "other": 0
             }
         },
         "session": {},
+        // 6b994b567c9 (#3883, FIX 871): the `companions` slot is retired and
+        // `persona_ref` is `counterpart_person_ref`.
         "companion": {
             "person_ref": board_person_ref,
-            "persona_ref": board_persona_ref
+            "counterpart_person_ref": board_persona_ref
         }
     });
     let (status, context_board_body) = route_json(

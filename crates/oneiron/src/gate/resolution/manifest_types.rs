@@ -16,8 +16,8 @@ use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
 use crate::gate::fanout_policy::{FanoutControls, FanoutPrecedence, FanoutScopedRow};
 
 use crate::gate::ceiling::{
-    ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
-    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling, SourceTrustRow,
+    ActorCeiling, DelegationFoldCache, PolicyAuthorityMarker, PolicyOwnerPatternRow,
+    PolicyOwnerPolicyRow, PolicyOwnerPrecedence, PolicyPack, SourceTrustCeiling, SourceTrustRow,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
@@ -360,7 +360,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) owner_policy_output_contract: Option<String>,
     pub(super) owner_policy_patterns: Vec<PolicyOwnerPatternRow>,
     pub(super) owner_policy_patterns_dropped: bool,
-    pub(super) signatures: Vec<PolicySignature>,
+    pub(super) signatures: Vec<PolicyAuthorityMarker>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     pub(crate) native_mail_policy: Vec<crate::gate::mail_policy::MailPolicy>,
     pub(super) project_collaboration: Option<ProjectCollaborationPolicy>,

@@ -7,6 +7,9 @@
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --test git_lfs_prehandler_refusal_envelope`.
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -14,13 +17,12 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use ed25519_dalek::{Signer, SigningKey};
+use engine_stack::on_engine_stack;
 use oneiron::agent_dispatch::DEFAULT_BASE_LOGICAL_ID;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, holder_proof_challenge};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::{EntityId, Vault, VaultConfig};
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -106,33 +108,6 @@ impl Fixture {
         let status = response.status().as_u16();
         let body = to_bytes(response.into_body(), usize::MAX).await?;
         Ok((status, serde_json::from_slice(&body)?))
-    }
-}
-
-/// Runs `test` as the server's binary runs its app: on a multi-thread runtime
-/// whose threads have the engine's stack, driven from a thread that has it
-/// too (`ENGINE_THREAD_STACK_BYTES`).
-fn on_engine_stack<F, Fut>(test: F) -> TestResult
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = TestResult>,
-{
-    let driver = std::thread::Builder::new()
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || -> Result<(), String> {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())?
-                .block_on(test())
-                .map_err(|error| error.to_string())
-        })?;
-    match driver.join() {
-        Ok(outcome) => Ok(outcome?),
-        // A failed assertion fails the test with its own message.
-        Err(panic) => std::panic::resume_unwind(panic),
     }
 }
 

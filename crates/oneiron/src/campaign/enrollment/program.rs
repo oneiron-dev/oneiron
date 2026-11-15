@@ -224,6 +224,10 @@ pub(super) fn campaign_program_step_in_txn(
 /// longer token could never enroll anyone.
 pub const CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES: usize = 512;
 
+/// Longest accepted copy A/B arm label on a step, in bytes (ARCH-0059
+/// #copy-review): a short author's label such as `model` or `human`.
+pub const CAMPAIGN_PROGRAM_STEP_ARM_MAX_BYTES: usize = 64;
+
 /// Longest accepted email subject, in bytes (FIX 11641): the Gmail
 /// `Subject:` room inside RFC 5322's line limit. The stalwart 998-byte cap
 /// accepts it too, so one bound serves both email halves.
@@ -647,6 +651,7 @@ fn write_program_in_txn(
                     .as_ref()
                     .map(|outbound| descriptor_checked(&step.channel, outbound))
                     .transpose()?,
+                arm: step.arm.clone(),
             })
         })
         .collect::<Result<_>>()?;
@@ -772,6 +777,15 @@ fn validate_step_draft(step: &CampaignProgramStepDraft) -> Result<()> {
     }
     if step.channel != normalize_campaign_pack_token(&step.channel) {
         return Err(invalid("a step's channel must be normalized"));
+    }
+    if let Some(arm) = &step.arm
+        && (arm.trim().is_empty()
+            || arm.len() > CAMPAIGN_PROGRAM_STEP_ARM_MAX_BYTES
+            || arm.chars().any(char::is_control))
+    {
+        return Err(invalid(
+            "a step's arm must be a non-empty label within the maximum length",
+        ));
     }
     if let Some(outbound) = &step.outbound {
         if outbound.verb.trim().is_empty() || outbound.verb.chars().any(char::is_control) {
@@ -1000,6 +1014,9 @@ struct ProgramStepRow {
     sender_ref: String,
     basis_evidence: String,
     outbound: Option<ProgramOutboundRow>,
+    /// Absent on rows written before copy arms: those tag no arm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    arm: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1091,6 +1108,7 @@ fn encode_program_step(step: &CampaignProgramStep) -> ProgramStepRow {
             idempotency_supported: outbound.idempotency_supported,
             subject: outbound.subject.clone(),
         }),
+        arm: step.arm.clone(),
     }
 }
 
@@ -1121,5 +1139,6 @@ fn decode_program_step(
         sender_ref: id_from_hex(&row.sender_ref, CONTEXT)?,
         basis_evidence: id_from_hex(&row.basis_evidence, CONTEXT)?,
         outbound,
+        arm: row.arm,
     })
 }

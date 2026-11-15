@@ -175,11 +175,15 @@ pub(in crate::api::ai::chat) async fn start_turn(
             "no_model_configured",
             refusal.to_string(),
         ),
-        RoleRefusal::RouteNotServed { .. } => refused(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "model_route_not_served",
-            refusal.to_string(),
-        ),
+        // Only a replay meets the fallback refusal; a turn reads it as its
+        // route not served.
+        RoleRefusal::RouteNotServed { .. } | RoleRefusal::FallbackNoLongerAllowed { .. } => {
+            refused(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "model_route_not_served",
+                refusal.to_string(),
+            )
+        }
         RoleRefusal::Refused(_) => refused(
             StatusCode::PAYMENT_REQUIRED,
             "turn_not_admitted",

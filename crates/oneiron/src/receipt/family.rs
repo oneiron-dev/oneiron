@@ -396,8 +396,10 @@ pub(super) fn collect_receipt_records(
         records.extend(crate::check_in::check_in_receipts(vault, query)?);
     }
     // INQUIRE-1: each send of an inquiry on the asking vault, kept in the
-    // send's own transaction. Its own kind and store; its own read txn.
-    if query.includes_kind(ReceiptKind::Inquiry) {
+    // send's own transaction. Its own kind and store; its own read txn. The
+    // same store keeps each change of an inquiry edge's terms on the
+    // member's vault, of kind Share (FIX INQUIRY-STANDING-PER-KEEP).
+    if query.includes_kind(ReceiptKind::Inquiry) || query.includes_kind(ReceiptKind::Share) {
         records.extend(crate::inquiry::inquiry_receipts(vault, query)?);
     }
 
@@ -656,6 +658,9 @@ pub(crate) fn gate_decision_receipt_from_base(record: &GateDecisionRecord) -> Re
         receipt.fields.insert("predicate".into(), predicate.into());
         receipt.fields.insert("criticality".into(), "normal".into());
     }
+    receipt
+        .fields
+        .extend(crate::claim::owner_ruling_receipt_fields(record));
     receipt
 }
 

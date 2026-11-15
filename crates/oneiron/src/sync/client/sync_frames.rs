@@ -2,7 +2,7 @@
 
 use loro::{LoroDoc, VersionVector};
 
-use super::base::SyncClient;
+use super::base::{FollowedWorlds, SyncClient};
 use super::types::{SVF_FRESH, SyncClientConfig, SyncEvent, SyncResidenceMode};
 use crate::error::Result;
 use crate::sync::loro_support::doc_version_vector;
@@ -14,8 +14,13 @@ use crate::sync::window_rows::{WINDOW_SHALLOW_FENCE, WINDOW_STATE_VECTOR};
 impl SyncClient {
     /// Every socket has its own subscribed-key set. A reconnect retains its
     /// local Docs and root, but must negotiate every world VV again after
-    /// the server's root response (and after all shared base VVs).
-    pub(in crate::sync) fn begin_connection_sync(&mut self) {
+    /// the server's root response (and after all shared base VVs). The
+    /// worlds it follows are read here, before its first frame, and every
+    /// frame of this negotiation selects from them
+    /// (`negotiated_worlds_or_live`): a change after this point
+    /// renegotiates once the steady loop starts.
+    pub(crate) fn begin_connection_sync(&mut self) {
+        self.negotiated_worlds = self.effective_worlds().ok();
         self.requested_windows
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -29,7 +34,25 @@ impl SyncClient {
         self.sealed_updates.restart();
         // A grant or a replacement on an earlier socket proves nothing on this one (FIX 20202).
         self.promotions_granted.clear();
+        self.follow_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.follows_refused.clear();
+        self.followed_windows_landed.clear();
         self.replacements_installed.clear();
+    }
+
+    /// The worlds this negotiation's frames select from: the set read as
+    /// its connection began, which the steady loop compares
+    /// ([`Self::follow_set_changed`]), so a change during the negotiation
+    /// renegotiates. Before any connection began, or when that read failed,
+    /// the set read now.
+    fn negotiated_worlds_or_live(&self) -> std::result::Result<FollowedWorlds, TransportError> {
+        match &self.negotiated_worlds {
+            Some(worlds) => Ok(worlds.clone()),
+            None => self.effective_worlds(),
+        }
     }
 
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
@@ -169,14 +192,14 @@ impl SyncClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
 
-        let effective_worlds = self.effective_worlds()?;
+        let effective_worlds = self.negotiated_worlds_or_live()?;
         let mut keys: Vec<WindowKey> = Vec::new();
         if self.config.residence_mode == SyncResidenceMode::All {
             let mut next = Some(WindowKey::from_timestamp(now_secs));
             for _ in 0..self.config.default_window_count {
                 let Some(key) = next else { break };
                 next = key.previous_month();
-                if let Some(worlds) = &effective_worlds {
+                if let FollowedWorlds::Only(worlds) = &effective_worlds {
                     for world in worlds {
                         let scoped = WindowKey::for_month_world(&key, *world);
                         if !keys.contains(&scoped) {
@@ -195,10 +218,7 @@ impl SyncClient {
             // including historical base months and world claims not yet indexed
             // by a fresh server. A followed world also needs its base month.
             let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
-            if effective_worlds
-                .as_ref()
-                .is_none_or(|worlds| !worlds.is_empty())
-            {
+            if effective_worlds.follows_any() {
                 discovered.extend(
                     crate::sync::discover_local_window_keys(&self.vault)
                         .map_err(|error| TransportError::Storage(error.to_string()))?,
@@ -228,6 +248,20 @@ impl SyncClient {
                     .ok_or(TransportError::InvalidWindowKey)?;
                 if !keys.contains(&key) {
                     keys.push(key);
+                }
+            }
+            // A followed world's windows sync in full with no promotion marker:
+            // the home grants each one on this socket (`follows_full_window`),
+            // or refuses it (`FOLLOW_REFUSED`). Only the windows the home's
+            // root lists are asked.
+            if self.config.residence_selector.is_some() {
+                for key in crate::sync::schema::read_window_list(&self.root_doc) {
+                    if key.world().is_some()
+                        && self.follows_full_window_in(key.as_str(), &effective_worlds)
+                        && !keys.contains(&key)
+                    {
+                        keys.push(key);
+                    }
                 }
             }
             // This vault's embedding setup rows (OF-370) reach an opened-item device whatever
@@ -268,19 +302,19 @@ impl SyncClient {
                 if !self.home_may_promote(&key) {
                     continue;
                 }
-                let selector = self.config.residence_selector.as_ref().ok_or(
-                    TransportError::InvalidPayload("promoted window has no selector"),
-                )?;
-                let bytes = crate::sync::encode_sync_selector(selector)
-                    .map_err(|_| TransportError::InvalidPayload("invalid promotion selector"))?;
-                messages.push(
-                    transport::encode_window_sync(
-                        key.as_str(),
-                        window_sub_tags::PROMOTION_REQUEST,
-                        &bytes,
-                    )
-                    .into_result()?,
-                );
+                // A followed world's window this device never promoted is
+                // asked as a follow, and its vector waits for the home's
+                // grant: a home that does not grant the whole window answers
+                // FOLLOW_REFUSED, and nothing of it goes on this socket.
+                if self.follow_only_window_in(&key, &effective_worlds)? {
+                    messages.push(self.follow_request_frame(&key)?);
+                    self.requested_windows
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(key);
+                    continue;
+                }
+                messages.push(self.promotion_request_frame(&key)?);
                 // The setup window's vector waits for the home's grant.
                 if self.setup_catch_up(key.as_str()) {
                     continue;
@@ -344,9 +378,52 @@ impl SyncClient {
         Ok(messages)
     }
 
+    /// The `PROMOTION_REQUEST` frame for `key`: this lane's residence
+    /// selector, as the home grant-checks it.
+    fn promotion_request_frame(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        self.selector_request_frame(key, window_sub_tags::PROMOTION_REQUEST)
+    }
+
+    /// The `FOLLOW_REQUEST` frame for followed window `key`: the same
+    /// selector, which the home grant-checks as a promotion's, but answers a
+    /// refusal with `FOLLOW_REFUSED` and keeps the socket open. Records the
+    /// request for [`Self::unanswered_follow_requests`].
+    fn follow_request_frame(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        let frame = self.selector_request_frame(key, window_sub_tags::FOLLOW_REQUEST)?;
+        self.follow_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone());
+        Ok(frame)
+    }
+
+    /// The `sub_tag` frame for `key` carrying this lane's residence selector.
+    fn selector_request_frame(
+        &self,
+        key: &WindowKey,
+        sub_tag: u8,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        let selector =
+            self.config
+                .residence_selector
+                .as_ref()
+                .ok_or(TransportError::InvalidPayload(
+                    "promoted window has no selector",
+                ))?;
+        let bytes = crate::sync::encode_sync_selector(selector)
+            .map_err(|_| TransportError::InvalidPayload("invalid promotion selector"))?;
+        transport::encode_window_sync(key.as_str(), sub_tag, &bytes).into_result()
+    }
+
     fn selected_discovered_windows(
         discovered: Vec<WindowKey>,
-        effective_worlds: &Option<std::collections::BTreeSet<crate::EntityId>>,
+        effective_worlds: &FollowedWorlds,
     ) -> Vec<WindowKey> {
         let mut selected = Vec::new();
         for key in discovered {
@@ -360,9 +437,7 @@ impl SyncClient {
                     selected.push(key);
                 }
             } else if key.world().is_none()
-                && effective_worlds
-                    .as_ref()
-                    .is_none_or(|worlds| !worlds.is_empty())
+                && effective_worlds.follows_any()
                 && !selected.contains(&key)
             {
                 // A selected-world edge can name a shared base endpoint
@@ -381,9 +456,10 @@ impl SyncClient {
     pub(super) fn newly_followed_window_requests(
         &mut self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        let effective_worlds = self.effective_worlds()?;
-        // Opened residence exchanges full VVs only for promoted windows; the
-        // deferred set holds only those, so an advertised key never enrolls.
+        let effective_worlds = self.negotiated_worlds_or_live()?;
+        // Opened residence exchanges full VVs only for promoted windows and
+        // followed worlds' windows; the deferred set holds the ones this
+        // connection's first frames asked to promote.
         let opened = self.config.residence_mode == SyncResidenceMode::Opened
             && self.config.federation_peer.is_none();
         let mut discovered = if opened {
@@ -400,12 +476,29 @@ impl SyncClient {
                 .iter()
                 .cloned(),
         );
-        if !opened
-            && !self.root_bootstrapped
-            && effective_worlds
-                .as_ref()
-                .is_none_or(|worlds| !worlds.is_empty())
-        {
+        // A followed world's window the root lists now and this connection's
+        // first frames did not ask for: it is asked as a follow, and its
+        // vector waits for the home's grant.
+        let mut late_follows = std::collections::HashSet::new();
+        if opened && self.config.residence_selector.is_some() {
+            for key in crate::sync::schema::read_window_list(&self.root_doc) {
+                let requested = self
+                    .requested_windows
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .contains(&key);
+                if key.world().is_some()
+                    && !requested
+                    && !discovered.contains(&key)
+                    && self.follow_only_window_in(&key, &effective_worlds)?
+                    && self.home_may_promote(&key)
+                {
+                    late_follows.insert(key.clone());
+                    discovered.push(key);
+                }
+            }
+        }
+        if !opened && !self.root_bootstrapped && effective_worlds.follows_any() {
             discovered.extend(
                 crate::sync::discover_local_window_keys(&self.vault)
                     .map_err(|error| TransportError::Storage(error.to_string()))?,
@@ -438,6 +531,14 @@ impl SyncClient {
             // Judged again as the deferred keys drain: the home may no longer
             // read the world (FIX 922 item 11).
             if !self.home_may_request(&key) {
+                continue;
+            }
+            if late_follows.contains(&key) {
+                frames.push(self.follow_request_frame(&key)?);
+                self.requested_windows
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(key);
                 continue;
             }
             let vv = self
@@ -510,11 +611,7 @@ impl SyncClient {
 
     /// Whether ready window `key` may be asked of the home on this
     /// connection now ([`Self::ready_window_requests`]).
-    fn ready_window_requestable(
-        &self,
-        key: &WindowKey,
-        effective_worlds: &Option<std::collections::BTreeSet<crate::EntityId>>,
-    ) -> bool {
+    fn ready_window_requestable(&self, key: &WindowKey, effective_worlds: &FollowedWorlds) -> bool {
         let exchanged = self
             .requested_windows
             .lock()
