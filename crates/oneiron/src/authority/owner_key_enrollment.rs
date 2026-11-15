@@ -135,8 +135,9 @@ impl FoldState {
     }
 
     /// Whether `key` authorizes no `ReRoot`, no `RotateKey`, no
-    /// `EnrollDevice` and no revoke of another owner key or of a key its
-    /// parents do not hold, from any signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
+    /// `EnrollDevice`, no revoke of another owner key or of a key its
+    /// parents do not hold, and no roster-signed machine answer as the
+    /// owner's or removal, from any signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
     /// or a key only a passkey vouched for, until confirmed (lead ruling
     /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
     /// rule that counts an entry's participants asks it of each.
@@ -181,7 +182,11 @@ pub(super) fn remember_passkey_vouch(
 /// parents do not hold as a non-owner or revoked row (Sol xhigh stack review
 /// F1). A key the parents do not hold at all is barred too: its tombstone
 /// would revoke an owner key enrolled on a sibling branch once the fold
-/// merges the two (Astra stack review finding 1). Every other op passes.
+/// merges the two (Astra stack review finding 1). And a roster-signed
+/// `MachineProfile` that answers a machine as the owner's (`Owned(_)`) or
+/// removes one: the owner's say-so for a machine, of the vouch and revoke
+/// class, judged by role alone so that no sibling branch reopens it
+/// (OPUS-SECREAD-A N1). Every other op passes.
 fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -> bool {
     match op {
         AuthorityOp::ReRoot { .. }
@@ -193,6 +198,9 @@ fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -
                     .roster
                     .get(revoked_key)
                     .is_some_and(|device| device.revoked || device.roles & ROLE_OWNER == 0)
+        }
+        AuthorityOp::MachineProfile(profile) => {
+            matches!(profile.role, MachineRole::Owned(_) | MachineRole::Removed)
         }
         _ => false,
     }

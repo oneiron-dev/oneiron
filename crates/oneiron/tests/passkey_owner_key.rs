@@ -24,7 +24,8 @@
 //! enrols no device that could re-root, and its cosign lends no consent to
 //! an agent's revoke of another owner key (Sol xhigh stack review F1, F2),
 //! nor revokes, on a sibling branch, an owner key its own parents do not
-//! hold yet (Astra stack review finding 1).
+//! hold yet (Astra stack review finding 1), nor answers a machine as the
+//! owner's or removes one by a roster-signed profile (OPUS-SECREAD-A N1).
 //! A passkey that only another passkey vouched for has its own confirmation
 //! door (F5).
 //!
@@ -45,14 +46,17 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use base64::Engine as _;
 use ed25519_dalek::Signer as _;
 use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityOp, AuthorityTier,
-    DeviceAuthority, HostSlipIssuer, MachineRole, OwnerKeyEnrollment, OwnerPasskeyEnrollment,
-    ROLE_AGENT, ROLE_OWNER, webauthn_assertion_envelope, webauthn_challenge,
+    DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
+    MachineProfile, MachineRole, OwnerKeyEnrollment, OwnerPasskeyEnrollment, ROLE_AGENT,
+    ROLE_OWNER, machine_profile_proof_transcript, webauthn_assertion_envelope, webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -434,6 +438,120 @@ fn a_key_only_a_passkey_vouched_for_cannot_fence_the_owners_device_key() {
     assert!(
         hosted.live_owner_key(&ed_key(&owner_device())),
         "the owner's device key stands"
+    );
+}
+
+/// The install key of a machine a roster-signed profile answers for.
+fn machine_install() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[0x4C; 32])
+}
+
+/// `signer`'s roster-signed profile of a fresh machine in `role`, with the
+/// machine's own proof, stored for the fold to judge; true when it counted.
+fn answers_fresh_machine(
+    hosted: &HostedVault,
+    signer: &ed25519_dalek::SigningKey,
+    role: MachineRole,
+) -> bool {
+    let vault_id = hosted
+        .vault
+        .authority_vault_id()
+        .expect("the vault id read")
+        .expect("a rooted vault");
+    let machine = oneiron::EntityId::now();
+    let install = machine_install();
+    let machine_key = install.verifying_key().to_bytes();
+    let encryption_key = || MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = install
+        .sign(&machine_profile_proof_transcript(
+            &vault_id,
+            machine,
+            &machine_key,
+            MachineDeviceClass::Computer,
+            &encryption_key(),
+        ))
+        .to_bytes();
+    let owner = hosted
+        .proof
+        .actor_for_read(&hosted.vault)
+        .expect("the vault's owner");
+    let op = AuthorityOp::MachineProfile(MachineProfile {
+        machine,
+        owner,
+        machine_key,
+        device_class: MachineDeviceClass::Computer,
+        encryption_key: encryption_key(),
+        role,
+        revision: 1,
+        machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
+    });
+    append_signed_rows(
+        &hosted.vault,
+        vec![SignedRow {
+            op,
+            signer: ed_key(signer),
+            cosigners: Vec::new(),
+        }],
+        signs_as,
+    )
+    .unwrap_or_default()
+    .first()
+    .copied()
+    .unwrap_or(false)
+}
+
+/// OPUS-SECREAD-A N1: a roster-signed machine profile is the owner's
+/// answer for a machine, so a key only the passkey vouched for answers no
+/// machine as the owner's (a node the page's operator runs would then merge
+/// as his) and removes none (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B:
+/// the vouch and revoke class). Judged by role, not by the machine's
+/// presence, so no sibling branch reopens it.
+#[test]
+fn a_key_only_a_passkey_vouched_for_answers_no_machine_as_the_owners() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        !answers_fresh_machine(
+            &hosted,
+            &host_held(),
+            MachineRole::Owned(MachineOwnership::Yours)
+        ),
+        "the limited key answers no machine as the owner's"
+    );
+    assert!(
+        !answers_fresh_machine(&hosted, &host_held(), MachineRole::Removed),
+        "the limited key removes no machine"
+    );
+}
+
+/// Once a device key confirms it, the passkey-vouched key answers a
+/// machine as the owner's as any owner-held root does.
+#[test]
+fn once_confirmed_the_passkey_vouched_key_answers_a_machine_as_the_owners() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .confirm_owner_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    assert!(
+        answers_fresh_machine(
+            &hosted,
+            &host_held(),
+            MachineRole::Owned(MachineOwnership::Yours)
+        ),
+        "the confirmed key's machine answer counts"
     );
 }
 
