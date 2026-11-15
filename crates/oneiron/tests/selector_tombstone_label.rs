@@ -17,6 +17,15 @@
 //! open CLAIM's tombstone rides P's window; the test asserts the R CLAIM's
 //! tombstone does not.
 //!
+//! The fixture also lands two PERSON rows through the sync replay door, as
+//! rows from the owner's other device land: one open, and one whose
+//! `source_audience` names R. A replicated row other than a CLAIM takes no
+//! record-scope stamp (FIX 11925), so the relationship gate withholds the R
+//! PERSON from P for want of a scope, and its delete has no scope to capture
+//! (FIX-LIST SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE). The owner purges
+//! both. The open PERSON's tombstone rides P's window; the test asserts the
+//! R PERSON's tombstone does not.
+//!
 //! Both deletes are hard. A plain delete keeps a header-only CLAIM shell and
 //! the shell's window edges, so `withheld_claim_carriers` reads the shell as
 //! a CLAIM whose body does not decode, and the export withholds its
@@ -25,7 +34,7 @@
 //! tombstone, so it cannot leak one.
 //!
 //! A second test gives the same grant the Owner role: a co-Owner reads the
-//! whole vault, so the R tombstone rides its window. It guards the fix
+//! whole vault, so both R tombstones ride its window. It guards the fix
 //! against refusing an Owner.
 //!
 //! A third test builds the window from a peer's bytes. A peer vault packs
@@ -57,8 +66,8 @@ use oneiron::sync::{
     put_selector_test_federation_grant,
 };
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::label_writers::open_member_vault;
-use oneiron::write_envelope::claim_body::relationship_scope_of;
+use oneiron::test_doors::label_writers::{open_member_vault, put_replicated_row};
+use oneiron::write_envelope::claim_body::{encode_relationship_scope, relationship_scope_of};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, DeleteReason,
     EntityId, Vault, VaultConfig,
@@ -95,6 +104,32 @@ fn record(vault: &Vault, subject: EntityId, relationship: Option<EntityId>, now:
     id
 }
 
+/// A PERSON from the owner's other device, landed through the sync replay
+/// door, so it has no record-scope stamp here (FIX 11925). With
+/// `relationship`, its `source_audience` names it, as a provisional confirm
+/// writes for a name said only there.
+fn replicated_person(vault: &Vault, relationship: Option<EntityId>, now: u64) -> EntityId {
+    let id = EntityId::now();
+    let mut fields = vec![(Value::from("name"), Value::from("Yuki"))];
+    if let Some(relationship) = relationship {
+        fields.push((
+            Value::from("source_audience"),
+            Value::Map(vec![
+                (
+                    Value::from("rel"),
+                    encode_relationship_scope(relationship_scope_of(Some(relationship)).as_ref()),
+                ),
+                (Value::from("private"), Value::Boolean(false)),
+            ]),
+        ));
+    }
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &Value::Map(fields)).expect("PERSON body");
+    put_replicated_row(vault, &id, ENTITY_TYPE_PERSON, now, &body)
+        .expect("FIXTURE: the replicated PERSON lands");
+    id
+}
+
 /// Keeps `doc` as the vault's own window `key`, as the engine persists a
 /// window: its snapshot and version vector.
 fn persist_window(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
@@ -113,19 +148,21 @@ fn persist_window(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
         .expect("FIXTURE: the window version flag is kept");
 }
 
-/// The R CLAIM one selector export saw purged, and whether the window
-/// carried its tombstone.
+/// The R rows one selector export saw purged, and whether the window
+/// carried each one's tombstone.
 struct Export {
-    /// The purged R CLAIM, and whether its tombstone rode the window.
-    labelled: [(&'static str, bool); 1],
+    /// The purged R CLAIM and R PERSON, and whether each tombstone rode the
+    /// window.
+    labelled: [(&'static str, bool); 2],
 }
 
-/// Plants the open CLAIM and the R CLAIM, gives `member` a live federation
+/// Plants the open CLAIM and the R CLAIM, lands the open PERSON and the R
+/// PERSON through the sync replay door, gives `member` a live federation
 /// grant of `role` whose Scope admits every record, keeps the packed window
-/// as the vault's own, purges both CLAIMs, and exports the vault's window
+/// as the vault's own, purges all four rows, and exports the vault's window
 /// through the member's selector. With `check_read_lane`, the fixture first
-/// checks that the member's own read lane reads the open CLAIM and not the
-/// R CLAIM.
+/// checks that the member's own read lane reads the open CLAIM and neither
+/// the R CLAIM nor the R PERSON.
 fn export_through(
     role: FederationGrantRole,
     preset: FederationGrantPreset,
@@ -176,6 +213,8 @@ fn export_through(
 
     let open_claim = record(&vault, member, None, now);
     let purged_claim = record(&vault, member, Some(relationship), now);
+    let open_person = replicated_person(&vault, None, now);
+    let purged_person = replicated_person(&vault, Some(relationship), now);
 
     let reads = |id: EntityId| {
         vault
@@ -194,6 +233,10 @@ fn export_through(
             !reads(purged_claim),
             "FIXTURE: the member does not read the R CLAIM"
         );
+        assert!(
+            !reads(purged_person),
+            "FIXTURE: the member does not read the R PERSON"
+        );
     }
 
     let key = WindowKey::from_timestamp(now);
@@ -210,17 +253,19 @@ fn export_through(
 
     // Hard deletes only: a plain delete's CLAIM shell withholds the
     // tombstone from every member (see the module doc).
-    for id in [open_claim, purged_claim] {
+    let purged = [open_claim, purged_claim, open_person, purged_person];
+    for id in purged {
         assert!(
             vault
                 .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
                 .expect("FIXTURE: the owner's delete")
                 .existed,
-            "FIXTURE: the purged CLAIM existed"
+            "FIXTURE: the purged row {} existed",
+            id.to_hex()
         );
     }
     let window = load_window_from_state(&vault, "local", &key).expect("the vault's window");
-    for id in [open_claim, purged_claim] {
+    for id in purged {
         assert!(
             window.get_map("tombstones").get(&id.to_hex()).is_some(),
             "FIXTURE: the vault's window holds the tombstone of {}",
@@ -235,8 +280,15 @@ fn export_through(
         carries(open_claim),
         "FIXTURE: the selector window carries the open CLAIM's tombstone"
     );
+    assert!(
+        carries(open_person),
+        "FIXTURE: the selector window carries the open PERSON's tombstone"
+    );
     Export {
-        labelled: [("purged R CLAIM", carries(purged_claim))],
+        labelled: [
+            ("purged R CLAIM", carries(purged_claim)),
+            ("purged R PERSON", carries(purged_person)),
+        ],
     }
 }
 
