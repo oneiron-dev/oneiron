@@ -46,21 +46,29 @@ pub enum Permitted {
 impl Permitted {
     /// What an act may do: the lesser of its actor's reading and its entry's.
     #[must_use]
-    pub fn limited_by(self, _other: Self) -> Self {
-        Self::Nothing
+    pub fn limited_by(self, other: Self) -> Self {
+        self.min(other)
     }
 
     /// Whether this admits a move in `direction`.
     #[must_use]
-    pub const fn admits(self, _direction: Direction) -> bool {
-        false
+    pub const fn admits(self, direction: Direction) -> bool {
+        match direction {
+            Direction::Narrows => !matches!(self, Self::Nothing),
+            Direction::Neutral => matches!(self, Self::NoWidening | Self::AnyMove),
+            Direction::Widens => matches!(self, Self::AnyMove),
+        }
     }
 
     /// Asks the rule for one move: the witness when this admits `direction`,
     /// None when the act counts for nothing here.
     #[must_use]
-    pub const fn admit(self, _direction: Direction) -> Option<Admitted> {
-        None
+    pub const fn admit(self, direction: Direction) -> Option<Admitted> {
+        if self.admits(direction) {
+            Some(Admitted { direction })
+        } else {
+            None
+        }
     }
 }
 
