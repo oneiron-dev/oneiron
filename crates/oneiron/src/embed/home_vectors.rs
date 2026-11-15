@@ -222,7 +222,7 @@ impl super::PendingEmbeddingReconciler {
         runtime: &tokio::runtime::Handle,
         report: &mut super::PendingEmbeddingReconcileReport,
     ) -> Result<()> {
-        let work = self.prepare_reconcile_pass(super::unix_millis_now(), report)?;
+        let work = self.prepare_reconcile_pass(crate::unix_millis_now(), report)?;
         let work = self.reuse_home_claim_vectors(runtime, work, report)?;
         self.reconcile_prepared_work(work, report)
     }

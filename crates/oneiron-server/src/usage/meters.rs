@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 use super::codec::UsageError;
 use super::keys::{
-    MAX_DIMENSION_LEN, MAX_IDEMPOTENCY_KEY_LEN, meter_key, meter_rollup_key, now_secs,
+    MAX_DIMENSION_LEN, MAX_IDEMPOTENCY_KEY_LEN, meter_key, meter_rollup_key, unix_seconds_now,
     validate_dimension, validate_key, validate_optional_dimension,
 };
 use super::ledger::UsageLedger;
@@ -315,7 +315,7 @@ impl UsageLedger {
         fold_meter(&mut rollup, row);
         let stored = StoredMeterRow {
             row: row.clone(),
-            recorded_at: now_secs(),
+            recorded_at: unix_seconds_now(),
         };
         self.vault
             .sync_state_put_in_write_txn(txn, key, &rmp_serde::to_vec_named(&stored)?)?;
