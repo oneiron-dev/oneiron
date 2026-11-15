@@ -87,16 +87,23 @@ pub fn web_sign_in_value(owner_keys: &BTreeSet<AuthorityKey>) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-/// The domain of [`passkey_full_owner_value`].
-pub const PASSKEY_FULL_OWNER_VALUE_CONTEXT: &str = "oneiron passkey full owner v1";
+/// The tag [`passkey_full_owner_value`] begins with.
+pub const PASSKEY_FULL_OWNER_VALUE_TAG: &[u8; 29] = b"oneiron passkey full owner v1";
 
 /// The value of an act of the owner's choice "Let my passkey remove devices
-/// and keys" ([`PolicySetting::PasskeyFullOwner`]): BLAKE3 under
-/// [`PASSKEY_FULL_OWNER_VALUE_CONTEXT`] over one byte, 1 for on and 0 for
-/// off. Only the value of on turns it on; any other value is off.
+/// and keys" ([`PolicySetting::PasskeyFullOwner`]): the 29 bytes of
+/// [`PASSKEY_FULL_OWNER_VALUE_TAG`], two zero bytes, and 1 for on or 0 for
+/// off as the last byte. It is a fixed tag, no digest: the choice is one bit
+/// of a signed act, so nothing in it needs a hash, and it starts none
+/// outside the fingerprint door (ratchet metric 7, raw_hasher_starts; Sol
+/// xhigh review of PR 1c, finding 2). Only the value of on turns it on; any
+/// other value is off.
 #[must_use]
 pub fn passkey_full_owner_value(on: bool) -> [u8; 32] {
-    blake3::derive_key(PASSKEY_FULL_OWNER_VALUE_CONTEXT, &[u8::from(on)])
+    let mut value = [0_u8; 32];
+    value[..PASSKEY_FULL_OWNER_VALUE_TAG.len()].copy_from_slice(PASSKEY_FULL_OWNER_VALUE_TAG);
+    value[31] = u8::from(on);
+    value
 }
 
 /// The target an owner act names when it changes no row of its own: a
