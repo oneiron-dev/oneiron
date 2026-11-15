@@ -25,10 +25,10 @@ use crate::{EntityId, TimeRange, Vault};
 use super::root_appointment_judge::{proof_fold, verdict_of_candidate};
 use super::*;
 
-/// The roster still holds a live root key: no appointment is needed, and
-/// one would be void and burn the anchor. Nothing was written.
-const NOT_ROOTLESS: &str = "this install's roster still holds a live root key; an appointment \
-                            would be void and burn the anchor; nothing was written";
+/// The roster still holds a live root key: no appointment is needed.
+/// Nothing was written.
+const NOT_ROOTLESS: &str = "this install's roster still holds a live root key; no appointment \
+                            is needed; nothing was written";
 /// The pinned root's anchor is burned on this install. Nothing was written.
 const ANCHOR_BURNED: &str = "the anchor of this install's pinned root is burned; re-issue the \
                              kit, pin its root with pin_owner_root and appoint with the new \

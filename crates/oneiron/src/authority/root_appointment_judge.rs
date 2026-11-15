@@ -14,10 +14,13 @@
 //! - V4: the anchor is not burned in the ancestry.
 //!
 //! An anchor is burned by one void appointment (V2, V3 or V4 failed on a
-//! complete ancestry), or by two valid ones beside each other, neither in the
-//! other's ancestry. Its appointments are judged in topological order, and
-//! after its first burn every later one is void with no proof fold, which
-//! bounds the proof folds an anchor costs.
+//! complete ancestry), by one whose successor is not fresh (V1), or by two
+//! valid ones beside each other, neither in the other's ancestry. The door
+//! never signs a void or not-fresh appointment (it judges each candidate
+//! first, and its successor key is new), so only a probe by a holder of the
+//! anchor key burns it alone. Its appointments are judged in topological
+//! order, and after its first burn every later one is void with no proof
+//! fold, which bounds the proof folds an anchor costs.
 //!
 //! Only the anchor of this install's pinned root is judged; every other
 //! appointment costs no proof fold.
@@ -67,7 +70,8 @@ pub enum AppointmentVerdict {
     /// Its ancestry is incomplete here, or its proof fold passed the fold's
     /// memory floor. It is judged again when that changes.
     Pending,
-    /// A row of its ancestry names the successor key (V1). It burns nothing.
+    /// A row of its ancestry names the successor key (V1). It burns its
+    /// anchor, as a void one does.
     SuccessorNotFresh,
     /// V2, V3 or V4 failed. It burns its anchor.
     Void(AppointmentVoidReason),
@@ -305,7 +309,9 @@ fn judge_anchor(
             Some(ancestry) => {
                 let verdict = verdict_of(by_hash, hash, ancestry);
                 match verdict {
-                    AppointmentVerdict::Void(_) => burned = true,
+                    AppointmentVerdict::Void(_) | AppointmentVerdict::SuccessorNotFresh => {
+                        burned = true;
+                    }
                     AppointmentVerdict::Valid => {
                         burned = valid.iter().any(|earlier| !ancestry.contains(earlier));
                         valid.push(hash);
@@ -411,11 +417,16 @@ fn judge_one(
     else {
         return AppointmentVerdict::Pending;
     };
+    // V1 first: it reads the ancestry once, and a not-fresh row costs no walk
+    // of earlier appointments and no proof fold.
+    if !successor_is_fresh(by_hash, ancestry, appointment, anchor) {
+        return AppointmentVerdict::SuccessorNotFresh;
+    }
     let rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = ancestry
         .iter()
         .map(|hash| (*hash, by_hash[hash].clone()))
         .collect();
-    // V4 first: an anchor burned beneath the row costs no proof fold.
+    // V4 next: an anchor burned beneath the row costs no proof fold.
     let earlier: Vec<AuthorityEntryHash> = rows
         .iter()
         .filter(|(_, row)| {
@@ -433,9 +444,6 @@ fn judge_one(
         .any(|verdict| *verdict == AppointmentVerdict::Pending)
     {
         return AppointmentVerdict::Pending;
-    }
-    if !successor_is_fresh(&rows, appointment, anchor) {
-        return AppointmentVerdict::SuccessorNotFresh;
     }
     let scoped: Vec<AuthorityLogEntry> = rows.values().cloned().collect();
     let (proof, parts) = proof_fold(&scoped, appointment.root, anchor);
@@ -528,15 +536,16 @@ fn proof_parts(
     Some(parts)
 }
 
-/// Whether no row of the ancestry `rows` names the successor key: no row's
-/// canonical signed body carries the key's bytes, so no op of any variant
-/// names it (a device it enrols, rotates, hands the root to or revokes, an
-/// actor binding or its revocation, an owner root's anchor, another
-/// appointment's successor), and neither does a signer or cosigner. A row the
-/// codec cannot encode fails freshness. The appointing anchor is never its
-/// own successor (the codec).
+/// Whether no row of `ancestry` (complete in `by_hash`) names the successor
+/// key: no row's canonical signed body carries the key's bytes, so no op of
+/// any variant names it (a device it enrols, rotates, hands the root to or
+/// revokes, an actor binding or its revocation, an owner root's anchor,
+/// another appointment's successor), and neither does a signer or cosigner.
+/// A row the codec cannot encode fails freshness. The appointing anchor is
+/// never its own successor (the codec).
 fn successor_is_fresh(
-    rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestry: &BTreeSet<AuthorityEntryHash>,
     appointment: &RootAppointment,
     anchor: [u8; 32],
 ) -> bool {
@@ -551,12 +560,12 @@ fn successor_is_fresh(
     if key.is_empty() {
         return false;
     }
-    !rows
-        .values()
-        .any(|row| match encode_authority_log_entry_body(row) {
+    !ancestry.iter().any(
+        |hash| match encode_authority_log_entry_body(&by_hash[hash]) {
             Ok(body) => body.windows(key.len()).any(|window| window == key),
             Err(_) => true,
-        })
+        },
+    )
 }
 
 /// ProofFold (PLAN v3 section 4a): the strict fold of exactly `rows`, under
