@@ -663,6 +663,22 @@ pub(crate) fn admitted_row_in_txn(
     })?))
 }
 
+/// The `Admitted` row for the owed wake `wake`: its map key and bytes, as
+/// the decision mirror encodes them. For the integration tests alone, which
+/// carry a row no emitter builds: an occurrence's decision.
+#[cfg(oneiron_test_support)]
+pub(super) fn admitted_row_for_test(wake: &TurnProgramWake) -> Result<(String, Vec<u8>)> {
+    let (turn, registration) = wake.key();
+    Ok((
+        wake_key((turn, registration)),
+        encode(&WakeRow::Admitted {
+            turn,
+            registration,
+            admission: wake.admission_id(),
+        })?,
+    ))
+}
+
 /// Where a carried row of either map goes in a checkpoint.
 pub(crate) enum RowPlacement {
     /// In its actor's compartment, held while each dependency is.

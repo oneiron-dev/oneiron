@@ -216,3 +216,40 @@ pub fn disarm_kept_here(vault: &Vault, actor: EntityId, registration: EntityId) 
 pub fn arming_row_bytes(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<Vec<u8>> {
     crate::dreamer_runner::turn_program_test_hooks::arming_row_bytes(vault, actor, registration)
 }
+
+/// Whether this machine keeps a carried decision for the wake TURN `turn`
+/// owes `registration`.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn decision_kept_here(vault: &Vault, turn: EntityId, registration: EntityId) -> Result<bool> {
+    crate::dreamer_runner::turn_program_test_hooks::decision_kept_here(vault, turn, registration)
+}
+
+/// The `Admitted` row a linked machine would carry for the owed wake of
+/// `registration`: its turn, its map key, and its bytes as the decision
+/// mirror encodes them.
+///
+/// # Errors
+///
+/// No such owed wake, a store failure, or a row that cannot encode.
+#[cfg(feature = "sync")]
+pub fn admitted_row_bytes(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<(EntityId, String, Vec<u8>)> {
+    crate::dreamer_runner::turn_program_test_hooks::admitted_row_bytes(vault, actor, registration)
+}
+
+/// How many `Admitted` rows TURN `turn` owes the window from this machine's
+/// decisions.
+///
+/// # Errors
+///
+/// A store failure.
+#[cfg(feature = "sync")]
+pub fn decided_rows_for_turn(vault: &Vault, turn: EntityId) -> Result<usize> {
+    crate::dreamer_runner::turn_program_test_hooks::decided_rows_for_turn(vault, turn)
+}
