@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     COMPACTION_CHECK_FACET, CompactionCheckModel, CompactionCheckVerdict, NO_DIAGNOSTIC, Settled,
-    ask_judge, emit_finding, judge_call, judge_locality, support, unix_now,
+    ask_judge, emit_finding, judge_call, judge_locality, support,
 };
 use crate::attempt_queue::AttemptId;
 use crate::compaction::{
@@ -174,7 +174,7 @@ pub(crate) fn declare_conversation_check_in_txn(
         txn,
         declaration.input()?,
         declaration.landing_key(),
-        unix_now(),
+        crate::unix_seconds_now(),
     )?;
     Ok(())
 }
