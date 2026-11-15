@@ -11,10 +11,29 @@ use crate::workspace_roster::GoalRecord;
 use super::{CampaignError, CampaignResult};
 
 mod axes;
+pub(crate) mod axes_job;
+pub(crate) mod judge;
+mod producers;
 pub(crate) mod records;
 pub use axes::{
     ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor,
     CoachArchiveAxesRecipe, propose_campaign_archive,
+};
+pub use axes_job::{
+    ArchiveAxesBrief, ArchiveAxesHost, ArchiveAxesReply, ArchiveAxesSample,
+    CampaignArchiveAxesQueued, CampaignArchiveProposalRequest, CampaignArchiveProposalState,
+    CampaignArchiveProposeAxes,
+};
+pub use judge::{
+    ArchiveJudgeAsk, ArchiveJudgeHost, ArchiveJudgeQuestion, CampaignArchiveJudge,
+    CampaignArchiveJudged,
+};
+pub(crate) use producers::erase_producer_actor_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use producers::producer_record_count;
+pub use producers::{
+    ArchiveAxesMethod, ArchiveAxesMint, ArchivePlacementBasis, mint_archive_axes,
+    mint_archive_placement, mint_archive_score,
 };
 pub use records::{
     CampaignArchiveAdmission, CampaignArchiveBest, CampaignArchiveCoverage, CampaignArchiveInstall,
@@ -23,7 +42,10 @@ pub use records::{
 };
 
 /// A specific output revision. References must resolve to immutable content,
-/// not a mutable entity's current body.
+/// not a mutable entity's current body: an ARTIFACT's revision is a retained
+/// version's content hash (64 lowercase hex), any other entity's a document
+/// revision it owns (its `RevisionRef`, 32 lowercase hex). The archive's
+/// writers refuse a revision the entity does not hold.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]

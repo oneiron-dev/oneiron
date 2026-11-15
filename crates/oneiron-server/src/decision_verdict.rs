@@ -138,6 +138,29 @@ pub(crate) fn on_caller_payer<T>(payer: Option<&PayerPerson>, call: impl FnOnce(
     call()
 }
 
+/// Runs `call` on the caller's own line, as [`run_verdict`] seats a verdict:
+/// every model rung it reaches on this thread spends on a meter bound to
+/// `principal` with no limit ([`BudgetGuard::uncapped`]), named after
+/// `line`, and bills the vault owner; its model calls are captured under
+/// `session_ref`. A host door asking typed questions for a facade caller
+/// runs its ladder calls inside it, on a blocking thread.
+pub(crate) fn on_caller_line<T>(
+    vault: &oneiron::Vault,
+    (principal, class): (EntityId, EdgeActorClass),
+    line: &str,
+    session_ref: Option<&str>,
+    call: impl FnOnce() -> T,
+) -> T {
+    let meter = BudgetGuard::uncapped(
+        format!("{line}:{}:{}", principal.to_hex(), vault.now_recorded_at()),
+        oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
+        WriteActor::new(principal, class),
+    );
+    model_calls::scoped(principal, session_ref, || {
+        on_caller_meter(&meter, || on_caller_payer(None, call))
+    })
+}
+
 /// Each caller's verdict spend in the current window, on this server: a
 /// tally for the check, never a budget.
 #[derive(Debug, Default)]

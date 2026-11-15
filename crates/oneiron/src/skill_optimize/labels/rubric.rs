@@ -112,6 +112,92 @@ pub(crate) fn judge_rubric_sourced_in_txn(
     ))
 }
 
+/// Whether `skill` is the bootstrap `judge` skill or a revision on its
+/// admitted succession: the same walk as [`judge_head_sourced_in_txn`], which
+/// takes the least id at a fork, stopping at `skill` or at the head.
+fn judge_lineage_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<bool> {
+    let mut head = EntityId::derive(
+        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
+        &[JUDGE_SKILL_ID.as_bytes()],
+    )?;
+    let mut seen = BTreeSet::from([head]);
+    loop {
+        if head == *skill {
+            return Ok(true);
+        }
+        let newer = vault.filtered_edge_peers(
+            txn,
+            crate::ports::EdgeDirection::In,
+            &head,
+            EdgeKind::Supersedes,
+            Some(crate::registry::ENTITY_TYPE_SKILL),
+        )?;
+        let Some(next) = newer.into_iter().filter(|id| !seen.contains(id)).min() else {
+            return Ok(false);
+        };
+        seen.insert(next);
+        head = next;
+    }
+}
+
+/// The judge's rubric at one pinned package (RULING ARCHIVE-QUALITY-RULER,
+/// 13 Nov 22:47): `skill` is the bootstrap `judge` skill or a revision on its
+/// admitted succession, still named `judge`, live, shared and loadable, and
+/// its stored package's canonical tree hash is `package` (64 lowercase hex).
+/// The text is that package's SKILL.md. A revision with no stored package has
+/// no pinned rubric. `None` when any of that fails: a judge that moved off
+/// the pin is never read in its place, as no older package is kept to read.
+pub(crate) fn pinned_judge_rubric_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    package: &str,
+) -> Result<Option<JudgeRubric>> {
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, skill)?.is_live()
+        || !judge_lineage_holds_in_txn(vault, txn, skill)?
+    {
+        return Ok(None);
+    }
+    let record = match vault.read_skill_record_in_txn(txn, skill) {
+        Ok(record) => record,
+        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if record.skill_id != JUDGE_SKILL_ID
+        || crate::skill::resident_of(&record)?.is_some()
+        || !crate::skill::skill_loadable(&record)
+        || record
+            .content_hash
+            .as_ref()
+            .map(|hash| hash.to_hex())
+            .as_deref()
+            != Some(package)
+    {
+        return Ok(None);
+    }
+    let Some(stored) = vault.runtime_skill_package_in_txn(txn, skill, &record)? else {
+        return Ok(None);
+    };
+    let Some(text) = stored
+        .files
+        .into_iter()
+        .find(|file| file.path == SKILL_FILE)
+        .and_then(|file| String::from_utf8(file.content).ok())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(JudgeRubric {
+        skill: *skill,
+        version: record.version,
+        digest: *blake3::hash(text.as_bytes()).as_bytes(),
+        text,
+    }))
+}
+
 /// [`judge_rubric_in_txn`] in a read transaction of its own: the rubric the
 /// replay judge reads beside every case.
 pub fn judge_rubric(vault: &Vault) -> Result<Option<JudgeRubric>> {

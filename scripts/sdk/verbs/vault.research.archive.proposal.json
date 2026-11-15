@@ -1,0 +1,14 @@
+{
+  "name": "vault.research.archive.proposal",
+  "description": "Reads one archive axes request's state: pending, proposed with the receipted proposal install takes, none when no axes or clusters were found, or failed when its premises no longer held.",
+  "input": "crate::autoreason_campaign::archive::CampaignArchiveProposalRequest",
+  "output": "crate::autoreason_campaign::archive::CampaignArchiveProposalState",
+  "call": "crate::task_verb::sdk::research_archive_proposal(memory, input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

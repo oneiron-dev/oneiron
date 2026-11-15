@@ -2,6 +2,7 @@
 //! Winners and coverage are rebuilt, never stored as learning claims.
 use serde::{Deserialize, Serialize};
 
+use super::producers;
 use super::{
     ArchiveAxesProposal, ArchiveAxesRequest, ArchiveCell, ArchiveCellJudge, ArchiveCellJudgment,
     ArchiveDescriptor, ArchiveOutputRef, ArchiveOutputScore, ArchiveQualityMetric,
@@ -10,11 +11,13 @@ use super::{
 use crate::autoreason_campaign::coverage::project_output_coverage;
 use crate::autoreason_campaign::research::{self, ResearchBinding};
 use crate::autoreason_campaign::{CampaignError, CampaignResult};
+use crate::error::SecretError;
+use crate::secret_custody::SecretSight;
 use crate::side_table::{self, Named, SideTable};
 use crate::workspace_roster::GoalRecord;
 use crate::{AttemptId, EntityId, Error, Result, Vault};
 
-const ARCHIVES: SideTable<[u8; 16], CampaignArchiveRecord, Named> =
+pub(super) const ARCHIVES: SideTable<[u8; 16], CampaignArchiveRecord, Named> =
     SideTable::new(&side_table::AUTORESEARCH_OUTPUT_ARCHIVE);
 const REPLAYS: SideTable<([u8; 16], [u8; 16]), ArchiveReplayOutputs, Named> =
     SideTable::new(&side_table::AUTORESEARCH_OUTPUT_REPLAY);
@@ -121,16 +124,17 @@ pub(crate) fn attempt(id: EntityId) -> Result<AttemptId> {
     AttemptId::from_bytes(id.as_bytes())
 }
 
-fn campaign_error(error: CampaignError) -> Error {
+pub(super) fn campaign_error(error: CampaignError) -> Error {
     match error {
         CampaignError::Decision(error) => error,
         other => invalid(&other.to_string()),
     }
 }
 
-/// The controller supplies an already receipted recipe result. The same
+/// The controller supplies an engine-recorded recipe result (its receipt is
+/// checked against the producer record after the pin is built). The same
 /// proposal function validates and freezes both descriptor kinds.
-struct ReceiptedRecipe(ArchiveAxesProposal);
+pub(super) struct ReceiptedRecipe(pub(super) ArchiveAxesProposal);
 impl CoachArchiveAxesRecipe for ReceiptedRecipe {
     fn propose_axes(
         &self,
@@ -157,7 +161,7 @@ impl ArchiveCellJudge for ReceiptedPlacement {
     }
 }
 
-fn goal_in_txn(
+pub(super) fn goal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     binding: &ResearchBinding,
@@ -206,13 +210,192 @@ fn entity_type_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, entity: &EntityId) -
     Ok(header.entity_type)
 }
 
-fn output_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, output: &ArchiveOutputRef) -> Result<()> {
-    if entity_type_in_txn(vault, txn, &output.entity)? == crate::registry::ENTITY_TYPE_SKILL {
+pub(super) fn task_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, task: &EntityId) -> Result<()> {
+    if entity_type_in_txn(vault, txn, task)? != crate::registry::ENTITY_TYPE_TASK {
+        return Err(invalid("an output archive is pinned to a task"));
+    }
+    Ok(())
+}
+
+/// A live output, never a skill variant, at a revision it holds: an
+/// ARTIFACT's revision is one of its retained versions' content hash (64
+/// lowercase hex), any other entity's a document revision it owns (its
+/// `RevisionRef`, 32 lowercase hex). A revision the entity never held, or
+/// no longer keeps, is refused.
+pub(super) fn output_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    output: &ArchiveOutputRef,
+) -> Result<()> {
+    let kind = entity_type_in_txn(vault, txn, &output.entity)?;
+    if kind == crate::registry::ENTITY_TYPE_SKILL {
         return Err(invalid(
             "the campaign archive holds outputs, never skill variants",
         ));
     }
+    let never_held = || invalid("the output names a revision it does not hold");
+    if kind == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
+        let version = vault
+            .blob_artifact_versions_in_txn(txn, &output.entity)?
+            .into_iter()
+            .find(|version| lower_hex(&version.content_hash) == output.revision)
+            .ok_or_else(never_held)?
+            .version;
+        vault
+            .blob_artifact_version_metadata_in_txn(txn, &output.entity, version)?
+            .ok_or_else(never_held)?;
+        return Ok(());
+    }
+    let revision = revision_ref(&output.revision).ok_or_else(never_held)?;
+    if !crate::vault::entity_revision::entity_owns_revision_in_txn(
+        &vault.store,
+        txn,
+        &output.entity,
+        revision,
+    )? {
+        return Err(never_held());
+    }
     Ok(())
+}
+
+/// The text of a held output revision, as a model's input reads it (the
+/// Coach's recipe and embedder, the judge's ladder and embedder): an
+/// ARTIFACT version's bytes, or another entity's body at its revision (a
+/// file-plane ASSET's body file, never its manifest; a MessagePack body as
+/// its served JSON). Each is read as a masked reader is served it (OF-560):
+/// every key a write door marked is overwritten, whoever asks, so no key
+/// reaches a model through the archive (#7967 review round 1). `None` when
+/// that revision no longer serves (withdrawn words, a body its reader
+/// refuses, a file no revision keeps, bytes no masked copy of may leave, an
+/// ARTIFACT version only a proof no model input carries reads).
+pub(super) fn output_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    output: &ArchiveOutputRef,
+) -> Result<Option<String>> {
+    output_in_txn(vault, txn, output)?;
+    if entity_type_in_txn(vault, txn, &output.entity)? == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT
+    {
+        let Some(version) = vault
+            .blob_artifact_versions_in_txn(txn, &output.entity)?
+            .into_iter()
+            .find(|version| lower_hex(&version.content_hash) == output.revision)
+        else {
+            return Ok(None);
+        };
+        // A queue check's exhaust reads only with the owner's live proof
+        // (`Vault::export_blob_artifact_for_reader_in_txn`, FIX 4997), and a
+        // reminder wording only for a reader of its source. No model input
+        // here carries either proof, so neither version serves, masked or
+        // not (#7967 review round 2).
+        if matches!(
+            version.provenance,
+            crate::blob_artifact::BlobVersionProvenance::QueueCheck { .. }
+        ) || version.made_by.process.identity
+            == crate::commitment_wake::COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND
+        {
+            return Ok(None);
+        }
+        let served = masked_served(vault.read_blob_artifact_version_sighted_in_txn(
+            txn,
+            &output.entity,
+            version.version,
+            SecretSight::Masked,
+        ))?;
+        return Ok(served.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()));
+    }
+    let Some(revision) = revision_ref(&output.revision) else {
+        return Ok(None);
+    };
+    let Some(row) = crate::vault::entity_revision::read_entity_revision_in_txn(
+        vault,
+        txn,
+        &output.entity,
+        crate::vault::entity_revision::ReadMode::Pinned(revision),
+    )?
+    else {
+        return Ok(None);
+    };
+    // A file-plane ASSET's revision is stored as its manifest: it reads as
+    // the body file it names, as every revision reader serves it (FIX 3677,
+    // 22091): the live row through the ASSET's current file, an older one
+    // through the file its revisions keep, whatever body the ASSET holds now
+    // (#7966 review round 2). A manifest whose file nothing keeps any more
+    // no longer serves (#7966 review round 1).
+    let materialized = vault.materialized_revision_in_txn(txn, &output.entity, row.clone())?;
+    if materialized == row && stored_manifest(&row) {
+        return Ok(None);
+    }
+    let body = materialized
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .unwrap_or_default()
+        .to_vec();
+    let Some(body) = crate::store::file_key_masks::served_bytes_in_txn(
+        &vault.store,
+        txn,
+        body,
+        None,
+        SecretSight::Masked,
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut cursor = body.as_slice();
+    Ok(Some(match rmpv::decode::read_value(&mut cursor) {
+        Ok(value) if cursor.is_empty() => {
+            crate::batch::export::served_stored_messagepack_json(&body, value).to_string()
+        }
+        _ => String::from_utf8_lossy(&body).into_owned(),
+    }))
+}
+
+/// Whether the stored row `row` is an ASSET's whose body is a file-plane
+/// manifest.
+fn stored_manifest(row: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(row)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_ASSET)
+        && row
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .and_then(crate::store::AssetFileManifest::decode)
+            .is_some()
+}
+
+/// An ARTIFACT version's bytes as a door serves a masked reader an optional
+/// file (`served_bytes_in_txn`): `None` when no masked copy of them may
+/// leave, or when the release scan reads a credential in the copy that
+/// would.
+fn masked_served(read: Result<Option<Vec<u8>>>) -> Result<Option<Vec<u8>>> {
+    match read {
+        Ok(Some(bytes)) if crate::batch::secret_scan::scan_file_content("", &bytes).is_some() => {
+            Ok(None)
+        }
+        Ok(served) => Ok(served),
+        Err(
+            Error::EntityNotFound
+            | Error::Secret(SecretError::MaskedCopyWithheld { .. } | SecretError::SealedFileWithheld),
+        ) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn lower_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// A `RevisionRef` from its 32 lowercase hex characters, and nothing else.
+fn revision_ref(text: &str) -> Option<crate::vault::RevisionRef> {
+    if text.len() != 32
+        || !text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return None;
+    }
+    let mut revision = [0_u8; 16];
+    for (index, byte) in revision.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(crate::vault::RevisionRef(revision))
 }
 
 pub(crate) fn read_in_txn(
@@ -225,7 +408,7 @@ pub(crate) fn read_in_txn(
         .ok_or(invalid("the campaign has no installed output archive"))
 }
 
-fn rebuild(record: &CampaignArchiveRecord) -> Result<OutputArchive> {
+pub(super) fn rebuild(record: &CampaignArchiveRecord) -> Result<OutputArchive> {
     OutputArchive::rebuild(record.pin.clone(), &record.placements, &record.scores)
         .map_err(campaign_error)
 }
@@ -257,9 +440,7 @@ pub(crate) fn install_in_txn(
     let root = attempt(input.root)?;
     let binding = research::binding_in_txn(vault, txn, root)?;
     let goal = goal_in_txn(vault, txn, &binding, input.project, input.goal_ref)?;
-    if entity_type_in_txn(vault, txn, &input.task)? != crate::registry::ENTITY_TYPE_TASK {
-        return Err(invalid("an output archive is pinned to a task"));
-    }
+    task_in_txn(vault, txn, &input.task)?;
     for output in &input.sample_outputs {
         output_in_txn(vault, txn, output)?;
     }
@@ -275,6 +456,8 @@ pub(crate) fn install_in_txn(
         &ReceiptedRecipe(input.proposal),
     )
     .map_err(campaign_error)?;
+    producers::check_axes_receipt_in_txn(vault, txn, input.root, None, &pin)?;
+    producers::ruler_in_txn(vault, txn, pin.quality_metric())?;
     install_pin(vault, txn, root, input.project, pin)
 }
 
@@ -320,6 +503,8 @@ pub(crate) fn repropose_in_txn(
             &ReceiptedRecipe(input.proposal),
         )
         .map_err(campaign_error)?;
+    producers::check_axes_receipt_in_txn(vault, txn, input.new_root, Some(input.root), &pin)?;
+    producers::ruler_in_txn(vault, txn, pin.quality_metric())?;
     install_pin(vault, txn, new_root, old.project, pin)
 }
 
@@ -338,36 +523,51 @@ pub(crate) fn record_in_txn(
             "the output names another archive descriptor revision",
         ));
     }
-    let placement = match input.placement {
+    let (placement, embedding) = match input.placement {
         CampaignArchivePlacement::Judgment { judgment } => {
             let output = judgment.output.clone();
-            record
+            let placed = record
                 .pin
-                .judge_output(&output, &ReceiptedPlacement(judgment))
+                .judge_output(&output, &ReceiptedPlacement(judgment));
+            (placed, None)
         }
         CampaignArchivePlacement::Embedding {
             output,
             receipt,
             model_revision,
             embedding,
-        } => record
-            .pin
-            .place_embedding(output, receipt, &model_revision, &embedding),
-    }
-    .map_err(campaign_error)?;
+        } => {
+            let placed = record
+                .pin
+                .place_embedding(output, receipt, &model_revision, &embedding);
+            (placed, Some((model_revision, embedding)))
+        }
+    };
+    let placement = placement.map_err(campaign_error)?;
     if placement.output != input.score.output {
         return Err(invalid(
             "placement and scoring must name the same output revision",
         ));
     }
     output_in_txn(vault, txn, &placement.output)?;
+    producers::check_placement_receipt_in_txn(
+        vault,
+        txn,
+        input.root,
+        &placement,
+        embedding
+            .as_ref()
+            .map(|(model, vector)| (model.as_str(), vector.as_slice())),
+    )?;
+    let score =
+        producers::check_score_receipt_in_txn(vault, txn, input.root, &record.pin, &input.score)?;
     // Exact retries keep one copy of each original receipt. Rebuild refuses
     // any conflicting placement, score, cell or definition before the write.
     if !record.placements.contains(&placement) {
         record.placements.push(placement);
     }
-    if !record.scores.contains(&input.score) {
-        record.scores.push(input.score);
+    if !record.scores.contains(&score) {
+        record.scores.push(score);
     }
     let answer = view(&record)?;
     ARCHIVES.put(&vault.store, txn, root.as_bytes(), &record)?;

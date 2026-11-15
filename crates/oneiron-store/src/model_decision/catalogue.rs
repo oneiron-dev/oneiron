@@ -113,6 +113,15 @@ pub const CAMPAIGN_TASTE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which of a pinned output-archive axis's bins one output revision falls in
+/// (ARM05 P3; ARCH-0053 #output-archive): one typed choice per axis. Keyed by
+/// the descriptor revision and the axis name.
+pub const ARCHIVE_PLACEMENT: QuestionFamily = QuestionFamily {
+    name: "autoreason_campaign.archive_placement",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Whether a campaign that reached its complaint-rate dial should resume.
 /// Keyed by campaign; only an owner person's yes resumes it. Its fixed
 /// machine-lifecycle wording lives in campaign/surface, the second wording exception.
