@@ -169,10 +169,12 @@ pub(super) fn initial_member_enters_in(
     let entry = crate::disclosure::room_party_entry_in(vault, txn, fold, person)?;
     Ok(!entry.vault_agent
         && !crate::disclosure::is_vault_owner(
+            vault,
+            txn,
             fold,
             crate::vault::embedded_owner_actor_id()?,
             &person,
-        ))
+        )?)
 }
 
 impl Memory<'_> {

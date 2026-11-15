@@ -297,9 +297,14 @@ pub(crate) fn actor_is_vault_owner_in_txn(
     actor: EntityId,
     actor_class: EdgeActorClass,
 ) -> MemoryResult<bool> {
-    if actor_class == EdgeActorClass::Human && actor == crate::vault::embedded_owner_actor_id()? {
+    if actor_class == EdgeActorClass::Human
+        && actor == crate::vault::embedded_owner_actor_id()?
+        && crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn)?
+    {
         // The local embedded-owner reader is the host's own-device read lane.
         // A separately paired authority root does not turn it into a peer.
+        // An unrooted shared vault's embedded owner the census no longer
+        // names falls to the owner check below, which refuses it.
         return Ok(true);
     }
     match verify_vault_owner_in_txn(vault, txn, actor, actor_class) {

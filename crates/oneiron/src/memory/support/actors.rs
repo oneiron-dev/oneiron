@@ -280,3 +280,32 @@ impl Memory<'_> {
         Ok(self.actor_class)
     }
 }
+
+/// Whether the embedded owner still takes the owner shortcuts that skip the
+/// owner-binding check (the read-lane owner key and its write standing, the
+/// room-role Owner arm, the disclosure VaultOwner party) in `txn`
+/// (UNROOTED-EMBEDDED-OWNER-SHORTCUTS). A personal vault's embedded owner and
+/// a rooted vault's always do, as before. On an unrooted vault that holds a
+/// shared-vault creation it does only while the live owner census names it,
+/// the rule [`verify_owner_actor_binding_in_txn`] reads there, so an embedded
+/// owner whom another Owner made an Admin takes none of them.
+pub(crate) fn embedded_owner_shortcut_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<bool> {
+    if vault.shared_vault_creation_in_txn(txn)?.is_none() {
+        return Ok(true);
+    }
+    if vault
+        .authority_view_readonly_in_txn(txn)?
+        .vault_id
+        .is_some()
+    {
+        return Ok(true);
+    }
+    crate::policy_model::is_live_vault_owner_in_txn(
+        vault,
+        txn,
+        &crate::vault::embedded_owner_actor_id()?,
+    )
+}
