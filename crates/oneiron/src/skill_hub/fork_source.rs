@@ -1,5 +1,6 @@
 //! A fork copies real files and edits source identity before hashing the new tree.
 use super::{HubFile, HubPackage, SkillPackageFormat, folder, package_codec::invalid};
+use crate::dreamer_runner::maintenance::agent_health::object_without_duplicates;
 use crate::skill::health_review::REVIEWER_POLICY_FILE;
 use crate::skill::team_shape_catalog::{TASK_TYPE_TREE_FILE, TEAM_SHAPE_SKILL_NAME};
 use crate::skill_optimize::SkillFileEdit;
@@ -23,34 +24,43 @@ const DRAFTABLE_EXTENSIONS: [&str; 10] = [
 /// advisory scan reads at every import and update door, and an optimizer
 /// revision runs no such scan), so they stay a human edit like the scripts
 /// themselves (cold read N2 of #7949).
-const DEPENDENCY_MANIFEST_FILES: [&str; 12] = [
+const DEPENDENCY_MANIFEST_FILES: [&str; 16] = [
     "package.json",
     "package-lock.json",
     "npm-shrinkwrap.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    ".yarnrc.yml",
+    "bunfig.toml",
     "pyproject.toml",
     "cargo.toml",
     "composer.json",
     "deno.json",
+    "import_map.json",
     "environment.yml",
     "environment.yaml",
+    "conda-lock.yml",
     "pixi.toml",
 ];
 
-/// Whether `path` names a dependency or package manifest
-/// ([`DEPENDENCY_MANIFEST_FILES`], or a pip requirements or constraints
-/// file), by its last path segment.
+/// Whether `path` names a dependency or package manifest: a file whose name
+/// [`DEPENDENCY_MANIFEST_FILES`] lists, or a pip requirements or constraints
+/// file, i.e. a `.txt` file whose name holds `requirements` or
+/// `constraints`, or any `.txt` file inside a `requirements` folder. Names
+/// compare without case.
 fn is_dependency_manifest_path(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
-    DEPENDENCY_MANIFEST_FILES.contains(&name.as_str())
-        || (name.ends_with(".txt")
-            && (name.contains("requirements") || name.starts_with("constraints")))
-        || path
-            .split('/')
-            .rev()
-            .skip(1)
-            .any(|dir| dir.eq_ignore_ascii_case("requirements"))
+    if DEPENDENCY_MANIFEST_FILES.contains(&name.as_str()) {
+        return true;
+    }
+    name.ends_with(".txt")
+        && (name.contains("requirements")
+            || name.contains("constraints")
+            || path
+                .split('/')
+                .rev()
+                .skip(1)
+                .any(|dir| dir.eq_ignore_ascii_case("requirements")))
 }
 
 /// Whether a skill_optimize draft may replace `record`'s file at `path`
@@ -203,10 +213,9 @@ impl Vault {
     /// byte-exact, so a callable never silently loses its executable file.
     /// A rule skill's `policy.json` is re-derived from the improved text: a
     /// dial the text names with a number takes it (FIX 10878). A draft that
-    /// replaces the file itself must hold each number the final text names
-    /// for its keys, so no revision's text names a dial value its file does
-    /// not run, and a later re-derive never undoes a drafted file (cold read
-    /// N3 of #7949).
+    /// replaces the file itself must pass [`validate_drafted_policy`], so no
+    /// revision's text names a dial value its file does not run, and a later
+    /// re-derive never undoes a drafted file (cold read N3 of #7949).
     pub(crate) fn optimized_skill_package_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -280,22 +289,39 @@ impl Vault {
             replace_drafted_file(proposed, &mut package.files, edit)?;
         }
         if files.iter().any(|edit| edit.path == REVIEWER_POLICY_FILE)
-            && package
+            && let Some(policy) = package
                 .files
                 .iter()
                 .find(|file| file.path == REVIEWER_POLICY_FILE)
-                .is_some_and(|policy| {
-                    rederived_rule_policy(&policy.content, &proposed.desc).is_some()
-                })
         {
-            return Err(invalid(
-                "a drafted policy.json must hold the number its instructions name for each key",
-            ));
+            validate_drafted_policy(&policy.content, &proposed.desc)?;
         }
         proposed.content_hash = Some(package.content_hash()?);
         package.record = proposed.clone();
         folder::package_from_source(proposed, package.files, SkillPackageFormat::Native).map(Some)
     }
+}
+
+/// Refuses a drafted `policy.json` the final instructions `text` do not run
+/// (cold read N3 of #7949): it must be one JSON object with no key named
+/// twice, which is what the rule's reader seeds from (bytes of another
+/// shape fall back whole, FIX 10882), and it must hold each number `text`
+/// names for one of its keys. The skill_optimize draft check and the write
+/// door both apply it, so a Coach heal files such a draft as unusable
+/// instead of failing its transaction.
+///
+/// # Errors
+///
+/// `InvalidSkillBody` when `policy` is not such an object, or a key holds
+/// another number than `text` names for it.
+pub(crate) fn validate_drafted_policy(policy: &[u8], text: &str) -> Result<()> {
+    if object_without_duplicates(policy).is_none() || rederived_rule_policy(policy, text).is_some()
+    {
+        return Err(invalid(
+            "a drafted policy.json must be one JSON object, with no key named twice, that holds the number its instructions name for each key",
+        ));
+    }
+    Ok(())
 }
 
 /// Replaces the file `edit` names in `files` with its text whole: for

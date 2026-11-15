@@ -231,7 +231,9 @@ fn decode(bytes: &[u8]) -> (BTreeMap<&'static str, f64>, Vec<PolicyFallback>) {
 /// write winning. `None` when `bytes` are not one JSON object, or any
 /// top-level key repeats. Keys nested inside a value are that value's own
 /// shape, as before.
-fn object_without_duplicates(bytes: &[u8]) -> Option<serde_json::Map<String, serde_json::Value>> {
+pub(crate) fn object_without_duplicates(
+    bytes: &[u8],
+) -> Option<serde_json::Map<String, serde_json::Value>> {
     struct Unique(serde_json::Map<String, serde_json::Value>);
 
     struct UniqueVisitor;

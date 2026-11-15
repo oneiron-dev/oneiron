@@ -467,8 +467,9 @@ fn an_instructions_only_edit_keeps_every_file_but_the_description() {
 /// A rule skill's `policy.json` holds each number its text names (FIX
 /// 10878; cold read N3 of #7949): a draft whose text moves the number moves
 /// the dial, a file edit that keeps the text keeps the file, and a drafted
-/// `policy.json` lands only when it holds the numbers the final text names,
-/// so no revision's text names a dial value its file does not run.
+/// `policy.json` lands only when it is one JSON object, with no key named
+/// twice, that holds the numbers the final text names, so no revision's
+/// text names a dial value its file does not run.
 #[test]
 fn a_drafted_policy_json_holds_the_numbers_its_text_names() {
     let drafted_policy = |desc: &str, files: &[(&str, &str)]| -> Result<Vec<u8>> {
@@ -513,6 +514,21 @@ fn a_drafted_policy_json_holds_the_numbers_its_text_names() {
     let error = drafted_policy(POLICY_DESC, &[("policy.json", policy_at(9).as_str())])
         .expect_err("a drafted policy.json at another number than its text names is refused");
     assert_eq!(error.kind(), ErrorKind::InvalidSkillBody, "{error}");
+    for (policy, shape) in [
+        ("[4]\n", "not one JSON object"),
+        (
+            "{\"health.loop.repeats\": 9, \"health.loop.repeats\": 4}\n",
+            "a key named twice",
+        ),
+    ] {
+        let error = drafted_policy(POLICY_DESC, &[("policy.json", policy)])
+            .expect_err("a drafted policy.json its reader sets aside whole is refused");
+        assert_eq!(
+            error.kind(),
+            ErrorKind::InvalidSkillBody,
+            "{shape}: {error}"
+        );
+    }
 }
 
 /// A dependency or package manifest chooses the third-party code a skill's

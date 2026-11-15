@@ -327,8 +327,10 @@ pub(crate) fn skill_repair_brief(
 /// "replacement" identical to what it replaces, or a file edit past what the
 /// brief offered (census L9-02): a path the brief did not carry whole (a new
 /// path, a script or hook, or a file listed by path only), the same path
-/// twice, more files or bytes than the bounds allow, a file's own text, or
-/// more than the gate's judge reads whole ([`validate_judged_arms`]).
+/// twice, more files or bytes than the bounds allow, a file's own text, a
+/// `policy.json` its instructions do not run
+/// ([`crate::skill_hub::validate_drafted_policy`]), or more than the gate's
+/// judge reads whole ([`validate_judged_arms`]).
 pub(crate) fn validate_skill_draft(
     brief: &SkillOptimizeBrief,
     desc: &str,
@@ -355,6 +357,12 @@ pub(crate) fn validate_skill_draft(
         ));
     }
     validate_file_edits(brief, files)?;
+    for edit in files
+        .iter()
+        .filter(|edit| edit.path == crate::skill::health_review::REVIEWER_POLICY_FILE)
+    {
+        crate::skill_hub::validate_drafted_policy(edit.content.as_bytes(), desc)?;
+    }
     validate_judged_arms(brief, desc, files)
 }
 
