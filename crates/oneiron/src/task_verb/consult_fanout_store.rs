@@ -523,7 +523,7 @@ pub(super) fn append_human_ruling(
     );
     ruling.grant_ref = Some(grant_ref);
     // The ruling's own second, from the receipt's milliseconds.
-    ruling.decided_at = Some(RecordedSeconds::from_secs(receipt.occurred_at / 1000));
+    ruling.decided_at = Some(RecordedSeconds::from_millis(receipt.occurred_at));
     let record = vault.store.record_gate_receipt_in_txn(txn, ruling)?;
     Ok(format!("gate:{}", record.decision_id.to_hex()))
 }
