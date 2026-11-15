@@ -38,7 +38,7 @@ use oneiron::task_verb::sdk::{AskImageAnswer, AskImageReceipt, AskImageRequest};
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,
     EntityId, ImageContent, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat,
-    TierPrecedence, WriteActor,
+    TierPrecedence,
 };
 use serde_json::json;
 
@@ -162,6 +162,8 @@ pub(crate) async fn asked(
         ));
     };
     let run_id = format!("ask_image:{}:{}", pulled.asset_ref, vault.now_recorded_at());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = auth.write_actor(actor, class);
     let run = || {
         let settings = server.ai.chat_settings();
         let meter = vault
@@ -170,7 +172,7 @@ pub(crate) async fn asked(
                 settings.turn_budget_units,
                 oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
                 BudgetExhaustionPolicy::Suspend,
-                WriteActor::new(actor, class),
+                writer,
             )
             .map_err(|error| {
                 refusal(

@@ -12,7 +12,6 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::WriteActor;
 use oneiron::llm::decision::{DecisionAnswer, DecisionAsk};
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND};
 use serde::Deserialize;
@@ -83,12 +82,14 @@ async fn answer(
     auth.require_unrestricted_record_scope()?;
     let (actor, class) = facade_actor(&server, &auth)?;
     let request: AnswerAsk = facade_input(facade_json(payload)?)?;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = auth.write_actor(actor, class);
     let ask = super::clock_ingress::run_blocking(move || {
         let asks = server.decision_host().asks();
         if asks.get(request.seq)?.is_none() {
             return Ok(None);
         }
-        asks.answer_as(&WriteActor::new(actor, class), request.seq, request.answer)
+        asks.answer_as(&writer, request.seq, request.answer)
             .map(Some)
     })
     .await

@@ -14,7 +14,7 @@ use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::critic::review::{CriticReviewOutcome, CriticReviewSubmit, review_artifact};
 use oneiron::memory::{EntityView, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult, ProducerRows};
 use oneiron::registry::ENTITY_TYPE_TASK;
-use oneiron::{EdgeActorClass, EntityId, Error, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, Error};
 use serde_json::{Value, json};
 
 use super::host_doors::support::{Listed, internal, owner_proof, refused};
@@ -70,7 +70,8 @@ fn review(
     read: &mut Vec<EntityId>,
 ) -> MemoryResult<CriticReviewOutcome> {
     let vault = server.vault();
-    let (request, catalog) = input.bind(WriteActor::new(actor, class), vault.now_recorded_at())?;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let (request, catalog) = input.bind(auth.write_actor(actor, class), vault.now_recorded_at())?;
     let declared = match request.spawn_attempt {
         Some(spawn) => admit_declared_spawn(server, auth, spawn)?,
         None => None,

@@ -357,7 +357,8 @@ pub(super) async fn hold_live_run(
         .vault()
         .credential_read_key(proof)?
         .ok_or_else(refused)?;
-    let writer = WriteActor::new(actor, class);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = auth.write_actor(actor, class);
     let run = server
         .live_runs
         .resolve(

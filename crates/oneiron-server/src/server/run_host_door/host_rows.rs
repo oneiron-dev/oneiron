@@ -62,10 +62,10 @@ pub(super) fn host_row(
                 (Some(_), None) => Some(agent_lane(server, actor)?),
                 _ => None,
             };
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             encode(run_verdict(
                 server,
-                principal,
-                class,
+                actor,
                 memory,
                 lane.as_ref(),
                 held,

@@ -257,13 +257,15 @@ pub(crate) async fn annotate_turn_vad(
     let turn_id = parse_entity_id_param(&req.turn_id, "turn_id")?;
     require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
 
-    let source = match (VadAnnotationSource::from(req.source), writer.class) {
-        (VadAnnotationSource::UserSelfReport, oneiron::EdgeActorClass::Human) => {
-            VadAnnotationSource::UserSelfReport
-        }
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let actor = auth.write_actor(writer.actor, writer.class);
+    let source = match (
+        VadAnnotationSource::from(req.source),
+        actor.acts_as_own_person(),
+    ) {
+        (VadAnnotationSource::UserSelfReport, true) => VadAnnotationSource::UserSelfReport,
         _ => VadAnnotationSource::ModelInference,
     };
-    let actor = oneiron::WriteActor::new(writer.actor, writer.class);
     let vad = req.vad.into_vad()?;
     let annotated_at = req.annotated_at.unwrap_or_else(unix_seconds_now);
     let annotation =

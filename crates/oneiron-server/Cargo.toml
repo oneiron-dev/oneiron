@@ -337,6 +337,12 @@ name = "handed_on_session_run"
 path = "tests/handed_on_session_run.rs"
 required-features = ["oneiron/test-support"]
 
+# The handed-on person sweep's served batch and VAD doors run on a `MemoryKeystore` too.
+[[test]]
+name = "handed_on_person_sweep_server"
+path = "tests/handed_on_person_sweep_server.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
 [lints]
 workspace = true
 

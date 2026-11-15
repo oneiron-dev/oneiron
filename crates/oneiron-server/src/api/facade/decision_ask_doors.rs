@@ -221,5 +221,6 @@ pub(super) fn holder(auth: &CoreAuth, verb: &str) -> MemoryResult<WriteActor> {
         Some("agent") => EdgeActorClass::Agent,
         _ => return Err(refused()),
     };
-    Ok(WriteActor::new(principal, class))
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    Ok(auth.write_actor(principal, class))
 }

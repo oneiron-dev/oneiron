@@ -56,9 +56,10 @@ enum JobCaller {
 
 impl JobCaller {
     fn actor(&self) -> WriteActor {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         match self {
             Self::Agent(actor) | Self::Owner(actor) => *actor,
-            Self::Mcp(context) => WriteActor::new(context.actor_ref, context.actor_class),
+            Self::Mcp(context) => context.write_actor(),
             Self::Facade { writer, .. } => *writer,
         }
     }

@@ -125,6 +125,10 @@ impl BatchBuilder<'_> {
             self.agent_authoring.as_ref(),
             &mut self.ops,
         )?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.handed_on_human {
+            super::relabel_handed_on_skill_births_in_ops(&vault.store, &*wtxn, &mut self.ops)?;
+        }
         #[cfg(feature = "sync")]
         admit_federated_puts(vault, wtxn, &mut self.ops, &self.federated_puts)?;
         // A batch inside an actor-bound transaction cannot silently choose the

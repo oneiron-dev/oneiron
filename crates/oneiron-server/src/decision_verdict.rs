@@ -237,8 +237,7 @@ impl HeldImage {
 )]
 pub(crate) fn run_verdict(
     server: &SyncServer,
-    principal: EntityId,
-    class: EdgeActorClass,
+    writer: WriteActor,
     reader: &Memory<'_>,
     lane: Option<&ScopedRead<'_>>,
     held: Option<DecisionImage>,
@@ -248,6 +247,8 @@ pub(crate) fn run_verdict(
     session_ref: Option<&str>,
 ) -> MemoryResult<AiVerdict> {
     let vault = server.vault();
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let principal = writer.entity_ref();
     // The caller's own Read line: it admits and charges every rung's call,
     // and nothing on it is refused for spend (rule 5).
     let meter = BudgetGuard::uncapped(
@@ -257,21 +258,12 @@ pub(crate) fn run_verdict(
             vault.now_recorded_at()
         ),
         oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
-        WriteActor::new(principal, class),
+        writer,
     );
     let answered = model_calls::scoped(principal, session_ref, || {
         on_caller_meter(&meter, || {
             on_caller_payer(payer, || {
-                answer_verdict(
-                    server,
-                    principal,
-                    class,
-                    reader,
-                    lane,
-                    held,
-                    request,
-                    evidence_read,
-                )
+                answer_verdict(server, writer, reader, lane, held, request, evidence_read)
             })
         })
     });
@@ -350,13 +342,13 @@ pub(crate) fn run_job_verdict(
 ) -> MemoryResult<JobVerdict> {
     let vault = server.vault();
     let before = job.meter.read().used_units;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let answered = model_calls::scoped(job.principal, job.session_ref, || {
         on_caller_meter(job.meter, || {
             on_caller_payer(job.payer, || {
                 answer_verdict_reasoned(
                     server,
-                    job.principal,
-                    job.class,
+                    WriteActor::new(job.principal, job.class),
                     reader,
                     None,
                     None,
@@ -398,31 +390,18 @@ pub(crate) fn run_job_verdict(
 
 /// [`run_verdict`]'s question through the ladder, on whatever line the
 /// calling thread meters.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "run_verdict's axes and its evidence list"
-)]
 fn answer_verdict(
     server: &SyncServer,
-    principal: EntityId,
-    class: EdgeActorClass,
+    writer: WriteActor,
     reader: &Memory<'_>,
     lane: Option<&ScopedRead<'_>>,
     held: Option<DecisionImage>,
     request: &AiVerdictRequest,
     evidence_read: &mut Vec<EntityId>,
 ) -> MemoryResult<AiVerdict> {
-    answer_verdict_reasoned(
-        server,
-        principal,
-        class,
-        reader,
-        lane,
-        held,
-        request,
-        evidence_read,
-    )
-    .map(|(verdict, _)| verdict)
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    answer_verdict_reasoned(server, writer, reader, lane, held, request, evidence_read)
+        .map(|(verdict, _)| verdict)
 }
 
 /// [`answer_verdict`], with the ladder's reason when it gave no answer (FIX
@@ -431,20 +410,17 @@ fn answer_verdict(
 /// an uncertain one. The verdict's wire shape carries no such reason, so a
 /// job that must tell an unavailable ladder from a judged abstain reads it
 /// here.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "run_verdict's axes and its evidence list"
-)]
 fn answer_verdict_reasoned(
     server: &SyncServer,
-    principal: EntityId,
-    class: EdgeActorClass,
+    writer: WriteActor,
     reader: &Memory<'_>,
     lane: Option<&ScopedRead<'_>>,
     held: Option<DecisionImage>,
     request: &AiVerdictRequest,
     evidence_read: &mut Vec<EntityId>,
 ) -> MemoryResult<(AiVerdict, Option<HumanAskReason>)> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let principal = writer.entity_ref();
     let started = Instant::now();
     oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;
     let ceiling = request.ceiling.unwrap_or(DecisionRung::Big);
@@ -507,13 +483,7 @@ fn answer_verdict_reasoned(
             ));
         }
         dial.first = DecisionRung::Local;
-        Some(vision_rung(
-            server,
-            principal,
-            class,
-            &images,
-            "ai.verdict",
-        )?)
+        Some(vision_rung(server, writer, &images, "ai.verdict")?)
     };
     let mut ladder = host.ladder().ladder();
     if let Some(rung) = &local {
@@ -898,11 +868,10 @@ fn readable(image: DecisionImage) -> MemoryResult<DecisionImage> {
 }
 
 /// The Local-vision seat at the Local rung, spending on a run of its own for
-/// `principal`, as ask_image's Box ask does. `label` names the run's caller.
+/// `writer`, as ask_image's Box ask does. `label` names the run's caller.
 pub(crate) fn vision_rung(
     server: &SyncServer,
-    principal: EntityId,
-    class: EdgeActorClass,
+    writer: WriteActor,
     images: &[DecisionImage],
     label: &str,
 ) -> MemoryResult<ModelDecisionProvider> {
@@ -919,6 +888,7 @@ pub(crate) fn vision_rung(
         .unwrap_or_default();
     let run_id = format!("{label}:{asset}:{}", vault.now_recorded_at());
     let settings = server.ai.chat_settings();
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     // Inside a verdict, the caller's own line (FIX 1123); else this call's.
     let meter = match caller_meter() {
         Some(meter) => meter,
@@ -928,7 +898,7 @@ pub(crate) fn vision_rung(
                 settings.turn_budget_units,
                 oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
                 BudgetExhaustionPolicy::Suspend,
-                WriteActor::new(principal, class),
+                writer,
             )
             .map_err(|error| {
                 MemoryError::bad_request_with(

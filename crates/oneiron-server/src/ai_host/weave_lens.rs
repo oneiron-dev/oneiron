@@ -476,7 +476,11 @@ async fn prepare_live(
         tokio::task::spawn_blocking(move || {
             caller.read(&vault, reads_at, &producers, |memory, reader| {
                 let live = reader.prepare(memory, &request)?;
-                let mut actor = WriteActor::new(memory.actor(), memory.actor_class());
+                // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                let mut actor = caller.auth().map_or_else(
+                    || WriteActor::new(memory.actor(), memory.actor_class()),
+                    |auth| auth.write_actor(memory.actor(), memory.actor_class()),
+                );
                 // Keep the meter's existing frontier semantics.
                 if let WeaveLensCaller::Run {
                     actor: run_actor, ..

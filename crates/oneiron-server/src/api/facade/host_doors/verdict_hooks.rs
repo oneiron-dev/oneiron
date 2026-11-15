@@ -58,10 +58,10 @@ pub(crate) async fn ai_verdict(
                 ),
                 _ => None,
             };
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             let verdict = crate::decision_verdict::run_verdict(
                 server,
-                caller.0,
-                caller.1,
+                auth.write_actor(caller.0, caller.1),
                 &reader,
                 lane.as_ref(),
                 held,

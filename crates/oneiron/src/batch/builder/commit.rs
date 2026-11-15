@@ -342,6 +342,7 @@ impl BatchBuilder<'_> {
         let prepared_person_substrate = self.prepared_person_substrate.take();
         let prepared_agent_birth = self.prepared_agent_birth.take();
         let agent_authoring = self.agent_authoring.take();
+        let handed_on_human = self.handed_on_human;
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
@@ -394,6 +395,13 @@ impl BatchBuilder<'_> {
             // moves to the proposal's own id.
             if let Err(err) =
                 vault.bound_agent_authored_puts_in_txn(&*wtxn, agent_authoring.as_ref(), &mut ops)
+            {
+                return Rows::Discard(Err(err.into()));
+            }
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            if handed_on_human
+                && let Err(err) =
+                    super::relabel_handed_on_skill_births_in_ops(&vault.store, &*wtxn, &mut ops)
             {
                 return Rows::Discard(Err(err.into()));
             }

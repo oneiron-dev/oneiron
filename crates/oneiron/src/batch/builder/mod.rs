@@ -75,6 +75,9 @@ pub struct BatchBuilder<'a> {
     /// answers ([`Self::authored_through`]). `None` writes each body as
     /// staged.
     agent_authoring: Option<crate::agent_def::AgentAuthoring>,
+    /// Whether a SKILL birth this batch puts lands Generated: set by
+    /// [`Self::authored_through`] when its writer is Human and no person.
+    handed_on_human: bool,
     /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
     /// exact bytes: a marked carrier's content its writer already scanned
     /// (FIX 9034), set by that door alone.
@@ -147,6 +150,7 @@ impl<'a> BatchBuilder<'a> {
             prepared_person_substrate: None,
             prepared_agent_birth: None,
             agent_authoring: None,
+            handed_on_human: false,
             marked_carriers: std::collections::BTreeMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
@@ -194,6 +198,9 @@ impl<'a> BatchBuilder<'a> {
         read_key: Option<&crate::claim::ScopedReadActorKey>,
     ) -> Self {
         self.agent_authoring = crate::agent_def::AgentAuthoring::of(actor, door, read_key);
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.handed_on_human = actor.actor_class() == crate::edge::EdgeActorClass::Human
+            && !actor.acts_as_own_person();
         self
     }
 
@@ -258,4 +265,47 @@ impl<'a> BatchBuilder<'a> {
         self.import_tier = tier;
         self
     }
+}
+
+fn relabel_handed_on_skill_births_in_ops(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    ops: &mut [BatchOp],
+) -> crate::error::Result<()> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    for op in ops {
+        let BatchOp::Put {
+            id,
+            entity_type,
+            data,
+            allow_maintenance,
+            allow_reserved_predicate,
+            hub_sync_imported,
+            ..
+        } = op
+        else {
+            continue;
+        };
+        if *entity_type != crate::registry::ENTITY_TYPE_SKILL
+            || (*allow_maintenance && *allow_reserved_predicate)
+            || *hub_sync_imported
+        {
+            continue;
+        }
+        let Ok(mut record) = crate::write_envelope::skill_record::decode_skill_record(data) else {
+            continue;
+        };
+        if record.lifecycle_status != crate::write_envelope::skill_record::SkillLifecycle::Candidate
+        {
+            continue;
+        }
+        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some() {
+            continue;
+        }
+        record.source = crate::claim::ClaimSource::Generated;
+        record.generated = true;
+        record.human_authored = false;
+        *data = crate::write_envelope::skill_record::encode_skill_record(&record)?;
+    }
+    Ok(())
 }

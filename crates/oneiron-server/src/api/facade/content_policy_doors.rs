@@ -18,7 +18,7 @@ use oneiron::policy_model::doors::{
 use oneiron::policy_model::{PolicyModelEnforcement, PolicyRowReceipt, RelaySafeguardTier};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::EmptyRequest;
-use oneiron::{EdgeActorClass, EntityId, FatalLlmError, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, FatalLlmError};
 
 use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
@@ -112,7 +112,8 @@ pub(crate) async fn vault_policy_outbound_decide(
                 auth,
                 caller,
             };
-            let budget = meter(caller, "policy-owner-pass");
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let budget = meter(auth, caller, "policy-owner-pass");
             let answer = runtime
                 .block_on(server.vault().enforce_policy_model_with_budget(
                     request,
@@ -148,7 +149,8 @@ pub(crate) async fn vault_policy_relay_decide(
         ))?;
         let request = input.into_request(&memory)?;
         let backend = CheckerBackend { server, auth, caller };
-        let budget = meter(caller, "policy-relay-pass");
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let budget = meter(auth, caller, "policy-relay-pass");
         let admission = budget.admit().map_err(|_| MemoryError::new(
             oneiron::memory::MEMORY_CODE_BUDGET_SPENT, "the relay classifier lease was not admitted", &[],
         ))?;
@@ -193,11 +195,12 @@ fn live(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<()> {
     Ok(())
 }
 
-fn meter((actor, class): (EntityId, EdgeActorClass), name: &str) -> BudgetGuard {
+fn meter(auth: &CoreAuth, (actor, class): (EntityId, EdgeActorClass), name: &str) -> BudgetGuard {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     BudgetGuard::uncapped(
         format!("{name}:{}", EntityId::now().to_hex()),
         oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
-        WriteActor::new(actor, class),
+        auth.write_actor(actor, class),
     )
 }
 
@@ -219,9 +222,10 @@ impl LlmBackend for CheckerBackend<'_> {
                 .ai
                 .admit_role(self.server.vault(), ModelRole::Checker, request)
                 .map_err(|_| FatalLlmError::InvalidRequest)?;
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             let run = self.server.ai.model_runtime().undeclared_run(
                 format!("policy-checker:{}", EntityId::now().to_hex()),
-                meter(self.caller, "policy-checker"),
+                meter(self.auth, self.caller, "policy-checker"),
             );
             call.ladder
                 .generate_while(&run, call.request, None, &|| {

@@ -24,7 +24,6 @@
 //! would read.
 use std::sync::Arc;
 
-use oneiron::WriteActor;
 use oneiron::authority::ActSurface;
 use oneiron::code_run::actions::{ActionHostBinding, AgentActionCall};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
@@ -106,8 +105,10 @@ async fn run_action_answer(
     };
     let owner_surface = Some(surface);
     let vault = Arc::clone(&server.vault);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = auth.write_actor(actor, class);
     super::clock_ingress::run_blocking(move || {
-        let actor = WriteActor::new(actor, class);
+        let actor = writer;
         let principal = policy_setting_doors::action_principal(actor, key)?;
         let dispatch = SharedActionExecutor::app()?.execute_call(
             &vault,

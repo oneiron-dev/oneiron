@@ -364,7 +364,8 @@ pub(crate) fn action_bound(
 impl ActionBound {
     /// The actor an action under this binding writes as.
     pub(crate) fn writes_as(&self) -> WriteActor {
-        WriteActor::new(self.actor, self.class)
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.replay_auth.write_actor(self.actor, self.class)
     }
 }
 

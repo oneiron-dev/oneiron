@@ -338,8 +338,12 @@ impl McpResolvedActor {
     }
 
     #[must_use]
-    pub const fn write_actor(&self) -> WriteActor {
-        WriteActor::new(self.actor_ref, self.actor_class)
+    pub fn write_actor(&self) -> WriteActor {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.auth.as_ref().map_or_else(
+            || WriteActor::new(self.actor_ref, self.actor_class),
+            |auth| auth.write_actor(self.actor_ref, self.actor_class),
+        )
     }
 
     /// True when this connector may call the named REGISTERED tool.
