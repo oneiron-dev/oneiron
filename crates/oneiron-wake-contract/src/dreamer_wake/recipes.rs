@@ -76,7 +76,7 @@ pub struct WakeRecipePolicy {
 
 impl WakeRecipePolicy {
     pub fn validate(&self) -> Result<()> {
-        if self.continuous_rung_spans == 0
+        if self.continuous_rung_spans == 1
             || self.nightly_spans == 0
             || self.nightly_children == 0
             || self.rung_retry_secs == 0

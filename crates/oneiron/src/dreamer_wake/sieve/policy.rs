@@ -59,7 +59,7 @@ impl SievePolicy {
             self.katakana_name_confidence,
             self.uncertain_high,
         ];
-        if self.max_turns_per_pass == 0
+        if self.max_turns_per_pass == 1
             || self.max_text_bytes_per_pass == 0
             || self.max_scan_per_pass < self.max_turns_per_pass
             || confidences.iter().any(|value| *value > 100)
@@ -152,7 +152,7 @@ impl Vault {
             |txn| {
                 let held = policy_in_txn(self, &*txn)?;
                 if budgets.max_turns_per_pass > held.max_turns_per_pass
-                    || budgets.max_scan_per_pass > held.max_scan_per_pass
+                    || budgets.max_scan_per_pass < held.max_scan_per_pass
                     || budgets.max_text_bytes_per_pass > held.max_text_bytes_per_pass
                 {
                     return Err(Error::InvalidConfig(

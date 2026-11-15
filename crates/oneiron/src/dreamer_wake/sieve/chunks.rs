@@ -299,7 +299,7 @@ fn readable_in(vault: &Vault, txn: &heed::RoTxn<'_>, messages: &[EntityId]) -> R
     if messages.is_empty() {
         return Ok(Vec::new());
     }
-    refused_as_none(dreamer_may_read_messages_in(vault, txn, messages), messages)
+    refused_as_none(dreamer_may_read_messages_in(vault, txn, messages).map(|_| vec![true; messages.len()]), messages)
 }
 
 /// Which of `turns` the Dreamer may read.
