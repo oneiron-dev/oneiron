@@ -4,8 +4,10 @@
 # `oneiron-llm` holds the text model wires, so no `oneiron-llm-*` crate stands
 # apart from it. `oneiron-gen` holds the image, video and music job wires, so
 # no `oneiron-image-*` adapter crate stands apart from it, and the Gemini media
-# wire is no longer in `oneiron-llm`. The `oneiron-image` organ is not a wire
-# adapter and stays its own crate.
+# wire is no longer in `oneiron-llm`. `oneiron-speech` holds the speech wires,
+# so the Soniox ASR and Irodori/MOSS-local TTS wires are no longer in core's
+# voice cascade. The `oneiron-image` organ is not a wire adapter and stays its
+# own crate.
 #
 # Fails CLOSED: a missing or unreadable manifest fails the check. Reads the
 # manifests and the directory tree only, so it needs no cargo and no network.
@@ -36,7 +38,7 @@ def package_name(manifest):
 
 
 # The family crates: each must exist under its own name.
-FAMILIES = ("oneiron-llm", "oneiron-gen")
+FAMILIES = ("oneiron-llm", "oneiron-gen", "oneiron-speech")
 for family in FAMILIES:
     manifest = crates / family / "Cargo.toml"
     if not manifest.is_file():
@@ -59,6 +61,9 @@ for directory in sorted(path for path in crates.iterdir() if path.is_dir()):
 FOREIGN_PATHS = (
     ("crates/oneiron-llm/src/gemini/media.rs", "the Gemini media wire belongs to oneiron-gen"),
     ("crates/oneiron-llm/src/gemini/media", "the Gemini media wire belongs to oneiron-gen"),
+    ("crates/oneiron/src/voice_cascade/soniox.rs", "the Soniox ASR wire belongs to oneiron-speech"),
+    ("crates/oneiron/src/voice_cascade/tts_spikes.rs", "the Irodori/MOSS-local TTS wire belongs to oneiron-speech"),
+    ("crates/oneiron/src/voice_cascade/tts_spikes", "the Irodori/MOSS-local TTS wire belongs to oneiron-speech"),
 )
 for path, reason in FOREIGN_PATHS:
     if (root / path).exists():

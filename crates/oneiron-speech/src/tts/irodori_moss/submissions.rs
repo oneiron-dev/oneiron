@@ -8,8 +8,8 @@
 //! rather than sending its taken prefix again.
 
 use super::{Adapter, GenerationEpoch, MAX_TEXT_BYTES, ProviderOperation, TransportQueue};
-use crate::error::Result;
-use crate::voice_cascade::speakable;
+use oneiron::Result;
+use oneiron::voice_cascade::speakable_first_piece;
 
 /// A Text the queue took part of: the whole text and how many of its bytes
 /// the queue took. Only a Text with some of it taken is kept; one refused
@@ -48,7 +48,7 @@ pub(super) fn resume_text_submission(
 ) -> Result<()> {
     while pending.cursor < pending.text.len() {
         let rest = &pending.text[pending.cursor..];
-        let len = speakable::first_piece(rest, max_bytes);
+        let len = speakable_first_piece(rest, max_bytes);
         send(rest[..len].to_owned())?;
         pending.cursor += len;
     }

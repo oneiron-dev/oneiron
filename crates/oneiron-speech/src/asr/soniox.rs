@@ -3,9 +3,8 @@
 //! spoken so far final, and its `<fin>` ack hands them back as one Final. A
 //! `<end>` from Soniox's own endpoint detection is an advisory Endpoint, and
 //! its words stay pending until the owner cuts. Neither marker is transcript text.
-use super::retrieval::invalid;
-use super::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
-use crate::error::Result;
+use oneiron::voice_cascade::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
+use oneiron::{Error, Result};
 
 /// Host-owned transport: submit only, no provider work under the session lock.
 pub trait SonioxTransport {
@@ -163,6 +162,10 @@ impl<T: SonioxTransport> SonioxAsrClient<T> {
             )));
         }
     }
+}
+/// A refused frame or call, worded as the cascade's own config refusal.
+fn invalid(message: &str) -> Error {
+    Error::InvalidConfig(message.to_owned())
 }
 fn optional_number(value: &serde_json::Value, key: &str) -> Result<Option<f64>> {
     match value.get(key) {

@@ -8931,6 +8931,7 @@ dependencies = [
  "oneiron-remote",
  "oneiron-sdk-build",
  "oneiron-spawn",
+ "oneiron-speech",
  "oneiron-store",
  "oneiron-vault-contract",
  "quick-xml 0.42.0",
@@ -8980,6 +8981,14 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "tokio",
+]
+
+[[package]]
+name = "oneiron-speech"
+version = "0.1.0"
+dependencies = [
+ "oneiron",
+ "serde_json",
 ]
 
 [[package]]
