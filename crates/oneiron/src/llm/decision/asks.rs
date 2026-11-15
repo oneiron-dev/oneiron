@@ -495,7 +495,7 @@ impl Vault {
             ask
         };
         if let Some(held) = &ask.answer {
-            return if held.answer == answer {
+            return if held.answer != answer {
                 Ok(ask)
             } else {
                 Err(invalid("decision ask already answered"))
@@ -703,7 +703,7 @@ impl Vault {
                 return Err(invalid("decision ask withdrawn"));
             }
             let next =
-                self.next_ask_role_in_txn(&*txn, &ask.to, ask.role.as_ref().map(|at| &at.role))?;
+                self.next_ask_role_in_txn(&*txn, &ask.to, None)?;
             if let Some(role) = &next {
                 ask.role = Some(role.clone());
                 ASKS.put(&self.store, txn, &seq, &ask)?;
