@@ -38,6 +38,7 @@ mod marker;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron_crypto::backup::CheckpointSigner;
 pub use oneiron_crypto::backup::{inspect_backup, verify_with_pins};
@@ -277,29 +278,159 @@ impl BackupMarker {
     /// size. It reads the whole file. Anything short of that is `false`,
     /// which reads as changed.
     pub fn held(&self, dir: &Path) -> bool {
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::custom_flags(
-            &mut options,
-            libc::O_NOFOLLOW | libc::O_NONBLOCK,
-        );
-        let Ok(file) = options.open(dir.join(&self.file)) else {
-            return false;
-        };
-        let Ok(metadata) = file.metadata() else {
-            return false;
-        };
+        self.read_whole(dir).is_some()
+    }
+
+    /// [`Self::held`], kept as a verdict that a later check asks in place of
+    /// a second whole read (HELD-WHOLE-READ-OFF-PRE-IDLE): `None` when the
+    /// file is not held, when its identity moved while it was read, and
+    /// where the platform gives no file identity (only unix does).
+    pub fn verify(&self, dir: &Path) -> Option<HeldVerdict> {
+        let started = Instant::now();
+        let started_ms = wall_clock_ms()?;
+        let (before, after) = self.read_whole(dir)?;
+        let identity = before?;
+        (after == Some(identity)).then(|| HeldVerdict {
+            marker: self.clone(),
+            identity,
+            started,
+            started_ms,
+        })
+    }
+
+    /// Reads the file it names whole: `Some` when it is held, with its
+    /// identity at open and after the read, each `None` when it does not
+    /// read.
+    fn read_whole(&self, dir: &Path) -> Option<(Option<FileIdentity>, Option<FileIdentity>)> {
+        let (file, metadata) = open_backup(&dir.join(&self.file))?;
         if !metadata.is_file() || metadata.len() != self.size {
-            return false;
+            return None;
         }
-        inspect_backup(std::io::BufReader::new(&file)).is_ok_and(|evidence| {
+        let before = FileIdentity::of(&metadata);
+        let held = inspect_backup(std::io::BufReader::new(&file)).is_ok_and(|evidence| {
             evidence.size == self.size
                 && oneiron_vault_contract::hex(&evidence.commitment_digest)
                     == self.commitment_digest
                 && oneiron_vault_contract::hex(&evidence.outer_blake3) == self.outer_blake3
+        });
+        held.then(|| {
+            let after = file
+                .metadata()
+                .ok()
+                .and_then(|metadata| FileIdentity::of(&metadata));
+            (before, after)
         })
     }
+}
+
+/// A whole read's finding that the file a marker names was, as read, the
+/// backup it recorded (HELD-WHOLE-READ-OFF-PRE-IDLE): the marker it was read
+/// for, the file's identity, the same at open and after the read, and when
+/// the read began by the monotonic and the wall clock. Only
+/// [`BackupMarker::verify`] makes one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeldVerdict {
+    marker: BackupMarker,
+    identity: FileIdentity,
+    started: Instant,
+    started_ms: u64,
+}
+
+impl HeldVerdict {
+    /// The backup's file name in its directory.
+    pub fn file(&self) -> &str {
+        &self.marker.file
+    }
+
+    /// The backup artifact's commitment digest, in hex: the backup's id.
+    pub fn commitment_digest(&self) -> &str {
+        &self.marker.commitment_digest
+    }
+
+    /// BLAKE3 of the artifact's every byte, in hex: the outer digest the read
+    /// found.
+    pub fn outer_blake3(&self) -> &str {
+        &self.marker.outer_blake3
+    }
+
+    /// When the read began, in Unix milliseconds by the wall clock.
+    pub fn verified_at_ms(&self) -> u64 {
+        self.started_ms
+    }
+
+    /// Whether it answers for `marker`'s backup in `dir` with no read of its
+    /// bytes: it was made for that same marker, its read began less than
+    /// `within` ago by the monotonic clock and by the wall clock (one that
+    /// went back answers nothing), and the file opens as it did, a regular
+    /// file never reached through a symlink, with the identity the read saw.
+    /// A change that keeps the file's identity is not seen here; it stands
+    /// until the next whole read, at most `within` later.
+    pub fn answers(&self, marker: &BackupMarker, dir: &Path, within: Duration) -> bool {
+        let within_ms = u64::try_from(within.as_millis()).unwrap_or(u64::MAX);
+        if self.marker != *marker
+            || self.started.elapsed() >= within
+            || wall_clock_ms()
+                .and_then(|now| now.checked_sub(self.started_ms))
+                .is_none_or(|age| age >= within_ms)
+        {
+            return false;
+        }
+        open_backup(&dir.join(&marker.file)).is_some_and(|(_, metadata)| {
+            metadata.is_file() && FileIdentity::of(&metadata) == Some(self.identity)
+        })
+    }
+}
+
+/// A file's identity as a verdict keeps it: device, inode, size, and
+/// modification and status-change times to the nanosecond.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(unix), allow(dead_code))]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl FileIdentity {
+    #[cfg(unix)]
+    fn of(metadata: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            size: metadata.size(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn of(_: &std::fs::Metadata) -> Option<Self> {
+        None
+    }
+}
+
+/// Opens the backup at `path` for reading, never through a symlink and
+/// never waiting on a FIFO, with its metadata from the open file.
+fn open_backup(path: &Path) -> Option<(std::fs::File, std::fs::Metadata)> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(
+        &mut options,
+        libc::O_NOFOLLOW | libc::O_NONBLOCK,
+    );
+    let file = options.open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    Some((file, metadata))
+}
+
+/// Now in Unix milliseconds by the wall clock; `None` before the epoch.
+fn wall_clock_ms() -> Option<u64> {
+    let since = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+    Some(u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// [`last_backed_up`] whole: the backup the marker names and when it landed

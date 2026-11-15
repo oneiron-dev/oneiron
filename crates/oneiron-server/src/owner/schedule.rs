@@ -121,6 +121,10 @@ pub(crate) struct OwnerHost {
     managed_unrecorded_ms: AtomicU64,
     /// Where the scheduled pass is ([`PassStage`]).
     pass_stage: AtomicU8,
+    /// The background verify of the accepted backup and its last finding,
+    /// which a backup before an idle reap asks (`managed`,
+    /// HELD-WHOLE-READ-OFF-PRE-IDLE).
+    held: managed::HeldChecks,
     /// The scheduled pass's one permit, held on its blocking thread until
     /// the pass ends; a stop takes it back and closes it (FIX 6732).
     resident: Arc<tokio::sync::Semaphore>,
@@ -152,6 +156,7 @@ impl OwnerHost {
             managed_said: AtomicU8::new(0),
             managed_unrecorded_ms: AtomicU64::new(0),
             pass_stage: AtomicU8::new(PassStage::Queued as u8),
+            held: managed::HeldChecks::default(),
             resident: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
@@ -513,6 +518,9 @@ impl SyncServer {
                         tracing::warn!(panicked = error.is_panic(), "scheduled backup task failed");
                     }
                 }
+                // Off the pass, its lock and its admission: a backup before
+                // an idle reap never waits on it (managed).
+                host.spawn_held_verify();
             }
         }))
     }
