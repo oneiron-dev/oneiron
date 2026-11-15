@@ -7,11 +7,14 @@
 //! with `Vault::put_claim`, as the inquiry landing writes one.
 //!
 //! Red on main: the batch citing the copy commits, the evidence predicate
-//! admits the copy, a profile read from the copy is stored (through a
-//! derivation and directly), a model's proposal whose prompt carried the
-//! copy is stored, the brief share naming its world is created, and the
-//! guest ask's disclosure check does not refuse it. Guards (green on main
-//! too): the same doors take a local claim, a local world, a TURN.
+//! admits the copy, a SameAs link with the copy as an endpoint lands, the
+//! person's `about` facts take the copy in, a profile read from the copy is
+//! stored (through a derivation and directly), a model's proposal whose
+//! prompt carried the copy is stored (also when the copy was erased between
+//! the prompt and the proposal), the brief share naming its world is
+//! created, and the guest ask's disclosure check does not refuse it. Guards
+//! (green on main too): the same doors take a local claim, a local world, a
+//! TURN.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -28,8 +31,9 @@ use oneiron::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use oneiron::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound};
+use oneiron::deletion::DeleteEntityOptions;
 use oneiron::entity_id::ForeignWorldId;
-use oneiron::memory::ClaimInput;
+use oneiron::memory::{ClaimInput, CommitReceipt, MemoryResult};
 use oneiron::note::TakeTarget;
 use oneiron::psych_profile::{
     PsychProfile, PsychProfileConfidence, PsychProfileKey, PsychProfileSource,
@@ -45,8 +49,9 @@ use oneiron::task_verb::{
 };
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
-    Claim, Derived, Evidence, Named, Profile, batches_of, claim_evidence_admissible, commit,
-    commit_with_sources, grant_core_read, profile_stored, source_version, supports,
+    Claim, Derived, Evidence, Named, Profile, SameAs, about_facts, batches_of,
+    claim_evidence_admissible, commit, commit_with_sources, grant_core_read, profile_stored,
+    source_version, supports,
 };
 use oneiron::test_doors::guest_ask_disclosure::check_disclosure;
 use oneiron::test_doors::steward::dreamer;
@@ -260,6 +265,117 @@ fn the_evidence_predicate_never_admits_a_foreign_copy() {
 }
 
 impl DeriveFixture {
+    /// Commits the Dreamer's SameAs link of `source` to `target`: whether it
+    /// landed, and its reasons.
+    fn commit_same_as(&self, run: &str, source: EntityId, target: EntityId) -> (bool, Vec<String>) {
+        let committed = commit(
+            &self.vault,
+            self.dreamer,
+            EdgeActorClass::System,
+            run,
+            &[Derived::SameAs(SameAs {
+                local: "same_as",
+                source: Named::Stored(source),
+                target: Named::Stored(target),
+            })],
+        )
+        .expect("commit");
+        let [item] = committed.items.as_slice() else {
+            panic!("one item: {:?}", committed.items);
+        };
+        (item.landed, item.reasons.clone())
+    }
+}
+
+#[test]
+fn a_same_as_link_with_a_foreign_copy_endpoint_is_refused() {
+    let fixture = derive_fixture();
+    // Guard: the Dreamer reads the copy, so the refusal is never the unread one.
+    fixture.version(fixture.rows.copy);
+    let (local, copy) = (fixture.rows.local, fixture.rows.copy);
+    for (run, source, target) in [
+        ("run-link-to-copy", local, copy),
+        ("run-link-from-copy", copy, local),
+    ] {
+        assert_eq!(
+            fixture.commit_same_as(run, source, target),
+            (false, vec![FOREIGN_COPY_REFUSAL.to_owned()]),
+            "{run}: the link's status claim would cite the foreign copy"
+        );
+    }
+
+    // Guard: a link between two local claims lands.
+    let other = put_claim(
+        &fixture.vault,
+        fixture.rows.person,
+        "owen drinks his coffee black",
+        ClaimSource::UserStated,
+        None,
+    );
+    let (landed, reasons) = fixture.commit_same_as("run-link-local", local, other);
+    assert!(landed, "the local link lands: {reasons:?}");
+}
+
+/// The digest and bands of `person`'s facts the Dreamer's `about` lines are
+/// asked from.
+fn person_about_facts(vault: &Vault, dreamer: EntityId, person: EntityId) -> ([u8; 32], Vec<u8>) {
+    about_facts(vault, dreamer, EdgeActorClass::System, person).expect("the person's facts")
+}
+
+#[test]
+fn a_persons_about_facts_never_hold_a_foreign_copy() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    let person = put(&vault, ENTITY_TYPE_PERSON, b"owen");
+    put_claim(
+        &vault,
+        person,
+        "owen takes his coffee black",
+        ClaimSource::UserStated,
+        None,
+    );
+    let before = person_about_facts(&vault, dreamer, person);
+    // Guard: the local claim is a fact the lines are asked from.
+    assert!(!before.1.is_empty(), "the person has a local fact");
+
+    let copy = put_claim(
+        &vault,
+        person,
+        "owen is out Thursday",
+        ClaimSource::Imported,
+        Some(foreign_world()),
+    );
+    // Guard: the Dreamer reads the copy, so it is left out as a copy, not
+    // as a row it cannot read.
+    assert!(
+        source_version(&vault, dreamer, EdgeActorClass::System, copy)
+            .expect("read")
+            .is_some(),
+        "the Dreamer reads the copy"
+    );
+    assert_eq!(
+        person_about_facts(&vault, dreamer, person),
+        before,
+        "the foreign copy adds no fact to the person's about lines"
+    );
+
+    // Guard: another local claim does.
+    put_claim(
+        &vault,
+        person,
+        "owen works from the Lisbon office",
+        ClaimSource::UserStated,
+        None,
+    );
+    assert_ne!(
+        person_about_facts(&vault, dreamer, person).0,
+        before.0,
+        "a local fact is taken in"
+    );
+}
+
+impl DeriveFixture {
     /// Commits the Dreamer's profile of the person read from `document`:
     /// whether it landed, and its reasons.
     fn commit_profile(&self, run: &str, document: EntityId) -> (bool, Vec<String>) {
@@ -355,9 +471,16 @@ fn a_profile_put_from_a_foreign_copy_is_refused() {
     assert!(profile_stored(&fixture.vault, person).expect("read"));
 }
 
-#[test]
-fn a_proposal_from_a_prompt_that_carried_a_foreign_copy_is_refused() {
-    // An agent that reads proposes, as `claim_approval_recall.rs` opens one.
+/// A vault where an agent that reads proposes, as
+/// `claim_approval_recall.rs` opens one.
+struct PromptFixture {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    agent: EntityId,
+    rows: Rows,
+}
+
+fn prompt_fixture() -> PromptFixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
     vault.ensure_embedded_owner_actor().expect("the owner");
@@ -366,60 +489,126 @@ fn a_proposal_from_a_prompt_that_carried_a_foreign_copy_is_refused() {
     vault
         .install_read_permit_for_test(WriteActor::new(agent, EdgeActorClass::Agent))
         .expect("the agent reads");
-    let memory = vault.memory(agent, EdgeActorClass::Agent);
-    let proposal = |id: EntityId| ClaimInput {
-        id: Some(id.to_hex()),
-        predicate: "profile.note".to_owned(),
-        subject_ref: rows.person.to_hex(),
-        value: json!("owen is away this week"),
-        confidence: 0.8,
-        source: "generated".to_owned(),
-        world_ref: None,
-        relationship_ref: None,
-        scope: None,
-        valid_from: None,
-        valid_to: None,
-        occurred_at: None,
-        learned_at: None,
-        salience: None,
-        confidence_details: None,
-    };
+    PromptFixture {
+        _dir: dir,
+        vault,
+        agent,
+        rows,
+    }
+}
 
-    let from_copy = EntityId::now();
-    let refused = memory
-        .claim_propose_prompted(
-            &proposal(from_copy),
-            "test.prompted",
-            &[rows.copy],
-            &[b"owen is out Thursday".as_slice()],
-        )
-        .expect_err("a proposal from a prompt that carried a foreign copy is refused");
-    assert_eq!(
-        refused
-            .gate_denial
-            .as_ref()
-            .map(|denial| denial.reason_codes.clone()),
-        Some(vec![FOREIGN_COPY_REFUSAL.to_owned()]),
-        "{refused:?}"
-    );
-    assert!(
-        vault.get_claim(&from_copy).expect("read").is_none(),
-        "no proposal is stored"
-    );
+impl PromptFixture {
+    /// The agent's proposal `id` about the person, from a prompt that
+    /// carried `producers`.
+    fn propose(&self, id: EntityId, producers: &[EntityId]) -> MemoryResult<CommitReceipt> {
+        let input = ClaimInput {
+            id: Some(id.to_hex()),
+            predicate: "profile.note".to_owned(),
+            subject_ref: self.rows.person.to_hex(),
+            value: json!("owen is away this week"),
+            confidence: 0.8,
+            source: "generated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+            confidence_details: None,
+        };
+        self.vault
+            .memory(self.agent, EdgeActorClass::Agent)
+            .claim_propose_prompted(
+                &input,
+                "test.prompted",
+                producers,
+                &[b"what the model read".as_slice()],
+            )
+    }
 
+    /// `id` was refused as a proposal sourced from a foreign copy, and is
+    /// not stored.
+    fn assert_refused(&self, id: EntityId, producers: &[EntityId]) {
+        let refused = self
+            .propose(id, producers)
+            .expect_err("a proposal from a prompt that carried a foreign copy is refused");
+        assert_eq!(
+            refused
+                .gate_denial
+                .as_ref()
+                .map(|denial| denial.reason_codes.clone()),
+            Some(vec![FOREIGN_COPY_REFUSAL.to_owned()]),
+            "{refused:?}"
+        );
+        assert!(
+            self.vault.get_claim(&id).expect("read").is_none(),
+            "no proposal is stored"
+        );
+    }
+
+    /// `id` is stored, proposed.
+    fn assert_proposed(&self, id: EntityId, producers: &[EntityId]) {
+        let receipt = self
+            .propose(id, producers)
+            .expect("a proposal from a prompt that carried local claims is stored");
+        assert_eq!(receipt.approval, "proposed");
+        assert!(self.vault.get_claim(&id).expect("read").is_some());
+    }
+}
+
+#[test]
+fn a_proposal_from_a_prompt_that_carried_a_foreign_copy_is_refused() {
+    let fixture = prompt_fixture();
+    fixture.assert_refused(EntityId::now(), &[fixture.rows.copy]);
     // Guard: the same proposal from a prompt that carried the local claim is
     // stored, proposed.
-    let from_local = EntityId::now();
-    let receipt = memory
-        .claim_propose_prompted(
-            &proposal(from_local),
-            "test.prompted",
-            &[rows.local],
-            &[b"owen takes his coffee black".as_slice()],
-        )
-        .expect("a proposal from a prompt that carried a local claim is stored");
-    assert_eq!(receipt.approval, "proposed");
-    assert!(vault.get_claim(&from_local).expect("read").is_some());
+    fixture.assert_proposed(EntityId::now(), &[fixture.rows.local]);
+}
+
+#[test]
+fn a_proposal_from_a_prompt_whose_foreign_copy_was_erased_since_is_refused() {
+    // The copy was in the prompt, and is deleted (its shell kept) or purged
+    // before the model's words are proposed: it is still their source.
+    let fixture = prompt_fixture();
+    let purged = put_claim(
+        &fixture.vault,
+        fixture.rows.person,
+        "owen is back Friday",
+        ClaimSource::Imported,
+        Some(foreign_world()),
+    );
+    assert!(
+        fixture
+            .vault
+            .delete_entity(&fixture.rows.copy)
+            .expect("delete")
+    );
+    assert!(
+        fixture
+            .vault
+            .delete_entity_with_options(&purged, DeleteEntityOptions { purge: true })
+            .expect("purge")
+    );
+    for erased in [fixture.rows.copy, purged] {
+        assert!(
+            fixture.vault.get_claim(&erased).expect("read").is_none(),
+            "the copy no longer reads"
+        );
+        fixture.assert_refused(EntityId::now(), &[erased]);
+    }
+
+    // Guard: a prompt whose local claim was erased since still proposes.
+    let erased_local = put_claim(
+        &fixture.vault,
+        fixture.rows.person,
+        "owen likes the window seat",
+        ClaimSource::UserStated,
+        None,
+    );
+    assert!(fixture.vault.delete_entity(&erased_local).expect("delete"));
+    fixture.assert_proposed(EntityId::now(), &[fixture.rows.local, erased_local]);
 }
 
 /// One rooted, owner-bound vault, as `delegation_expiry_wall_clock.rs` opens
