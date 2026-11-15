@@ -90,13 +90,16 @@ pub enum Failure {
     /// after the one redirect it follows.
     #[error("reply redirected where the shape does not follow")]
     Redirect,
-    /// A streamed reply held a form of the key. A model stream redacts each
-    /// form at its bytes and goes on (FIX 6103), so it never sends this; a
-    /// git reply, whose pkt-lines and pack checksums a rewrite would break,
-    /// is cut with it instead (OSH-3), and so is an LFS reply that carried
-    /// the credential (a batch's once its exact echoes in action headers
-    /// are rewritten, and an action's the credential was installed on).
-    #[error("streamed reply holds the key")]
+    /// A reply held a form of the key, or a run encoded too deep to rule
+    /// one out, where a rewrite would pass as the reply. A model stream
+    /// redacts each form at its bytes and goes on (FIX 6103), so it never
+    /// sends this; a git reply, whose pkt-lines and pack checksums a rewrite
+    /// would break, is cut with it instead (OSH-3), and so is an LFS reply
+    /// that carried the credential (a batch's once its exact echoes in
+    /// action headers are rewritten, and an action's the credential was
+    /// installed on), and a file's content
+    /// ([`crate::Shape::answers_file_content`]) the strip would change.
+    #[error("reply holds the key")]
     ReplyHoldsKey,
 }
 

@@ -5,7 +5,7 @@
 use super::source_tree::HeldFiles;
 use super::{ExportBody, ExportSecrets};
 use crate::batch::export::{ArchiveFiles, ExportFileTree, ExportSourceContent, FileSpool};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::store::skill_package::{HubPackage, SkillCapabilitySurface};
 use crate::write_envelope::skill_source::SkillPackageFormat;
 use serde::{Deserialize, Serialize};
@@ -218,6 +218,5 @@ impl ExportHubSource {
         Ok(())
     }
 }
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("hub source archive: {reason}"))
-}
+#[doc(hidden)]
+use oneiron_records::serialize::hub_source_archive::invalid;
