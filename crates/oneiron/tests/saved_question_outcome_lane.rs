@@ -4,7 +4,10 @@
 //! same unit, and never the bound one: not at arrival, not at a manual
 //! projection, not at its window's close, and no calibration pair. A fact
 //! inside its worlds labels the bound question by its window's close, or by
-//! a manual projection before it.
+//! a manual projection before it. An arrival defers that judgment to the
+//! question pump, whose next pass labels the fact with the window still open,
+//! and also a fact recorded after the window closed with an event time
+//! inside it.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeMap;
@@ -456,5 +459,104 @@ fn a_world_bound_saved_question_labels_a_fact_inside_its_worlds_at_a_manual_proj
             && labels[0].answer == fixture.bound_answer.claim,
         "actor=owner's question saved under the base-world lane; expected fact {fact:?} inside \
          its worlds to label its answer once a manual projection has run; seen {labels:?}"
+    );
+}
+
+/// One pass of the question pump's outcome step at `now`, which closes no
+/// window when none is due.
+fn pump_outcome_pass(fixture: &Fixture, now: u64, closes: usize) {
+    let closed =
+        close_due_outcome_windows(&fixture.vault, now).expect("the pump's outcome window pass");
+    assert_eq!(
+        closed, closes,
+        "precondition: the pump pass at {now} closes {closes} windows"
+    );
+}
+
+/// The bound question holds one label, naming `fact` and its own answer.
+fn assert_bound_labelled_once(fixture: &Fixture, fact: EntityId, when: &str) {
+    let labels = fixture.labels(fixture.bound);
+    assert!(
+        labels.len() == 1
+            && labels[0].fact == fact
+            && labels[0].answer == fixture.bound_answer.claim,
+        "actor=owner's question saved under the base-world lane; expected fact {fact:?} inside \
+         its worlds to label its answer {when}; seen {labels:?}"
+    );
+}
+
+#[test]
+fn a_world_bound_saved_question_labels_a_fact_inside_its_worlds_at_the_next_pump_pass_before_its_window_closes()
+ {
+    let fixture = fixture();
+    let fact = fixture.write_fact(base_world_id());
+    assert!(
+        fixture.bound_lane_reads(&fact),
+        "precondition: the base-world lane reads the fact in the base world"
+    );
+    assert_control_labelled(&fixture, fact, "at arrival");
+    pump_outcome_pass(&fixture, fixture.fact_at(), 0);
+    assert_bound_labelled_once(
+        &fixture,
+        fact,
+        "at the pump's next pass, its window still open",
+    );
+    let windows = closed_outcome_windows(&fixture.vault, fixture.owner, fixture.bound)
+        .expect("bound question windows");
+    assert!(
+        windows.is_empty(),
+        "precondition: the bound question's window is still open; seen {windows:?}"
+    );
+    let pairs = calibration_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.bound,
+        CallerLocality::OnDevice,
+    )
+    .expect("bound question calibration pairs");
+    assert!(
+        pairs.len() == 1 && pairs[0].outcome.fact == fact,
+        "actor=owner's question saved under the base-world lane; expected one calibration pair \
+         from fact {fact:?} before its window closes; seen {pairs:?}"
+    );
+    pump_outcome_pass(&fixture, fixture.fact_at(), 0);
+    assert_bound_labelled_once(&fixture, fact, "once, after a second pump pass");
+}
+
+#[test]
+fn a_world_bound_saved_question_labels_a_fact_recorded_after_its_window_closed_at_the_next_pump_pass()
+ {
+    let fixture = fixture();
+    pump_outcome_pass(&fixture, fixture.close_at(), 2);
+    let windows = closed_outcome_windows(&fixture.vault, fixture.owner, fixture.bound)
+        .expect("bound question windows");
+    assert!(
+        windows.len() == 1 && matches!(windows[0].outcome, WindowOutcome::Unknown),
+        "precondition: the bound question's window closes unknown, no fact yet; seen {windows:?}"
+    );
+    // Recorded after the close, with an event time inside the window.
+    let fact = fixture.write_fact(base_world_id());
+    assert!(
+        fixture.bound_lane_reads(&fact),
+        "precondition: the base-world lane reads the fact in the base world"
+    );
+    assert_control_labelled(&fixture, fact, "at arrival after its window closed");
+    pump_outcome_pass(&fixture, fixture.close_at() + 1, 0);
+    assert_bound_labelled_once(
+        &fixture,
+        fact,
+        "at the pump's next pass after its window closed",
+    );
+    let pairs = calibration_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.bound,
+        CallerLocality::OnDevice,
+    )
+    .expect("bound question calibration pairs");
+    assert!(
+        pairs.len() == 1 && pairs[0].outcome.fact == fact,
+        "actor=owner's question saved under the base-world lane; expected one calibration pair \
+         from fact {fact:?} recorded after its window closed; seen {pairs:?}"
     );
 }
