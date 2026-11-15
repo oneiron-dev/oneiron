@@ -324,7 +324,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/page_inspector.rs` | src | s | 2 crate-vis | — | The engine's e-sign page inspector on this server's seal organ (FIX 9609) |
 | `src/api/esign/parse_lease.rs` | src | s | 4 crate-vis | — | A PDF inspection's parse on this machine's memory (FIX 8065): the editor's geometry door, the anonymous one… |
 | `src/api/esign/parse_lease/isolated.rs` | src | s | 1 crate-vis | — | Geometry and ceremony-preview callers' input lease, region and isolated parse |
-| `src/api/esign/presentation.rs` | src | m | 8 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
+| `src/api/esign/presentation.rs` | src | m | 6 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/esign_qr.rs` | src | s | 2 crate-vis | — | The public QR page a sealed document's certificate names (ARCH-0064a section 6, [SGN-05])… |
 | `src/api/facade.rs` | src | m | 36 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
@@ -417,7 +417,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 5 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/git_push_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and… |
 | `src/api/facade/goal_optimize_doors.rs` | src | m | 15 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
-| `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
+| `src/api/facade/graduation_doors.rs` | src | s | 11 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
 | `src/api/facade/grants_doors.rs` | src | s | 2 crate-vis | — | `self.grants.answer` (FIX 1379): an access request answered by the vault owner, or by the person or agent it… |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 13 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/graph_ask_doors/question_answers.rs` | src | s | 1 crate-vis | — | `vault.questions.answers` (FIX 1585, FIX 2337): the engine's one reader (`question_answers`), as the… |
@@ -563,6 +563,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/wire_health_doors.rs` | src | s | 2 crate-vis | — | The owner's wire detection policy, under the same proof as `/v1/owner/wire-health` |
 | `src/api/feedback_inbox.rs` | src | m | 2 crate-vis | — | The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no… |
 | `src/api/feedback_inbox/flood.rs` | src | s | 5 crate-vis | — | The open inbox's flood cap: the one refusal its keyless intake makes |
+| `src/api/first_party_html.rs` | src | s | 3 crate-vis | — | First-party HTML on the API's origin (ARCH-0050 #artifact-origin-open): the signing ceremony (`GET /sign`)… |
 | `src/api/git_http/broker_relay.rs` | src | m | 17 crate-vis | — | What every loopback relay that sends Git's exchanges through the credential broker shares (ARCH-0069 OSH-3)… |
 | `src/api/git_http/gate.rs` | src | s | 12 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
 | `src/api/git_http/gate/push.rs` | src | s | 3 crate-vis | — | The push half of the smart-HTTP gate (FIX 6867, G1-PUSH): the pusher's sidecar, built from the credential… |
@@ -604,9 +605,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/admission.rs` | src | m | 13 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/admission_intent.rs` | src | s | 4 crate-vis | — | The durable admission receipt (ARCH-0044 C5) of a generated verb an MCP `tools/call` runs under the… |
 | `src/api/mcp_gateway/board_observations.rs` | src | m | 10 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
-| `src/api/mcp_gateway/board_setup.rs` | src | s | 15 crate-vis | — | Board state, setup grammar, and page preflight |
+| `src/api/mcp_gateway/board_setup.rs` | src | s | 17 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/board_setup/assembly.rs` | src | m | 18 crate-vis | — | An MCP connection's Context Board: its keyframe, sections, pins, readers, worlds and packs |
-| `src/api/mcp_gateway/board_setup/carrier.rs` | src | s | 9 crate-vis | — | The MCP result carrier: the one chokepoint a tool result leaves through, and its paging |
+| `src/api/mcp_gateway/board_setup/carrier.rs` | src | m | 9 crate-vis | — | The MCP result carrier: the one chokepoint a tool result leaves through, and its paging |
 | `src/api/mcp_gateway/board_setup/children.rs` | src | s | 2 crate-vis | — | The connector actor's own children on its board (FIX 1052): each child that rides no TASK row is judged by… |
 | `src/api/mcp_gateway/board_setup/connection_brief.rs` | src | s | 2 crate-vis | — | An MCP connection's self brief as its setup delivers it (FIX 17594 delivery slice D4, Engine call MCP A)… |
 | `src/api/mcp_gateway/board_setup/run.rs` | src | m | 12 crate-vis | — | A code-mode run's Context Board: the run's lane, its pins, its sections and its packs |
@@ -1780,7 +1781,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/backup/payload_retention.rs` | src | s | 3 crate-vis | — | Checkpoint payload retention beside a vault's backups (KS7-5): each backup's kept-generation inventory lands… |
 | `src/owner/backup/rehearse.rs` | src | m | 14 crate-vis | — | Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and… |
 | `src/owner/backup/relay_hold.rs` | src | s | 4 crate-vis | — | The relay delete guard over one vault's backup holds (FIX 1488): the adapter L14's relay locker delete takes… |
-| `src/owner/backup/restore.rs` | src | L | 11 crate-vis | — | Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the… |
+| `src/owner/backup/restore.rs` | src | L | 12 crate-vis | — | Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the… |
 | `src/owner/backup/scratch.rs` | src | s | 3 crate-vis | — | The mark a rehearsal's scratch copy carries when it is deleted afterwards, and the start-up sweep of those a… |
 | `src/owner/backup/tests.rs` | test | m | — | — | — |
 | `src/owner/backup/write_budget.rs` | src | s | 16 crate-vis | — | The floor uploads keep, lent to this vault's backups and rehearsals (FIX 5479) |
@@ -1879,6 +1880,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/deletion.rs` | src | s | 4 crate-vis | — | The vault's deletion marker as a host's background passes read it (FIX 11710, FIX 11979): the marker every… |
 | `src/server/desktop_seats.rs` | src | m | 16 crate-vis | — | The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |
 | `src/server/embedding.rs` | src | m | 7 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
+| `src/server/embedding/idle_release_tests.rs` | test | s | — | — | The idle publisher releases each send to an embedder off this device (census L5-32; DEC-0005… |
 | `src/server/hook_regen_pass.rs` | src | s | 1 crate-vis | — | The served hook regen pass (ARCH-0080 §8, FIX 4689) |
 | `src/server/housekeeping.rs` | src | m | 20 crate-vis | — | The host's half of the engine's housekeeping |
 | `src/server/housekeeping_tests.rs` | test | m | — | — | Done-means for host housekeeping: a running server, its lifecycle loop on a short tick over a vault on a… |
@@ -1971,9 +1973,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/live_run_payer.rs` | src | s | 1 struct · 3 fn | FillWriterPayer | Doors for `tests/live_run_payer_erased.rs` ([LIVE-RUN-PAYER-REQUIRED]… |
 | `src/test_doors/live_run_step.rs` | src | s | 1 fn | — | Door for `tests/run_step_live_run.rs` ([RUN-STEP-DOOR-SERVER-TEST]): a leased agent run on a test's server… |
 | `src/test_doors/mcp_carrier_release.rs` | src | s | 1 fn | — | Doors for `tests/board_child_release.rs` (census L2-38, review round 1): the release check a gateway carrier… |
+| `src/test_doors/mcp_page_mint.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/mcp_page_continuation_rejudge.rs`: one act run at a vault's next page one mint, after its… |
 | `src/test_doors/mcp_surface.rs` | src | s | 2 fn | — | Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the… |
 | `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 11 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
-| `src/test_doors/mod.rs` | src | s | 19 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 20 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/openapi_document.rs` | src | s | 2 fn | — | Door for `tests/openapi_document_reuse.rs` and `tests/openapi_document_precompute.rs`: how many times this… |
 | `src/test_doors/replay_admission.rs` | src | s | 5 fn | — | Doors to an exact replay's admission (FIX-LIST REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG): a runtime whose… |
@@ -2067,11 +2070,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/facade_live_run_status.rs` | test | s | — | — | Live-run guard refusals keep their status through the real facade router |
 | `tests/facade_repo_refusal_status.rs` | test | s | — | — | A repo door's typed refusal keeps its own status through the real facade router (NO-DOOR… |
 | `tests/federation_connect_host_fault_status.rs` | test | m | — | — | Connect host faults keep their server status while invalid peer proofs remain request errors |
+| `tests/first_party_html_isolation.rs` | test | m | — | — | First-party HTML on the API's origin is isolated from every other document there (ARCH-0050… |
 | `tests/gate_pin_core_write_lane.rs` | test | s | — | — | OPUS-T0-F gate pins, PR 9 (Engine NOTE 13 Nov 02:19): green pins for the write gate G80 of… |
 | `tests/gate_pin_landing_facet.rs` | test | s | — | — | OPUS-T0-F gate pins, PR 4 (Engine task 12 Nov 19:38): green pins for the write gate G103 of… |
 | `tests/git_lfs_install_wait_out.rs` | test | s | — | — | L3-30 (canon ARCH-0044:471): an LFS upload whose body was received and spooled, but whose install waited… |
 | `tests/git_lfs_prehandler_refusal_envelope.rs` | test | s | — | — | A slip the owner revoked is refused at the binding door, before any route runs |
 | `tests/gpu_pod_hours.rs` | test | s | — | — | A GPU pod with `hours` takes new batches only inside them, read in its fixed UTC offset; a pod without… |
+| `tests/graduation_demote_holder_door.rs` | test | m | — | — | A policy holder demotes a graduated ramp scope over the host door (census L7-33; Engine RULING… |
 | `tests/history_import_archive_precheck.rs` | test | m | — | — | The archive pre-check under `oneiron import chatgpt <zip>`, through the shipped binary (ARCH-0027… |
 | `tests/host_init_fresh_node.rs` | test | s | — | — | `oneiron host init` on a fresh node path (FIX-LIST [T0I-HOST-INIT-SYSTEMD-DIR-TWICE]): the reference… |
 | `tests/hosted_import_archive_precheck.rs` | test | m | — | — | The archive pre-check under a hosted import (ARCH-0027 #archive-precheck: the pass "skips and lists an… |
@@ -2122,6 +2127,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
 | `tests/managed_serve_usage_metering.rs` | test | s | — | — | A managed start binds its hosted vault's usage meter before any worker starts (census L8-12… |
 | `tests/mcp_caveated_reader.rs` | test | m | — | — | MCP-CAVEATED-READER (RETRIEVAL-04): a reader's `core:read` slip, narrowed by its holder to one world… |
+| `tests/mcp_page_continuation_rejudge.rs` | test | m | — | — | L1-05 (ARCH-0028 #mcp-continuation-open): an MCP page continuation is judged again under its caller's… |
 | `tests/mcp_server_discover.rs` | test | m | — | — | L1-04 (canon ARCH-0028 "Discover catalog"; Engine RULING L1-04 = B, 13 Nov 2026): `server/discover` on the… |
 | `tests/mcp_surface_registration_latency.rs` | test | s | — | — | FIX SLOW-FACADE-CALLS-COORDINATION-08: the MCP surface registers once per process, not on every request that… |
 | `tests/media_job_staged_spend.rs` | test | s | — | — | [MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1: a media job its run's spend scope funds books its own… |

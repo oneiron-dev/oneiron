@@ -31,7 +31,9 @@ use oneiron_verb_wire::receipt::field_set::{
     FIELD_MANIFEST_ENTRIES, FIELD_MANIFEST_SOURCE_ROWS, FIELD_TYPE_REF_PROJECT,
 };
 
-const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
+#[doc(hidden)]
+use oneiron_records::receipt::field_set::FIELD_MANIFEST_ATTRIBUTION;
+
 /// OF-541: the template seat the attempt's executor was configured with;
 /// `model` is what that seat ran.
 pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
