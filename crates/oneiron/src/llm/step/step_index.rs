@@ -193,6 +193,40 @@ pub(super) fn step_claim_is_runner_execution(decoded: &DecodedStepClaim, body: &
     step_claim_producer(decoded, body) == Some(StepClaimProducer::Runner)
 }
 
+/// Whether the claim's stamped write-envelope provenance names the
+/// compaction step's surface, whatever attempt or run it binds: the read
+/// gate's test for a filed compaction step, which carries the compactor's
+/// words about the records its call read
+/// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). Wider than the memo
+/// index's [`step_claim_producer`], so a step that index refuses is gated too.
+pub(super) fn stamped_compaction_step(body: &ClaimBody) -> bool {
+    provenance_entries(body).is_some_and(|entries| {
+        provenance_field(entries, ENVELOPE_PROVENANCE_SURFACE_KEY) == Some(COMPACTION_STEP_SURFACE)
+    })
+}
+
+/// The entries of the claim's stamped write-envelope provenance map.
+fn provenance_entries(body: &ClaimBody) -> Option<&[(Value, Value)]> {
+    let Some(Value::Map(evidence)) = body.evidence.as_ref() else {
+        return None;
+    };
+    let provenance = evidence.iter().find_map(|(key, value)| {
+        (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)).then_some(value)
+    });
+    match provenance {
+        Some(Value::Map(entries)) => Some(entries.as_slice()),
+        _ => None,
+    }
+}
+
+/// The string `name` holds in a provenance map's `entries`.
+fn provenance_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a str> {
+    entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+        .and_then(Value::as_str)
+}
+
 /// The producer the claim's stamped write-envelope provenance attests: a map
 /// whose attempt id equals `attempt_id` and whose surface is the runner's,
 /// or the compaction step's with a non-empty run.
@@ -200,21 +234,8 @@ fn step_claim_provenance_producer(
     body: &ClaimBody,
     attempt_id: AttemptId,
 ) -> Option<StepClaimProducer> {
-    let Some(Value::Map(evidence)) = body.evidence.as_ref() else {
-        return None;
-    };
-    let provenance = evidence.iter().find_map(|(key, value)| {
-        (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)).then_some(value)
-    });
-    let Some(Value::Map(entries)) = provenance else {
-        return None;
-    };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
-            .and_then(Value::as_str)
-    };
+    let entries = provenance_entries(body)?;
+    let field = |name: &str| provenance_field(entries, name);
     let expected_attempt = bytes_to_hex_lower(attempt_id.as_bytes());
     if field(ENVELOPE_PROVENANCE_ATTEMPT_KEY) != Some(expected_attempt.as_str()) {
         return None;

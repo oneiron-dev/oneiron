@@ -14,12 +14,17 @@
 //! next reply answers in. The lane admits the conversation's MESSAGEs by the
 //! read grant the agent's first witness of it issues (FIX 10895,
 //! [`super::connector_witness_grant`]); a grant that fails to issue is owed
-//! a repair and never holds the turn back.
+//! a repair and never holds the turn back. A self agent's reply reads the
+//! conversation's log instead, as its chat does: its own standing summaries,
+//! then the turns none covers (OWN-VOICE-EPOCHS = C).
+
+use std::collections::BTreeMap;
 
 use rmpv::Value as Msgpack;
 use serde_json::json;
 
 use crate::Vault;
+use crate::compaction::{ChatLog, ChatLogLine, read_chat_log};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{
@@ -232,6 +237,57 @@ impl Vault {
         Ok(history)
     }
 
+    /// The log of the conversation `origin` belongs to, as `agent`'s own
+    /// read lane admits it (OWN-VOICE-EPOCHS = C): each standing summary the
+    /// agent wrote of the turns it covers, then every retained message no
+    /// summary covers, the last `hot_turns` turns never in a compaction
+    /// window. Each message comes with the provenance a reply labels foreign
+    /// words by, and this exchange's own inbound and reply turns are left out
+    /// as [`Self::connector_conversation_history`] leaves them out. `None`
+    /// when the lane does not admit the conversation yet: no witness, or no
+    /// read grant (FIX 10895).
+    ///
+    /// # Errors
+    /// The log or the transcript read fails.
+    pub fn connector_conversation_log(
+        &self,
+        agent: EntityId,
+        origin: &SurfaceConnectorPayload,
+        reply_ref: &str,
+        hot_turns: u64,
+    ) -> MemoryResult<Option<ConnectorConversationLog>> {
+        let conversation = connector_conversation_id(origin)?;
+        let memory = self.memory(agent, EdgeActorClass::Agent);
+        let log = match read_chat_log(&memory, conversation, hot_turns, usize::MAX) {
+            Ok(log) => log,
+            Err(error) if error.code == MEMORY_CODE_NOT_FOUND => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        // The log's lines carry no provenance: each retained message is read
+        // again through the same lane, by its id.
+        let mut retained: BTreeMap<String, TranscriptMessage> = self
+            .connector_conversation_history(agent, origin, reply_ref)?
+            .into_iter()
+            .map(|message| (message.id.clone(), message))
+            .collect();
+        let lines = log
+            .lines
+            .iter()
+            .zip(&log.message_ids)
+            .filter_map(|(line, id)| match (line, id) {
+                (ChatLogLine::Summary { epoch, text, .. }, _) => Some(ConnectorLogLine::Summary {
+                    epoch: *epoch,
+                    text: text.clone(),
+                }),
+                (ChatLogLine::Message { .. }, Some(id)) => {
+                    retained.remove(&id.to_hex()).map(ConnectorLogLine::Message)
+                }
+                (ChatLogLine::Message { .. }, None) => None,
+            })
+            .collect();
+        Ok(Some(ConnectorConversationLog { log, lines }))
+    }
+
     fn witness_connector_turn(
         &self,
         agent: EntityId,
@@ -278,7 +334,7 @@ impl Vault {
                             source,
                         );
                     }
-                    Ok(())
+                    hold_in_thread_session_in_txn(self, txn, agent, conversation, now)
                 })?;
         let read_grant_repair = self
             .issue_connector_witness_read_grant(agent, conversation, now)
@@ -292,6 +348,49 @@ impl Vault {
             read_grant_repair,
         })
     }
+}
+
+/// Holds the connector thread `conversation`'s turns in the thread's own
+/// SESSION, in the witness's transaction (OWN-VOICE-EPOCHS = C; Engine ruling
+/// UNBUILT-02-SITTING = A): the SESSION its epochs' lineage runs in. The
+/// thread's first witness mints the SESSION. Each witness holds every turn of
+/// the thread that has no SESSION yet, the one it just landed and an older
+/// thread's earlier turns alike; a turn already held keeps its SESSION
+/// (first-write-wins). A turn that occurred before the last turn the
+/// thread's landed epochs cover is not held: numbered there, it would move
+/// the turns they cover, so it stays a raw line no epoch takes. While that
+/// last covered turn's own row does not read (it was hard-erased), no turn
+/// can be placed against it, so none is held.
+fn hold_in_thread_session_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    agent: EntityId,
+    conversation: EntityId,
+    now: u64,
+) -> MemoryResult<()> {
+    let store = &vault.store;
+    let session = vault.thread_session_in_txn(txn, conversation, agent, now)?;
+    let end =
+        match crate::compaction::conversation_covered_end_in(store, txn, session, conversation)? {
+            Some(end) => match crate::compaction::thread_turn_key_in(store, txn, &end)? {
+                Some((key, _)) => Some(key),
+                None => return Ok(()),
+            },
+            None => None,
+        };
+    for turn in crate::compaction::conversation_turns_in(store, txn, &conversation)? {
+        if crate::compaction::turn_session_membership_in_txn(store, txn, &turn)?.is_some() {
+            continue;
+        }
+        if let Some(end) = end
+            && crate::compaction::thread_turn_key_in(store, txn, &turn)?
+                .is_none_or(|(key, _)| key <= end)
+        {
+            continue;
+        }
+        crate::compaction::record_turn_session_membership_in_txn(store, txn, &turn, Some(session))?;
+    }
+    Ok(())
 }
 
 /// Refuses the witness when its agent, or anyone its exchange names, is
@@ -329,6 +428,43 @@ pub struct ConnectorWitness {
     pub read_grant_repair: Option<MemoryError>,
 }
 
+/// A connector conversation's log as a reply reads it (OWN-VOICE-EPOCHS =
+/// C): [`Vault::connector_conversation_log`].
+#[derive(Debug, Clone)]
+pub struct ConnectorConversationLog {
+    /// The chat log the reply's compaction breakpoint holds its threshold
+    /// against and takes its window from.
+    pub log: ChatLog,
+    /// What the reply reads, oldest first.
+    pub lines: Vec<ConnectorLogLine>,
+}
+
+/// One line of a connector conversation's log as a reply reads it.
+#[derive(Debug, Clone)]
+pub enum ConnectorLogLine {
+    /// A standing summary in place of the turns it covers: the agent's own
+    /// words about them.
+    Summary { epoch: u64, text: String },
+    /// One retained message, with its provenance.
+    Message(TranscriptMessage),
+}
+
+/// The MESSAGE `agent`'s reply kept as `reply_ref` to the message `origin`
+/// brought lands at once it is delivered. It is known before the reply
+/// lands, so the reply's compaction files its paid calls under it
+/// (OWN-VOICE-EPOCHS = C).
+///
+/// # Errors
+/// The id does not derive.
+pub fn connector_reply_message_id(
+    origin: &SurfaceConnectorPayload,
+    agent: EntityId,
+    reply_ref: &str,
+) -> MemoryResult<EntityId> {
+    let [_, (message, _)] = connector_witness_row_ids(origin, agent, reply_ref)?;
+    Ok(message)
+}
+
 /// The MESSAGE and TURN ids `agent`'s witness of the exchange `origin`
 /// brought lands at (FIX 10897): the inbound side, then the reply kept as
 /// `reply_ref`, each as (message, turn). They derive from the exchange
@@ -360,7 +496,9 @@ pub(crate) fn connector_witness_row_ids(
 /// The conversation an event belongs to: one per channel, receiving
 /// identity, provider thread and audience, so a LINE group's members share
 /// one and a direct message has its own.
-fn connector_conversation_id(origin: &SurfaceConnectorPayload) -> MemoryResult<EntityId> {
+pub(crate) fn connector_conversation_id(
+    origin: &SurfaceConnectorPayload,
+) -> MemoryResult<EntityId> {
     let parts = [
         origin.channel.as_bytes(),
         origin.receiving_identity_ref.as_bytes(),
