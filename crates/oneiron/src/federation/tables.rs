@@ -65,7 +65,11 @@ crate::side_table::side_tables! {
     /// to what, and when; the receipt that names a holder of an `engine.controls` class. Key:
     /// id16 (the change). A hard erase of an actor takes out the receipts that name it.
     FEDERATION_ENGINE_CONTROL_CHANGE: VaultMeta b"federation:engine_control_change:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical]
+        // Restore class (FABLE-6916-1): a receipt records an act. A knob such as the projector
+        // or sieve policy restores live, so its receipts stay as the live vault holds them, as
+        // FEDERATION_ENGINE_DEFAULT_GRANT's do. Where a knob restores with content, its receipt
+        // stays as the record of a change the restore rolled back.
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::federation::erase_engine_control_actor_in_txn;
     /// One grant the engine stood by default (lead 10 Nov 06:5x): a base agent's Steward grant
     /// stood when a host first opened the vault, the engine's act and never the owner's. The

@@ -155,7 +155,7 @@ pub fn outbound_approve_once_digest(
     vault: &Vault,
     request: &OutboundDispatchRequest,
 ) -> Result<Option<EffectDigest>, OutboundDispatchError> {
-    Ok(pinned_approval_digest(&outbound_gate_effect(
+    Ok(ApprovalTarget::approve_once_digest(&outbound_gate_effect(
         vault, request,
     )?))
 }
@@ -176,7 +176,7 @@ pub fn outbound_step_approve_once_digest(
 ) -> Result<Option<EffectDigest>, OutboundDispatchError> {
     let binding =
         crate::model_step_effect::step_effect_binding_for_request(attempt_id, step_request)?;
-    Ok(pinned_approval_digest(&prepared_gate_effect(
+    Ok(ApprovalTarget::approve_once_digest(&prepared_gate_effect(
         vault,
         request,
         Some(binding),
@@ -264,14 +264,9 @@ pub(crate) fn outbound_preflight_effect(
 
 /// FIX 6424: the approve-once digest a held `effect` names, 64 lower-hex,
 /// the one the Gate's spend lookup composes; `None` for an effect whose
-/// family pins no target.
+/// family pins no target. Its family composes it (FIX 22398).
 pub(super) fn approval_digest(effect: &ExternalEffectGateInput) -> Option<String> {
-    pinned_approval_digest(effect).map(|digest| digest.to_hex())
-}
-
-fn pinned_approval_digest(effect: &ExternalEffectGateInput) -> Option<EffectDigest> {
-    effect.provenance.approval_target.as_ref()?;
-    crate::gate::external_effect_approval_digest(effect)
+    ApprovalTarget::held_digest(effect)
 }
 
 /// FIX 6424: the send ref `request`'s frozen payload carries, for a family

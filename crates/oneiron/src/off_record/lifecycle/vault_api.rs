@@ -660,9 +660,12 @@ pub(super) fn set_entry_mode(
         OffRecordMode::OffRecord => entry.overlay.rearm()?,
     }
     state.record.mode = mode;
-    // Off record again, nobody's vault takes the room's turns.
+    // Off record again, nobody's vault takes the room's turns, and the next
+    // on-record stretch is a conversation of its own (FIX 22388): its first
+    // witness allocates a fresh continuation shell.
     if mode != OffRecordMode::OnRecord {
         state.saver = None;
+        state.continuation_shell = None;
     }
     entry.publish_state(state);
     Ok(state.record.clone())

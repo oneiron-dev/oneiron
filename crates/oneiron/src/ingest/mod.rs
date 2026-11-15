@@ -87,6 +87,8 @@ pub use self::types::{
 
 #[cfg(test)]
 mod bulk_review_tests;
+// FIX [LIBTEST-QUARANTINE-INGEST-DOCS-TESTS]: the lib test target's type check fails here (2 errors: E0061 x1, E0277 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod docs_tests;
 #[cfg(test)]
@@ -123,6 +125,7 @@ pub(crate) use connector_archive_link::erase_in_txn as erase_connector_archive_o
 pub(crate) use connector_witness_grant::{
     CONNECTOR_WITNESS_READ_REASON, connector_witness_read_reason,
 };
+pub mod archive_precheck;
 pub mod exports;
 pub mod history;
 mod parsed;

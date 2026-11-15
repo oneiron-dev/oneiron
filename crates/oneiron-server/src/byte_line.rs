@@ -330,7 +330,7 @@ impl ByteLine {
     }
 
     /// The bytes the line holds.
-    #[cfg(test)]
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn total(&self) -> usize {
         self.total
     }

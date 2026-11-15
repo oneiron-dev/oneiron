@@ -437,10 +437,10 @@ fn numbered_value_key_id(
     key_id
 }
 
+/// A status's byte in a signed transition (byte 1 is not assigned).
 pub(super) fn status_byte(status: SecretCustodyStatus) -> u8 {
     match status {
         SecretCustodyStatus::Active => 0,
-        SecretCustodyStatus::Suspended => 1,
         SecretCustodyStatus::Revoked => 2,
     }
 }
@@ -448,7 +448,6 @@ pub(super) fn status_byte(status: SecretCustodyStatus) -> u8 {
 fn status_from_byte(byte: u8) -> Result<SecretCustodyStatus> {
     Ok(match byte {
         0 => SecretCustodyStatus::Active,
-        1 => SecretCustodyStatus::Suspended,
         2 => SecretCustodyStatus::Revoked,
         _ => return Err(malformed()),
     })
