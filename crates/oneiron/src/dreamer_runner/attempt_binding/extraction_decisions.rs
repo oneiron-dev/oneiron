@@ -18,7 +18,7 @@ impl DreamerAttemptBinding {
         match self.facet {
             BoundFacet::ConflictSettle => self.settlement_verdict(input),
             BoundFacet::Extraction => self.extraction_verdict(input),
-            BoundFacet::Strength => Err(facet_refused(self.facet)),
+            BoundFacet::Strength | BoundFacet::PsychProfile => Err(facet_refused(self.facet)),
         }
     }
 

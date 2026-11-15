@@ -52,8 +52,9 @@ pub struct Outcome {
     pub chosen: usize,
     /// Whether the profile landed.
     pub landed: bool,
-    /// Why the engine refused the model's reply, when it did; the step was
-    /// paid and nothing was committed.
+    /// Why the step ended with no tiers, when it did: the engine refused the
+    /// model's reply (the step was paid), or an owner's erase took the step.
+    /// Nothing was committed.
     pub reply_refused: Option<String>,
     /// The refusal tokens of a commit the engine refused.
     pub refusals: Vec<String>,
@@ -131,7 +132,7 @@ pub fn run(client: &OneironClient, input: &Input) -> Result<Outcome, Error> {
         call(
             client,
             SOURCES_PAGE_VERB,
-            json!({ "person": input.person, "facet": input.facet, "world": input.world }),
+            json!({ "person": &input.person, "facet": &input.facet, "world": &input.world }),
         )?,
     )?;
     let served = page.value.candidates;
@@ -158,7 +159,7 @@ pub fn run(client: &OneironClient, input: &Input) -> Result<Outcome, Error> {
     let versions: Vec<&SourceVersion> = chosen.iter().map(|candidate| &candidate.version).collect();
     let receipt: Receipt = decode(
         STEP_SUBMIT_VERB,
-        call(client, STEP_SUBMIT_VERB, json!({ "sources": versions }))?,
+        call(client, STEP_SUBMIT_VERB, json!({ "sources": &versions }))?,
     )?;
     let tiers = match receipt.result {
         Some(StepResult {
@@ -171,6 +172,12 @@ pub fn run(client: &OneironClient, input: &Input) -> Result<Outcome, Error> {
         }) if status == "failed" => {
             outcome.reply_refused =
                 Some(failure.map_or_else(|| status.clone(), |failure| failure.to_string()));
+            return Ok(outcome);
+        }
+        // An owner's erase took the step's request and result: it is over
+        // and never asked again, so the attempt ends as a refused one does.
+        Some(StepResult { status, .. }) if status == "erased" => {
+            outcome.reply_refused = Some("an owner's erase took the step".to_owned());
             return Ok(outcome);
         }
         Some(StepResult { status, .. }) => return Err(Error::Unsettled { status }),
@@ -191,9 +198,9 @@ pub fn run(client: &OneironClient, input: &Input) -> Result<Outcome, Error> {
                     "kind": "psych_profile",
                     "spec": {
                         "local": PROFILE_LOCAL,
-                        "person": input.person,
-                        "facet": input.facet,
-                        "world": input.world,
+                        "person": &input.person,
+                        "facet": &input.facet,
+                        "world": &input.world,
                         "compact": tiers.compact,
                         "text": tiers.text,
                         "narrative": tiers.narrative,
@@ -201,7 +208,7 @@ pub fn run(client: &OneironClient, input: &Input) -> Result<Outcome, Error> {
                         "claims": versions.iter().map(|version| &version.entity).collect::<Vec<_>>(),
                     },
                 }],
-                "sources": versions,
+                "sources": &versions,
             }),
         )?,
     )?;
