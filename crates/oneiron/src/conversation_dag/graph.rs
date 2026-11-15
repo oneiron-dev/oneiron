@@ -370,7 +370,7 @@ pub(crate) fn chain(
         }
         require_member(store, txn, conversation, &id)?;
         records.push(id);
-        cursor = parent(store, txn, &id)?;
+        cursor = None;
     }
     let mut walk = walk_count(store, txn, conversation)?;
     walk.rows(records.len());
