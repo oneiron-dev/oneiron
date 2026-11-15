@@ -83,7 +83,19 @@ pub(super) fn signs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool>
         .authority_view_readonly_in_txn(txn)?
         .vault_id
         .is_some()
-        && vault.loaded_install_signer().is_some())
+        && signer_in_txn(vault, txn)?.is_some())
+}
+
+/// The signer the host loaded for the machine id `txn` holds. A signer loaded for an id
+/// since dropped would sign as a machine this install no longer is, so it is none.
+fn signer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<std::sync::Arc<crate::identity::InstallSigner>>> {
+    let machine = crate::identity::read_machine_id_in_txn(vault, txn)?;
+    Ok(vault
+        .loaded_install_signer()
+        .filter(|signer| Some(signer.machine) == machine))
 }
 
 /// Whether this install's door wrote exactly `body` as the fact row `fact_ref`.
@@ -112,7 +124,7 @@ pub(super) fn carrier_signature_in_txn(
     let Some(vault_id) = vault.authority_view_readonly_in_txn(txn)?.vault_id else {
         return Ok(None);
     };
-    let Some(signer) = vault.loaded_install_signer() else {
+    let Some(signer) = signer_in_txn(vault, txn)? else {
         tracing::warn!(
             "no install signer loaded: this task fact is written unsigned and counts on this install only"
         );
