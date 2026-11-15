@@ -6,13 +6,10 @@
 //! One row per proof kind the rows name today, plus one row per check of
 //! the old hand list of verb names, which 0a moves into the rows. That is
 //! one row or more per rule of the table, so a kind folded into a shared
-//! rule keeps who it admits. Each row is judged for three callers, each on
-//! its own slip with its holder proof:
-//! - `owner`: this install's host root, a self-hosted vault's owner;
-//! - `agent`: a registered agent principal on its own slip (actor class
-//!   `agent`, read, propose and write), holding no Grant;
-//! - `unbound`: a slip naming a principal the vault does not know, with no
-//!   actor class.
+//! rule keeps who it admits. Each row is judged for the three callers of
+//! `support/door_rule_fixture.rs`: `owner` (this install's host root),
+//! `agent` (a registered agent on its own slip, holding no Grant) and
+//! `unbound` (a slip naming a principal the vault does not know).
 //!
 //! The table below is what main admits. A mismatch lists every row's
 //! observed answers at once. An IN is only this pre-hook check: the room
@@ -28,21 +25,10 @@
 //! --locked -p oneiron-server --all-features --test door_rule_admission`.
 #![cfg(oneiron_test_support)]
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
+#[path = "support/door_rule_fixture.rs"]
+mod door_rule_fixture;
 
-use axum::http::{HeaderMap, HeaderValue};
-use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
-use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::{EntityId, Vault, VaultConfig};
-use oneiron_keystore::MemoryKeystore;
-use oneiron_server::config::SyncServerConfig;
-use oneiron_server::server::SyncServer;
-use oneiron_server::test_doors::door_rule_admission::row_door_admits;
-use serde_json::json;
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+use door_rule_fixture::{TestResult, admits, setup};
 
 /// Admitted before the row's hooks.
 const IN: bool = true;
@@ -242,129 +228,6 @@ const ROWS: &[(&str, &str, bool, bool, bool)] = &[
     ),
 ];
 
-/// How a slip's holder proves possession of it.
-enum Holder {
-    /// The host root: the issuer signs its binding proof.
-    Root,
-    /// A minted slip: its holder's own key signs the binding transcript.
-    Key(SigningKey),
-}
-
-/// A slip and the proof of its holder.
-struct Credential {
-    slip: CapabilitySlip,
-    holder: Holder,
-}
-
-struct Fixture {
-    _dir: tempfile::TempDir,
-    vault: Arc<Vault>,
-    server: Arc<SyncServer>,
-    issuer: HostSlipIssuer,
-    owner: Credential,
-    agent: Credential,
-    unbound: Credential,
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// A slip minted under `root`'s issuer for `holder_ref`, with `actor_class`,
-/// read, propose and write (never owner grade), held by the key `seed`.
-fn mint(
-    vault: &Vault,
-    issuer: &HostSlipIssuer,
-    root: &CapabilitySlip,
-    holder_ref: String,
-    actor_class: Option<&str>,
-    seed: u8,
-) -> TestResult<Credential> {
-    let key = SigningKey::from_bytes(&[seed; 32]);
-    let mut claims = root.claims.clone();
-    claims.parent_id = None;
-    claims.holder_ref = holder_ref;
-    claims.binding_key = key.verifying_key().to_bytes();
-    claims.actor_class = actor_class.map(str::to_owned);
-    claims.scope = Scope::top();
-    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from([
-        "read".to_owned(),
-        "propose".to_owned(),
-        "write".to_owned(),
-    ]));
-    claims.slip_id = [seed; 32];
-    Ok(Credential {
-        slip: vault.mint_capability_slip(issuer, claims)?,
-        holder: Holder::Key(key),
-    })
-}
-
-fn setup() -> TestResult<Fixture> {
-    let dir = tempfile::tempdir()?;
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
-    vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
-    let server = Arc::new(SyncServer::new(
-        Arc::clone(&vault),
-        SyncServerConfig {
-            auth_secret: Some("door-rule-admission".into()),
-            ..Default::default()
-        },
-    )?);
-    let issuer = vault.load_host_slip_issuer()?;
-    let root = vault.ensure_host_root_slip(&issuer)?;
-    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
-    let agent_ref = vault.ensure_agent_principal("door-rule-admission-agent")?;
-    let agent = mint(
-        &vault,
-        &issuer,
-        &root,
-        agent_ref.to_hex(),
-        Some("agent"),
-        0x71,
-    )?;
-    let unbound = mint(&vault, &issuer, &root, EntityId::now().to_hex(), None, 0x72)?;
-    Ok(Fixture {
-        _dir: dir,
-        vault,
-        server,
-        issuer,
-        owner: Credential {
-            slip: root,
-            holder: Holder::Root,
-        },
-        agent,
-        unbound,
-    })
-}
-
-/// The request headers `credential` presents: its token and a fresh holder
-/// proof.
-fn headers(fixture: &Fixture, credential: &Credential) -> TestResult<HeaderMap> {
-    let timestamp = fixture.vault.now_recorded_at();
-    let nonce = EntityId::now().to_hex();
-    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
-    let signature = match &credential.holder {
-        Holder::Root => hex(&fixture
-            .issuer
-            .binding_proof(&credential.slip, challenge.as_bytes())?),
-        Holder::Key(key) => {
-            let transcript = credential.slip.binding_transcript(challenge.as_bytes())?;
-            hex(&key.sign(&transcript).to_bytes())
-        }
-    };
-    let binding = json!({"timestamp": timestamp, "nonce": nonce, "signature": signature});
-    let mut map = HeaderMap::new();
-    map.insert(
-        "authorization",
-        HeaderValue::from_str(&format!("Bearer {}", credential.slip.to_token()?))?,
-    );
-    map.insert(
-        "x-oneiron-binding",
-        HeaderValue::from_str(&binding.to_string())?,
-    );
-    Ok(map)
-}
-
 /// Every row admits before its hooks exactly the callers main admits. A
 /// mismatch names every row's observed answers.
 #[test]
@@ -379,7 +242,7 @@ fn each_proof_kind_admits_the_callers_main_admits() -> TestResult {
             ("agent", &fixture.agent, agent),
             ("unbound", &fixture.unbound, unbound),
         ] {
-            let answer = row_door_admits(&fixture.server, &headers(&fixture, credential)?, verb);
+            let answer = admits(&fixture, credential, verb)?;
             if answer.is_ok() != expected {
                 mismatched += 1;
             }
@@ -415,9 +278,7 @@ fn every_caller_is_authenticated() -> TestResult {
         ("unbound", &fixture.unbound),
     ] {
         for &(_, verb, ..) in ROWS {
-            if let Err(refusal) =
-                row_door_admits(&fixture.server, &headers(&fixture, credential)?, verb)
-            {
+            if let Err(refusal) = admits(&fixture, credential, verb)? {
                 assert!(
                     !refusal.starts_with("credential:"),
                     "{who} on {verb}: {refusal}"
