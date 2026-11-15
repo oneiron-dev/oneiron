@@ -6,10 +6,14 @@ use serde::{Deserialize, Serialize};
 
 use super::ModelLocality;
 use super::manifest::{self, ModelSlot};
+use super::model_pack::{MODEL_PACK_REVERT_VERB, ModelPackChangeCause};
 use super::routing::DescriptionPolicy;
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{ItemDomain, Kind, SettingChange, SettingValue};
+use crate::setting::{
+    EncodedValue, ItemDomain, Kind, Setter, SettingChange, SettingMode, SettingValue,
+};
+use crate::settings::model_pack::ModelPackPreference;
 
 fn no_description_policy() -> Option<DescriptionPolicy> {
     None
@@ -75,6 +79,59 @@ fn check_resident_route_in_txn(
         .try_for_each(|slot| manifest::route_admits(&manifest, slot, route))
 }
 
+/// The owner's model pack preference as a setting value: follow the latest pack (the default),
+/// pin a season or pin one pack.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct ModelPackPreferenceValue(pub(crate) ModelPackPreference);
+
+impl SettingValue for ModelPackPreferenceValue {}
+
+/// What moved the pack in effect. The engine writes this key only on a retirement's move; the
+/// owner's one-tap revert gives its verb as the change's reason; any other change is the owner's
+/// setting.
+fn model_pack_change_cause(change: &SettingChange) -> ModelPackChangeCause {
+    match change.setter {
+        Setter::Engine { .. } => ModelPackChangeCause::Retirement,
+        Setter::Owner
+            if change
+                .why
+                .as_deref()
+                .is_some_and(|why| why.starts_with(MODEL_PACK_REVERT_VERB)) =>
+        {
+            ModelPackChangeCause::Revert
+        }
+        _ => ModelPackChangeCause::Preference,
+    }
+}
+
+/// The model pack preference is one value row at the vault, so the revert and a retirement's
+/// move, which write that row, always decide: a pin of it is refused. A season or pack pin names
+/// one the vault can follow now. The change records the move of the pack in effect, with its
+/// notice and revert (FIX 5369); the pack before it is the one the row's prior value selects.
+fn note_model_pack_preference_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    if change.mode == SettingMode::Pin {
+        return Err(Error::InvalidConfig(
+            "the model pack preference is one value row: a pin of it would hold back the \
+             one-tap revert and a retirement's move"
+                .into(),
+        ));
+    }
+    let preference = |value: Option<&EncodedValue>| {
+        value
+            .and_then(EncodedValue::decode::<ModelPackPreferenceValue>)
+            .unwrap_or_default()
+            .0
+    };
+    vault.check_model_pack_preference_in_txn(txn, &preference(change.value.as_ref()))?;
+    let before = vault.model_pack_selected_in_txn(txn, &preference(change.prior.as_ref()))?;
+    vault.note_active_model_pack_in_txn(txn, before, model_pack_change_cause(change))
+}
+
 crate::setting::setting_keys! {
     /// The vault's model description policy: the models a routed seat may take, the owner's line
     /// about each, and the effort defaults. Null is no policy: a routed seat or verdict is then
@@ -91,5 +148,14 @@ crate::setting::setting_keys! {
         kind: Kind::new(no_resident_route),
         item: Some(ItemDomain { name: "model slot", admits: admits_slot }),
         on_change: Some(check_resident_route_in_txn),
+    };
+    /// The owner's model pack preference (FIX 5367, 5369): follow the latest pack (the default),
+    /// pin a season while an installed pack of it is served, or pin one installed, served pack,
+    /// as the one-tap revert does. A change that moves the pack in effect sends its notice. One
+    /// value row: a pin of it is refused. A retirement moves a pin whose pack retired to its
+    /// successor as the engine's own change.
+    pub(crate) MODEL_PACK_PREFERENCE: ModelPackPreferenceValue = "models.pack_preference" {
+        kind: Kind::new(ModelPackPreferenceValue::default),
+        on_change: Some(note_model_pack_preference_in_txn),
     };
 }

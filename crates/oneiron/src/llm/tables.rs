@@ -79,12 +79,9 @@ crate::side_table::side_tables! {
     /// FIX 5369). Key: ().
     LLM_MODEL_PACK_ACTIVE: VaultMeta b"llm:model_pack_active:v1" Named
         // Restore class: FIX 5367: the followed-pack record travels with the install receipts it
-        // names; the owner's follow-or-pin preference stands as the live vault holds it.
+        // names; the owner's follow-or-pin preference (`models.pack_preference`) stands as the
+        // live vault holds it.
         [restore: content] [family: unclassified] [tier: canonical];
-    /// The owner's model pack preference: follow the latest pack, pin a season or pin one pack
-    /// (FIX 5367, FIX 5369). Key: ().
-    LLM_MODEL_PACK_PREFERENCE: VaultMeta b"llm:model_pack_preference:v1" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Each model pack retirement notice sent to the vault's owners, and when, so a restart or a
     /// second pass sends none twice (FIX 5368). Key: u64be(retirement epoch day) + u64be(mark,
     /// days before it) + string(`pack:<pack id>` or `model:<model id>`).
