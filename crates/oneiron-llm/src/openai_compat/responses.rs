@@ -18,7 +18,7 @@ use oneiron::llm::{
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStreamEvent,
-    LlmToolSpec, LlmUsage, ResponseFormat,
+    LlmToolSpec, LlmUsage, ResponseFormat, provider_finish_reason,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use std::collections::{BTreeMap, VecDeque};
@@ -265,14 +265,10 @@ fn responses_finish_reason(response: &JsonValue, content: &[ContentPart]) -> Fin
         {
             Some("max_output_tokens") => FinishReason::Length,
             Some("content_filter") => FinishReason::ContentFiltered,
-            Some(other) => FinishReason::Other {
-                name: other.to_owned(),
-            },
+            Some(other) => provider_finish_reason(other),
             None => FinishReason::Length,
         },
-        Some(other) => FinishReason::Other {
-            name: other.to_owned(),
-        },
+        Some(other) => provider_finish_reason(other),
         None => FinishReason::Other {
             name: "unreported".to_owned(),
         },

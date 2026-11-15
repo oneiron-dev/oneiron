@@ -8,7 +8,7 @@ use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, is_solo, limit};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmCapability, LlmError, LlmInputUsage,
     LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec,
-    LlmUsage, ModelLocality, ResponseFormat, RetryableLlmError,
+    LlmUsage, ModelLocality, ResponseFormat, RetryableLlmError, provider_finish_reason,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use std::collections::BTreeMap;
@@ -496,9 +496,7 @@ pub(crate) fn openai_finish_reason(reason: &str) -> FinishReason {
         "length" => FinishReason::Length,
         "tool_calls" | "function_call" => FinishReason::ToolCalls,
         "content_filter" => FinishReason::ContentFiltered,
-        other => FinishReason::Other {
-            name: other.to_owned(),
-        },
+        other => provider_finish_reason(other),
     }
 }
 

@@ -180,6 +180,7 @@ pub(crate) use self::step::{
 };
 pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
+pub use oneiron_model::llm::provider_finish_reason;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,

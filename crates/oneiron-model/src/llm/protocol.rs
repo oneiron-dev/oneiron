@@ -424,6 +424,24 @@ pub enum FinishReason {
     },
 }
 
+/// The [`FinishReason::Other`] name a provider finish string lands under.
+///
+/// A provider string that starts with an engine-authored prefix (`fallback:`
+/// or `authored:`) is stored with a `provider:` prefix in front, so no engine
+/// reader takes it as authored. Every other provider string stays exactly as
+/// the provider sent it.
+pub fn provider_finish_reason(name: &str) -> FinishReason {
+    if name.starts_with("fallback:") || name.starts_with("authored:") {
+        FinishReason::Other {
+            name: format!("provider:{name}"),
+        }
+    } else {
+        FinishReason::Other {
+            name: name.to_owned(),
+        }
+    }
+}
+
 /// Why an answer ended [`FinishReason::Incomplete`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
