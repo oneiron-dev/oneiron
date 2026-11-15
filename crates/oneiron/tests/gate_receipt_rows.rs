@@ -11,7 +11,8 @@
 //!   added by UC-03 PR 1g, the one row here with a bound id and a bound time).
 //! - 1h the rest: the owner approves an agent's plan-doc (`note/plan_doc.rs`), and a connector
 //!   key's register receipt (`connector_key/txn.rs`; added by UC-03 PR 1h, a row whose time its
-//!   caller binds).
+//!   caller binds), and the owner's delete of a NOTE (`deletion/gate.rs`; added by UC-03 PR
+//!   1h-ii, a row built before its write transaction opens).
 //!
 //! The foreign grant and the plan-doc approval are two of the owner's yeses that D2 (UC-03 PR 5)
 //! respells from `allow` to `approved`; PR 5 moves those two pins with its behaviour change.
@@ -32,11 +33,15 @@ use oneiron::claim::base_world_id;
 use oneiron::connector_key::{ConnectorKeyRecord, encode_connector_key_body};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::counterparty_contact::CounterpartyContactRecord;
+use oneiron::deletion::TombstoneReason;
 use oneiron::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
 };
 use oneiron::federation::{Scope, ScopeId};
-use oneiron::note::{PlanDocProposeRequest, PlanDocVerdictRequest, approve_plan_doc_as};
+use oneiron::memory::SafeDeleteReason;
+use oneiron::note::{
+    PlanDocProposeRequest, PlanDocVerdictRequest, TakeTarget, approve_plan_doc_as,
+};
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::store::{
     GateDecisionContext, GateDecisionId, GateDecisionReadContext, GateDecisionRecord, GateLoopLink,
@@ -473,6 +478,72 @@ fn a_connector_key_register_row_keeps_its_fields() -> TestResult {
             claim_id: None,
             grant_ref: Some(grant_ref),
             diff_handle: handle.finalize().to_vec(),
+            read_frontier_hash: frontier,
+            context: GateDecisionContext::default(),
+            redacted_at: None,
+        }
+    );
+    Ok(())
+}
+
+/// Family 1h: the owner deletes a NOTE through `vault.delete`'s call, `Memory::safe_delete`. The
+/// deletion's plan builds this row before any write transaction opens, with the request's id and
+/// time bound, and a later transaction appends it. The fixture is G41's
+/// (`tests/gate_pins_authority_rechecks.rs`): a seeded vault, its embedded owner and a keystore.
+#[test]
+fn an_owner_delete_row_keeps_its_fields() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: 1_780_000_000,
+            end: 1_780_000_000,
+        },
+        1_780_000_000,
+        &rmp_serde::to_vec_named(&json!({ "name": "delete guard subject" }))?,
+    )?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let note = memory
+        .author_take(TakeTarget::Subject(subject), "a take the owner deletes")?
+        .id_hex;
+    let note_id = EntityId::from_hex(&note)?;
+
+    let receipt = memory.safe_delete(&note, SafeDeleteReason::UserDelete)?;
+
+    assert!(receipt.existed);
+    let mut handle = Sha256::new();
+    handle.update(b"oneiron.gate.deletion.v0");
+    handle.update(owner.as_bytes());
+    handle.update(note_id.as_bytes());
+    handle.update([TombstoneReason::UserDelete.wire_byte()]);
+    let handle = handle.finalize().to_vec();
+    let rows: Vec<GateDecisionRecord> = vault
+        .gate_decisions(64)?
+        .into_iter()
+        .filter(|row| row.content_kind == "deletion" && row.diff_handle == handle)
+        .collect();
+    assert_eq!(rows.len(), 1, "the delete of the NOTE writes one row");
+    let frontier = door::policy_frontier(&vault)?;
+    assert_eq!(
+        fields(&rows[0]),
+        Fields {
+            version: 0,
+            outcome: "allow".to_owned(),
+            reason_codes: strings(&["gate.allow.owner_delete"]),
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "human".to_owned(),
+            actor_ref: Some(owner.to_hex()),
+            content_kind: "deletion".to_owned(),
+            policy_manifest_version: POLICY_VERSION.to_owned(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: handle,
             read_frontier_hash: frontier,
             context: GateDecisionContext::default(),
             redacted_at: None,

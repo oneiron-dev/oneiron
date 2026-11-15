@@ -1,7 +1,7 @@
 //! Doors for `tests/gate_receipt_rows.rs` and `tests/gate_receipt_mint.rs`
 //! (UC-03 PR 0): one Gate ledger row read back by its id, the read frontier
 //! of the policy the vault resolves to now, and the receipt draft minted
-//! through the one writer with each of its forms.
+//! through the one writer with each of its forms, and through its bound half.
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -133,6 +133,18 @@ pub fn record_bound_receipt(
     receipt.id = Some(decision);
     receipt.decided_at = Some(RecordedSeconds::from_secs(at));
     vault.with_write_txn(|txn| vault.store.record_gate_receipt_in_txn(txn, receipt))
+}
+
+/// The guard draft with `decision` and `at` as given, built by the mint's
+/// bound half alone (`GateReceipt::mint_bound`), with no vault.
+pub fn mint_bound_receipt(
+    decision: Option<GateDecisionId>,
+    at: Option<u64>,
+) -> Result<GateDecisionRecord> {
+    let mut receipt = guard_receipt(ReceiptActor::Engine, PolicyBasis::NOT_READ);
+    receipt.id = decision;
+    receipt.decided_at = at.map(RecordedSeconds::from_secs);
+    receipt.mint_bound()
 }
 
 /// Two drafts that take fresh ids and the recording clock, recorded in one

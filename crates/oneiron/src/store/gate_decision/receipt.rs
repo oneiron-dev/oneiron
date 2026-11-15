@@ -22,7 +22,7 @@ use super::types::{
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::policy_record::POLICY_SCHEMA_VERSION;
@@ -105,6 +105,60 @@ impl GateReceipt {
             id: None,
             decided_at: None,
         }
+    }
+
+    /// The row of a draft that binds both its id and its time: the mint's
+    /// bound half, which reads nothing. [`Store::mint_gate_receipt_in_txn`]
+    /// fills the two and calls it, so one body builds every row. A caller
+    /// calls it alone only for a row built before its write transaction
+    /// opens (a deletion's plan builds its row, and later transactions append
+    /// it). A draft that leaves its id or its time to the store is refused.
+    pub(crate) fn mint_bound(self) -> Result<GateDecisionRecord> {
+        let Self {
+            outcome,
+            kind,
+            reasons,
+            actor,
+            handle,
+            basis,
+            about,
+            grant_ref,
+            details,
+            notices,
+            receipt_reasons,
+            context,
+            id,
+            decided_at,
+        } = self;
+        let (Some(decision_id), Some(decided_at)) = (id, decided_at) else {
+            return Err(Error::InvariantViolation(
+                "a bound Gate receipt names both its id and its time",
+            ));
+        };
+        let mut system_notices = GateSystemNoticeRecord::receipt_details(&kind, details);
+        system_notices.extend(notices);
+        let (actor_class, actor_ref) = actor.class_and_ref();
+        let PolicyBasis { frontier, version } = basis;
+        Ok(GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id,
+            created_at: decided_at.secs(),
+            outcome: outcome.as_str().to_owned(),
+            reason_codes: reasons,
+            receipt_reasons,
+            system_notices,
+            actor_class,
+            actor_ref,
+            content_kind: kind.into_owned(),
+            policy_manifest_version: version.into_owned(),
+            claim_id: about.map(|claim| *claim.as_bytes()),
+            grant_ref,
+            diff_handle: handle,
+            // No policy read is stored as 32 zero bytes, as before the draft.
+            read_frontier_hash: frontier.unwrap_or([0; 32]),
+            context,
+            redacted_at: None,
+        })
     }
 }
 
@@ -204,68 +258,31 @@ impl Store {
     }
 
     /// Mints `receipt` without appending it, for a door that appends the row
-    /// later or through another append door (a deletion's sidecar, a claim
-    /// write's savepoint, an off-record room, a policy verdict's sealed row,
-    /// the egress floor, a bundle's member index).
+    /// later or through another append door (a claim write's savepoint, an
+    /// off-record room, a policy verdict's sealed row, the egress floor, a
+    /// bundle's member index). A deletion builds its row before any write
+    /// transaction opens, through [`GateReceipt::mint_bound`].
     ///
     /// A fresh id comes from the store clock, moved past any id the ledger
     /// already holds. The time is the vault's recording clock in `txn`, in
-    /// whole seconds, unless the draft records an earlier decision.
+    /// whole seconds, unless the draft records an earlier decision. The row
+    /// is then built by [`GateReceipt::mint_bound`].
     pub(crate) fn mint_gate_receipt_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
-        receipt: GateReceipt,
+        mut receipt: GateReceipt,
     ) -> Result<GateDecisionRecord> {
-        let GateReceipt {
-            outcome,
-            kind,
-            reasons,
-            actor,
-            handle,
-            basis,
-            about,
-            grant_ref,
-            details,
-            notices,
-            receipt_reasons,
-            context,
-            id,
-            decided_at,
-        } = receipt;
-        let decision_id = match id {
-            Some(id) => id,
-            None => self.fresh_gate_decision_id_in_txn(
+        if receipt.id.is_none() {
+            receipt.id = Some(self.fresh_gate_decision_id_in_txn(
                 &*txn,
                 GateDecisionId::from_bytes(self.clock.ulid()?),
-            )?,
-        };
-        let created_at = match decided_at {
-            Some(at) => at.secs(),
-            None => crate::ports::recorded_at_in_txn(self, txn)?,
-        };
-        let mut system_notices = GateSystemNoticeRecord::receipt_details(&kind, details);
-        system_notices.extend(notices);
-        let (actor_class, actor_ref) = actor.class_and_ref();
-        let PolicyBasis { frontier, version } = basis;
-        Ok(GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at,
-            outcome: outcome.as_str().to_owned(),
-            reason_codes: reasons,
-            receipt_reasons,
-            system_notices,
-            actor_class,
-            actor_ref,
-            content_kind: kind.into_owned(),
-            policy_manifest_version: version.into_owned(),
-            claim_id: about.map(|claim| *claim.as_bytes()),
-            grant_ref,
-            diff_handle: handle,
-            // No policy read is stored as 32 zero bytes, as before the draft.
-            read_frontier_hash: frontier.unwrap_or([0; 32]),
-            context,
-            redacted_at: None,
-        })
+            )?);
+        }
+        if receipt.decided_at.is_none() {
+            receipt.decided_at = Some(RecordedSeconds::from_secs(
+                crate::ports::recorded_at_in_txn(self, txn)?,
+            ));
+        }
+        receipt.mint_bound()
     }
 }

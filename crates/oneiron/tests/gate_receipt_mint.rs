@@ -8,9 +8,13 @@
 //!   (no policy read is 32 zero bytes);
 //! - a fresh id comes from the store clock and rises; `created_at` is whole seconds on the
 //!   recording clock; a bound id and a backdated decision are kept, and a bound id that is
-//!   taken is refused.
+//!   taken is refused;
+//! - the mint's bound half (UC-03 PR 1h-ii, RULING UC03-1H-DELETION-MINT = A) builds the row
+//!   the transaction mint appends for the same bound draft, and refuses a draft that leaves its
+//!   id or its time to the store.
 //!
-//! Red on main: main has no draft or mint, so the doors this file calls do not exist.
+//! Red on main: main has no draft or mint, so the doors this file calls do not exist. Before PR
+//! 1h-ii the bound half's door does not exist either.
 
 #![cfg(oneiron_test_support)]
 
@@ -134,6 +138,25 @@ fn fresh_ids_rise_and_are_each_appended_once() -> TestResult {
     for row in [&first, &second] {
         assert_eq!(row.outcome, "noted");
         assert_eq!(door::gate_row(&vault, row.decision_id)?.as_ref(), Some(row));
+    }
+    Ok(())
+}
+
+#[test]
+fn the_bound_half_builds_the_same_row_and_refuses_an_unbound_draft() -> TestResult {
+    const DECIDED_AT: u64 = 1_600_000_000;
+    let (_dir, vault, _owner) = vault();
+    let bound = GateDecisionId::now();
+
+    let built = door::mint_bound_receipt(Some(bound), Some(DECIDED_AT))?;
+    let appended = door::record_bound_receipt(&vault, bound, DECIDED_AT)?;
+
+    assert_eq!(built, appended, "one body builds both rows");
+    for (decision, at) in [(Some(bound), None), (None, Some(DECIDED_AT)), (None, None)] {
+        assert!(
+            door::mint_bound_receipt(decision, at).is_err(),
+            "a draft binding id {decision:?} and time {at:?} is refused"
+        );
     }
     Ok(())
 }
