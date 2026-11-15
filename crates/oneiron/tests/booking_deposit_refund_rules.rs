@@ -840,6 +840,44 @@ fn a_host_cancel_seen_after_the_start_keeps_the_deposit() {
     );
 }
 
+/// The host's feed carries the booking live at SEQUENCE 5; a stale copy of
+/// the feed then sends an older SEQUENCE 3 that reads cancelled. The passport
+/// keeps SEQUENCE 5 (an older replay changes nothing), so the booking stays
+/// live and its deposit stays captured (Muse Wonder blind review of #8230,
+/// F2, 16 Nov 08:10).
+#[test]
+fn an_older_sequence_cancellation_replayed_after_a_live_one_keeps_the_deposit() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_stale_replay", 9);
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        5,
+        false,
+        "v5",
+        NOW + 60,
+    )
+    .expect("the host feed at SEQUENCE 5, live");
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        3,
+        true,
+        "v3-stale",
+        NOW + 120,
+    )
+    .expect("a stale feed copy at SEQUENCE 3, cancelled");
+    assert_eq!(
+        fixture.state_of("pi_stale_replay"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "an older SEQUENCE replay moves no money while the passport's own version is live"
+    );
+}
+
 #[cfg(oneiron_test_support)]
 #[test]
 fn a_host_cancel_seen_before_the_start_and_repaired_after_it_refunds() {
