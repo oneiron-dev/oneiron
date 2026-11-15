@@ -7,9 +7,11 @@ use oneiron_setting_contract::RowKey;
 use super::change::record_change_in_txn;
 use super::read::{StoredRow, in_force_in_txn, load_in_txn, names_subject, table_of};
 use super::{
-    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, spec_named,
+    EncodedValue, Restore, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
+    spec_named,
 };
 use crate::Vault;
+use crate::batch::secret_scan::admit_typed;
 use crate::check_in::{
     CheckInMode, CheckInScope, NoAgentVerdict, OpenPendingCheckIn, VerifiedChain, WaitReason,
     consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
@@ -32,6 +34,45 @@ pub enum SettingCaller<'a> {
     Owner(&'a AuthenticatedOwner),
     /// An agent whose binding the caller verified.
     Agent(EntityId),
+    /// A live person on their own row of a key set by its subject, by a proof the door
+    /// revalidates in its write as a person's (owner of the vault or not).
+    Person(&'a AuthenticatedOwner),
+    /// The engine's own path; only this crate builds one.
+    Engine(EngineSetting),
+}
+
+/// The engine's own change. Only this crate builds one, so no host and no verb can name it. It
+/// writes a value row with no check-in and no holder's bound, as the engine's direct writes did,
+/// and never a pin.
+#[derive(Debug, Clone, Copy)]
+pub struct EngineSetting {
+    ask: Option<EntityId>,
+}
+
+impl EngineSetting {
+    /// The engine applies the owner's answer to the ask `check_in` (a model fallback chosen in a
+    /// question, DESIGN 1.2 step 3).
+    #[must_use]
+    #[cfg_attr(
+        not(all(oneiron_test_support, feature = "test-support")),
+        allow(dead_code)
+    )]
+    pub(crate) const fn answer(check_in: EntityId) -> Self {
+        Self {
+            ask: Some(check_in),
+        }
+    }
+
+    /// An engine path's own change, such as a retired model pack's successor or the residence
+    /// switch; the change's reason names the path.
+    #[must_use]
+    #[cfg_attr(
+        not(all(oneiron_test_support, feature = "test-support")),
+        allow(dead_code)
+    )]
+    pub(crate) const fn own() -> Self {
+        Self { ask: None }
+    }
 }
 
 /// One change a caller asks for.
@@ -41,13 +82,32 @@ pub struct SetSetting {
     pub item: Option<String>,
     pub scope: SettingScope,
     pub mode: SettingMode,
-    /// The new value as JSON; `None` clears the row.
+    /// The new value as JSON; `None` clears the row. For a key whose value is an `Option`,
+    /// `Some(Value::Null)` stores `None` (the verb reads a `null` value as a clear).
     pub value: Option<serde_json::Value>,
     /// The row's revision the caller saw; the change is refused when the row has moved since.
     pub expected_revision: Option<u64>,
     pub why: Option<String>,
     /// The settled check-in this change waited on, to spend.
     pub check_in_ref: Option<EntityId>,
+}
+
+impl SetSetting {
+    /// A value row of `key` at the vault scope, with no item, expected revision, reason or
+    /// check-in: the common change of one value.
+    #[must_use]
+    pub fn vault_value(key: &str, value: serde_json::Value) -> Self {
+        Self {
+            key: key.to_owned(),
+            item: None,
+            scope: SettingScope::Vault,
+            mode: SettingMode::Value,
+            value: Some(value),
+            expected_revision: None,
+            why: None,
+            check_in_ref: None,
+        }
+    }
 }
 
 /// What a change answers.
@@ -70,8 +130,9 @@ pub enum SetSettingOutcome {
 }
 
 impl Vault {
-    /// Changes one setting row in one write: the catalogue, the value's check, the caller's power
-    /// checked live in this write, the change row, and the key's hook.
+    /// Changes one setting row in one write: the catalogue, the side-row wall on the value, the
+    /// value's check, the caller's power checked live in this write, the change row, and the
+    /// key's hook. Once the write commits, an applied change runs the key's `after_commit`.
     ///
     /// - The owner sets every key, a pin included.
     /// - An agent sets a value row of a key of class `c` while it holds a live `engine.controls`
@@ -83,19 +144,51 @@ impl Vault {
     ///   on a check-in under the agent's own live owner Grant that lists `vault.settings.set`:
     ///   the door opens it and answers [`SetSettingOutcome::Pending`]; the same change again,
     ///   naming the approved check-in, applies once.
+    /// - A live person sets a value row about themselves (scope `Person(them)`) on a key set by
+    ///   its subject, and on a key that names its tighter direction only a value no looser than
+    ///   the one in force; never a row the owner set. Anything else is refused, with no ask.
+    /// - The engine sets a value row of any key, with no ask and no bound; never a pin.
     ///
-    /// A value equal to the row's writes nothing.
+    /// The value passes the side-row wall before it is checked and stored, as an authored row
+    /// does: a secret goes to custody and the row keeps its handle; any other hit refuses the
+    /// change. A value equal to the row's writes nothing.
     ///
     /// # Errors
     ///
     /// `InvalidConfig` for an unknown key, an item or scope the key does not admit, a value of
     /// another shape or one its check refuses, a moved row, a reason over 1,000 bytes, a
-    /// check-in that is not this change's, or an agent with no Grant listing the verb; an owner
-    /// proof that no longer holds; storage errors.
+    /// check-in that is not this change's, an agent with no Grant listing the verb, a person's
+    /// change outside their own row, or an engine pin; an owner or person proof that no longer
+    /// holds; the side-row wall's refusal; storage errors.
     pub fn set_setting(
         &self,
         caller: SettingCaller<'_>,
         request: SetSetting,
+    ) -> Result<SetSettingOutcome> {
+        self.with_write_txn_grouped_after_commit(
+            |txn| self.set_setting_in_txn(txn, caller, &request),
+            |outcome| {
+                run_after_commit(self, &[(&request, &outcome)]);
+                Ok(outcome)
+            },
+        )
+    }
+
+    /// [`Self::set_setting`] in the caller's write: the same wall, checks, power, change row and
+    /// hook, so the change commits with the caller's other writes or not at all. Several changes
+    /// in one write take consecutive sequences. A [`SetSettingOutcome::Pending`] answer opened
+    /// its check-in in this write too; a caller whose other writes need the change applied fails
+    /// its write on it. The caller runs [`run_after_commit`] over its changes once its write has
+    /// committed.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_setting`].
+    pub(crate) fn set_setting_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        caller: SettingCaller<'_>,
+        request: &SetSetting,
     ) -> Result<SetSettingOutcome> {
         let spec = spec_named(&request.key)?;
         spec.check_item(request.item.as_deref())?;
@@ -115,25 +208,64 @@ impl Vault {
                 "a setting change's reason is at most 1,000 bytes".into(),
             ));
         }
-        let value = request
-            .value
-            .clone()
-            .map(|json| spec.kind.from_json(json))
-            .transpose()?;
         let key = RowKey {
             name: spec.name.to_owned(),
             item: request.item.clone(),
             mode: request.mode,
             scope: request.scope.clone(),
         };
-        self.with_write_txn_grouped(|txn| {
-            let change = Change {
-                spec,
-                key: &key,
-                value: value.as_ref(),
-            };
-            set_in_txn(self, txn, &change, caller, &request)
-        })
+        let value = match request.value.clone() {
+            Some(mut json) => {
+                // The side-row wall reads the value before it is encoded (SETTING-ROWS-SIDE-ROW-
+                // WALL = A): a secret goes to custody and the value keeps its handle.
+                admit_typed(
+                    self,
+                    txn,
+                    (wall_place(spec), key.encode().as_slice()),
+                    &mut json,
+                )?;
+                Some(spec.kind.from_json(json)?)
+            }
+            None => None,
+        };
+        let change = Change {
+            spec,
+            key: &key,
+            value: value.as_ref(),
+        };
+        set_in_txn(self, txn, &change, caller, request)
+    }
+}
+
+/// Where the side-row wall says it found a secret in a setting value (OF-067).
+const fn wall_place(spec: &SettingSpec) -> &'static str {
+    match spec.restore {
+        Restore::Live => "side:SETTING",
+        Restore::Content => "side:SETTING_CONTENT",
+    }
+}
+
+/// Runs the `after_commit` of each key whose change applied with a sequence, once per change,
+/// after the write that made them committed. [`Vault::set_setting`] runs it itself; a caller of
+/// [`Vault::set_setting_in_txn`] runs it over its changes once its own write has committed. A
+/// change that wrote nothing (an equal value) or waits on a check-in runs nothing.
+pub(crate) fn run_after_commit(vault: &Vault, changes: &[(&SetSetting, &SetSettingOutcome)]) {
+    for (request, outcome) in changes {
+        if !matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ) {
+            continue;
+        }
+        if let Some(after_commit) = spec_named(&request.key)
+            .ok()
+            .and_then(|spec| spec.after_commit)
+        {
+            after_commit(vault);
+        }
     }
 }
 
@@ -153,17 +285,37 @@ fn set_in_txn(
 ) -> Result<SetSettingOutcome> {
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     let (by, setter) = match caller {
-        SettingCaller::Owner(owner) => (owner.revalidate_in_txn(vault, txn)?, Setter::Owner),
+        SettingCaller::Owner(owner) => (Some(owner.revalidate_in_txn(vault, txn)?), Setter::Owner),
         SettingCaller::Agent(agent) => match agent_power_in_txn(vault, txn, change, agent)? {
-            Some(setter) => (agent, setter),
+            Some(setter) => (Some(agent), setter),
             None => match request.check_in_ref {
                 Some(check_in) => {
                     spend_in_txn(vault, txn, change, agent, &check_in, now)?;
-                    (agent, Setter::Approved { check_in })
+                    (Some(agent), Setter::Approved { check_in })
                 }
                 None => return open_request_in_txn(vault, txn, change, agent, now),
             },
         },
+        SettingCaller::Person(person) => {
+            let person = person.revalidate_person_in_txn(vault, txn)?;
+            let setter = person_power_in_txn(vault, txn, change, person)?.ok_or_else(|| {
+                Error::InvalidConfig(format!(
+                    "a person sets only a value row about themselves on a key set by its \
+                     subject, never one the owner set, and on a key with a tighter direction no \
+                     looser than the value in force: `{}`",
+                    change.spec.name
+                ))
+            })?;
+            (Some(person), setter)
+        }
+        SettingCaller::Engine(engine) => {
+            if change.key.mode == SettingMode::Pin {
+                return Err(Error::InvalidConfig(
+                    "the engine sets a value row, never a pin: a pin is the owner's".into(),
+                ));
+            }
+            (None, Setter::Engine { ask: engine.ask })
+        }
     };
     let table = table_of(change.spec);
     let key_bytes = change.key.encode();
@@ -206,7 +358,7 @@ fn set_in_txn(
             item: change.key.item.clone(),
             scope: change.key.scope.clone(),
             mode: change.key.mode,
-            by: Some(by),
+            by,
             setter,
             prior: prior_value,
             value: change.value.cloned(),
@@ -218,7 +370,7 @@ fn set_in_txn(
         Some(value) => {
             let row = StoredRow {
                 value: value.clone(),
-                by: Some(by),
+                by,
                 setter,
                 set_at: now,
                 change: recorded.sequence,
@@ -263,6 +415,36 @@ fn agent_power_in_txn(
     let Some(setter) = setter else {
         return Ok(None);
     };
+    bounded_power_in_txn(vault, txn, change, setter)
+}
+
+/// The capacity in which `person` may make `change`, in `txn`, or `None` when they may not: a
+/// value row at their own `Person` scope on a key set by its subject.
+fn person_power_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    change: &Change<'_>,
+    person: EntityId,
+) -> Result<Option<Setter>> {
+    if change.key.mode == SettingMode::Pin
+        || change.spec.set_by != SetBy::Subject
+        || change.key.scope != SettingScope::Person(person)
+    {
+        return Ok(None);
+    }
+    bounded_power_in_txn(vault, txn, change, Setter::Subject)
+}
+
+/// `setter` when the rows in force leave it room for `change`, else `None`: no owner's pin on
+/// the chain, no row the owner set in its place, and on a key that names its tighter direction a
+/// holder's value inside the owner's nearest row, a subject's no looser than the value in force.
+fn bounded_power_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    change: &Change<'_>,
+    setter: Setter,
+) -> Result<Option<Setter>> {
+    let spec = change.spec;
     // The scope and every wider one the key admits, narrowest first.
     let chain = match &change.key.scope {
         SettingScope::Vault => vec![SettingScope::Vault],
