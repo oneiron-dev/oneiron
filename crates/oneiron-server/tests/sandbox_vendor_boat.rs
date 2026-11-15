@@ -6,13 +6,17 @@
 //!
 //! The run makes one VM from the owner's saved snapshot of the pinned guest
 //! image, with none of the account's secrets, no disk snapshot and a
-//! lifetime of the step's own time; it starts every command in a network
-//! namespace of its own, as the VM's user with no supplementary group and
-//! no new privilege; it sends the owner's key only to the API and moves
-//! each file through a signed URL with no key of ours; and it deletes the
-//! VM at the end, confirming its id. A refused
-//! create, a VM that fails to start, a lost command and a signed URL off the
-//! API's scheme never show a secret and leave no VM behind.
+//! lifetime of the step's own time; it first makes the client's own
+//! directory as the VM's user; it starts every command of the run in a
+//! network namespace of its own, as a user and group of its own with no
+//! supplementary group and no new privilege; it stages the upload in the
+//! client's directory and copies it into place as the guest's file, and
+//! copies the guest's frames out as the guest before it downloads them; it
+//! sends the owner's key only to the API and moves each file through a
+//! signed URL with no key of ours; and it deletes the VM at the end,
+//! confirming its id. A refused create, a VM that fails to start, a lost
+//! command and a signed URL off the API's scheme never show a secret and
+//! leave no VM behind.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support --test sandbox_vendor_boat`.
@@ -48,9 +52,12 @@ const VM: &str = "bx_k7m2p9qr";
 /// The secret part of each signed file URL the stand-in answers.
 const UPLOAD_TOKEN: &str = "upload-7f3a9c";
 const DOWNLOAD_TOKEN: &str = "download-2c9e41";
-/// What every command starts under.
+/// What every command of the run starts under.
 const CONFINED_PREFIX: &str = "sudo -n unshare --net -- \
-    setpriv --reuid=user --regid=user --clear-groups --no-new-privs --";
+    setpriv --reuid 70000 --regid 70000 --clear-groups --no-new-privs --";
+/// The client's own files on the VM.
+const UPLOAD_FILE: &str = "/tmp/oneiron-client/upload-0";
+const DOWNLOAD_FILE: &str = "/tmp/oneiron-client/download-1";
 
 /// How the stand-in answers.
 struct Script {
@@ -59,7 +66,7 @@ struct Script {
     /// The VM's state at its first poll, and the reason it names.
     started_state: &'static str,
     started_error: Option<&'static str>,
-    /// Whether the guest's command (the second) is lost at its second poll.
+    /// Whether the guest's command (the fourth) is lost at its second poll.
     lose_guest: bool,
     /// Whether the upload URL is on another scheme than the API's.
     foreign_upload_url: bool,
@@ -117,7 +124,7 @@ fn command_status(script: &Script, process: u64, poll: u32) -> Value {
             "status": "running", "running": true, "exitCode": null, "stdout": "", "stderr": "",
         });
     }
-    if script.lose_guest && process == 2 {
+    if script.lose_guest && process == 4 {
         return json!({
             "ok": true, "type": "command.status", "success": false, "processId": process,
             "status": "lost", "running": false, "exitCode": null, "stdout": "", "stderr": "",
@@ -224,12 +231,12 @@ async fn answer(
             } else {
                 format!("http://{host}/signed/{UPLOAD_TOKEN}")
             };
-            signed("upload_url", url, "/tmp/oneiron-batch/host-frames")
+            signed("upload_url", url, UPLOAD_FILE)
         }
         ("POST", path, None) if path == format!("{vm}/files/download-url") => signed(
             "download_url",
             format!("http://{host}/signed/{DOWNLOAD_TOKEN}"),
-            "/tmp/oneiron-batch/guest-frames",
+            DOWNLOAD_FILE,
         ),
         ("PUT", path, None) if path == format!("/signed/{UPLOAD_TOKEN}") => {
             StatusCode::OK.into_response()
@@ -317,24 +324,32 @@ fn a_switched_run_goes_to_boat_with_the_key_only_at_its_api() {
     assert!(manifest.fence_unproven);
 
     let vm = format!("/sandboxes/{VM}");
-    assert_eq!(
-        fixture.calls(),
+    let detached = |process: u32| {
         [
-            "POST /sandboxes".to_owned(),
-            format!("GET {vm}"),
             format!("POST {vm}/commands"),
-            format!("GET {vm}/commands/1"),
-            format!("GET {vm}/commands/1"),
+            format!("GET {vm}/commands/{process}"),
+            format!("GET {vm}/commands/{process}"),
+        ]
+    };
+    let expected: Vec<String> = [
+        vec!["POST /sandboxes".to_owned(), format!("GET {vm}")],
+        detached(1).to_vec(),
+        detached(2).to_vec(),
+        vec![
             format!("POST {vm}/files/upload-url"),
             format!("PUT /signed/{UPLOAD_TOKEN}"),
-            format!("POST {vm}/commands"),
-            format!("GET {vm}/commands/2"),
-            format!("GET {vm}/commands/2"),
+        ],
+        detached(3).to_vec(),
+        detached(4).to_vec(),
+        detached(5).to_vec(),
+        vec![
             format!("POST {vm}/files/download-url"),
             format!("GET /signed/{DOWNLOAD_TOKEN}"),
             format!("DELETE {vm}"),
-        ]
-    );
+        ],
+    ]
+    .concat();
+    assert_eq!(fixture.calls(), expected);
     {
         let calls = fixture.calls.lock().unwrap();
         for call in calls.iter() {
@@ -389,29 +404,25 @@ fn a_switched_run_goes_to_boat_with_the_key_only_at_its_api() {
         "the VM lives the step's time and a margin: {lifetime}"
     );
 
-    assert_eq!(
-        fixture.bodies(&format!("{vm}/commands")),
-        [
-            json!({
-                "command": format!(
-                    "{CONFINED_PREFIX} mkdir -m 0700 /tmp/oneiron-batch /tmp/oneiron-batch/workspace"
-                ),
-                "detached": true,
-            }),
-            json!({
-                "command": format!(
-                    "{CONFINED_PREFIX} /usr/local/bin/oneiron-guest --batch \
-                     /tmp/oneiron-batch/host-frames /tmp/oneiron-batch/guest-frames \
-                     /tmp/oneiron-batch/workspace"
-                ),
-                "detached": true,
-            }),
-        ]
-    );
-    for (kind, path) in [
-        ("upload-url", "/tmp/oneiron-batch/host-frames"),
-        ("download-url", "/tmp/oneiron-batch/guest-frames"),
-    ] {
+    let commands: Vec<Value> = [
+        "mkdir -m 0700 /tmp/oneiron-client".to_owned(),
+        format!("{CONFINED_PREFIX} mkdir -m 0700 /tmp/oneiron-batch /tmp/oneiron-batch/workspace"),
+        format!(
+            "sudo -n install -o 70000 -g 70000 -m 0600 -T -- {UPLOAD_FILE} \
+             /tmp/oneiron-batch/host-frames"
+        ),
+        format!(
+            "{CONFINED_PREFIX} /usr/local/bin/oneiron-guest --batch \
+             /tmp/oneiron-batch/host-frames /tmp/oneiron-batch/guest-frames \
+             /tmp/oneiron-batch/workspace"
+        ),
+        format!("{CONFINED_PREFIX} cat -- /tmp/oneiron-batch/guest-frames >{DOWNLOAD_FILE}"),
+    ]
+    .into_iter()
+    .map(|command| json!({ "command": command, "detached": true }))
+    .collect();
+    assert_eq!(fixture.bodies(&format!("{vm}/commands")), commands);
+    for (kind, path) in [("upload-url", UPLOAD_FILE), ("download-url", DOWNLOAD_FILE)] {
         let asked = &fixture.bodies(&format!("{vm}/files/{kind}"))[0];
         assert_eq!(asked["path"], path);
         let seconds = asked["ttlSeconds"].as_u64().expect("a URL lifetime");
@@ -506,6 +517,9 @@ fn a_signed_url_off_the_api_scheme_gets_nothing() {
             format!("POST {vm}/commands"),
             format!("GET {vm}/commands/1"),
             format!("GET {vm}/commands/1"),
+            format!("POST {vm}/commands"),
+            format!("GET {vm}/commands/2"),
+            format!("GET {vm}/commands/2"),
             format!("POST {vm}/files/upload-url"),
             format!("DELETE {vm}"),
         ]
