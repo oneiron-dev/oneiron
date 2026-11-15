@@ -68,8 +68,8 @@ pub(super) fn fold_entry_state(
     // #1430b). A row a handoff or a removal vouches for is never refused, and
     // still lands restriction only, as does every row the fold with no vouch
     // holds back or only the vouch admits (`install_fold::NoVouch`). No floor
-    // refuses a roster row: the roster is the same on every install
-    // (`changes_roster`), and its signer's own order binds it below.
+    // refuses a roster row, which vouches for its own signer's rows below it
+    // (`changes_roster`); its signer's own order binds it below.
     let past_floor = context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))

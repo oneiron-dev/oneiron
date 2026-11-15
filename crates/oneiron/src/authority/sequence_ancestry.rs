@@ -13,7 +13,13 @@ pub(super) fn causal_sequence_floors(
         let before = floors.len();
         for (tip_hash, tip) in by_hash {
             let tip_floor = original.get(tip_hash).copied();
-            if tip_floor.is_some_and(|floor| tip.seq < floor) {
+            // No floor refuses a roster row (`changes_roster`), so it is never
+            // a rollback tip here: it vouches for its signer's rows below it
+            // in its ancestry whatever this install had seen when it came, as
+            // every install's fold of the same rows does (Sol review F1 of
+            // [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]).
+            let roster_tip = super::entry_transition::changes_roster(&tip.op);
+            if !roster_tip && tip_floor.is_some_and(|floor| tip.seq < floor) {
                 continue;
             }
             let covered: Vec<_> = ancestors[tip_hash]
@@ -22,7 +28,7 @@ pub(super) fn causal_sequence_floors(
                     by_hash.get(*hash).is_some_and(|entry| {
                         entry.signer_key() == tip.signer_key()
                             && entry.seq < tip.seq
-                            && tip_floor.is_none_or(|floor| entry.seq > floor)
+                            && (roster_tip || tip_floor.is_none_or(|floor| entry.seq > floor))
                             && floors.get(*hash).is_some_and(|floor| entry.seq < *floor)
                     })
                 })
@@ -37,7 +43,8 @@ pub(super) fn causal_sequence_floors(
             }
             // A raw parent claim or signature alone is not an authorization proof.
             // Require complete, independently valid ancestry, and preserve every
-            // other signer's floor. A newly received rollback tip cannot vouch.
+            // other signer's floor. A newly received rollback tip cannot vouch;
+            // nor can a roster tip that does not fold on its own ancestry.
             if entry_folds_on_available_ancestry(
                 *tip_hash,
                 by_hash,

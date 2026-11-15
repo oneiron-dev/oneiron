@@ -32,12 +32,14 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
 /// A row that changes the roster: a genesis, an enrollment (an agent key or
 /// an owner's own signing key), a revocation, a rotation or a re-root, the
 /// ops whose `apply_op` arms write `FoldState::roster`. No arrival floor
-/// refuses one (FIX [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]): the roster is a
-/// fold of the rows alone, the same on every install whatever order they
-/// arrived in, as a revocation's rule is (ARCH-0040 ONE-REVOKE-D3). Its
-/// signer's own order still binds it, on every install alike: a row at or
-/// below a sequence its signer reached in the row's own ancestry is refused
-/// (`fold_entry_state`, `state.seqs`).
+/// refuses one (FIX [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]), and one vouches for
+/// its own signer's rows below it in its ancestry (`sequence_ancestry`), so
+/// arrival order alone does not change the roster, as a revocation's rule
+/// asks (ARCH-0040 ONE-REVOKE-D3). Its signer's own order still binds it, on
+/// every install alike: a row at or below a sequence its signer reached in
+/// the row's own ancestry is refused (`fold_entry_state`, `state.seqs`). A
+/// parent of another signer that this install's floor refuses still holds
+/// it back (FIX [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
 pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
     matches!(
         op,
