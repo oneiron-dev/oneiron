@@ -166,6 +166,9 @@ impl Vault {
                     DerivationItem::Archive(archive) => {
                         super::archive::stage_in_txn(self, txn, &context, archive)?
                     }
+                    DerivationItem::Conflict(conflict) => {
+                        super::conflict::stage_in_txn(self, txn, &context, conflict)?
+                    }
                 }
             };
             match &outcome {

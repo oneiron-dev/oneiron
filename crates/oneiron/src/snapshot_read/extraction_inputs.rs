@@ -300,22 +300,44 @@ pub(crate) fn queued_extraction_branch_in_txn(
     txn: &heed::RoTxn<'_>,
     attempt: EntityId,
 ) -> MemoryResult<(DreamerConsolidationScope, ConsolidationBranchPlan<EntityId>)> {
-    let record = AttemptQueue::new(vault)
-        .get_in_txn(txn, AttemptId::from_bytes(attempt.as_bytes())?)?
-        .ok_or_else(invalid_extraction_attempt)?;
-    let payload = decode_dreamer_attempt_payload(&record.payload)
-        .map_err(|_| invalid_extraction_attempt())?;
+    queued_extraction_branch_opt_in_txn(vault, txn, attempt)?.ok_or_else(invalid_extraction_attempt)
+}
+
+/// Reads the queued extraction branch of `attempt`: `None` when the attempt
+/// is not in the queue, or is not a Micro, Meso or Macro consolidation
+/// attempt with a partition payload. Storage errors stay errors, so a caller
+/// that refuses the `None` cases still aborts the commit on them.
+///
+/// # Errors
+///
+/// Storage errors, and a queue row that does not decode.
+pub(crate) fn queued_extraction_branch_opt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: EntityId,
+) -> Result<Option<(DreamerConsolidationScope, ConsolidationBranchPlan<EntityId>)>> {
+    let record =
+        AttemptQueue::new(vault).get_in_txn(txn, AttemptId::from_bytes(attempt.as_bytes())?)?;
+    let Some(record) = record else {
+        return Ok(None);
+    };
+    let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
+        return Ok(None);
+    };
     let scope = [
         DreamerConsolidationScope::Micro,
         DreamerConsolidationScope::Meso,
         DreamerConsolidationScope::Macro,
     ]
     .into_iter()
-    .find(|scope| record.kind == scope.attempt_kind() && payload.attempt_type == scope.as_str())
-    .ok_or_else(invalid_extraction_attempt)?;
-    let branch =
-        decode_partition_payload(&payload.input).map_err(|_| invalid_extraction_attempt())?;
-    Ok((scope, branch))
+    .find(|scope| record.kind == scope.attempt_kind() && payload.attempt_type == scope.as_str());
+    let Some(scope) = scope else {
+        return Ok(None);
+    };
+    let Ok(branch) = decode_partition_payload(&payload.input) else {
+        return Ok(None);
+    };
+    Ok(Some((scope, branch)))
 }
 
 /// Serves one queued TURN only when its source and every named partition entity read.

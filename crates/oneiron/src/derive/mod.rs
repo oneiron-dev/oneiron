@@ -30,6 +30,7 @@ mod artifact;
 mod batch;
 mod claim;
 mod commit;
+mod conflict;
 mod evidence;
 mod link;
 mod record;
@@ -51,11 +52,12 @@ pub use artifact::{
 };
 pub use batch::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
-    DerivedClaim, DerivedEvidence, DerivedEvidenceSpans, DerivedPersonAbout, DerivedPsychProfile,
-    DerivedSameAs, DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
-    MAX_BATCH_ITEMS,
+    DerivedClaim, DerivedConflict, DerivedConflictMember, DerivedEvidence, DerivedEvidenceSpans,
+    DerivedPersonAbout, DerivedPsychProfile, DerivedSameAs, DerivedSettle, DerivedSettlement,
+    DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
+pub use conflict::CONFLICT_NEEDS_EXTRACTION_ATTEMPT;
 pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_SPAN_UNBOUND, EVIDENCE_UNVERIFIED};
 pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
 pub use record::{DerivationBatchRecord, ItemRecord};
@@ -69,10 +71,11 @@ pub use supersede::{
     SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
 };
 pub use wire::{
-    DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveEvidenceInput,
-    DeriveEvidenceSpans, DeriveItemInput, DeriveItemView, DeriveLeftItemView, DeriveRef,
-    DeriveRevertInput, DeriveRevertView, DeriveSameAsInput, DeriveSettleInput,
-    DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
+    DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveConflictInput,
+    DeriveConflictMember, DeriveEvidenceInput, DeriveEvidenceSpans, DeriveItemInput,
+    DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput, DeriveRevertView,
+    DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals,
+    DeriveSupersedeInput, DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it

@@ -6,7 +6,9 @@ use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::selection::StrengthSignals;
 use crate::error::{Error, Result};
+use crate::model_decision::MAX_DECISION_STATE_BYTES;
 use crate::snapshot_read::{EVIDENCE_SPANS_MAX_RANGES, EvidenceRange};
+use crate::verbs::{CandidateOperand, PinnedClaim};
 use crate::write_envelope::{SourceLineage, WriteActor};
 
 /// Who commits a derivation batch, as the engine stamps it: the actor of the
@@ -120,6 +122,37 @@ pub struct DerivedSettle {
     pub marker: ItemRef,
     /// The answer.
     pub settlement: DerivedSettlement,
+}
+
+/// One member of a conflict an extraction job opens: the candidate exactly
+/// as a bound Resolution read of `ai.verdict` takes it, with the confidence
+/// and the prospective query hints a kept alternative lands with. Neither
+/// enters the candidate's id.
+#[derive(Debug, Clone)]
+pub struct DerivedConflictMember {
+    /// The candidate, exactly the operand the Resolution read takes.
+    pub operand: CandidateOperand,
+    /// Its confidence, in `[0, 1]`.
+    pub confidence: f32,
+    /// The prospective query hints a kept alternative lands with.
+    pub prospective_queries: Vec<String>,
+}
+
+/// A conflict an extraction job opens: the set a bound Resolution read of
+/// `ai.verdict` names, opened instead of asked. A later Settle item of the
+/// batch names the marker by this item's local name.
+#[derive(Debug, Clone)]
+pub struct DerivedConflict {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The conflict's candidates, 1..n.
+    pub members: Vec<DerivedConflictMember>,
+    /// The stored heads the set stands against, each with the version the
+    /// job read: what the Resolution read names as `priors`.
+    pub heads: Vec<PinnedClaim>,
+    /// As the pack's `set_members`: the candidate indexes of the one set to
+    /// open, when the members form more than one.
+    pub set_members: Option<Vec<usize>>,
 }
 
 /// An archive an agent derived: its own weak claim `claim`, with the
@@ -237,6 +270,9 @@ pub enum DerivationItem {
     PsychProfile(DerivedPsychProfile),
     /// A reversible archive (kind 6).
     Archive(DerivedArchive),
+    /// A conflict an extraction job opens: the set a bound Resolution read
+    /// of `ai.verdict` names, opened instead of asked.
+    Conflict(DerivedConflict),
 }
 
 impl DerivationItem {
@@ -252,6 +288,7 @@ impl DerivationItem {
             Self::PersonAbout(about) => &about.local,
             Self::PsychProfile(profile) => &profile.local,
             Self::Archive(archive) => &archive.local,
+            Self::Conflict(conflict) => &conflict.local,
         }
     }
 
@@ -267,20 +304,26 @@ impl DerivationItem {
             Self::PersonAbout(_) => "person_about",
             Self::PsychProfile(_) => "psych_profile",
             Self::Archive(_) => "archive",
+            Self::Conflict(_) => "conflict",
         }
     }
 
     /// Whether the item's first landed row is one the item itself creates:
     /// a claim, a settlement's answer, a link's status claim, a topology
-    /// event. Only such an item can be named by a later item. Every other
-    /// kind lands on a row that stood before it (a supersession's
-    /// replacement, an archived claim, a PERSON) or may replay one (an
-    /// evidence record, a profile at its address), and a name for such a row
-    /// would cite it with no version and no read of its own.
+    /// event, a conflict's marker. Only such an item can be named by a later
+    /// item: a later Settle item names a conflict's marker by the Conflict
+    /// item's local name. Every other kind lands on a row that stood before
+    /// it (a supersession's replacement, an archived claim, a PERSON) or may
+    /// replay one (an evidence record, a profile at its address), and a name
+    /// for such a row would cite it with no version and no read of its own.
     pub(super) const fn creates_row(&self) -> bool {
         matches!(
             self,
-            Self::Claim(_) | Self::Settle(_) | Self::SameAs(_) | Self::Topology(_)
+            Self::Claim(_)
+                | Self::Settle(_)
+                | Self::SameAs(_)
+                | Self::Topology(_)
+                | Self::Conflict(_)
         )
     }
 
@@ -290,6 +333,10 @@ impl DerivationItem {
         match self {
             Self::Claim(claim) => &claim.evidence,
             Self::Evidence(evidence) => &evidence.sources,
+            // A conflict item holds no `ItemRef`: its pins are checked by
+            // its stager through the extraction read, never by
+            // `derive/sources.rs`.
+            Self::Conflict(_) => &[],
             _ => &[],
         }
     }
@@ -313,6 +360,10 @@ impl DerivationItem {
             Self::PersonAbout(about) => vec![&about.person],
             Self::PsychProfile(_) => Vec::new(),
             Self::Archive(archive) => vec![&archive.claim],
+            // A conflict item holds no `ItemRef`: its pins are checked by
+            // its stager through the extraction read, never by
+            // `derive/sources.rs`.
+            Self::Conflict(_) => Vec::new(),
         }
     }
 }
@@ -338,8 +389,11 @@ impl DerivationBatch {
     /// [`MAX_BATCH_ITEMS`], every local name non-empty and unique, every
     /// local reference naming an earlier item that creates a row
     /// ([`DerivationItem::creates_row`]), at most one `about` item for a
-    /// person, a version for every stored source cited, and well-formed span
-    /// locators on claim and evidence items.
+    /// person, a version for every stored source cited, well-formed span
+    /// locators on claim and evidence items, and well-formed conflict items:
+    /// at least one member, bounded collections, every member confidence
+    /// finite and in `[0, 1]`, and prospective query hints the lexical
+    /// normaliser admits.
     ///
     /// # Errors
     ///
@@ -401,6 +455,7 @@ impl DerivationBatch {
                 DerivationItem::Evidence(evidence) => {
                     validate_spans(&evidence.sources, &evidence.spans)?;
                 }
+                DerivationItem::Conflict(conflict) => validate_conflict(conflict)?,
                 _ => {}
             }
         }
@@ -410,6 +465,50 @@ impl DerivationBatch {
 
 fn malformed(why: &'static str) -> Error {
     Error::InvalidClaimBody(why)
+}
+
+/// Checks one conflict item's shape: at least one member, at most
+/// [`MAX_DECISION_STATE_BYTES`] members, heads, `set_members` entries and
+/// TURN evidence entries of one member, every member confidence finite and
+/// in `[0, 1]`, and prospective query hints the lexical normaliser admits.
+/// Every other fault of an operand (ids, grammar, pins, the set, the
+/// selector) is judged by the extraction read when the item stages, and
+/// refuses the item, not the batch.
+fn validate_conflict(item: &DerivedConflict) -> Result<()> {
+    if item.members.is_empty() {
+        return Err(malformed("a conflict item holds at least one member"));
+    }
+    let bounded = [
+        item.members.len(),
+        item.heads.len(),
+        item.set_members.as_ref().map_or(0, Vec::len),
+    ];
+    if bounded
+        .iter()
+        .any(|length| *length > MAX_DECISION_STATE_BYTES)
+        || item
+            .members
+            .iter()
+            .any(|member| member.operand.evidence.len() > MAX_DECISION_STATE_BYTES)
+    {
+        return Err(malformed(
+            "a conflict collection exceeds the native decision state bound",
+        ));
+    }
+    for member in &item.members {
+        if !member.confidence.is_finite() || !(0.0..=1.0).contains(&member.confidence) {
+            return Err(malformed(
+                "a conflict member's confidence is a number from 0 to 1",
+            ));
+        }
+        let hints: Vec<&str> = member
+            .prospective_queries
+            .iter()
+            .map(String::as_str)
+            .collect();
+        crate::claim::normalize_lexical_query_hints(&hints)?;
+    }
+    Ok(())
 }
 
 /// Checks one claim or evidence item's span locators against the stored rows
