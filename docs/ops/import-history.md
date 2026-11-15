@@ -149,6 +149,17 @@ workspace in the report; by default it is the export's file or folder name up
 to " Slack export". The generic ingest registry refuses a Slack export: only
 this command keeps its sharing.
 
+The export is untrusted input, so one that does not read one way only is
+refused before anything is written: a conversation id listed twice, a folder
+two conversations would claim (two of one name, or a name that is another
+conversation's id), members naming more than one workspace (`team_id`), two
+files at one path (a zip holding `groups.json` under two spellings), or an id
+that is not a Slack id (ASCII letters and digits). A message whose speaker or
+Slack time is not in Slack's form is counted unreadable. A workspace whose
+members name no team id is keyed `name.<its name>`, apart from every team id.
+Words you erased never land again, whichever way a later map moves their
+speaker.
+
 ## Generic ingest registry projection
 
 The registry's `hook-transcript` source accepts the same file snapshot envelope as

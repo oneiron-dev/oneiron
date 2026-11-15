@@ -12,7 +12,8 @@
 //! Erasing an imported MESSAGE takes its text's hash out of every row that
 //! holds it ([`erase_message_in_txn`]). The row keeps the MESSAGE's id in its
 //! place, an id the vault's erasure record names too, so a later copy of the
-//! same words is not landed again; the texts still in the vault keep theirs.
+//! same words is not landed again, whoever the copy says spoke them; the
+//! texts still in the vault keep theirs.
 
 use std::collections::HashSet;
 
@@ -70,8 +71,7 @@ impl LedgerRow {
 
     /// Whether this text of the message landed and was erased since: under
     /// the message's id or its alias, its words derive one of the row's
-    /// erased MESSAGEs. Words of an unknown speaker are matched by the same
-    /// words with the speaker known too, as [`holds`] matches them.
+    /// erased MESSAGEs as any speaker said them ([`erasure_hashes`]).
     pub(super) fn held_erased(
         &self,
         source: HistorySource,
@@ -80,7 +80,7 @@ impl LedgerRow {
         if self.erased.is_empty() {
             return Ok(false);
         }
-        let texts = holding_hashes(message);
+        let texts = erasure_hashes(message);
         for native_id in std::iter::once(&message.native_id).chain(&message.alias) {
             for text in &texts {
                 let id = super::land::derive(
@@ -189,6 +189,15 @@ fn holding_hashes(message: &HistoryMessage) -> Vec<String> {
         ],
         speaker => vec![hash(message, speaker)],
     }
+}
+
+/// The [`content_hash`]es an erasure of `message`'s words holds: its side
+/// and words as each speaker said them. Unlike [`holding_hashes`], words with
+/// the speaker known are held too by the same words erased under another
+/// speaker, so a re-import whose member map moves a member to or from the
+/// owner never lands erased words again.
+fn erasure_hashes(message: &HistoryMessage) -> [String; 3] {
+    [Speaker::ByRole, Speaker::SlackMember, Speaker::Unknown].map(|speaker| hash(message, speaker))
 }
 
 /// The hash of `message`'s side and words as `speaker` said them. A message
