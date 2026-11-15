@@ -330,7 +330,6 @@ impl Vault {
         history_root(&merged, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
-        let mut ops = Vec::new();
         // The store door judges each row against the rows already staged
         // (H72), so stage each after its parents, its consent and its
         // signer's lower sequences, whatever order the caller gave.
@@ -340,37 +339,32 @@ impl Vault {
             .map(|(_, (_, entry))| entry)
             .chain(carried_structure(evidence.as_deref(), &resident));
         let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
-        for (hash, bytes, _) in
-            super::import_order::import_order(stored, &resident, own_roots, decoded)
-        {
+        let ordered = super::import_order::import_order(stored, &resident, own_roots, decoded);
+        let mut rows = Vec::with_capacity(ordered.len());
+        for (hash, bytes, entry) in ordered {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
-            ops.push(BatchOp::Put {
-                id,
-                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
+            let re_root_signer =
+                super::recovery::arriving_re_root_signer(&entry, resident.contains(&hash));
+            rows.push((
+                BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                    occurred: TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    learned_at: now,
+                    row_version: None,
+                    data: bytes,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
                 },
-                learned_at: now,
-                row_version: None,
-                data: bytes,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            });
+                re_root_signer,
+            ));
         }
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut txn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+        self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows)?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged {
@@ -781,4 +775,54 @@ pub fn recover_vaults_independently(
             )
         })
         .collect()
+}
+
+impl Vault {
+    /// Stages `rows` in their order in `txn`. Before each arriving ReRoot (a
+    /// row carrying its signer, [`super::recovery::arriving_re_root_signer`])
+    /// the signer is judged against the fold of the rows staged before it
+    /// ([`super::recovery::refuse_re_root_of_a_serving_host`]), so the
+    /// signed-history import and the authority-log puts refuse what the ReRoot
+    /// writer refuses. A gap-closing batch has no fold before its rows; the
+    /// fold rule judges them (OF-469). With no arriving ReRoot the rows stage
+    /// as one batch.
+    pub(super) fn stage_authority_rows_judging_re_roots_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        rows: Vec<(BatchOp, Option<AuthorityKey>)>,
+    ) -> Result<()> {
+        let mut segment = Vec::with_capacity(rows.len());
+        for (op, re_root_signer) in rows {
+            if let Some(signer) = re_root_signer {
+                if !segment.is_empty() {
+                    self.stage_authority_ops_in_txn(txn, std::mem::take(&mut segment))?;
+                }
+                match self.authority_fold_readonly_in_txn(txn) {
+                    Ok(fold) => super::recovery::refuse_re_root_of_a_serving_host(&fold, &signer)?,
+                    Err(error) if super::readonly_fold::is_history_incomplete(&error) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            segment.push(op);
+        }
+        self.stage_authority_ops_in_txn(txn, segment)
+    }
+
+    fn stage_authority_ops_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ops: Vec<BatchOp>,
+    ) -> Result<()> {
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
 }
