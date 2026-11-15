@@ -4,7 +4,8 @@
 //! The host's exchange checks that transcript as it checks a container
 //! guest's frames, so a proposal outside the workspace, a transcript that
 //! diverges from the host's answers, and a failed vendor call each refuse
-//! the run, and the vendor's sandbox is deleted on every path.
+//! the run, a transcript the host stops reading cannot hold the run, and the
+//! vendor's sandbox is deleted on every path.
 //!
 //! `cargo test --locked -p oneiron-agent-runtime --all-features --test vendor_batch_backend`.
 #![cfg(target_os = "linux")]
@@ -12,7 +13,8 @@
 
 use std::fs;
 use std::io::{Cursor, Read, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use oneiron::code_sandbox::{
     SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable, SandboxProposalBody,
@@ -398,6 +400,41 @@ fn a_vendor_transcript_that_diverges_refuses_the_run() {
         assert!(fixture.adapter.collect_overlay_proposals().is_err());
         assert_eq!(fixture.deleted(), ["sandbox-1"], "{refusal}");
     }
+}
+
+#[test]
+fn a_vendor_transcript_the_host_stops_reading_ends_the_run() {
+    // The host refuses the first unknown frame and reads no more, while the
+    // relay still holds more unanswered frames than the socket buffers. The
+    // watcher's cut must wake the relay's blocked write.
+    let pad = "x".repeat(1024);
+    let mut guest_frames = vec![hello()];
+    guest_frames.extend((0..8192).map(|_| json!({ "type": "unknown_kind", "pad": pad })));
+    let mut fixture = Fixture::new(&guest_frames, false);
+    let (ended, run_ended) = mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        if matches!(
+            run_ended.recv_timeout(Duration::from_secs(120)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ) {
+            let _ = writeln!(
+                std::io::stderr(),
+                "a_vendor_transcript_the_host_stops_reading_ends_the_run: the run hung 120 s"
+            );
+            std::process::exit(101);
+        }
+    });
+    let error = fixture
+        .run(&StepCancellation::new(), &mut Console::default())
+        .expect_err("an unknown guest frame");
+    ended.send(()).unwrap();
+    watchdog.join().unwrap();
+    assert!(
+        error.to_string().contains("invalid guest frame"),
+        "the host's own check refused it: {error}"
+    );
+    assert!(fixture.adapter.collect_overlay_proposals().is_err());
+    assert_eq!(fixture.deleted(), ["sandbox-1"]);
 }
 
 #[test]
