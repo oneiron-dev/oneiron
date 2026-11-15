@@ -76,16 +76,12 @@ pub(crate) fn rung2_thread_send(
     thread_ref: Option<&str>,
     agent: EntityId,
 ) -> oneiron::Result<Option<Rung2FirstSend>> {
-    if channel != BOOKING_RUNG2_CHANNEL {
-        return Ok(None);
-    }
-    // A thread ref no passport can carry began no rung-2 thread.
-    let Some(thread_ref) = thread_ref.filter(|thread| validate_thread_ref(thread).is_ok()) else {
+    // RED BASE: no channel, thread-ref or agent check.
+    let _ = (channel, agent, BOOKING_RUNG2_CHANNEL, validate_thread_ref);
+    let Some(thread_ref) = thread_ref else {
         return Ok(None);
     };
-    Ok(vault
-        .booking_rung2_thread_first_send(thread_ref)?
-        .filter(|kept| kept.agent_ref == agent))
+    vault.booking_rung2_thread_first_send(thread_ref)
 }
 
 /// What the reply event `event_id`, the visitor's `reply_text` on the
@@ -140,60 +136,25 @@ pub(super) fn rung2_reply_with(
     let Some(front) = publication.constraint_front.as_ref() else {
         return Ok(None);
     };
+    // RED BASE: no tally, no parse, the agent pays.
     let copy = front.copy();
     let continuation = &kept.continuation;
-    let admission = vault
-        .admit_booking_rung2_reply(&kept.send_ref, event_id, &front.caps())
-        .map_err(engine_read_error)?;
-    if admission == Rung2ReplyAdmission::PastCap {
-        let offers = rung2_offers(
-            server,
-            kept.page_ref,
-            &continuation.event_type,
-            &continuation.constraint,
-            &continuation.visitor_tz,
-            now,
-        )?;
-        return Ok(Some(Rung2Reply::Fixed(render_rung2_past_cap_text(
-            &copy, &offers,
-        ))));
-    }
-    let (constraint, visitor_tz) = match parse(&publication) {
-        Ok(ConstraintParseDisposition::Constraint {
-            object,
-            visitor_tz_override,
-        }) => (
-            object,
-            visitor_tz_override.unwrap_or_else(|| continuation.visitor_tz.clone()),
-        ),
-        Ok(ConstraintParseDisposition::OffTopic) => {
-            return Ok(Some(Rung2Reply::Fixed(render_rung2_off_topic_text(&copy))));
-        }
-        // No new constraint: the reply re-solves the kept one.
-        Err(error) => {
-            tracing::info!(
-                reason = error.message(),
-                "a rung-2 reply did not parse; it re-solves the kept constraint"
-            );
-            (
-                continuation.constraint.clone(),
-                continuation.visitor_tz.clone(),
-            )
-        }
-    };
+    let _ = (parse, event_id, Rung2ReplyAdmission::PastCap);
+    let _ = (
+        render_rung2_off_topic_text,
+        render_rung2_past_cap_text,
+        anonymous_payer,
+    );
     let offers = rung2_offers(
         server,
         kept.page_ref,
         &continuation.event_type,
-        &constraint,
-        &visitor_tz,
+        &continuation.constraint,
+        &continuation.visitor_tz,
         now,
     )?;
     let offers = render_rung2_first_send_text(&copy, &offers);
-    let payer = anonymous_payer(vault, publication.sponsor).map_err(|error| {
-        tracing::warn!(code = %error.code, "a rung-2 reply's payer did not resolve");
-        ApiError::internal_server_error("booking rung-2 reply payer unavailable")
-    })?;
+    let payer = WriteActor::new(kept.agent_ref, oneiron::EdgeActorClass::Agent);
     Ok(Some(Rung2Reply::Answer(Rung2Answer {
         context: format!("{RUNG2_REPLY_CONTEXT_LEAD}\n\n{offers}"),
         offers,
