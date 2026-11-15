@@ -50,10 +50,6 @@ crate::side_table::side_tables! {
     /// Key: id16.
     ORIGIN_LFS_GC_QUEUE: VaultMeta b"origin:lfs:gc:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// The owner's ordered LFS path rules for one served origin and the revision of the last set
-    /// (NO-DOOR REPO-LFS-PATH-POLICY). Key: id16 (repo id).
-    ORIGIN_LFS_PATH_POLICY: VaultMeta b"origin:lfs:path_policy:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
     /// Crash-recoverable heartbeat journal (oid32+timestamp8, 40 bytes) for one in-progress streamed
     /// LFS upload. Key: id16.
     ORIGIN_LFS_UPLOAD_JOURNAL: VaultMeta b"origin:lfs:upload:v1:" Raw
@@ -65,10 +61,12 @@ crate::side_table::side_tables! {
     /// (repo id).
     ORIGIN_MIRROR_LFS_CENSUS: VaultMeta b"origin:mirror_lfs_census:v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// The owner's outbound mirror of one served repository: its https URL, the custody record of
-    /// its push token, the cadence and the last push. Key: id16 (repo id).
-    ORIGIN_MIRROR_TARGET: VaultMeta b"origin:mirror_target:v1:" Named
-        [restore: refuse "repository mirror targets"] [family: unclassified] [tier: canonical];
+    /// What one served repository's outbound mirror has done, beside the owner's setup (the
+    /// catalogue key `origin.mirror`): the served name it was set under, the last push, the refs
+    /// the mirror took, the strategy's revision, the target's generation and the automatic
+    /// pushes' status. Key: id16 (repo id).
+    ORIGIN_MIRROR_STATE: VaultMeta b"origin:mirror_state:v1:" Named
+        [restore: refuse "repository mirror state"] [family: unclassified] [tier: canonical];
     /// One mirror's automatic push work (FIX 6866): its head (open plan, failed reconcile reads,
     /// kept plans) and each frozen MirrorPushPlan with its review pages and per-batch progress.
     /// LIVE. Key: id16 (repo id) + id16 (repo id again, then `head`; or a plan id, then nothing

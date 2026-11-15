@@ -1,23 +1,22 @@
 //! The owner's repository LFS path policy (NO-DOOR REPO-LFS-PATH-POLICY;
 //! Engine CODECUSTODY-LFS Q1 = A): one served origin's ordered rules, each an
-//! exact path or a directory prefix with its class, and the revision of the
-//! owner's last set, which the next set must name. The first rule that
-//! matches a path decides its class; a path no rule matches is
-//! repository-large. A rule never reads a byte count.
+//! exact path or a directory prefix with its class. The rules are the
+//! catalogue key `origin.lfs_path_rules` at the origin's repo scope (DESIGN
+//! 15-setting-primitive stage 4), set through `vault.settings.set` with the
+//! revision the setter read. The first rule that matches a path decides its
+//! class; a path no rule matches is repository-large. A rule never reads a
+//! byte count.
 
 use serde::{Deserialize, Serialize};
 
 use super::{LfsAssetClass, LfsPathPolicy};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::git_wire::git_path_bytes;
-use crate::side_table::{self, Named, SideTable};
+use crate::origin::setting_keys::LFS_PATH_RULES;
+use crate::setting::{SettingScope, SettingValue};
 use crate::store::code_snapshot::validation::validate_manifest_path;
-
-/// One served origin's path policy. Key: the origin's LFS repo id.
-const PATH_POLICY: SideTable<EntityId, OriginLfsPathPolicy, Named> =
-    SideTable::new(&side_table::ORIGIN_LFS_PATH_POLICY);
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::origin::lfs::path_policy::OriginLfsPathMatch;
@@ -31,9 +30,22 @@ pub struct OriginLfsPathRule {
     pub class: LfsAssetClass,
 }
 
-/// One served origin's LFS path policy: its ordered rules and the revision
-/// of the owner's last set. Revision 0 with no rules is an origin whose
-/// owner never set one.
+/// One served origin's LFS path rules in order: the value of the catalogue
+/// key `origin.lfs_path_rules`. None by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct OriginLfsPathRules(pub Vec<OriginLfsPathRule>);
+
+impl SettingValue for OriginLfsPathRules {
+    fn check(self) -> Result<Self> {
+        validate_origin_lfs_path_rules(&self.0)?;
+        Ok(self)
+    }
+}
+
+/// One served origin's LFS path policy as a push reads it: its ordered rules
+/// and the revision of the key's row that decided them. Revision 0 with no
+/// rules is an origin whose owner never set one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OriginLfsPathPolicy {
@@ -73,7 +85,7 @@ impl OriginLfsPathRule {
 ///
 /// # Errors
 /// The first such path's refusal.
-pub(crate) fn validate_origin_lfs_path_rules(rules: &[OriginLfsPathRule]) -> Result<()> {
+fn validate_origin_lfs_path_rules(rules: &[OriginLfsPathRule]) -> Result<()> {
     rules.iter().try_for_each(OriginLfsPathRule::validate)
 }
 
@@ -89,20 +101,6 @@ impl LfsPathPolicy for OriginLfsPathPolicy {
 }
 
 impl Vault {
-    /// The LFS path policy of the served origin `repo_name` and its repo id:
-    /// what the owner last set, or revision 0 with no rules.
-    ///
-    /// # Errors
-    /// A name that is no served origin, or a store failure.
-    pub fn served_origin_lfs_path_policy(
-        &self,
-        repo_name: &str,
-    ) -> Result<(EntityId, OriginLfsPathPolicy)> {
-        let repo_id = self.served_mirror_repo_id(repo_name)?;
-        let txn = self.store.env.read_txn()?;
-        Ok((repo_id, self.origin_lfs_path_policy_in_txn(&txn, repo_id)?))
-    }
-
     /// The served origin `repo_id`'s policy, read now: what a push's
     /// pointers are classified by when it is accepted and when it lands. No
     /// decision reads the class yet (Engine CODECUSTODY-LFS-CLASS = B), so a
@@ -125,39 +123,11 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         repo_id: EntityId,
     ) -> Result<OriginLfsPathPolicy> {
-        Ok(PATH_POLICY
-            .get(&self.store, txn, &repo_id)?
-            .unwrap_or_default())
-    }
-
-    /// Replaces the served origin `repo_id`'s rules in `txn` when its stored
-    /// revision is `expected_revision`, and advances the revision by one; an
-    /// empty rule list sets the default back and still advances it. The
-    /// stored revision otherwise, and nothing is written.
-    ///
-    /// # Errors
-    /// A rule whose path is not a normalized repository-relative path, a
-    /// revision overflow, or a store failure.
-    pub(crate) fn set_origin_lfs_path_policy_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        repo_id: EntityId,
-        expected_revision: u64,
-        rules: Vec<OriginLfsPathRule>,
-    ) -> Result<std::result::Result<OriginLfsPathPolicy, u64>> {
-        validate_origin_lfs_path_rules(&rules)?;
-        let current = self.origin_lfs_path_policy_in_txn(txn, repo_id)?;
-        if current.revision != expected_revision {
-            return Ok(Err(current.revision));
-        }
-        let policy = OriginLfsPathPolicy {
-            revision: current
-                .revision
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("origin lfs path policy revision"))?,
-            rules,
-        };
-        PATH_POLICY.put(&self.store, txn, &repo_id, &policy)?;
-        Ok(Ok(policy))
+        let resolved =
+            LFS_PATH_RULES.read_in_txn(self, txn, &[SettingScope::Repo(repo_id)], None)?;
+        Ok(OriginLfsPathPolicy {
+            revision: resolved.revision,
+            rules: resolved.value.0,
+        })
     }
 }

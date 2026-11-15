@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 // Classification
 // ---------------------------------------------------------------------------
 /// What a repository path's bytes ARE: the owner's word for a path, kept in
-/// the origin's LFS path policy (`vault.code.origin.lfs_path_policy.*`).
+/// the origin's LFS path rules (the setting `origin.lfs_path_rules`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum LfsAssetClass {

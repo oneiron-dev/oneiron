@@ -1,8 +1,10 @@
-//! The owner's repository registration and outbound mirror setup, through the
-//! same proof and credential-scoped handle as the origin authority doors.
+//! The owner's repository registration and outbound mirror reads and pushes,
+//! through the same proof and credential-scoped handle as the origin authority
+//! doors. The mirror's setup is the catalogue key `origin.mirror`, set through
+//! `vault.settings.set` at the repository's scope.
 
 use super::*;
-use crate::origin::mirror::{OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput};
+use crate::origin::mirror::OriginMirrorRun;
 use crate::origin::publish::{OriginMirrorPlanRequest, OriginMirrorPlanView};
 
 impl Memory<'_> {
@@ -45,67 +47,6 @@ impl Memory<'_> {
     ) -> MemoryResult<OriginMirrorPlanView> {
         self.origin_owner(owner)?;
         Ok(self.vault.origin_mirror_plan(input)?)
-    }
-
-    pub fn origin_mirror_set_as(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: OriginMirrorSetRequest,
-    ) -> MemoryResult<OriginMirrorTarget> {
-        let mut txn = self.vault.store.env.write_txn()?;
-        self.origin_owner_in_txn(owner, &txn)?;
-        let mirror = self.vault.set_served_origin_mirror_in_txn(
-            &mut txn,
-            &input.repo,
-            OriginMirrorTargetInput {
-                url: input.url,
-                secret_ref: input.secret_ref,
-                user: input.user,
-                every_secs: input.every_secs,
-                sync_strategy: input.sync_strategy,
-                visibility: input.visibility,
-            },
-        )?;
-        txn.commit().map_err(crate::Error::from)?;
-        // Committed first: a full-auto mirror plans its published state now.
-        self.vault.wake_origin_mirrors();
-        Ok(mirror)
-    }
-
-    /// Sets the mirror's sync strategy (FIX 6866): the strategy and its
-    /// revision only, under the same owner proof as mirror setup.
-    pub fn origin_mirror_strategy_as(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: OriginMirrorStrategyRequest,
-    ) -> MemoryResult<OriginMirrorTarget> {
-        let mut txn = self.vault.store.env.write_txn()?;
-        self.origin_owner_in_txn(owner, &txn)?;
-        let mirror = self.vault.set_served_origin_mirror_strategy_in_txn(
-            &mut txn,
-            &input.repo,
-            input.sync_strategy,
-        )?;
-        txn.commit().map_err(crate::Error::from)?;
-        self.vault.wake_origin_mirrors();
-        Ok(mirror)
-    }
-
-    pub fn origin_mirror_clear_as(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: OriginRepoRequest,
-    ) -> MemoryResult<OriginMirrorCleared> {
-        let mut txn = self.vault.store.env.write_txn()?;
-        self.origin_owner_in_txn(owner, &txn)?;
-        let cleared = self
-            .vault
-            .clear_served_origin_mirror_in_txn(&mut txn, &input.repo)?;
-        txn.commit().map_err(crate::Error::from)?;
-        Ok(OriginMirrorCleared {
-            repo: input.repo,
-            cleared,
-        })
     }
 
     pub fn origin_mirror_push_as(

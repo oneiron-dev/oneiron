@@ -719,21 +719,22 @@ Each repository names one https mirror (GitHub, GitLab, a Gitea), and the mirror
   it with an exact request (below) or use `schedule`.
 
 Put the mirror's push token into custody first, bound to `origin:mirror-push`, then name the
-mirror:
+mirror. The mirror is the setting `origin.mirror` at the repository's scope (its id is the
+`repo_id` that registering the origin answered); set it with `vault.settings.set` and read it
+with `vault.settings.get`:
 
 ```sh
 oneiron api raw POST /v1/owner/secrets/register --data '{"name": "demo-mirror-token",
   "class": "custody-portable", "rung": 0,
   "bindings": [{"effector": "origin:mirror-push", "scopes": ["read"]}],
   "value_base64": "<base64 of the token>"}'
-oneiron api raw POST /v1/owner/origin-mirror --data '{"repo": "demo",
-  "url": "https://github.com/you/demo.git", "secret_ref": "demo-mirror-token",
-  "every_secs": 900, "sync_strategy": "schedule", "visibility": "public"}'
+# vault.settings.set:
+#   {"key": "origin.mirror", "scope": {"kind": "repo", "id": "<repo_id>"},
+#    "value": {"url": "https://github.com/you/demo.git", "secret_ref": "demo-mirror-token",
+#              "every_secs": 900, "sync_strategy": "schedule", "visibility": "public"}}
+#   a null value stops it; the mirror keeps what it has.
 oneiron api raw GET '/v1/owner/origin-mirror?repo=demo'    # the target, its strategy and last push
-oneiron api raw POST /v1/owner/origin-mirror/strategy \
-  --data '{"repo": "demo", "sync_strategy": "ask_me"}'      # change the strategy alone
 oneiron api raw POST /v1/owner/origin-mirror/push --data '{"repo": "demo"}'   # push now
-oneiron api raw DELETE '/v1/owner/origin-mirror?repo=demo' # stop; the mirror keeps what it has
 ```
 
 The token goes to git as a basic-auth header with the user `x-access-token` (GitHub's; pass
@@ -751,14 +752,15 @@ vault's door: push it here as `refs/imported/<source>/<branch>` (for example
 mirror import. Merge it here; the next mirror push carries the merge out. Imported refs are never
 pushed back to the mirror.
 
-Leaving out `sync_strategy` keeps the strategy of a mirror whose URL is unchanged; a new mirror,
-or a new URL, starts at `ask_me`. The strategy route (and `vault.code.origin.mirror.strategy`)
-changes the strategy and its `strategy_revision` and nothing else: never the URL, the token, the
+A set states the whole mirror: leaving out `sync_strategy` means `ask_me`, and leaving out
+`visibility` means `unknown` (held as public), whatever the mirror had before. A set that changes
+the strategy alone moves its `strategy_revision` and nothing else: never the URL, the token, the
 cadence or what was pushed. A change of URL, user, custody record or served name gives the
 mirror a fresh `target_generation` id instead, one no earlier mirror of the repo held, cleared or
-not. Only the live owner sets either; `every_secs` is still
-stored and checked on an `ask_me` or `full_auto` mirror, and only `schedule` reads it. A switch
-to `ask_me` (or to the other automatic strategy, or a new destination, or clearing the mirror)
+not. The custody record is checked when the mirror is set: a token not bound to
+`origin:mirror-push` refuses the set. Only the live owner sets it (an agent's set waits on the
+owner's check-in); `every_secs` is still stored and checked on an `ask_me` or `full_auto`
+mirror, and only `schedule` reads it. A switch to `ask_me` (or to the other automatic strategy, or a new destination, or clearing the mirror)
 pauses automatic work not yet sent: a push already running finishes and is settled first, and
 nothing more goes out whole. Clearing the mirror also settles its open plan at once, as cleared:
 refs whose push may already have gone out are recorded as unknown, and a push still running

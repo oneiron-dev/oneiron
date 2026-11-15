@@ -10,7 +10,7 @@
 //! reviews again from scratch on that run's refs. A status that cannot be
 //! written warns: it never fails the run, a local effect or a config read.
 
-use super::mirror::TARGETS;
+use super::mirror::put_mirror_state_in_txn;
 use super::mirror_auto::{
     ORIGIN_MIRROR_REVIEW_UNAVAILABLE, OriginMirrorAutomation, OriginMirrorHold,
     OriginMirrorHoldCause,
@@ -47,7 +47,7 @@ impl Vault {
     ) {
         let written = (|| -> Result<()> {
             let mut txn = self.store.env.write_txn()?;
-            let Some(mut row) = TARGETS.get(&self.store, &txn, &repo_id)? else {
+            let Some(mut row) = self.mirror_target_in_txn(&txn, repo_id)? else {
                 return Ok(());
             };
             if row.target_generation != generation {
@@ -59,7 +59,7 @@ impl Vault {
                 return Ok(());
             }
             row.automation = Some(status);
-            TARGETS.put(&self.store, &mut txn, &repo_id, &row)?;
+            put_mirror_state_in_txn(self, &mut txn, repo_id, &row)?;
             txn.commit()?;
             Ok(())
         })();
@@ -127,8 +127,7 @@ impl Vault {
         // recorded its own since `scope.target` was read (FIX 7216).
         let pushed = {
             let txn = self.store.env.read_txn()?;
-            TARGETS
-                .get(&self.store, &txn, &scope.repo_id)?
+            self.mirror_target_in_txn(&txn, scope.repo_id)?
                 .map_or_else(|| scope.target.pushed.clone(), |row| row.pushed)
         };
         let kept: Vec<String> = summary

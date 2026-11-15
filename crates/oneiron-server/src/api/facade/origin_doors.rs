@@ -164,36 +164,6 @@ pub(crate) async fn vault_code_origin_mirror_get(
     .await
 }
 
-/// `vault.code.origin.lfs_path_policy.get`.
-pub(crate) async fn vault_code_origin_lfs_path_policy_get(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: OriginRepoRequest,
-) -> Listed<OriginLfsPathPolicyView> {
-    as_owner(
-        server,
-        auth,
-        "vault.code.origin.lfs_path_policy.get",
-        move |memory, owner| memory.origin_lfs_path_policy_get_as(owner, input),
-    )
-    .await
-}
-
-/// `vault.code.origin.lfs_path_policy.set`.
-pub(crate) async fn vault_code_origin_lfs_path_policy_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: OriginLfsPathPolicySetRequest,
-) -> Listed<OriginLfsPathPolicyView> {
-    as_owner(
-        server,
-        auth,
-        "vault.code.origin.lfs_path_policy.set",
-        move |memory, owner| memory.origin_lfs_path_policy_set_as(owner, input),
-    )
-    .await
-}
-
 pub(crate) async fn vault_code_origin_mirror_plan(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -204,48 +174,6 @@ pub(crate) async fn vault_code_origin_mirror_plan(
         auth,
         "vault.code.origin.mirror.plan",
         move |memory, owner| memory.origin_mirror_plan_as(owner, input),
-    )
-    .await
-}
-
-pub(crate) async fn vault_code_origin_mirror_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: OriginMirrorSetRequest,
-) -> Listed<oneiron::origin::mirror::OriginMirrorTarget> {
-    as_owner(
-        server,
-        auth,
-        "vault.code.origin.mirror.set",
-        move |memory, owner| memory.origin_mirror_set_as(owner, input),
-    )
-    .await
-}
-
-pub(crate) async fn vault_code_origin_mirror_strategy(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: OriginMirrorStrategyRequest,
-) -> Listed<oneiron::origin::mirror::OriginMirrorTarget> {
-    as_owner(
-        server,
-        auth,
-        "vault.code.origin.mirror.strategy",
-        move |memory, owner| memory.origin_mirror_strategy_as(owner, input),
-    )
-    .await
-}
-
-pub(crate) async fn vault_code_origin_mirror_clear(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: OriginRepoRequest,
-) -> Listed<OriginMirrorCleared> {
-    as_owner(
-        server,
-        auth,
-        "vault.code.origin.mirror.clear",
-        move |memory, owner| memory.origin_mirror_clear_as(owner, input),
     )
     .await
 }

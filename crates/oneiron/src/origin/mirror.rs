@@ -1,7 +1,11 @@
 //! Outbound mirror pushing (ARCH-0068 RA8).
 //!
 //! The owner names one https mirror per served repository: its URL, the
-//! custody record holding its push token and a cadence. The repository's
+//! custody record holding its push token and a cadence. That choice is the
+//! catalogue key `origin.mirror` at the repository's scope (DESIGN
+//! 15-setting-primitive stage 4); what the mirror has done since (its served
+//! name, last run, pushed refs, strategy revision, target generation and
+//! automation) is the state row beside it. The repository's
 //! origin pushes its published refs, and only those, to the mirror on that
 //! cadence, forced, and deletes there the refs it pushed before that are no
 //! longer published. The cadence is the repository's real RPO. A host that
@@ -44,6 +48,7 @@
 //! A mirror whose audience is public or unstated never takes history that
 //! holds a marked live key (FIX 7608 slice 9, `secret_publication`).
 
+use super::mirror_auto::OriginMirrorAutomation;
 use super::mirror_census::LfsCensus;
 use super::mirror_run::{MirrorPass, MirrorTrigger};
 use super::mirror_strategy::{
@@ -51,14 +56,16 @@ use super::mirror_strategy::{
 };
 use super::publication::OriginPublicationStatus;
 use super::residence::OriginHostAuthority;
-use super::secret_publication::{RepoDestinationVisibility, configured_audience};
-use super::smart_http::origin_repo_dir;
+use super::secret_publication::{RepoDestinationAudience, RepoDestinationVisibility};
+use super::setting_keys::MIRROR;
+use super::smart_http::{ORIGIN_REPO_DIR_SUFFIX, origin_repo_dir, origin_serving_root};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::code_snapshot::RepoRef;
+use serde::{Deserialize, Serialize};
 
 /// The effector a mirror's push token is bound to in custody.
 pub const ORIGIN_MIRROR_PUSH_EFFECTOR: &str = "origin:mirror-push";
@@ -79,9 +86,11 @@ pub const ORIGIN_MIRROR_NAMED_LFS_OBJECTS: usize = 8;
 const MAX_URL_BYTES: usize = 2048;
 const MAX_USER_BYTES: usize = 128;
 
-/// One repository's mirror. Key: repo id.
-pub(super) const TARGETS: SideTable<EntityId, OriginMirrorTarget, Named> =
-    SideTable::new(&side_table::ORIGIN_MIRROR_TARGET);
+/// What one repository's mirror has done. Key: repo id. A row stands while
+/// the owner's `origin.mirror` names a setup at the repository's scope: the
+/// key's hook writes it and removes it.
+pub(super) const STATES: SideTable<EntityId, OriginMirrorState, Named> =
+    SideTable::new(&side_table::ORIGIN_MIRROR_STATE);
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::origin::mirror::{
@@ -89,24 +98,180 @@ pub use oneiron_verb_wire::origin::mirror::{
     OriginMirrorNotReadyReason, OriginMirrorReadiness, OriginMirrorRun, OriginMirrorTarget,
 };
 
-/// What the owner sets.
-#[derive(Debug, Clone)]
-pub struct OriginMirrorTargetInput {
-    /// The mirror's https URL.
+/// The owner's choice of one served repository's outbound mirror: the value
+/// of the catalogue key `origin.mirror` at the repository's scope. The token
+/// stays in custody, bound to [`ORIGIN_MIRROR_PUSH_EFFECTOR`]; the setting
+/// holds only its custody name, which the key's hook checks in the write that
+/// sets it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OriginMirrorSetup {
+    /// The mirror's https URL, with no credential, query or fragment.
     pub url: String,
-    /// The custody record of the push token, bound to
-    /// [`ORIGIN_MIRROR_PUSH_EFFECTOR`].
+    /// The custody record of the push token.
     pub secret_ref: String,
-    /// [`ORIGIN_MIRROR_DEFAULT_USER`] when absent.
-    pub user: Option<String>,
-    /// Seconds between pushes, at least [`ORIGIN_MIRROR_MIN_EVERY_SECS`].
+    /// The basic-auth user the token goes with; [`ORIGIN_MIRROR_DEFAULT_USER`]
+    /// when absent.
+    #[serde(default = "default_mirror_user")]
+    pub user: String,
+    /// Seconds between pushes, at least [`ORIGIN_MIRROR_MIN_EVERY_SECS`]: the
+    /// repository's real RPO.
     pub every_secs: u64,
-    /// The strategy; when absent the same URL keeps its own and a new one
-    /// starts at `ask_me`.
-    pub sync_strategy: Option<OriginMirrorSyncStrategy>,
-    /// Who can read the mirror, as the owner states it; when absent the
-    /// same URL keeps its own and a new one is `unknown`, held as public.
-    pub visibility: Option<RepoDestinationVisibility>,
+    /// How the mirror sends what this vault publishes; `ask_me` when absent.
+    #[serde(default)]
+    pub sync_strategy: OriginMirrorSyncStrategy,
+    /// Who can read the mirror, as the owner states it; `unknown` when
+    /// absent, held as public. A public or unknown mirror never takes history
+    /// that holds a marked live key.
+    #[serde(default = "unknown_visibility")]
+    pub visibility: RepoDestinationVisibility,
+}
+
+impl crate::setting::SettingValue for OriginMirrorSetup {
+    fn check(self) -> Result<Self> {
+        validate_mirror_url(&self.url)?;
+        if self.user.is_empty()
+            || self.user.len() > MAX_USER_BYTES
+            || self.user.contains(':')
+            || self.user.chars().any(char::is_control)
+        {
+            return Err(invalid("mirror user must be a short name with no ':'"));
+        }
+        if self.every_secs < ORIGIN_MIRROR_MIN_EVERY_SECS {
+            return Err(invalid("mirror cadence is shorter than one minute"));
+        }
+        if self.secret_ref.is_empty() || self.secret_ref.chars().any(char::is_control) {
+            return Err(invalid("mirror secret_ref must name a custody record"));
+        }
+        Ok(self)
+    }
+}
+
+fn default_mirror_user() -> String {
+    ORIGIN_MIRROR_DEFAULT_USER.to_owned()
+}
+
+const fn unknown_visibility() -> RepoDestinationVisibility {
+    RepoDestinationVisibility::Unknown
+}
+
+/// What one repository's mirror has done, apart from the owner's setup: the
+/// served name it was set under, its last run, the refs it took, its
+/// strategy's revision, its target's generation and the automatic pushes'
+/// status ([`OriginMirrorTarget`] documents each).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OriginMirrorState {
+    pub(super) repo: String,
+    pub(super) last: Option<OriginMirrorRun>,
+    pub(super) pushed: Vec<String>,
+    pub(super) strategy_revision: u64,
+    pub(super) target_generation: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) automation: Option<OriginMirrorAutomation>,
+}
+
+/// The mirror as its readers see it: the owner's setup with its state.
+fn joined_target(setup: OriginMirrorSetup, state: OriginMirrorState) -> OriginMirrorTarget {
+    OriginMirrorTarget {
+        repo: state.repo,
+        url: setup.url,
+        secret_ref: setup.secret_ref,
+        user: setup.user,
+        every_secs: setup.every_secs,
+        last: state.last,
+        pushed: state.pushed,
+        sync_strategy: setup.sync_strategy,
+        strategy_revision: state.strategy_revision,
+        target_generation: state.target_generation,
+        automation: state.automation,
+        audience: RepoDestinationAudience::mirror(setup.visibility),
+    }
+}
+
+/// Writes the state half of `target`, read through
+/// [`Vault::mirror_target_in_txn`] and changed, back to its row.
+pub(super) fn put_mirror_state_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    repo_id: EntityId,
+    target: &OriginMirrorTarget,
+) -> Result<()> {
+    let state = OriginMirrorState {
+        repo: target.repo.clone(),
+        last: target.last.clone(),
+        pushed: target.pushed.clone(),
+        strategy_revision: target.strategy_revision,
+        target_generation: target.target_generation,
+        automation: target.automation.clone(),
+    };
+    STATES.put(&vault.store, txn, &repo_id, &state)
+}
+
+/// The hook of `origin.mirror`, in the write that changes it: what the old
+/// setter did beside the row. A setup's custody record must already be bound
+/// to [`ORIGIN_MIRROR_PUSH_EFFECTOR`], or the write fails. The state row takes
+/// the served name, a fresh generation when the URL, user, custody record or
+/// served name moves, the strategy's revision moved by one when the strategy
+/// does, and the history only for the same URL; moved work pauses. A clear
+/// drops the state row and the LFS census and stops the work. A row at any
+/// scope but a repository's is refused: a mirror is per repository.
+///
+/// # Errors
+/// That refusal, the custody refusal, a repository id no served repository
+/// has, or a store failure.
+pub(crate) fn mirror_setup_changed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &crate::setting::SettingChange,
+) -> Result<()> {
+    let crate::setting::SettingScope::Repo(repo_id) = change.scope else {
+        return Err(invalid(
+            "origin.mirror is set per served repository: name the repository's scope",
+        ));
+    };
+    let decode = |value: Option<&crate::setting::EncodedValue>| {
+        value
+            .and_then(crate::setting::Kind::<Option<OriginMirrorSetup>>::decode)
+            .flatten()
+    };
+    let Some(setup) = decode(change.value.as_ref()) else {
+        vault.clear_mirror_lfs_census_in_txn(txn, &repo_id)?;
+        vault.pause_mirror_work_on_change_in_txn(txn, repo_id, true);
+        STATES.delete(&vault.store, txn, &repo_id)?;
+        return Ok(());
+    };
+    vault.check_secret_at_door_in_txn(txn, &setup.secret_ref, ORIGIN_MIRROR_PUSH_EFFECTOR)?;
+    let repo = vault.served_origin_name(repo_id)?;
+    let prior = decode(change.prior.as_ref());
+    let state = STATES.get(&vault.store, txn, &repo_id)?;
+    let configured = configured_strategy(prior.as_ref().zip(state.as_ref()), &repo, &setup);
+    let moved = state.as_ref().is_some_and(|row| {
+        row.strategy_revision != configured.revision
+            || row.target_generation != configured.generation
+    });
+    let (last, pushed, automation) = match (prior, state) {
+        (Some(prior), Some(row)) if prior.url == setup.url => {
+            (row.last, row.pushed, row.automation)
+        }
+        _ => (None, Vec::new(), None),
+    };
+    let row = OriginMirrorState {
+        repo,
+        last,
+        pushed,
+        strategy_revision: configured.revision,
+        target_generation: configured.generation,
+        automation,
+    };
+    STATES.put(&vault.store, txn, &repo_id, &row)?;
+    if moved {
+        vault.pause_mirror_work_on_change_in_txn(txn, repo_id, false);
+    }
+    // A full-auto mirror plans its published state at once; a wake before
+    // this write commits finds it on the next pass.
+    vault.wake_origin_mirrors();
+    Ok(())
 }
 
 /// What one scheduled pass over the mirror targets did.
@@ -131,137 +296,82 @@ struct MirrorRunLanded {
 }
 
 impl Vault {
-    /// Sets the mirror of a served repository. The token must already be in
-    /// custody, bound to [`ORIGIN_MIRROR_PUSH_EFFECTOR`]: the door is asked
-    /// now, so a target it would refuse is refused here. A new URL starts
-    /// with nothing pushed; the same URL keeps its history.
-    pub fn set_served_origin_mirror(
+    /// The mirror of `repo_id` as its readers see it: the owner's setup at
+    /// the repository's scope with its state row; `None` when no setup
+    /// stands.
+    ///
+    /// # Errors
+    /// A row that does not decode, or a store failure.
+    pub(super) fn mirror_target_in_txn(
         &self,
-        repo_name: &str,
-        input: OriginMirrorTargetInput,
-    ) -> Result<OriginMirrorTarget> {
-        let mut txn = self.store.env.write_txn()?;
-        let row = self.set_served_origin_mirror_in_txn(&mut txn, repo_name, input)?;
-        txn.commit()?;
-        self.wake_origin_mirrors();
-        Ok(row)
+        txn: &heed::RoTxn<'_>,
+        repo_id: EntityId,
+    ) -> Result<Option<OriginMirrorTarget>> {
+        let Some(state) = STATES.get(&self.store, txn, &repo_id)? else {
+            return Ok(None);
+        };
+        let setup = MIRROR
+            .read_in_txn(
+                self,
+                txn,
+                &[crate::setting::SettingScope::Repo(repo_id)],
+                None,
+            )?
+            .value;
+        Ok(setup.map(|setup| joined_target(setup, state)))
     }
 
-    /// [`Self::set_served_origin_mirror`] as the caller's owner proof,
-    /// revalidated in the transaction that installs the target (FIX 8214).
-    pub fn set_served_origin_mirror_as_owner(
+    /// Every repository's mirror that has a setup, by repo id.
+    ///
+    /// # Errors
+    /// A row that does not decode, or a store failure.
+    pub(super) fn mirror_targets_in_txn(
         &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        repo_name: &str,
-        input: OriginMirrorTargetInput,
-    ) -> Result<OriginMirrorTarget> {
-        let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
-        let row = self.set_served_origin_mirror_in_txn(&mut txn, repo_name, input)?;
-        txn.commit()?;
-        self.wake_origin_mirrors();
-        Ok(row)
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, OriginMirrorTarget)>> {
+        let mut targets = Vec::new();
+        for (repo_id, state) in STATES.scan(&self.store, txn)? {
+            let setup = MIRROR
+                .read_in_txn(
+                    self,
+                    txn,
+                    &[crate::setting::SettingScope::Repo(repo_id)],
+                    None,
+                )?
+                .value;
+            if let Some(setup) = setup {
+                targets.push((repo_id, joined_target(setup, state)));
+            }
+        }
+        Ok(targets)
     }
 
-    /// The shared setter, checked in the transaction that installs the target.
-    pub(crate) fn set_served_origin_mirror_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        repo_name: &str,
-        input: OriginMirrorTargetInput,
-    ) -> Result<OriginMirrorTarget> {
-        let user = input
-            .user
-            .unwrap_or_else(|| ORIGIN_MIRROR_DEFAULT_USER.to_owned());
-        validate_mirror_url(&input.url)?;
-        if user.is_empty()
-            || user.len() > MAX_USER_BYTES
-            || user.contains(':')
-            || user.chars().any(char::is_control)
-        {
-            return Err(invalid("mirror user must be a short name with no ':'"));
+    /// The served name of the repository whose id is `repo_id`.
+    ///
+    /// # Errors
+    /// `EntityNotFound` when no served repository has it; a serving root or
+    /// repository that cannot be read.
+    fn served_origin_name(&self, repo_id: EntityId) -> Result<String> {
+        for entry in std::fs::read_dir(origin_serving_root(self)?)? {
+            let file_name = entry?.file_name();
+            let Some(name) = file_name
+                .to_str()
+                .and_then(|name| name.strip_suffix(ORIGIN_REPO_DIR_SUFFIX))
+            else {
+                continue;
+            };
+            if self.served_mirror_repo_id(name).ok() == Some(repo_id) {
+                return Ok(name.to_owned());
+            }
         }
-        if input.every_secs < ORIGIN_MIRROR_MIN_EVERY_SECS {
-            return Err(invalid("mirror cadence is shorter than one minute"));
-        }
-        self.check_secret_at_door_in_txn(txn, &input.secret_ref, ORIGIN_MIRROR_PUSH_EFFECTOR)?;
-        let repo_id = self.served_mirror_repo_id(repo_name)?;
-        let previous = TARGETS.get(&self.store, txn, &repo_id)?;
-        let configured = configured_strategy(
-            previous.as_ref(),
-            repo_name,
-            (&input.url, &user, &input.secret_ref),
-            input.sync_strategy,
-        );
-        let moved = previous.as_ref().is_some_and(|row| {
-            row.strategy_revision != configured.revision
-                || row.target_generation != configured.generation
-        });
-        let audience = configured_audience(input.visibility, previous.as_ref(), &input.url);
-        let (last, pushed, automation) = match previous {
-            Some(row) if row.url == input.url => (row.last, row.pushed, row.automation),
-            _ => (None, Vec::new(), None),
-        };
-        let row = OriginMirrorTarget {
-            repo: repo_name.to_owned(),
-            url: input.url,
-            secret_ref: input.secret_ref,
-            user,
-            every_secs: input.every_secs,
-            last,
-            pushed,
-            sync_strategy: configured.strategy,
-            strategy_revision: configured.revision,
-            target_generation: configured.generation,
-            automation,
-            audience,
-        };
-        TARGETS.put(&self.store, txn, &repo_id, &row)?;
-        if moved {
-            self.pause_mirror_work_on_change_in_txn(txn, repo_id, false);
-        }
-        Ok(row)
+        Err(Error::EntityNotFound)
     }
 
     /// The mirror of a served repository, if the owner set one.
     pub fn served_origin_mirror(&self, repo_name: &str) -> Result<Option<OriginMirrorTarget>> {
         let repo_id = self.served_mirror_repo_id(repo_name)?;
         let txn = self.store.env.read_txn()?;
-        TARGETS.get(&self.store, &txn, &repo_id)
-    }
-
-    /// Stops mirroring a served repository. The mirror keeps what it has.
-    /// `true` when a target was set.
-    pub fn clear_served_origin_mirror(&self, repo_name: &str) -> Result<bool> {
-        let mut txn = self.store.env.write_txn()?;
-        let removed = self.clear_served_origin_mirror_in_txn(&mut txn, repo_name)?;
-        txn.commit()?;
-        Ok(removed)
-    }
-
-    /// [`Self::clear_served_origin_mirror`] as the caller's owner proof,
-    /// revalidated in the transaction that removes the target (FIX 8214).
-    pub fn clear_served_origin_mirror_as_owner(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        repo_name: &str,
-    ) -> Result<bool> {
-        let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
-        let removed = self.clear_served_origin_mirror_in_txn(&mut txn, repo_name)?;
-        txn.commit()?;
-        Ok(removed)
-    }
-
-    pub(crate) fn clear_served_origin_mirror_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        repo_name: &str,
-    ) -> Result<bool> {
-        let repo_id = self.served_mirror_repo_id(repo_name)?;
-        self.clear_mirror_lfs_census_in_txn(txn, &repo_id)?;
-        self.pause_mirror_work_on_change_in_txn(txn, repo_id, true);
-        TARGETS.delete(&self.store, txn, &repo_id)
+        self.mirror_target_in_txn(&txn, repo_id)
     }
 
     /// Pushes a served repository to its mirror now, due or not, as the
@@ -270,7 +380,7 @@ impl Vault {
         let repo_id = self.served_mirror_repo_id(repo_name)?;
         let target = {
             let txn = self.store.env.read_txn()?;
-            TARGETS.get(&self.store, &txn, &repo_id)?
+            self.mirror_target_in_txn(&txn, repo_id)?
         }
         .ok_or(Error::EntityNotFound)?;
         require_whole_ref_strategy(repo_name, &target)?;
@@ -289,7 +399,7 @@ impl Vault {
         let (actor, target) = {
             let txn = self.store.env.read_txn()?;
             let actor = owner.revalidate_in_txn(self, &txn)?;
-            (actor, TARGETS.get(&self.store, &txn, &repo_id)?)
+            (actor, self.mirror_target_in_txn(&txn, repo_id)?)
         };
         let target = target.ok_or(Error::EntityNotFound)?;
         require_whole_ref_strategy(repo_name, &target)?;
@@ -446,7 +556,7 @@ impl Vault {
     ) -> Result<Option<(Vec<(GitRefName, GitOid)>, Vec<GitRefName>)>> {
         let target = {
             let txn = self.store.env.read_txn()?;
-            TARGETS.get(&self.store, &txn, &repo_id)?
+            self.mirror_target_in_txn(&txn, repo_id)?
         };
         let Some(target) = target else {
             return Ok(None);
@@ -517,14 +627,14 @@ impl Vault {
         url: &str,
         run: &OriginMirrorRun,
     ) -> Result<()> {
-        let Some(mut row) = TARGETS.get(&self.store, txn, &repo_id)? else {
+        let Some(mut row) = self.mirror_target_in_txn(txn, repo_id)? else {
             return Ok(());
         };
         if row.url != url {
             return Ok(());
         }
         row.last = Some(run.clone());
-        TARGETS.put(&self.store, txn, &repo_id, &row)?;
+        put_mirror_state_in_txn(self, txn, repo_id, &row)?;
         Ok(())
     }
 }

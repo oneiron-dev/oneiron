@@ -17,11 +17,11 @@
 //! read the strategy, so changing it leaves every pending or approved
 //! request as it stands.
 //!
-//! Only the live owner changes a strategy: through mirror setup, or through
-//! [`Vault::set_served_origin_mirror_strategy_in_txn`], which changes the
-//! strategy and its revision and nothing else. A change of the mirror's URL,
-//! user, custody record or served name moves its target generation instead,
-//! which every exact request is bound to. Either change pauses the mirror's
+//! Only the live owner changes a strategy, through the catalogue key
+//! `origin.mirror` (an agent's change waits on the owner's check-in); the
+//! key's hook moves the strategy's revision only when the strategy moves. A
+//! change of the mirror's URL, user, custody record or served name moves its
+//! target generation instead, which every exact request is bound to. Either change pauses the mirror's
 //! unsent automatic work in the same transaction (a switch to `ask_me`
 //! sends nothing more whole; a running push settles first), and every
 //! automatic batch's claim fences the strategy, revision and generation.

@@ -33,7 +33,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, lock_repository};
 use crate::origin::git_transport::OriginGitPublishPush;
-use crate::origin::mirror::{OriginMirrorTarget, TARGETS};
+use crate::origin::mirror::OriginMirrorTarget;
 use crate::origin::mirror_run::mirror_hold_dir;
 use crate::origin::smart_http::push_queue_key;
 
@@ -96,7 +96,7 @@ impl Vault {
         };
         let current = {
             let txn = self.store.env.read_txn()?;
-            TARGETS.get(&self.store, &txn, &view.repo_id)?
+            self.mirror_target_in_txn(&txn, view.repo_id)?
         };
         let changed = changed_fields(&view.destination, current.as_ref());
         if !changed.is_empty() {
@@ -132,7 +132,7 @@ impl Vault {
         };
         let changed = changed_fields(
             &view.destination,
-            TARGETS.get(&self.store, &txn, &view.repo_id)?.as_ref(),
+            self.mirror_target_in_txn(&txn, view.repo_id)?.as_ref(),
         );
         let (to, refused) = if super::expired(&view, self.now_recorded_at()) {
             (OriginPublishState::Expired, None)
@@ -219,7 +219,7 @@ impl Vault {
     ) -> Result<()> {
         let current = {
             let txn = self.store.env.read_txn()?;
-            TARGETS.get(&self.store, &txn, &repo_id)?
+            self.mirror_target_in_txn(&txn, repo_id)?
         };
         let changed = changed_fields(destination, current.as_ref());
         if changed.is_empty() {

@@ -27,7 +27,6 @@ use crate::Vault;
 use crate::error::Result;
 use crate::git_wire::GitPlanRefOutcome;
 use crate::llm::BrokerIsolation;
-use crate::origin::mirror::TARGETS;
 
 impl Vault {
     /// Whether the plan may still send: its mirror row is the one it froze
@@ -38,7 +37,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         plan: &MirrorPushPlan,
     ) -> Result<bool> {
-        let Some(target) = TARGETS.get(&self.store, txn, &plan.repo_id)? else {
+        let Some(target) = self.mirror_target_in_txn(txn, plan.repo_id)? else {
             return Ok(false);
         };
         let destination = &plan.destination;
