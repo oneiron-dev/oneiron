@@ -456,12 +456,12 @@ fn a_runs_two_held_calls_of_one_binding_list_apart_under_their_own_answers() -> 
     let binding = b"one AlwaysAsk tool's effect binding".as_slice();
     let (first, second) = ("a1".repeat(32), "b2".repeat(32));
     let held = append_effect_receipt(&f.vault, "pending", binding)?;
-    journal_run_effect(&f.vault, run, &held, Some(&first))?;
+    journal_run_effect(&f.vault, run, &held, Some(first.as_str()))?;
     let ran = append_effect_receipt(&f.vault, "allow", binding)?;
-    journal_run_effect(&f.vault, run, &ran, Some(&first))?;
-    journal_run_effect(&f.vault, run, &held, Some(&second))?;
+    journal_run_effect(&f.vault, run, &ran, Some(first.as_str()))?;
+    journal_run_effect(&f.vault, run, &held, Some(second.as_str()))?;
     let refused = append_effect_receipt(&f.vault, "deny", binding)?;
-    journal_run_effect(&f.vault, run, &refused, Some(&second))?;
+    journal_run_effect(&f.vault, run, &refused, Some(second.as_str()))?;
 
     let effect = |receipt: &str| ("external_effect".to_owned(), receipt.to_owned());
     assert_eq!(
