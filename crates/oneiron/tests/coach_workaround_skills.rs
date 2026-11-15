@@ -5,7 +5,8 @@
 //! links fall in three distinct app runs, it files one born-Proposed Candidate skill. The
 //! skill's files name only the registered names and the trigger. It also files one Proposed
 //! finding, stamped like the captures, that lists the supporting runs and the counterexamples
-//! (the same failure, repaired another way). Two runs file nothing. A link that does not join
+//! (the same failure, repaired another way, also in a run that supports the repair). Two runs
+//! file nothing. A link that does not join
 //! (a missing repair, a repair in another run) counts for nothing. An app run seen in two
 //! captures counts once. A second pass over the same evidence files no second skill and no
 //! second finding.
@@ -113,6 +114,9 @@ fn mappings() -> Vec<AgUiCustomMapping> {
 enum RunEnd {
     /// Failure, the person's repair, and the outcome naming that repair: a `Linked` link.
     Repaired(&'static str),
+    /// As `Repaired` with the first repair, then the same failure again, repaired with the
+    /// second: two `Linked` links in one run, every event with its own id.
+    RepairedTwice(&'static str, &'static str),
     /// The outcome names a repair id no event of the run carries: `MissingLink`.
     MissingRepair,
     /// The repair sits in another run of the thread: `NamespaceMismatch`.
@@ -143,6 +147,29 @@ fn run_events(thread: &str, run: &str, end: RunEnd) -> Vec<Value> {
                 OUTCOME,
                 json!({"id": "o", "thread": thread, "run": run, "repair": "p", "result": "sent"}),
             ));
+        }
+        RunEnd::RepairedTwice(first, second) => {
+            for (repair, failure_id, repair_id, outcome_id) in
+                [(first, "f", "p", "o"), (second, "f2", "p2", "o2")]
+            {
+                if failure_id != "f" {
+                    events.push(custom(
+                        FAILED,
+                        json!({"id": failure_id, "thread": thread, "run": run,
+                               "reason": "draft rejected again"}),
+                    ));
+                }
+                events.push(custom(
+                    repair,
+                    json!({"id": repair_id, "thread": thread, "run": run, "failure": failure_id,
+                           "text": PAYLOAD_MARKER}),
+                ));
+                events.push(custom(
+                    OUTCOME,
+                    json!({"id": outcome_id, "thread": thread, "run": run, "repair": repair_id,
+                           "result": "sent"}),
+                ));
+            }
         }
         RunEnd::MissingRepair => events.push(custom(
             OUTCOME,
@@ -342,6 +369,48 @@ fn three_runs_repaired_the_same_way_file_one_candidate_skill_and_a_finding() {
         );
         assert!(!text.contains(RETYPED), "{path} names only its own repair");
     }
+}
+
+#[test]
+fn a_run_that_also_repaired_the_failure_another_way_is_a_counterexample() {
+    let fixture = fixture();
+    capture(
+        &fixture,
+        &[
+            ("t1", "r1", RunEnd::RepairedTwice(FIXED, RETYPED)),
+            ("t1", "r2", RunEnd::Repaired(FIXED)),
+            ("t1", "r3", RunEnd::Repaired(FIXED)),
+        ],
+    );
+    let attempt = admit_skill_distill_attempt(&fixture.vault, T0).expect("the skills job");
+    let report = fixture
+        .vault
+        .run_coach_workaround_skills(&attempt, T0)
+        .expect("the workaround pass");
+    assert!(
+        report.errors.is_empty(),
+        "no write rolled back: {:?}",
+        report.errors
+    );
+    assert_eq!(report.groups, 2, "one failure, two repairs");
+    assert_eq!(report.nominations, 1, "only the three-run repair nominates");
+
+    let findings = findings(&fixture.vault).expect("findings");
+    assert_eq!(findings.len(), 1, "one finding");
+    let value = &findings[0].value;
+    assert_eq!(value["repair"], FIXED);
+    assert_eq!(run_ids(&value["supporting_runs"]), ["r1", "r2", "r3"]);
+    assert_eq!(
+        run_ids(&value["counterexamples"]),
+        ["r1"],
+        "r1 also repaired the same failure another way"
+    );
+    let counterexample = &value["counterexamples"][0];
+    assert_eq!(counterexample["repair"], RETYPED);
+    assert_ne!(
+        counterexample["outcome_ordinal"], value["supporting_runs"][0]["outcome_ordinal"],
+        "the counterexample anchors the second outcome of r1"
+    );
 }
 
 #[test]

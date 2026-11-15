@@ -384,9 +384,10 @@ fn failure_runs(captures: &[StoredAgUiCapture]) -> Result<BTreeMap<FailureKey, F
 }
 
 /// Each (failure, repair) group with linked runs in at least
-/// [`WORKAROUND_MIN_RUNS`] distinct app runs, with its counterexamples: the
-/// same failure's linked runs that took another repair and are not among
-/// the group's own runs.
+/// [`WORKAROUND_MIN_RUNS`] distinct app runs, with its counterexamples: every
+/// linked run of the same failure that took another repair, including a run
+/// that also supports the group (the failure came back and was repaired the
+/// other way).
 fn nominations(failures: BTreeMap<FailureKey, FailureRuns>) -> Vec<Nomination> {
     let mut out = Vec::new();
     for (key, runs) in failures {
@@ -398,9 +399,8 @@ fn nominations(failures: BTreeMap<FailureKey, FailureRuns>) -> Vec<Nomination> {
                 .repairs
                 .iter()
                 .filter(|(other, _)| *other != repair)
-                .flat_map(|(_, anchors)| anchors.iter())
-                .filter(|(run, _)| !supporting.contains_key(*run))
-                .map(|(_, anchor)| anchor.clone())
+                .flat_map(|(_, anchors)| anchors.values())
+                .cloned()
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
