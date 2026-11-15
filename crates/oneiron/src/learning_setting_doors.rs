@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
+use crate::federation::SubstrateReach;
 use crate::learning::{PriorOrigin, TypeRef};
 use crate::learning_setting::{self, SETTING_CATALOG, SettingMode, SettingRow, SettingScope};
 use crate::learning_setting_choice::{self as choice, ChoiceRow, ChoiceValue, SpawnChoice};
@@ -324,11 +325,13 @@ pub fn learning_settings_as_owner(
     input: &LearningSettingsRequest,
 ) -> Result<LearningSettingsView> {
     owner.revalidate(vault)?;
-    learning_settings(vault, input)
+    learning_settings(vault, input, &SubstrateReach::WholeVault)
 }
 
 /// [`learning_settings_as_owner`] for a holder of `engine.controls` (untangle
-/// 6.6c, the read side of the dials it may tune), checked at this read.
+/// 6.6c, the read side of the dials it may tune), checked at this read, as
+/// far as its grant reaches: a grant narrowed to some projects reads the
+/// rows those projects record ([`learning_settings`]).
 ///
 /// # Errors
 ///
@@ -338,13 +341,13 @@ pub fn learning_settings_as_holder(
     reader: WriteActor,
     input: &LearningSettingsRequest,
 ) -> crate::memory::MemoryResult<LearningSettingsView> {
-    crate::federation::admit_substrate_read_by(
+    let reach = crate::federation::admit_scoped_substrate_read_by(
         vault,
         reader,
         "vault.settings.learning",
         crate::federation::SubstrateRead::Dials,
     )?;
-    Ok(learning_settings(vault, input)?)
+    Ok(learning_settings(vault, input, &reach)?)
 }
 
 /// `vault.settings.learning` on a bound handle: the embedded owner reads
@@ -367,13 +370,40 @@ pub fn learning_settings_embedded(
     }
 }
 
+/// The project a setting row of `scope` records: a project row's project, a
+/// goal row's goal claim's project; None for a vault row and a task-type
+/// row, whose node no project records.
+fn setting_scope_project(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &SettingScope,
+) -> Option<EntityId> {
+    match scope {
+        SettingScope::Project(project) => Some(*project),
+        SettingScope::Goal(goal) => {
+            crate::workspace_roster::project::goal_claim_project(&vault.store, txn, *goal)
+        }
+        SettingScope::Vault | SettingScope::Type(_) => None,
+    }
+}
+
+/// The dials as far as `reach` reaches. The whole vault reads the catalog
+/// and every row. A grant narrowed to some projects reads the rows inside
+/// it ([`SubstrateReach::holds_row_in`]) and no catalog, since each catalog
+/// line carries the vault-wide value; and of a spawn choice's learning only
+/// what rests on the row's own scope, never the vault's runs standing in.
 fn learning_settings(
     vault: &Vault,
     input: &LearningSettingsRequest,
+    reach: &SubstrateReach,
 ) -> Result<LearningSettingsView> {
     let wanted = |key: &str| input.key.as_deref().is_none_or(|wanted| wanted == key);
+    let whole_vault = *reach == SubstrateReach::WholeVault;
     let mut catalog = Vec::new();
-    for spec in SETTING_CATALOG.iter().filter(|spec| wanted(spec.key)) {
+    for spec in SETTING_CATALOG
+        .iter()
+        .filter(|spec| whole_vault && wanted(spec.key))
+    {
         catalog.push(LearningSettingSpecView {
             key: spec.key.to_owned(),
             min: spec.min,
@@ -383,15 +413,18 @@ fn learning_settings(
         });
     }
     let rtxn = vault.store.env.read_txn()?;
+    let inside = |scope: &SettingScope| {
+        whole_vault || reach.holds_row_in(setting_scope_project(vault, &rtxn, scope))
+    };
     let mut rows: Vec<LearningSettingRowView> =
         learning_setting::list_setting_rows_in_txn(vault, &rtxn)?
             .into_iter()
-            .filter(|(_, row, _)| wanted(&row.key))
+            .filter(|(scope, row, _)| wanted(&row.key) && inside(scope))
             .map(|(scope, row, by)| row_view(scope, row, by))
             .collect();
     let choices: Vec<_> = choice::list_choice_rows_in_txn(vault, &rtxn)?
         .into_iter()
-        .filter(|(_, row, _)| wanted(row.value.choice().as_str()))
+        .filter(|(scope, row, _)| wanted(row.value.choice().as_str()) && inside(scope))
         .collect();
     if !choices.is_empty() {
         // What was learned is shown beside the rows, never in their place: a
@@ -408,7 +441,12 @@ fn learning_settings(
         rows.extend(choices.into_iter().map(|(scope, row, by)| {
             let learned = learning
                 .as_ref()
-                .map(|learning| learning.learned(row.value.choice(), &scope).into());
+                .map(|learning| {
+                    LearnedChoiceView::from(learning.learned(row.value.choice(), &scope))
+                })
+                // The vault's runs standing in for a scope with none of its
+                // own lie outside a narrowed reach.
+                .filter(|learned| whole_vault || learned.origin != PriorOrigin::Parent);
             choice_view(scope, row, by, learned)
         }));
     }

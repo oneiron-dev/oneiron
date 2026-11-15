@@ -188,23 +188,47 @@ pub fn read_learning_as_owner(
 }
 
 /// [`read_learning_as_owner`] for an agent or person holding a live Steward
-/// grant that names `read` (untangle 6.6c), checked at this read.
+/// grant that names `read` (untangle 6.6c), checked at this read, as far as
+/// that grant reaches. A grant narrowed to some projects reads a cell of one
+/// of them whose reading rests inside them: the cell's own runs, a cell
+/// inside them it borrowed, or the pack's shipped prior. A cell of another
+/// project or of the whole vault, and a reading that rests on the vault's
+/// cell or on another prior, are refused without saying what they hold.
 ///
 /// # Errors
 ///
-/// A caller who holds no such grant; as [`read_learning_as_owner`].
+/// A caller who holds no such grant, or reads outside its reach; as
+/// [`read_learning_as_owner`].
 pub fn read_learning_as_reader(
     vault: &Vault,
     reader: WriteActor,
     input: &LearningReadRequest,
 ) -> crate::memory::MemoryResult<LearningCellView> {
-    crate::federation::admit_substrate_read_by(
+    const VERB: &str = "vault.learning.read";
+    let reach = crate::federation::admit_scoped_substrate_read_by(
         vault,
         reader,
-        "vault.learning.read",
+        VERB,
         crate::federation::SubstrateRead::Evidence,
     )?;
-    Ok(read_learning(vault, input)?)
+    if reach == crate::federation::SubstrateReach::WholeVault {
+        return Ok(read_learning(vault, input)?);
+    }
+    if !reach.holds_row_in(learning_read_cell(input)?.project) {
+        return Err(crate::federation::outside_reach(VERB));
+    }
+    let view = read_learning(vault, input)?;
+    let rests_inside = view.view.own
+        || match &view.view.borrowed_from {
+            Some(source) => {
+                reach.holds_row_in(source.project.as_deref().map(entity_id).transpose()?)
+            }
+            None => view.view.estimate.prior.origin == crate::learning::PriorOrigin::Shipped,
+        };
+    if !rests_inside {
+        return Err(crate::federation::outside_reach(VERB));
+    }
+    Ok(view)
 }
 
 /// `vault.learning.read` on a bound handle: the embedded owner reads under
@@ -227,12 +251,18 @@ pub fn read_learning_embedded(
     }
 }
 
-fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningCellView> {
+/// The cell `input` reads: its request's project, else the cell's own, steers
+/// the cell and its tree (FIX 6038).
+fn learning_read_cell(input: &LearningReadRequest) -> Result<LearningCell> {
     let cell = input.cell.engine()?;
     let project = input.project_ref.as_deref().map(entity_id).transpose()?;
-    // One scope steers the cell and its tree (FIX 6038).
     let project = project.or(cell.project);
-    let cell = cell.with_project(project);
+    Ok(cell.with_project(project))
+}
+
+fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningCellView> {
+    let cell = learning_read_cell(input)?;
+    let project = cell.project;
     let parents = match &cell.type_ref {
         Some(stamp) => {
             let tree = crate::task_type::type_tree_at(vault, project, stamp.tree_version)?

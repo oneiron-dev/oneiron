@@ -116,6 +116,17 @@ fn current_claim(store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Result<(ClaimB
     ))
 }
 
+/// The project the stored goal claim `id` names as its subject: a
+/// `project.goal_intake` claim's subject is its project. None for a row that
+/// is no such claim, or that cannot be read as one.
+pub(crate) fn goal_claim_project(store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Option<EntityId> {
+    let (body, _) = current_claim(store, txn, id).ok()?;
+    match body.subject {
+        ClaimSubject::Entity(project) if body.predicate == PREDICATE => Some(project),
+        _ => None,
+    }
+}
+
 /// Called at the common put chokepoint for every local, raw and replicated write.
 pub(crate) fn guard_claim_put(
     store: &Store,

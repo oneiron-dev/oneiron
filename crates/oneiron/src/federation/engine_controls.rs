@@ -158,6 +158,37 @@ impl Vault {
         Ok(holds.then_some(standing.grant))
     }
 
+    /// The ceilings through which `holder` may use the Steward verb `verb`
+    /// now, by the rule of [`Self::steward_grant_with_verb_in`]: for a base
+    /// agent the meet of its standing rows, while they name `verb` and its
+    /// MACHINE binding is live; for any other actor the authority scope of
+    /// each live Steward grant on this vault's root that names `verb`
+    /// itself. Empty when none does.
+    pub(crate) fn steward_grant_ceilings_with_verb_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        verb: &str,
+    ) -> Result<Vec<Scope>> {
+        if SystemAgent::of(holder).is_none() {
+            return Ok(self
+                .root_steward_grants_with_verb_in(txn, holder, verb)?
+                .into_iter()
+                .map(|(_, scope)| scope)
+                .collect());
+        }
+        let Some(standing) = steward_reach_in(&self.store, txn, holder)? else {
+            return Ok(Vec::new());
+        };
+        let holds =
+            standing.verbs.contains(verb) && self.system_agent_binding_live_in(txn, holder)?;
+        Ok(if holds {
+            vec![standing.scope]
+        } else {
+            Vec::new()
+        })
+    }
+
     /// The live Steward grant on this vault's root that names `holder` and
     /// the verb `verb` itself, and reaches as far as `reach` asks, if any.
     fn root_steward_grant_with_verb_in(
@@ -167,8 +198,24 @@ impl Vault {
         verb: &str,
         reach: GrantReach,
     ) -> Result<Option<EntityId>> {
+        Ok(self
+            .root_steward_grants_with_verb_in(txn, holder, verb)?
+            .into_iter()
+            .find(|(_, scope)| reach == GrantReach::Any || reaches_whole_vault(scope))
+            .map(|(id, _)| id))
+    }
+
+    /// Every live Steward grant on this vault's root that names `holder` and
+    /// the verb `verb` itself, with its authority scope, in the store's id order.
+    fn root_steward_grants_with_verb_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        verb: &str,
+    ) -> Result<Vec<(EntityId, Scope)>> {
         let root = self.steward_root_scope_in_txn(txn)?;
         let now = self.store.clock.now_recorded_at();
+        let mut grants = Vec::new();
         for id in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -193,12 +240,11 @@ impl Vault {
                 && grant.is_live_at(now)
                 && matches!(&grant.authority_scope.verbs, ScopeAxis::Some(verbs)
                     if verbs.contains(verb))
-                && (reach == GrantReach::Any || reaches_whole_vault(&grant.authority_scope))
             {
-                return Ok(Some(id));
+                grants.push((id, grant.authority_scope));
             }
         }
-        Ok(None)
+        Ok(grants)
     }
 
     /// The engine-control door: when `actor` may change a knob of `class`,
@@ -279,7 +325,7 @@ pub(crate) fn is_engine_controls_grant(row: &super::FederationGrant) -> bool {
 /// narrowed. A vault or holder override row narrows a member's grant by a
 /// meet (worlds, facets, bands, audience, sensitivity), and a member works
 /// "exactly as its scopes allow" (ARCH-0043).
-fn reaches_whole_vault(scope: &Scope) -> bool {
+pub(crate) fn reaches_whole_vault(scope: &Scope) -> bool {
     *scope
         == Scope {
             verbs: scope.verbs.clone(),
