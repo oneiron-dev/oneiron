@@ -217,10 +217,13 @@ fn signed(
 }
 
 /// A handoff whose own rows fail is no handoff, and fences nothing (Sol
-/// review 3, finding 1). The old root's fork stands on two confirmations that
-/// collide; the full fold settles the real handoff. A row the old key signs
-/// outside the real handoff's line, colliding with a confirmation inside it,
-/// leaves that handoff a handoff all the same.
+/// review 3, finding 1). The old root's fork stands on a confirmation that
+/// reuses its parent's nonce, which its own ancestry refuses (a collision
+/// between concurrent rows refuses neither since RULING
+/// COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39); the full fold settles the
+/// real handoff. A row the old key signs outside the real handoff's line,
+/// sharing a nonce with a confirmation inside it, leaves that handoff a
+/// handoff all the same.
 #[test]
 fn a_handoff_that_fails_on_its_own_rows_fences_nothing() {
     let old = ed_key(200);
@@ -243,25 +246,27 @@ fn a_handoff_that_fails_on_its_own_rows_fences_nothing() {
             }),
         )
     };
-    let (first, second) = (confirm(1, 1, &genesis), confirm(2, 1, &genesis));
+    let first = confirm(1, 1, &genesis);
+    let reuse = confirm(2, 2, &first);
     let fork = signed(
         id,
-        &[&first, &second],
+        &[&reuse],
         &old,
-        2,
+        3,
         AuthorityOp::ReRoot {
             new_device: owner_device(&heir, AuthorityTier::Software),
         },
     );
-    let handoff = re_root_entry(id, &genesis, &old, 3, &next);
+    let handoff = re_root_entry(id, &genesis, &old, 4, &next);
     let fold = fold_authority_log(&[
         genesis.clone(),
         first,
-        second,
+        reuse.clone(),
         fork.clone(),
         handoff.clone(),
     ]);
     assert!(fold.valid_entries.contains(&hash(&handoff)));
+    assert!(!fold.valid_entries.contains(&hash(&reuse)));
     assert!(!fold.valid_entries.contains(&hash(&fork)));
     assert!(is_live(&fold, &next));
     assert!(fold.retired_keys.contains(&authority_key_from_ed(&old)));
@@ -412,7 +417,8 @@ fn minted_slips(
     (entries, head, seq, root.claims.issued_at)
 }
 
-/// A federation confirmation; two that share a nonce collide.
+/// A federation confirmation; one that reuses a nonce of its own ancestry is
+/// refused.
 fn confirmation(id: u8, nonce: u8) -> AuthorityOp {
     AuthorityOp::FederationConfirm(AuthorityConfirmAction {
         kind: AuthorityConfirmKind::Accept,
@@ -423,29 +429,12 @@ fn confirmation(id: u8, nonce: u8) -> AuthorityOp {
     })
 }
 
-/// Which of two colliding confirmations the fold drops.
-fn loser<'a>(
-    entries: &[AuthorityLogEntry],
-    first: &'a AuthorityLogEntry,
-    second: &'a AuthorityLogEntry,
-) -> &'a AuthorityLogEntry {
-    let mut all = entries.to_vec();
-    all.extend([first.clone(), second.clone()]);
-    if fold_authority_log(&all)
-        .valid_entries
-        .contains(&hash(first))
-    {
-        second
-    } else {
-        first
-    }
-}
-
 /// The heir of a handoff that never took effect restricts nothing (Sol
-/// review 4, finding 1). The live root's handoff stands on two confirmations
-/// that collide, so it installs no heir; the heir's withdrawal of a live slip,
-/// proved on its own dropped branch, withdraws nothing. A withdrawal the live
-/// root signs on the losing confirmation's branch still stands.
+/// review 4, finding 1). The live root's handoff stands on a confirmation
+/// that reuses its parent's nonce, which its own ancestry refuses, so it
+/// installs no heir; the heir's withdrawal of a live slip, proved on that
+/// refused branch, withdraws nothing. A withdrawal the live root signs on the
+/// first confirmation still stands.
 #[test]
 fn the_heir_of_a_handoff_that_never_took_effect_withdraws_no_slip() {
     let dir = tempfile::tempdir().unwrap();
@@ -459,11 +448,11 @@ fn the_heir_of_a_handoff_that_never_took_effect_withdraws_no_slip() {
         issuer.sign_entry(vault_id, seq, parents, op, at).unwrap()
     };
     let first = sign(seq + 1, vec![head], confirmation(1, 97));
-    let second = sign(seq + 2, vec![head], confirmation(2, 97));
+    let second = sign(seq + 2, vec![hash(&first)], confirmation(2, 97));
     let heir = ed_key(211);
     let handoff = sign(
         seq + 3,
-        vec![hash(&first), hash(&second)],
+        vec![hash(&second)],
         AuthorityOp::ReRoot {
             new_device: owner_device(&heir, AuthorityTier::Software),
         },
@@ -479,10 +468,9 @@ fn the_heir_of_a_handoff_that_never_took_effect_withdraws_no_slip() {
         ),
         &heir,
     );
-    let lost = loser(&entries, &first, &second);
     let control = sign(
         seq + 4,
-        vec![hash(lost)],
+        vec![hash(&first)],
         AuthorityOp::SlipRevoke { slip_id: withdrawn },
     );
     entries.extend([
@@ -494,9 +482,11 @@ fn the_heir_of_a_handoff_that_never_took_effect_withdraws_no_slip() {
     ]);
 
     let fold = fold_authority_log(&entries);
+    assert!(fold.valid_entries.contains(&hash(&first)));
+    assert!(!fold.valid_entries.contains(&hash(&second)));
     assert!(!fold.valid_entries.contains(&hash(&handoff)));
     assert!(!fold.valid_entries.contains(&hash(&forged)));
-    assert!(!fold.valid_entries.contains(&hash(&control)));
+    assert!(fold.valid_entries.contains(&hash(&control)));
     assert!(fold.retired_keys.is_empty());
     assert!(
         !fold.slips.explicit_revoked.contains(&kept),
@@ -508,10 +498,11 @@ fn the_heir_of_a_handoff_that_never_took_effect_withdraws_no_slip() {
 }
 
 /// The same holds after a real handoff (Sol review 4, finding 1, its settled
-/// variant): the successor's own handoff to an heir stands on colliding
-/// confirmations, and the heir withdraws none of the successor's slips. A
-/// withdrawal the successor signs on the losing confirmation's branch, whose
-/// ancestry holds only the settled handoff, still stands.
+/// variant): the successor's own handoff to an heir stands on a confirmation
+/// that reuses its parent's nonce, and the heir withdraws none of the
+/// successor's slips. A withdrawal the successor signs on the first
+/// confirmation, whose ancestry holds the settled handoff and no refused row,
+/// still stands.
 #[test]
 fn after_a_settled_handoff_an_unsettled_heir_withdraws_no_slip() {
     let dir = tempfile::tempdir().unwrap();
@@ -533,10 +524,10 @@ fn after_a_settled_handoff_an_unsettled_heir_withdraws_no_slip() {
         )
         .unwrap();
     let first = signed(id, &[&settled], &next, 1, confirmation(3, 97));
-    let second = signed(id, &[&settled], &next, 2, confirmation(4, 97));
+    let second = signed(id, &[&first], &next, 2, confirmation(4, 97));
     let handoff = signed(
         id,
-        &[&first, &second],
+        &[&second],
         &next,
         3,
         AuthorityOp::ReRoot {
@@ -551,10 +542,9 @@ fn after_a_settled_handoff_an_unsettled_heir_withdraws_no_slip() {
         AuthorityOp::SlipRevoke { slip_id: kept },
     );
     entries.push(settled.clone());
-    let lost = loser(&entries, &first, &second);
     let control = signed(
         id,
-        &[lost],
+        &[&first],
         &next,
         4,
         AuthorityOp::SlipRevoke { slip_id: withdrawn },

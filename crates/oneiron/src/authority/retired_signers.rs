@@ -6,7 +6,7 @@
 //! there, and could install a second root. Retirement is therefore judged
 //! across branches, and it fails closed:
 //! - A handoff takes effect only on its own rows: it and its whole ancestry
-//!   fold on their own, and no concurrent tier floor prunes them. A pruned
+//!   fold on their own, and no concurrent floor prunes them. A pruned
 //!   handoff installs nothing and retires nothing.
 //! - Settlement does not depend on the order rows arrived in. A local
 //!   sequence floor records only which of a signer's rows this vault saw
