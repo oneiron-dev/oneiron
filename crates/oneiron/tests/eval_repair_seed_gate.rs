@@ -2,8 +2,8 @@
 //! L1-20-SEEDER = A): a linked repair becomes a held-out case. Its source
 //! family gets its sealed split before anything derives from it, the old
 //! skill must fail the case and the candidate must pass it, graded against the
-//! app's observed outcome and never the candidate's own text, and a held-out
-//! family never feeds training.
+//! app's observed outcome, or an adjudicated label, and never the candidate's
+//! own text, and a held-out family never feeds training.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test eval_repair_seed_gate`
@@ -15,10 +15,10 @@ use std::sync::Arc;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::ingest::{AgUiCustomMapping, AgUiFileImport, AgUiObservationKind};
 use oneiron::skill_optimize::{
-    CutDecision, EvalArmPin, EvalCohortSetup, EvalLabelKind, EvalRepairLegAnswer, EvalRepairSeed,
-    EvalRepairSeedLegs, EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
-    EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose, eval_authoring_inventory,
-    setup_eval_cohorts,
+    CutDecision, EvalArmPin, EvalCohortSetup, EvalLabel, EvalLabelKind, EvalRepairLegAnswer,
+    EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRefusal, EvalRepairSeedRequest,
+    EvalRepairSeedState, EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose,
+    eval_authoring_inventory, setup_eval_cohorts,
 };
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -31,6 +31,8 @@ const ANSWER: &str = "fixed answer";
 /// When each seed is proposed, then settled.
 const PROPOSED_AT: u64 = 1_000;
 const SETTLED_AT: u64 = 2_000;
+/// When an adjudicated seed's audit label is given.
+const LABELLED_AT: u64 = 1_500;
 
 struct Fixture {
     vault: Vault,
@@ -586,6 +588,258 @@ fn an_erased_capture_takes_its_seed() -> TestResult {
     Ok(())
 }
 
+/// A text-response task contract whose check is an adjudicated answer: the
+/// app's outcome is no usable text.
+fn adjudicated_task(initial_state: Value) -> Value {
+    let mut task = text_task(initial_state);
+    task["grader"] = json!({ "kind": "adjudicated_response" });
+    task
+}
+
+fn adjudicated_capture(
+    fixture: &Fixture,
+    initial_state: Value,
+) -> TestResult<EvalRepairTaskSource> {
+    capture(
+        fixture,
+        adjudicated_task(initial_state),
+        json!({ "status": "resolved" }),
+    )
+}
+
+fn audit(kind: EvalLabelKind, value: &str) -> EvalLabel {
+    EvalLabel {
+        kind,
+        value: value.to_owned(),
+        reference: "audit:desk-1".to_owned(),
+        weight: 0.8,
+        at: LABELLED_AT,
+        source_rows: None,
+    }
+}
+
+/// Lands `label` on the seed as the owner; the seed, or the refusal's text.
+fn label_seed(
+    fixture: &Fixture,
+    source: &EvalRepairTaskSource,
+    label: &EvalLabel,
+) -> Result<EvalRepairSeed, String> {
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .label_eval_repair_seed(source, label)
+        .map(|read| read.seed.expect("the owner reads their own capture"))
+        .map_err(|error| error.to_string())
+}
+
+#[test]
+fn adjudicated_seed_waits_for_its_label() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    assert_eq!(proposed.state, EvalRepairSeedState::AwaitingLabel);
+    assert_eq!(proposed.adjudication, None);
+    let family = fixture
+        .vault
+        .eval_family_of_root(&EvalSeat::Companion, &root(&source))?
+        .expect("the proposal assigns the capture's root");
+    assert_eq!(family.purpose, FamilyPurpose::SealedConfirmation);
+    assert!(
+        fixture.vault.pending_eval_repair_seeds()?.is_empty(),
+        "the gate has nothing to grade before the label"
+    );
+    let early = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .settle_eval_repair_seed(
+            &source,
+            &response("wrong answer"),
+            &response(ANSWER),
+            &legs(),
+            SETTLED_AT,
+        );
+    assert!(early.is_err(), "the gate refuses to grade before the label");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    assert_eq!(uncut_sealed_cases(&fixture)?, 0);
+
+    let labelled = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, ANSWER),
+    )?;
+    assert_eq!(labelled.state, EvalRepairSeedState::Pending);
+    let adjudication = labelled
+        .adjudication
+        .clone()
+        .expect("the label is on the seed");
+    assert_eq!(
+        adjudication.answer_digest,
+        *blake3::hash(ANSWER.as_bytes()).as_bytes()
+    );
+    assert_eq!(adjudication.reference, "audit:desk-1");
+    assert_eq!(adjudication.at, LABELLED_AT);
+    let stored = format!("{labelled:?}");
+    assert!(
+        !stored.contains(ANSWER),
+        "a seed row never holds the adjudicated answer: {stored}"
+    );
+    assert_eq!(
+        fixture.vault.pending_eval_repair_seeds()?,
+        vec![labelled.clone()]
+    );
+    // The same label again changes nothing; another answer is refused.
+    assert_eq!(
+        label_seed(
+            &fixture,
+            &source,
+            &audit(EvalLabelKind::AdjudicatedAudit, ANSWER)
+        )?,
+        labelled
+    );
+    assert!(
+        label_seed(
+            &fixture,
+            &source,
+            &audit(EvalLabelKind::AdjudicatedAudit, "another answer")
+        )
+        .is_err(),
+        "the adjudicated label is set once"
+    );
+
+    // The old arm's answer must fail and the candidate's pass, exactly.
+    let refused = settle(
+        &fixture,
+        &source,
+        &response("wrong answer"),
+        &response(" fixed answer"),
+    )?;
+    assert_eq!(
+        refused.state,
+        EvalRepairSeedState::Refused {
+            reason: EvalRepairSeedRefusal::CandidateFailed,
+            at: SETTLED_AT,
+        }
+    );
+    assert_eq!(uncut_sealed_cases(&fixture)?, 0);
+    Ok(())
+}
+
+#[test]
+fn adjudicated_seed_confirms_on_its_label() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, ANSWER),
+    )?;
+    let settled = settle(
+        &fixture,
+        &source,
+        &response("wrong answer"),
+        &response(ANSWER),
+    )?;
+    let EvalRepairSeedState::Confirmed { case, .. } = settled.state else {
+        panic!("the gate confirms the seed: {:?}", settled.state);
+    };
+    assert_eq!(uncut_sealed_cases(&fixture)?, 1);
+    let case = oneiron::test_doors::eval_repair_seed::eval_case(&fixture.vault, &case)?
+        .expect("the confirmed seed's case is stored");
+    assert_eq!(case.family, settled.family);
+    assert_eq!(case.receipts, vec![root(&source)]);
+    assert_eq!(case.labels.len(), 1);
+    let label = &case.labels[0];
+    assert_eq!(label.kind, EvalLabelKind::AdjudicatedAudit);
+    assert_eq!(
+        label.value,
+        blake3::hash(ANSWER.as_bytes()).to_hex().to_string(),
+        "the label holds the adjudicated answer's digest"
+    );
+    assert_eq!(label.reference, "audit:desk-1");
+    assert!((label.weight - 0.8).abs() < f64::EPSILON);
+    assert_eq!(label.at, LABELLED_AT);
+    assert!(
+        !format!("{case:?}").contains(ANSWER),
+        "the case never holds the answer text"
+    );
+    // A label after the gate settled is the same label or refused.
+    assert!(
+        label_seed(
+            &fixture,
+            &source,
+            &audit(EvalLabelKind::AdjudicatedAudit, "another answer")
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn seed_label_refuses_owner_pick_and_judge() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    for kind in [
+        EvalLabelKind::OwnerPick,
+        EvalLabelKind::JudgeVerdict,
+        EvalLabelKind::WorldOutcome,
+    ] {
+        assert!(
+            label_seed(&fixture, &source, &audit(kind, ANSWER)).is_err(),
+            "a repair seed takes only an adjudicated audit, not {kind:?}"
+        );
+    }
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn seed_label_refuses_a_leaked_or_unbounded_answer() -> TestResult {
+    let fixture = fixture()?;
+    let leaky = adjudicated_capture(
+        &fixture,
+        json!({ "draft": "the fixed answer, typed early" }),
+    )?;
+    let proposed = propose(&fixture, &leaky).map_err(|refusal| format!("refused: {refusal}"))?;
+    let leaked = label_seed(
+        &fixture,
+        &leaky,
+        &audit(EvalLabelKind::AdjudicatedAudit, ANSWER),
+    );
+    assert!(
+        leaked
+            .as_ref()
+            .is_err_and(|refusal| refusal.contains("leaked")),
+        "an adjudicated answer the workspace holds is no check: {leaked:?}"
+    );
+    let long = "a".repeat(513);
+    assert!(
+        label_seed(
+            &fixture,
+            &leaky,
+            &audit(EvalLabelKind::AdjudicatedAudit, &long)
+        )
+        .is_err(),
+        "a longer adjudicated answer is refused, never cut"
+    );
+    assert_eq!(fixture.vault.eval_repair_seed(&leaky)?, Some(proposed));
+
+    // An observed-outcome task takes no adjudicated label.
+    let observed = text_capture(&fixture)?;
+    let proposed = propose(&fixture, &observed).map_err(|refusal| format!("refused: {refusal}"))?;
+    assert!(
+        label_seed(
+            &fixture,
+            &observed,
+            &audit(EvalLabelKind::AdjudicatedAudit, ANSWER)
+        )
+        .is_err()
+    );
+    assert_eq!(fixture.vault.eval_repair_seed(&observed)?, Some(proposed));
+    Ok(())
+}
+
 /// The companion seat's sealed families as one owner cut takes them: every
 /// family whose cases all fall before `until`.
 fn cut_before(fixture: &Fixture, until: u64) -> TestResult<usize> {
@@ -691,5 +945,210 @@ fn a_withheld_capture_reveals_no_seed() -> TestResult {
     let after = attempt(&source)?;
     assert!(after.seed.is_none(), "{:?}", after.seed);
     assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn seed_label_refuses_an_answer_in_its_reference() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let label = EvalLabel {
+        reference: format!("audit:{ANSWER}"),
+        ..audit(EvalLabelKind::AdjudicatedAudit, ANSWER)
+    };
+    let refusal = label_seed(&fixture, &source, &label).expect_err("the reference holds it");
+    assert!(refusal.contains("reference holds its answer"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn a_task_whose_intent_holds_the_answer_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    let told = format!("Reply with exactly this: {ANSWER}");
+    // An observed answer the intent shows the candidate: no task.
+    let mut observed = text_task(clean_state());
+    observed["intent"] = json!(told);
+    let source = capture(&fixture, observed, json!({ "response": ANSWER }))?;
+    let refusal = propose(&fixture, &source).expect_err("the intent holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    // An adjudicated answer the intent shows the candidate: no label.
+    let mut adjudicated = adjudicated_task(clean_state());
+    adjudicated["intent"] = json!(told);
+    let source = capture(&fixture, adjudicated, json!({ "status": "resolved" }))?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, ANSWER),
+    )
+    .expect_err("the intent holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn a_withheld_capture_takes_no_label() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let coach = fixture.vault.coach_authority()?;
+    let reader = fixture
+        .vault
+        .memory(coach.entity_ref(), coach.actor_class());
+    let label = audit(EvalLabelKind::AdjudicatedAudit, ANSWER);
+    // No seed yet: the withheld reader learns nothing, not even that.
+    let before = reader.label_eval_repair_seed(&source, &label)?;
+    assert!(before.seed.is_none(), "{:?}", before.seed);
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let after = reader.label_eval_repair_seed(&source, &label)?;
+    assert!(after.seed.is_none(), "{:?}", after.seed);
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn an_answer_a_precondition_or_a_tool_shows_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    // A leg is shown each precondition's pointer: an observed answer there
+    // is no task.
+    let pointer = "/orders/0/city";
+    let mut observed = text_task(clean_state());
+    observed["preconditions"] = json!([{ "pointer": pointer, "equals": "Lyon" }]);
+    let source = capture(&fixture, observed.clone(), json!({ "response": pointer }))?;
+    let refusal = propose(&fixture, &source).expect_err("the precondition holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    // Nor is an adjudicated answer there a check.
+    let mut adjudicated = observed;
+    adjudicated["grader"] = json!({ "kind": "adjudicated_response" });
+    let source = capture(&fixture, adjudicated, json!({ "status": "resolved" }))?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, pointer),
+    )
+    .expect_err("the precondition holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    // A leg is shown each declared tool's name: an end state that is one
+    // is no task.
+    let mut tool = tool_task();
+    tool["world"] = json!({ "json_state_tools": { "tools": [
+        { "name": "set_city", "effect": { "kind": "set", "pointer": "" } },
+    ] } });
+    tool["initial_state"] = json!("Paris");
+    let source = capture(&fixture, tool, json!({ "state": "set_city" }))?;
+    let refusal = propose(&fixture, &source).expect_err("the tool's name is the end state");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn seed_label_refuses_an_answer_in_its_task_pointer() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    // The seed keeps the source's task pointer as text.
+    let answer = "value/task";
+    assert!(source.task_pointer.contains(answer));
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, answer),
+    )
+    .expect_err("the task pointer holds the answer");
+    assert!(refusal.contains("task pointer"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn an_end_state_a_whole_shown_value_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    let declaration = json!({ "name": "set_root", "effect": { "kind": "set", "pointer": "" } });
+    let precondition = json!({ "pointer": "/city", "equals": "Paris" });
+    let mut tool = tool_task();
+    tool["world"] = json!({ "json_state_tools": { "tools": [declaration.clone()] } });
+    tool["initial_state"] = json!({ "city": "Paris" });
+    tool["preconditions"] = json!([precondition.clone()]);
+    tool["tools"] = json!(["set_root"]);
+    // A leg is shown each whole declared tool, each whole precondition and
+    // the offered tools' list: an end state that is one of them, which a
+    // leg can copy into a call, is no task.
+    for end in [declaration, precondition, json!(["set_root"])] {
+        let source = capture(&fixture, tool.clone(), json!({ "state": end }))?;
+        let refusal = propose(&fixture, &source).expect_err("the leg's input holds the end state");
+        assert!(refusal.contains("leaked"), "{refusal}");
+        assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    }
+    // An end state the input does not hold is a task.
+    let source = capture(&fixture, tool, json!({ "state": { "city": "Lyon" } }))?;
+    propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    Ok(())
+}
+
+#[test]
+fn an_answer_that_is_the_json_of_a_shown_value_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    // A leg is shown its input as JSON: the JSON text of a value in it is an
+    // answer it can copy.
+    let answer = clean_state()["orders"][0].to_string();
+    let source = capture(
+        &fixture,
+        text_task(clean_state()),
+        json!({ "response": answer }),
+    )?;
+    let refusal = propose(&fixture, &source).expect_err("the workspace's JSON holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    // Nor is such an adjudicated answer a check.
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, &answer),
+    )
+    .expect_err("the workspace's JSON holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn seed_label_refuses_an_answer_that_is_a_seed_identifier() -> TestResult {
+    let fixture = fixture()?;
+    let mut source = adjudicated_capture(&fixture, clean_state())?;
+    source.seat = EvalSeat::Named("ORCHID".to_owned());
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    // The seed keeps its source and its arms' pins: an answer that is one of
+    // them, whole, would sit in the seed as text.
+    let pins = request(&source);
+    for answer in [
+        "ORCHID".to_owned(),
+        source.claim_ref.clone(),
+        source.source_hash.clone(),
+        source.outcome_ordinal.to_string(),
+        pins.old.model.clone(),
+        pins.old.revision.clone(),
+        pins.candidate.skill_digest.clone().unwrap_or_default(),
+    ] {
+        let refusal = label_seed(
+            &fixture,
+            &source,
+            &audit(EvalLabelKind::AdjudicatedAudit, &answer),
+        )
+        .expect_err("the answer is one of the seed's identifiers");
+        assert!(refusal.contains("identifiers"), "{answer}: {refusal}");
+        assert_eq!(
+            fixture.vault.eval_repair_seed(&source)?,
+            Some(proposed.clone())
+        );
+    }
     Ok(())
 }
