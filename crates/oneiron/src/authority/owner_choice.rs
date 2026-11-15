@@ -22,9 +22,12 @@
 //! shares), and its owner must be live at the act's causal point. A choice
 //! this install does not count at full strength (its carrier raced its
 //! removal, it landed restriction only, or it is disputed) counts as not
-//! made: the choice it replaced stays in force. Choices are main-log
-//! entries, so every machine the owner admits folds them, and the fold reads
-//! the log alone.
+//! made: the choice it replaced stays in force. A carrier that is not the
+//! owner's machine needs an owner key's proof where such a carrier must
+//! prove its acts ([`super::owner_proof`], row CARRIER-OWNER-PROOF); with
+//! none its choice waits, in no frontier, until the owner carries it again
+//! from an owner device. Choices are main-log entries, so every machine the
+//! owner admits folds them, and the fold reads the log alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -56,12 +59,19 @@ type ChoiceFrontier<P> = WorldFrontier<SignedOwnerChoice<P>>;
 
 /// One kind's choices in one fold state: the frontier of each target (only
 /// the vault's own for a vault-wide kind, which the record's shape check
-/// pins; each acting PERSON's own for a person's kind), and every
-/// well-signed choice whose carrier the one rule did not admit.
+/// pins; each acting PERSON's own for a person's kind), every well-signed
+/// choice whose carrier the one rule did not admit, and every choice that
+/// waits for the owner's proof (row CARRIER-OWNER-PROOF).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct OwnerChoiceState<P> {
     frontiers: BTreeMap<EntityId, ChoiceFrontier<P>>,
     refused: BTreeSet<AuthorityEntryHash>,
+    /// Admitted choices a carrier that is not the owner's machine delivered
+    /// with no owner key's proof, where such a carrier needs one
+    /// ([`super::owner_proof::not_mine_carriers_need_proof`]): valid, in no
+    /// frontier, so they supersede nothing and no `seen` covers them. The
+    /// owner confirms one by carrying the choice again from an owner device.
+    waiting: BTreeSet<AuthorityEntryHash>,
 }
 
 impl<P> Default for OwnerChoiceState<P> {
@@ -69,6 +79,7 @@ impl<P> Default for OwnerChoiceState<P> {
         Self {
             frontiers: BTreeMap::new(),
             refused: BTreeSet::new(),
+            waiting: BTreeSet::new(),
         }
     }
 }
@@ -81,6 +92,7 @@ pub(super) fn merge_owner_choices<P: Clone + PartialEq>(
 ) {
     merge_world_frontiers(&mut merged.frontiers, &right.frontiers);
     merged.refused.extend(right.refused.iter().copied());
+    merged.waiting.extend(right.waiting.iter().copied());
 }
 
 #[doc(hidden)]
@@ -144,6 +156,10 @@ pub(super) enum OwnerChoiceLanding<P> {
     /// Valid without effect: its carrier was not admitted, or its owner not
     /// live, at its parents.
     Refused(AuthorityEntryHash),
+    /// Valid, and waiting for the owner's proof: an admitted carrier that is
+    /// not the owner's machine delivered it with none, where such a carrier
+    /// needs one (row CARRIER-OWNER-PROOF). It supersedes nothing.
+    Waiting(AuthorityEntryHash),
     /// It supersedes exactly the live choices of its target.
     Recorded {
         target: EntityId,
@@ -167,6 +183,12 @@ pub(super) enum OwnerChoiceLanding<P> {
 /// what descends from it. `pin` and `counted` only weaken a choice this
 /// install does not count. Reads only; the kind's adapter lands the result
 /// into its own register.
+///
+/// One cosign is an owner key's proof or a forged entry
+/// ([`super::owner_proof::owner_proof_key`]). A proof never lifts a refusal.
+/// An admitted choice from a carrier that is not the owner's machine (its
+/// signing key is not its trusted mine key, pin-free) waits with no proof
+/// where such a carrier needs one.
 pub(super) fn owner_choice_landing<P: Clone>(
     state: &FoldState,
     register: &OwnerChoiceState<P>,
@@ -176,9 +198,7 @@ pub(super) fn owner_choice_landing<P: Clone>(
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<OwnerChoiceLanding<P>, AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
+    let proof = super::owner_proof::owner_proof_key(state, entry, hash)?;
     let signer = entry.signer_key();
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
@@ -207,9 +227,16 @@ pub(super) fn owner_choice_landing<P: Clone>(
     let admitted = standing.admits_owner_act_signer(op.machine, &key, roster);
     let marks = standing.live_signing_chains(op.machine, signer);
     let narrow_only = !standing.admits_owner_act_signer(op.machine, &key, StandingView::Install);
+    let carrier_is_mine = standing.trusted_key(op.machine, roster) == Some(key);
     drop(standing);
     if !admitted || !super::owner_act::owner_live_at(state, op.act.owner) {
         return Ok(OwnerChoiceLanding::Refused(hash));
+    }
+    if proof.is_none()
+        && !carrier_is_mine
+        && super::owner_proof::not_mine_carriers_need_proof(state)
+    {
+        return Ok(OwnerChoiceLanding::Waiting(hash));
     }
     Ok(OwnerChoiceLanding::Recorded {
         target: op.act.target,
@@ -240,15 +267,19 @@ impl<P> OwnerChoiceState<P> {
     /// Whether no choice of the kind was ever folded: a register an image
     /// need not carry (FIX 4624).
     pub(super) fn is_empty(&self) -> bool {
-        self.frontiers.is_empty() && self.refused.is_empty()
+        self.frontiers.is_empty() && self.refused.is_empty() && self.waiting.is_empty()
     }
 
-    /// Lands a valid choice: a refused one is kept without effect; a
-    /// recorded one supersedes the live choices of its target.
+    /// Lands a valid choice: a refused one is kept without effect, a
+    /// waiting one is kept for the owner's confirm, and a recorded one
+    /// supersedes the live choices of its target.
     pub(super) fn land(&mut self, landing: OwnerChoiceLanding<P>) {
         match landing {
             OwnerChoiceLanding::Refused(hash) => {
                 self.refused.insert(hash);
+            }
+            OwnerChoiceLanding::Waiting(hash) => {
+                self.waiting.insert(hash);
             }
             OwnerChoiceLanding::Recorded {
                 target,

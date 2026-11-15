@@ -30,8 +30,8 @@ use crate::error::Result;
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
-    FoldedOwnerChoice, OwnerChoiceOp, OwnerChoiceState, folded_owner_choices, owner_choice_landing,
-    refused_owner_choices,
+    FoldedOwnerChoice, OwnerChoiceLanding, OwnerChoiceOp, OwnerChoiceState, folded_owner_choices,
+    owner_choice_landing, refused_owner_choices,
 };
 use super::*;
 
@@ -106,8 +106,11 @@ pub(super) fn apply_policy_setting(
         counting,
         restriction_only,
     )?;
+    // A waiting act is no agent's act in force: the owner's confirm is his
+    // own act (row CARRIER-OWNER-PROOF).
+    let waits = matches!(landing, OwnerChoiceLanding::Waiting(_));
     state.policy_settings.land(landing);
-    if let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
+    if !waits && let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
         state.agent_carried_acts.insert(hash, agent);
     }
     Ok(())

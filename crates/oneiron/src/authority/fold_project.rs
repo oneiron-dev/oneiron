@@ -127,6 +127,9 @@ pub(super) fn project_once(
     let machines = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         super::machine_claims::folded_machines(state, unsettled)
     });
+    let held_machine_answers = merged.as_ref().map_or_else(BTreeMap::new, |state| {
+        super::owner_proof::listed_held_answers(state, &machines)
+    });
     // A key is judged in this install's final trust set: the pin while the
     // fold holds its root, as the install sets it, else the roster.
     let world_keys = merged.as_ref().map_or_else(BTreeMap::new, |state| {
@@ -216,6 +219,7 @@ pub(super) fn project_once(
         }),
         actor_bindings,
         machines,
+        held_machine_answers,
         pinned_root: None,
         root_anchors: merged
             .as_ref()

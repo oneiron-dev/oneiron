@@ -79,6 +79,10 @@ pub struct AuthorityFold {
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Each physical machine's folded standing, keyed by its MACHINE row.
     pub machines: BTreeMap<EntityId, FoldedMachine>,
+    /// Each machine's held answers that still ask the owner, by entry: read
+    /// through [`AuthorityFold::held_machine_answers`].
+    pub(super) held_machine_answers:
+        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>>,
     /// This install's pinned root while the fold holds it as a valid root:
     /// the pin [`AuthorityFold::trusted_machine`] reads. `None` trusts the
     /// accepted roster revisions alone.
@@ -314,6 +318,12 @@ pub(super) struct FoldState {
     /// Every claim of each install key (the machine, its admitter, and an
     /// owner-held roster signer), merged by union.
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
+    /// Each machine's held answers by entry (row CARRIER-OWNER-PROOF): the
+    /// carried answers that needed an owner key's proof and carried none.
+    /// They stand for nothing (no head, no removal, no key claim). Merged by
+    /// union.
+    pub(super) held_machine_answers:
+        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>>,
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
     pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
@@ -592,6 +602,12 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    for (machine, held) in &right.held_machine_answers {
+        let merged_held = merged.held_machine_answers.entry(*machine).or_default();
+        for (hash, answer) in held {
+            merged_held.entry(*hash).or_insert_with(|| answer.clone());
+        }
+    }
     for (anchor, roots) in &right.root_anchors {
         merged
             .root_anchors

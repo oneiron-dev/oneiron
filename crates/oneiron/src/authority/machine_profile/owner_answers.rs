@@ -91,8 +91,8 @@ impl MachineRevision {
 /// consent check, as a grant travel choice's is. Its signer is the carrier's
 /// install key alone; the roster rule never applies to it.
 ///
-/// It requires no cosign, the carrier admitted by the one carrier rule in
-/// the act's parent state, pin-free, with no root-key exception (FIX 2222:
+/// It requires the carrier admitted by the one carrier rule in the act's
+/// parent state, pin-free, with no root-key exception (FIX 2222:
 /// the host root acts as nobody; C4: an unprofiled target never carries its
 /// own answer), the act's owner live there, and the carrier's next sequence.
 /// The act's target is the profile's machine (its shape check). What the
@@ -104,6 +104,13 @@ impl MachineRevision {
 /// proof its own, its revision above its roster chain. A carrier this install
 /// does not count lands the answer restriction only, as a revision past its
 /// floor does.
+///
+/// An answer that needs an owner key's proof and carries none (row
+/// CARRIER-OWNER-PROOF, [`super::super::owner_proof`]) passes every check
+/// above and is then HELD: it joins the machine's held answers and nothing
+/// else (no head, no owner-held revision, no removal, no key claim), so the
+/// prior head stays and the owner's device can ask. One cosign is the proof
+/// or a forged entry; there is never a second.
 pub(in crate::authority) fn apply_owner_answer(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -115,9 +122,7 @@ pub(in crate::authority) fn apply_owner_answer(
     let (Some(carrier), Some(act)) = (profile.carrier, profile.act) else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     };
-    if !entry.cosigns.is_empty() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
+    let proof = super::super::owner_proof::owner_proof_key(state, entry, hash)?;
     let signer = entry.signer_key();
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
@@ -137,6 +142,9 @@ pub(in crate::authority) fn apply_owner_answer(
     }
     let not_counted_here = !standing.admits_owner_act_signer(carrier, &key, StandingView::Install);
     let marks = standing.live_signing_chains(carrier, signer);
+    // Mine is judged pin-free in the roster view, as validity is.
+    let carrier_is_mine = standing.trusted_key(carrier, roster) == Some(key);
+    let target_key = standing.trusted_key(profile.machine, roster);
     drop(standing);
     if !super::super::owner_act::owner_live_at(state, act.owner) {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
@@ -169,6 +177,21 @@ pub(in crate::authority) fn apply_owner_answer(
         })),
         say_so: Some(say_so),
     };
+    if proof.is_none()
+        && super::super::owner_proof::machine_answer_needs_proof(
+            state,
+            profile,
+            carrier_is_mine,
+            target_key,
+        )
+    {
+        state
+            .held_machine_answers
+            .entry(profile.machine)
+            .or_default()
+            .insert(hash, folded);
+        return Ok(());
+    }
     let revisions = crate::authority::machine_standing::with_revision(
         chain,
         &folded,

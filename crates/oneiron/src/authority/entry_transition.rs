@@ -133,6 +133,7 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            held_machine_answers: BTreeMap::new(),
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
