@@ -32,8 +32,6 @@ use crate::edge::EdgeKind;
 use rmpv::Value;
 
 use super::*;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS]: re-exports signed_birth, gated for the lib test target's type check; port it with that item, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 pub(crate) use support::signed_birth as create_project_signed_for_test;
 pub(crate) use support::signed_depth as set_project_depth_signed_for_test;

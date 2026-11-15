@@ -122,8 +122,6 @@ pub(crate) use projection::{
     normalize_project_body, project_room_dependency, reconcile_project_rooms,
     validate_project_body, validate_room_body,
 };
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS]: re-exports create_project_signed_for_test, gated for the lib test target's type check; port it with that item, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tests::create_project_signed_for_test;
 #[cfg(test)]
