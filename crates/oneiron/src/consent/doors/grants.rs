@@ -4,6 +4,9 @@
 use super::*;
 use crate::failure_signals::FAILURE_SIGNALS_CHANNEL;
 use crate::outbound_grant::StandingOutboundGrantScope;
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
+use crate::{EdgeActorClass, WriteActor};
 
 mod grantee_revocation;
 
@@ -307,32 +310,25 @@ impl Vault {
         setting: &DerivedGrantSetting,
         receipt: &ConsentReceipt,
     ) -> Result<()> {
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: receipt.decision_id(),
-            created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
-            outcome: receipt.gate_outcome().to_owned(),
-            reason_codes: vec![receipt.reason_code().to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                CONSENT_CONTENT_KIND,
-                vec![
-                    format!("principal:{}", stamp.principal_ref),
-                    format!("setting:{}", setting.receipt_ref),
-                ],
-            ),
-            actor_class: SYSTEM_ACTOR_CLASS.to_owned(),
-            actor_ref: Some(stamp.actor.to_hex()),
-            content_kind: CONSENT_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
-            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
-            read_frontier_hash: [0_u8; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(wtxn, &record)
+        // `receipt` is the Approved one `put_standing_grant_row_in_txn`
+        // returns. The system carries the act out, for the owner the stamp
+        // names: class `system`, ref the owner's actor.
+        let mut gate_receipt = GateReceipt::new(
+            GateReceiptOutcome::Approved,
+            CONSENT_CONTENT_KIND,
+            receipt.reason_code(),
+            ReceiptActor::Row(WriteActor::new(stamp.actor, EdgeActorClass::System)),
+            crate::consent::consent_receipt_diff_handle(receipt),
+            PolicyBasis::NOT_READ,
+        );
+        gate_receipt.id = Some(receipt.decision_id());
+        gate_receipt.grant_ref = crate::consent::consent_receipt_grant_ref(receipt);
+        gate_receipt.details = vec![
+            format!("principal:{}", stamp.principal_ref),
+            format!("setting:{}", setting.receipt_ref),
+        ];
+        self.store.record_gate_receipt_in_txn(wtxn, gate_receipt)?;
+        Ok(())
     }
 
     /// Denies one pending operation, recording the refusal in the receipt
@@ -531,26 +527,17 @@ impl Vault {
             decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
             grant_ref: grant_ref.to_owned(),
         };
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: receipt.decision_id(),
-            created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
-            outcome: receipt.gate_outcome().to_owned(),
-            reason_codes: vec![receipt.reason_code().to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: SYSTEM_ACTOR_CLASS.to_owned(),
-            actor_ref: None,
-            content_kind: CONSENT_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
-            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
-            read_frontier_hash: [0_u8; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(wtxn, &record)?;
+        let mut gate_receipt = GateReceipt::new(
+            GateReceiptOutcome::Revoked,
+            CONSENT_CONTENT_KIND,
+            receipt.reason_code(),
+            ReceiptActor::Engine,
+            crate::consent::consent_receipt_diff_handle(&receipt),
+            PolicyBasis::NOT_READ,
+        );
+        gate_receipt.id = Some(receipt.decision_id());
+        gate_receipt.grant_ref = crate::consent::consent_receipt_grant_ref(&receipt);
+        self.store.record_gate_receipt_in_txn(wtxn, gate_receipt)?;
         Ok(Some(receipt))
     }
 
@@ -626,32 +613,19 @@ pub(crate) fn record_standing_grant_use_for_store_in_txn(
         grant_ref: grant_ref.to_owned(),
         effect_digest,
     };
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: receipt.decision_id(),
-        created_at: crate::ports::recorded_at_in_txn(store, wtxn)?,
-        outcome: receipt.gate_outcome().to_owned(),
-        reason_codes: vec![receipt.reason_code().to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: CONSENT_ACTOR_CLASS.to_owned(),
-        actor_ref: Some(row.owner_stamp.actor.to_hex()),
-        content_kind: CONSENT_CONTENT_KIND.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: None,
-        grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
-        diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
-        read_frontier_hash: [0_u8; 32],
-        context: Default::default(),
-        redacted_at: None,
-    };
-    store.append_gate_decision_in_txn(wtxn, &record)?;
+    let mut gate_receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        CONSENT_CONTENT_KIND,
+        receipt.reason_code(),
+        ReceiptActor::human(row.owner_stamp.actor),
+        crate::consent::consent_receipt_diff_handle(&receipt),
+        PolicyBasis::NOT_READ,
+    );
+    gate_receipt.id = Some(receipt.decision_id());
+    gate_receipt.grant_ref = crate::consent::consent_receipt_grant_ref(&receipt);
+    store.record_gate_receipt_in_txn(wtxn, gate_receipt)?;
     Ok(receipt)
 }
-
-/// The Gate `actor_class` of a consent act the system carries out: a derived
-/// grant's mint, for the owner its `actor_ref` names, or the engine's revoke.
-const SYSTEM_ACTOR_CLASS: &str = "system";
 
 /// A system path that mints a standing outbound grant to carry out a setting
 /// the owner made earlier (L02 04:5x). The set is closed: each variant is one
