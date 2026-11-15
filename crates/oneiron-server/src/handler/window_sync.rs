@@ -495,11 +495,20 @@ pub(super) async fn handle_window_sync(
             let (positions, imported) = oneiron::sync::window::with_live_window_turn(
                 server.reassert_manager.materializer(),
                 || -> Result<_, ProtocolError> {
-                    server
-                        .persist_imported_update(&key, &persisted, &landings, write_auth)
-                        .map_err(|e| {
-                            ProtocolError::Persistence(format!("update persist failed: {e}"))
-                        })?;
+                    // A promoted window's write judges its destination in the
+                    // committing transaction, as a document's does: world
+                    // privacy may have changed since the pre-write check.
+                    let stored = if protocol::is_residence_version(conn_state.protocol_version) {
+                        let peer = conn_state.peer_machine(server.vault());
+                        server.persist_promoted_imported_update(
+                            &key, &persisted, &landings, write_auth, peer, &doc,
+                        )
+                    } else {
+                        server.persist_imported_update(&key, &persisted, &landings, write_auth)
+                    };
+                    stored.map_err(|e| {
+                        ProtocolError::Persistence(format!("update persist failed: {e}"))
+                    })?;
                     let positions = oneiron::sync::prepare_own_device_push_positions(
                         server.vault(),
                         conn_state.peer_machine(server.vault()),

@@ -73,12 +73,54 @@ pub fn persist_admitted_window_update(
     landings: &super::selector::RepoSyncLandings,
     session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
 ) -> Result<u64> {
-    vault.with_write_txn_grouped(|wtxn| {
+    persist_window_update_in(vault, key, update_bytes, landings, |wtxn| {
         if !session_is_live(wtxn) {
             return Err(Error::sync_protocol(
                 SyncProtocolValidation::DocumentAdmissionDenied,
             ));
         }
+        Ok(())
+    })
+}
+
+/// [`persist_admitted_window_update`] for a promoted window's write: the
+/// entities `update_bytes` lands on `source` must still reach `peer`'s
+/// machine in the committing transaction, judged as a document's writer
+/// judges its destination (world privacy may have changed since the
+/// pre-write check).
+pub fn persist_promoted_window_update(
+    vault: &Vault,
+    key: &WindowKey,
+    update_bytes: &[u8],
+    landings: &super::selector::RepoSyncLandings,
+    session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
+    peer: crate::authority::PeerMachine,
+    source: &LoroDoc,
+) -> Result<u64> {
+    let rows = super::residence::promoted_window_update_rows(source, update_bytes)?;
+    persist_window_update_in(vault, key, update_bytes, landings, |wtxn| {
+        if !session_is_live(wtxn) {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
+        }
+        super::residence::admit_promoted_window_destination_in_txn(vault, wtxn, peer, &rows)
+    })
+}
+
+/// The writer behind [`persist_imported_window_update`] and
+/// [`persist_promoted_window_update`]: `admit` judges the write in the
+/// committing transaction, before a sequence number is taken, then the
+/// update appends as today. A refusal writes nothing.
+fn persist_window_update_in(
+    vault: &Vault,
+    key: &WindowKey,
+    update_bytes: &[u8],
+    landings: &super::selector::RepoSyncLandings,
+    admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+) -> Result<u64> {
+    vault.with_write_txn_grouped(|wtxn| {
+        admit(wtxn)?;
         // FIX 7608 slice 4 (FIX 10732, L04 05:5x): the new bytes a translated
         // copy edit lands carry its mark in this writer, never committed
         // unmarked.

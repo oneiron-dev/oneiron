@@ -12,7 +12,7 @@ use crate::Vault;
 use crate::authority::{Destination, PeerMachine, VerifiedSlip, WorldPrivacyView};
 use crate::claim::{CallerLocality, ResidenceReadContext};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::federation::FederationGrantScope;
 use crate::sync::SyncSelector;
 use crate::sync::types::WindowKey;
@@ -213,6 +213,37 @@ pub fn rows_may_reach(vault: &Vault, peer: PeerMachine, rows: &[EntityId]) -> Re
         }
     }
     Ok(true)
+}
+
+/// Refuse a promoted window's write whose rows may not reach `peer`'s
+/// machine. The writer calls this in its committing transaction, so a world
+/// privacy change that landed after the pre-write check still meets the
+/// write, as a document's writer judges its destination. A peer whose proof
+/// no longer stands is an unknown destination; a row whose world cannot be
+/// placed stays.
+///
+/// # Errors
+///
+/// The write's refusal, or storage errors.
+pub(crate) fn admit_promoted_window_destination_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: PeerMachine,
+    rows: &[EntityId],
+) -> Result<()> {
+    let withheld = Withhold::Peer(peer).worlds_in(vault, txn)?;
+    for row in rows {
+        match crate::settings::device_only_withholds(&vault.store, txn, &withheld, row) {
+            Ok(false) => {}
+            Ok(true) | Err(Error::CorruptedIndex(_)) => {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 /// The worlds kept off the machine `peer` proved, read now, or `None` when no

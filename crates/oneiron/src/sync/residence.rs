@@ -34,6 +34,7 @@ mod search;
 mod window_index;
 mod world_base_rows;
 mod world_eviction;
+pub(crate) use admission::admit_promoted_window_destination_in_txn;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_parts::{
     AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
@@ -416,6 +417,53 @@ pub fn admit_promoted_window_update(
         )?;
     }
     Ok(())
+}
+
+/// The entities a promoted window's update lands, read from the update's own
+/// operations on a fork of `source`: every binary insert into the entities
+/// map with a well-formed id. Anything else the update carries (a birth
+/// restatement, an engine-translated hold) names no landed row and is not
+/// listed. An update that does not decode, arrives as a snapshot, or leaves
+/// pending dependencies is refused, as admission refuses it.
+pub(crate) fn promoted_window_update_rows(
+    source: &LoroDoc,
+    update: &[u8],
+) -> Result<Vec<EntityId>> {
+    let malformed = || Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied);
+    let metadata = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| malformed())?;
+    if metadata.mode.is_snapshot() {
+        return Err(malformed());
+    }
+    let candidate = source.fork();
+    let status = candidate.import(update).map_err(|_| malformed())?;
+    if status.pending.is_some() {
+        return Err(malformed());
+    }
+    let operations =
+        candidate.export_json_updates(&metadata.partial_start_vv, &metadata.partial_end_vv);
+    if !super::loro_support::json_covers_blob(&operations, &metadata) {
+        return Err(malformed());
+    }
+    let entities = ContainerID::new_root("entities", ContainerType::Map);
+    let mut rows = std::collections::BTreeSet::new();
+    for op in operations.changes.into_iter().flat_map(|change| change.ops) {
+        if op.container != entities {
+            continue;
+        }
+        let JsonOpContent::Map(MapOp::Insert {
+            key,
+            value: LoroValue::Binary(_),
+        }) = op.content
+        else {
+            continue;
+        };
+        let id = EntityId::from_hex(&key).map_err(|_| malformed())?;
+        if key != id.to_hex() {
+            return Err(malformed());
+        }
+        rows.insert(id);
+    }
+    Ok(rows.into_iter().collect())
 }
 
 /// Export the canonical window, not the selector's synthetic document.

@@ -115,6 +115,30 @@ impl SyncServer {
         )
     }
 
+    /// [`Self::persist_imported_update`] for a promoted window's write: the
+    /// entities the update lands on `source` must still reach `peer`'s
+    /// machine in the committing transaction (world privacy may have changed
+    /// since the pre-write check).
+    pub(crate) fn persist_promoted_imported_update(
+        &self,
+        key: &WindowKey,
+        update_bytes: &[u8],
+        landings: &oneiron::sync::selector::RepoSyncLandings,
+        auth: Option<&crate::auth::CoreAuth>,
+        peer: oneiron::authority::PeerMachine,
+        source: &loro::LoroDoc,
+    ) -> Result<u64, oneiron::Error> {
+        server_state::persist_promoted_window_update(
+            &self.vault,
+            key,
+            update_bytes,
+            landings,
+            |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
+            peer,
+            source,
+        )
+    }
+
     /// Evicts a window doc from the live manager registry.
     ///
     /// Used when an accepted update fails to import into the loaded doc: the
