@@ -1,4 +1,5 @@
 use crate::team::TeamPattern;
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// Who decides (ARCH-0079 #patterns). `Solo` is the width-1 degenerate
@@ -17,8 +18,10 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("coordination.pattern")]
 pub enum CoordinationPattern {
     Solo,
     CeoDecides,
@@ -37,19 +40,6 @@ impl CoordinationPattern {
         Self::Market,
         Self::Rotation,
     ];
-
-    /// Stable wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Solo => "solo",
-            Self::CeoDecides => "ceo_decides",
-            Self::Committee => "committee",
-            Self::Vote => "vote",
-            Self::Market => "market",
-            Self::Rotation => "rotation",
-        }
-    }
 
     pub fn from_token(token: &str) -> crate::error::Result<Self> {
         match token.trim().to_ascii_lowercase().as_str() {

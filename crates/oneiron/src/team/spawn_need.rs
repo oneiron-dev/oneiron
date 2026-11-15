@@ -1,4 +1,5 @@
 use crate::team::spawn_override::SpawnOverride;
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// How much a spawn cares (ARCH-0079 #spawn): the same five words vendors
@@ -17,8 +18,10 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("care.level")]
 pub enum CareLevel {
     Light,
     Medium,
@@ -38,28 +41,10 @@ impl CareLevel {
         Self::Max,
     ];
 
-    /// Stable wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Light => "light",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::XHigh => "xhigh",
-            Self::Max => "max",
-        }
-    }
-
     /// Parse a wire token.
     pub fn from_token(token: &str) -> crate::error::Result<Self> {
-        match token.trim().to_ascii_lowercase().as_str() {
-            "light" => Ok(Self::Light),
-            "medium" => Ok(Self::Medium),
-            "high" => Ok(Self::High),
-            "xhigh" => Ok(Self::XHigh),
-            "max" => Ok(Self::Max),
-            _ => Err(super::widen_record::invalid("unknown care level")),
-        }
+        <Self as Register>::named(&token.trim().to_ascii_lowercase())
+            .ok_or_else(|| super::widen_record::invalid("unknown care level"))
     }
 
     /// Ladder position, 0 (light) to 4 (max).
