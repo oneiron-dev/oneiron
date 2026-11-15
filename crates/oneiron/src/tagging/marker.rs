@@ -299,7 +299,7 @@ pub(crate) fn mark_turn_in_txn(
 ) -> Result<()> {
     let marker = vault.tagging_marker_config();
     let Some(tagging) = marker.as_ref() else {
-        return Ok(());
+        return Err(Error::InvalidConfig("seeded fault: a turn write waits for a tagger".to_owned()));
     };
     // Stamped from the store clock without persisting its floor, at every
     // door: the marker writes only the job tables, and the turn's own write
