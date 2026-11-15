@@ -5,8 +5,10 @@
 //! `POST /v1/core/query` in process (`build_app` + `oneshot`): the owner on
 //! the host root credential, the established self-hosted owner path, and an
 //! agent on its own paired credential, enrolled through a real pairing
-//! redemption and proving its holder key on every request. Each case owns
-//! its vault. No sockets, no sleeps, no models.
+//! redemption and proving its holder key on every request. The two sync
+//! cases serve the same app on a loopback port and open the owner's `GET
+//! /ws` socket, as a same-vault peer does. Each case owns its vault. No
+//! sleeps, no models.
 //!
 //! The promises, with their canon lines (oneiron-docs `generated/`,
 //! `oneiron/gate/oneiron-arch-0069-secret-custody-v1.md`):
@@ -24,7 +26,12 @@
 //! - a secret is not knowledge: `:8` "Secrets are not knowledge, and the
 //!   repo is not their sync plane." and "never as retrievable claims", so no
 //!   recall or query names the record, and an export with secrets left out
-//!   carries no value.
+//!   carries no value;
+//! - custody never syncs: `:61` "custody bodies never sync", and "Window
+//!   admission refuses a custody carrier anywhere in the entities plane,
+//!   before import, persistence or relay", so a registered record never
+//!   leaves over the sync socket and a peer's custody carrier is refused
+//!   there and writes nothing.
 //!
 //! These promises hold on main. Their red proof is a seeded fault (Test rules
 //! v2, rule 5), named in the PR.
@@ -40,7 +47,9 @@ mod engine_stack;
 
 use std::collections::BTreeSet;
 use std::io::{Cursor, Read};
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     Router,
@@ -51,15 +60,28 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
+use futures_util::{SinkExt, StreamExt};
+use loro::{ExportMode, LoroDoc};
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, PairingPrincipal, pairing_binding_transcript,
 };
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::registry::ENTITY_TYPE_SECRET_CUSTODY;
+use oneiron::sync::WindowKey;
+use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::ServiceExt;
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// The close code the sync door answers an update that does not import.
+const DECODE_ERROR_CLOSE: u16 = 4002;
 
 /// The name every case registers its secret under.
 const NAME: &str = "doors-custody-secret";
@@ -635,6 +657,344 @@ fn a_secret_is_not_knowledge_and_no_read_carries_its_value() {
         assert!(
             row["body"].is_null(),
             "an archive with secrets left out carries no custody body: {row}"
+        );
+    });
+}
+
+impl Served {
+    /// Serves the app on a loopback port, as `oneiron serve` does: its
+    /// address.
+    async fn listen(&self) -> SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener");
+        let addr = listener.local_addr().expect("listener address");
+        let app = self.app.clone();
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve the app") });
+        addr
+    }
+
+    /// The owner's sync socket on the host root credential, opened with
+    /// `hello`: the socket and the root manifest frame it answers first.
+    async fn sync_socket(&self, addr: SocketAddr, hello: Vec<u8>) -> (Socket, Vec<u8>) {
+        let mut request = format!("ws://{addr}/ws")
+            .into_client_request()
+            .expect("sync socket request");
+        let headers = request.headers_mut();
+        headers.insert(
+            "authorization",
+            format!("Bearer {}", self.owner_token)
+                .parse()
+                .expect("authorization header"),
+        );
+        headers.insert(
+            "x-oneiron-binding",
+            self.binding(Caller::Owner).parse().expect("binding header"),
+        );
+        let (mut socket, _) = tokio_tungstenite::connect_async(request)
+            .await
+            .expect("the owner's sync socket opens");
+        socket
+            .send(Message::Binary(hello.into()))
+            .await
+            .expect("protocol hello");
+        let root = next_frame(&mut socket).await;
+        assert_eq!(
+            root.first(),
+            Some(&TAG_SYNC_UPDATE),
+            "the root manifest comes first"
+        );
+        (socket, root)
+    }
+}
+
+/// The base month window a row written now lands in.
+fn month_window(vault: &Vault) -> String {
+    WindowKey::from_timestamp(vault.now_recorded_at())
+        .as_str()
+        .to_owned()
+}
+
+/// The next binary frame on `socket`, each window UPDATE unwrapped from its
+/// pad envelope.
+async fn next_frame(socket: &mut Socket) -> Vec<u8> {
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(10), socket.next())
+            .await
+            .expect("a sync frame within 10 s")
+            .expect("the sync socket stays open")
+            .expect("a sync frame");
+        match message {
+            Message::Binary(data) => return unwrap_window_update(data.to_vec()),
+            Message::Ping(_) | Message::Pong(_) => continue,
+            other => panic!("unexpected sync message: {other:?}"),
+        }
+    }
+}
+
+/// A window UPDATE frame with its pad envelope taken off; every other frame
+/// as it came.
+fn unwrap_window_update(frame: Vec<u8>) -> Vec<u8> {
+    if frame.first() != Some(&TAG_WINDOW_SYNC) {
+        return frame;
+    }
+    let (key, sub_tag, payload) =
+        transport::decode_window_sync(&frame[1..]).expect("a window frame decodes");
+    if sub_tag != window_sub_tags::UPDATE {
+        return frame;
+    }
+    let envelope = transport::decode_window_pad_envelope(payload)
+        .expect("a window UPDATE arrives in its pad envelope");
+    transport::encode_window_sync(key, sub_tag, &envelope.payload)
+        .into_result()
+        .expect("an unwrapped window update re-encodes")
+}
+
+/// Pulls `key`'s whole window over `socket` with an empty version vector:
+/// every frame the server answers up to its VV_RESPONSE.
+async fn pull_window(socket: &mut Socket, key: &str) -> Vec<Vec<u8>> {
+    let empty = LoroDoc::new().oplog_vv().encode();
+    let request = transport::encode_window_sync(key, window_sub_tags::VV_REQUEST, &empty);
+    socket
+        .send(Message::Binary(request.into()))
+        .await
+        .expect("window request");
+    let mut frames = Vec::new();
+    loop {
+        let frame = next_frame(socket).await;
+        let answered = frame.first() == Some(&TAG_WINDOW_SYNC)
+            && transport::decode_window_sync(&frame[1..]).is_ok_and(|(window, sub_tag, _)| {
+                window == key && sub_tag == window_sub_tags::VV_RESPONSE
+            });
+        frames.push(frame);
+        if answered {
+            return frames;
+        }
+    }
+}
+
+/// Every entity carrier the window UPDATEs among `frames` hold: its map key
+/// and its blob.
+fn window_carriers(frames: &[Vec<u8>]) -> Vec<(String, Vec<u8>)> {
+    let mut carriers = Vec::new();
+    for frame in frames {
+        if frame.first() != Some(&TAG_WINDOW_SYNC) {
+            continue;
+        }
+        let (_, sub_tag, payload) =
+            transport::decode_window_sync(&frame[1..]).expect("a window frame decodes");
+        if sub_tag != window_sub_tags::UPDATE {
+            continue;
+        }
+        let doc = LoroDoc::new();
+        doc.import(payload).expect("a window update imports");
+        let deep = doc.get_deep_value();
+        let Some(entities) = deep
+            .as_map()
+            .and_then(|root| root.get("entities"))
+            .and_then(|entities| entities.as_map())
+        else {
+            continue;
+        };
+        for (key, value) in entities.iter() {
+            let blob = value
+                .as_binary()
+                .map(|blob| blob.to_vec())
+                .unwrap_or_default();
+            carriers.push((key.clone(), blob));
+        }
+    }
+    carriers
+}
+
+/// `bytes` holds `needle` somewhere.
+fn holds(bytes: &[u8], needle: &[u8]) -> bool {
+    bytes.windows(needle.len()).any(|window| window == needle)
+}
+
+/// A peer's custody carrier, as a same-vault replica would replay one: type
+/// byte 68, the full metadata header at `at`, and a MessagePack body naming
+/// the record and carrying `value`.
+fn custody_carrier(name: &str, value: &SecretValue, at: u64) -> Vec<u8> {
+    let mut blob = vec![ENTITY_TYPE_SECRET_CUSTODY];
+    for field in [at, at, at, 0] {
+        blob.extend_from_slice(&field.to_be_bytes());
+    }
+    let body = rmp_serde::to_vec_named(&json!({
+        "name": name,
+        "rotation_generation": 7,
+        "value": value.raw,
+    }))
+    .expect("a MessagePack body");
+    blob.extend_from_slice(&body);
+    blob
+}
+
+/// The owner registers a secret, then opens the sync socket a same-vault
+/// peer pulls over: the root manifest and every window it lists, with the
+/// month window a row written now lands in, each pulled whole. No window
+/// holds a custody carrier, no carrier sits under the record's id, and no
+/// byte the socket sent spells the record's id, its name or its value
+/// (arch-0069:61, "custody bodies never sync"). Red with the seeded faults
+/// that let reverse rematerialization pack, the pending mirror carry, and
+/// the egress scrub keep a custody row.
+#[test]
+fn a_registered_custody_row_never_leaves_over_the_sync_socket() {
+    run_on_engine_stack("secrets-doors-sync-pull", || async {
+        let served = served().await;
+        let value = SecretValue::fresh();
+        let registered = served.register(NAME, &value).await;
+        let secret_id = registered["secret_id"]
+            .as_str()
+            .expect("the register reply names the record")
+            .to_owned();
+        let addr = served.listen().await;
+        let (mut socket, root) = served
+            .sync_socket(addr, transport::encode_chunk_full_window_protocol_hello())
+            .await;
+
+        let root_doc = LoroDoc::from_snapshot(&root[1..]).expect("the root manifest imports");
+        let mut windows: BTreeSet<String> = oneiron::sync::schema::read_window_list(&root_doc)
+            .iter()
+            .map(|key| key.as_str().to_owned())
+            .collect();
+        windows.insert(month_window(&served.vault));
+        let mut sent = root.clone();
+        for key in &windows {
+            let frames = pull_window(&mut socket, key).await;
+            for (entity, blob) in window_carriers(&frames) {
+                assert_ne!(
+                    blob.first(),
+                    Some(&ENTITY_TYPE_SECRET_CUSTODY),
+                    "window {key} carries a custody row under {entity}"
+                );
+                assert_ne!(
+                    entity, secret_id,
+                    "window {key} carries a row under the custody record's id"
+                );
+            }
+            for frame in frames {
+                sent.extend_from_slice(&frame);
+            }
+        }
+        for (what, needle) in [
+            ("the custody record's id", secret_id.as_bytes()),
+            ("the secret's name", NAME.as_bytes()),
+            ("the secret's value", value.raw.as_bytes()),
+            ("the secret value's base64", value.base64.as_bytes()),
+        ] {
+            assert!(
+                !holds(&sent, needle),
+                "the sync socket sent {what} (windows {windows:?})"
+            );
+        }
+    });
+}
+
+/// A same-vault peer pushes a custody carrier for the owner's record over
+/// the sync socket: the door closes the socket with 4002 ("update does not
+/// import") before import, persistence or relay. The owner's record keeps
+/// its id, status, generation and custody revision, and a fresh pull of the
+/// window holds no carrier and no byte of the forged value (arch-0069:61).
+/// Red with the seeded fault that drops window admission's custody arm.
+#[test]
+fn a_pushed_custody_carrier_is_refused_at_the_sync_door() {
+    run_on_engine_stack("secrets-doors-sync-push", || async {
+        let served = served().await;
+        let kept = SecretValue::fresh();
+        let forged = SecretValue::fresh();
+        let registered = served.register(NAME, &kept).await;
+        let secret_id = registered["secret_id"]
+            .as_str()
+            .expect("the register reply names the record")
+            .to_owned();
+        let before = served.custody(NAME).await;
+        let month = month_window(&served.vault);
+        let addr = served.listen().await;
+        let (mut pusher, _) = served
+            .sync_socket(addr, transport::encode_legacy_full_window_protocol_hello())
+            .await;
+
+        let author = LoroDoc::new();
+        author
+            .get_map("entities")
+            .insert(
+                &secret_id,
+                custody_carrier(NAME, &forged, served.vault.now_recorded_at()).as_slice(),
+            )
+            .expect("the forged carrier inserts");
+        author.commit();
+        let update = author
+            .export(ExportMode::all_updates())
+            .expect("the forged update exports");
+        let envelope = transport::WindowPadEnvelope {
+            kind: transport::WindowPadKind::Update,
+            form: transport::WindowPadForm::PadFree,
+            queue_seq: None,
+            payload: update,
+            refs: Vec::new(),
+            sidecar: None,
+        };
+        for frame in envelope
+            .encode_frames(&month, window_sub_tags::UPDATE)
+            .expect("the forged update frames")
+        {
+            pusher
+                .send(Message::Binary(frame.into()))
+                .await
+                .expect("the forged update sends");
+        }
+
+        let closed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match pusher.next().await {
+                    Some(Ok(Message::Close(frame))) => {
+                        return frame.map(|frame| u16::from(frame.code));
+                    }
+                    None | Some(Err(_)) => return None,
+                    Some(Ok(_)) => continue,
+                }
+            }
+        })
+        .await
+        .expect("the sync door closes the socket within 10 s");
+        assert_eq!(
+            closed,
+            Some(DECODE_ERROR_CLOSE),
+            "the sync door refuses the custody carrier as an update that does not import"
+        );
+
+        let after = served.custody(NAME).await;
+        let record = |view: &Value| {
+            [
+                view["secret_id"].clone(),
+                view["known"].clone(),
+                view["status"].clone(),
+                view["generation"].clone(),
+                view["seen"].clone(),
+            ]
+        };
+        assert_eq!(
+            record(&after),
+            record(&before),
+            "the refused carrier moves nothing: {after}"
+        );
+        let (mut puller, _) = served
+            .sync_socket(addr, transport::encode_chunk_full_window_protocol_hello())
+            .await;
+        let frames = pull_window(&mut puller, &month).await;
+        assert!(
+            window_carriers(&frames)
+                .iter()
+                .all(|(entity, blob)| *entity != secret_id
+                    && blob.first() != Some(&ENTITY_TYPE_SECRET_CUSTODY)),
+            "the window keeps no custody carrier"
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|frame| !holds(frame, forged.raw.as_bytes())),
+            "no byte of the forged value reaches the window"
         );
     });
 }
