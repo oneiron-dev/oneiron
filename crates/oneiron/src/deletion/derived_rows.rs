@@ -71,6 +71,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::context_board::erase_section_fit_receipts_in_txn,
     // FIX 6870: a CODE anchor's repo manifests, aliases and minted markers.
     |write, txn, id| crate::origin::erase_repo_manifests_in_txn(write.store, txn, id),
+    // DESIGN 15-setting-primitive: the setting rows at a scope that names it, and its changes.
+    |write, txn, id| crate::setting::erase_setting_entity_in_txn(write.store, txn, id),
     // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
     release_asset_blob_in_txn,
     // FIX 10219: a subject's recognition prints, samples and active pointer.
