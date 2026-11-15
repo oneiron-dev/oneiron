@@ -72,3 +72,31 @@ pub struct BookingConstraintTurnWindow {
     pub start: u64,
     pub end: u64,
 }
+
+/// The owner's one-send press on a held rung-2 first send, named by its send
+/// ref (`booking-rung2:<page hex>:<session>`, the ref its hold and its
+/// receipt carry).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingRung2ReleaseOnceRequest {
+    pub send_ref: String,
+}
+
+/// What the owner's press on a rung-2 first send came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingRung2ReleaseOnceResponse {
+    pub send_ref: String,
+    /// The canonical Message-ID the send goes out under.
+    pub message_id: String,
+    pub outcome: BookingRung2ReleaseOutcome,
+}
+
+/// Sent: the kept words reached the mail server (on a later press, the send
+/// the ledger recorded). Held: the Gate still holds the send for a reason the
+/// one-send press does not answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BookingRung2ReleaseOutcome {
+    Sent,
+    Held,
+}

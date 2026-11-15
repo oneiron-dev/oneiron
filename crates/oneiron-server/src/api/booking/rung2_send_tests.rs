@@ -1,11 +1,15 @@
 //! Rung 2 on the public page (INBOX-RESIDUE PR-3b-3b): the turn keeps the
 //! continuation host-side, the visitor's send keeps the page agent's first
 //! send once per session and to one address, the owner's rate row bounds it,
-//! and a page that cannot continue by email asks for none.
+//! and a page that cannot continue by email asks for none. The owner's press
+//! (PR-3b-3c, `vault.booking.rung2.release_once`) approves the kept words
+//! once and sends them.
 //!
 //! The send runs on a test native-mail adapter on [`DOMAIN`], and its
 //! dispatch is recorded rather than sent: the cold-send hold of a kept send
-//! is the engine's own (`tests/booking_rung2_thread.rs`).
+//! is the engine's own (`tests/booking_rung2_thread.rs`). With
+//! `--cfg oneiron_test_support` one press test meets that hold for real,
+//! through the engine's own dispatch into a counting transport.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -26,6 +30,7 @@ use oneiron::channel_identity_provider::EmailProviderInbound;
 use oneiron::channel_identity_provider::native_mail::{
     NativeMailAdapter, NativeMailHost, NativeMailRunMode,
 };
+use oneiron::task_verb::sdk::{BookingRung2ReleaseOnceResponse, BookingRung2ReleaseOutcome};
 
 use super::super::admission::rung2_send_facts;
 use super::super::front::ConstraintTurnResponse;
@@ -33,6 +38,7 @@ use super::super::rung2::{
     Rung2Dispatched, Rung2Send, Rung2SendInput, Rung2SendResponse, rung2_continuations,
     rung2_turn_answer,
 };
+use super::super::rung2_release::release_kept_first_send;
 use super::super::subject::session_key;
 use super::fixture::*;
 use super::*;
@@ -163,6 +169,20 @@ impl Rung2Page {
         email: &str,
         dispatched: &RefCell<Vec<Rung2FirstSend>>,
     ) -> Result<Rung2SendResponse, ApiError> {
+        self.press_with(session, email, |_, kept| {
+            dispatched.borrow_mut().push(kept.clone());
+            Ok(Rung2Dispatched::Held)
+        })
+    }
+
+    /// One press of `session` for `email`, its kept send handed to
+    /// `dispatch`.
+    fn press_with(
+        &self,
+        session: &str,
+        email: &str,
+        dispatch: impl FnOnce(&Vault, &Rung2FirstSend) -> Result<Rung2Dispatched, ApiError>,
+    ) -> Result<Rung2SendResponse, ApiError> {
         let authority = self.authority();
         let front = authority
             .publication
@@ -183,10 +203,47 @@ impl Rung2Page {
             facts: &facts,
             now: now(),
         }
-        .run(&self.adapter, |_, kept| {
-            dispatched.borrow_mut().push(kept.clone());
-            Ok(Rung2Dispatched::Held)
-        })
+        .run(&self.adapter, dispatch)
+    }
+
+    /// The owner's press on `send_ref`, its dispatch recorded in
+    /// `dispatched` and answered sent.
+    fn release(
+        &self,
+        send_ref: &str,
+        dispatched: &RefCell<Vec<Rung2FirstSend>>,
+    ) -> Result<BookingRung2ReleaseOnceResponse, ApiError> {
+        release_kept_first_send(
+            &self.server().vault,
+            &crate::test_credentials::embedded_owner(&self.server().vault),
+            &self.adapter,
+            send_ref,
+            |_, kept| {
+                dispatched.borrow_mut().push(kept.clone());
+                Ok(Rung2Dispatched::Sent)
+            },
+        )
+    }
+
+    /// Whether the owner's one-send approval of `kept`'s exact request is
+    /// already minted: minting it again is refused as spent.
+    fn press_minted(&self, kept: &Rung2FirstSend) -> bool {
+        let request = kept.dispatch_request().expect("request");
+        match self.adapter.approve_send_once(
+            &self.server().vault,
+            &crate::test_credentials::embedded_owner(&self.server().vault),
+            &request,
+        ) {
+            Ok(_) => false,
+            Err(error) => {
+                assert_eq!(
+                    error.kind(),
+                    oneiron::ErrorKind::ConsentApproveOnceSpent,
+                    "{error}"
+                );
+                true
+            }
+        }
     }
 
     fn kept(&self, session: &str) -> Option<Rung2FirstSend> {
@@ -611,4 +668,193 @@ fn the_public_page_url_prefix_is_https_on_a_dotted_host() {
     ] {
         assert!(config(invalid).validate().is_err(), "{invalid}");
     }
+}
+
+/// The owner's press names a kept send by its ref and approves exactly
+/// those words once, with the owner's proof, then hands them to the send:
+/// the answer names the send and its Message-ID.
+#[test]
+fn the_owners_press_approves_the_kept_words_once_and_sends_them() {
+    let page = Rung2Page::new(true);
+    let session = "rung2-release";
+    page.turn_kept(session);
+    let held = RefCell::new(Vec::new());
+    page.press(session, VISITOR, &held)
+        .expect("the visitor's press");
+    let kept = page.kept(session).expect("kept");
+
+    let sent = RefCell::new(Vec::new());
+    let send_ref = rung2_send_ref(&page.fixture.page, session);
+    let released = page.release(&send_ref, &sent).expect("the owner's press");
+    assert_eq!(
+        released,
+        BookingRung2ReleaseOnceResponse {
+            send_ref: send_ref.clone(),
+            message_id: kept.message_id.clone(),
+            outcome: BookingRung2ReleaseOutcome::Sent,
+        }
+    );
+    assert_eq!(*sent.borrow(), [kept.clone()], "the kept words go");
+    assert!(
+        page.press_minted(&kept),
+        "the press minted the one-send approval of the kept request"
+    );
+}
+
+/// A second press approves nothing more and answers the same send: the
+/// first approval stands, and the send is the same kept words.
+#[test]
+fn a_second_press_approves_nothing_more_and_answers_the_same_send() {
+    let page = Rung2Page::new(true);
+    let session = "rung2-release-twice";
+    page.turn_kept(session);
+    let held = RefCell::new(Vec::new());
+    page.press(session, VISITOR, &held)
+        .expect("the visitor's press");
+    let kept = page.kept(session).expect("kept");
+    let send_ref = rung2_send_ref(&page.fixture.page, session);
+
+    let sent = RefCell::new(Vec::new());
+    let first = page.release(&send_ref, &sent).expect("first press");
+    let second = page
+        .release(&send_ref, &sent)
+        .expect("a second press is no refusal");
+    assert_eq!(first, second);
+    assert_eq!(*sent.borrow(), [kept.clone(), kept.clone()]);
+    assert!(page.press_minted(&kept), "one approval, minted once");
+}
+
+/// A press names a kept send by the ref its hold carries: a ref the host
+/// could not have written is refused as a bad request, and a well-formed ref
+/// that kept nothing (another session, another page) is not found. Nothing
+/// is sent.
+#[test]
+fn a_press_names_a_kept_send_by_its_ref() {
+    let page = Rung2Page::new(true);
+    let session = "rung2-release-ref";
+    page.turn_kept(session);
+    let held = RefCell::new(Vec::new());
+    page.press(session, VISITOR, &held)
+        .expect("the visitor's press");
+
+    let sent = RefCell::new(Vec::new());
+    let page_hex = page.fixture.page.to_hex();
+    for malformed in [
+        String::new(),
+        format!("{page_hex}:{session}"),
+        format!("booking-rung2:{page_hex}"),
+        format!("booking-rung2:not-hex:{session}"),
+        format!("booking-rung2:{page_hex}:"),
+    ] {
+        let refused = page
+            .release(&malformed, &sent)
+            .expect_err("a malformed ref is refused");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{malformed}");
+    }
+    for unkept in [
+        rung2_send_ref(&page.fixture.page, "another-session"),
+        rung2_send_ref(&id(0x82), session),
+    ] {
+        let refused = page
+            .release(&unkept, &sent)
+            .expect_err("a ref that kept nothing");
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND, "{unkept}");
+    }
+    assert!(sent.borrow().is_empty(), "nothing is sent");
+}
+
+/// The host's mail transport in the held-send test: it delivers every send
+/// it is handed and counts them.
+#[cfg(oneiron_test_support)]
+#[derive(Default)]
+struct CountingTransport {
+    delivered: usize,
+}
+
+#[cfg(oneiron_test_support)]
+impl oneiron::outbound::OutboundExecutionSink for CountingTransport {
+    fn execute(
+        &mut self,
+        _request: &oneiron::outbound::OutboundExecutionRequest<'_>,
+    ) -> oneiron::outbound::OutboundExecutionOutcome {
+        self.delivered += 1;
+        oneiron::outbound::OutboundExecutionOutcome::delivered_to_channel("host:rung2")
+    }
+}
+
+/// The engine's own dispatch of `kept` through `transport`.
+#[cfg(oneiron_test_support)]
+fn dispatch_through(
+    adapter: &NativeMailAdapter<Host>,
+    transport: &RefCell<CountingTransport>,
+    vault: &Vault,
+    kept: &Rung2FirstSend,
+) -> Result<Rung2Dispatched, ApiError> {
+    let request = kept.dispatch_request().expect("request");
+    let result = adapter
+        .dispatch_send(vault, request, &mut *transport.borrow_mut())
+        .expect("dispatch");
+    match result.outcome {
+        oneiron::outbound::OutboundDispatchOutcome::Held => Ok(Rung2Dispatched::Held),
+        oneiron::outbound::OutboundDispatchOutcome::DeliveredToChannel => Ok(Rung2Dispatched::Sent),
+        outcome => panic!("a rung-2 first send is held or sent: {outcome:?}"),
+    }
+}
+
+/// Under the cold-send law the visitor's send holds for the owner, and the
+/// owner's press releases it: the kept words reach the transport once, and a
+/// second press sends nothing more.
+#[cfg(oneiron_test_support)]
+#[test]
+fn the_owners_press_releases_a_held_first_send_to_the_visitor_once() {
+    let page = Rung2Page::new(true);
+    oneiron::test_doors::booking_rung2_thread::hold_cold_mail_for_owner_press(
+        &page.server().vault,
+        page.agent,
+    )
+    .expect("the cold-send policy");
+    let session = "rung2-release-held";
+    page.turn_kept(session);
+    let transport = RefCell::new(CountingTransport::default());
+    let answered = page
+        .press_with(session, VISITOR, |vault, kept| {
+            dispatch_through(&page.adapter, &transport, vault, kept)
+        })
+        .expect("the visitor's press");
+    assert!(
+        matches!(answered, Rung2SendResponse::Held { .. }),
+        "a first send to a stranger holds: {answered:?}"
+    );
+    assert_eq!(
+        transport.borrow().delivered,
+        0,
+        "a held send reaches no transport"
+    );
+
+    let send_ref = rung2_send_ref(&page.fixture.page, session);
+    let owner = crate::test_credentials::embedded_owner(&page.server().vault);
+    let release = || {
+        release_kept_first_send(
+            &page.server().vault,
+            &owner,
+            &page.adapter,
+            &send_ref,
+            |vault, kept| dispatch_through(&page.adapter, &transport, vault, kept),
+        )
+        .expect("the owner's press")
+    };
+    let first = release();
+    assert_eq!(first.outcome, BookingRung2ReleaseOutcome::Sent);
+    assert_eq!(
+        transport.borrow().delivered,
+        1,
+        "the press sends the kept words"
+    );
+    let second = release();
+    assert_eq!(second, first);
+    assert_eq!(
+        transport.borrow().delivered,
+        1,
+        "a second press answers from the recorded send"
+    );
 }

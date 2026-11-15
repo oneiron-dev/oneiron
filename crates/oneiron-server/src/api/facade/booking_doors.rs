@@ -7,14 +7,15 @@ use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     BookingAvailabilityRequest, BookingBookRequest, BookingCancelRequest,
     BookingConstraintTurnRequest, BookingConstraintTurnResponse, BookingPageTokenRequest,
-    BookingPageTokenResponse, BookingRescheduleRequest,
+    BookingPageTokenResponse, BookingRescheduleRequest, BookingRung2ReleaseOnceRequest,
+    BookingRung2ReleaseOnceResponse,
 };
 
 use super::FacadeApiError;
-use super::host_doors::support::{Listed, MaybeListed, internal, refused};
+use super::host_doors::support::{Listed, MaybeListed, internal, owner_proof, refused};
 use crate::api::booking::{
     booking_page_token, credential_transport_context, execute_booking_operation_listing,
-    resolve_booking_page_listing, resolve_public_booking_page_listing,
+    release_rung2_first_send, resolve_booking_page_listing, resolve_public_booking_page_listing,
     run_public_constraint_turn_listing,
 };
 use crate::auth::CoreAuth;
@@ -185,4 +186,26 @@ pub(crate) async fn vault_booking_cancel(
         BookingOperationRequest::Cancel(input),
     )
     .await
+}
+
+/// `vault.booking.rung2.release_once` (INBOX-RESIDUE PR-3b-3c): the owner's
+/// one-send press on a held rung-2 first send. An owner act on the owner's
+/// own proof: it approves exactly the kept words to the one visitor and sends
+/// them, and a second press approves nothing more. The send's mail
+/// submission blocks, so it runs on a blocking thread. It lists no row: the
+/// kept send is a side artifact, and the answer names only the send.
+pub(crate) async fn vault_booking_rung2_release_once(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: BookingRung2ReleaseOnceRequest,
+) -> MemoryResult<BookingRung2ReleaseOnceResponse> {
+    const VERB: &str = "vault.booking.rung2.release_once";
+    let owner = owner_proof(auth, server, VERB)?;
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || {
+        release_rung2_first_send(&server, &owner, input.send_ref.trim())
+            .map_err(|error| FacadeApiError::from(error).into_memory_error())
+    })
+    .await
+    .map_err(|_| internal(VERB))?
 }

@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 pub use oneiron_verb_wire::verbs::calendar::{
     BookingCancelRequest, BookingConstraintTurnInput, BookingConstraintTurnRequest,
     BookingConstraintTurnWindow, BookingPageTokenRequest, BookingPageTokenResponse,
-    BookingRescheduleRequest, CalendarFreebusyRequest,
+    BookingRescheduleRequest, BookingRung2ReleaseOnceRequest, BookingRung2ReleaseOnceResponse,
+    BookingRung2ReleaseOutcome, CalendarFreebusyRequest,
 };
 
 /// Public availability, using the canonical booking operation envelope.

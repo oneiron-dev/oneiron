@@ -292,7 +292,7 @@ fn validate_rung2_send_input(input: &Rung2SendInput) -> Result<(), ApiError> {
 
 /// The host names a `[native_mail]` server, but no pack is connected to it
 /// now.
-fn native_mail_unavailable() -> ApiError {
+pub(super) fn native_mail_unavailable() -> ApiError {
     ApiError::internal_server_error("booking rung-2 mail unavailable")
 }
 
@@ -475,7 +475,7 @@ fn offer_lines(
 
 /// Sends a kept first send through the native mail pack: the cold-send law
 /// holds a first send to a stranger for the owner's one-send press.
-fn dispatch_on_pack(
+pub(super) fn dispatch_on_pack(
     pack: &NativeMailPack,
     vault: &Vault,
     kept: &Rung2FirstSend,
