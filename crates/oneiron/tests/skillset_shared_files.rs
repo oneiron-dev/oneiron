@@ -4,7 +4,8 @@
 //! `shared/` files ride every bundled skill under `shared/`, so each member's
 //! content hash covers exactly what it runs, and one pack put re-pins every
 //! member when a shared file changes. A member folder may not hold a
-//! `shared/` of its own, and a travelling agent pack, which carries each skill
+//! `shared/` of its own when the pack holds one (it keeps one as before when
+//! the pack does not), and a travelling agent pack, which carries each skill
 //! whole, may not hold one at all.
 #![cfg(oneiron_test_support)]
 
@@ -56,7 +57,7 @@ impl Fixture {
     /// The owner's put of `files`, which must install.
     fn install(&self, files: Vec<HubFile>) -> PackInstallReceipt {
         match self.vault.put_pack(&self.owner, files) {
-            Ok(PackInstallDisposition::Installed(receipt)) => receipt,
+            Ok(PackInstallDisposition::Installed(receipt)) => *receipt,
             other => panic!("the owner's put installs the pack: {other:?}"),
         }
     }
@@ -124,7 +125,9 @@ fn two_bundled_skills_read_one_shared_file() {
 }
 
 /// One put with a changed shared file re-pins every member: both new members
-/// read the new bytes, and both old members are superseded.
+/// read the new bytes, and both old members are superseded. The put's one
+/// permission card lists both members, and with their powers unchanged it
+/// widens nothing (0053-SKILLSET-UPDATE-CARD = A).
 #[test]
 fn a_shared_file_update_re_pins_every_member_in_one_put() {
     let fixture = Fixture::new();
@@ -132,6 +135,17 @@ fn a_shared_file_update_re_pins_every_member_in_one_put() {
     let second = fixture.install(skillset("1.1.0", GLOSSARY_SECOND, None));
 
     assert_eq!(second.skills.len(), 2, "{:?}", second.skills);
+    assert_eq!(
+        second.permissions.bundled_skills.len(),
+        2,
+        "{:?}",
+        second.permissions
+    );
+    assert!(
+        second.permissions.widening_bundled_skills.is_empty(),
+        "{:?}",
+        second.permissions
+    );
     for member in &second.skills {
         assert!(!first.skills.contains(member), "member {member} is new");
         assert_eq!(
@@ -176,26 +190,59 @@ fn a_shared_file_change_needs_each_versioned_member_to_bump() {
     }
 }
 
-/// A bundled skill folder holding its own `shared/` is refused, because the
-/// pack's `shared/` would collide with it.
+/// A bundled skill folder holding its own `shared` entry is refused when the
+/// pack holds `shared/`, because the pack's `shared/` would collide with it:
+/// a `shared/` folder, a file named `shared`, or `Shared/` in another case.
 #[test]
 fn a_member_folder_holding_shared_is_refused() {
     let fixture = Fixture::new();
-    let mut files = skillset("1.0.0", GLOSSARY_FIRST, None);
-    files.push(HubFile::new(
+    for member_path in [
         "skills/ledger-lookup/shared/notes.md",
-        "a member's own notes\n",
+        "skills/ledger-lookup/shared",
+        "skills/ledger-lookup/Shared/notes.md",
+    ] {
+        let mut files = skillset("1.0.0", GLOSSARY_FIRST, None);
+        files.push(HubFile::new(member_path, "a member's own notes\n"));
+
+        let refused = fixture.vault.put_pack(&fixture.owner, files);
+
+        let error = refused.expect_err(member_path);
+        assert!(
+            error
+                .to_string()
+                .contains("a bundled skill folder cannot hold shared/"),
+            "{member_path}: {error}"
+        );
+    }
+}
+
+/// A pack with no `shared/` folds nothing, so a member keeps its own
+/// `shared/` folder and reads it, as before this change.
+#[test]
+fn a_member_keeps_its_own_shared_folder_when_the_pack_has_none() {
+    const NOTES_PATH: &str = "shared/notes.md";
+    const NOTES: &str = "a member's own notes\n";
+    let fixture = Fixture::new();
+    let mut files = skillset("1.0.0", GLOSSARY_FIRST, None);
+    files.retain(|file| file.path != SHARED_PATH);
+    files.push(HubFile::new(
+        format!("skills/ledger-lookup/{NOTES_PATH}"),
+        NOTES,
     ));
 
-    let refused = fixture.vault.put_pack(&fixture.owner, files);
+    let receipt = fixture.install(files);
 
-    let error = refused.expect_err("a member folder may not hold shared/");
-    assert!(
-        error
-            .to_string()
-            .contains("a bundled skill folder cannot hold shared/"),
-        "{error}"
-    );
+    let readers: Vec<&String> = receipt
+        .skills
+        .iter()
+        .filter(|member| {
+            fixture.member_file(member, NOTES_PATH).as_deref() == Some(NOTES.as_bytes())
+        })
+        .collect();
+    assert_eq!(readers.len(), 1, "{:?}", receipt.skills);
+    for member in &receipt.skills {
+        assert_eq!(fixture.member_file(member, SHARED_PATH), None);
+    }
 }
 
 /// A travelling agent pack carries each skill whole, so a `shared/` beside
