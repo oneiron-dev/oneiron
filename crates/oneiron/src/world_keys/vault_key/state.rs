@@ -174,7 +174,7 @@ pub(super) fn open_link(
 /// The earlier data keys `links` (newest first) reach from `current`, newest
 /// first: link n opens with the current key, then each older link with the key
 /// the one above it opened to. Refuses a gap, a repeat, or a link out of order.
-pub(super) fn walk_links(
+pub(in crate::world_keys) fn walk_links(
     vault_id: &[u8; 32],
     current: &VaultDataKey,
     links: &[KeyHeaderLink],
