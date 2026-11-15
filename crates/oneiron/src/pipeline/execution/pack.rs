@@ -26,6 +26,9 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(mut self) -> Result<PipelineOutput> {
+        // A candidate scoring set is a caller input: one outside its knob
+        // ranges fails closed before any read (RESEARCH-0651 contract item 1).
+        self.params.validate()?;
         // A project filter is the ingest door's project id, held to its
         // bounds before any index, expansion or telemetry work (H38).
         if let Some(project_id) = self.project_id_filter.as_deref() {
@@ -823,6 +826,7 @@ impl PipelineBuilder<'_> {
             self.vector_search.is_some() || hyde_expanded,
             space,
             &floors,
+            &self.params,
             |id| match rtxn.as_ref() {
                 Some(rtxn) => {
                     Ok(read_entity_metadata(&self.read, rtxn, id)?.map(|meta| meta.entity_type))

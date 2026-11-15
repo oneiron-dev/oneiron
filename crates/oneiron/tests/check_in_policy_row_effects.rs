@@ -36,8 +36,8 @@ use oneiron::consent::bypass_lifecycle::{
     CreateBypassGrantRequest, bypass_grant_warning, create_bypass_grant,
 };
 use oneiron::consent::{BypassScope, CatastropheClass};
-use oneiron::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope};
 use oneiron::policy_model::doors::{PolicyRowChangeRequest, change_owner_policy_row};
+use oneiron::policy_model::{PolicyRowAction, PolicyRowChange, PolicyRowScope};
 use oneiron::registry::ENTITY_TYPE_CONVERSATION;
 use oneiron::{EntityId, TimeRange};
 
