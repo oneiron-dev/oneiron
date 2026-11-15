@@ -4,7 +4,6 @@
 
 use super::*;
 
-pub(crate) mod archive_restore;
 mod indexes;
 use oneiron_store::pending_gate_consent::keys;
 mod obligation;

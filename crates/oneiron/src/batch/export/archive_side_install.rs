@@ -146,8 +146,6 @@ pub(crate) enum ArchivedSideGroup {
     ConversationRole,
     /// Connector slates retained as nonportable references.
     ConnectorSlate,
-    /// Parked gate consent and its rebuilt answer obligation.
-    PendingGateConsent,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
@@ -250,7 +248,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::CONVERSATION_ROLE_GRANT.name => Some(Group::ConversationRole),
         name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
-        name if name == side_table::PENDING_GATE_CONSENT.name => Some(Group::PendingGateConsent),
         _ => None,
     }
 }
@@ -405,11 +402,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::ConnectorSlate => {
             crate::connector_key::land_archived_connector_slate_rows_in_txn(
-                vault, txn, permit, rows,
-            )
-        }
-        ArchivedSideGroup::PendingGateConsent => {
-            crate::store::pending_gate_consent::archive_restore::land_archived_pending_gate_consent_rows_in_txn(
                 vault, txn, permit, rows,
             )
         }

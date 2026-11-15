@@ -32,14 +32,14 @@
 //!   the owner import installs one VOICE_REF_RENDER_CONSENT row that reads Granted.
 //! * `a_connector_slate_is_held_back_as_a_non_portable_reference`: a CONNECTOR_GRANT_SLATE
 //!   row installs on no destination (its key binding travels in no disposition).
-//! * `the_owner_restore_installs_the_pending_review_and_the_actorless_import_leaves_none`:
-//!   the owner import installs one PENDING_GATE_CONSENT row for its restored open claim, with
-//!   the reason and decision the source parked it under.
 //!
 //! No test covers CONSENT_WIDEN_PROPOSAL: the export's credential pass holds every row of
 //! that table out of an archive, so the owner's restore has no landing for it.
 //! No test covers HOOKS_GRANT: every import restores a hook binding claim as Proposed, and a
 //! grant needs its binding approved, so the owner's restore has no landing for it either.
+//! No test covers PENDING_GATE_CONSENT: a tray row names a gate decision of its source vault,
+//! which no import installs, and the owner's restore already lists each restored open claim
+//! in its inbox group, so the owner's restore has no landing for it.
 //!
 //! Every vault a test deletes from installs a process-memory device keystore first: the
 //! delete's plan phase loads the install signing key, so a delete without one fails.
@@ -68,9 +68,7 @@ use oneiron::voice_identity::{
     VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoicePrintPurpose,
 };
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     DeleteReason, EdgeActorClass, EntityId, ModelLocality, TimeRange, Vault, WriteActor,
-    WriteEnvelope, WriteProvenance,
 };
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
@@ -1031,139 +1029,5 @@ fn a_connector_slate_is_held_back_as_a_non_portable_reference() {
         ),
         source_tuple,
         "the actorless destination retains the slate tuple byte for byte"
-    );
-}
-
-/// The owner restore installs a parked claim review beside its restored claim; the actorless
-/// import leaves none.
-#[test]
-fn the_owner_restore_installs_the_pending_review_and_the_actorless_import_leaves_none() {
-    let (_source_dir, source) = open_source_vault();
-    let actor = fixed_id(0x6E);
-    let subject = fixed_id(0x6F);
-    let x = fixed_id(0x70);
-    let now = source.now_recorded_at();
-    let at = TimeRange {
-        start: now,
-        end: now,
-    };
-    put_person_at(&source, actor, b"actor", at, now);
-    put_person_at(&source, subject, b"subject", at, now);
-    let envelope = WriteEnvelope::new(
-        WriteActor::new(actor, EdgeActorClass::Agent),
-        ClaimSource::UserStated,
-        WriteProvenance::new(rmpv::Value::from("pending-gate-consent probe"))
-            .expect("provenance builds"),
-        ClaimApprovalStatus::Proposed,
-    );
-    let candidate = ClaimCandidate::new(
-        "profile.favorite_drink",
-        ClaimSubject::Entity(subject),
-        rmpv::Value::from("ok"),
-        0.9,
-    );
-    source
-        .batch()
-        .claim_candidate(&x, candidate, &envelope, at, now)
-        .commit()
-        .expect("the agent Proposed write lands held");
-    let claim = source
-        .get_claim(&x)
-        .expect("read the parked claim")
-        .expect("the claim landed");
-    assert_eq!(
-        claim.approval,
-        ClaimApprovalStatus::Proposed,
-        "the source claim stays Proposed"
-    );
-    assert_eq!(
-        claim.lifecycle,
-        ClaimLifecycleStatus::Active,
-        "the source claim stays Active"
-    );
-    let source_pending = source
-        .pending_gate_consents(10)
-        .expect("read the source tray");
-    assert_eq!(
-        source_pending.len(),
-        1,
-        "the source parks exactly one pending review"
-    );
-    assert_eq!(
-        source_pending[0].claim_id,
-        *x.as_bytes(),
-        "the source tray row keys the claim"
-    );
-    assert!(
-        source_pending[0]
-            .reason_codes
-            .contains(&"gate.pending.actor_ceiling".to_owned()),
-        "the agent write pends on its missing ceiling: {:?}",
-        source_pending[0].reason_codes
-    );
-    let archive = export_whole(&source);
-    let source_tuple = rows_for(&retained_rows(&archive), "PENDING_GATE_CONSENT");
-    assert_eq!(
-        source_tuple.len(),
-        1,
-        "the source archive holds one pending-review tuple"
-    );
-
-    let (_dest_dir, dest) = open_later_vault();
-    let dest_owner = owner_proof(&dest);
-    let receipt = dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
-        .expect("the owner import succeeds");
-    let summary =
-        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
-    assert_eq!(
-        table_count(&summary, "PENDING_GATE_CONSENT", "installed_rows"),
-        Some(1),
-        "the owner import reports one installed PENDING_GATE_CONSENT row; an absent field means it installed nothing: {summary}"
-    );
-    let dest_claim = dest
-        .get_claim(&x)
-        .expect("read the restored claim")
-        .expect("the claim restored");
-    assert_eq!(
-        dest_claim.approval,
-        ClaimApprovalStatus::Proposed,
-        "the restored claim stays Proposed"
-    );
-    assert_eq!(
-        dest_claim.lifecycle,
-        ClaimLifecycleStatus::Active,
-        "the restored claim stays Active"
-    );
-    let dest_pending = dest
-        .pending_gate_consents(10)
-        .expect("read the destination tray");
-    let restored = dest_pending
-        .iter()
-        .find(|row| row.claim_id == *x.as_bytes())
-        .expect("the destination tray holds the restored review");
-    assert_eq!(
-        restored.reason_codes, source_pending[0].reason_codes,
-        "the restored review keeps its reason"
-    );
-    assert_eq!(
-        restored.decision_id, source_pending[0].decision_id,
-        "the restored review keeps its decision"
-    );
-
-    let (_bare_dir, bare) = open_later_vault();
-    bare.import_whole_vault_archive_from(Cursor::new(&archive))
-        .expect("the actorless import succeeds");
-    assert!(
-        bare.pending_gate_consents(10)
-            .expect("read the actorless tray")
-            .iter()
-            .all(|row| row.claim_id != *x.as_bytes()),
-        "the actorless import parks no review for X"
-    );
-    assert_eq!(
-        rows_for(&retained_rows(&export_whole(&bare)), "PENDING_GATE_CONSENT"),
-        source_tuple,
-        "the actorless destination retains the pending tuple byte for byte"
     );
 }
