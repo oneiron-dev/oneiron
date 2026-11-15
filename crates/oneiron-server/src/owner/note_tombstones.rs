@@ -97,7 +97,7 @@ pub(crate) fn decline(
     review(vault, owner)
 }
 
-fn memory_error(error: MemoryError) -> OwnerError {
+pub(crate) fn memory_error(error: MemoryError) -> OwnerError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
         oneiron::memory::MEMORY_CODE_FORBIDDEN => OwnerError::Refused(error.message),

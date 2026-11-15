@@ -242,7 +242,7 @@ pub(crate) fn witness(
         })
 }
 
-fn witness_error(error: MemoryError) -> OwnerError {
+pub(crate) fn witness_error(error: MemoryError) -> OwnerError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
         oneiron::memory::MEMORY_CODE_FORBIDDEN => OwnerError::Refused(error.message),

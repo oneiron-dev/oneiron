@@ -414,6 +414,19 @@ pub(crate) fn engine_refusal_statuses_for_test(code: &str) -> [axum::http::Statu
     ]
 }
 
+/// The owner's refusal `POST /v1/owner/steer`, `POST /v1/owner/inbox/concern/move`
+/// and `GET /v1/owner/inbox` make of an engine refusal whose code is `code`,
+/// in that order: the integration tests' door (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) fn owner_route_refusals_for_test(code: &str) -> [OwnerError; 3] {
+    let refusal = || oneiron::memory::MemoryError::new(code, "a pinned refusal", &[]);
+    [
+        steer_routes::steer_error(refusal()),
+        concern_routes::move_error(refusal()),
+        inbox_routes::inbox_error(refusal()),
+    ]
+}
+
 pub(super) fn owner_error(error: OwnerError) -> ApiError {
     // FIX 5479, FIX 5615: a backup or a rehearsal stopped at the disk's floor
     // or by a full disk names capacity, never a fault of its own.
