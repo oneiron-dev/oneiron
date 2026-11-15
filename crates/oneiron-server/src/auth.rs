@@ -494,7 +494,7 @@ impl CoreAuth {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn from_oauth_relay(subject: String, scopes: BTreeSet<CoreScope>) -> Self {
         Self {
             principal: format!("oauth-relay:{subject}"),
