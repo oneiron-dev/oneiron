@@ -185,7 +185,8 @@ pub fn setting_list_embedded(
 }
 
 /// `vault.settings.set`: one row's change through [`Vault::set_setting`]: `applied`, or
-/// `pending` with the check-in it waits on.
+/// `pending` with the check-in it waits on. The owner's applied change is signed on the main log
+/// from the handle's act surface (stage 7a-1).
 ///
 /// # Errors
 ///
@@ -198,6 +199,12 @@ pub fn setting_set_embedded(
     let request = set_request(input)?;
     let vault: &Vault = memory.vault();
     if let Ok(owner) = memory.embedded_owner(SET) {
+        // The owner's change is signed from where the owner's request reached this install, as
+        // the host bound it on the handle (an embedded handle's own call names this install).
+        let request = SetSetting {
+            surface: Some(memory.owner_surface()),
+            ..request
+        };
         return Ok(vault.set_setting(SettingCaller::Owner(&owner), request)?);
     }
     let agent = agent_of(memory, SET)?;
@@ -257,5 +264,6 @@ fn set_request(input: SettingSetRequest) -> MemoryResult<SetSetting> {
         why: input.why,
         check_in_ref,
         weight_runs: input.weight_runs,
+        surface: None,
     })
 }

@@ -2,9 +2,12 @@
 //! `vault.settings.get`, `vault.settings.list` and `vault.settings.set`, and from stage 6.0
 //! `vault.settings.accept_defaults`, each on the calling actor's own credential (`facade_actor`).
 //! The engine door judges the caller itself: the vault owner on the owner's own live slip, or an
-//! agent on its verified binding (an owner act refuses any other caller).
+//! agent on its verified binding (an owner act refuses any other caller). `vault.settings.set`
+//! also takes where the owner's say-so reached this install (`host_door_surface`): the owner's
+//! applied change is signed from it (stage 7a-1); an agent's change ignores it.
 use std::sync::Arc;
 
+use oneiron::authority::ActSurface;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::setting::{SetSettingOutcome, SettingView};
 use oneiron::task_verb::sdk::{
@@ -53,12 +56,14 @@ pub(crate) async fn vault_settings_list(
     .await
 }
 
-/// `vault.settings.set`: one row's change, applied or waiting on a check-in.
+/// `vault.settings.set`: one row's change, applied or waiting on a check-in. The owner's
+/// applied change is signed from `surface`.
 pub(crate) async fn vault_settings_set(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
+    surface: ActSurface,
     input: SettingSetRequest,
 ) -> Listed<SetSettingOutcome> {
     credential_listing(
@@ -66,7 +71,7 @@ pub(crate) async fn vault_settings_set(
         auth,
         caller,
         "vault.settings.set",
-        move |_, _, memory| sdk::setting_set_embedded(&memory, input),
+        move |_, _, memory| sdk::setting_set_embedded(&memory.with_owner_surface(surface), input),
     )
     .await
 }

@@ -1,19 +1,26 @@
 //! The owner's act on a vault setting as a signed op (FIX 4624, FIX 5660),
 //! and its wire codec.
 //!
-//! The owner changes a vault-wide setting (the dreamer's wake policy, the
-//! inference defaults, the room-thread admin switches), or the owner or an
-//! agent within its Grant sets or clears one agent's free-time policy, from
-//! any surface where he is authenticated. The install that served the act,
-//! a live machine of the vault in any role, signs it with its install key;
-//! the record carries the
-//! act ([`OwnerAct`], kind `policy_setting` on the setting's reserved target
-//! ([`owner_act_target`]), or kind `free_time_policy` on the agent the policy
-//! is for). Its `seen` is the target's live acts as the deciding surface
-//! showed them, under [`POLICY_SETTING_REVISION_CONTEXT`]; the setting itself
-//! stays a local row, so the record keeps only digests of it: the value it
-//! replaced (`prior`) and the value it left (`value`, none for a clear). It
-//! is a main-log entry, so every machine the owner admits folds it.
+//! The owner changes a vault-wide setting (a catalogue key of the setting
+//! primitive, or one of the eight settings its own doors still sign: the
+//! dreamer's wake policy, the inference defaults, the room-thread admin
+//! switches, ...), or the owner or an agent within its Grant sets or clears
+//! one agent's free-time policy, from any surface where he is authenticated.
+//! The install that served the act, a live machine of the vault in any role,
+//! signs it with its install key; the record carries the act ([`OwnerAct`],
+//! kind `policy_setting` on the setting's reserved target
+//! ([`policy_setting_target`]), or kind `free_time_policy` on the agent the
+//! policy is for). Its `seen` is the target's live acts as the deciding
+//! surface showed them, under [`POLICY_SETTING_REVISION_CONTEXT`]; the
+//! setting itself stays a local row, so the record keeps only digests of it:
+//! the value it replaced (`prior`) and the value it left (`value`, none for a
+//! clear). It is a main-log entry, so every machine the owner admits folds
+//! it.
+//!
+//! The setting is named by its text on the wire (stage 7a-1, RULING
+//! SETTING-7A-SIGNED-ACT-BASE = A): any name of a setting key's shape, known
+//! to this build or not. The eight names of [`PolicySetting`] are that text
+//! as before, so every stored entry decodes, validates and folds as it did.
 //!
 //! Only the free-time policy is an agent's to set, within a Grant line that
 //! names it; a vault-wide setting is the owner's own.
@@ -60,8 +67,35 @@ pub fn owner_act_target(name: &str) -> Result<EntityId> {
     EntityId::from_bytes(id)
 }
 
-/// A setting an owner act of kind [`OwnerActKind::PolicySetting`] or
-/// [`OwnerActKind::FreeTimePolicy`] changes.
+/// The longest setting name an act carries, in bytes.
+pub const POLICY_SETTING_NAME_MAX: usize = 128;
+
+/// The reserved target of an act on the vault-wide setting `setting` (its
+/// wire name): [`owner_act_target`] of `settings.<setting>`. For each of the
+/// eight [`PolicySetting`] names that is the target its acts always named
+/// ([`PolicySetting::reserved_target`]); a catalogue key's acts name the
+/// target of its key name the same way, so every install names the same
+/// frontier.
+///
+/// # Errors
+/// As [`owner_act_target`].
+pub fn policy_setting_target(setting: &str) -> Result<EntityId> {
+    owner_act_target(&format!("settings.{setting}"))
+}
+
+/// Whether `setting` has a setting name's shape: a setting key's dotted
+/// lowercase ASCII ([`oneiron_setting_contract::check_name`]), at most
+/// [`POLICY_SETTING_NAME_MAX`] bytes. The op checks the shape, never a
+/// catalogue: a name this build does not know is still a well-formed act.
+#[must_use]
+pub fn is_policy_setting_name(setting: &str) -> bool {
+    setting.len() <= POLICY_SETTING_NAME_MAX
+        && oneiron_setting_contract::check_name(setting).is_ok()
+}
+
+/// One of the eight settings whose own doors sign their acts until stage 2
+/// moves them onto the setting primitive (D4 deletes this list). An act names
+/// it by its wire text ([`Self::wire`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicySetting {
@@ -122,7 +156,7 @@ impl PolicySetting {
         }
     }
 
-    /// The setting a wire tag names; `None` for any other text.
+    /// The one of the eight a wire name names; `None` for any other text.
     #[must_use]
     pub fn parse(wire: &str) -> Option<Self> {
         Some(match wire {
@@ -160,7 +194,7 @@ impl PolicySetting {
     /// As [`owner_act_target`].
     pub fn reserved_target(self) -> Result<Option<EntityId>> {
         match self.act_kind() {
-            OwnerActKind::PolicySetting => owner_act_target(self.as_str()).map(Some),
+            OwnerActKind::PolicySetting => policy_setting_target(self.wire()).map(Some),
             _ => Ok(None),
         }
     }
@@ -171,11 +205,14 @@ impl PolicySetting {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicySettingSet {
     /// The act: who decided, from which surface, on which of the target's
-    /// revisions. Its kind is the setting's ([`PolicySetting::act_kind`]).
+    /// revisions. Its kind is `free_time_policy` for the free-time policy and
+    /// `policy_setting` for every other setting.
     pub act: OwnerAct,
     /// The carrier: the machine whose install key signed the act.
     pub machine: EntityId,
-    pub setting: PolicySetting,
+    /// The setting's name as the wire carries it: a [`PolicySetting`]'s
+    /// [`PolicySetting::wire`] text, or a catalogue key's name.
+    pub setting: String,
     /// BLAKE3 over the setting's value the act replaced, as JSON.
     pub prior: [u8; 32],
     /// BLAKE3 over the value the act left, as JSON; `None` for a clear.
@@ -183,21 +220,36 @@ pub struct PolicySettingSet {
 }
 
 impl PolicySettingSet {
-    /// The act names the setting's own kind, and a vault-wide setting's
-    /// reserved target; the free-time policy's act names its agent, which
-    /// only the writer knows to be one. An agent's act stands only on the
-    /// free-time policy, under a Grant line that names it, no ask answers a
-    /// setting act, and only the free-time policy is ever cleared.
+    /// The setting's name has a setting name's shape
+    /// ([`is_policy_setting_name`]). The act names the setting's own kind,
+    /// and a vault-wide setting's reserved target
+    /// ([`policy_setting_target`]); the free-time policy's act names its
+    /// agent, which only the writer knows to be one. An agent's act stands
+    /// only on the free-time policy, under a Grant line that names it, and no
+    /// ask answers a setting act. Of the eight [`PolicySetting`]s only the
+    /// free-time policy is ever cleared; a catalogue key's clear is an act
+    /// like its set.
     pub fn validate(&self) -> Result<()> {
-        let free_time = self.setting == PolicySetting::FreeTimePolicy;
+        if !is_policy_setting_name(&self.setting) {
+            return Err(invalid_authority());
+        }
+        let known = PolicySetting::parse(&self.setting);
+        let free_time = known == Some(PolicySetting::FreeTimePolicy);
         if (matches!(self.act.by, ActBy::Agent { .. }) && !free_time)
             || self.act.answer.is_some()
-            || (self.value.is_none() && !free_time)
+            || (self.value.is_none() && known.is_some() && !free_time)
         {
             return Err(invalid_authority());
         }
-        let target = self.setting.reserved_target()?.unwrap_or(self.act.target);
-        self.act.validate_carried(self.setting.act_kind(), target)
+        if free_time {
+            return self
+                .act
+                .validate_carried(OwnerActKind::FreeTimePolicy, self.act.target);
+        }
+        self.act.validate_carried(
+            OwnerActKind::PolicySetting,
+            policy_setting_target(&self.setting)?,
+        )
     }
 }
 
@@ -212,7 +264,7 @@ pub(super) fn policy_setting_value(set: &PolicySettingSet) -> Value {
             super::owner_act::owner_act_value(&set.act),
         ),
         (Value::from("machine"), Value::from(set.machine.to_hex())),
-        (Value::from("setting"), Value::from(set.setting.wire())),
+        (Value::from("setting"), Value::from(set.setting.as_str())),
         (Value::from("prior"), binary_value(set.prior)),
         (
             Value::from("value"),
@@ -221,13 +273,14 @@ pub(super) fn policy_setting_value(set: &PolicySettingSet) -> Value {
     ])
 }
 
-/// A known setting tag, two digests (the second nil for a clear); the op's
-/// shape check then pins the act's kind and who may make it.
+/// A setting's name, two digests (the second nil for a clear); the op's
+/// shape check then pins the name's shape, the act's kind and who may make
+/// it ([`PolicySettingSet::validate`]).
 pub(super) fn decode_policy_setting(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
     validate_keys(entries, &POLICY_SETTING_KEYS)?;
     let setting = required(entries, "setting")?
         .as_str()
-        .and_then(PolicySetting::parse)
+        .map(str::to_owned)
         .ok_or_else(invalid_authority)?;
     let value = match required(entries, "value")? {
         Value::Nil => None,

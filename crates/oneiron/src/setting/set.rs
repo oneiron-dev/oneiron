@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_authority::authority::{Direction, Permitted};
+use oneiron_authority::authority::{ActSurface, Direction, Permitted};
 use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey};
 
 use super::change::record_change_in_txn;
@@ -11,6 +11,7 @@ use super::pack::layer_default_in_txn;
 use super::read::{
     Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
 };
+use super::signed_act::sign_owner_change_in_txn;
 use super::{
     EncodedValue, Restore, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
     set_line, spec_named,
@@ -98,6 +99,11 @@ pub struct SetSetting {
     /// A learned key's seed: its weight in runs, finite and above zero (ARCH-0003
     /// `#learning-settings`). Only a value row of a learned key carries one, and it must.
     pub weight_runs: Option<f64>,
+    /// Where the owner said so (DESIGN 1.2 "The change stream"): an owner's applied change that
+    /// names it is signed as one `PolicySettingSet` in the same write, last and best effort
+    /// (stage 7a-1). Only the owner's change names one. The host names it from where the
+    /// owner's request reached it, never from the request's input.
+    pub surface: Option<ActSurface>,
 }
 
 impl SetSetting {
@@ -115,6 +121,7 @@ impl SetSetting {
             why: None,
             check_in_ref: None,
             weight_runs: None,
+            surface: None,
         }
     }
 }
@@ -170,14 +177,19 @@ impl Vault {
     /// does: a secret goes to custody and the row keeps its handle; any other hit refuses the
     /// change. A value equal to the row's writes nothing.
     ///
+    /// An owner's change that names its act surface is signed: last in the write, after the key's
+    /// hook, one `PolicySettingSet` on the key's target, best effort, and the change row names the
+    /// entry (stage 7a-1, [`super::signed_act`]).
+    ///
     /// # Errors
     ///
     /// `InvalidConfig` for an unknown key, an item or scope the key does not admit, a value of
     /// another shape or one its check refuses, a moved row, a reason over 1,000 bytes, a
     /// check-in that is not this change's or that was asked over another row, an agent with no
-    /// Grant listing the verb, a person's move the rule does not admit, an engine pin, or a loose
-    /// move of a key whose quorum is all; an owner or person proof that no longer holds; the
-    /// side-row wall's refusal; storage errors.
+    /// Grant listing the verb, a person's move the rule does not admit, an engine pin, a loose
+    /// move of a key whose quorum is all, or an act surface named by a caller other than the
+    /// owner; an owner or person proof that no longer holds; the side-row wall's refusal; storage
+    /// errors.
     pub fn set_setting(
         &self,
         caller: SettingCaller<'_>,
@@ -305,6 +317,12 @@ fn set_in_txn(
     request: &SetSetting,
 ) -> Result<SetSettingOutcome> {
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    if request.surface.is_some() && !matches!(caller, SettingCaller::Owner(_)) {
+        return Err(Error::InvalidConfig(
+            "only the owner's change names where the owner said so: an act surface is the owner's"
+                .into(),
+        ));
+    }
     if change.key.mode == SettingMode::Carried && change.value.is_some() {
         return Err(Error::InvalidConfig(
             "only a move writes a carried row; a set may only clear one".into(),
@@ -449,6 +467,8 @@ fn set_in_txn(
             why: request.why.clone(),
             weight_runs: change.weight_runs,
             direction: Some(direction),
+            surface: request.surface,
+            signed: None,
         },
     )?;
     let revision = match change.value {
@@ -471,6 +491,10 @@ fn set_in_txn(
     };
     if let Some(on_change) = change.spec.on_change {
         on_change(vault, txn, &recorded)?;
+    }
+    // The signed record goes last, best effort, after every mandatory write (FIX 4624).
+    if let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, request.surface) {
+        sign_owner_change_in_txn(vault, txn, change.spec, owner, surface, &recorded);
     }
     Ok(SetSettingOutcome::Applied {
         sequence: Some(recorded.sequence),

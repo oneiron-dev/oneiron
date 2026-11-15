@@ -338,7 +338,7 @@ fn record_act_in_txn(
         txn,
         PolicySettingAct {
             act,
-            setting: PolicySetting::FreeTimePolicy,
+            setting: PolicySetting::FreeTimePolicy.wire().to_owned(),
             prior,
             value,
         },

@@ -41,6 +41,7 @@ mod learned;
 mod pack;
 mod read;
 mod set;
+mod signed_act;
 pub(crate) mod tables;
 
 use std::marker::PhantomData;

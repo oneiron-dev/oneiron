@@ -481,6 +481,8 @@ fn write_layer_row_in_txn(
             why: Some(write.why),
             weight_runs: None,
             direction: Some(write.direction),
+            surface: None,
+            signed: None,
         },
     )?;
     let row = StoredRow {
