@@ -681,7 +681,6 @@ impl<'a> ContextPackBuilder<'a> {
     /// The run fails with [`crate::Error::InvalidConfig`] when the carried
     /// rows and the refs set by [`Self::working_set`] together name more
     /// than [`super::super::MAX_WORKING_SET_REFS`] distinct refs.
-    #[must_use]
     pub fn rehydrate_from(mut self, summary: EntityId) -> Self {
         self.rehydrate_from = Some(summary);
         self

@@ -1979,6 +1979,29 @@ fn import_edge_with_seeds(
             .apply(wtxn)?;
         return Ok(EdgeImport::Landed);
     }
+    // The epoch mint alone creates this kind: an archived carried manifest
+    // comes back through the internal write, its weights (the host's order)
+    // kept, from a restored epoch SUMMARY. From any other row the public
+    // write below refuses it.
+    if kind == EdgeKind::Carries
+        && crate::compaction::is_epoch_summary_in(&vault.store, wtxn, &source)?
+    {
+        vault
+            .batch_in()
+            .edge_with_value_fields(
+                &source,
+                kind,
+                &target,
+                crate::batch::EdgeValueFields {
+                    weight: edge.weight,
+                    created_at: edge.created_at,
+                    vad,
+                    provenance: None,
+                },
+            )
+            .apply(wtxn)?;
+        return Ok(EdgeImport::Landed);
+    }
     vault
         .batch_in()
         .edge_with_created_at_and_vad(&source, kind, &target, edge.weight, edge.created_at, vad)

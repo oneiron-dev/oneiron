@@ -122,7 +122,13 @@ fn run_on_engine_stack(name: &str, test: impl std::future::Future<Output = ()> +
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 fn fixture_id(byte: u8) -> EntityId {

@@ -86,7 +86,7 @@ pub use folds::{
     FoldUnfoldInput, FoldUnfolded, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
 };
 
-pub(crate) use carry::carried_rows_in;
+pub(crate) use carry::{carried_rows_in, is_epoch_summary_in};
 pub use check_material::CompactionCheckMaterialRef;
 pub(crate) use check_material::{
     CheckMaterialFault, CompactionCheckMaterial, admit_check_material_in_txn,

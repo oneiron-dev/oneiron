@@ -117,7 +117,8 @@ pub(crate) struct CoreContextPackStats {
     /// Item drop accounting.
     items_dropped: CoreContextPackItemAccounting,
     /// What the pack did with its working set: the rows the `packet_id`
-    /// summary carries. Absent for a pack that names no packet.
+    /// summary carries. Absent for a pack that names no packet, and for a
+    /// live packet that carries no rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     working_set: Option<CoreContextPackWorkingSet>,
 }
