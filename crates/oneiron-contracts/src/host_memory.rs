@@ -45,7 +45,7 @@ const MEMORY_REPOLL: Duration = Duration::from_millis(200);
 /// The free memory every admission leaves untouched on a machine of `total`
 /// bytes: the larger of 256 MiB and a sixteenth of it. A floor the machine
 /// keeps for everything it does not lease, never a cap on one request.
-fn memory_reserve(total: u64) -> u64 {
+pub fn memory_reserve(total: u64) -> u64 {
     (total / 16).max(MEMORY_RESERVE_FLOOR_BYTES)
 }
 

@@ -163,8 +163,10 @@ fn is_current(held: &Held, generation: u64) -> bool {
     held.holders > 0 && held.generation == generation
 }
 
-/// A machine with no battery counts as plugged in.
-fn on_mains_power() -> bool {
+/// Whether the machine runs on mains power now. A machine with no battery
+/// counts as plugged in. The wake assertion follows it, and the host's
+/// capacity probe records it (CROSS-ARCH-0024 #my-network 05).
+pub fn on_mains_power() -> bool {
     if cfg!(target_os = "macos") {
         return Command::new("/usr/bin/pmset")
             .args(["-g", "batt"])
