@@ -5,7 +5,7 @@
   "output": "u64",
   "call": "memory.workspace_one_vault_acknowledge(&input.workspace_ref)?",
   "scope": "Write",
-  "act_class": "write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

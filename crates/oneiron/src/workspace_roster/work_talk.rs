@@ -75,8 +75,12 @@ fn work_talk_key(id: EntityId) -> Vec<u8> {
 
 /// The binding the work-talk conversation `room` carries, `None` for any
 /// other room: an absent id, a non-conversation, or a conversation without
-/// the field. A field that does not decode fails closed. Only storage and
-/// corruption errors escape, so a pre-guard bypass site can ask about any id.
+/// the field. A field fails closed (`ConversationDenied`) when it does not
+/// decode, or when this vault's open door did not register it under
+/// `work_talk.v1/<room>` with the same bytes: a replicated body carries the
+/// field without its local registration, so a forged binding, one copied
+/// under another id, or one added to an unbound conversation admits no
+/// writer and opens no read.
 pub(crate) fn work_talk_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -90,6 +94,15 @@ pub(crate) fn work_talk_binding_in_txn(
         return Ok(None);
     };
     let encoded = rmp_serde::to_vec_named(value).map_err(|_| denied())?;
+    if vault
+        .store
+        .vault_meta
+        .get(txn, &work_talk_key(room))?
+        .as_deref()
+        != Some(encoded.as_slice())
+    {
+        return Err(denied());
+    }
     let binding: WorkTalkBinding = rmp_serde::from_slice(&encoded).map_err(|_| denied())?;
     Ok(Some(binding))
 }
@@ -246,6 +259,12 @@ impl Vault {
                 at,
                 &[],
             )?;
+            // The talk adopts the DAG at birth, so no ChildOf edge reaches it
+            // except through an admitted append (the witness producer's or
+            // the DAG door's permit, each behind `admit_work_talk_witness`):
+            // a raw TURN + ChildOf pair from a structural put is refused
+            // before the first turn as after it.
+            crate::conversation_dag::migrate_in_txn(self, txn, &id)?;
             Ok(id)
         })
     }

@@ -253,9 +253,14 @@ pub(in crate::api) fn owner_authorship(
         .map_err(|_| refused())
 }
 
-/// The one verb whose direct request binds the requesting person's own
-/// proof rather than only the owner's (OF-417).
-pub(super) const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
+/// The verbs whose direct request binds the requesting person's own proof
+/// rather than only the owner's: the work-companion setting (OF-417), and a
+/// member's own work-talk open and one-vault acknowledge (L7-05).
+pub(super) const PERSON_PROOF_VERBS: [&str; 3] = [
+    "vault.workspace.work_companion.set",
+    "vault.workspace.work_talk.open",
+    "vault.workspace.one_vault.acknowledge",
+];
 
 /// The delete whose direct owner request also binds the host's own slip
 /// issuer: deleting a Connect guest's PERSON withdraws its grants and
@@ -263,18 +268,18 @@ pub(super) const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
 pub(super) const GUEST_REVOKING_DELETE_VERB: &str = "vault.delete";
 
 /// The proof a direct request (outside any room turn) binds onto its
-/// caller's surface for `verb`. `vault.workspace.work_companion.set` takes
-/// the person's own proof ([`shared_act_doors::person`]): the owner's, or a
-/// live person's on their own verified human credential, whose
-/// workspace-settings power the engine then checks; any other caller binds
-/// none and the engine refuses it. Every other verb binds the owner's own
-/// authorship ([`owner_authorship`]), or none.
+/// caller's surface for `verb`. A [`PERSON_PROOF_VERBS`] row takes the
+/// person's own proof ([`shared_act_doors::person`]): the owner's, or a live
+/// person's on their own verified human credential, whose power the engine
+/// then checks (workspace settings, or the member's own roster row); any
+/// other caller binds none and the engine refuses it. Every other verb binds
+/// the owner's own authorship ([`owner_authorship`]), or none.
 pub(in crate::api) fn direct_authorship(
     auth: &CoreAuth,
     server: &SyncServer,
     verb: &str,
 ) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
-    if verb == PERSON_PROOF_VERB {
+    if PERSON_PROOF_VERBS.contains(&verb) {
         return Ok(shared_act_doors::person(server, auth, verb).ok());
     }
     owner_authorship(auth, server)

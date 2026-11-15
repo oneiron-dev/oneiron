@@ -513,18 +513,22 @@ pub(crate) fn room_reader_in(
 /// Whether `caller` is one of the two actors a work-talk conversation binds
 /// (L7-05): the member's workspace actor or the brought companion's actor.
 /// It takes no seat and mints no grant. `false` for any other room or
-/// caller. The binding is immutable, so no live revalidation applies.
+/// caller, and for a field that does not stand (undecodable, or without its
+/// local registration: a replicated forgery), so the room's other standings
+/// still decide. The binding is immutable, so no live revalidation applies.
 fn work_talk_reader_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     caller: EntityId,
 ) -> crate::Result<bool> {
-    Ok(
-        crate::workspace_roster::work_talk_binding_in_txn(vault, txn, room)?.is_some_and(
-            |binding| caller == binding.member_actor || caller == binding.companion_actor,
-        ),
-    )
+    match crate::workspace_roster::work_talk_binding_in_txn(vault, txn, room) {
+        Ok(binding) => Ok(binding.is_some_and(|binding| {
+            caller == binding.member_actor || caller == binding.companion_actor
+        })),
+        Err(crate::Error::Record(crate::error::RecordError::ConversationDenied)) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room

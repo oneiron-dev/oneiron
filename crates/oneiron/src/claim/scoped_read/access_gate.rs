@@ -458,15 +458,19 @@ impl ScopedRead<'_> {
     }
 
     /// Whether the row `id` of `kind` sits in a work-talk conversation whose
-    /// binding admits this lane's reader (L7-05): the conversation itself, a
-    /// TURN by its `ChildOf` edge, or a MESSAGE by its `PartOf` TURN's
-    /// `ChildOf` edge, as the transcript finds it. The two bound PERSONs
-    /// read as ledger members on any lane (the companion's PERSON never
-    /// holds a handle; the rule exists so room-turn peer conjuncts pass);
-    /// the two bound AGENT_DEF actors read only on a lane bound to that
-    /// conversation's room turn, so plain grant-gated doors stay closed for
-    /// them. Any failure to read the walk or the binding withholds the row.
-    /// No grant is minted or consulted; every other gate still binds.
+    /// binding admits this lane's reader (L7-05): the conversation itself,
+    /// or a TURN or MESSAGE whose one room is that conversation
+    /// ([`crate::conversation::room_for_record_in`], the room a leader chat's
+    /// message scope reads). A row whose ancestry reaches a second room (an
+    /// extra `PartOf` or `ChildOf` edge into the work talk) is ambiguous and
+    /// withheld, so no edge added later lends the binding to another room's
+    /// row. The two bound PERSONs read as ledger members on any lane (the
+    /// companion's PERSON never holds a handle; the rule exists so room-turn
+    /// peer conjuncts pass); the two bound AGENT_DEF actors read only on a
+    /// lane bound to that conversation's room turn, so plain grant-gated
+    /// doors stay closed for them. Any failure to read the room or the
+    /// binding withholds the row. No grant is minted or consulted; every
+    /// other gate still binds.
     pub(super) fn work_talk_row_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -475,17 +479,12 @@ impl ScopedRead<'_> {
     ) -> bool {
         match kind {
             ENTITY_TYPE_CONVERSATION => self.work_talk_conversation_admits_in(txn, id),
-            ENTITY_TYPE_TURN => self
-                .edge_targets_in(txn, id, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
-                .into_iter()
-                .any(|conversation| self.work_talk_conversation_admits_in(txn, &conversation)),
-            ENTITY_TYPE_MESSAGE => self
-                .edge_targets_in(txn, id, EdgeKind::PartOf, ENTITY_TYPE_TURN)
-                .into_iter()
-                .flat_map(|turn| {
-                    self.edge_targets_in(txn, &turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
-                })
-                .any(|conversation| self.work_talk_conversation_admits_in(txn, &conversation)),
+            ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE => {
+                matches!(
+                    crate::conversation::room_for_record_in(self.vault, txn, *id),
+                    Ok(Some(room)) if self.work_talk_conversation_admits_in(txn, &room)
+                )
+            }
             _ => false,
         }
     }

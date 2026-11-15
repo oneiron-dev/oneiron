@@ -5,7 +5,7 @@
   "output": "crate::entity_id::EntityId",
   "call": "memory.workspace_work_talk_open(&input.workspace_ref)?",
   "scope": "Write",
-  "act_class": "write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

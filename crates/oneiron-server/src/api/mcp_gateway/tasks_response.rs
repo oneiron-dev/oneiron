@@ -920,8 +920,9 @@ async fn mcp_task_row<T: Send + 'static>(
 /// result, a refusal's too. The rebuilt surface keeps the row's credential
 /// and write context. Rows needing direct authorship must not take this
 /// hop: the listing's bind is not
-/// re-applied inside (today only `vault.workspace.work_companion.set` and
-/// `tasks.answer`, neither a blocking row).
+/// re-applied inside (today only `vault.workspace.work_companion.set`,
+/// `vault.workspace.work_talk.open`, `vault.workspace.one_vault.acknowledge`
+/// and `tasks.answer`, none a blocking row).
 async fn mcp_off_runtime_row<T: Send + 'static>(
     server: &Arc<SyncServer>,
     tool: &str,
@@ -958,8 +959,9 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 }
 
 /// The proof a direct MCP caller's own request binds for `tool`, as the
-/// HTTP facade binds it outside a room turn: the work-companion setting
-/// takes the person's own proof (OF-417), an attendee ask's answer the
+/// HTTP facade binds it outside a room turn: the work-companion setting and
+/// a member's own work-talk open and one-vault acknowledge take the
+/// person's own proof (OF-417, L7-05), an attendee ask's answer the
 /// owner's own authorship (OF-365), and the owner's own `vault.delete` his
 /// authorship and this host's slip issuer, so deleting a Connect guest's
 /// PERSON withdraws its grants first (FIX 3875, 5317). Every other row binds
@@ -973,7 +975,11 @@ fn mcp_direct_authorship<'a>(
 ) -> Result<oneiron::Memory<'a>, McpGatewayError> {
     if !matches!(
         tool,
-        "vault.workspace.work_companion.set" | "tasks.answer" | "vault.delete"
+        "vault.workspace.work_companion.set"
+            | "vault.workspace.work_talk.open"
+            | "vault.workspace.one_vault.acknowledge"
+            | "tasks.answer"
+            | "vault.delete"
     ) {
         return Ok(memory);
     }
