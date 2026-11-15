@@ -12,11 +12,12 @@
 //! Letting their messages back in widens their own row: where the vault
 //! asks for an owner key, an install that is not the owner's machine and
 //! holds no owner key cannot prove it, and the door refuses it, storing
-//! nothing (ruling CARRIER-PERSON-OPT-BACK-IN = A). Leaving them out lands
-//! from any install.
+//! nothing (ruling CARRIER-PERSON-OPT-BACK-IN = A), unless the person proved
+//! it with their own slip key. Leaving them out lands from any install.
 
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, Result};
+use crate::edge::EdgeActorClass;
+use crate::error::{Error, RecordError, Result};
 use crate::{TimeRange, Vault};
 
 use super::*;
@@ -34,6 +35,8 @@ const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than o
 const STALE: &str = "the conversation training choice changed since it was read";
 /// The vault's setting does not let people opt out.
 const OPT_OUTS_NOT_ALLOWED: &str = "this vault does not allow opt-outs";
+/// The person's own slip-key proof does not hold for this choice.
+const PERSON_PROOF_REFUSED: &str = "the person's proof does not hold for this choice";
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the conversation training choice";
 
@@ -60,22 +63,29 @@ impl Vault {
     /// (`leave_out`), or lets them back in, from `surface` (audit only).
     /// `seen` is the revision their surface showed them
     /// ([`ConversationTrainingView::revision`]); `None` takes the current
-    /// one. Refused while the vault's setting does not let people opt out.
-    /// The choice names the main-log heads alone, whose fold carries this
-    /// install's standing rows and every live choice of the person's (FIX
-    /// 4987), so it supersedes all of them, and lands atomically or not at
-    /// all. It stops new sharing of their messages; it withdraws nothing
-    /// already shared.
+    /// one. `person_proof` is the person's own slip-key proof of the choice
+    /// (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF), `None` when they signed
+    /// none: with one, their opt back in lands through any carrier. An
+    /// opt-out drops it unjudged and unstored. The statement's `seen` is the
+    /// current revision. Refused while the vault's setting does not let
+    /// people opt out. The choice names the main-log
+    /// heads alone, whose fold carries this install's standing rows and every
+    /// live choice of the person's (FIX 4987), so it supersedes all of them,
+    /// and lands atomically or not at all. It stops new sharing of their
+    /// messages; it withdraws nothing already shared.
     ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault;
     /// [`crate::error::RecordError::AuthorityRefused`] ("this vault does not
     /// allow opt-outs") while the vault does not let people opt out, and when
     /// this install cannot carry the choice or its fold does not count it;
+    /// [`RecordError::AuthorityRefused`] ("the person's proof does not hold
+    /// for this choice") when their proof does not hold;
     /// [`crate::error::RecordError::OwnerKeyRequired`] when they let their
     /// messages back in where the vault asks for an owner key and this
     /// install neither is the owner's machine nor holds one (nothing is
-    /// stored);
+    /// stored), and when the vault owner passes a person proof (they prove
+    /// with the owner key, never a slip key);
     /// [`Error::ConcurrentWrite`] when `seen` is not the current revision;
     /// [`Error::InvalidConfig`] when the choice would name more parents than
     /// one entry may.
@@ -85,7 +95,11 @@ impl Vault {
         surface: ActSurface,
         leave_out: bool,
         seen: Option<PolicyRevision>,
+        person_proof: Option<PersonChoiceProof>,
     ) -> Result<ConversationTrainingView> {
+        // The proof answers only the opt back in: an opt-out lands with no
+        // proof, so it never fails on one and never stores one.
+        let person_proof = person_proof.filter(|_| !leave_out);
         let mut txn = self.store.env.write_txn()?;
         let person = owner.revalidate_person_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -126,7 +140,48 @@ impl Vault {
             surface,
             current.0,
         );
-        let now = self.instant_in_txn(&txn)?.secs();
+        let instant = self.instant_in_txn(&txn)?;
+        let now = instant.secs();
+        // The person's own slip-key proof (row
+        // PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF), judged on the pre-write
+        // fold, the entry's parent state, by the one helper the fold judges
+        // it with.
+        if let Some(proof) = &person_proof {
+            // The vault owner proves with the owner key, never a slip key:
+            // the same refusal an unproven opt back in meets, so their
+            // surface shows the same "use your owner device" state.
+            let owns = crate::memory::actor_is_vault_owner_in_txn(
+                self,
+                &txn,
+                person,
+                EdgeActorClass::Human,
+            )
+            .map_err(|_| invalid_authority())?;
+            if owns {
+                return Err(Error::Record(RecordError::OwnerKeyRequired));
+            }
+            let set = ConversationTrainingSet {
+                act,
+                machine,
+                leave_out,
+                person_proof: person_proof.clone(),
+            };
+            let bound = fold.actor_bindings.values().any(|binding| {
+                binding.actor_ref == set.act.owner && binding.actor_class == ACTOR_CLASS_HUMAN
+            });
+            let proven = fold.vault_id.is_some_and(|vault_id| {
+                super::super::person_proof::proof_holds(
+                    &fold.slips,
+                    &fold.roster,
+                    &vault_id,
+                    bound,
+                    &set,
+                )
+            });
+            if !fold.slip_is_live_at(&proof.slip, instant) || !proven {
+                return Err(authority_refused(PERSON_PROOF_REFUSED));
+            }
+        }
         let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
@@ -136,6 +191,7 @@ impl Vault {
                 act,
                 machine,
                 leave_out,
+                person_proof,
             }),
             now,
             self.owner_proof_signer(&fold).as_deref(),
