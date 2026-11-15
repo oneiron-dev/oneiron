@@ -71,7 +71,7 @@ impl OwnerRootSigner {
 
     /// The enrollment's proof of possession: the key's signature over the
     /// challenge the engine made for it.
-    fn sign_possession(&self, challenge: &[u8]) -> Vec<u8> {
+    pub(crate) fn sign_possession(&self, challenge: &[u8]) -> Vec<u8> {
         self.signing.sign(challenge).to_bytes().to_vec()
     }
 
