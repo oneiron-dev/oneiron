@@ -17,6 +17,10 @@
 //! Every poll runs through the installed-feed door (`feed_door`), as the
 //! host's queued-poll worker and the `calendar.ics.poll` verb do, on a seeded
 //! vault whose gate holds each imported claim for consent.
+//!
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --test calendar_ics_feed_consent`.
+#![cfg(oneiron_test_support)]
 
 use std::sync::{Arc, Mutex};
 
@@ -364,7 +368,8 @@ fn first_poll_opens_one_review_and_holds_the_feed_until_the_owner_decides() {
         feed::poll_waits_on_owner(&f.vault, &work).expect("hold"),
         "the host completes the feed's queued poll unpolled"
     );
-    // The stub has no response queued: a fetch would fail with its text.
+    // The hold refuses before any fetch: the stub's queued response stays
+    // unread, and a fetch would have answered with the poll's result.
     let refused = f
         .poll(&work, complete(&["uid-1@work"], "v1"))
         .expect_err("a held feed does not poll");
