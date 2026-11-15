@@ -47,6 +47,37 @@ impl GateDecisionId {
     }
 }
 
+/// A named engine part that writes a Gate receipt and is not an actor row:
+/// the `actor_class` tokens that are not edge classes (`human`, `agent`,
+/// `system`). `Owner` and `Engine` keep the two tokens writers use today
+/// beside `human` and `system`, so no reader of `actor_class` changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GateEnginePart {
+    PolicyModel,
+    Sandbox,
+    BookingHttpGuard,
+    ConnectorCaller,
+    FirstParty,
+    Owner,
+    Engine,
+}
+
+impl GateEnginePart {
+    /// The `actor_class` token a receipt from this part carries.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PolicyModel => "policy_model",
+            Self::Sandbox => "sandbox",
+            Self::BookingHttpGuard => "booking.http_guard",
+            Self::ConnectorCaller => "connector_caller",
+            Self::FirstParty => "first_party",
+            Self::Owner => "owner",
+            Self::Engine => "engine",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GateSystemNoticeAction {
     pub label: String,
