@@ -44,7 +44,7 @@ crate::setting::setting_keys! {
     /// only this caller's own history and the documents you pick; or the whole vault; or a custom
     /// scope you define or an agent proposes. Under the whole vault, or a custom scope that
     /// includes other callers, the agent may repeat what other callers said. The line's agent may
-    /// narrow its own reach; any widening asks you first.
+    /// narrow its own reach, and undo its own narrowing; going past your choice asks you first.
     pub CALL_REACH: PhoneReach = "voice.phone.reach" {
         kind: Kind::new(reach_default).strictest(reach_default).tighter(reach_tighter),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],

@@ -106,8 +106,11 @@ impl PhoneLineReadCeiling {
     }
 
     /// The live reach of the frozen call: the frozen reach met with the
-    /// line's current `voice.phone.reach`. The live reach can narrow the
-    /// frozen call but never widen it; a widening waits for the next call.
+    /// line's current `voice.phone.reach`. A call never reads wider than its
+    /// answer-time reach nor than the live value: a narrowing lands at the
+    /// next read; a widening back within the answer-time reach (the owner's
+    /// own, or an agent undoing its own narrowing) lands at once, and the rest
+    /// waits for the next call (REACH-AGENT-UNDO-NARROWING = A).
     /// The caller's original credential is checked separately by the read door.
     pub(crate) fn current_reach_in(
         &self,
