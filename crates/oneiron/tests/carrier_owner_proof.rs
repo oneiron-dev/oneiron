@@ -529,7 +529,7 @@ impl PairedMachine {
     }
 
     /// The owner confirms the paired machine on an owner device: the laptop
-    /// carries the owner's answer `Owned(Yours)` again at revision 2, over
+    /// carries the owner's answer `Owned(Yours)` again at revision 1, over
     /// the pairing, cosigned by each of `cosigners`.
     fn confirm(mut self, cosigners: &[&SigningKey]) -> AuthorityFold {
         let vault_id = genesis_vault_id(&self.rows[0]).expect("the vault id");
@@ -550,7 +550,7 @@ impl PairedMachine {
                 self.paired_machine,
                 &self.paired,
                 MachineRole::Owned(MachineOwnership::Yours),
-                2,
+                1,
                 Some((self.laptop_machine, act)),
             )),
             &self.laptop,
@@ -1055,7 +1055,7 @@ fn an_owner_key_cosigned_confirm_over_a_held_pairing_makes_the_machine_mine() {
     assert_eq!(
         fold.trusted_machine(paired_machine)
             .map(|trusted| trusted.profile.revision),
-        Some(2),
+        Some(1),
         "the fold trusts the owner key's confirm, not the held pairing: {:?}",
         fold.issues
     );
@@ -1247,17 +1247,16 @@ fn an_owner_laptops_pick_lands_over_a_waiting_pick() {
 }
 
 /// Guard (plan read F2): revision numbers never decide what asks. A held
-/// answer at the last revision a profile can name blocks nothing: the
-/// owner's confirm lands under it, the machine is mine, and both held
-/// answers the confirm saw ask no more.
+/// answer at the next revision blocks nothing: the owner's confirm lands,
+/// the machine is mine, and both held answers the confirm saw ask no more.
 #[test]
-fn a_held_answer_at_the_last_revision_never_blocks_the_owners_confirm() {
+fn a_held_answer_at_the_next_revision_never_blocks_the_owners_confirm() {
     let mut paired = PairedMachine::new();
     let (root, key_holder) = (paired.root.clone(), paired.paired.clone());
     let paired_machine = paired.paired_machine;
     let paired_key = key_holder.verifying_key().to_bytes();
     let pairing = hash(&paired.rows[2]);
-    let last = paired.laptop_answers_yours(2, vec![pairing], &key_holder, u64::MAX, &[]);
+    let last = paired.laptop_answers_yours(2, vec![pairing], &key_holder, 1, &[]);
     let fold = fold_authority_log(&paired.rows);
     assert_eq!(
         asking(&fold, paired_machine),
@@ -1265,7 +1264,7 @@ fn a_held_answer_at_the_last_revision_never_blocks_the_owners_confirm() {
         "both unproven answers are held and ask: {:?}",
         fold.issues
     );
-    paired.laptop_answers_yours(3, vec![last], &key_holder, 2, &[&root]);
+    paired.laptop_answers_yours(3, vec![last], &key_holder, 1, &[&root]);
     let fold = fold_authority_log(&paired.rows);
     assert!(
         mine(&fold, paired_machine, &paired_key),
@@ -1275,7 +1274,7 @@ fn a_held_answer_at_the_last_revision_never_blocks_the_owners_confirm() {
     assert_eq!(
         fold.trusted_machine(paired_machine)
             .map(|trusted| trusted.profile.revision),
-        Some(2),
+        Some(1),
         "the fold trusts the confirm: {:?}",
         fold.issues
     );
@@ -1296,8 +1295,8 @@ fn an_unproven_answer_after_the_owners_confirm_asks_again() {
     let paired_machine = paired.paired_machine;
     let paired_key = key_holder.verifying_key().to_bytes();
     let pairing = hash(&paired.rows[2]);
-    let confirm = paired.laptop_answers_yours(2, vec![pairing], &key_holder, 2, &[&root]);
-    let rekey = paired.laptop_answers_yours(3, vec![confirm], &signing(STRANGER_SEED), 3, &[]);
+    let confirm = paired.laptop_answers_yours(2, vec![pairing], &key_holder, 1, &[&root]);
+    let rekey = paired.laptop_answers_yours(3, vec![confirm], &signing(STRANGER_SEED), 2, &[]);
     let fold = fold_authority_log(&paired.rows);
     assert!(
         mine(&fold, paired_machine, &paired_key),

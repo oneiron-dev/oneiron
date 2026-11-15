@@ -129,7 +129,8 @@ pub(super) const YOURS: MachineRole = MachineRole::Owned(MachineOwnership::Yours
 
 /// The owner's anchor marks machine M. The host then signs sibling revisions
 /// of M, each valid on its own: under a root of its own, a verbatim copy at
-/// revision `u64::MAX` and a removal; under its roster key, a removal and a
+/// the next revision (1 where the host saw nothing, 2 where it saw the mark)
+/// and a removal; under its roster key, a removal and a
 /// conflicting equal revision. On an install pinned to the owner's root M
 /// stays mine with its own keys, whether the host's revisions saw the owner's
 /// mark or not, and a later owner revision still lands. An unpinned install
@@ -163,7 +164,7 @@ fn neither_a_foreign_anchor_nor_a_host_roster_strips_the_owners_mark() {
                 &host_parents,
                 &host_anchor,
                 2,
-                profile(&request, YOURS, u64::MAX),
+                profile(&request, YOURS, if host_saw_the_mark { 2 } else { 1 }),
             ),
             signed(
                 id,

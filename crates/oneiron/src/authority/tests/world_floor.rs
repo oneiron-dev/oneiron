@@ -155,10 +155,13 @@ fn a_narrowing_that_arrives_after_a_refused_row_still_narrows() {
 }
 
 /// Astra #1430, shape B: two concurrent owner revisions of a machine that
-/// narrowed and then widened a world. A demotion saw only the narrowing; a
-/// removal at a higher sequence saw the widening. A replica that stores the
-/// removal first still races the widening against the demotion, so in both
-/// orders the widening keeps no full strength.
+/// narrowed and then widened a world, each numbered one above the head both
+/// saw. A demotion saw only the narrowing; a removal at a higher sequence
+/// saw the widening. A replica that stores the removal first still races
+/// the widening against the demotion, so in both orders the widening keeps
+/// no full strength. (The removal was numbered 3 here, alone at the head,
+/// until the fold refused a revision that skips a number; the two now share
+/// revision 2, and their divergence leaves the head in conflict.)
 #[test]
 fn a_demotion_that_arrives_after_a_removal_still_races_a_widening() {
     let host = host();
@@ -203,7 +206,7 @@ fn a_demotion_that_arrives_after_a_removal_still_races_a_widening() {
         seq + 2,
         MachineProfile {
             role: MachineRole::Removed,
-            revision: 3,
+            revision: 2,
             seen_world_edits: BTreeSet::from([authority_entry_hash(&widening).unwrap()]),
             ..profile
         },
@@ -438,10 +441,11 @@ fn owner_on(
 /// Sol P2 round 13 F1 and Wonder round 7 W1: a "yours" revision past the
 /// floor still heads its machine by the roster rule. Two concurrent owner
 /// re-marks diverge; a demotion over one of them lists the machine's
-/// widening, or the widening is signed under one of them. A replica that
-/// stored a later owner row first takes both re-marks past its floor and
-/// still finds the demotion replaced, or the widening was signed under, a
-/// mark that does not stand: the widening only narrows, in both orders.
+/// widening, which landed before them or was signed under that one. A
+/// replica that stored a later owner row first takes both re-marks past its
+/// floor and still finds the demotion replaced, or the widening was signed
+/// under, a mark that does not stand: the widening only narrows, in both
+/// orders.
 #[test]
 fn a_demotion_over_a_divergent_mark_past_the_floor_acknowledges_nothing() {
     for signed_under_remark in [false, true] {
@@ -504,11 +508,10 @@ fn a_demotion_over_a_divergent_mark_past_the_floor_acknowledges_nothing() {
         let demotion = owner_on(
             &host,
             seq + 4,
-            if signed_under_remark {
-                heads.clone()
-            } else {
-                vec![hash(&marked)]
-            },
+            // Over the re-mark in both branches, so 3 is the next number
+            // (MACHINE-REVISION-FOLD-BOUND); the branches still differ by
+            // where the widening was signed.
+            vec![hash(&marked)],
             MachineProfile {
                 role: MachineRole::Owned(MachineOwnership::WorkSchool),
                 revision: 3,
@@ -1219,9 +1222,10 @@ fn refused_repick(
 }
 
 /// Sol P2 round 18, F2: two "yours" revisions of one number leave a machine
-/// in conflict, so its widening counts only as narrowing. A removal over a
-/// row its floor refuses lists the widening; with no handoff, only the
-/// removal's own branch vouch admits it, and it acknowledges nothing here.
+/// in conflict, so its widening counts only as narrowing. A removal over
+/// one of the two and over a row its floor refuses lists the widening; with
+/// no handoff, only the removal's own branch vouch admits it, and it
+/// acknowledges nothing here.
 fn removal_vouch() -> MarkPastFloor {
     let start = Start::new(126);
     let machine = other_machine(
@@ -1253,6 +1257,9 @@ fn removal_vouch() -> MarkPastFloor {
     let refused = start.revoke(start.seq, start.below_heads(), 27);
     let mut parents = start.heads();
     parents.push(hash(&refused));
+    // Over one sibling at 2, so 3 is the next number
+    // (MACHINE-REVISION-FOLD-BOUND); the vouch still arrives after it.
+    parents.push(hash(&quiet));
     let removal = start.owner_row(
         start.seq + 5,
         parents,

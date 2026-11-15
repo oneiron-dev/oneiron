@@ -6,8 +6,9 @@
 //! MACHINE-ANSWER-WRITERS-READ-TRUST-CHAINS = B).
 //!
 //! Any fresh key publishes an owner root, and that root's anchor marks any
-//! machine in its own chain: owned or removed, at any revision, under any
-//! keys that carry their own machine proof. The three writers of the owner's
+//! machine in its own chain: owned or removed, under any keys that carry
+//! their own machine proof, at a revision up to one above the highest head
+//! the mark's parents hold. The three writers of the owner's
 //! answer (`Vault::set_machine_role`, `Vault::enroll_machine` for a class
 //! revision, `Vault::confirm_held_machine_answers`) read every chain of the
 //! machine before: the next revision topped every chain, the new profile
@@ -26,6 +27,14 @@
 //! one mark of that root's anchor beside the owner's machine, and then acts
 //! through the owner's door or the redeem door. No vault here pins a root,
 //! so the machine stands under the roster's head alone.
+//!
+//! The last five tests are PR 2 of the row (FIX 25887): the fold refuses a
+//! machine revision numbered more than one above the highest head its
+//! machine's chains hold in the entry's parents. Each hand-signs rows that
+//! skip a number, on the roster or in a stranger's chain, and reads them
+//! refused. So a stranger's mark in the tests before them sits at most one
+//! revision above the roster's head, and then names the roster's row among
+//! its parents; where the machine has no chain yet it sits at revision 1.
 
 #![cfg(oneiron_test_support)]
 
@@ -38,9 +47,9 @@ use oneiron::authority::{
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer,
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
     MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole,
-    OwnerRootRecord, PairingPrincipal, PairingRedeemed, authority_entry_hash, authority_transcript,
-    machine_possession_transcript, machine_profile_proof_transcript,
-    pairing_binding_transcript_pinned,
+    OwnerAct, OwnerActKind, OwnerRootRecord, PairingPrincipal, PairingRedeemed,
+    authority_entry_hash, authority_transcript, machine_possession_transcript,
+    machine_profile_proof_transcript, pairing_binding_transcript_pinned,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
@@ -48,7 +57,9 @@ use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::world_keys::{RecoveryRoot, RecoveryRootSeed};
 use oneiron::{EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
-use oneiron_authority::authority::{FrontierJoin, FrontierJoinFamily, FrontierJoinScope};
+use oneiron_authority::authority::{
+    FrontierJoin, FrontierJoinFamily, FrontierJoinScope, machine_answer_revision,
+};
 
 /// The seed of the joining machine's machine key.
 const JOINING_SEED: u8 = 68;
@@ -56,6 +67,8 @@ const JOINING_SEED: u8 = 68;
 const STRANGER_MACHINE_SEED: u8 = 71;
 /// The seed of the connection key a redeemed pairing link binds.
 const CONNECTION_SEED: u8 = 73;
+/// The seed of the machine key of a machine no chain names.
+const UNNAMED_MACHINE_SEED: u8 = 79;
 /// The stored rows' occurred range and learned-at, as the store-door tests use.
 const AT: TimeRange = TimeRange { start: 2, end: 2 };
 
@@ -237,6 +250,26 @@ impl ServedVault {
             .expect("the owner enrols this install's owner signing key");
     }
 
+    /// The vault's id.
+    fn vault_id(&self) -> AuthorityVaultId {
+        self.vault
+            .authority_fold()
+            .expect("authority fold")
+            .vault_id
+            .expect("the vault is rooted")
+    }
+
+    /// The entry of `machine`'s roster head.
+    fn roster_row(&self, machine: EntityId) -> AuthorityEntryHash {
+        self.vault
+            .authority_fold()
+            .expect("authority fold")
+            .machine(machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .expect("guard: the machine has a roster chain")
+            .entry
+    }
+
     /// Another machine's request to join this vault.
     fn joining_machine(&self) -> MachineEnrolmentRequest {
         self.joining_machine_with_class(MachineDeviceClass::Computer)
@@ -385,7 +418,7 @@ fn publish_stranger_root(
 fn stranger_mark_with_m_keys(
     served: &ServedVault,
     vault_id: AuthorityVaultId,
-    root: AuthorityEntryHash,
+    parents: Vec<AuthorityEntryHash>,
     anchor: &SigningKey,
     request: &MachineEnrolmentRequest,
     role: MachineRole,
@@ -407,7 +440,60 @@ fn stranger_mark_with_m_keys(
     let entry = signed(
         Some(vault_id),
         2,
-        vec![root],
+        parents,
+        AuthorityOp::MachineProfile(profile),
+        anchor,
+        &[],
+    );
+    let mark = hash(&entry);
+    served
+        .vault
+        .put_authority_log_entry(&entry, AT, 2)
+        .expect("the stranger's mark is stored");
+    mark
+}
+
+/// The parents of a stranger's mark one revision above `machine`'s roster
+/// head: the stranger's root row and the machine's roster row, in hash order.
+fn root_and_roster_row(
+    served: &ServedVault,
+    machine: EntityId,
+    root: AuthorityEntryHash,
+) -> Vec<AuthorityEntryHash> {
+    let mut parents = vec![root, served.roster_row(machine)];
+    parents.sort_unstable();
+    parents
+}
+
+/// The stranger's anchor marks M under M's own keys and proof at `revision`,
+/// on the parents and at the anchor's sequence that `on` names, and the mark
+/// is stored whether the fold takes it or not. Returns the mark's hash.
+fn stranger_mark_at(
+    served: &ServedVault,
+    on: (Vec<AuthorityEntryHash>, u64),
+    anchor: &SigningKey,
+    request: &MachineEnrolmentRequest,
+    role: MachineRole,
+    revision: u64,
+) -> AuthorityEntryHash {
+    let (parents, seq) = on;
+    let profile = MachineProfile {
+        machine: request.machine,
+        owner: stranger_owner(),
+        machine_key: request.machine_key,
+        device_class: request.device_class,
+        encryption_key: request.encryption_key.clone(),
+        role,
+        revision,
+        machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
+    };
+    let entry = signed(
+        Some(served.vault_id()),
+        seq,
+        parents,
         AuthorityOp::MachineProfile(profile),
         anchor,
         &[],
@@ -425,7 +511,7 @@ fn stranger_mark_with_m_keys(
 fn stranger_mark_with_stranger_keys(
     served: &ServedVault,
     vault_id: AuthorityVaultId,
-    root: AuthorityEntryHash,
+    parents: Vec<AuthorityEntryHash>,
     anchor: &SigningKey,
     machine: EntityId,
     role: MachineRole,
@@ -442,7 +528,7 @@ fn stranger_mark_with_stranger_keys(
     let entry = signed(
         Some(vault_id),
         2,
-        vec![root],
+        parents,
         AuthorityOp::MachineProfile(profile),
         anchor,
         &[],
@@ -477,10 +563,11 @@ fn held_hosted_enrolment() -> (ServedVault, MachineEnrolmentRequest) {
 }
 
 /// The owner's removal is numbered from the roster's head: beside a
-/// stranger's mark of the machine at the last revision it lands at revision
-/// 2. Before, the next number overflowed and the door refused.
+/// stranger's mark of the machine one revision above that head it lands at
+/// revision 2. Before, the next number topped every chain: 3 here, a number
+/// the fold now refuses over a roster head at 1.
 #[test]
-fn the_owner_removes_a_machine_beside_a_stranger_roots_mark_at_the_last_revision() {
+fn the_owner_removes_a_machine_beside_a_stranger_roots_mark() {
     let (served, request) = enrolled_self_host();
     let machine = request.machine;
     let vault_id = served
@@ -493,11 +580,11 @@ fn the_owner_removes_a_machine_beside_a_stranger_roots_mark_at_the_last_revision
     let mark = stranger_mark_with_m_keys(
         &served,
         vault_id,
-        root_hash,
+        root_and_roster_row(&served, machine, root_hash),
         &anchor,
         &request,
         MachineRole::Owned(MachineOwnership::Yours),
-        u64::MAX,
+        2,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -509,9 +596,8 @@ fn the_owner_removes_a_machine_beside_a_stranger_roots_mark_at_the_last_revision
         .and_then(|folded| folded.anchored.get(&root.anchor_key))
         .expect("guard: the view holds F's chain");
     assert_eq!(
-        anchored.profile.revision,
-        u64::MAX,
-        "guard: F's chain stands at the last revision"
+        anchored.profile.revision, 2,
+        "guard: F's chain stands at revision 2, one above the roster's head"
     );
     let landing = served
         .vault
@@ -560,7 +646,7 @@ fn the_owner_answers_about_a_machine_beside_a_stranger_roots_removal_mark() {
     let mark = stranger_mark_with_m_keys(
         &served,
         vault_id,
-        root_hash,
+        vec![root_hash],
         &anchor,
         &request,
         MachineRole::Removed,
@@ -651,11 +737,11 @@ fn the_owners_role_change_keeps_a_machines_keys_beside_a_stranger_roots_mark_wit
     let mark = stranger_mark_with_stranger_keys(
         &served,
         vault_id,
-        root_hash,
+        root_and_roster_row(&served, machine, root_hash),
         &anchor,
         machine,
         MachineRole::Owned(MachineOwnership::Yours),
-        5,
+        2,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -714,8 +800,9 @@ fn the_owners_role_change_keeps_a_machines_keys_beside_a_stranger_roots_mark_wit
 }
 
 /// A class revision is numbered from the roster's head: beside a stranger's
-/// mark at the last revision it lands at revision 2. Before, the next number
-/// overflowed and the door refused.
+/// mark one revision above that head it lands at revision 2. Before, the
+/// next number topped every chain: 3 here, a number the fold now refuses
+/// over a roster head at 1.
 #[test]
 fn a_machines_class_revision_lands_beside_a_stranger_roots_mark() {
     let (served, request) = enrolled_self_host();
@@ -730,11 +817,11 @@ fn a_machines_class_revision_lands_beside_a_stranger_roots_mark() {
     let mark = stranger_mark_with_m_keys(
         &served,
         vault_id,
-        root_hash,
+        root_and_roster_row(&served, machine, root_hash),
         &anchor,
         &request,
         MachineRole::Owned(MachineOwnership::Yours),
-        u64::MAX,
+        2,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -744,8 +831,8 @@ fn a_machines_class_revision_lands_beside_a_stranger_roots_mark() {
     assert!(
         fold.machine(machine)
             .and_then(|folded| folded.anchored.get(&root.anchor_key))
-            .is_some_and(|anchored| anchored.profile.revision == u64::MAX),
-        "guard: the view holds F's chain at the last revision"
+            .is_some_and(|anchored| anchored.profile.revision == 2),
+        "guard: the view holds F's chain at revision 2, one above the roster's head"
     );
     let second = served.joining_machine_with_class(MachineDeviceClass::Phone);
     assert_eq!(second.machine, machine, "guard: the class revision names M");
@@ -796,8 +883,9 @@ fn a_machines_class_revision_lands_beside_a_stranger_roots_mark() {
 }
 
 /// A class revision checks the keys of the roster's head: beside a
-/// stranger's mark under other keys it still lands at revision 2. Before, the
-/// door refused, because a head named other keys than the request.
+/// stranger's mark under other keys, one revision above that head, it still
+/// lands at revision 2. Before, the door refused, because a head named other
+/// keys than the request.
 #[test]
 fn a_machines_class_revision_lands_beside_a_stranger_roots_mark_with_other_keys() {
     let (served, request) = enrolled_self_host();
@@ -812,11 +900,11 @@ fn a_machines_class_revision_lands_beside_a_stranger_roots_mark_with_other_keys(
     let mark = stranger_mark_with_stranger_keys(
         &served,
         vault_id,
-        root_hash,
+        root_and_roster_row(&served, machine, root_hash),
         &anchor,
         machine,
         MachineRole::Owned(MachineOwnership::Yours),
-        5,
+        2,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -856,9 +944,9 @@ fn a_machines_class_revision_lands_beside_a_stranger_roots_mark_with_other_keys(
 }
 
 /// The owner's confirm is numbered from the standing heads: a held enrolment
-/// of a machine that only a stranger's mark names, at the last revision,
-/// confirms at roster revision 1. Before, the next number overflowed and the
-/// confirm was refused.
+/// of a machine that only a stranger's mark names confirms at roster
+/// revision 1. Before, the next number topped every chain and the confirm
+/// was refused.
 #[test]
 fn the_owners_confirm_of_a_held_enrolment_lands_beside_a_stranger_roots_mark() {
     let (served, request) = held_hosted_enrolment();
@@ -873,11 +961,11 @@ fn the_owners_confirm_of_a_held_enrolment_lands_beside_a_stranger_roots_mark() {
     let mark = stranger_mark_with_m_keys(
         &served,
         vault_id,
-        root_hash,
+        vec![root_hash],
         &anchor,
         &request,
         MachineRole::Owned(MachineOwnership::Yours),
-        u64::MAX,
+        1,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -887,7 +975,7 @@ fn the_owners_confirm_of_a_held_enrolment_lands_beside_a_stranger_roots_mark() {
     assert!(
         fold.machine(machine)
             .and_then(|folded| folded.anchored.get(&root.anchor_key))
-            .is_some_and(|anchored| anchored.profile.revision == u64::MAX),
+            .is_some_and(|anchored| anchored.profile.revision == 1),
         "guard: the view holds F's chain of M"
     );
     served.enrol_owner_key();
@@ -932,11 +1020,11 @@ fn a_stranger_roots_mark_with_other_keys_never_makes_a_held_answer_read_as_a_rek
     let mark = stranger_mark_with_stranger_keys(
         &served,
         vault_id,
-        root_hash,
+        vec![root_hash],
         &anchor,
         machine,
         MachineRole::Owned(MachineOwnership::Yours),
-        5,
+        1,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -974,7 +1062,7 @@ fn a_stranger_roots_mark_with_other_keys_never_makes_a_held_answer_read_as_a_rek
 
 /// A machine cannot keep itself by carrying a stranger's mark into the main
 /// log. M's own install key signs a frontier join whose parents are M's
-/// roster row and the stranger's mark of M at the last revision; an admitted
+/// roster row and the stranger's mark of M at revision 1; an admitted
 /// machine needs only the carrier rule for a join. The join is a main-log
 /// row, so the stranger's chain of M is in the past of every row written
 /// after it. The owner's removal reads the roster's head all the same and
@@ -994,11 +1082,11 @@ fn the_owner_removes_a_machine_whose_own_join_names_a_stranger_roots_mark() {
     let mark = stranger_mark_with_m_keys(
         &served,
         vault_id,
-        root_hash,
+        vec![root_hash],
         &anchor,
         &request,
         MachineRole::Owned(MachineOwnership::Yours),
-        u64::MAX,
+        1,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -1118,9 +1206,10 @@ fn redeem_machine_link(
 }
 
 /// Credential-only re-pairing reads the heads M stands under here:
-/// beside a stranger root's mark of M under other keys, M pairs again
-/// and no revision is written. Before, the re-pairing read every chain
-/// of M, and the stranger's mark refused it.
+/// beside a stranger root's mark of M under other keys, one revision above
+/// the roster's head, M pairs again and no revision is written. Before, the
+/// re-pairing read the newest head over every chain of M, and the stranger's
+/// mark refused it.
 #[test]
 fn a_machine_pairs_again_beside_a_stranger_roots_mark_with_other_keys() {
     let (served, request) = enrolled_self_host();
@@ -1135,11 +1224,11 @@ fn a_machine_pairs_again_beside_a_stranger_roots_mark_with_other_keys() {
     let mark = stranger_mark_with_stranger_keys(
         &served,
         vault_id,
-        root_hash,
+        root_and_roster_row(&served, machine, root_hash),
         &anchor,
         machine,
         MachineRole::Owned(MachineOwnership::Yours),
-        5,
+        2,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -1289,11 +1378,11 @@ fn a_stranger_roots_mark_under_the_requests_class_never_makes_a_class_change_a_r
     let mark = stranger_mark_with_m_keys(
         &served,
         vault_id,
-        root_hash,
+        root_and_roster_row(&served, machine, root_hash),
         &anchor,
         &second,
         MachineRole::Owned(MachineOwnership::Yours),
-        5,
+        2,
     );
     let fold = served.vault.authority_fold().expect("authority fold");
     assert!(
@@ -1304,7 +1393,7 @@ fn a_stranger_roots_mark_under_the_requests_class_never_makes_a_class_change_a_r
         fold.machine(machine)
             .and_then(|folded| folded.anchored.get(&root.anchor_key))
             .is_some_and(|anchored| {
-                anchored.profile.revision == 5
+                anchored.profile.revision == 2
                     && anchored.profile.device_class == MachineDeviceClass::Phone
             }),
         "guard: the view holds the stranger's chain of M above the roster, under the \
@@ -1319,5 +1408,353 @@ fn a_stranger_roots_mark_under_the_requests_class_never_makes_a_class_change_a_r
     assert_eq!(
         with_mark, without_mark,
         "beside the stranger's mark the redemption answers as it does with no mark"
+    );
+}
+
+/// M's raw key carries the owner's `Owned(Yours)` answer about `target` at
+/// `revision` on `parents`, signed at `seq`, and the answer is stored.
+/// `node` is the key the answer names for `target`: M's own key when M
+/// answers about itself. Returns the answer's hash.
+fn m_carries_yours(
+    served: &ServedVault,
+    parents: Vec<AuthorityEntryHash>,
+    seq: u64,
+    carrier: EntityId,
+    target: EntityId,
+    node: &SigningKey,
+    revision: u64,
+) -> AuthorityEntryHash {
+    let vault_id = served.vault_id();
+    let mut profile = node_profile(
+        vault_id,
+        target,
+        node,
+        MachineRole::Owned(MachineOwnership::Yours),
+        revision,
+    );
+    profile.carrier = Some(carrier);
+    profile.act = Some(OwnerAct::by_owner(
+        owner(),
+        OwnerActKind::MachineAnswer,
+        target,
+        ActSurface::ThisInstall,
+        machine_answer_revision(parents.iter().copied()),
+    ));
+    let entry = signed(
+        Some(vault_id),
+        seq,
+        parents,
+        AuthorityOp::MachineProfile(profile),
+        &signing(JOINING_SEED),
+        &[],
+    );
+    let answer = hash(&entry);
+    served
+        .vault
+        .put_authority_log_entry(&entry, AT, 2)
+        .expect("M's carried answer is stored");
+    answer
+}
+
+/// A carried answer that skips a revision is refused, and the machine takes
+/// its next answer: M's own answer at 3 over the roster head at 1 lands
+/// nowhere, and the owner's answer lands at 2. Before, the fold took the
+/// answer at 3.
+#[test]
+fn an_answer_that_skips_a_revision_is_refused_and_the_machine_takes_its_next_answer() {
+    let (served, request) = enrolled_self_host();
+    let machine = request.machine;
+    let roster_row = served.roster_row(machine);
+    let row = m_carries_yours(
+        &served,
+        vec![roster_row],
+        1,
+        machine,
+        machine,
+        &signing(JOINING_SEED),
+        3,
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        !fold.valid_entries.contains(&row),
+        "the fold refuses M's answer at revision 3 over the roster head at 1: {:?}",
+        fold.issues
+    );
+    let roster = fold
+        .machine(machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("M has a roster chain after the refused answer");
+    assert!(roster.is_live(), "M's roster head is still live");
+    assert_eq!(
+        roster.profile.revision, 1,
+        "M's roster head is still at revision 1"
+    );
+    let landing = served
+        .vault
+        .set_machine_role(
+            &served.owner,
+            ActSurface::ThisInstall,
+            machine,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the owner's next answer for M lands");
+    assert!(
+        landing.held().is_none(),
+        "the owner's answer stands, it is not held"
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    let roster = fold
+        .machine(machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("M has a roster chain after the owner's answer");
+    assert_eq!(
+        roster.profile.revision, 2,
+        "M's roster head is at revision 2: {:?}",
+        fold.issues
+    );
+}
+
+/// A carried answer at the last revision a profile can name is refused, and
+/// the owner still removes the machine: the row at `u64::MAX` lands nowhere,
+/// so the removal lands at revision 2. Before, the row landed and the
+/// machine had no next number: no door could answer about it again (FIX
+/// 25887).
+#[test]
+fn an_answer_at_the_last_revision_is_refused_and_the_owner_still_removes_the_machine() {
+    let (served, request) = enrolled_self_host();
+    let machine = request.machine;
+    let roster_row = served.roster_row(machine);
+    let row = m_carries_yours(
+        &served,
+        vec![roster_row],
+        1,
+        machine,
+        machine,
+        &signing(JOINING_SEED),
+        u64::MAX,
+    );
+    let landing = served
+        .vault
+        .set_machine_role(
+            &served.owner,
+            ActSurface::ThisInstall,
+            machine,
+            MachineRole::Removed,
+            None,
+        )
+        .expect("the owner removes the machine after a row at the last revision");
+    assert!(
+        landing.held().is_none(),
+        "the removal stands, it is not held"
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    let roster = fold
+        .machine(machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("M has a roster chain after the removal");
+    assert_eq!(
+        roster.profile.role,
+        MachineRole::Removed,
+        "M's roster head is removed"
+    );
+    assert_eq!(
+        roster.profile.revision, 2,
+        "M's roster head is at revision 2"
+    );
+    assert!(
+        !fold.valid_entries.contains(&row),
+        "the row at the last revision is not in valid_entries: {:?}",
+        fold.issues
+    );
+}
+
+/// A stranger root's mark that skips a revision is refused: the anchor's
+/// marks at `u64::MAX` and at 3 land nowhere and leave the machine no chain
+/// of that anchor, while its mark at 2, one above the roster's head, heads
+/// the anchor's chain. Before, the fold took a first mark at any number.
+#[test]
+fn a_stranger_roots_mark_that_skips_a_revision_is_refused() {
+    let (served, request) = enrolled_self_host();
+    let machine = request.machine;
+    let (root, anchor, root_hash) = publish_stranger_root(&served, served.vault_id());
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let at_the_last = stranger_mark_at(
+        &served,
+        (vec![root_hash], 2),
+        &anchor,
+        &request,
+        yours,
+        u64::MAX,
+    );
+    let at_three = stranger_mark_at(&served, (vec![root_hash], 3), &anchor, &request, yours, 3);
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        !fold.valid_entries.contains(&at_the_last),
+        "the anchor's mark at the last revision is refused: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&at_three),
+        "the anchor's mark at 3 is refused: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.machine(machine)
+            .and_then(|folded| folded.anchored.get(&root.anchor_key))
+            .is_none(),
+        "M has no chain of that anchor"
+    );
+    let mark = stranger_mark_at(
+        &served,
+        (root_and_roster_row(&served, machine, root_hash), 4),
+        &anchor,
+        &request,
+        yours,
+        2,
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&mark),
+        "the anchor's mark at 2, one above the roster head at 1, is valid: {:?}",
+        fold.issues
+    );
+    let anchored = fold
+        .machine(machine)
+        .and_then(|folded| folded.anchored.get(&root.anchor_key))
+        .expect("the view holds the anchor's chain of M");
+    assert_eq!(
+        anchored.profile.revision, 2,
+        "the anchor's chain is headed at revision 2"
+    );
+}
+
+/// A stranger root's chain climbs one revision a row: its marks at 2 and 3
+/// land, its mark at 5 over them is refused, and the owner's removal still
+/// lands at roster revision 2. Before, the mark at 5 landed.
+#[test]
+fn a_stranger_roots_chain_climbs_one_revision_a_row() {
+    let (served, request) = enrolled_self_host();
+    let machine = request.machine;
+    let (root, anchor, root_hash) = publish_stranger_root(&served, served.vault_id());
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let first = stranger_mark_at(
+        &served,
+        (root_and_roster_row(&served, machine, root_hash), 2),
+        &anchor,
+        &request,
+        yours,
+        2,
+    );
+    let second = stranger_mark_at(&served, (vec![first], 3), &anchor, &request, yours, 3);
+    let skipping = stranger_mark_at(&served, (vec![second], 4), &anchor, &request, yours, 5);
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&first),
+        "the anchor's mark at 2, one above the roster head at 1, is valid: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.valid_entries.contains(&second),
+        "the anchor's mark at 3, one above its mark at 2, is valid: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&skipping),
+        "the anchor's mark at 5 over its chain's head at 3 is refused: {:?}",
+        fold.issues
+    );
+    let anchored = fold
+        .machine(machine)
+        .and_then(|folded| folded.anchored.get(&root.anchor_key))
+        .expect("the view holds the anchor's chain of M");
+    assert_eq!(
+        anchored.profile.revision, 3,
+        "the anchor's chain head stays at revision 3"
+    );
+    let landing = served
+        .vault
+        .set_machine_role(
+            &served.owner,
+            ActSurface::ThisInstall,
+            machine,
+            MachineRole::Removed,
+            None,
+        )
+        .expect("the owner's removal lands beside the stranger's chain");
+    assert!(
+        landing.held().is_none(),
+        "the removal stands, it is not held"
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    let roster = fold
+        .machine(machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("M has a roster chain after the removal");
+    assert_eq!(
+        roster.profile.role,
+        MachineRole::Removed,
+        "M's roster head is removed"
+    );
+    assert_eq!(
+        roster.profile.revision, 2,
+        "M's roster head is at revision 2"
+    );
+}
+
+/// An unproven answer that skips a revision is refused and never held: M's
+/// answer at 3 about a machine no chain names is neither valid nor held and
+/// asks the owner nothing, while the same answer at 1 is held. Before, the
+/// answer at 3 was held, and a confirm of it would have landed at 3.
+#[test]
+fn an_unproven_answer_that_skips_a_revision_is_refused_and_never_held() {
+    let (served, request) = enrolled_self_host();
+    let machine = request.machine;
+    let roster_row = served.roster_row(machine);
+    let target = EntityId::from_bytes([0x77; 16]).expect("an id");
+    let target_key = signing(UNNAMED_MACHINE_SEED);
+    let skipping = m_carries_yours(
+        &served,
+        vec![roster_row],
+        1,
+        machine,
+        target,
+        &target_key,
+        3,
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        !fold.valid_entries.contains(&skipping),
+        "the unproven answer at revision 3 about a machine no chain names is refused: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.held_machine_answers().get(&target).is_none(),
+        "the refused answer is not among the held answers"
+    );
+    assert!(
+        !served.held_entries().contains(&skipping),
+        "the refused answer asks the owner nothing"
+    );
+    let first = m_carries_yours(
+        &served,
+        vec![roster_row],
+        2,
+        machine,
+        target,
+        &target_key,
+        1,
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.held_machine_answers()
+            .get(&target)
+            .is_some_and(|answers| answers.contains_key(&first)),
+        "the same answer at revision 1 is held: {:?}",
+        fold.issues
+    );
+    assert!(
+        served.held_entries().contains(&first),
+        "the held answer at revision 1 asks the owner"
     );
 }
