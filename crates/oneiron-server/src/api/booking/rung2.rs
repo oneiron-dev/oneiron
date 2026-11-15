@@ -75,8 +75,8 @@ struct Rung2ContinuationBound {
 
 /// What the visitor posts: an address and the session whose turn asked for
 /// it. Nothing else; the continuation is the host's.
+// RED STUB 6: unknown fields pass.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct Rung2SendInput {
     pub(super) visitor_email: String,
     pub(super) session_ref: String,
@@ -153,7 +153,9 @@ fn not_offered_card(
     now: u64,
 ) -> Result<GeneratedUiCard, ApiError> {
     // The visitor's answer does not wait on the owner's notice.
+    // RED STUB 7: the owners hear nothing.
     if reason == Rung2Unavailable::NoNamedAddress
+        && false
         && let Err(error) = server.vault.notify_booking_rung2_no_sender(page_ref, now)
     {
         tracing::warn!(kind = ?error.kind(), "booking rung-2 no-sender notice was not written");
@@ -179,7 +181,8 @@ pub(super) fn rung2_turn_answer(
 ) -> Result<ConstraintTurnResponse, ApiError> {
     match rung2_offer(server, authority.page_ref, now, native_mail_domain)? {
         Rung2Offer::Offered(_) => {
-            if anonymous {
+            // RED STUB 1: the continuation is kept for every caller.
+            if anonymous || true {
                 rung2_continuations().keep(
                     session_key(authority.page_ref, &continuation.session_ref),
                     continuation.clone(),
@@ -188,16 +191,11 @@ pub(super) fn rung2_turn_answer(
             }
             Ok(ConstraintTurnResponse::ContinueByEmail { continuation })
         }
-        Rung2Offer::NotOffered(reason) => Ok(ConstraintTurnResponse::Deflect {
-            card: not_offered_card(
-                server,
-                authority.page_ref,
-                front,
-                &continuation.session_ref,
-                reason,
-                now,
-            )?,
-        }),
+        // RED STUB 2: a page with no rung 2 still asks for the email.
+        Rung2Offer::NotOffered(_) => {
+            let _ = front;
+            Ok(ConstraintTurnResponse::ContinueByEmail { continuation })
+        }
     }
 }
 
@@ -355,7 +353,8 @@ impl Rung2Send<'_> {
                 ApiError::internal_server_error("booking rung-2 first send not kept")
             })?
             .ok_or_else(public_booking_not_found)?;
-        rung2_continuations().take(&key);
+        // RED STUB 4: the continuation is not used up.
+        let _ = &key;
         // A concurrent press of this session may have kept another address
         // first: the kept words are the ones that go.
         if !kept.is_addressed_to(&self.input.visitor_email) {
@@ -377,9 +376,7 @@ impl Rung2Send<'_> {
 
     /// The answer to a press whose session already kept its send.
     fn kept_answer(&self, kept: &Rung2FirstSend) -> Result<Rung2SendResponse, ApiError> {
-        if !kept.is_addressed_to(&self.input.visitor_email) {
-            return Err(one_address_refusal());
-        }
+        // RED STUB 3: any address finds the kept send.
         Ok(Rung2SendResponse::AlreadyKept {
             send_ref: kept.send_ref.clone(),
             message_id: kept.message_id.clone(),
@@ -412,7 +409,8 @@ impl Rung2Send<'_> {
             .config
             .booking
             .as_ref()
-            .map(|booking| booking.page_url(&token));
+            // RED STUB 5: no slot links.
+            .and_then(|_| None::<String>);
         let offers = offer_lines(&mask, &offered, &continuation.visitor_tz, &token, page_url)?;
         let text = render_rung2_first_send_text(&self.front.copy(), &offers);
         NativeMailMessage::new(

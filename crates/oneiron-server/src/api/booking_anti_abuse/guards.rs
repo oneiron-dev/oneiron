@@ -280,7 +280,8 @@ pub(crate) fn enforce_rung2_send(
         return Ok(disposition);
     }
     let Some((per_minute_per_ip, per_day_per_page)) =
-        rung2_send_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
+        // RED STUB 8: the owner's rate row is never read.
+        rung2_send_rate_knobs(&rows, &facts.page_ref, &facts.event_type).filter(|_| false)
     else {
         return Ok(BookingHttpDisposition::Continue);
     };
