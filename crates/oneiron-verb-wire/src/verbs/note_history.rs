@@ -4,10 +4,18 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+/// `vault.notes.history_purge`'s input: the NOTE whose history the owner
+/// erases.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeRequest {
     pub note_ref: String,
+    /// An asker's approved check-in for this erase, 32 hex
+    /// (`text_history_erase_effect_digest` over the note, with no frontier):
+    /// the Owner applies it on their own proof, and the outcome names its
+    /// asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// The shared-vault act returned by an owner's explicit history purge.
@@ -35,10 +43,22 @@ pub struct NoteHistoryPurgeReceipt {
 }
 
 /// A waiting act has erased nothing. Its starter executes it after the
-/// shared-vault veto window closes without an objection.
+/// shared-vault veto window closes without an objection. Each names the
+/// check-in decision the erase runs on (2k2): the Owner on their own proof,
+/// and the approved check-in of another asker it applied, with its
+/// requester; a waiting act records it too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum NoteHistoryPurgeOutcome {
-    Erased { receipt: NoteHistoryPurgeReceipt },
-    Waiting { note_ref: String, act_id: String },
+    Erased {
+        receipt: NoteHistoryPurgeReceipt,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_in: Option<crate::check_in::CheckInDecision>,
+    },
+    Waiting {
+        note_ref: String,
+        act_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_in: Option<crate::check_in::CheckInDecision>,
+    },
 }

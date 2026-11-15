@@ -10,8 +10,9 @@
 //! - [`RowKey`], the stored key bytes `name 0x00 item 0x00 mode scope`;
 //! - [`decide`], the pure order in which a read takes its value from the rows it found:
 //!   the narrowest owner pin, else the narrowest value row (the item's own row first), a
-//!   holder's row held inside the owner's on a key that names a tighter direction, else the
-//!   catalogue default. A row that does not decode never reads as the default.
+//!   holder's row held inside the owner's, or inside the catalogue default where the owner set
+//!   none, on a key that names a tighter direction, else the catalogue default. A row that does
+//!   not decode never reads as the default.
 //!
 //! The catalogue row (`SettingSpec`), the tables and the doors are the engine's: they name its
 //! act classes and its grants.
@@ -96,11 +97,15 @@ pub enum SettingSync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadBy {
-    /// The owner, a holder of the power to set the key, and a subject for its own rows. The
-    /// default.
+    /// The owner, a holder of the key's `engine.controls` class, an agent whose Grant lists the
+    /// key's read line (`settings.get:<key>`), and a subject for its own rows. The default.
     Holders,
     /// Any reader of the vault.
     Members,
+    /// The holders, and any live Steward grant that reaches the whole vault and names an
+    /// `engine.controls` class: the read of the learning dials and the snapshot bounds, which
+    /// changes nothing (S66F-READ = C).
+    Dials,
 }
 
 /// In which capacity a change was made: the change row's `as`.
@@ -111,6 +116,11 @@ pub enum Setter {
     Owner,
     /// A live holder of the key's class, through this grant.
     Holder { grant: EntityId },
+    /// An agent through its live owner Grant that lists the key's own line
+    /// (`settings.set:<key>`, DESIGN 1.2 step 3), as a holder: its value stays inside the
+    /// owner's row, or the catalogue default where the owner set none; a widening asks the user
+    /// (AUTH-1 = A). It never pins.
+    KeyGrant { grant: EntityId },
     /// The agent or person the row's scope names, on its own row.
     Subject,
     /// An actor whose request the holders approved, through this check-in.
@@ -154,6 +164,7 @@ mod tests {
         for setter in [
             Setter::Owner,
             Setter::Holder { grant: id },
+            Setter::KeyGrant { grant: id },
             Setter::Subject,
             Setter::Approved { check_in: id },
             Setter::Engine { ask: Some(id) },
