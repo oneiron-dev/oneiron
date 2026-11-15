@@ -29,8 +29,10 @@ use crate::receipt::{
     ReceiptScanPosition,
 };
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::request_limits::{PageLimit, ZeroLimitRefused, page_limit_zero_refused};
 use crate::settings::ReadDestination;
 use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::verb_names::VAULT_RECEIPTS_LIMIT_DEFAULT;
 
 /// Who reads `vault.receipts`, and through what (FIX 7355): the vault, where
 /// the read's rows go, the content its served forms are read from, the
@@ -100,7 +102,9 @@ pub struct VaultReceiptsPage {
     pub next_after: Option<String>,
     /// The requested number of receipts this page could hold.
     pub effective_limit: usize,
-    /// Whether the page lowered the requested count; always false.
+    /// Whether the requested count was over the page's maximum and cut to
+    /// it, as the list's limit rule reports it. Both ledgers have no maximum
+    /// (#5059), so this is false: the page holds the requested count.
     #[serde(default)]
     pub limit_clamped: bool,
     /// Send receipt rows skipped as undecodable (FIX 12044): counted, never
@@ -348,13 +352,19 @@ pub(crate) fn receipts_page_for(
     kinds: &[String],
     after: Option<&str>,
 ) -> MemoryResult<VaultReceiptsPage> {
-    if limit == 0 {
-        return Err(MemoryError::bad_request_with(
-            "limit must be at least 1",
-            &["Request one receipt or more and continue from next_after."],
-        ));
-    }
-    let page = limit;
+    // The list's limit rule: zero is refused, and no ceiling cuts the ask
+    // (#5059), so the page reports no clamp.
+    let PageLimit {
+        rows: page,
+        clamped: limit_clamped,
+    } = page_limit_zero_refused(Some(limit), VAULT_RECEIPTS_LIMIT_DEFAULT, usize::MAX).map_err(
+        |ZeroLimitRefused| {
+            MemoryError::bad_request_with(
+                "limit must be at least 1",
+                &["Request one receipt or more and continue from next_after."],
+            )
+        },
+    )?;
     let (receipts, next_after) = if kinds.is_empty() {
         gate_page(reader, after, page)?
     } else {
@@ -364,7 +374,7 @@ pub(crate) fn receipts_page_for(
         receipts,
         next_after,
         effective_limit: page,
-        limit_clamped: false,
+        limit_clamped,
         undecodable: reader
             .receipt_vault()
             .undecodable_send_receipts_for_kinds(kinds)?,
