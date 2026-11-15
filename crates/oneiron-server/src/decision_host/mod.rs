@@ -77,11 +77,16 @@ mod doors;
 mod native_capture;
 mod notes;
 mod refresh;
+#[cfg(oneiron_test_support)]
+mod system_one_door;
 
 pub(crate) use adapters::description_notes;
 pub use big_binding::BigRung;
 pub(crate) use notes::ReviewStateNotes;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub use system_one_door::{SystemOneRungForTest, system_one_rung_for_test};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's
 /// reasons write ([`oneiron::llm::decision::HostRule`]).
