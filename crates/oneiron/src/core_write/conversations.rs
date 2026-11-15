@@ -265,6 +265,16 @@ impl Vault {
         .edge_checked(&id, &conversation, 1.0)
         .commit_with_target_guard_and_hooks(
             |txn| {
+                // L7-05: a work-talk conversation takes turns only through
+                // the witness and DAG doors, where its binding names the
+                // writer. This generic door mints its own DAG permit and
+                // admits no bound actor, so it lands nothing there, for any
+                // credential, the owner's included.
+                if crate::workspace_roster::work_talk_binding_in_txn(self, txn, conversation)?
+                    .is_some()
+                {
+                    return Err(crate::error::RecordError::ConversationDenied.into());
+                }
                 if admits(txn, &conversation, &id)? {
                     existed.set(crate::ports::EntityStoreRead::port_entity_present(
                         &self.store,
