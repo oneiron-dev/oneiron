@@ -490,6 +490,7 @@ pub(in crate::api::ai::chat) fn keep(
             budget_units: meter.budget_units,
             message,
             sources,
+            keeps_no_record: meter.keeps_no_record,
         };
         match crate::server::blocking(|| ai.enter_chat_breakpoint(call, &admitted, answering)) {
             Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}

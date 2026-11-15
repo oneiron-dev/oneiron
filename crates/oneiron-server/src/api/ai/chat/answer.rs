@@ -131,6 +131,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                 payer,
                 funding: funding.clone(),
                 budget_units,
+                keeps_no_record: model_call_no_record_at_arrival,
             },
             sources.clone(),
         )

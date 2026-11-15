@@ -100,6 +100,9 @@ pub(crate) struct ChatBreakpointCall {
     /// not all were witnessed: its live fork is captured only from a whole
     /// set (FIX 9463).
     pub(crate) sources: Option<Vec<EntityId>>,
+    /// The turn keeps no model-call record: the flight's runs are off the
+    /// record too, so no run receipt names their rows' worlds (census L5-25).
+    pub(crate) keeps_no_record: bool,
 }
 
 /// One answer's own admitted call, as its breakpoint captures it: a clone
@@ -215,6 +218,7 @@ impl AiHandle {
         let meter = CompactionMeter::Chat {
             guard,
             payer: call.funding.clone(),
+            keeps_no_record: call.keeps_no_record,
         };
         let registry = live
             .self_registry(

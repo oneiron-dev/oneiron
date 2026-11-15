@@ -258,6 +258,20 @@ impl ServedCompactionBackend {
                 },
             })
             .sourced(union_source_rows([sources, home_rows]));
+        // A chat turn that keeps no model-call record keeps none for its
+        // flight's calls: their runs name no rows, so no run receipt names
+        // the retained window's worlds (census L5-25; Astra delta 2).
+        let run = if matches!(
+            self.meter,
+            CompactionMeter::Chat {
+                keeps_no_record: true,
+                ..
+            }
+        ) {
+            run.off_record()
+        } else {
+            run
+        };
         // A run's scope lends this call a live lease, as a reader child's
         // (FIX 11748): its admission meets the room the scope has left now,
         // siblings' spend included, and its own spend books once.
@@ -413,7 +427,7 @@ impl ServedCompactionBackend {
             }
             // A chat turn's flight bills the payer its turn resolved, on its
             // own guard on the chat actor's line (FIX 4465 D).
-            CompactionMeter::Chat { guard, payer } => (guard.clone(), payer.clone()),
+            CompactionMeter::Chat { guard, payer, .. } => (guard.clone(), payer.clone()),
             CompactionMeter::Scope(scope) => {
                 let payer =
                     scope_funding(&self.vault, Some(scope), false).map_err(

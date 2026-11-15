@@ -695,6 +695,9 @@ enum CompactionMeter {
     Chat {
         guard: BudgetGuard,
         payer: Option<PayerPerson>,
+        /// The turn keeps no model-call record: each call's run is off the
+        /// record and names no rows (census L5-25).
+        keeps_no_record: bool,
     },
 }
 

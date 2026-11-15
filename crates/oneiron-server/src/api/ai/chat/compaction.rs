@@ -290,6 +290,9 @@ pub(super) struct TurnMeter {
     pub(super) payer: WriteActor,
     pub(super) funding: Option<PayerPerson>,
     pub(super) budget_units: u64,
+    /// The turn keeps no model-call record, so its flight's runs name no
+    /// rows either (census L5-25).
+    pub(super) keeps_no_record: bool,
 }
 
 /// The answer's breakpoint, right before its stream: held until the answer
