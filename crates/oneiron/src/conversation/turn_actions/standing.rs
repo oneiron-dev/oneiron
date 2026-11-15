@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::TurnActionAttempt;
 use crate::authority::{InvocationSlipBinding, ManagedOwnerCheckError, VerifiedSlip};
 use crate::edge::EdgeActorClass;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::MemoryResult;
 use crate::{EntityId, Error, Vault};
 
 /// What a queued action's requester stands on: never a secret, and judged
@@ -116,11 +116,5 @@ impl TurnActionAttempt {
     }
 }
 
-/// The slip a turn action was asked with no longer stands for its requester.
-fn standing_lost() -> MemoryError {
-    MemoryError::new(
-        crate::memory::MEMORY_CODE_FORBIDDEN,
-        "the slip this turn action was asked with no longer stands for its requester",
-        &["Ask for the action again with a live credential."],
-    )
-}
+#[doc(hidden)]
+use oneiron_records::conversation::turn_actions::standing::standing_lost;

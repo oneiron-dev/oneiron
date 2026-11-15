@@ -220,7 +220,7 @@ async fn api(
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 /// Acceptance's public pairing HTTP exchange, with an async deadline. The API

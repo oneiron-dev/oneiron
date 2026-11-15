@@ -772,18 +772,9 @@ mod hex32 {
     }
 }
 
-fn hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
+#[doc(hidden)]
+use oneiron_records::conversation_dag::quote::hex;
 
 fn unhex(text: &str) -> Result<[u8; 32]> {
-    let mut out = [0_u8; 32];
-    if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(invalid("invalid quote anchor hash"));
-    }
-    for (slot, pair) in out.iter_mut().zip(text.as_bytes().chunks(2)) {
-        let pair = std::str::from_utf8(pair).map_err(|_| invalid("invalid quote anchor hash"))?;
-        *slot = u8::from_str_radix(pair, 16).map_err(|_| invalid("invalid quote anchor hash"))?;
-    }
-    Ok(out)
+    oneiron_hex::decode_any_case::<32>(text).ok_or_else(|| invalid("invalid quote anchor hash"))
 }

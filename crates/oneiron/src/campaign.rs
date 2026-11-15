@@ -236,6 +236,8 @@ fn slot_matches(
         && existing.family == Some(family)
 }
 
+/// The `campaign.member` claims by campaign and by deriving query (ARCH-0044 H202).
+pub(crate) mod member_index;
 pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

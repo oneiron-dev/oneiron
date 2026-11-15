@@ -1,0 +1,153 @@
+[
+  {
+    "question_id": "mini_ssu_1",
+    "question_type": "single-session-user",
+    "question": "What time does Yuki's library shift begin?",
+    "question_date": "2023/03/01 (Wed) 10:00",
+    "haystack_session_ids": [
+      "shared_filler_1",
+      "answer_mini_ssu_1"
+    ],
+    "haystack_dates": [
+      "2023/01/05 (Thu) 09:00",
+      "2023/02/10 (Fri) 18:30"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "Owen moved to the quiet street near the park."
+        },
+        {
+          "role": "assistant",
+          "content": "  "
+        },
+        {
+          "role": "user",
+          "content": "Yuki visited Owen on Sunday afternoon."
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Owen asked Yuki about her new job at the library."
+        },
+        {
+          "role": "assistant",
+          "content": "Yuki said the team is friendly and the work is calm."
+        },
+        {
+          "role": "user",
+          "content": "Yuki said her shift begins at nine in the morning.",
+          "has_answer": true
+        },
+        {
+          "role": "assistant",
+          "content": "Owen thanked Yuki and wished her luck."
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "answer_mini_ssu_1"
+    ],
+    "answer": "Nine in the morning."
+  },
+  {
+    "question_id": "mini_ku_1",
+    "question_type": "knowledge-update",
+    "question": "Where does Yuki live now?",
+    "question_date": "2023/07/01 (Sat) 12:00",
+    "haystack_session_ids": [
+      "shared_filler_1",
+      "answer_mini_ku_1_old",
+      "answer_mini_ku_1_new"
+    ],
+    "haystack_dates": [
+      "2023/03/01 (Wed) 08:15",
+      "2023/03/12 (Sun) 19:00",
+      "2023/06/20 (Tue) 07:45"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "Owen moved to the quiet street near the park."
+        },
+        {
+          "role": "assistant",
+          "content": "  "
+        },
+        {
+          "role": "user",
+          "content": "Yuki visited Owen on Sunday afternoon."
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Owen asked where Yuki lives these days."
+        },
+        {
+          "role": "assistant",
+          "content": "Yuki lives in Osaka.",
+          "has_answer": true
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Owen asked Yuki for her new address."
+        },
+        {
+          "role": "assistant",
+          "content": "Yuki moved to Sapporo.",
+          "has_answer": true
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "answer_mini_ku_1_old",
+      "answer_mini_ku_1_new"
+    ],
+    "answer": "Yuki moved to Sapporo."
+  },
+  {
+    "question_id": "mini_ssu_2_abs",
+    "question_type": "single-session-user",
+    "question": "What is the name of Owen's dog?",
+    "question_date": "2023/04/02 (Sun) 11:00",
+    "haystack_session_ids": [
+      "filler_mini_3",
+      "answer_mini_abs_1"
+    ],
+    "haystack_dates": [
+      "2023/02/01 (Wed) 12:00",
+      "2023/02/20 (Mon) 16:40"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "Owen booked two train tickets for Saturday morning."
+        },
+        {
+          "role": "assistant",
+          "content": "Yuki packed lunch and a map for the trip."
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Owen asked Yuki about weekend plans."
+        },
+        {
+          "role": "assistant",
+          "content": "Yuki said they would walk by the lake.",
+          "has_answer": true
+        }
+      ]
+    ],
+    "answer_session_ids": [],
+    "answer": "The sessions never mention a dog."
+  }
+]

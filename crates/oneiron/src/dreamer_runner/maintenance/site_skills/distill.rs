@@ -49,15 +49,8 @@ pub(super) struct NamedProgram {
     pub held_out: bool,
 }
 
-/// One trap kind and its occurrence count. Kinds are stable snake-case
-/// tokens; they never carry a locator, a value or caller-authored text.
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct TrapCount {
-    /// The stable kind token.
-    pub kind: String,
-    /// Its occurrence count.
-    pub count: u64,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::maintenance::site_skills::distill::TrapCount;
 
 /// One candidate site skill and the folder that files it.
 #[derive(Debug, Clone)]

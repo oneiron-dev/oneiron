@@ -31,6 +31,7 @@ pub(super) struct StartingHandles {
     pub(super) connector_events: Option<JoinHandle<()>>,
     pub(super) connector_sends: Option<JoinHandle<()>>,
     pub(super) builtin_host: Option<JoinHandle<()>>,
+    pub(super) hosted_imports: Option<JoinHandle<()>>,
     pub(super) coach_host: Option<JoinHandle<()>>,
     pub(super) failure_signals: Option<JoinHandle<()>>,
     pub(super) tagging: Option<JoinHandle<()>>,
@@ -89,6 +90,7 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
         handles.connector_events,
         handles.connector_sends,
         handles.builtin_host,
+        handles.hosted_imports,
         handles.coach_host,
         handles.failure_signals,
     ]

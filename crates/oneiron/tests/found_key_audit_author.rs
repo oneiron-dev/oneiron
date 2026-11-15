@@ -20,6 +20,7 @@ use oneiron::memory::StructuralPutInput;
 use oneiron::receipt::AuthorityAuditQuery;
 use oneiron::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
+use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -50,12 +51,13 @@ fn open_vault() -> Result<(tempfile::TempDir, Vault, EntityId, EntityId), Box<dy
     Ok((dir, vault, owner, writer))
 }
 
-/// Gives this install its live machine profile.
-fn profile_install(vault: &Vault) -> TestResult {
+/// Gives this install its live machine profile, and returns the host issuer
+/// that roots the vault.
+fn profile_install(vault: &Vault) -> Result<HostSlipIssuer, Box<dyn std::error::Error>> {
     let issuer = HostSlipIssuer::from_secret(b"found key audit author host")?;
     vault.ensure_host_root_slip(&issuer)?;
     vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
-    Ok(())
+    Ok(issuer)
 }
 
 /// `person`'s own proof: the owner tier for the owner, the person tier for
@@ -264,7 +266,7 @@ fn a_persons_own_training_opt_out_names_the_person_never_the_owner() -> TestResu
 #[test]
 fn a_shared_vault_admins_training_setting_names_the_admin_not_an_owner() -> TestResult {
     let (_dir, vault, owner_id, admin) = open_vault()?;
-    profile_install(&vault)?;
+    let issuer = profile_install(&vault)?;
     let member = |member_ref, role| InitialSharedMember {
         member_ref,
         role: Some(role),
@@ -287,7 +289,13 @@ fn a_shared_vault_admins_training_setting_names_the_admin_not_an_owner() -> Test
         .ok_or("FIXTURE: the Admin's founding invitation")?;
     vault.accept_shared_invitation(&admin_proof, SHARED, &invitation.id)?;
 
+    // The vault is rooted, and a human binding is the owner's (H149): the
+    // Admin holds none, so the setting's writer refuses it as unbound. The
+    // fixture binds the host key to the Admin for its one act and gives it
+    // back to the owner after, as delete_authority.rs does for a Member.
+    bind_host_actor(&vault, &issuer, admin, "human")?;
     vault.set_conversation_learning(&admin_proof, ActSurface::ThisInstall, true, true, None)?;
+    bind_host_owner(&vault, &issuer, owner_id)?;
     let owner = proof_of(&vault, owner_id)?;
     vault.set_conversation_learning(&owner, ActSurface::ThisInstall, true, false, None)?;
 
