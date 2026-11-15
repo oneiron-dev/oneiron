@@ -33,13 +33,15 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
 /// an owner's own signing key), a revocation, a rotation or a re-root, the
 /// ops whose `apply_op` arms write `FoldState::roster`. No arrival floor
 /// refuses one (FIX [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]), and one vouches for
-/// its own signer's withdrawals below it in its ancestry (`only_withdraws`),
-/// so arrival order alone does not change the roster, as a revocation's rule
-/// asks (ARCH-0040 ONE-REVOKE-D3). Its signer's own order still binds it, on
-/// every install alike: a row at or below a sequence its signer reached in
-/// the row's own ancestry is refused (`fold_entry_state`, `state.seqs`). A
-/// parent of another signer that this install's floor refuses still holds
-/// it back (FIX [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
+/// every row of its own signer below it in its ancestry that a floor refuses
+/// (`floor_refuses`, `sequence_ancestry`), so arrival order alone does not
+/// change the roster, as a revocation's rule asks (ARCH-0040 ONE-REVOKE-D3).
+/// A restriction it names keeps its floor and lands restriction only there.
+/// Its signer's own order still binds it, on every install alike: a row at
+/// or below a sequence its signer reached in the row's own ancestry is
+/// refused (`fold_entry_state`, `state.seqs`). A parent of another signer
+/// that this install's floor refuses still holds it back (FIX
+/// [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
 pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -49,22 +51,6 @@ pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
             | AuthorityOp::RevokeDevice { .. }
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
-    )
-}
-
-/// A row that only takes authority away: a slip's revocation, the revocation
-/// of every slip a Grant names, or an actor binding's revocation. A roster
-/// row vouches for such rows of its own signer below it in its ancestry
-/// whatever this install had seen when they came (`sequence_ancestry`):
-/// counting one grants nothing. It vouches so for no other row, so a row
-/// this install's floor refuses or holds to restriction stays so, whatever
-/// roster row names it (Astra review F2 of [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]).
-pub(super) fn only_withdraws(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
-        AuthorityOp::SlipRevoke { .. }
-            | AuthorityOp::SlipGrantRevoke { .. }
-            | AuthorityOp::RevokeActor { .. }
     )
 }
 

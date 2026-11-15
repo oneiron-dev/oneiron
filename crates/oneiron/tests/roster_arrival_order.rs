@@ -10,14 +10,15 @@
 //! later enrolment left the revoked key live on the install that received
 //! the revocation last. Now a roster row is judged on its signer's causal
 //! order alone, so both installs hold the same roster. A roster row also
-//! vouches for its own signer's rows below it in its ancestry, so a
-//! revocation on a withdrawal that reached the install past the floor lands
-//! there too (Sol review F1). It vouches for nothing that grants: a machine
+//! vouches for its own signer's rows below it in its ancestry that the floor
+//! refuses, so a revocation on a withdrawal (Sol review F1) or on an actor
+//! binding (Astra review round 2, F3) that reached the install past the
+//! floor lands there too. A restriction it names keeps its floor: a machine
 //! mark that reached an install past the floor stays held there, though a
-//! handoff names it (Astra review F2). A row that its own ancestry already shows its
-//! signer past is still refused on every install (the control). A parent of
-//! another signer that this install's floor refuses still holds a roster row
-//! back (root FIX-LIST [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
+//! handoff names it (Astra review F2). A row that its own ancestry already
+//! shows its signer past is still refused on every install (the control). A
+//! parent of another signer that this install's floor refuses still holds a
+//! roster row back (root FIX-LIST [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
 
 use std::collections::BTreeSet;
 
@@ -382,7 +383,7 @@ fn a_revocation_on_a_withdrawal_past_the_floor_holds_in_either_arrival_order() {
     );
 }
 
-/// A roster row vouches for nothing that grants (Astra review F2): the
+/// A restriction a roster row names keeps its floor (Astra review F2): the
 /// owner marks machine M "yours" (sequence 1), on the mark hands the vault
 /// to a fresh owner key (2), and as a sibling of the mark enrols agent U
 /// (3). Install J receives U's enrolment first, so the mark reaches it below
