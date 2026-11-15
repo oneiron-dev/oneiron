@@ -10,7 +10,7 @@ use super::evidence::{
 use super::landing_lfs::{
     admit_landing_lfs_pointers, attach_landing_lfs_pointers, ref_required_lfs_oids,
 };
-use super::paths::{ORIGIN_REF_UPDATE_BATCH, now_secs, serve_failed};
+use super::paths::{ORIGIN_REF_UPDATE_BATCH, serve_failed};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
@@ -205,7 +205,7 @@ impl Vault {
         // does not hold refuses the landing, so no head is ever advertised
         // that a stock client could not check out.
         let admitted = admit_landing_lfs_pointers(self, repo_id, &outcome.lfs_pointers)?;
-        let learned_at = now_secs();
+        let learned_at = crate::unix_seconds_now();
         let landing = self.land_receive_pack_refs(
             &wire,
             &handle,
