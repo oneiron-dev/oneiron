@@ -35,7 +35,10 @@
 //! A rebuilt key carries the lane's credential ([`SavedCredential`]), and
 //! every read under it judges that credential again in its own snapshot: a
 //! key rebuilt while the credential held and kept past its withdrawal reads
-//! nothing, and freezing that key again keeps the credential.
+//! nothing, and freezing that key again keeps the credential. A narrowed
+//! lane also keeps the earlier end a caveat set its credential, which its
+//! mint's liveness does not judge: from that end it reads nothing, as the
+//! live proof did (FIX SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
 //!
 //! Sight is never frozen: a door that serves a secret derives it again from
 //! the rebuilt lane.
@@ -58,8 +61,16 @@ const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is n
 pub(crate) enum SavedCredential {
     /// A narrowed lane's credential: it holds while it is live, that is
     /// unexpired, unrevoked and its grant, invitation and delegation
-    /// standing (`Vault::capability_slip_id_is_live_in_txn`).
-    Live([u8; 32]),
+    /// standing (`Vault::capability_slip_id_is_live_in_txn`), and, when a
+    /// caveat set it an earlier end than its mint's, before that end, as
+    /// its live proof was held to it (FIX SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
+    Live {
+        /// The credential's slip id.
+        id: [u8; 32],
+        /// The caveat's earlier end, in seconds on the vault's clock;
+        /// `None` when the saved proof was its mint, which ends with it.
+        expires_at: Option<u64>,
+    },
     /// The credential of a lane that reads as its principal's own
     /// ([`FrozenReadLane::reads_as_principal`]): it holds while it is
     /// unrevoked and its grant, invitation and delegation stand, past its
@@ -74,7 +85,19 @@ impl SavedCredential {
     #[must_use]
     pub(crate) fn slip_id(self) -> [u8; 32] {
         match self {
-            Self::Live(id) | Self::Standing(id) => id,
+            Self::Live { id, .. } | Self::Standing(id) => id,
+        }
+    }
+
+    /// The earlier end a caveat set this credential, which a narrowed lane
+    /// keeps (FIX SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY); `None` for a credential
+    /// that ends with its mint, and for one that stands past its own expiry
+    /// (`Self::Standing`).
+    #[must_use]
+    pub(crate) fn expires_at(self) -> Option<u64> {
+        match self {
+            Self::Live { expires_at, .. } => expires_at,
+            Self::Standing(_) => None,
         }
     }
 
@@ -84,9 +107,25 @@ impl SavedCredential {
     /// A store, fold or clock failure judging it.
     pub(crate) fn holds_in(self, vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
         match self {
-            Self::Live(id) => vault.capability_slip_id_is_live_in_txn(txn, &id),
+            Self::Live { id, expires_at } => {
+                if let Some(end) = expires_at
+                    && vault.instant_in_txn(txn)?.secs() >= end
+                {
+                    return Ok(false);
+                }
+                vault.capability_slip_id_is_live_in_txn(txn, &id)
+            }
             Self::Standing(id) => vault.capability_slip_id_stands_in_txn(txn, &id),
         }
+    }
+}
+
+/// The earlier of two ends a credential is held to, either of which may be
+/// unset.
+fn earlier_end(first: Option<u64>, second: Option<u64>) -> Option<u64> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(first.min(second)),
+        (first, second) => first.or(second),
     }
 }
 
@@ -168,6 +207,16 @@ pub struct FrozenReadLane {
     /// credential bounded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credential: Option<[u8; 32]>,
+    /// The earlier end a caveat set that credential, in seconds on the
+    /// vault's clock, as the saved key's live proof was held to it: every
+    /// rebuild, and every read under a rebuilt key, reads nothing from then
+    /// on, while the credential's mint may still be live (FIX
+    /// SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY). `None` when the saved proof was
+    /// its mint, whose own end the credential's liveness judges, and on a
+    /// lane that reads as its principal's own, whose credential's expiry
+    /// ends no saved work (FIX 3377).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credential_expires_at: Option<u64>,
     /// The read Scope the saved lane was held to, as every read door checks
     /// a credential's; `None` on a lane held to none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,14 +298,18 @@ impl FrozenReadLane {
     }
 
     /// The credential each rebuild of this lane, and each read under the
-    /// rebuilt key, judges: whole on a narrowed lane, by its standing on one
-    /// that reads as its principal's own.
+    /// rebuilt key, judges: whole on a narrowed lane, with the earlier end a
+    /// caveat set it, by its standing on one that reads as its principal's
+    /// own.
     fn saved_credential(&self) -> Option<SavedCredential> {
         self.credential.map(|id| {
             if self.reads_as_principal() {
                 SavedCredential::Standing(id)
             } else {
-                SavedCredential::Live(id)
+                SavedCredential::Live {
+                    id,
+                    expires_at: self.credential_expires_at,
+                }
             }
         })
     }
@@ -350,22 +403,33 @@ impl FrozenReadLane {
         // with no grant to judge. A credential that names a grant stands
         // only while the grant does: frozen as its holder's principal lane,
         // saved work read on after the grant was withdrawn (FIX
-        // OWN-DEVICE-GRANT-NOT-RECHECKED).
-        let mut credentials: Vec<[u8; 32]> = key
-            .saved_credentials
-            .iter()
-            .copied()
-            .map(SavedCredential::slip_id)
-            .collect();
-        if let Some(claims) = claims
-            && (names_grant || keeps_scope || keeps_basis || narrows)
-            && !credentials.contains(&claims.slip_id)
+        // OWN-DEVICE-GRANT-NOT-RECHECKED). Each keeps the earlier end a caveat
+        // set it, and an attenuated proof the end its caveats left it; one
+        // credential held to two ends keeps the earlier (FIX
+        // SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
+        let mut credentials: Vec<([u8; 32], Option<u64>)> = Vec::new();
+        let mut bind = |id: [u8; 32], end: Option<u64>| match credentials
+            .iter_mut()
+            .find(|(bound, _)| *bound == id)
         {
-            credentials.push(claims.slip_id);
+            Some((_, kept)) => *kept = earlier_end(*kept, end),
+            None => credentials.push((id, end)),
+        };
+        for credential in &key.saved_credentials {
+            bind(credential.slip_id(), credential.expires_at());
         }
-        let credential = match credentials.as_slice() {
-            [] => None,
-            [credential] => Some(*credential),
+        if let Some(proof) = &key.proof
+            && (names_grant || keeps_scope || keeps_basis || narrows)
+        {
+            let claims = proof.claims();
+            bind(
+                claims.slip_id,
+                (!proof.is_unattenuated()).then_some(claims.expires_at),
+            );
+        }
+        let (credential, credential_expires_at) = match credentials.as_slice() {
+            [] => (None, None),
+            [(credential, end)] => (Some(*credential), *end),
             _ => {
                 return Err(Error::InvalidConfig(
                     "a saved read lane is bound by one credential".into(),
@@ -374,7 +438,8 @@ impl FrozenReadLane {
         };
         if !keeps_scope && !keeps_basis && !narrows {
             // No Scope: a rebuild keeps the principal's own floor and owner
-            // authority while the credential stands.
+            // authority while the credential stands, past any end of its own
+            // (FIX 3377).
             return Ok(Self {
                 credential,
                 ..Self::principal()
@@ -402,6 +467,7 @@ impl FrozenReadLane {
         };
         Ok(Self {
             credential,
+            credential_expires_at,
             authority,
             grant_alternatives,
             records,
@@ -545,10 +611,14 @@ impl FrozenReadLane {
         // A key held past this snapshot judges the credential at each read
         // (review R1 of #8029): rebuilt while it held, it reads nothing once
         // it no longer does. A key whose own proof is that credential
-        // already judges it at each use.
+        // already judges it at each use, unless a caveat set the saved one an
+        // earlier end: a proof of the same slip under other caveats, or none,
+        // is not held to it (FIX SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
         let proof_id = key.proof.as_ref().map(|proof| proof.claims().slip_id);
         let mut key = match saved {
-            Some(credential) if proof_id != Some(credential.slip_id()) => {
+            Some(credential)
+                if proof_id != Some(credential.slip_id()) || credential.expires_at().is_some() =>
+            {
                 key.bound_by_saved_credential(credential)
             }
             _ => key,
