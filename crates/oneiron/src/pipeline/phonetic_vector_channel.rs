@@ -23,16 +23,20 @@ pub(super) struct PhoneticVectorQuery {
 
 impl PipelineBuilder<'_> {
     /// `query`'s admitted results, best first: each entity scores its best name, and only rows
-    /// that pass the run's own filters and gate take a place.
+    /// that pass the run's own filters and gate take a place. The walk asks with caches of its
+    /// own, as the code rung's sound cut and the narrowed vector walk do, so a row it passes
+    /// leaves no decision behind and adds nothing to the pack's suppression counts; the rows
+    /// it returns enter the run's caches when the channel admits them.
     pub(super) fn phonetic_vector_results(
         &self,
         rtxn: &RoTxn<'_>,
         query: &PhoneticVectorQuery,
         filters: PipelineFilterConfig<'_>,
-        metadata_cache: &mut EntityMetadataCache,
-        claim_gate: &mut ClaimStatusGateCache,
+        claim_gate: &ClaimStatusGateCache,
     ) -> Result<Vec<ScoredEntity>> {
         let memory = self.memory_category;
+        let mut metadata = EntityMetadataCache::default();
+        let mut gate = claim_gate.fresh(filters.authority_filter.include_stale);
         crate::phonetic_learned::search_phonetic_vectors_in_txn(
             &self.read,
             rtxn,
@@ -45,8 +49,8 @@ impl PipelineBuilder<'_> {
                     rtxn,
                     id,
                     filters,
-                    metadata_cache,
-                    claim_gate,
+                    &mut metadata,
+                    &mut gate,
                 )? && (!memory || CapabilityLane::Memory.admits(&self.read, rtxn, id)?))
             },
         )

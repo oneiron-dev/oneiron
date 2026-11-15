@@ -1,7 +1,7 @@
 //! Phonetic candidate retrieval over canonical and session snapshots.
-use super::RetrievalIndexRead;
 use super::phonetic_sound::{SoundScan, is_sound_key, sound_match_score};
 use super::query::{PHONETIC_IDS_PER_CHECKPOINT, phonetic_checkpoint};
+use super::{RetrievalIndexRead, SoundMatchAdmission};
 use crate::EntityId;
 use crate::Vault;
 use crate::entity_id::ENTITY_ID_LEN;
@@ -24,6 +24,7 @@ impl<T: ManifestDbs> RetrievalIndexRead for T {
         codes: &[String],
         params: &RetrievalParams,
         deadline: Option<&RetrievalDeadline>,
+        admission: Option<&mut SoundMatchAdmission<'_>>,
     ) -> Result<Vec<ScoredEntity>> {
         let mut unique = codes.to_vec();
         unique.sort();
@@ -75,7 +76,7 @@ impl<T: ManifestDbs> RetrievalIndexRead for T {
                     }
                 }
             }
-            for (id, distance) in scan.finish() {
+            for (id, distance) in scan.finish(admission)? {
                 let entry = accumulators.entry(id).or_default();
                 entry.score += sound_match_score(distance);
                 entry.matches += 1;
@@ -106,8 +107,9 @@ impl RetrievalIndexRead for Vault {
         codes: &[String],
         params: &RetrievalParams,
         deadline: Option<&RetrievalDeadline>,
+        admission: Option<&mut SoundMatchAdmission<'_>>,
     ) -> Result<Vec<ScoredEntity>> {
         self.store
-            .port_retrieval_phonetic_search_with_deadline(txn, codes, params, deadline)
+            .port_retrieval_phonetic_search_with_deadline(txn, codes, params, deadline, admission)
     }
 }

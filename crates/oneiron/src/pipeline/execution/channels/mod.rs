@@ -31,7 +31,7 @@ use super::super::budget::{
 };
 use super::super::builder::PipelineBuilder;
 use super::super::capabilities::{memory_candidate_count, partition_capabilities};
-use super::super::channels::{execute_phonetic, fusion_fetch_limit};
+use super::super::channels::fusion_fetch_limit;
 use super::super::corpus_filter::CorpusFilter;
 use super::super::criticality::critical_candidate_ids;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
@@ -364,7 +364,7 @@ impl PipelineBuilder<'_> {
             if let Some(codes) = &self.phonetic_search
                 && let Some(phonetic_results) =
                     self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
-                        execute_phonetic(&self.read, rtxn, codes, &self.params, self.deadline)
+                        self.scoped_phonetic_results(rtxn, codes, filter_config, &claim_gate)
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
@@ -383,13 +383,7 @@ impl PipelineBuilder<'_> {
             if let Some(query) = &self.phonetic_vector_search
                 && let Some(learned_results) =
                     self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
-                        self.phonetic_vector_results(
-                            rtxn,
-                            query,
-                            filter_config,
-                            &mut metadata_cache,
-                            &mut claim_gate,
-                        )
+                        self.phonetic_vector_results(rtxn, query, filter_config, &claim_gate)
                     })?
             {
                 if !diagnostics.succeeded.contains(&RetrievalSignal::Phonetic) {

@@ -6,7 +6,8 @@ use crate::error::{Error, Result};
 use super::builder::PipelineBuilder;
 use super::capabilities::CapabilityLane;
 use super::channels::{
-    execute_temporal, scoped_vector_channel_limit, truncate_widened_channel_results_to_scope,
+    execute_phonetic, execute_temporal, scoped_vector_channel_limit,
+    truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
     import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
@@ -81,6 +82,43 @@ impl PipelineBuilder<'_> {
         )?;
         scores.truncate(requested);
         Ok(scores)
+    }
+
+    /// The phonetic channel under the call's scope. The sound match keeps
+    /// the nearest few of its rows, so the call's predicate decides inside
+    /// that cut: a row the call may not see sets no nearest distance and
+    /// takes no place under the cap (review #8107). Exact codes have no cut;
+    /// the gates after the channel filter them as before. The probe's caches
+    /// are its own, as the vector walk's: a row the cut asks about leaves no
+    /// decision behind.
+    pub(super) fn scoped_phonetic_results(
+        &self,
+        rtxn: &RoTxn<'_>,
+        codes: &[String],
+        filters: PipelineFilterConfig<'_>,
+        claim_gate: &ClaimStatusGateCache,
+    ) -> Result<Vec<ScoredEntity>> {
+        let memory = self.memory_category;
+        let mut metadata = EntityMetadataCache::default();
+        let mut gate = claim_gate.fresh(filters.authority_filter.include_stale);
+        let mut admits = |id: &crate::EntityId| -> Result<bool> {
+            Ok(pipeline_candidate_matches_filters_and_gate(
+                &self.read,
+                rtxn,
+                id,
+                filters,
+                &mut metadata,
+                &mut gate,
+            )? && (!memory || CapabilityLane::Memory.admits(&self.read, rtxn, id)?))
+        };
+        execute_phonetic(
+            &self.read,
+            rtxn,
+            codes,
+            &self.params,
+            self.deadline,
+            &mut admits,
+        )
     }
 
     pub(super) fn scoped_temporal_results(
