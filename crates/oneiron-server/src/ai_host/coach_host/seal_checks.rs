@@ -14,7 +14,6 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use oneiron::EntityId;
 use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::compaction::output::{OutputRef, restore_output};
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
@@ -26,7 +25,10 @@ use oneiron::llm::decision::{
     DecisionCall, DecisionPack, DecisionProvider, DecisionRung, ProviderDecision, ProviderPin,
 };
 use oneiron::llm::manifest::ModelRole;
+#[cfg(oneiron_test_support)]
+use oneiron::self_heal::audit::SealCheckKind;
 use oneiron::self_heal::audit::{CheckerProtocol, SealCheckOutcome, SealCheckRequest};
+use oneiron::{EntityId, LlmMessage};
 
 use self::checker::{
     FLAW_WORDING, answers, check_state, independent, objective_data, pack_messages, protocol_digest,
@@ -35,6 +37,8 @@ use super::super::CHAT_ROLE;
 use super::super::code_fix::HostModels;
 use crate::models::ModelCallBinding;
 use crate::server::SyncServer;
+#[cfg(oneiron_test_support)]
+use serde_json::json;
 
 pub(in crate::ai_host) mod checker;
 
@@ -53,6 +57,29 @@ const CHECKER_ROLES: [ModelRole; 3] = [ModelRole::Checker, ModelRole::Coach, CHA
 /// One check's clock on the decision ladder: longer than any judge's call,
 /// so the ladder cuts no answer the judge gave.
 const CHECK_BUDGET: Duration = Duration::from_secs(30 * 60);
+
+/// What the seal's judge asks of the Coach's models: one tool-less call's
+/// text on a role's seat, with the binding of the rung that answered it,
+/// fallback included. `None` when no seat serves the call. The tests lend
+/// a stub through `crate::test_doors::seal_judge`.
+pub(crate) trait SealJudgeModels {
+    /// One recorded call's text on `role`'s seat, with its answering rung.
+    fn generate_recorded(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+    ) -> oneiron::Result<Option<(String, ModelCallBinding)>>;
+}
+
+impl SealJudgeModels for HostModels<'_> {
+    fn generate_recorded(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+    ) -> oneiron::Result<Option<(String, ModelCallBinding)>> {
+        self.generate_recorded(role, messages)
+    }
+}
 
 /// One `coach.seal_checks` job: the pending checks, the ones asked longest
 /// ago (or never) first.
@@ -88,144 +115,157 @@ impl SealChecker for HostChecker<'_> {
         executor: &str,
         now: u64,
     ) -> oneiron::Result<SealCheck> {
-        let runtime = self.server.ai.model_runtime();
-        let Some(role) = CHECKER_ROLES.into_iter().find(|role| {
-            runtime
-                .seat(*role)
-                .is_some_and(|seat| independent(seat.model.as_str(), executor))
-        }) else {
-            return Ok(SealCheck::Unavailable);
-        };
-        // An output handle names its bytes; an agent run's result TURN names
-        // the answer its own run recorded, read back by that output's digest
-        // and length, never by the TURN's id. Any other result is unavailable.
-        let source = match OutputRef::from_handle(&request.result_ref) {
-            Ok(source) => source,
-            Err(_) => match AgentDispatcher::new(self.server.vault())
-                .agent_run_answer(request.attempt, &request.result_ref)
-            {
-                Ok(Some(source)) => source,
-                Ok(None) => return Ok(SealCheck::Unavailable),
-                Err(error) => {
-                    tracing::debug!(kind = ?error.kind(), "an agent run result could not be read");
-                    return Ok(SealCheck::Unavailable);
-                }
-            },
-        };
-        let bytes = match restore_output(self.server.vault(), source) {
-            Ok(bytes) => bytes,
+        check_on(self.server, &self.models, request, executor, now)
+    }
+}
+
+/// The check of `request` on its pinned result, by a judge that is not
+/// `executor`, the model that produced the result, with the judge's calls
+/// answered through `models`: the Coach's seats in production, a stub in
+/// the tests (`crate::test_doors::seal_judge`).
+pub(crate) fn check_on<M: SealJudgeModels>(
+    server: &SyncServer,
+    models: &M,
+    request: &SealCheckRequest,
+    executor: &str,
+    now: u64,
+) -> oneiron::Result<SealCheck> {
+    let runtime = server.ai.model_runtime();
+    let Some(role) = CHECKER_ROLES.into_iter().find(|role| {
+        runtime
+            .seat(*role)
+            .is_some_and(|seat| independent(seat.model.as_str(), executor))
+    }) else {
+        return Ok(SealCheck::Unavailable);
+    };
+    // An output handle names its bytes; an agent run's result TURN names
+    // the answer its own run recorded, read back by that output's digest
+    // and length, never by the TURN's id. Any other result is unavailable.
+    let source = match OutputRef::from_handle(&request.result_ref) {
+        Ok(source) => source,
+        Err(_) => match AgentDispatcher::new(server.vault())
+            .agent_run_answer(request.attempt, &request.result_ref)
+        {
+            Ok(Some(source)) => source,
+            Ok(None) => return Ok(SealCheck::Unavailable),
             Err(error) => {
-                tracing::debug!(kind = ?error.kind(), "a sealed result could not be read");
+                tracing::debug!(kind = ?error.kind(), "an agent run result could not be read");
                 return Ok(SealCheck::Unavailable);
             }
-        };
-        // A withheld body reads as its mark, which is not the result.
-        if source.verify(&bytes).is_err() {
+        },
+    };
+    let bytes = match restore_output(server.vault(), source) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::debug!(kind = ?error.kind(), "a sealed result could not be read");
             return Ok(SealCheck::Unavailable);
         }
-        // The judge reads the result whole; its length is measured, never cut.
-        let result = String::from_utf8_lossy(&bytes);
-        let _ = self
-            .server
-            .vault()
-            .measure_limit(EngineLimit::MaintenanceTextBytes, result.len() as u64);
-        let asked: Vec<&str> = request
-            .objectives
-            .iter()
-            .map(|objective| objective.objective.as_str())
-            .collect();
-        let Some(check) =
-            SealObjectiveCheck::new(request.kind, &asked, &protocol_digest(), FLAW_WORDING)?
-        else {
-            // One question cannot stand for two findings.
-            return Ok(SealCheck::Inconclusive);
-        };
-        let objectives = request
-            .objectives
-            .iter()
-            .zip(check.questions())
-            .map(|(objective, question)| objective_data(request.kind, objective, question.id))
-            .collect();
-        let state = check_state(request.kind, objectives, &result);
-        let Some(seat) = runtime.seat(role) else {
-            return Ok(SealCheck::Unavailable);
-        };
-        let judge = SealJudge {
-            models: &self.models,
-            role,
-            pin: ProviderPin {
-                rung: DecisionRung::Big,
-                model: seat.model.as_str().to_owned(),
-                version: seat.model.as_str().to_owned(),
-            },
-            calls: Mutex::new(Vec::new()),
-        };
-        let bands = self.server.decision_host().bands();
-        let decided = check.decide(
-            self.server.vault().coach_authority()?.entity_ref(),
-            &request.result_ref,
-            &state,
-            &SealObjectiveDecisions {
-                judge: &judge,
-                bands: &bands,
-                budget: CHECK_BUDGET,
-            },
-        )?;
-        let calls = judge
-            .calls
-            .into_inner()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // No seat served a call: nothing was asked.
-        if calls.iter().any(Option::is_none) {
-            return Ok(SealCheck::Unavailable);
-        }
-        // One rung answers a check: a contribution check's forks are scored
-        // on it alone.
-        let mut bindings = calls.into_iter().flatten();
-        let Some(binding) = bindings.next() else {
-            return Ok(SealCheck::Inconclusive);
-        };
-        let one_rung = |other: &ModelCallBinding| {
-            other.rung.model == binding.rung.model
-                && other.rung.locality == binding.rung.locality
-                && other.route == binding.route
-        };
-        if !bindings.all(|other| one_rung(&other)) {
-            return Ok(SealCheck::Inconclusive);
-        }
-        let served = binding.rung.model.as_str().to_owned();
-        // A fallback rung may be the executor's own model.
-        if !independent(&served, executor) {
-            return Ok(SealCheck::Inconclusive);
-        }
-        Ok(match decided {
-            SealObjectiveDecision::Decided {
-                findings,
-                decisions,
-            } => {
-                tracing::debug!(
-                    reference = %request.reference,
-                    decisions = decisions.len(),
-                    "the seal's objectives were decided on the ladder"
-                );
-                SealCheck::Checked {
-                    outcome: SealCheckOutcome {
-                        judge_revision: served,
-                        checked_at: now,
-                        findings,
-                    },
-                    // The rung that answered, as it answered: a contribution
-                    // check's forks are scored on it alone.
-                    protocol: CheckerProtocol {
-                        digest: protocol_digest(),
-                        role,
-                        judge_rung: binding.route.map(|route| (binding.rung.locality, route)),
-                    },
-                }
-            }
-            SealObjectiveDecision::Inconclusive => SealCheck::Inconclusive,
-        })
+    };
+    // A withheld body reads as its mark, which is not the result.
+    if source.verify(&bytes).is_err() {
+        return Ok(SealCheck::Unavailable);
     }
+    // The judge reads the result whole; its length is measured, never cut.
+    let result = String::from_utf8_lossy(&bytes);
+    let _ = server
+        .vault()
+        .measure_limit(EngineLimit::MaintenanceTextBytes, result.len() as u64);
+    let asked: Vec<&str> = request
+        .objectives
+        .iter()
+        .map(|objective| objective.objective.as_str())
+        .collect();
+    let Some(check) =
+        SealObjectiveCheck::new(request.kind, &asked, &protocol_digest(), FLAW_WORDING)?
+    else {
+        // One question cannot stand for two findings.
+        return Ok(SealCheck::Inconclusive);
+    };
+    let objectives = request
+        .objectives
+        .iter()
+        .zip(check.questions())
+        .map(|(objective, question)| objective_data(request.kind, objective, question.id))
+        .collect();
+    let state = check_state(request.kind, objectives, &result);
+    let Some(seat) = runtime.seat(role) else {
+        return Ok(SealCheck::Unavailable);
+    };
+    let judge = SealJudge {
+        models,
+        role,
+        pin: ProviderPin {
+            rung: DecisionRung::Big,
+            model: seat.model.as_str().to_owned(),
+            version: seat.model.as_str().to_owned(),
+        },
+        calls: Mutex::new(Vec::new()),
+    };
+    let bands = server.decision_host().bands();
+    let decided = check.decide(
+        server.vault().coach_authority()?.entity_ref(),
+        &request.result_ref,
+        &state,
+        &SealObjectiveDecisions {
+            judge: &judge,
+            bands: &bands,
+            budget: CHECK_BUDGET,
+        },
+    )?;
+    let calls = judge
+        .calls
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // No seat served a call: nothing was asked.
+    if calls.iter().any(Option::is_none) {
+        return Ok(SealCheck::Unavailable);
+    }
+    // One rung answers a check: a contribution check's forks are scored
+    // on it alone.
+    let mut bindings = calls.into_iter().flatten();
+    let Some(binding) = bindings.next() else {
+        return Ok(SealCheck::Inconclusive);
+    };
+    let one_rung = |other: &ModelCallBinding| {
+        other.rung.model == binding.rung.model
+            && other.rung.locality == binding.rung.locality
+            && other.route == binding.route
+    };
+    if !bindings.all(|other| one_rung(&other)) {
+        return Ok(SealCheck::Inconclusive);
+    }
+    let served = binding.rung.model.as_str().to_owned();
+    // A fallback rung may be the executor's own model.
+    if !independent(&served, executor) {
+        return Ok(SealCheck::Inconclusive);
+    }
+    Ok(match decided {
+        SealObjectiveDecision::Decided {
+            findings,
+            decisions,
+        } => {
+            tracing::debug!(
+                reference = %request.reference,
+                decisions = decisions.len(),
+                "the seal's objectives were decided on the ladder"
+            );
+            SealCheck::Checked {
+                outcome: SealCheckOutcome {
+                    judge_revision: served,
+                    checked_at: now,
+                    findings,
+                },
+                // The rung that answered, as it answered: a contribution
+                // check's forks are scored on it alone.
+                protocol: CheckerProtocol {
+                    digest: protocol_digest(),
+                    role,
+                    judge_rung: binding.route.map(|route| (binding.rung.locality, route)),
+                },
+            }
+        }
+        SealObjectiveDecision::Inconclusive => SealCheck::Inconclusive,
+    })
 }
 
 /// The independent judge as the decision ladder's one Big rung
@@ -233,14 +273,14 @@ impl SealChecker for HostChecker<'_> {
 /// Coach's run and meter, and its answer is read as each question's yes/no
 /// weights. `calls` keeps, per call, the rung that answered it, or none
 /// when no seat served it.
-struct SealJudge<'a> {
-    models: &'a HostModels<'a>,
+struct SealJudge<'a, M: SealJudgeModels = HostModels<'a>> {
+    models: &'a M,
     role: ModelRole,
     pin: ProviderPin,
     calls: Mutex<Vec<Option<ModelCallBinding>>>,
 }
 
-impl DecisionProvider for SealJudge<'_> {
+impl<M: SealJudgeModels> DecisionProvider for SealJudge<'_, M> {
     fn pin(&self) -> ProviderPin {
         self.pin.clone()
     }
@@ -283,4 +323,50 @@ impl DecisionProvider for SealJudge<'_> {
             .push(answered.map(|(_, binding)| binding));
         Ok(decisions)
     }
+}
+
+/// One check's clock on the decision ladder, for the tests.
+#[cfg(oneiron_test_support)]
+pub(crate) fn check_budget() -> Duration {
+    CHECK_BUDGET
+}
+
+/// The digest of the checker's protocol, for the tests.
+#[cfg(oneiron_test_support)]
+pub(crate) fn seal_protocol_digest() -> [u8; 32] {
+    protocol_digest()
+}
+
+/// The judge's answer over `objectives` of a check of `kind`, for the
+/// tests: one JSON object keyed by each objective's question id, `flaws`
+/// saying per objective whether a flaw is present. The questions are the
+/// check's own, so the script answers what the check asks.
+///
+/// # Errors
+///
+/// A question the catalogue refuses, a repeated objective, or `flaws`
+/// naming another count than `objectives`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn scripted_answer(
+    kind: SealCheckKind,
+    objectives: &[&str],
+    flaws: &[bool],
+) -> oneiron::Result<String> {
+    if flaws.len() != objectives.len() {
+        return Err(oneiron::Error::InvalidConfig(
+            "a scripted seal answer names one verdict per objective".into(),
+        ));
+    }
+    let Some(check) = SealObjectiveCheck::new(kind, objectives, &protocol_digest(), FLAW_WORDING)?
+    else {
+        return Err(oneiron::Error::InvalidConfig(
+            "one question cannot stand for two findings".into(),
+        ));
+    };
+    let mut entries = serde_json::Map::new();
+    for (question, flaw) in check.questions().iter().zip(flaws) {
+        let (yes, no) = if *flaw { (0.9, 0.1) } else { (0.1, 0.9) };
+        entries.insert(question.id.to_hex(), json!({ "yes": yes, "no": no }));
+    }
+    Ok(serde_json::Value::Object(entries).to_string())
 }
