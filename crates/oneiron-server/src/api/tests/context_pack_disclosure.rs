@@ -116,7 +116,7 @@ async fn core_context_pack_owner_present_true_on_scoped_bearer_is_forbidden() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        body["error"]["details"]["requiredScope"],
+        body["error"]["details"]["required_scope"],
         Value::from("interlocutors.owner_present")
     );
     assert!(
@@ -215,29 +215,21 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         body["disclosure"]["notice"].is_null(),
         "notice is Some iff supervised"
     );
+    assert!(
+        body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
+        "candidate sweep counted removals: {body:?}"
+    );
     let result_ids: Vec<&str> = body["results"]
         .as_array()
         .expect("results")
         .iter()
         .filter_map(|entity| entity["id"].as_str())
         .collect();
-    // The other-world claim is absent from the assembled context, and the
-    // clamp count does not name it: `clamped_out` counts only clamped rows
-    // the caller would itself retrieve on its own floor (ARCH-0067 H146,
-    // `UnfinalizedContextPack::clamped_out_under`), and this caller's
-    // clearance holds only the base world (the 6bb2488ab0ec run: 0). The
-    // widened leg below retrieves the same claim.
-    assert_eq!(
-        (
-            body["disclosure"]["clamped_out"].clone(),
-            result_ids.contains(&diary.to_hex().as_str()),
-            result_ids.contains(&party.to_hex().as_str()),
-            result_ids.contains(&base_claim.to_hex().as_str()),
-        ),
-        (json!(0), false, true, true),
-        "clamp count, diary, party, base claim; {} results; disclosure {}",
-        result_ids.len(),
-        body["disclosure"]
+    assert!(result_ids.contains(&party.to_hex().as_str()));
+    assert!(result_ids.contains(&base_claim.to_hex().as_str()));
+    assert!(
+        !result_ids.contains(&diary.to_hex().as_str()),
+        "out-of-world Tier-B claim absent from the assembled context"
     );
     let neighbors = body["neighbors"].as_array().expect("neighbors");
     assert!(neighbors.is_empty());
@@ -670,7 +662,7 @@ async fn core_context_pack_scope_only_token_is_clamped_and_cannot_assert_owner_p
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        body["error"]["details"]["requiredScope"],
+        body["error"]["details"]["required_scope"],
         Value::from("interlocutors.owner_present")
     );
 }
@@ -721,9 +713,6 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
     // The member joins at the owner-signed birth: its v3 proof signs the
     // roster, and the birth derives the home room from it.
     create_owned_project(&server, owner, project, &roster);
-    // A room member's class-less peer key reads only through a class-agnostic
-    // grant (FIX 9917, FIX 1218): without one the room reads empty for all.
-    put_actor_read_grant(&server.vault, peer, None);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
     assert_eq!(
         server.vault.room_audience_members(room).unwrap(),
@@ -1473,7 +1462,7 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
             )
             .await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
-            body["error"].as_object_mut().unwrap().remove("requestId");
+            body["error"].as_object_mut().unwrap().remove("request_id");
             answers.push(body);
         }
         answers

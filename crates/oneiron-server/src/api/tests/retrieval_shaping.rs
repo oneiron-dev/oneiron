@@ -9,10 +9,6 @@ fn search_response_rechecks_projected_claim_body() {
         pred: &'a str,
         val: &'a str,
         conf: f32,
-        #[serde(rename = "confBand")]
-        conf_band: &'static str,
-        #[serde(rename = "confBasis")]
-        conf_basis: &'static str,
         #[serde(with = "serde_bytes")]
         subj: &'a [u8],
         appr: &'static str,
@@ -40,8 +36,6 @@ fn search_response_rechecks_projected_claim_body() {
         pred: "profile.projected",
         val: "hidden after update",
         conf: 0.9,
-        conf_band: "certain",
-        conf_basis: "deterministic_fallback",
         subj: subject.as_bytes(),
         appr: "proposed",
         life: "active",
@@ -181,7 +175,7 @@ async fn context_pack_route_projects_json_response_controls() {
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
-                "budget": { "tokenBudget": 16 }
+                "budget": { "token_budget": 16 }
             })),
         ),
     )

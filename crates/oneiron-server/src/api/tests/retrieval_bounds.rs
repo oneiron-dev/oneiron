@@ -70,25 +70,25 @@ async fn an_over_large_limit_is_served_at_the_ceiling_and_says_so() {
                 "POST",
                 "/v1/core/query".to_owned(),
                 Some(json!({"query": "lantern", "limit": limit})),
-                "/meta/limitClamped",
+                "/meta/limit_clamped",
             ),
             (
                 "POST",
                 "/v1/companion/memory/reason".to_owned(),
                 Some(json!({"query": "lantern", "limit": limit})),
-                "/limitClamped",
+                "/limit_clamped",
             ),
             (
                 "GET",
                 format!("/api/search/text?query=lantern&limit={limit}"),
                 None,
-                "/meta/limitClamped",
+                "/meta/limit_clamped",
             ),
             (
                 "GET",
                 format!("/api/search/vector?query={vector}&limit={limit}"),
                 None,
-                "/meta/limitClamped",
+                "/meta/limit_clamped",
             ),
             (
                 "POST",
@@ -136,7 +136,7 @@ async fn an_over_large_limit_is_served_at_the_ceiling_through_mcp() {
                 "memory.query",
                 "memory_read",
                 json!({"request": {"query": "lantern", "limit": limit}}),
-                "/response/meta/limitClamped",
+                "/response/meta/limit_clamped",
             ),
             (
                 "memory.context_pack",
@@ -215,8 +215,8 @@ async fn a_query_past_the_shipped_row_is_refused_typed_at_every_query_door() {
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}");
         let details = too_large(&reply);
         assert_eq!(details["field"], field, "{uri}");
-        assert_eq!(details["maxBytes"], SHIPPED_QUERY_ROW, "{uri}");
-        assert_eq!(details["receivedBytes"], SHIPPED_QUERY_ROW + 1, "{uri}");
+        assert_eq!(details["max_bytes"], SHIPPED_QUERY_ROW, "{uri}");
+        assert_eq!(details["received_bytes"], SHIPPED_QUERY_ROW + 1, "{uri}");
     }
 
     // The native MCP doors answer the same shape with the MCP typed tool
@@ -284,7 +284,7 @@ fn item<'a>(items: &'a Value, id: &oneiron::EntityId) -> &'a Value {
 
 /// Bug repro and done-means (H27, A5, A6): a multi-row read decodes bodies
 /// only up to the shipped `[limits].projection_body_bytes` budget; a row past
-/// it keeps its id, kind and time and carries a typed `bodyOmitted` marker in
+/// it keeps its id, kind and time and carries a typed `body_omitted` marker in
 /// place of its body (never a per-byte array), its summary label falling
 /// back to its id. The single-entity `view=full` read still returns that
 /// body whole. On main every body was decoded, whatever its size.
@@ -309,15 +309,15 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
     assert_eq!(status, StatusCode::OK, "{query}");
     let shown = item(&query["items"], &small);
     assert_eq!(shown["txt"], small_txt);
-    assert!(shown.get("bodyOmitted").is_none(), "{shown}");
+    assert!(shown.get("body_omitted").is_none(), "{shown}");
     let omitted = item(&query["items"], &large);
     assert!(omitted.get("txt").is_none(), "the body stays out");
     assert!(omitted.get("bodyBytes").is_none(), "no per-byte array");
     assert_eq!(omitted["kind"], shown["kind"]);
-    let marker = &omitted["bodyOmitted"];
+    let marker = &omitted["body_omitted"];
     assert_eq!(marker["code"], "PROJECTION_BYTES_EXCEEDED", "{omitted}");
-    assert_eq!(marker["maxBytes"], SHIPPED_BODY_ROW);
-    assert_eq!(marker["bodyBytes"], large_bytes);
+    assert_eq!(marker["max_bytes"], SHIPPED_BODY_ROW);
+    assert_eq!(marker["body_bytes"], large_bytes);
     assert!(marker["ref"].as_str().is_some_and(|r| !r.is_empty()));
 
     let (status, summary) = route_json(
@@ -333,7 +333,7 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
     assert_eq!(status, StatusCode::OK, "{summary}");
     let omitted = item(&summary["items"], &large);
     assert_eq!(omitted["label"], large.to_hex(), "{omitted}");
-    assert_eq!(omitted["bodyOmitted"]["code"], "PROJECTION_BYTES_EXCEEDED");
+    assert_eq!(omitted["body_omitted"]["code"], "PROJECTION_BYTES_EXCEEDED");
     assert_eq!(item(&summary["items"], &small)["label"], small_txt);
 
     let (status, whole) = route_json(
@@ -348,7 +348,7 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(whole["txt"].as_str().map(str::len), Some(large_txt.len()));
-    assert!(whole.get("bodyOmitted").is_none());
+    assert!(whole.get("body_omitted").is_none());
 
     // The marker's ref hydrates the very body the row left out, and a pinned
     // one still does after the row is edited (round 1, Sol F2 = Astra F2).
@@ -366,7 +366,7 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
         hydrated["item"]["txt"].as_str().map(str::len),
         Some(large_txt.len())
     );
-    let pinned = omitted["bodyOmitted"]["ref"].clone();
+    let pinned = omitted["body_omitted"]["ref"].clone();
     let edited = rmp_serde::to_vec_named(&json!({"txt": "edited", "spkr": "user", "at": 101_u64}))
         .expect("encode edit");
     server
@@ -443,9 +443,9 @@ async fn an_omitted_timeline_change_hydrates_its_pinned_body_after_an_edit() {
     assert_eq!(status, StatusCode::OK, "{timeline:#}");
     let change = &timeline["records"][1]["changes"][0];
     assert_eq!(change["after_id"], new.to_hex(), "{timeline:#}");
-    let before = change["before"]["bodyOmitted"]["ref"].as_str();
+    let before = change["before"]["body_omitted"]["ref"].as_str();
     assert!(before.is_some_and(|r| r.contains('@')), "{change}");
-    let marker = &change["after"]["bodyOmitted"];
+    let marker = &change["after"]["body_omitted"];
     assert_eq!(marker["code"], "PROJECTION_BYTES_EXCEEDED", "{change}");
 
     let mut head = server
@@ -514,9 +514,9 @@ async fn an_omitted_standard_row_in_a_conversation_list_names_its_id() {
     assert_eq!(status, StatusCode::OK, "{list}");
     let row = item(&list["items"], &room);
     assert_eq!(
-        row["bodyOmitted"]["code"], "PROJECTION_BYTES_EXCEEDED",
+        row["body_omitted"]["code"], "PROJECTION_BYTES_EXCEEDED",
         "{row}"
     );
     assert!(row["kind"].is_string(), "{row}");
-    assert!(row["updatedAt"].is_u64(), "{row}");
+    assert!(row["updated_at"].is_u64(), "{row}");
 }

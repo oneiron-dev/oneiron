@@ -52,7 +52,7 @@
         "type": "bearer"
       },
       "body": {
-        "countMode": "estimate",
+        "count_mode": "estimate",
         "limit": 3,
         "query": "contractneedle",
         "view": "full"
@@ -62,7 +62,7 @@
     },
     "response": {
       "body": {
-        "grantedData": [
+        "granted_data": [
           "7e000000000000000000000012210001"
         ],
         "items": [
@@ -75,11 +75,11 @@
             "spkr": "user",
             "txt": "blue hallway contractneedle",
             "type": 1,
-            "updatedAt": 1782357635
+            "updated_at": 1782357635
           }
         ],
         "meta": {
-          "countMode": "estimate",
+          "count_mode": "estimate",
           "total": 1
         },
         "narrowing": {
@@ -134,7 +134,7 @@
     "response": {
       "body": {
         "capabilities": [],
-        "confidenceAdjustment": -0.35,
+        "confidence_adjustment": -0.35,
         "evidence": {
           "result_ids": [
             "7e000000000000000000000012210001"
@@ -157,7 +157,7 @@
           ],
           "telemetry_persisted": true
         },
-        "grantedData": [
+        "granted_data": [
           "7e000000000000000000000012210001"
         ],
         "narrowing": {
@@ -316,7 +316,7 @@
         "notifications": [],
         "pack": {
           "capabilities": [],
-          "confidenceAdjustment": -0.35,
+          "confidence_adjustment": -0.35,
           "disclosure": {
             "clamped_out": 1,
             "interlocutors": [
@@ -344,7 +344,7 @@
             "scores": [],
             "telemetry_persisted": true
           },
-          "grantedData": [],
+          "granted_data": [],
           "interlocutors": [
             {
               "claims_not_instructions": true,
@@ -484,7 +484,7 @@
           "spkr": "user",
           "txt": "blue hallway contractneedle",
           "type": 1,
-          "updatedAt": 1782357635
+          "updated_at": 1782357635
         },
         "narrowing": {
           "actor_ceiling": {
@@ -556,7 +556,7 @@
           "label": "Contract dream",
           "name": "Contract dream",
           "type": 4,
-          "updatedAt": 1782357735
+          "updated_at": 1782357735
         }
       },
       "status": 200
@@ -571,7 +571,7 @@
       },
       "body": null,
       "method": "GET",
-      "path": "/v1/core/conversations?view=full&limit=5&countMode=exact"
+      "path": "/v1/core/conversations?view=full&limit=5&count_mode=exact"
     },
     "response": {
       "body": {
@@ -580,21 +580,21 @@
             "id": "7e000000000000000000000012210002",
             "kind": "CONVERSATION",
             "label": "Contract dream",
-            "lastMessageSnippet": null,
+            "last_message_snippet": null,
             "name": "Contract dream",
             "occurred": {
               "end": 1782357700,
               "start": 1782357700
             },
             "type": 4,
-            "updatedAt": 1782357735
+            "updated_at": 1782357735
           },
           {
             "claims_scope_ref": "<root-project-id>",
             "id": "<home-room-id>",
             "kind": "CONVERSATION",
             "label": "<home-room-id>",
-            "lastMessageSnippet": null,
+            "last_message_snippet": null,
             "memberIds": [
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"
             ],
@@ -605,11 +605,11 @@
             "project_id": "<root-project-id>",
             "schema_version": 1,
             "type": 4,
-            "updatedAt": 0
+            "updated_at": 0
           }
         ],
         "meta": {
-          "countMode": "exact",
+          "count_mode": "exact",
           "total": 2
         },
         "narrowing": {
@@ -684,7 +684,7 @@
           "spkr": "assistant",
           "txt": "turn contract envelope",
           "type": 1,
-          "updatedAt": 1782357835
+          "updated_at": 1782357835
         }
       },
       "status": 200
@@ -712,11 +712,11 @@
             "spkr": "assistant",
             "txt": "turn contract envelope",
             "type": 1,
-            "updatedAt": 1782357835
+            "updated_at": 1782357835
           }
         ],
         "meta": {
-          "countMode": "exact",
+          "count_mode": "exact",
           "total": 1
         }
       },
@@ -743,7 +743,7 @@
         "spkr": "assistant",
         "txt": "turn contract envelope",
         "type": 1,
-        "updatedAt": 1782357835
+        "updated_at": 1782357835
       },
       "status": 200
     }

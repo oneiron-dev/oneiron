@@ -35,7 +35,7 @@ async fn health_runtime_summary_redacts_route_model_details_without_auth() {
         .expect("health response body");
     let body: Value = serde_json::from_slice(&body).expect("health JSON body");
     assert_eq!(body["runtime"]["mode"], Value::from("local_free"));
-    assert_eq!(body["runtime"]["oneironSpendMetered"], Value::from(false));
+    assert_eq!(body["runtime"]["oneiron_spend_metered"], Value::from(false));
     assert_eq!(body["runtime"]["state"], Value::from("available"));
     assert!(body["runtime"].get("routes").is_none());
 
@@ -43,7 +43,7 @@ async fn health_runtime_summary_redacts_route_model_details_without_auth() {
     for redacted in [
         "sensitive-orchestrator-model",
         "orchestrator",
-        "providerKind",
+        "provider_kind",
         "provenance",
     ] {
         assert!(
@@ -143,13 +143,13 @@ async fn unknown_outbound_connector_returns_typed_recovery_error() {
         error["details"]["connector"],
         Value::from("not_a_connector")
     );
-    assert_eq!(error["details"]["connectorKnown"], Value::from(false));
+    assert_eq!(error["details"]["connector_known"], Value::from(false));
     assert!(
         error["details"].get("verb").is_none(),
         "connector-only discovery errors should not fabricate a verb"
     );
     assert!(
-        error["details"]["supportedConnectors"]
+        error["details"]["supported_connectors"]
             .as_array()
             .expect("supported connectors")
             .contains(&Value::from("slack"))
@@ -179,9 +179,9 @@ async fn unsupported_outbound_verb_returns_typed_recovery_error() {
     let error = error_envelope(&body);
     assert_eq!(error["details"]["connector"], Value::from("line"));
     assert_eq!(error["details"]["verb"], Value::from("edit"));
-    assert_eq!(error["details"]["connectorKnown"], Value::from(true));
+    assert_eq!(error["details"]["connector_known"], Value::from(true));
     assert!(
-        error["details"]["supportedVerbs"]
+        error["details"]["supported_verbs"]
             .as_array()
             .expect("supported verbs")
             .contains(&Value::from("send"))
@@ -618,14 +618,14 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     assert!(!body.is_empty());
 
     for invalid_route in [
-        format!("/a/{}/report.pdf?blobVersion=0", artifact_id.to_hex()),
+        format!("/a/{}/report.pdf?blob_version=0", artifact_id.to_hex()),
         format!(
-            "/a/{}/report.pdf?blobVersion={}&channel=published",
+            "/a/{}/report.pdf?blob_version={}&channel=published",
             artifact_id.to_hex(),
             first.version
         ),
         format!(
-            "/a/{}/report.pdf?blobVersion={}&forkHash={}",
+            "/a/{}/report.pdf?blob_version={}&fork_hash={}",
             artifact_id.to_hex(),
             first.version,
             "00".repeat(32)
@@ -863,7 +863,7 @@ async fn local_artifact_route_serves_preview_pointer_and_rejects_ambiguous_selec
     assert_eq!(body.as_ref(), b"<h1>preview</h1>\n");
 
     let ambiguous = format!(
-        "/a/site/index.html?channel=preview&forkHash={}",
+        "/a/site/index.html?channel=preview&fork_hash={}",
         oneiron::artifact_hex(&ingest.snapshot.fork_hash)
     );
     let (status, _, body) = route_bytes(
@@ -1077,7 +1077,7 @@ fn bind_artifact_member_to_divergent_pacts(
 async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_oracle() {
     fn stable_error(bytes: &Bytes) -> Value {
         let mut body: Value = serde_json::from_slice(bytes).expect("error envelope");
-        body["error"].as_object_mut().unwrap().remove("requestId");
+        body["error"].as_object_mut().unwrap().remove("request_id");
         body
     }
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -1235,7 +1235,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
         server.clone(),
         Request::builder()
             .uri(format!(
-                "/a/site/_t/{token}/index.html?forkHash={}",
+                "/a/site/_t/{token}/index.html?fork_hash={}",
                 oneiron::artifact_hex(&hash)
             ))
             .body(Body::empty())
@@ -1287,7 +1287,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    server
+    let creation = server
         .vault
         .initialize_shared_vault(
             &authenticated_owner,
@@ -1300,7 +1300,6 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             10,
         )
         .unwrap();
-    let accepted = accept_founding_invitation(&server.vault, member, 42);
     server
         .vault
         .publish_artifact_pointer_with_tier(
@@ -1401,7 +1400,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             (missing.0, stable_error(&missing.2))
         );
     }
-    let member_grant = oneiron::EntityId::from_hex(&accepted[0]).unwrap();
+    let member_grant = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
     let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
     let discarded = route_bytes(
         server.clone(),
@@ -1608,7 +1607,7 @@ async fn preview_link_bundle_keeps_its_selector_for_relative_assets_and_navigati
         server.clone(),
         Request::builder()
             .uri(format!(
-                "/a/site/_t/{token}/?forkHash={}",
+                "/a/site/_t/{token}/?fork_hash={}",
                 oneiron::artifact_hex(&preview.snapshot.fork_hash)
             ))
             .body(Body::empty())
@@ -1671,7 +1670,7 @@ async fn preview_link_bundle_keeps_its_selector_for_relative_assets_and_navigati
 async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
     fn stable_error(bytes: &Bytes) -> Value {
         let mut body: Value = serde_json::from_slice(bytes).unwrap();
-        body["error"].as_object_mut().unwrap().remove("requestId");
+        body["error"].as_object_mut().unwrap().remove("request_id");
         body
     }
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -1730,7 +1729,7 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    server
+    let creation = server
         .vault
         .initialize_shared_vault(
             &authenticated_owner,
@@ -1743,7 +1742,6 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
             10,
         )
         .unwrap();
-    let accepted = accept_founding_invitation(&server.vault, member, 42);
     let missing = route_bytes(
         server.clone(),
         Request::builder()
@@ -1796,7 +1794,7 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
         server.clone(),
         Request::builder()
             .uri(format!(
-                "/a/{}/_t/{blob_token}/export?blobVersion={version}",
+                "/a/{}/_t/{blob_token}/export?blob_version={version}",
                 blob.to_hex()
             ))
             .body(Body::empty())
@@ -1844,7 +1842,7 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
         )
         .unwrap();
 
-    let member_grant = oneiron::EntityId::from_hex(&accepted[0]).unwrap();
+    let member_grant = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
     let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
     let blob_discarded = route_bytes(
         server.clone(),
@@ -1890,7 +1888,7 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
         server.clone(),
         Request::builder()
             .uri(format!(
-                "/a/{}/_t/{blob_token}/export?blobVersion={version}",
+                "/a/{}/_t/{blob_token}/export?blob_version={version}",
                 blob.to_hex()
             ))
             .body(Body::empty())
@@ -2015,7 +2013,7 @@ async fn published_token_root_keeps_reserved_directories_and_encoded_code_names(
         ("report%3F2.js", b"query name".as_slice()),
         ("literal%2520.js", b"percent name".as_slice()),
     ] {
-        let requested = format!("/a/site/_t/{token}/{encoded}?forkHash={hash}");
+        let requested = format!("/a/site/_t/{token}/{encoded}?fork_hash={hash}");
         let first = route_bytes(
             server.clone(),
             Request::builder()
@@ -2097,7 +2095,7 @@ async fn blob_token_redirect_round_trips_escaped_export_names() {
             )
             .unwrap();
         let requested = format!(
-            "/a/{}/_t/{token}/{encoded}?blobVersion={version}",
+            "/a/{}/_t/{token}/{encoded}?blob_version={version}",
             id.to_hex()
         );
         let first = route_bytes(
@@ -2179,7 +2177,7 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    server
+    let creation = server
         .vault
         .initialize_shared_vault(
             &authenticated,
@@ -2192,8 +2190,7 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
             10,
         )
         .unwrap();
-    let accepted = accept_founding_invitation(&server.vault, member, 42);
-    let grant_id = oneiron::EntityId::from_hex(&accepted[0]).unwrap();
+    let grant_id = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
     let grant = oneiron::federation::FederationGrant::new(
         oneiron::federation::FederationGrantScope::vault(42),
         member,
@@ -2254,7 +2251,7 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
     .await;
     let stable = |body: &Bytes| {
         let mut value: Value = serde_json::from_slice(body).unwrap();
-        value["error"].as_object_mut().unwrap().remove("requestId");
+        value["error"].as_object_mut().unwrap().remove("request_id");
         value
     };
     for (index, narrowed) in [

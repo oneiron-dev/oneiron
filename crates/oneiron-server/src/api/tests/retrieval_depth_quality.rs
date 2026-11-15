@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Required response fields and camelCase names are a contract; unrelated
+/// Required response fields and snake_case names are a contract; unrelated
 /// additive fields do not change the default-tier behavior.
 #[tokio::test]
 async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
@@ -32,14 +32,14 @@ async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
             "confidence",
             "gaps",
             "reasoning",
-            "tokensUsed",
+            "tokens_used",
             "quality",
-            "confidenceAdjustment",
+            "confidence_adjustment",
         ])
         .is_subset(&keys),
-        "required camelCase response fields: {body:?}"
+        "required snake_case response fields: {body:?}"
     );
-    for alias in ["tokens_used", "confidence_adjustment"] {
+    for alias in ["tokensUsed", "confidenceAdjustment"] {
         assert!(!keys.contains(alias), "forbidden alias {alias}: {body:?}");
     }
     assert!(
@@ -55,7 +55,7 @@ async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
         "an extractive answer cites the evidence it shows: {body:?}"
     );
     assert_eq!(
-        body["tokensUsed"],
+        body["tokens_used"],
         Value::from(0),
         "the omitted-depth default is model-free and spends nothing"
     );
@@ -68,16 +68,17 @@ async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
         .map(String::as_str)
         .collect();
     assert!(
-        BTreeSet::from(["queriesRun", "signalsUsed", "candidatesScanned"]).is_subset(&trace_keys),
+        BTreeSet::from(["queries_run", "signals_used", "candidates_scanned"])
+            .is_subset(&trace_keys),
         "required trace fields: {body:?}"
     );
-    for alias in ["queries_run", "signals_used", "candidates_scanned"] {
+    for alias in ["queriesRun", "signalsUsed", "candidatesScanned"] {
         assert!(
             !trace_keys.contains(alias),
             "forbidden trace alias {alias}: {body:?}"
         );
     }
-    let signals: Vec<&str> = body["reasoning"]["signalsUsed"]
+    let signals: Vec<&str> = body["reasoning"]["signals_used"]
         .as_array()
         .expect("signals array")
         .iter()
@@ -87,7 +88,7 @@ async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
         signals.contains(&"ppr"),
         "standard expands the graph: {signals:?}"
     );
-    let queries: Vec<&str> = body["reasoning"]["queriesRun"]
+    let queries: Vec<&str> = body["reasoning"]["queries_run"]
         .as_array()
         .expect("queries array")
         .iter()
@@ -135,7 +136,7 @@ async fn memory_reason_refuses_an_answer_citing_evidence_it_never_retrieved() {
         "the refusal is reported, not hidden: {gaps:?}"
     );
     assert_eq!(
-        body["tokensUsed"],
+        body["tokens_used"],
         Value::from(3 + 5 + 9),
         "the tokens were spent whether or not the answer was usable"
     );

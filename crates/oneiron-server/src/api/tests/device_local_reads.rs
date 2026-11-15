@@ -922,9 +922,6 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
         .vault
         .put_edge(&holder, oneiron::EdgeKind::About, &about, 1.0)
         .unwrap();
-    // The holder reads the question TURN and the PERSON its answer names
-    // (FIX 9917); the fixture's own grant covers the owner only.
-    put_actor_read_grant(&server.vault, holder, None);
     let (handle, answered) =
         oneiron::test_support::settle_outcome_ask(&server.vault, owner, holder, Some("about"))
             .unwrap();
@@ -1268,7 +1265,7 @@ async fn a_query_off_this_device_is_released_by_the_row_it_counts_past_its_page(
             json!({"arguments": {"request": {
                 "query": "orchid",
                 "limit": 1,
-                "countMode": "estimate",
+                "count_mode": "estimate",
             }}}),
         );
         async move {

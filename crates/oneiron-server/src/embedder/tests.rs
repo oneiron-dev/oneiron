@@ -1450,21 +1450,6 @@ fn put_claim(vault: &oneiron::Vault, seed: u8, text: &str) -> oneiron::entity_id
     let mut bytes = [seed; 16];
     bytes[0] = 0x7e;
     let id = oneiron::entity_id::EntityId::from_bytes(bytes).expect("entity id");
-    // A CLAIM is born only under a stored FACET (FIX 7757): store the one
-    // claim_body stamps, the subject's substrate facet, once.
-    let subject = oneiron::EntityId::from_bytes([0x7d; 16]).expect("subject id");
-    let facet = oneiron::claim::substrate_facet_id(subject).expect("substrate facet");
-    if !vault.entity_exists(&facet).expect("read facet row") {
-        vault
-            .put_entity(
-                &facet,
-                oneiron::registry::ENTITY_TYPE_FACET,
-                oneiron::temporal::TimeRange { start: 1, end: 1 },
-                1,
-                b"embedder test facet",
-            )
-            .expect("put facet");
-    }
     vault
         .batch()
         .put(
@@ -1591,7 +1576,7 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
     runtime.shutdown_background();
 
     assert_eq!(body["embedder"]["provider"], json!("endpoint"));
-    assert_eq!(body["embedder"]["modelId"], json!("test/model@rev"));
+    assert_eq!(body["embedder"]["model_id"], json!("test/model@rev"));
     assert_eq!(body["embedder"]["dimensions"], json!(DIMS));
     let hits: Vec<String> = body["items"]
         .as_array()
@@ -1777,7 +1762,7 @@ fn the_text_search_door_refuses_an_oversized_query_with_413() {
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
     assert_eq!(body["code"], json!("PAYLOAD_TOO_LARGE"));
     assert_eq!(body["details"]["field"], json!("query"));
-    assert_eq!(body["details"]["maxBytes"], json!(8 * 1024));
+    assert_eq!(body["details"]["max_bytes"], json!(8 * 1024));
 }
 
 /// The worker recovers on its own: a provider that fails its first pass and then

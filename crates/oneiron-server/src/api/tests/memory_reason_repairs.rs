@@ -106,7 +106,7 @@ async fn memory_reason_text_query_text_never_retargets_the_probe() {
         assert!(!original["items"].as_array().unwrap().is_empty());
         let (status, overridden) = route_json_auth(
             server.clone(),
-            raw_search_request_auth(&format!("{uri}&queryText=unindexedbudget")),
+            raw_search_request_auth(&format!("{uri}&query_text=unindexedbudget")),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{overridden:?}");
@@ -153,7 +153,7 @@ async fn memory_reason_text_query_text_never_retargets_the_probe() {
     assert!(
         parameters
             .iter()
-            .all(|parameter| parameter["name"] != "queryText")
+            .all(|parameter| parameter["name"] != "query_text")
     );
 }
 
@@ -219,7 +219,7 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
                 "/v1/companion/memory/reason",
                 json!({
                     "query": "launch", "depth": depth, "limit": 1,
-                    "sessionContext": { "documentShortIds": [short_id.clone()] }
+                    "sessionContext": { "document_short_ids": [short_id.clone()] }
                 }),
             ),
         )

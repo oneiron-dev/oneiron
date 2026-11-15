@@ -716,7 +716,7 @@ async fn an_agent_without_the_grant_asks_and_a_holder_answers() {
             let (status, refused) = act(&server, path, who.clone(), room.id, "loft").await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {refused}");
             assert_eq!(
-                error_envelope(&refused)["details"]["requiredScope"],
+                error_envelope(&refused)["details"]["required_scope"],
                 "core:write",
                 "{path}: {refused}"
             );
@@ -812,10 +812,6 @@ async fn a_shared_vaults_member_saves_and_its_viewer_does_not() {
         .vault()
         .initialize_shared_vault(&proof, 42, None, &members, 10)
         .unwrap();
-    // Both invitees accept, so the Viewer's refusal below rests on its role.
-    for invitee in [gil, ana] {
-        accept_founding_invitation(server.vault(), invitee, 42);
-    }
     let (viewer, member) = (slip("gil", gil, "human"), slip("ana", ana, "human"));
 
     start(&server, member.clone(), room, "attic").await;
@@ -1493,7 +1489,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
         .await;
         // Each response's own request id says nothing of the record.
         if let Some(error) = answer["error"].as_object_mut() {
-            error.remove("requestId");
+            error.remove("request_id");
         }
         answers.push((status, answer));
     }

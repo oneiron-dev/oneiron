@@ -86,7 +86,7 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         "query": "contractneedle",
         "limit": 3,
         "view": "full",
-        "countMode": "estimate"
+        "count_mode": "estimate"
     });
     let (status, body) = core_json(
         server.clone(),
@@ -251,7 +251,7 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         body,
     ));
 
-    let conversations_path = "/v1/core/conversations?view=full&limit=5&countMode=exact";
+    let conversations_path = "/v1/core/conversations?view=full&limit=5&count_mode=exact";
     // The list reads as a named reader: here the vault's owner.
     let owner = server.vault.ensure_embedded_owner_actor().expect("owner");
     let (status, mut body) = route_json(
