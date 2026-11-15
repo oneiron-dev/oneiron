@@ -344,9 +344,9 @@ impl ConsolidationExecutor<'_> {
     ) -> DurableStepResult<Option<FinalResolution>> {
         let spec = resolution_final_prep(read);
         let owned: Vec<Vec<u8>> = spec.key.iter().map(key_part_bytes).collect();
-        let key: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
+        let key_parts: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
         let question = CONFLICT_RESOLUTION.question(
-            &key,
+            &key_parts,
             self.decisions.resolution_wording.clone(),
             AnswerContract::Choice {
                 options: spec.options,
