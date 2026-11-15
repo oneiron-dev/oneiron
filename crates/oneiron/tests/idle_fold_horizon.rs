@@ -299,6 +299,49 @@ fn a_parked_run_folds_its_kind_marks_at_the_cache_horizon() -> TestResult {
     Ok(())
 }
 
+/// Two kind marks over one step fold its output once: the step shows the first fold's stub
+/// (`FoldLedger::kind_covering`), so the call counts that output's tokens once, not per mark.
+#[test]
+fn overlapping_kind_marks_count_a_shared_output_once() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let key = wait_key(0x76)?;
+    let observation: &[u8] = &[b'o'; OBSERVATION_BYTES];
+    doors::seed_step_observations(&vault, key.run, &[observation, observation, observation])?;
+    let first = doors::mark_output_fold(&vault, key.run, (0, 1), 2)?;
+    let second = doors::mark_output_fold(&vault, key.run, (1, 2), 2)?;
+    let row = leased_try(&vault, "idle-fold-overlap")?;
+    park(&vault, &row, &key, PARKED_MS)?;
+    put_own_cell(&vault, &[3_600; 30])?;
+    assert!(idle_fold::record_cache_horizon(
+        &vault,
+        &key,
+        row.id,
+        agent()?,
+        &prefix()
+    )?);
+
+    assert_eq!(idle_fold::run_due_idle_calls(&vault, DUE_MS)?, 1);
+    assert_eq!(
+        doors::idle_call(&vault, &key)?,
+        Some(IdleCallView::Fold {
+            folds: 2,
+            // Steps 0, 1 and 2, each once: step 1 lies under both marks.
+            tokens: 3 * OBSERVATION_BYTES as u64 / 4,
+            at_ms: DUE_MS,
+        }),
+        "the shared step's output counts once"
+    );
+    assert_eq!(
+        doors::fold_ledger(&vault, key.run)?,
+        FoldLedgerView {
+            pending_marks: Vec::new(),
+            kind_folds: vec![first, second],
+        },
+        "both marks landed as folds"
+    );
+    Ok(())
+}
+
 /// When the waits of its cell come back within the prefix's last minute, a warm read beats a
 /// cold write of the folded prefix: the call is Expire and the mark stays pending.
 #[test]

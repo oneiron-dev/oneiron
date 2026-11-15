@@ -667,8 +667,9 @@ pub(super) fn kind_fold_records(
 /// A parked run's pending kind marks, sealed from the vault alone (L2-37):
 /// the ledger they were read against, the records the token feed would land
 /// for them at the run's next breakpoint, and the prompt tokens of the
-/// bodies those stubs replace (an upper estimate: the stubs' own handles are
-/// not subtracted).
+/// bodies those stubs replace: each body once, and none a landed fold
+/// already hides (an upper estimate: the stubs' own handles are not
+/// subtracted).
 #[derive(Debug)]
 pub(crate) struct ParkedKindFolds {
     pub(crate) ledger: crate::compaction::FoldLedger,
@@ -712,15 +713,22 @@ pub(crate) fn parked_kind_folds(
     if records.is_empty() {
         return Ok(None);
     }
+    // Two marks of one kind over a step show one stub (kind_covering), and a
+    // body a landed fold hides is off the prompt already: neither saves
+    // again.
+    let mut counted = std::collections::BTreeSet::new();
     let folded_tokens = records
         .iter()
-        .flat_map(|fold| {
-            let path: fn(u64) -> String = match fold.kind {
-                Some(FoldKind::Program) => script_output_path,
-                _ => observation_output_path,
-            };
-            (fold.from..=fold.through).map(path)
+        .filter_map(|fold| Some((fold.kind?, fold)))
+        .flat_map(|(kind, fold)| fold.outputs.iter().map(move |output| (kind, output.step)))
+        .filter(|&(kind, step)| {
+            ledger.covering(step).is_none() && ledger.kind_covering(kind, step).is_none()
         })
+        .map(|(kind, step)| match kind {
+            FoldKind::Program => script_output_path(step),
+            FoldKind::ReplOutput => observation_output_path(step),
+        })
+        .filter(|path| counted.insert(path.clone()))
         .filter_map(|path| record.outputs.iter().find(|output| output.path == path))
         // The window's rule of thumb: four bytes to a token.
         .map(|output| output.raw_len / 4)

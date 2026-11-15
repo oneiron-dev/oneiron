@@ -336,6 +336,9 @@ pub(super) fn run_bound(
     // managed issuer, else this install's own self-host root (FIX-LIST 3018).
     let issuer = server.host_issuer();
     let mut full = 0;
+    // L2-37: the prefix the last entry's turn left cached. An entry that
+    // resumes a Yielded program may park with no turn of its own.
+    let mut horizon = None;
     loop {
         let outcome = enter_run(
             vault,
@@ -355,6 +358,7 @@ pub(super) fn run_bound(
             &exposures,
             &server.ai,
             planned.as_ref(),
+            horizon.take(),
         );
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
@@ -366,6 +370,7 @@ pub(super) fn run_bound(
         // Every input producer reports at each stop. Any unknown constituent
         // keeps the whole set unknown, and the run goes on (FIX 7020).
         record_resident_read_sets(vault, &status.attempt, &outcome, &exposures);
+        horizon.clone_from(&outcome.cache_horizon);
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
             EngineExecutorStatus::WindowFull { .. }
@@ -578,6 +583,7 @@ fn enter_run(
     exposures: &[TaskExposure],
     ai: &crate::ai_host::AiHandle,
     planned: Option<&PlannedModel>,
+    horizon: Option<oneiron::idle_fold::CachedPrefixHorizon>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
@@ -699,6 +705,7 @@ fn enter_run(
         planned,
         status.input.definition.models.clone(),
         brief.as_ref().map(|brief| brief as &dyn SelfBriefPort),
+        horizon,
     );
     door.bind_meter(None);
     door.bind_lease(None);

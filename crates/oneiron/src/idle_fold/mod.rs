@@ -40,7 +40,7 @@ pub use horizon::{
     CachedPrefixHorizon, next_idle_call_due_ms, record_cache_horizon, run_due_idle_calls,
 };
 #[cfg(oneiron_test_support)]
-pub(crate) use horizon::{IdleCall, IdleCallRecord, IdleFoldDue, due_of, idle_call_of};
+pub(crate) use horizon::{IdleCall, due_of, idle_call_of};
 pub(crate) use returns::rebuild_return_tables;
 #[cfg(oneiron_test_support)]
 pub(crate) use returns::{IdleReturnCell, put_return_cell, return_cell};

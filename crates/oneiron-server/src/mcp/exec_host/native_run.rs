@@ -98,6 +98,8 @@ pub(super) fn run_engine_native_code_mode(
             &reactor,
             seat.as_ref(),
             brief,
+            // Each `execute_code` call is its own entry.
+            None,
         ),
         None => enter_engine_native_run(
             vault,
@@ -113,6 +115,7 @@ pub(super) fn run_engine_native_code_mode(
             // Keep this caller's existing unconstrained routing.
             Vec::new(),
             brief,
+            None,
         ),
     }
     .map_err(|error| match error.provider_outage() {

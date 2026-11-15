@@ -189,6 +189,18 @@ impl<'a> EngineNativeExecutor<'a> {
         self
     }
 
+    /// The prefix the run's last turn answer left cached, as its previous
+    /// entry returned it (L2-37): an entry that resumes a pending program
+    /// with no turn parks with it. Each answer this entry gets replaces it.
+    #[must_use]
+    pub fn with_cache_horizon(
+        mut self,
+        horizon: Option<crate::idle_fold::CachedPrefixHorizon>,
+    ) -> Self {
+        self.cache_horizon = horizon;
+        self
+    }
+
     /// Binds the host's compaction seat for this run (agent-runtime-v1 §d7):
     /// the window compacts itself, and fills park with a typed reason. A run
     /// bound to an off-record room compacts into the room's overlay, along
