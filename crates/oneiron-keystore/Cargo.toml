@@ -31,9 +31,16 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSString"] }
 objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "LAContext", "block2"] }
 
-# DPAPI, through the binding the workspace already locks; no SDK at build time.
+# DPAPI, the session's lock record and the window the unlock prompt shows over,
+# through the binding the workspace already locks. Windows Hello's prompt is a
+# Windows Runtime call, which windows-sys does not carry: it comes from the
+# `windows` crate, with its asynchronous-call types from `windows-future`, both
+# already in the workspace lock. No SDK at build time
+# (scripts/ci/check_keystore_windows_target.sh; no CI job runs it yet).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+windows = { version = "0.62", features = ["Security_Credentials_UI", "Win32_System_WinRT"] }
+windows-future = "0.3"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_System_RemoteDesktop", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 # The process-memory adapter, the scripted presence prompt and the manual

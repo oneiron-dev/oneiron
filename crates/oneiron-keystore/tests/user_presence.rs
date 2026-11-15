@@ -9,6 +9,10 @@
 //! confirmed while its screen reads locked, a locked reading ends the
 //! window, the watch ends the window when no act comes, and the watch stops
 //! with its gate. Each LocalAuthentication error code keeps its own refusal.
+//!
+//! Windows: each Windows Hello answer keeps its own meaning, each
+//! availability says whether the device can ask, and only an active session
+//! that says it is unlocked reads as unlocked.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
@@ -18,7 +22,7 @@ use std::time::{Duration, Instant};
 use oneiron_keystore::{
     ManualPresenceClock, NoPromptPresence, PRESENCE_WINDOW_SECS, PresenceCapability, PresenceClock,
     PresenceConfirmation, PresenceError, PresenceGate, PresenceInstant, PresenceWindow,
-    ScriptedPresence, UserPresence,
+    ScriptedPresence, UserPresence, WindowsScreenSession,
 };
 
 const WINDOW_MS: u64 = PRESENCE_WINDOW_SECS * 1000;
@@ -536,5 +540,116 @@ fn each_local_authentication_code_keeps_its_own_refusal() {
             PresenceError::Platform("local authentication", code),
             "code {code}"
         );
+    }
+}
+
+#[test]
+fn each_windows_hello_answer_keeps_its_own_meaning() {
+    let answer = PresenceError::user_consent_verification;
+    // Verified.
+    assert_eq!(answer(0), Ok(()));
+    // RetriesExhausted, Canceled.
+    for result in [5, 6] {
+        assert_eq!(
+            answer(result),
+            Err(PresenceError::Declined),
+            "result {result}"
+        );
+    }
+    // DeviceNotPresent, NotConfiguredForUser, DisabledByPolicy: the confirm
+    // belongs on another device.
+    for result in [1, 2, 3] {
+        assert!(
+            matches!(answer(result), Err(PresenceError::NoPrompt(_))),
+            "result {result}: {:?}",
+            answer(result)
+        );
+    }
+    assert_ne!(answer(1), answer(2), "each says why it cannot ask");
+    assert_ne!(answer(2), answer(3), "each says why it cannot ask");
+    // DeviceBusy, and a value Windows may add later: a fault by its number,
+    // never a confirm, and never read as the user's own no.
+    for result in [4, 7, -1, i32::MIN, i32::MAX] {
+        assert_eq!(
+            answer(result),
+            Err(PresenceError::Platform(
+                "user consent verification result",
+                i64::from(result)
+            )),
+            "result {result}"
+        );
+    }
+}
+
+#[test]
+fn each_windows_hello_availability_says_whether_the_device_can_ask() {
+    let capability = PresenceCapability::from_user_consent_availability;
+    // Available, DeviceBusy: the device has a prompt.
+    for availability in [0, 4] {
+        assert_eq!(
+            capability(availability),
+            PresenceCapability::DevicePrompt,
+            "availability {availability}"
+        );
+    }
+    // DeviceNotPresent, NotConfiguredForUser, DisabledByPolicy, and a value
+    // this build does not know: no prompt, never a silent yes.
+    for availability in [1, 2, 3, 5, -1, i32::MAX] {
+        assert!(
+            matches!(capability(availability), PresenceCapability::NoPrompt(_)),
+            "availability {availability}: {:?}",
+            capability(availability)
+        );
+    }
+    // The verifier's answer and its availability give one reason for one
+    // cause.
+    for cause in [1, 2, 3] {
+        let Err(PresenceError::NoPrompt(asked)) = PresenceError::user_consent_verification(cause)
+        else {
+            panic!("result {cause} is not a device that cannot ask");
+        };
+        assert_eq!(capability(cause), PresenceCapability::NoPrompt(asked));
+    }
+}
+
+#[test]
+fn only_an_active_windows_session_that_says_unlocked_reads_as_unlocked() {
+    const ACTIVE: i32 = 0;
+    const LOCK: i32 = 0;
+    const UNLOCK: i32 = 1;
+    // WTS_SESSIONSTATE_UNKNOWN is every bit set.
+    const UNKNOWN: i32 = -1;
+    let session = WindowsScreenSession::from_session_info;
+
+    assert_eq!(session(1, ACTIVE, UNLOCK), WindowsScreenSession::Unlocked);
+    assert_eq!(session(1, ACTIVE, LOCK), WindowsScreenSession::Locked);
+    // A lock state this build does not know is never read as unlocked.
+    for flags in [UNKNOWN, 2, i32::MAX] {
+        assert_eq!(
+            session(1, ACTIVE, flags),
+            WindowsScreenSession::Unreadable,
+            "flags {flags}"
+        );
+    }
+    // Connected, Disconnected, Idle, Down: no user at a screen, whatever
+    // the lock state says.
+    for connect_state in [1, 4, 5, 8, -1] {
+        for flags in [LOCK, UNLOCK, UNKNOWN] {
+            assert_eq!(
+                session(3, connect_state, flags),
+                WindowsScreenSession::OffScreen,
+                "connect state {connect_state}, flags {flags}"
+            );
+        }
+    }
+    // Session 0 is the services session, whatever else it says.
+    for connect_state in [ACTIVE, 4] {
+        for flags in [LOCK, UNLOCK, UNKNOWN] {
+            assert_eq!(
+                session(0, connect_state, flags),
+                WindowsScreenSession::Services,
+                "connect state {connect_state}, flags {flags}"
+            );
+        }
     }
 }

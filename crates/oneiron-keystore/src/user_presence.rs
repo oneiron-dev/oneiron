@@ -86,6 +86,24 @@ const LA_ERROR_NOT_INTERACTIVE: i64 = -1004;
 const NO_DEVICE_PASSCODE: &str = "no passcode or password is set on this device";
 const PROMPT_NOT_ALLOWED: &str = "this process may not show the device's unlock prompt";
 
+// Windows' `UserConsentVerificationResult` values
+// (Windows.Security.Credentials.UI). `UserConsentVerifierAvailability` has
+// the first five under the same numbers, with `Available` for 0.
+const USER_CONSENT_VERIFIED: i32 = 0;
+const USER_CONSENT_DEVICE_NOT_PRESENT: i32 = 1;
+const USER_CONSENT_NOT_CONFIGURED_FOR_USER: i32 = 2;
+const USER_CONSENT_DISABLED_BY_POLICY: i32 = 3;
+const USER_CONSENT_DEVICE_BUSY: i32 = 4;
+const USER_CONSENT_RETRIES_EXHAUSTED: i32 = 5;
+const USER_CONSENT_CANCELED: i32 = 6;
+const USER_CONSENT_AVAILABLE: i32 = 0;
+
+const NO_HELLO_DEVICE: &str = "this device has no Windows Hello sign-in";
+const HELLO_NOT_SET_UP: &str = "Windows Hello is not set up for this user";
+const HELLO_OFF_BY_POLICY: &str = "Windows Hello is turned off by policy on this device";
+const HELLO_AVAILABILITY_UNKNOWN: &str =
+    "Windows Hello gave an availability this build does not know";
+
 impl PresenceError {
     /// The refusal one of Apple's LocalAuthentication error codes (`LAError`)
     /// stands for. It is here, and not with the macOS prompt, so that every
@@ -110,6 +128,97 @@ impl PresenceError {
             LA_ERROR_PASSCODE_NOT_SET => Self::NoPrompt(NO_DEVICE_PASSCODE),
             LA_ERROR_NOT_INTERACTIVE => Self::NoPrompt(PROMPT_NOT_ALLOWED),
             other => Self::Platform("local authentication", other),
+        }
+    }
+
+    /// What one of Windows' `UserConsentVerificationResult` values stands
+    /// for: `Ok` only when Windows Hello verified the user. It is here, and
+    /// not with the Windows prompt, so that every platform's tests run it.
+    ///
+    /// # Errors
+    /// - The user cancelled, or failed too many times: [`Self::Declined`].
+    ///   Windows gives one value for the user's cancel and its own.
+    /// - The device has no Windows Hello, Hello is not set up for this
+    ///   user, or policy turned it off: [`Self::NoPrompt`].
+    /// - The device was busy, and every other value: [`Self::Platform`].
+    pub const fn user_consent_verification(result: i32) -> Result<(), Self> {
+        match result {
+            USER_CONSENT_VERIFIED => Ok(()),
+            USER_CONSENT_RETRIES_EXHAUSTED | USER_CONSENT_CANCELED => Err(Self::Declined),
+            USER_CONSENT_DEVICE_NOT_PRESENT => Err(Self::NoPrompt(NO_HELLO_DEVICE)),
+            USER_CONSENT_NOT_CONFIGURED_FOR_USER => Err(Self::NoPrompt(HELLO_NOT_SET_UP)),
+            USER_CONSENT_DISABLED_BY_POLICY => Err(Self::NoPrompt(HELLO_OFF_BY_POLICY)),
+            other => Err(Self::Platform(
+                "user consent verification result",
+                other as i64,
+            )),
+        }
+    }
+}
+
+impl PresenceCapability {
+    /// Whether a device can ask, from one of Windows'
+    /// `UserConsentVerifierAvailability` values. A busy device can ask: the
+    /// confirm that meets it busy answers that fault itself. A value this
+    /// build does not know is a device that cannot ask.
+    #[must_use]
+    pub const fn from_user_consent_availability(availability: i32) -> Self {
+        match availability {
+            USER_CONSENT_AVAILABLE | USER_CONSENT_DEVICE_BUSY => Self::DevicePrompt,
+            USER_CONSENT_DEVICE_NOT_PRESENT => Self::NoPrompt(NO_HELLO_DEVICE),
+            USER_CONSENT_NOT_CONFIGURED_FOR_USER => Self::NoPrompt(HELLO_NOT_SET_UP),
+            USER_CONSENT_DISABLED_BY_POLICY => Self::NoPrompt(HELLO_OFF_BY_POLICY),
+            _ => Self::NoPrompt(HELLO_AVAILABILITY_UNKNOWN),
+        }
+    }
+}
+
+// Windows' record of a session (wtsapi32.h, `WTSINFOEX_LEVEL1`).
+const WTS_SERVICES_SESSION_ID: u32 = 0;
+const WTS_ACTIVE: i32 = 0;
+const WTS_SESSIONSTATE_LOCK: i32 = 0;
+const WTS_SESSIONSTATE_UNLOCK: i32 = 1;
+
+/// What Windows' record of a session says about asking its user. It is
+/// here, and not with the Windows prompt, so that every platform's tests
+/// run its table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowsScreenSession {
+    /// Session 0: services, which have no screen.
+    Services,
+    /// Not the active session of a screen: its user switched out, or
+    /// disconnected.
+    OffScreen,
+    /// On a screen, and locked.
+    Locked,
+    /// On a screen, and unlocked.
+    Unlocked,
+    /// The record could not be read, or its lock state is not one of the
+    /// two this build knows. It is never read as unlocked.
+    Unreadable,
+}
+
+impl WindowsScreenSession {
+    /// Reads `WTSINFOEX_LEVEL1`'s `SessionId`, `SessionState` and
+    /// `SessionFlags`. Only an active session that says it is unlocked
+    /// reads as unlocked. (Windows 7 gave the two lock values the other
+    /// way round; it has no prompt here, so no window opens on it.)
+    #[must_use]
+    pub const fn from_session_info(
+        session_id: u32,
+        connect_state: i32,
+        session_flags: i32,
+    ) -> Self {
+        if session_id == WTS_SERVICES_SESSION_ID {
+            return Self::Services;
+        }
+        if connect_state != WTS_ACTIVE {
+            return Self::OffScreen;
+        }
+        match session_flags {
+            WTS_SESSIONSTATE_LOCK => Self::Locked,
+            WTS_SESSIONSTATE_UNLOCK => Self::Unlocked,
+            _ => Self::Unreadable,
         }
     }
 }
@@ -162,17 +271,25 @@ impl UserPresence for NoPromptPresence {
 
 // macOS is the one Apple platform with a prompt here: the others have no
 // screen-lock reading built, and a window must never outlast a lock.
-#[cfg(any(all(target_vendor = "apple", not(target_os = "macos")), windows))]
+#[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
 const NO_PLATFORM_PROMPT: &str = "this platform's unlock prompt is not built yet";
 #[cfg(not(any(target_vendor = "apple", windows)))]
 const NO_PLATFORM_PROMPT: &str = "this platform has no unlock prompt the engine can show";
 
 /// This platform's prompt. A platform with none, and one whose prompt is not
 /// built yet, answers as a device that cannot ask: never a silent yes.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 #[must_use]
 pub fn platform_user_presence() -> Arc<dyn UserPresence> {
     Arc::new(NoPromptPresence::new(NO_PLATFORM_PROMPT))
+}
+
+/// This platform's prompt: Windows Hello, which also answers whether the
+/// session is locked.
+#[cfg(windows)]
+#[must_use]
+pub fn platform_user_presence() -> Arc<dyn UserPresence> {
+    Arc::new(crate::windows_presence::WindowsUserPresence::new())
 }
 
 /// This platform's prompt: the macOS unlock sheet, which also answers
@@ -371,7 +488,7 @@ pub struct PresenceGate {
     prompting: Mutex<()>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 const NO_SCREEN_LOCK_WATCH: &str = "the screen-lock watch could not start";
 
 impl PresenceGate {
@@ -394,10 +511,11 @@ impl PresenceGate {
     }
 
     /// macOS delivers its lock notification only to a main thread that runs
-    /// a run loop, which a headless host has not: the gate reads the lock on
-    /// a timer. With no watch a window could outlast a lock, so a gate whose
+    /// a run loop, and Windows only to a window whose thread runs a message
+    /// loop. A headless host has neither: the gate reads the lock on a
+    /// timer. With no watch a window could outlast a lock, so a gate whose
     /// watch cannot start answers as a device that cannot ask.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     fn watching_platform_lock(self) -> Self {
         match self.watch_screen_lock(Duration::from_millis(SCREEN_LOCK_POLL_MS)) {
             Ok(()) => self,
@@ -408,7 +526,7 @@ impl PresenceGate {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     fn watching_platform_lock(self) -> Self {
         self
     }
