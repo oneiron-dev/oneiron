@@ -184,9 +184,12 @@ impl FailureDrillView {
 }
 
 /// The rows an agent must read to read `trace`: its attempt's complete
-/// recorded read set (FIX 7073), its TASK and the row its durable result
-/// names. `None` when its producers recorded no complete set: such a trace
-/// stays the owner's, as a heal context's trace part does (FIX 10093).
+/// recorded read set (FIX 7073), its TASK, the row its durable result names,
+/// the failed custom agent's definition (the failure's subject) and the
+/// project its dispatch ran in, as a seal's rows are (`seal_source_rows`,
+/// `attempt_project`). `None` when its producers recorded no complete set,
+/// or its dispatch does not decode: such a trace stays the owner's, as a
+/// heal context's trace part does (FIX 10093).
 fn agent_trace_rows(trace: &AttemptRecord) -> Option<Vec<EntityId>> {
     let mut rows = trace.source_rows()?.to_vec();
     rows.extend(trace.task_ref.as_deref().and_then(reference_row));
@@ -196,6 +199,9 @@ fn agent_trace_rows(trace: &AttemptRecord) -> Option<Vec<EntityId>> {
             .as_ref()
             .and_then(|result| reference_row(result.as_str())),
     );
+    let dispatch = crate::agent_dispatch::record_dispatch_input(trace)?;
+    rows.push(dispatch.target.agent_definition_ref().ok()?);
+    rows.extend(dispatch.project_ref);
     rows.sort_unstable();
     rows.dedup();
     Some(rows)

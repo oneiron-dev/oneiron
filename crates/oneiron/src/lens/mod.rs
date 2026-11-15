@@ -80,7 +80,6 @@ pub use selection::{
     LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan,
     LensSelection, LensSelectionRange, LensSelectionResolveRequest, LensSelectionResolved,
 };
-pub(crate) mod setting_keys;
 
 pub(crate) mod tables;
 #[cfg(test)]
