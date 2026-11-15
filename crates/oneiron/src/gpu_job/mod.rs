@@ -63,7 +63,7 @@ pub enum GpuJobError {
     /// created.
     #[error("the run admission refused the job: {0}")]
     Denied(RunDenied),
-    #[error("a GPU offer is priced at our list price, not {0:?}")]
+    #[error("a GPU offer must be priced at our list price, not {0:?}")]
     PriceShape(PriceShape),
     #[error("the quote's price does not fit")]
     QuoteOverflow,

@@ -115,9 +115,13 @@ impl Vault {
                 GpuJobState::Reserved | GpuJobState::Running => GpuJobState::Ending {
                     reason: GpuEndReason::Cancelled,
                 },
-                GpuJobState::Stopped => GpuJobState::Ended {
-                    reason: GpuEndReason::Cancelled,
-                },
+                GpuJobState::Stopped => {
+                    // The cancel gives up the stop's resume.
+                    job.stop = None;
+                    GpuJobState::Ended {
+                        reason: GpuEndReason::Cancelled,
+                    }
+                }
                 GpuJobState::Ending { .. } => return Ok(Ok(job)),
                 GpuJobState::Ended { .. } | GpuJobState::Held { .. } => {
                     return Ok(Err(GpuJobError::Ended));
@@ -164,7 +168,11 @@ impl Vault {
             chunk.resource = Some(resource);
             job.state = GpuJobState::Running;
         }
-        self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))?;
+        if !self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))? {
+            // Another write came first (a cancel): the stored row stands, and
+            // the chunk's end finds a resource this create made by its key.
+            return self.load_gpu_job(&job.id);
+        }
         Ok(job)
     }
 
@@ -176,7 +184,9 @@ impl Vault {
         now_ms: u64,
     ) -> Result<GpuJob, GpuJobError> {
         job.state = GpuJobState::Held { reason };
-        self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))?;
+        if !self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))? {
+            return self.load_gpu_job(&job.id);
+        }
         Ok(job)
     }
 }

@@ -141,10 +141,16 @@ impl GpuOffer {
             .list_cost_per_second
             .map(|rate| rate.checked_mul(quantity).ok_or(GpuJobError::QuoteOverflow))
             .transpose()?;
+        // The digest covers the request with its maximum stated, so a quote
+        // on the host's default checks against itself.
+        let stated = GpuJobRequest {
+            maximum_secs: Some(maximum_secs),
+            ..request.clone()
+        };
         let terms = QuoteTerms {
             offer: self,
             job: &job,
-            request,
+            request: &stated,
             maximum_secs,
             quoted_at_ms,
         };

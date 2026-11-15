@@ -575,6 +575,26 @@ fn a_create_timeout_finds_the_resource_and_never_creates_twice() {
 }
 
 #[test]
+fn a_quote_on_the_host_default_maximum_starts() {
+    let rig = rig();
+    let quote = rig
+        .offer
+        .quote(&request(None), None, DEFAULT_MAXIMUM_SECS, NOW)
+        .expect("quote");
+    assert_eq!(quote.maximum_secs, DEFAULT_MAXIMUM_SECS);
+    let (admission, _receipts) = admission(&quote.job, quote.units);
+    let job = rig.start(&quote, &admission);
+
+    assert_eq!(job.state, GpuJobState::Running);
+    assert_eq!(rig.gpu.called("create"), 1);
+    assert_eq!(
+        rig.gpu.state().specs[0].maximum_secs,
+        DEFAULT_MAXIMUM_SECS,
+        "the chunk runs under the host's default maximum"
+    );
+}
+
+#[test]
 fn a_quote_from_a_changed_offer_is_refused() {
     let rig = rig();
     let quote = rig.quote(100, None, NOW);
