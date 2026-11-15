@@ -56,6 +56,7 @@ fn owners(slot: Option<RowKey>, inline: &[u8]) -> PolicySettingSet {
         value: Some(*blake3::hash(inline).as_bytes()),
         slot,
         inline: Some(inline.to_vec()),
+        more: Vec::new(),
     }
 }
 

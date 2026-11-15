@@ -489,7 +489,7 @@ pub(crate) use pinned_root::{
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use policy_setting_choice::SettingFrontier;
 pub(crate) use policy_setting_choice::{
-    PolicySettingAct, SettingSlotAct, SettingSlotFold, SettingSlotHead,
+    PolicySettingAct, SettingSlotAct, SettingSlotFold, SettingSlotHead, SettingSlotRow,
 };
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,

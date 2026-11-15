@@ -28,8 +28,8 @@
 use serde::{Deserialize, Serialize};
 
 use oneiron_authority::authority::{
-    ActSurface, AuthorityEntryHash, OwnerAct, OwnerActKind, POLICY_SETTING_INLINE_MAX,
-    setting_slot_target,
+    ActSurface, AuthorityEntryHash, OwnerActKind, POLICY_SETTING_INLINE_MAX, setting_slot_target,
+    setting_value_digest,
 };
 use oneiron_setting_contract::{RowKey, SettingStanding};
 
@@ -41,7 +41,7 @@ use super::{
     spec_named,
 };
 use crate::Vault;
-use crate::authority::{SettingSlotAct, SettingSlotFold, SettingSlotHead};
+use crate::authority::{SettingSlotAct, SettingSlotFold, SettingSlotHead, SettingSlotRow};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
@@ -131,19 +131,20 @@ pub(super) fn append_act_in_txn(
         scope: recorded.scope.clone(),
     };
     let target = setting_slot_target(&slot)?;
-    let prior = digest(&match &recorded.prior {
+    let prior = setting_value_digest(&match &recorded.prior {
         Some(prior) => json_bytes(spec, prior)?,
         None => b"null".to_vec(),
     });
-    let seen = vault.policy_setting_revision_in_txn(txn, target)?;
-    let act = OwnerAct::by_owner(owner, OwnerActKind::PolicySetting, target, surface, seen);
     let signed = vault.append_setting_slot_act_in_txn(
         txn,
         SettingSlotAct {
-            act,
-            slot,
-            prior,
-            inline,
+            owner,
+            surface,
+            rows: vec![SettingSlotRow {
+                slot,
+                prior,
+                inline,
+            }],
         },
     )?;
     record_signed_entry_in_txn(&vault.store, txn, recorded, signed)?;
@@ -154,13 +155,9 @@ pub(super) fn append_act_in_txn(
 
 /// The value's JSON bytes: what an act carries inline, and what its digest is over (the digest
 /// stage 7a-1's acts keep).
-fn json_bytes(spec: &SettingSpec, value: &EncodedValue) -> Result<Vec<u8>> {
+pub(super) fn json_bytes(spec: &SettingSpec, value: &EncodedValue) -> Result<Vec<u8>> {
     let json = spec.kind.to_json(value).unwrap_or(serde_json::Value::Null);
     serde_json::to_vec(&json).map_err(|_| Error::InvariantViolation("setting act encoding"))
-}
-
-fn digest(bytes: &[u8]) -> [u8; 32] {
-    *blake3::hash(bytes).as_bytes()
 }
 
 fn target_key(target: EntityId) -> Vec<u8> {
@@ -511,6 +508,31 @@ fn write_row_in_txn(
     Ok(true)
 }
 
+/// Forgets every row the projection wrote, and its record (stage 7a-3 tests): this install then
+/// holds the log and none of those rows, as a machine that took the log from another holds it
+/// until its next pass. The rows forgotten.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn forget_projected_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<usize> {
+    let mut forgotten = 0;
+    for (target, projection) in PROJECTIONS.scan(&vault.store, txn)? {
+        if let Some(slot) = RowKey::decode(&projection.slot)
+            && let Ok(spec) = spec_named(&slot.name)
+            && table_of(spec).delete(&vault.store, txn, &projection.slot)?
+        {
+            forgotten += 1;
+        }
+        PROJECTIONS.delete(&vault.store, txn, &target)?;
+    }
+    Ok(forgotten)
+}
+
 /// How the acts behind the rows of `spec` a read walks stand: the least settled of the pin and
 /// value rows on `chain`, for `item` and the item-less rows (stage 7a-2). A key that does not
 /// travel is always settled.
@@ -558,10 +580,26 @@ impl Vault {
     /// write, and runs the `after_commit` of each key whose row changed (stage 7a-2). A vault
     /// with no authority root, or with no setting act, writes nothing.
     ///
+    /// First, in its own write, the owner's rows no act backs are published as batch acts, once
+    /// per vault (stage 7a-3, [`Self::publish_settings`]); a fault there is logged, and the
+    /// projection goes on.
+    ///
     /// # Errors
     ///
     /// Storage errors; a key's hook's error.
     pub fn project_settings(&self) -> Result<SettingsProjected> {
+        match self.publish_settings() {
+            Ok(Some(published)) if published.acts > 0 => tracing::info!(
+                acts = published.acts,
+                rows = published.rows,
+                "the owner's setting rows no act backed were published as batch acts"
+            ),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "the owner's setting rows no act backs were not published; the next authority commit or open tries again"
+            ),
+        }
         let moved: Vec<EntityId> = {
             let txn = self.store.env.read_txn()?;
             if !rooted_in_txn(self, &txn)? {

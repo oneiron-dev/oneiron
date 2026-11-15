@@ -397,8 +397,27 @@ pub fn setting_frontier(
     scope: SettingScope,
 ) -> Result<SettingFrontier> {
     vault
-        .setting_frontier(&row_key(key, item, mode, scope))
+        .setting_frontier(&[row_key(key, item, mode, scope)])
         .map(SettingFrontier)
+}
+
+/// One setting row as a test names it: its key, item, mode and scope.
+#[cfg(feature = "test-support")]
+pub type SlotName<'a> = (&'a str, Option<&'a str>, SettingMode, SettingScope);
+
+/// The frontier of the rows `slots` together (stage 7a-3): a batch signed on it names each row's
+/// revision as it stood.
+///
+/// # Errors
+///
+/// A key name of another shape; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_frontier_of(vault: &Vault, slots: &[SlotName<'_>]) -> Result<SettingFrontier> {
+    let slots: Vec<_> = slots
+        .iter()
+        .map(|(key, item, mode, scope)| row_key(key, *item, *mode, scope.clone()))
+        .collect();
+    vault.setting_frontier(&slots).map(SettingFrontier)
 }
 
 #[cfg(feature = "test-support")]
@@ -434,20 +453,78 @@ pub fn land_setting_act_from(
     value: Option<serde_json::Value>,
     ts: u64,
 ) -> Result<()> {
-    let inline = value
-        .map(|value| serde_json::to_vec(&value))
-        .transpose()
-        .map_err(|_| Error::InvariantViolation("a setting value's JSON"))?;
-    let entry = vault.sign_setting_act_as(
-        (signer.machine, &signer.key),
+    land_setting_batch_from(
+        vault,
+        signer,
         owner,
-        &frontier.0,
-        (row_key(key, item, mode, scope), inline),
+        frontier,
+        &[((key, item, mode, scope), value)],
         ts,
-    )?;
+    )
+    .map(|_| ())
+}
+
+/// The owner `owner`'s change of each row of `rows` to its value (`None` clears) as ONE act
+/// (a batch, stage 7a-3), signed as `signer`'s own door signs it on `frontier` at `ts`, landed
+/// here as a peer's entry lands. A row `frontier` did not read names `seen` zero. Whether the
+/// fold here counts the entry (valid, and not held back).
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_batch_from(
+    vault: &Vault,
+    signer: &EnrolledMachine,
+    owner: EntityId,
+    frontier: &SettingFrontier,
+    rows: &[(SlotName<'_>, Option<serde_json::Value>)],
+    ts: u64,
+) -> Result<bool> {
+    let rows = rows
+        .iter()
+        .map(|((key, item, mode, scope), value)| {
+            let inline = value
+                .as_ref()
+                .map(serde_json::to_vec)
+                .transpose()
+                .map_err(|_| Error::InvariantViolation("a setting value's JSON"))?;
+            Ok((row_key(key, *item, *mode, scope.clone()), inline))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let entry =
+        vault.sign_setting_act_as((signer.machine, &signer.key), owner, &frontier.0, rows, ts)?;
+    let hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
     let at = crate::temporal::TimeRange { start: ts, end: ts };
     vault.put_authority_log_entries(&[(entry, at, ts)])?;
-    Ok(())
+    let fold = vault.authority_fold()?;
+    Ok(fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash))
+}
+
+/// Whether the setting publish pass ran in this vault (stage 7a-3).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn settings_published(vault: &Vault) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::setting::settings_published_in_txn(vault, &txn)
+}
+
+/// Forgets every setting row the projection wrote from signed acts, and its record (stage
+/// 7a-3): the install then holds the log and none of those rows, as a machine that took the log
+/// from another, until its next projection pass. The rows forgotten.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn forget_projected_setting_rows(vault: &Vault) -> Result<usize> {
+    let mut txn = vault.store.env.write_txn()?;
+    let forgotten = crate::setting::forget_projected_rows_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(forgotten)
 }
 
 /// `test.ordered_cap` as a read at the places `known` resolves it: the value, its source and

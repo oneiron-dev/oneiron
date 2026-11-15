@@ -103,10 +103,6 @@ pub(super) fn record_signed_entry_in_txn(
 /// # Errors
 ///
 /// A change row that does not decode; storage errors.
-#[cfg_attr(
-    not(all(oneiron_test_support, feature = "test-support")),
-    allow(dead_code)
-)]
 pub(crate) fn change_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,

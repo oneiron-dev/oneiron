@@ -33,4 +33,9 @@ crate::side_table::side_tables! {
     /// revision writes nothing. Key: the row's act target (16 bytes).
     SETTING_PROJECTION: VaultMeta b"setting:projection:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// When the publish pass signed the owner's rows that no act backed as batch acts (stage
+    /// 7a-3, DESIGN 1.6 "a vault with no authority root"), in recorded seconds; absent until it
+    /// ran, so it runs once per vault. Key: ().
+    SETTING_PUBLISHED: VaultMeta b"setting:published:v1" Named
+        [restore: live] [family: unclassified] [tier: canonical];
 }

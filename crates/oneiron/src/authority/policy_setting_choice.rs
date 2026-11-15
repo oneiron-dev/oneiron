@@ -31,6 +31,12 @@
 //! ([`Vault::append_setting_slot_act_in_txn`]). Each row then has a frontier
 //! of its own, and the setting projection reads it back with the heads' ops
 //! ([`Vault::setting_slot_fold_in_txn`]).
+//!
+//! A batch is one act (stage 7a-3): one entry lists several rows, each on its
+//! own target with its own `seen`, under one decider. It lands once per row,
+//! on that row's frontier, and in all of them or none: a `seen` that is wrong
+//! on any row makes the entry invalid. A refused or held-back batch is so in
+//! every row, since both sets are keyed by the entry's hash.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -97,7 +103,9 @@ impl FoldedPolicySettings {
 }
 
 /// The `PolicySettingSet` transition ([`owner_choice_landing`]), under its
-/// own revision domain, on its target's frontier.
+/// own revision domain, on its target's frontier, and for a batch on each
+/// row's (stage 7a-3): every row is judged against the state before the
+/// entry, and only then do they all land.
 pub(super) fn apply_policy_setting(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -106,22 +114,30 @@ pub(super) fn apply_policy_setting(
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    let op = OwnerChoiceOp {
-        act: &set.act,
-        machine: set.machine,
-        choice: set.value.as_ref(),
-        context: POLICY_SETTING_REVISION_CONTEXT,
-    };
-    let landing = owner_choice_landing(
-        state,
-        &state.policy_settings,
-        entry,
-        op,
-        hash,
-        counting,
-        restriction_only,
-    )?;
-    state.policy_settings.land(landing);
+    let acts = set
+        .row_acts()
+        .map_err(|_| AuthorityFoldIssue::InvalidEntry(hash))?;
+    let mut landings = Vec::with_capacity(acts.len());
+    for (act, value) in &acts {
+        let op = OwnerChoiceOp {
+            act,
+            machine: set.machine,
+            choice: value.as_ref(),
+            context: POLICY_SETTING_REVISION_CONTEXT,
+        };
+        landings.push(owner_choice_landing(
+            state,
+            &state.policy_settings,
+            entry,
+            op,
+            hash,
+            counting,
+            restriction_only,
+        )?);
+    }
+    for landing in landings {
+        state.policy_settings.land(landing);
+    }
     if let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
         state.agent_carried_acts.insert(hash, agent);
     }
@@ -192,46 +208,73 @@ impl Vault {
                 value,
                 slot: None,
                 inline: None,
+                more: Vec::new(),
             })
         })
     }
 
-    /// Appends `act`, an owner's change of a setting row that travels, as a
-    /// signed `PolicySettingSet` in the change's write `txn` (stage 7a-2):
-    /// named by its row, with its value inline. Not best effort: the act is
-    /// the write, so whatever stops it (no live machine profile to carry it,
-    /// a fold that does not count it, a storage fault) fails the change, and
-    /// the savepoint it ran in is rolled back with it. The entry's hash.
+    /// Appends `act`, an owner's change of setting rows that travel, as one
+    /// signed `PolicySettingSet` in the change's write `txn` (stage 7a-2; a
+    /// batch of rows stage 7a-3): each row named by its slot, with its value
+    /// inline and the `seen` of its own target, read in `txn`. Not best
+    /// effort: the act is the write, so whatever stops it (no live machine
+    /// profile to carry it, a fold that does not count it, a storage fault)
+    /// fails the change, and the savepoint it ran in is rolled back with it.
+    /// The entry's hash.
     ///
     /// # Errors
     ///
-    /// The typed refusal of the act's append ([`super::carried_act`]), or a
-    /// storage error.
+    /// The typed refusal of the act's append ([`super::carried_act`]), an act
+    /// with no row, or a storage error.
     pub(crate) fn append_setting_slot_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         act: SettingSlotAct,
     ) -> Result<AuthorityEntryHash> {
         let SettingSlotAct {
-            act,
-            slot,
-            prior,
-            inline,
+            owner,
+            surface,
+            rows,
         } = act;
-        let value = inline.as_ref().map(|bytes| *blake3::hash(bytes).as_bytes());
-        let setting = slot.name.clone();
-        let vault_row = setting_slot_target(&slot)? == policy_setting_target(&setting)?;
+        let rows = {
+            let view = self.authority_view_readonly_in_txn(txn)?;
+            rows.into_iter()
+                .map(|row| {
+                    let seen = view
+                        .policy_settings
+                        .revision(setting_slot_target(&row.slot)?);
+                    slot_row(row.slot, seen, row.prior, row.inline)
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        let carried_by = setting_act_of((owner, surface), rows)?;
         self.append_carried_act_in_savepoint(txn, |machine| {
-            AuthorityOp::PolicySettingSet(PolicySettingSet {
-                act,
-                machine,
-                setting,
-                prior,
-                value,
-                slot: (!vault_row).then_some(slot),
-                inline,
-            })
+            AuthorityOp::PolicySettingSet(carried_by(machine))
         })
+    }
+
+    /// Whether the fold in `txn` holds the setting act `hash` valid and
+    /// without effect: its carrier was not admitted, or its owner not live,
+    /// at its parents.
+    pub(crate) fn policy_setting_act_refused_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hash: AuthorityEntryHash,
+    ) -> Result<bool> {
+        Ok(self
+            .authority_view_readonly_in_txn(txn)?
+            .policy_settings
+            .refused
+            .contains(&hash))
+    }
+
+    /// Whether this install can carry an owner's act in `txn`: it has a
+    /// machine identity and install key, and a live profile of it stands
+    /// under that key ([`super::carried_act`]).
+    pub(crate) fn can_carry_owner_act_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        self.owner_act_carrier_in_txn(txn, &fold)
+            .map(|carrier| carrier.is_some())
     }
 
     /// Every setting target the fold names in `txn`, each with its
@@ -266,11 +309,11 @@ impl Vault {
         let live = folded
             .live
             .keys()
-            .map(|hash| self.setting_slot_head_in_txn(txn, *hash))
+            .map(|hash| self.setting_slot_head_in_txn(txn, target, *hash))
             .collect::<Result<Vec<_>>>()?;
         let conflict = !folded.conflict.is_empty();
         let in_force = match (&folded.in_force, conflict) {
-            (Some(head), true) => Some(self.setting_slot_head_in_txn(txn, head.act)?),
+            (Some(head), true) => Some(self.setting_slot_head_in_txn(txn, target, head.act)?),
             _ => None,
         };
         Ok(Some(SettingSlotFold {
@@ -281,10 +324,12 @@ impl Vault {
         }))
     }
 
-    /// The setting act `hash` names, read back from the log in `txn`.
+    /// The setting act `hash` names, read back from the log in `txn`, as it
+    /// bears on `target` (a batch's row on it, stage 7a-3).
     fn setting_slot_head_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
+        target: EntityId,
         hash: AuthorityEntryHash,
     ) -> Result<SettingSlotHead> {
         let id = authority_log_entity_id_from_hash(&hash)?;
@@ -309,9 +354,9 @@ impl Vault {
         let entry = super::readonly_fold::decode_stored_authority_log_body(
             &raw[ENTITY_METADATA_HEADER_LEN..],
         )?;
-        let set = match entry.op {
+        let set = match &entry.op {
             AuthorityOp::PolicySettingSet(set) if authority_entry_hash(&entry)? == hash => {
-                Some(set)
+                set.on_target(target)?
             }
             _ => None,
         };
@@ -319,19 +364,80 @@ impl Vault {
     }
 }
 
-/// An owner's change of a setting row that travels, as its door passes it
-/// (stage 7a-2): everything its signed record carries but the carrier and
-/// the value's digest, which follow from the signing install and `inline`.
+/// An owner's change of setting rows that travel, as its door passes it
+/// (stage 7a-2; several rows stage 7a-3): everything its signed record
+/// carries but the carrier, each row's target and `seen`, and the values'
+/// digests, which follow from the signing install, the slots, the fold in the
+/// write and `inline`.
 pub(crate) struct SettingSlotAct {
-    /// The act on the row's target ([`setting_slot_target`]), its `seen`
-    /// read by [`Vault::policy_setting_revision_in_txn`] in the same write.
-    pub(crate) act: OwnerAct,
+    /// The owner who decided.
+    pub(crate) owner: EntityId,
+    /// Where his say-so reached this install.
+    pub(crate) surface: ActSurface,
+    /// The rows, at least one, no two on one slot.
+    pub(crate) rows: Vec<SettingSlotRow>,
+}
+
+/// One row of a [`SettingSlotAct`].
+pub(crate) struct SettingSlotRow {
     /// The row.
     pub(crate) slot: RowKey,
     /// BLAKE3 over the value the act replaced, as JSON.
     pub(crate) prior: [u8; 32],
     /// The value it left, as its JSON bytes; `None` for a clear.
     pub(crate) inline: Option<Vec<u8>>,
+}
+
+/// The row `slot` of an act, on `seen`: no slot for the key's vault value row
+/// (the target every act on it has named since stage 7a-1), and the value's
+/// digest from its inline bytes.
+fn slot_row(
+    slot: RowKey,
+    seen: [u8; 32],
+    prior: [u8; 32],
+    inline: Option<Vec<u8>>,
+) -> Result<PolicySettingRow> {
+    let vault_row = setting_slot_target(&slot)? == policy_setting_target(&slot.name)?;
+    Ok(PolicySettingRow {
+        setting: slot.name.clone(),
+        slot: (!vault_row).then_some(slot),
+        seen,
+        prior,
+        value: inline.as_deref().map(setting_value_digest),
+        inline,
+    })
+}
+
+/// The owner's act on `rows`, given its carrier: the first row is the op's
+/// own, on the act's target and `seen`, and the rest are its `more` (stage
+/// 7a-3).
+fn setting_act_of(
+    (owner, surface): (EntityId, ActSurface),
+    mut rows: Vec<PolicySettingRow>,
+) -> Result<impl FnOnce(EntityId) -> PolicySettingSet> {
+    if rows.is_empty() {
+        return Err(crate::error::Error::InvariantViolation(
+            "a setting act names at least one row",
+        ));
+    }
+    let first = rows.remove(0);
+    let act = OwnerAct::by_owner(
+        owner,
+        OwnerActKind::PolicySetting,
+        first.target()?,
+        surface,
+        first.seen,
+    );
+    Ok(move |machine| PolicySettingSet {
+        act,
+        machine,
+        setting: first.setting,
+        prior: first.prior,
+        value: first.value,
+        slot: first.slot,
+        inline: first.inline,
+        more: rows,
+    })
 }
 
 /// One setting row's acts, as the setting projection reads them (stage
@@ -357,40 +463,42 @@ pub(crate) struct SettingSlotHead {
     pub(crate) set: Option<PolicySettingSet>,
 }
 
-/// Where a row's acts stood when a test read them (stage 7a-2 tests): the main-log heads and
-/// the row's live acts, and its revision. An act signed on it later is concurrent with every
-/// act appended since.
+/// Where some rows' acts stood when a test read them (stage 7a-2 tests; several rows 7a-3): the
+/// main-log heads and the rows' live acts, and each row's revision by its target. An act signed
+/// on it later is concurrent with every act appended since.
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) struct SettingFrontier {
     parents: BTreeSet<AuthorityEntryHash>,
-    seen: [u8; 32],
+    seen: BTreeMap<EntityId, [u8; 32]>,
 }
 
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 impl Vault {
-    /// The frontier of the row `slot`'s acts now.
-    pub(crate) fn setting_frontier(&self, slot: &RowKey) -> Result<SettingFrontier> {
+    /// The frontier of the rows `slots`' acts now.
+    pub(crate) fn setting_frontier(&self, slots: &[RowKey]) -> Result<SettingFrontier> {
         let fold = self.authority_fold()?;
-        let target = setting_slot_target(slot)?;
         let mut parents = fold.append_heads.clone();
-        if let Some(folded) = fold.policy_settings.targets.get(&target) {
-            parents.extend(folded.live.keys().copied());
+        let mut seen = BTreeMap::new();
+        for slot in slots {
+            let target = setting_slot_target(slot)?;
+            if let Some(folded) = fold.policy_settings.targets.get(&target) {
+                parents.extend(folded.live.keys().copied());
+            }
+            seen.insert(target, fold.policy_settings.revision(target));
         }
-        Ok(SettingFrontier {
-            parents,
-            seen: fold.policy_settings.revision(target),
-        })
+        Ok(SettingFrontier { parents, seen })
     }
 
-    /// The owner `owner`'s change of the row `slot` to the JSON bytes `inline` (`None`
-    /// clears), as the machine `machine`'s own door signs it with its install key `key`, on
-    /// `frontier`, at `ts`: one act that names the row and carries its value.
+    /// The owner `owner`'s change of each row of `rows` to its JSON bytes (`None` clears), as
+    /// the machine `machine`'s own door signs it with its install key `key`, on `frontier`, at
+    /// `ts`: one act that names its rows and carries their values (a batch for more than one
+    /// row, stage 7a-3). A row `frontier` did not read names `seen` zero.
     pub(crate) fn sign_setting_act_as(
         &self,
         (machine, key): (EntityId, &ed25519_dalek::SigningKey),
         owner: EntityId,
         frontier: &SettingFrontier,
-        (slot, inline): (RowKey, Option<Vec<u8>>),
+        rows: Vec<(RowKey, Option<Vec<u8>>)>,
         ts: u64,
     ) -> Result<AuthorityLogEntry> {
         use ed25519_dalek::Signer;
@@ -398,23 +506,21 @@ impl Vault {
         let fold = self.authority_fold()?;
         let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
         let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
-        let target = setting_slot_target(&slot)?;
-        let vault_row = target == policy_setting_target(&slot.name)?;
-        let op = AuthorityOp::PolicySettingSet(PolicySettingSet {
-            act: OwnerAct::by_owner(
-                owner,
-                OwnerActKind::PolicySetting,
-                target,
-                ActSurface::ThisInstall,
-                frontier.seen,
-            ),
-            machine,
-            setting: slot.name.clone(),
-            prior: *blake3::hash(b"null").as_bytes(),
-            value: inline.as_ref().map(|bytes| *blake3::hash(bytes).as_bytes()),
-            slot: (!vault_row).then_some(slot),
-            inline,
-        });
+        let rows = rows
+            .into_iter()
+            .map(|(slot, inline)| {
+                let seen = frontier
+                    .seen
+                    .get(&setting_slot_target(&slot)?)
+                    .copied()
+                    .unwrap_or([0; 32]);
+                slot_row(slot, seen, setting_value_digest(b"null"), inline)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let op = AuthorityOp::PolicySettingSet(setting_act_of(
+            (owner, ActSurface::ThisInstall),
+            rows,
+        )?(machine));
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: fold.vault_id,
