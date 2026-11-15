@@ -22,6 +22,7 @@ mod content;
 mod content_landed;
 #[cfg(feature = "sync")]
 mod content_window;
+mod device_pin;
 mod doors;
 #[cfg(feature = "sync")]
 pub(crate) mod forward_version;
@@ -75,6 +76,9 @@ pub(crate) use self::content::purge_world_mirrors_in_txn;
 pub(crate) use self::content_landed::unland_window_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::content_window::{any_mirror_in, rewrite_mirrors_in_txn};
+pub use self::device_pin::{
+    DEVICE_PIN_MIN_CHARS, DEVICE_PIN_SHORT_MIN_CHARS, DevicePin, DevicePinTier, OwnerKeyRest,
+};
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{

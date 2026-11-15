@@ -35,7 +35,7 @@ pub use self::record::{
 };
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
-pub use self::secret::{KitRecord, SecretError};
+pub use self::secret::{DevicePinRefusal, KitRecord, SecretError};
 pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRootProblem};
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
@@ -331,6 +331,9 @@ pub enum ErrorKind {
     TaintedArtifactStale,
     WorldKeyRefused,
     KeystoreUnavailable,
+    /// A device PIN door refused: the PIN is required, wrong, or not one
+    /// this device takes (row OCS-OWNER-PIN).
+    DevicePinRefused,
     UnverifiedKitRestore,
     KitConfirmationStale,
     MicroVmBackendUnavailable,

@@ -63,6 +63,10 @@ pub(crate) struct WorldKeySession {
     pub(crate) vault_key: Mutex<Option<Arc<super::vault_key::VaultDataKey>>>,
     /// The checkpoint root signers the host holds here (FIX 4882).
     pub(crate) checkpoint_roots: Mutex<Vec<Arc<dyn crate::authority::CheckpointRootSigner>>>,
+    /// The process's device PIN, when the host installed one over this
+    /// handle's keystore (row OCS-OWNER-PIN). Cleared when another keystore
+    /// is installed.
+    pub(crate) device_pin: Mutex<Option<Arc<super::DevicePin>>>,
     /// The image each linked machine is sending this home in parts to
     /// countersign (FIX 4882), until it is whole, it idles out or its socket
     /// closes (FIX 5111).

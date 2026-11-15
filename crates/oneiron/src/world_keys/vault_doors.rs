@@ -16,13 +16,19 @@ impl Vault {
     /// Installs this install's this-device-only keystore on the vault handle. The host
     /// calls it after each open, as it does `retain_machine_write_signer`.
     /// Signing keys loaded from a keystore installed before are dropped: the next
-    /// signing door loads them from this one.
+    /// signing door loads them from this one. A device PIN installed over that
+    /// keystore is dropped with them ([`Vault::install_device_pin`]).
     pub fn install_device_keystore(&self, keystore: Arc<dyn DeviceKeystore>) {
         *self
             .world_keys
             .keystore
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(keystore);
+        *self
+            .world_keys
+            .device_pin
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
         *self
             .world_keys
             .signer

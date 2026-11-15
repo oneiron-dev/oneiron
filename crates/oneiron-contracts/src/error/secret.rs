@@ -224,6 +224,13 @@ pub enum SecretError {
     /// secret and open no world key.
     #[error("no this-device-only keystore: {0}")]
     KeystoreUnavailable(&'static str),
+    /// A device PIN door refused (row OCS-OWNER-PIN). A device with no
+    /// unlock prompt confirms its owner with a PIN that never leaves it, and
+    /// this install's owner key rests under that PIN. The act needs the PIN,
+    /// got a wrong one, or asked for a PIN this device does not take. The
+    /// refusal holds no PIN and no key.
+    #[error("device PIN: {0}")]
+    DevicePin(DevicePinRefusal),
     /// A kit seed this install cannot authenticate: fewer than two genuine
     /// stored pieces, no fingerprint from one of the owner's machines, and no
     /// owner confirmation. Refused before any write; the client words it.
@@ -255,6 +262,55 @@ pub enum SecretError {
          fault)"
     )]
     CredentialCustodyUnavailable { handle: String },
+}
+
+/// Why a device PIN door refused. No PIN and no key appears here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevicePinRefusal {
+    /// The act needs this device's PIN and no confirm holds now: confirm
+    /// with the PIN, then ask again.
+    Required,
+    /// The PIN is not this device's.
+    Wrong,
+    /// Too many wrong PINs: this device takes none for up to `wait_secs`
+    /// more seconds.
+    TooManyTries {
+        /// Seconds until this device takes a PIN again, at most.
+        wait_secs: u64,
+    },
+    /// The new PIN is shorter than this device takes.
+    TooShort {
+        /// The fewest characters this device takes.
+        min_chars: u32,
+    },
+    /// A PIN is set on this device already: it changes only with that PIN.
+    AlreadySet,
+    /// No PIN is set on this device.
+    NotSet,
+    /// This device takes no PIN, and why.
+    Unavailable(&'static str),
+}
+
+impl std::fmt::Display for DevicePinRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Required => f.write_str("this device's PIN is required; confirm with it first"),
+            Self::Wrong => f.write_str("that is not the PIN for this device"),
+            Self::TooManyTries { wait_secs } => write!(
+                f,
+                "too many wrong PINs; this device takes none for up to {wait_secs} s"
+            ),
+            Self::TooShort { min_chars } => {
+                write!(
+                    f,
+                    "the PIN is too short; use {min_chars} characters or more"
+                )
+            }
+            Self::AlreadySet => f.write_str("a PIN is set on this device already"),
+            Self::NotSet => f.write_str("no PIN is set on this device"),
+            Self::Unavailable(reason) => write!(f, "this device takes no PIN: {reason}"),
+        }
+    }
 }
 
 /// What the vault records of a kit seed's root.
@@ -305,6 +361,7 @@ impl SecretError {
             | Self::StalePageSealCredential
             | Self::UnfinishedSealedCreation => ErrorKind::WorldKeyRefused,
             Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
+            Self::DevicePin(_) => ErrorKind::DevicePinRefused,
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
             Self::KitConfirmationStale { .. } => ErrorKind::KitConfirmationStale,
             Self::CredentialLeafUnreadable { .. } => ErrorKind::CredentialLeafUnreadable,

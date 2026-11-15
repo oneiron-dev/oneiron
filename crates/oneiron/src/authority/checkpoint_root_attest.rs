@@ -94,6 +94,16 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// The root's raw signature over `statement`, which must be a checkpoint
     /// statement.
     fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>>;
+    /// Whether the root signs on `vault` at this moment. An owner signing
+    /// key signs only while the roster lists it live, and one that rests
+    /// under a device PIN only inside the window a right PIN opened (row
+    /// OCS-OWNER-PIN). [`Vault::checkpoint_root_signers`] leaves out a root
+    /// that does not sign now, so a pass neither asks it nor logs for it.
+    /// The default always signs.
+    fn signs_now(&self, vault: &Vault) -> bool {
+        let _ = vault;
+        true
+    }
 }
 
 impl CheckpointRootSigner for HostSlipIssuer {
@@ -166,14 +176,30 @@ impl Vault {
         held.push(signer);
     }
 
-    /// The root signers this handle holds.
+    /// The root signers this handle holds that sign at this moment
+    /// ([`CheckpointRootSigner::signs_now`]), in the order they were held.
     #[must_use]
     pub fn checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
+        // The list is copied first: a signer's answer may read the vault.
+        let held = self
+            .world_keys
+            .checkpoint_roots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        held.into_iter()
+            .filter(|signer| signer.signs_now(self))
+            .collect()
+    }
+
+    /// Lets go of the signer held for `root`, when one is: its key is gone
+    /// from this install.
+    pub(crate) fn release_checkpoint_root_signer(&self, root: &AuthorityKey) {
         self.world_keys
             .checkpoint_roots
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+            .retain(|held| held.root() != *root);
     }
 
     /// `signer`'s root attests checkpoint image `image`, which another host

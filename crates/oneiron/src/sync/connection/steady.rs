@@ -74,6 +74,10 @@ impl SyncConnection {
         let mut sealed_relay =
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The right device PINs this connection has seen (row OCS-OWNER-PIN):
+        // each new one brings the residence upkeep forward, see the
+        // housekeeping tick.
+        let mut seen_right_pins = self.manager.vault().device_pin_right_pins();
         // One staged import body pass at a time (FIX 12408): its producer's
         // socket runs off this loop, and its frames are handled here.
         let mut staged_pump: Option<crate::sync::client::StagedBodyPump> = None;
@@ -590,6 +594,15 @@ impl SyncConnection {
                 // Loro's Rust EphemeralStore has no internal timer. Its
                 // sends and writes are one batch (FIX 12036).
                 _ = ephemeral_housekeeping.tick(), if !gate.paused() => {
+                    // A right device PIN opened its window since the last
+                    // look: the residence upkeep runs now, not at its next
+                    // interval, so its checkpoint root exchange attests once
+                    // with the owner key that window lets sign.
+                    let right_pins = self.manager.vault().device_pin_right_pins();
+                    if right_pins != seen_right_pins {
+                        seen_right_pins = right_pins;
+                        sealed_relay.reset_immediately();
+                    }
                     let Some(_batch) = gate.admit().await else {
                         continue;
                     };
