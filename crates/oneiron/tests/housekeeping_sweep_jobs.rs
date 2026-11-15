@@ -1,8 +1,15 @@
 //! DESIGN 15-setting-primitive, stage 5a-2: the engine's 19 sweeps are jobs of the one runner, and
 //! their cadences are 19 Setting keys.
-//! - each sweep has a key `housekeeping.<sweep>.every` at the cadence the code held before;
+//! - each sweep has a key `housekeeping.<sweep>.every` at the cadence the code held before, and
+//!   each sweep's job takes its cadence from its key and is armed by the engine alone;
 //! - a handle's first pass arms and runs every engine sweep, and reports the host-only ones; the
 //!   next pass finds each due a cadence later;
+//! - a job that starts once a pass, as a sweep does, goes on at the next pass when it stopped at
+//!   its bound;
+//! - a cadence row this build cannot read never fails the pass: its sweep is armed from the
+//!   key's default;
+//! - queuing an erasure obligation makes the erasure sweep due an hour after its last run, or at
+//!   once when that hour has passed;
 //! - the owner sets a cadence: its job is armed again in that write and goes on from now, and a
 //!   cadence that can never fire is refused;
 //! - the owner's `housekeeping_all` runs every engine sweep now, and each goes on from now;
@@ -20,9 +27,15 @@ use oneiron::housekeeping::{
     HousekeepingBudget, HousekeepingReport, HousekeepingSweep, SweepOutcome,
 };
 use oneiron::memory::Memory;
+use oneiron::schedule::Trigger;
+use oneiron::setting::SettingScope;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::schedule::{due_at, note_sweep_deadline};
+use oneiron::test_doors::schedule::{
+    arm_as_engine, cadence_jobs, cadence_jobs_not_engine_armed, due_at, note_sweep_deadline,
+    pull_for_queued_erase_obligation, seen,
+};
+use oneiron::test_doors::setting::plant_undecodable_row;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -172,6 +185,19 @@ fn outcome(report: &HousekeepingReport, sweep: HousekeepingSweep) -> &SweepOutco
     report.sweep(sweep).expect("every sweep has a row")
 }
 
+/// When a sweep of cadence `secs` whose run ended at `end` with `outcome` is next due: at once
+/// when it stopped at its bound (the next pass goes on), after the first retry when it left
+/// items, else a cadence later.
+fn due_after(outcome: &SweepOutcome, end: u64, secs: u64) -> u64 {
+    match outcome {
+        SweepOutcome::Ran {
+            complete: false, ..
+        } => end,
+        SweepOutcome::Ran { work, .. } if work.items_failed() > 0 => end + MINUTE,
+        _ => end + secs,
+    }
+}
+
 #[test]
 fn each_engine_sweep_has_a_cadence_key_at_the_cadence_it_ran_at() {
     let fx = Fixture::rooted();
@@ -194,16 +220,19 @@ fn a_first_pass_runs_every_engine_sweep_and_the_next_finds_each_due_a_cadence_la
     }
     let first = fx.pass();
     assert_eq!(first.sweeps.len(), 25, "{first:#?}");
-    for (sweep, _) in CADENCES {
+    for (sweep, secs) in CADENCES {
+        let ran = outcome(&first, sweep);
         assert!(
-            matches!(
-                outcome(&first, sweep),
-                SweepOutcome::Ran { .. } | SweepOutcome::Failed { .. } | SweepOutcome::Panicked
-            ),
+            matches!(ran, SweepOutcome::Ran { .. }),
             "{}: the first pass runs it: {first:#?}",
             sweep.code()
         );
-        assert!(fx.due(sweep).is_some(), "{}: armed", sweep.code());
+        assert_eq!(
+            fx.due(sweep),
+            Some(due_after(ran, T0, secs)),
+            "{}: armed, and due as its run left it: {ran:?}",
+            sweep.code()
+        );
     }
     for sweep in HOST_ONLY {
         assert!(
@@ -225,13 +254,22 @@ fn a_first_pass_runs_every_engine_sweep_and_the_next_finds_each_due_a_cadence_la
     }
 
     let second = fx.pass();
-    for (sweep, secs) in QUIET_ON_A_NEW_VAULT {
-        assert_eq!(
-            outcome(&second, sweep),
-            &SweepOutcome::NotDue { due_at: T0 + secs },
-            "{}: the same handle's next pass runs nothing early: {second:#?}",
-            sweep.code()
-        );
+    for (sweep, secs) in CADENCES {
+        let due = due_after(outcome(&first, sweep), T0, secs);
+        if due > T0 {
+            assert_eq!(
+                outcome(&second, sweep),
+                &SweepOutcome::NotDue { due_at: due },
+                "{}: the same handle's next pass runs nothing early: {second:#?}",
+                sweep.code()
+            );
+        } else {
+            assert!(
+                matches!(outcome(&second, sweep), SweepOutcome::Ran { .. }),
+                "{}: a sweep that stopped at its bound goes on at the next pass: {second:#?}",
+                sweep.code()
+            );
+        }
     }
 }
 
@@ -279,13 +317,17 @@ fn the_owners_run_now_runs_every_engine_sweep_and_each_goes_on_from_now() {
         .vault
         .housekeeping_all(HousekeepingBudget::unbounded())
         .expect("the owner's run now");
-    for (sweep, _) in CADENCES {
+    for (sweep, secs) in CADENCES {
+        let ran = outcome(&report, sweep);
         assert!(
-            matches!(
-                outcome(&report, sweep),
-                SweepOutcome::Ran { .. } | SweepOutcome::Failed { .. } | SweepOutcome::Panicked
-            ),
+            matches!(ran, SweepOutcome::Ran { .. }),
             "{}: due or not, it runs: {report:#?}",
+            sweep.code()
+        );
+        assert_eq!(
+            fx.due(sweep),
+            Some(due_after(ran, now, secs)),
+            "{}: goes on from now: {ran:?}",
             sweep.code()
         );
     }
@@ -323,5 +365,107 @@ fn a_noted_deadline_makes_its_sweep_due_then_and_a_stopped_vault_wakes_for_it() 
         fx.due(sweep),
         Some(deadline + HOUR),
         "the run covered the deadline and goes on a cadence after it"
+    );
+}
+
+#[test]
+fn each_sweep_job_takes_its_cadence_key_and_only_the_engine_arms_it() {
+    let cadence = cadence_jobs();
+    for (sweep, _) in CADENCES {
+        let job = format!("housekeeping.{}", sweep.code());
+        assert!(
+            cadence.iter().any(|code| *code == job),
+            "{job}: {cadence:?}"
+        );
+    }
+    for sweep in HOST_ONLY {
+        let job = format!("housekeeping.{}", sweep.code());
+        assert!(
+            !cadence.iter().any(|code| *code == job),
+            "{job}: a host runs it: {cadence:?}"
+        );
+    }
+    assert_eq!(cadence_jobs_not_engine_armed(), Vec::<&str>::new());
+}
+
+#[test]
+fn a_job_that_starts_once_a_pass_goes_on_at_the_next_pass() {
+    let fx = Fixture::rooted();
+    arm_as_engine(
+        &fx.vault,
+        "test.once",
+        None,
+        Trigger::Every {
+            secs: HOUR,
+            first_at: None,
+        },
+    )
+    .expect("the engine arms a drain that starts once a pass");
+    fx.pass();
+    assert_eq!(
+        seen(&fx.vault, "test.once").len(),
+        1,
+        "it stopped at its bound and is due again at once, but the pass starts it once"
+    );
+    assert_eq!(
+        due_at(&fx.vault, "test.once", None).expect("the due time"),
+        Some(T0),
+        "due again at once"
+    );
+    fx.pass();
+    assert_eq!(
+        seen(&fx.vault, "test.once").len(),
+        2,
+        "the next pass goes on"
+    );
+}
+
+#[test]
+fn a_cadence_row_this_build_cannot_read_arms_its_sweep_from_the_default() {
+    let fx = Fixture::rooted();
+    let sweep = HousekeepingSweep::SymbolLeaseExpiry;
+    plant_undecodable_row(&fx.vault, &key(sweep), SettingScope::Vault)
+        .expect("a row this build cannot read");
+    let report = fx.pass();
+    assert!(
+        matches!(
+            outcome(&report, sweep),
+            SweepOutcome::Ran { complete: true, .. }
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(
+        fx.due(sweep),
+        Some(T0 + 5 * MINUTE),
+        "armed from the key's default, five minutes"
+    );
+    for (other, _) in CADENCES {
+        assert!(fx.due(other).is_some(), "{}: armed", other.code());
+    }
+}
+
+#[test]
+fn a_queued_erasure_makes_its_sweep_due_an_hour_after_its_last_run_or_at_once() {
+    let sweep = HousekeepingSweep::HardEraseSweep;
+
+    let soon = Fixture::rooted();
+    soon.pass();
+    assert_eq!(soon.due(sweep), Some(T0 + DAY));
+    soon.at(T0 + 10 * MINUTE);
+    pull_for_queued_erase_obligation(&soon.vault).expect("the queuing write");
+    assert_eq!(
+        soon.due(sweep),
+        Some(T0 + HOUR),
+        "ten minutes after a run: an hour after that run"
+    );
+
+    let late = Fixture::rooted();
+    late.pass();
+    late.at(T0 + 3 * HOUR);
+    pull_for_queued_erase_obligation(&late.vault).expect("the queuing write");
+    assert_eq!(
+        late.due(sweep),
+        Some(T0 + 3 * HOUR),
+        "three hours after a run: at once"
     );
 }

@@ -23,7 +23,9 @@
 //! keep their own schedule beside it. Stage 5a-1 adds what the sweeps need to move onto it:
 //! engine arming inside a write, the cadence key, a run that left items, an engine "run now"
 //! and the run it answers, one job alone, what a pass lends its runs and what they report back,
-//! and a due time pulled forward inside a write.
+//! and a due time pulled forward inside a write. Stage 5a-2 adds a job kind that starts once a
+//! pass ([`JobSpec::once_per_pass`]) and the tighter direction of a cadence key
+//! ([`more_often_is_tighter`]).
 
 mod arm;
 mod jobs;
@@ -38,7 +40,8 @@ pub use oneiron_schedule_contract::{
 pub use self::arm::ScheduleView;
 pub(crate) use self::arm::{
     ScheduleCaller, arm_in_txn, arm_setting_jobs, due_at_in_txn, due_by_in_txn,
-    erase_schedule_actor_in_txn, erase_schedule_subject_in_txn, rearm_on_change, request_runs,
+    erase_schedule_actor_in_txn, erase_schedule_subject_in_txn, finished_at_in_txn,
+    rearm_on_change, request_runs,
 };
 pub(crate) use self::jobs::{job_named, jobs};
 pub use self::run::{JobOutcome, JobRun, ScheduleRunReport};
@@ -146,6 +149,11 @@ pub struct JobSpec {
     /// a stopped process left durable must not wait a whole cadence after a restart. The host's
     /// pass asks for it ([`request_runs`]).
     pub at_open: bool,
+    /// Whether it starts at most once in a pass: a run that stopped at its bound goes on at the
+    /// next pass, not again in this one. The engine's sweeps take it, as they always ran: a
+    /// sweep with no cursor of its own may find the same items again, and the pass reports one
+    /// run of each.
+    pub once_per_pass: bool,
     /// One run. It keeps within the pass's deadline and answers how far it got.
     pub run: fn(&crate::Vault, &Armed, &JobPass<'_>) -> Result<JobResult>,
 }
@@ -168,6 +176,20 @@ impl std::fmt::Debug for JobSpec {
             .debug_struct("JobSpec")
             .field("code", &self.code)
             .finish_non_exhaustive()
+    }
+}
+
+/// The tighter direction of a cadence key ([`crate::setting::Kind::tighter`]): `a` is at least
+/// as tight as `b` when it runs at least as often. Only two intervals compare; any other pair is
+/// as tight only when equal, so a holder's wall-clock or one-time cadence stays inside the
+/// owner's row.
+#[must_use]
+pub(crate) fn more_often_is_tighter(a: &Trigger, b: &Trigger) -> bool {
+    match (a, b) {
+        (Trigger::Every { secs: a_secs, .. }, Trigger::Every { secs: b_secs, .. }) => {
+            a_secs <= b_secs
+        }
+        _ => a == b,
     }
 }
 

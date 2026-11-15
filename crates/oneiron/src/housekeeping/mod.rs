@@ -284,19 +284,27 @@ impl Vault {
         access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
         let started_at = self.now_recorded_at();
-        let first_pass = !self
-            .housekeeping
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .first_pass_done;
-        if first_pass {
-            crate::schedule::arm_setting_jobs(self, is_cadence_job)?;
-            crate::schedule::request_runs(self, |spec| spec.at_open)?;
-            // The requests are durable: a pass the budget cuts short leaves them for the next.
-            self.housekeeping
+        // The flag is taken before the arming, so two passes of one handle never both ask for
+        // the runs at each start; an arming or a request that fails gives it back for the next.
+        let first_pass = !std::mem::replace(
+            &mut self
+                .housekeeping
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .first_pass_done = true;
+                .first_pass_done,
+            true,
+        );
+        if first_pass {
+            // The requests are durable: a pass the budget cuts short leaves them for the next.
+            let asked = crate::schedule::arm_setting_jobs(self, is_cadence_job)
+                .and_then(|()| crate::schedule::request_runs(self, |spec| spec.at_open));
+            if let Err(error) = asked {
+                self.housekeeping
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .first_pass_done = false;
+                return Err(error);
+            }
         }
         if asked == Asked::All {
             crate::schedule::request_runs(self, is_cadence_job)?;
@@ -306,8 +314,8 @@ impl Vault {
     }
 
     /// The report of a pass that started at `started_at` and made `runs`: one row per sweep, or
-    /// only `only`'s. A sweep the pass ran reports its last run; one it did not run is not due
-    /// yet, or was left for a later pass.
+    /// only `only`'s. A sweep starts at most once a pass, and its row reports that run; one the
+    /// pass did not run is not due yet, or was left for a later pass.
     fn sweep_report(
         &self,
         started_at: u64,

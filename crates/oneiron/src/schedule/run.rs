@@ -52,7 +52,8 @@ pub struct JobRun {
 pub enum JobOutcome {
     /// It ran to the end of its work.
     Done,
-    /// It stopped at its budget and is due again at once.
+    /// It stopped at its budget and is due again at once; a job that starts once a pass goes on
+    /// at the next pass.
     More,
     /// It ran to the end of its work but left items, and is due again after the backoff.
     ItemsFailed,
@@ -70,11 +71,13 @@ pub enum JobOutcome {
     UnknownJob,
 }
 
-/// The first due-index entry due by `now`: its due time and its row's key.
+/// The first due-index entry due by `now` whose row is not one of `ran_once`, the rows of the
+/// once-a-pass jobs this pass has started: its due time and its row's key.
 fn first_due_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     now: u64,
+    ran_once: &[Vec<u8>],
 ) -> Result<Option<(u64, Vec<u8>)>> {
     for entry in DUE.iter_raw_from(&vault.store, txn, &[])? {
         let (key, _) = entry?;
@@ -82,7 +85,12 @@ fn first_due_in_txn(
             continue;
         };
         let due = u64::from_be_bytes(*due);
-        return Ok((due <= now).then(|| (due, row_key.to_vec())));
+        if due > now {
+            return Ok(None);
+        }
+        if !ran_once.iter().any(|ran| ran.as_slice() == row_key) {
+            return Ok(Some((due, row_key.to_vec())));
+        }
     }
     Ok(None)
 }
@@ -117,7 +125,8 @@ impl Vault {
     }
 
     /// [`Self::run_due`] within `pass`. A pass starts at least one due job, so it makes
-    /// progress however its budget was spent before it, unless its host asked it to stop.
+    /// progress however its budget was spent before it, unless its host asked it to stop. A job
+    /// that starts once a pass ([`JobSpec::once_per_pass`]) is not started again in it.
     pub(crate) fn run_due_until(&self, pass: &JobPass<'_>) -> Result<ScheduleRunReport> {
         let _pass = self
             .housekeeping
@@ -125,6 +134,7 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let deadline = pass.deadline;
         let mut report = ScheduleRunReport::default();
+        let mut ran_once: Vec<Vec<u8>> = Vec::new();
         while report.runs.len() < RUNS_PER_PASS
             && !deadline.stopped()
             && (report.runs.is_empty() || !deadline.passed())
@@ -132,12 +142,16 @@ impl Vault {
             let now = self.now_recorded_at();
             let due = {
                 let txn = self.store.env.read_txn()?;
-                first_due_in_txn(self, &txn, now)?
+                first_due_in_txn(self, &txn, now, &ran_once)?
             };
             let Some((due_at, key)) = due else {
                 break;
             };
-            report.runs.push(self.run_one(&key, due_at, pass)?);
+            let run = self.run_one(&key, due_at, pass)?;
+            if job_named(&run.job).is_some_and(|spec| spec.once_per_pass) {
+                ran_once.push(key);
+            }
+            report.runs.push(run);
         }
         Ok(report)
     }

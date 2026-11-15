@@ -459,7 +459,6 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GENUI_VOICE_GRANT_OFFER",
         "GMAIL_MAILBOX_CURSOR",
         "HOOKS_TASK_TICK_HOLD",
-        "HOUSEKEEPING_SCHEDULE",
         "HOUSEKEEPING_WAKE",
         "IDENTITY_DEVICE_PK",
         "IDENTITY_DEVICE_SK",

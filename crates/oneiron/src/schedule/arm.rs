@@ -453,9 +453,10 @@ fn cadence_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Resul
 
 /// Arms every job of a kind `which` takes whose cadence is a Setting key from the key's value in
 /// force, in one write. The host's pass calls it on its handle's first pass for every such job; a
-/// job already armed with that trigger keeps its due time. A value in force that cannot be armed
-/// (a zone this build does not know, a wall time with no occurrence ahead) is logged, and its job
-/// keeps the arming it has, so one cadence never holds the others.
+/// job already armed with that trigger keeps its due time. A value in force this build cannot
+/// read or arm (a row a later build wrote, a zone this build does not know, a wall time with no
+/// occurrence ahead) is logged, and its job is armed from the key's default: one cadence never
+/// holds the others, and no job is left unarmed.
 ///
 /// # Errors
 ///
@@ -463,17 +464,28 @@ fn cadence_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Resul
 pub(crate) fn arm_setting_jobs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         for spec in jobs().filter(|spec| which(spec)) {
-            if let Some(trigger) = cadence_in_txn(vault, txn, spec)? {
-                match arm_in_txn(vault, txn, spec, None, trigger) {
-                    Err(error) if error.kind() == ErrorKind::InvalidConfig => {
-                        tracing::warn!(
-                            job = spec.code,
-                            %error,
-                            "schedule: the cadence in force cannot be armed; the job keeps its arming"
-                        );
-                    }
-                    armed => armed?,
+            let When::Setting(key) = spec.when else {
+                continue;
+            };
+            let armed = match key.read_in_txn(vault, txn, &[], None) {
+                Ok(in_force) => arm_in_txn(vault, txn, spec, None, in_force.value),
+                Err(error) => Err(error),
+            };
+            match armed {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::InvalidConfig | ErrorKind::CorruptedIndex
+                    ) =>
+                {
+                    tracing::warn!(
+                        job = spec.code,
+                        %error,
+                        "schedule: the cadence in force cannot be armed; the job is armed from the key's default"
+                    );
+                    arm_in_txn(vault, txn, spec, None, key.kind.default_typed())?;
                 }
+                armed => armed?,
             }
         }
         Ok(())
@@ -559,6 +571,23 @@ pub(crate) fn due_by_in_txn(
         ..prior.clone()
     };
     store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
+}
+
+/// When the last run of `job` about `subject` ended (0 before the first), or `None` when it is
+/// not armed.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn finished_at_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    job: &str,
+    subject: Option<EntityId>,
+) -> Result<Option<u64>> {
+    Ok(ROWS
+        .get(store, txn, &row_key(job, subject))?
+        .map(|row| row.finished_at))
 }
 
 /// When `job` about `subject` is next due, or `None` when it is not armed: a requested run's

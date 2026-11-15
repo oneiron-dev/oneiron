@@ -8,18 +8,17 @@
 //! ([`crate::Vault::housekeeping_wake_at`]).
 //!
 //! One run of a sweep:
+//! - a sweep starts at most once in a pass ([`JobSpec::once_per_pass`]), as it did before: a run
+//!   that stopped at its bound is due again at once and goes on at the next pass;
 //! - the wake rows it covers are those noted before it started and due by then; a run that
 //!   finished with nothing failed removes them, and is due again at the earliest row left, if that
 //!   comes before its next occurrence;
 //! - an unfinished walk keeps in its cursor whether an earlier page left items, and answers
 //!   [`Ran::ItemsFailed`] at its end if one did;
-//! - an unfinished drain with no cursor that found nothing to do although the pass's deadline had
-//!   not passed made no progress (its queue stays put), so it is retried after the backoff, not at
-//!   once in the same pass;
 //! - the erasure sweep runs as the owner's when its run answers a "run now" (the owner's
 //!   `housekeeping_all`, or the owner's `vault.schedules.run`), and an owner's run that left a
 //!   window uncompacted is retried as the owner's; while an obligation waits it is due again
-//!   within the hour.
+//!   an hour after its last run ended, or at once when that hour has passed.
 
 use super::{HousekeepingSweep, SweepWork, sweeps, wake};
 use crate::Vault;
@@ -54,6 +53,7 @@ macro_rules! sweep_jobs {
             retry_cap_secs: None,
             wakes_host: false,
             at_open: $at_open,
+            once_per_pass: true,
             run: run_sweep_job,
         };
     )*};
@@ -129,7 +129,9 @@ pub(crate) fn sweep_due_by_in_txn(
     crate::schedule::due_by_in_txn(store, txn, &job_code(sweep), None, at)
 }
 
-/// Makes the erasure sweep due within the hour, inside the write that queues an obligation.
+/// Makes the erasure sweep due an hour after its last run ended, or at once when that hour has
+/// passed, inside the write that queues an obligation: the rule it kept before stage 5a, so an
+/// obligation queued long after a run never waits another hour.
 ///
 /// # Errors
 ///
@@ -138,12 +140,17 @@ pub(crate) fn erase_obligation_queued_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
+    let job = job_code(HousekeepingSweep::HardEraseSweep);
+    let Some(last_end) = crate::schedule::finished_at_in_txn(store, txn, &job, None)? else {
+        return Ok(());
+    };
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
-    sweep_due_by_in_txn(
+    crate::schedule::due_by_in_txn(
         store,
         txn,
-        HousekeepingSweep::HardEraseSweep,
-        now.saturating_add(HARD_ERASE_BUSY_EVERY),
+        &job,
+        None,
+        now.max(last_end.saturating_add(HARD_ERASE_BUSY_EVERY)),
     )
 }
 
@@ -187,12 +194,8 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
                 || work.windows_deferred_held > 0);
     let items_failed = earlier_failed || run.work.items_failed() > 0 || owner_left;
     let ran = if !run.complete {
-        if run.cursor.is_none() && run.work.is_idle() && !pass.deadline.passed() {
-            Ran::ItemsFailed
-        } else {
-            Ran::More {
-                cursor: write_cursor(items_failed, run.cursor.as_deref()),
-            }
+        Ran::More {
+            cursor: write_cursor(items_failed, run.cursor.as_deref()),
         }
     } else if items_failed {
         Ran::ItemsFailed

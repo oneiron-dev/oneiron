@@ -1,6 +1,6 @@
 //! The job kinds and doors the Schedule primitive's tests use (DESIGN 15-setting-primitive,
-//! stages 0.2 and 5a-1). They exist only under `--cfg oneiron_test_support`; no engine code arms
-//! them.
+//! stages 0.2, 5a-1 and 5a-2). They exist only under `--cfg oneiron_test_support`; no engine code
+//! arms them.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -157,6 +157,13 @@ fn run_seen(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResu
     Ok(JobResult::of(Ran::Done))
 }
 
+/// Always stops at its bound with work left, from the same cursor: a drain that may find the same
+/// items again.
+fn run_bounded(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    record(vault, armed);
+    Ok(JobResult::of(Ran::More { cursor: vec![0] }))
+}
+
 /// A job an actor arms; each run counts, and it wakes a stopped vault.
 pub static TEST_COUNT: JobSpec = JobSpec {
     code: "test.count",
@@ -167,6 +174,7 @@ pub static TEST_COUNT: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: true,
     at_open: false,
+    once_per_pass: false,
     run: run_count,
 };
 
@@ -180,6 +188,7 @@ pub static TEST_FAIL: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_fail,
 };
 
@@ -193,6 +202,7 @@ pub static TEST_PAGED: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_paged,
 };
 
@@ -206,6 +216,7 @@ pub static TEST_ENGINE: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_count,
 };
 
@@ -219,6 +230,7 @@ pub static TEST_LAPSE: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_count,
 };
 
@@ -232,6 +244,7 @@ pub static TEST_CADENCE: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_cadence,
 };
 
@@ -245,6 +258,7 @@ pub static TEST_ITEMS: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_items,
 };
 
@@ -258,6 +272,7 @@ pub static TEST_OPEN: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: true,
+    once_per_pass: false,
     run: run_seen,
 };
 
@@ -271,7 +286,22 @@ pub static TEST_ANSWER: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_answer,
+};
+
+/// A drain that starts once a pass, as the engine's sweeps do (stage 5a-2).
+pub static TEST_ONCE: JobSpec = JobSpec {
+    code: "test.once",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: true,
+    run: run_bounded,
 };
 
 /// Whether `spec` is one of these test job kinds (code `test.*`): the doors below take only
@@ -345,6 +375,37 @@ pub fn pull_due_forward(
     vault.with_write_txn_grouped(|txn| {
         crate::schedule::due_by_in_txn(&vault.store, txn, job, subject, at)
     })
+}
+
+/// The write that queues an erasure obligation makes the erasure sweep due, here in its own
+/// write and with no obligation queued: the pull alone (stage 5a-2).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn pull_for_queued_erase_obligation(vault: &Vault) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::housekeeping::jobs::erase_obligation_queued_in_txn(&vault.store, txn)
+    })
+}
+
+/// The codes of the job kinds whose cadence is a Setting key but which someone other than the
+/// engine may arm; empty, since only the engine arms from a cadence key.
+#[must_use]
+pub fn cadence_jobs_not_engine_armed() -> Vec<&'static str> {
+    crate::schedule::jobs()
+        .filter(|spec| matches!(spec.when, When::Setting(_)) && spec.arm_by != ArmBy::Engine)
+        .map(|spec| spec.code)
+        .collect()
+}
+
+/// The codes of the job kinds whose cadence is a Setting key.
+#[must_use]
+pub fn cadence_jobs() -> Vec<&'static str> {
+    crate::schedule::jobs()
+        .filter(|spec| matches!(spec.when, When::Setting(_)))
+        .map(|spec| spec.code)
+        .collect()
 }
 
 /// A door notes that `sweep` has work due at `at`, in its own write, as the secret-lease, voice
