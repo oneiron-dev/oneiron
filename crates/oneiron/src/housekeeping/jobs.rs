@@ -5,14 +5,15 @@
 //! changes the key, and the runner runs it when due, retries it after the backoff (60 s, doubling,
 //! capped at the smaller of its cadence and an hour) and keeps its cursor between pages. No sweep
 //! wakes a stopped vault for its cadence: the deadlines doors noted wake it
-//! ([`crate::Vault::housekeeping_wake_at`]).
+//! ([`crate::Vault::housekeeping_wake_at`]). A noted deadline is a row of its sweep's deadline job
+//! (`housekeeping.<sweep>.deadline`, stage 5b), a one-time job at the deadline.
 //!
 //! One run of a sweep:
 //! - a sweep starts at most once in a pass ([`JobSpec::once_per_pass`]), as it did before: a run
 //!   that stopped at its bound is due again at once and goes on at the next pass;
-//! - the wake rows it covers are those noted before it started and due by then; a run that
-//!   finished with nothing failed removes them, and is due again at the earliest row left, if that
-//!   comes before its next occurrence;
+//! - the deadlines it covers are those noted before it started and due by then; a run that
+//!   finished with nothing failed disarms them. A deadline whose time comes before a run covered
+//!   it runs: it makes the sweep due by then, and waits for the sweep's next due time;
 //! - an unfinished walk keeps in its cursor whether an earlier page left items, and answers
 //!   [`Ran::ItemsFailed`] at its end if one did;
 //! - the erasure sweep runs as the owner's when its run answers a "run now" (the owner's
@@ -40,6 +41,56 @@ pub(super) const HARD_ERASE_BUSY_EVERY: u64 = 60 * 60;
 const CURSOR_ITEMS_FAILED: u8 = 1;
 /// The cursor's first byte: the sweep's own cursor follows.
 const CURSOR_SWEEP: u8 = 2;
+
+macro_rules! deadline_jobs {
+    ($($(#[doc = $doc:literal])* $job:ident = $code:literal, wakes_host: $wakes:literal;)*) => {$(
+        $(#[doc = $doc])*
+        pub(crate) static $job: JobSpec = JobSpec {
+            code: $code,
+            when: When::PerArming,
+            arm_by: ArmBy::Engine,
+            late: Late::Run,
+            retry_first_secs: RETRY_FIRST_SECS,
+            retry_cap_secs: None,
+            wakes_host: $wakes,
+            at_open: false,
+            once_per_pass: true,
+            run: run_deadline_job,
+        };
+    )*};
+}
+
+deadline_jobs! {
+    /// A secret lease's expiry; it wakes a stopped vault.
+    SECRET_LEASE_EXPIRY_DEADLINE_JOB = "housekeeping.secret_lease_expiry.deadline", wakes_host: true;
+    /// A critical confirm's window; it wakes a stopped vault.
+    CRITICAL_CONFIRM_EXPIRY_DEADLINE_JOB = "housekeeping.critical_confirm_expiry.deadline", wakes_host: true;
+    /// A voice print's retention deadline; it wakes a stopped vault.
+    VOICE_PRINT_RETENTION_DEADLINE_JOB = "housekeeping.voice_print_retention.deadline", wakes_host: true;
+    /// A shared act's window; it wakes a stopped vault.
+    SHARED_ACT_MATURITY_DEADLINE_JOB = "housekeeping.shared_act_maturity.deadline", wakes_host: true;
+    /// A live-body edit whose anchored comments must follow at the next running-host pass.
+    ANNOTATION_BODY_ANCHORS_DEADLINE_JOB = "housekeeping.annotation_body_anchors.deadline", wakes_host: false;
+}
+
+/// The deadline job of `sweep`, or `None` for a sweep no door notes deadlines for.
+pub(crate) fn deadline_job(sweep: HousekeepingSweep) -> Option<&'static JobSpec> {
+    match sweep {
+        HousekeepingSweep::SecretLeaseExpiry => Some(&SECRET_LEASE_EXPIRY_DEADLINE_JOB),
+        HousekeepingSweep::CriticalConfirmExpiry => Some(&CRITICAL_CONFIRM_EXPIRY_DEADLINE_JOB),
+        HousekeepingSweep::VoicePrintRetention => Some(&VOICE_PRINT_RETENTION_DEADLINE_JOB),
+        HousekeepingSweep::SharedActMaturity => Some(&SHARED_ACT_MATURITY_DEADLINE_JOB),
+        HousekeepingSweep::AnnotationBodyAnchors => Some(&ANNOTATION_BODY_ANCHORS_DEADLINE_JOB),
+        _ => None,
+    }
+}
+
+/// The sweep whose deadline job's code is `job`.
+fn deadline_sweep_of(job: &str) -> Option<HousekeepingSweep> {
+    HousekeepingSweep::ALL
+        .into_iter()
+        .find(|sweep| deadline_job(*sweep).is_some_and(|spec| spec.code == job))
+}
 
 macro_rules! sweep_jobs {
     ($($(#[doc = $doc:literal])* $job:ident = $code:literal, $key:ident, at_open: $at_open:literal;)*) => {$(
@@ -161,8 +212,8 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
     ))?;
     let start = vault.now_recorded_at();
     let (earlier_failed, cursor) = read_cursor(armed.cursor.as_deref());
-    // The wake rows this run covers: noted before it started and due by then. A row noted while
-    // it runs stays for the next run.
+    // The deadlines this run covers: noted before it started and due by then. A deadline noted
+    // while it runs stays for the next run.
     let covered = wake::due_by(vault, sweep, start).unwrap_or_default();
     #[cfg(test)]
     match super::tests::injected(sweep) {
@@ -200,13 +251,13 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
     } else if items_failed {
         Ran::ItemsFailed
     } else {
-        // A walk that began before this run covers the rows due by when it began. A row the
-        // clear leaves behind costs one run that finds nothing.
+        // A walk that began before this run covers the deadlines due by when it began. A
+        // deadline the clear leaves behind runs at its time and waits for the run that covers it.
         let mut covered = covered;
         if let Some(until) = run.covered_until {
-            covered.retain(|&(_, at, _)| at <= until);
+            covered.retain(|&(_, at)| at <= until);
         }
-        let _ = wake::clear(vault, &covered);
+        let _ = wake::clear(vault, sweep, &covered);
         Ran::Done
     };
     let due_by = match ran {
@@ -220,21 +271,38 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
     })
 }
 
-/// When a sweep that ran to its end owes work again before its next occurrence: the earliest
-/// deadline a door noted for it that this run did not cover, and for the erasure sweep, within
-/// the hour while an obligation waits.
+/// When a sweep that ran to its end owes work again before its next occurrence: for the erasure
+/// sweep, within the hour while an obligation waits. A deadline a door noted that this run did not
+/// cover is a row of its own, due at its time.
 fn owed_at(vault: &Vault, sweep: HousekeepingSweep) -> Result<Option<u64>> {
-    let noted = {
-        let txn = vault.store.env.read_txn()?;
-        wake::earliest_in_txn(&vault.store, &txn, sweep)?
-    };
-    let busy = (sweep == HousekeepingSweep::HardEraseSweep && erase_obligation_waiting(vault)?)
-        .then(|| {
-            vault
-                .now_recorded_at()
-                .saturating_add(HARD_ERASE_BUSY_EVERY)
-        });
-    Ok(noted.into_iter().chain(busy).min())
+    if sweep != HousekeepingSweep::HardEraseSweep || !erase_obligation_waiting(vault)? {
+        return Ok(None);
+    }
+    Ok(Some(
+        vault
+            .now_recorded_at()
+            .saturating_add(HARD_ERASE_BUSY_EVERY),
+    ))
+}
+
+/// One run of a deadline no run of its sweep covered by its time: the pull its note made was
+/// refused (the sweep was backing off or running), a run of the sweep ended before it came, or
+/// the sweep's walk began before it. It makes the sweep due by now where its backoff allows, and
+/// is due again when the sweep is next due, until the sweep's run that covers it disarms it.
+fn run_deadline_job(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    let sweep = deadline_sweep_of(armed.job)
+        .ok_or(Error::InvariantViolation("a deadline job names no sweep"))?;
+    let job = job_code(sweep);
+    let due = vault.with_write_txn_grouped(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        crate::schedule::due_by_in_txn(&vault.store, txn, &job, None, now)?;
+        Ok(crate::schedule::due_at_in_txn(&vault.store, txn, &job, None)?.unwrap_or(now))
+    })?;
+    Ok(JobResult {
+        ran: Ran::Done,
+        due_by: Some(due),
+        sweep_work: None,
+    })
 }
 
 /// Whether any erasure obligation (an `h:` row, or a `hw:` withdrawn generation's) is queued.

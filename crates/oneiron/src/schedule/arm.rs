@@ -423,7 +423,7 @@ impl Vault {
 /// `InvalidConfig` for a trigger that can never fire, a zone the engine does not know, or one
 /// with no occurrence ahead; storage errors.
 pub(crate) fn arm_in_txn(
-    vault: &Vault,
+    store: &Store,
     txn: &mut heed::RwTxn<'_>,
     spec: &'static JobSpec,
     subject: Option<EntityId>,
@@ -433,13 +433,63 @@ pub(crate) fn arm_in_txn(
         return Err(refused(why));
     }
     let key = row_key(spec.code, subject);
-    let prior = ROWS.get(&vault.store, txn, &key)?;
+    let prior = ROWS.get(store, txn, &key)?;
     if prior.as_ref().is_some_and(|prior| prior.trigger == trigger) {
         return Ok(());
     }
-    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let now = crate::ports::recorded_at_in_txn(store, txn)?;
     let row = ScheduleRow::armed(trigger, None, prior.as_ref(), now)?;
-    store_row_in_txn(&vault.store, txn, &key, prior.as_ref(), Some(&row))
+    store_row_in_txn(store, txn, &key, prior.as_ref(), Some(&row))
+}
+
+/// The engine disarms `job` about `subject` inside the caller's write: its row and due-index
+/// entry go. Disarming what is not armed answers `false`.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn disarm_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    job: &str,
+    subject: Option<EntityId>,
+) -> Result<bool> {
+    let key = row_key(job, subject);
+    let Some(prior) = ROWS.get(store, txn, &key)? else {
+        return Ok(false);
+    };
+    store_row_in_txn(store, txn, &key, Some(&prior), None)?;
+    Ok(true)
+}
+
+/// The deadlines of `job` due by `until`: the subject and time of each of its rows armed at a
+/// time ([`Trigger::At`]) no later than `until`, in key order, at most `limit`. The job whose
+/// run serves them lists them before it starts, and disarms the ones its run covered.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn deadlines_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    job: &str,
+    until: u64,
+    limit: usize,
+) -> Result<Vec<(EntityId, u64)>> {
+    let mut deadlines = Vec::new();
+    for row in ROWS.iter_from(store, txn, &row_key(job, None))? {
+        if deadlines.len() == limit {
+            break;
+        }
+        let (key, row) = row?;
+        if let Trigger::At { at } = row.trigger
+            && at <= until
+            && let Some((_, Some(subject))) = parse_row_key(&key)
+        {
+            deadlines.push((subject, at));
+        }
+    }
+    Ok(deadlines)
 }
 
 /// The trigger in force for `spec`'s cadence key, at the vault, or `None` for a job that has no
@@ -469,7 +519,7 @@ pub(crate) fn arm_setting_jobs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Re
                 continue;
             };
             let armed = match key.read_in_txn(vault, txn, &[], None) {
-                Ok(in_force) => arm_in_txn(vault, txn, spec, None, in_force.value),
+                Ok(in_force) => arm_in_txn(&vault.store, txn, spec, None, in_force.value),
                 Err(error) => Err(error),
             };
             match armed {
@@ -491,7 +541,7 @@ pub(crate) fn arm_setting_jobs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Re
                             %error,
                             "schedule: the cadence in force cannot be armed; the job is armed from the key's default"
                         );
-                        arm_in_txn(vault, txn, spec, None, key.kind.default_typed())?;
+                        arm_in_txn(&vault.store, txn, spec, None, key.kind.default_typed())?;
                     }
                 }
                 armed => armed?,
@@ -516,7 +566,7 @@ pub(crate) fn rearm_on_change(
         if matches!(spec.when, When::Setting(key) if key.spec.name == change.key)
             && let Some(trigger) = cadence_in_txn(vault, txn, spec)?
         {
-            arm_in_txn(vault, txn, spec, None, trigger)?;
+            arm_in_txn(&vault.store, txn, spec, None, trigger)?;
         }
     }
     Ok(())

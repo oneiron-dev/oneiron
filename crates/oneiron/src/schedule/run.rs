@@ -410,9 +410,10 @@ impl Vault {
 }
 
 /// The row after a run that ended at `end`, or `None` when the job is done for good.
-/// - done: a deadline is done; a repeating job is next due at its next occurrence after now, or
-///   at the run's `due_by` when that is earlier but never sooner than its first retry after the
-///   end, its failures, cursor and answered request cleared;
+/// - done: a repeating job is next due at its next occurrence after now, or at the run's `due_by`
+///   when that is earlier but never sooner than its first retry after the end; a deadline is
+///   done, unless its run answered a `due_by`, at which it is due again, never sooner than its
+///   first retry after the end; either way its failures, cursor and answered request cleared;
 /// - more: due again at once, going on from its cursor;
 /// - items failed: due again after the backoff, its cursor cleared;
 /// - failed: due again after the backoff, its cursor kept.
@@ -431,21 +432,23 @@ fn finished(
         ..row
     };
     match &result.ran {
-        Ran::Done => row
-            .trigger
-            .next_due(due_at, end, &EngineZones)
-            .map(|next_due_at| ScheduleRow {
-                // A `due_by` already past means soon, never again in this pass.
-                next_due_at: result.due_by.map_or(next_due_at, |due_by| {
-                    due_by
-                        .max(end.saturating_add(spec.retry_first_secs))
-                        .min(next_due_at)
-                }),
+        Ran::Done => {
+            // A `due_by` already past means soon, never again in this pass.
+            let due_by = result
+                .due_by
+                .map(|due_by| due_by.max(end.saturating_add(spec.retry_first_secs)));
+            let next_due_at = match (row.trigger.next_due(due_at, end, &EngineZones), due_by) {
+                (Some(next), Some(due_by)) => Some(due_by.min(next)),
+                (next, due_by) => next.or(due_by),
+            };
+            next_due_at.map(|next_due_at| ScheduleRow {
+                next_due_at,
                 failures: 0,
                 cursor: None,
                 answering: false,
                 ..row
-            }),
+            })
+        }
         Ran::More { cursor } => Some(ScheduleRow {
             next_due_at: end,
             cursor: Some(cursor.clone()),

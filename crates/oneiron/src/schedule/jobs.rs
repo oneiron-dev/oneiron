@@ -2,8 +2,9 @@
 
 use super::JobSpec;
 
-/// Every job kind, one line each: the engine's 19 sweeps (stage 5a) and the tests' jobs; the due
-/// indexes and the host loops join in stages 5b and 5c.
+/// Every job kind, one line each: the engine's 19 sweeps (stage 5a), the deadlines doors note for
+/// five of them (stage 5b) and the tests' jobs; the other due indexes and the host loops join in
+/// stages 5b and 5c.
 static JOBS: &[&JobSpec] = &[
     &crate::housekeeping::jobs::SECRET_LEASE_EXPIRY_JOB,
     &crate::housekeeping::jobs::CRITICAL_CONFIRM_EXPIRY_JOB,
@@ -24,6 +25,11 @@ static JOBS: &[&JobSpec] = &[
     &crate::housekeeping::jobs::DRAFTER_CORPUS_SWEEP_JOB,
     &crate::housekeeping::jobs::MODEL_PACK_RETIREMENT_JOB,
     &crate::housekeeping::jobs::OAUTH_EXPIRY_JOB,
+    &crate::housekeeping::jobs::SECRET_LEASE_EXPIRY_DEADLINE_JOB,
+    &crate::housekeeping::jobs::CRITICAL_CONFIRM_EXPIRY_DEADLINE_JOB,
+    &crate::housekeeping::jobs::VOICE_PRINT_RETENTION_DEADLINE_JOB,
+    &crate::housekeeping::jobs::SHARED_ACT_MATURITY_DEADLINE_JOB,
+    &crate::housekeeping::jobs::ANNOTATION_BODY_ANCHORS_DEADLINE_JOB,
     #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_COUNT,
     #[cfg(oneiron_test_support)]

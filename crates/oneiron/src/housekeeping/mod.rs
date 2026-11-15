@@ -187,33 +187,25 @@ impl Vault {
     }
 
     /// When a vault that is not running must next run a pass, or `None` when
-    /// it owes no retirement: the earliest deadline a door noted for a secret
-    /// lease, a voice print, a critical confirm or a shared act's window, not
-    /// before that sweep is next due (a failing sweep waits out its backoff),
-    /// and the erasure sweep's due time while an obligation waits, and a left
-    /// env's owed body collection (FIX 2413), and the earliest deadline of
-    /// the retained peer work (FIX 11183), and a paced verb call's window or
-    /// deadline (FIX 8753), and the first day to come on which the model
-    /// pack retirement pass owes work, a notice mark with no notice recorded
-    /// or a retirement-day move (FIX 22059), and the next due watcher tick on
-    /// the node that releases them (FIX 22180), and the first due pending
-    /// check-in (ROLES-CHECKIN P2.3), and the first due armed job that wakes
-    /// its host. A sweep's cadence never wakes a vault: cache and retention
-    /// hygiene wait for the next start. Reads one row per sweep, the
-    /// schedule, the retained work queues, the installed model packs' kept
-    /// checks (FIX 20043) and notice records, and the first due index row,
-    /// so a host can ask every time it stops the vault.
+    /// it owes no retirement: the erasure sweep's due time while an obligation
+    /// waits, and a left env's owed body collection (FIX 2413), and the
+    /// earliest deadline of the retained peer work (FIX 11183), and a paced
+    /// verb call's window or deadline (FIX 8753), and the first day to come
+    /// on which the model pack retirement pass owes work, a notice mark with
+    /// no notice recorded or a retirement-day move (FIX 22059), and the next
+    /// due watcher tick on the node that releases them (FIX 22180), and the
+    /// first due pending check-in (ROLES-CHECKIN P2.3), and the first due
+    /// armed job that wakes its host. Among those jobs is each deadline a door noted for a secret
+    /// lease, a voice print, a critical confirm or a shared act's window (DESIGN
+    /// 15-setting-primitive, stage 5b): due at the deadline, and after a pass
+    /// that found the sweep backing off or its walk begun before the deadline,
+    /// when the sweep is next due. A sweep's cadence never wakes a vault: cache
+    /// and retention hygiene wait for the next start. Reads the schedule, the
+    /// retained work queues, the installed model packs' kept checks (FIX
+    /// 20043) and notice records, and the first due index row, so a host can
+    /// ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
-        let mut owed = {
-            let txn = self.store.env.read_txn()?;
-            let mut noted = Vec::new();
-            for sweep in wake::WAKE_SWEEPS {
-                if let Some(at) = wake::earliest_in_txn(&self.store, &txn, sweep)? {
-                    noted.push((sweep, at));
-                }
-            }
-            noted
-        };
+        let mut owed = Vec::new();
         if jobs::erase_obligation_waiting(self)? {
             owed.push((HousekeepingSweep::HardEraseSweep, 0));
         }
