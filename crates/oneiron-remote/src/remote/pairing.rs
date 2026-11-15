@@ -47,7 +47,7 @@ fn seed_from_hex(value: &str) -> Option<[u8; 32]> {
     Some(seed)
 }
 
-fn lower_hex(bytes: &[u8]) -> String {
+pub(super) fn lower_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
