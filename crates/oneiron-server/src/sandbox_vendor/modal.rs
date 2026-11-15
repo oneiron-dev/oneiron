@@ -279,11 +279,17 @@ struct ServiceConnection {
 
 impl ServiceConnection {
     fn failed(&self, error: GrpcError) -> oneiron::Error {
-        let mut secrets = Vec::with_capacity(self.secrets.len());
-        for secret in &self.secrets {
-            secrets.push(secret.as_str());
-        }
-        grpc_failed(error, &secrets)
+        grpc_failed(error, &self.secret_texts())
+    }
+
+    /// The start of a text Modal answered (a `GenericResult`'s exception),
+    /// as an error quotes it: without any secret of this connection.
+    fn quoted(&self, text: &str) -> String {
+        quoted(text, &self.secret_texts())
+    }
+
+    fn secret_texts(&self) -> Vec<&str> {
+        self.secrets.iter().map(|secret| secret.as_str()).collect()
     }
 
     async fn unary(
@@ -473,7 +479,7 @@ async fn build_image(
         Some((status, exception)) => Err(HTTP.failed(format!(
             "modal could not build the guest image: {}: {}",
             generic_status(status),
-            quoted(&exception, &[])
+            control.quoted(&exception)
         ))),
         None => Err(HTTP.failed("modal ended the guest image's build with no result")),
     }
@@ -510,7 +516,7 @@ async fn attach(
             return Err(HTTP.failed(format!(
                 "modal ended the sandbox before it ran: {}: {}",
                 generic_status(status),
-                quoted(&exception, &[])
+                control.quoted(&exception)
             )));
         }
         tokio::time::sleep(POLL_PAUSE).await;
