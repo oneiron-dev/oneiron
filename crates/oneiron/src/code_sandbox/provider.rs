@@ -71,6 +71,15 @@ impl SandboxVendor {
             Self::Instabox => "vendor:instabox",
         }
     }
+
+    /// The vendor whose backend answers `name` from `MicroVmBackend::name`;
+    /// `None` for a backend of ours.
+    #[must_use]
+    pub fn from_backend_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|vendor| vendor.backend_name() == name)
+    }
 }
 
 /// Whose machines run the vault's finite Foreign and Untrusted guests.
