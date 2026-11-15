@@ -34,6 +34,10 @@ const TEXT_SOURCE: SideTable<EntityId, Vec<(String, String)>, Named> =
 /// The field a birth's process actor fills, as the birth getter names it.
 const PROCESS: &str = "made_by.process.actor";
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "a placement callback: PlacedTable's fn pointer returns Result"
+)]
 fn place_text(out: &mut Captured, row: TypedRow<EntityId, Vec<(String, String)>>) -> Result<()> {
     out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     Ok(())
@@ -47,6 +51,10 @@ fn place_birth(out: &mut Captured, row: TypedRow<EntityId, RowBirth>) -> Result<
     })
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "a placement callback: PlacedTable's fn pointer returns Result"
+)]
 fn place_born_from(out: &mut Captured, row: TypedRow<(EntityId, EntityId), ()>) -> Result<()> {
     let (trigger, born) = row.key;
     let owner = OwnerRef::entity(&born);
@@ -309,10 +317,14 @@ pub struct RestoreComparison {
     pub kept_rows_back: bool,
 }
 
+/// A vault's raw rows of some side tables: each full key (prefix and key)
+/// and its value.
+type VaultRows = BTreeMap<Vec<u8>, Vec<u8>>;
+
 fn raw_rows<K: SideKey, V, C: SideCodec<V>>(
     vault: &Vault,
     table: SideTable<K, V, C>,
-    into: &mut BTreeMap<Vec<u8>, Vec<u8>>,
+    into: &mut VaultRows,
 ) -> Result<()> {
     let txn = vault.store.env.read_txn()?;
     for row in table.iter_raw_from(&vault.store, &txn, &[])? {
@@ -324,13 +336,13 @@ fn raw_rows<K: SideKey, V, C: SideCodec<V>>(
     Ok(())
 }
 
-fn text_rows(vault: &Vault) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
+fn text_rows(vault: &Vault) -> Result<VaultRows> {
     let mut rows = BTreeMap::new();
     raw_rows(vault, TEXT_SOURCE, &mut rows)?;
     Ok(rows)
 }
 
-fn birth_rows(vault: &Vault) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
+fn birth_rows(vault: &Vault) -> Result<VaultRows> {
     let mut rows = BTreeMap::new();
     raw_rows(vault, ROW_BIRTH, &mut rows)?;
     raw_rows(vault, BIRTH_BY_TRIGGER, &mut rows)?;
@@ -368,7 +380,7 @@ fn compare_restore(
     (source, descriptor_target, getter_target): (&Vault, &Vault, &Vault),
     actors_open: bool,
     getter_restore: impl Fn(&Store, &mut RwTxn<'_>, OpenedOwnerRows) -> Result<Restored>,
-    rows_of: fn(&Vault) -> Result<BTreeMap<Vec<u8>, Vec<u8>>>,
+    rows_of: fn(&Vault) -> Result<VaultRows>,
 ) -> Result<RestoreComparison> {
     let mut written = 0;
     let mut dropped = BTreeSet::new();
