@@ -80,12 +80,8 @@ async fn execute(
     // credential caller, a stale owner sign-in: FIX 5327) never reaches the
     // owner's own page resolver below.
     let (public_authority, listed, personal_link) = if transport.requires_publication {
-        let (page_ref, publication, rows, personal_link) =
-            public::resolve_public_booking_capability_listing(server, page_token)?;
-        let authority = oneiron::booking::publication::PublicBookingAuthority {
-            page_ref,
-            publication,
-        };
+        let (authority, rows, personal_link) =
+            public::public_attempt_authority(server, page_token)?;
         (Some(authority), Some(rows), personal_link)
     } else {
         (None, None, None)
@@ -181,7 +177,8 @@ async fn execute(
     }
 
     if let Some((response, sources)) = cache {
-        public_availability::recheck(server, public_authority.as_ref())?;
+        public_availability::recheck(server, public_authority.as_ref())
+            .map_err(|error| public::dead_link_or(server, page_token, error))?;
         let listed = listed.zip(sources).map(|(mut rows, sources)| {
             rows.extend(sources);
             rows
@@ -189,7 +186,31 @@ async fn execute(
         return Ok((response, listed));
     }
 
-    // ── 3, 4, 5. parse, dispatch, project ───────────────────────────────
+    // A personal link that ended while the attempt ran stopped it at a
+    // writer's recheck; its caller gets a dead link's 404 (BK-PERSONAL-LINKS).
+    dispatch(
+        server,
+        request,
+        transport,
+        page_ref,
+        now,
+        public_authority,
+        listed,
+    )
+    .await
+    .map_err(|error| public::dead_link_or(server, page_token, error))
+}
+
+// ── 3, 4, 5. parse, dispatch, project ───────────────────────────────────
+async fn dispatch(
+    server: &Arc<SyncServer>,
+    request: BookingOperationRequest,
+    transport: BookingAdmissionContext,
+    page_ref: EntityId,
+    now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
+    listed: Option<Vec<EntityId>>,
+) -> Result<(BookingOperationResponse, Option<Vec<EntityId>>), ApiError> {
     match request {
         BookingOperationRequest::Availability(mut input) => {
             // Free text is parsed first; only its object reaches the oracle.

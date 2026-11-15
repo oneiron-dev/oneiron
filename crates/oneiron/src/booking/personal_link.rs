@@ -349,6 +349,28 @@ pub fn personal_booking_links(
         .collect())
 }
 
+/// Whether the link `link_ref` names is live and opens `page_ref`, read in
+/// the caller's transaction. A public attempt that came through a personal
+/// link rechecks this wherever it rechecks the page's publication, so a link
+/// ended while the attempt ran (revoked, or "not you?") stops the attempt
+/// before it writes.
+///
+/// # Errors
+///
+/// [`BookingError::Surface`] for a storage failure.
+pub(crate) fn personal_link_live_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    link_ref: &str,
+    page_ref: EntityId,
+) -> Result<bool, BookingError> {
+    let Some(digest) = parse_link_ref(link_ref) else {
+        return Ok(false);
+    };
+    Ok(surface(LINKS.get(&vault.store, txn, &digest))?
+        .is_some_and(|row| row.ended.is_none() && row.page_ref == page_ref))
+}
+
 fn token_digest(token: &str) -> [u8; 32] {
     digest_with(PERSONAL_LINK_DIGEST_DOMAIN, token.as_bytes())
 }

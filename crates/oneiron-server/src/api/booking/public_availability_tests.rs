@@ -201,6 +201,7 @@ async fn queued_public_hold_loses_authority_before_the_lifecycle_writer() {
         publication: load_public_booking_page(&fixture.server.vault, fixture.page, now)
             .expect("read")
             .expect("public"),
+        personal_link_ref: None,
     };
     oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(
         &fixture.server.vault,

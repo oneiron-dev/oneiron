@@ -212,6 +212,7 @@ fn public_hold_writer_rechecks_retraction_expiry_and_exact_configuration() {
             publication: load_public_booking_page(&vault, id(1), now)
                 .expect("load")
                 .expect("public"),
+            personal_link_ref: None,
         };
         let mut write_now = now;
         match change {
@@ -285,6 +286,7 @@ fn public_attempt_dedupe_cannot_alias_a_literal_non_public_key() {
         publication: load_public_booking_page(&vault, id(1), now)
             .expect("read")
             .expect("public"),
+        personal_link_ref: None,
     };
     let spec = HoldSpec {
         page_ref: id(1),

@@ -10,7 +10,17 @@ pub struct PublicBookingAuthority {
     )]
     pub page_ref: EntityId,
     pub publication: BookingPagePublication,
+    /// The personal link the attempt came through, by its `link_ref`
+    /// (BK-PERSONAL-LINKS). Every recheck then also needs that link live, so
+    /// a link ended while the attempt ran (revoked, or "not you?") stops it.
+    /// `None` for a page token, and absent from such a snapshot's JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal_link_ref: Option<String>,
 }
+
+/// The refusal of an attempt whose personal link ended while it ran: the
+/// public routes answer it as the one 404 of a dead link.
+pub const PERSONAL_LINK_ENDED: &str = "personal booking link ended";
 
 fn serialize_page<S: serde::Serializer>(
     id: &EntityId,
@@ -45,6 +55,18 @@ impl PublicBookingAuthority {
         if current.as_ref() != Some(&self.publication) {
             return Err(BookingError::InvalidConstraint(
                 "public booking authority ended".to_owned(),
+            ));
+        }
+        if let Some(link_ref) = &self.personal_link_ref
+            && !crate::booking::personal_link::personal_link_live_in_txn(
+                vault,
+                txn,
+                link_ref,
+                self.page_ref,
+            )?
+        {
+            return Err(BookingError::InvalidConstraint(
+                PERSONAL_LINK_ENDED.to_owned(),
             ));
         }
         Ok(())

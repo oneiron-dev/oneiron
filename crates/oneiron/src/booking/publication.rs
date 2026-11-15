@@ -398,7 +398,7 @@ fn load_public_booking_page_listed_in_txn(
 }
 
 mod mutation;
-pub use mutation::PublicBookingAuthority;
+pub use mutation::{PERSONAL_LINK_ENDED, PublicBookingAuthority};
 mod write_index;
 use write_index::indexed_publication;
 pub use write_index::{booking_config_hash, resolve_public_booking_token};

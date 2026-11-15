@@ -4,6 +4,7 @@ use axum::extract::RawQuery;
 use axum::extract::rejection::PathRejection;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
+use oneiron::booking::publication::PublicBookingAuthority;
 use oneiron::booking::{
     BookingPageLens, BookingPageModel, BookingPagePublication, BookingVerb,
     PUBLIC_BOOKING_ROUTE_PREFIX, PersonalBookingLink, PublicBookingAction, PublicBookingPageToken,
@@ -156,6 +157,48 @@ pub(super) fn check_personal_link_recipient(
         return Err(public_booking_not_found());
     }
     Ok(())
+}
+
+/// The snapshot a public attempt carries to its writers: the page, its live
+/// publication and, through a personal link, that link, which every writer
+/// then rechecks beside the publication (BK-PERSONAL-LINKS). Beside it, the
+/// rows the publication was read from, and the link itself.
+pub(super) fn public_attempt_authority(
+    server: &SyncServer,
+    page_token: &str,
+) -> Result<
+    (
+        PublicBookingAuthority,
+        Vec<EntityId>,
+        Option<PersonalBookingLink>,
+    ),
+    ApiError,
+> {
+    let (page_ref, publication, rows, link) =
+        resolve_public_booking_capability_listing(server, page_token)?;
+    let authority = PublicBookingAuthority {
+        page_ref,
+        publication,
+        personal_link_ref: link.as_ref().map(|link| link.link_ref.clone()),
+    };
+    Ok((authority, rows, link))
+}
+
+/// An attempt through a personal link that ended while it ran (revoked, or
+/// "not you?") is answered as a dead link is, with the one 404, whatever the
+/// writer that stopped it refused with (BK-PERSONAL-LINKS). Every other
+/// error passes through unchanged.
+pub(super) fn dead_link_or(server: &SyncServer, page_token: &str, error: ApiError) -> ApiError {
+    let link_ended = oneiron::booking::is_personal_link_token(page_token)
+        && matches!(
+            oneiron::booking::resolve_personal_booking_link(&server.vault, page_token),
+            Ok(None)
+        );
+    if link_ended {
+        public_booking_not_found()
+    } else {
+        error
+    }
 }
 
 pub(crate) async fn render_public_booking_page(
@@ -315,17 +358,19 @@ async fn public_booking_constraint_turn(
     payload: Result<Json<super::front::ConstraintTurnInput>, JsonRejection>,
 ) -> Result<Json<super::front::ConstraintTurnResponse>, ApiError> {
     let Path(token) = path.map_err(|_| public_booking_not_found())?;
-    let (page_ref, publication) = resolve_public_booking_page(&server, &token)?;
+    let (page_ref, publication, link) = resolve_public_booking_capability(&server, &token)?;
     let input = json_payload(payload)?;
     let transport = public_http_transport_context(client)?;
-    let authority = oneiron::booking::publication::PublicBookingAuthority {
+    let authority = PublicBookingAuthority {
         page_ref,
         publication,
+        personal_link_ref: link.map(|link| link.link_ref),
     };
     let transport = BookingAdmissionContext::from(&transport);
     super::front::run_public_constraint_turn(&server, authority, input, &transport)
         .await
         .map(Json)
+        .map_err(|error| dead_link_or(&server, &token, error))
 }
 
 /// The recipient's "not you?" on a personal link (ARCH-0062:157): ends the

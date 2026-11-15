@@ -483,3 +483,94 @@ async fn the_owner_mints_lists_and_revokes_personal_links_through_its_verbs() {
     .await;
     assert_eq!(listed["links"][0]["ended_reason"], "revoked");
 }
+
+/// A confirm carries the personal link it came through to every writer
+/// (#8304 review round 1): a link that ends while the confirm waits, on its
+/// email domain lookup or its turn, stops the confirm before it books, and
+/// its caller gets exactly the 404 a dead link gets. The control: the same
+/// snapshot books while its link lives.
+#[tokio::test]
+async fn a_personal_link_ended_mid_confirm_books_nothing() {
+    let fixture = Fixture::new();
+    let slots = fixture.slots().await;
+    assert!(slots.len() > 1);
+    let link = mint(&fixture, "ada@example.test", "Ada");
+    let mut holds = Vec::new();
+    for (slot, session) in [(&slots[0], "ada"), (&slots[1], "ada-again")] {
+        let held = fixture
+            .dispatch_at(
+                &link.token,
+                "booking.hold",
+                hold(selected(slot), session, None),
+            )
+            .await
+            .expect("hold through the personal link");
+        let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = held
+        else {
+            panic!("held, got {held:?}")
+        };
+        holds.push((hold_token, session));
+    }
+    let confirm_input = |hold_token: &str, session: &str| {
+        let BookingOperationRequest::Book(BookingBookInput::Confirm(mut input)) =
+            confirm(hold_token.to_owned(), session)
+        else {
+            panic!("confirm")
+        };
+        "ada@example.test".clone_into(&mut input.booker_email);
+        input
+    };
+
+    // The confirm's admission resolves the link: the snapshot it carries.
+    let (authority, _, resolved) =
+        public_attempt_authority(&fixture.server, &link.token).expect("live link");
+    assert_eq!(
+        authority.personal_link_ref.as_deref(),
+        resolved.as_ref().map(|resolved| resolved.link_ref.as_str())
+    );
+    let booked = super::super::execute_confirm(
+        &fixture.server,
+        fixture.page,
+        confirm_input(&holds[0].0, holds[0].1),
+        now_secs().expect("clock"),
+        Some(authority.clone()),
+    )
+    .await
+    .expect("the snapshot books while its link lives");
+    assert!(matches!(
+        booked.0,
+        BookingOperationResponse::Book(BookingBookResult::Confirmed { .. })
+    ));
+
+    // While the next confirm waits, the minter revokes the link.
+    assert!(
+        revoke_personal_booking_link(
+            &fixture.server.vault.memory(id(0x77), EdgeActorClass::Human),
+            &link.link.link_ref,
+            now_secs().expect("clock"),
+        )
+        .expect("revoke")
+    );
+
+    // That confirm's writes then run on the snapshot taken before it.
+    let refused = super::super::execute_confirm(
+        &fixture.server,
+        fixture.page,
+        confirm_input(&holds[1].0, holds[1].1),
+        now_secs().expect("clock"),
+        Some(authority),
+    )
+    .await;
+    let Err(error) = refused else {
+        panic!("a confirm through a revoked link booked")
+    };
+    let answered = dead_link_or(&fixture.server, &link.token, error).into_response();
+    let unknown = answer(
+        &fixture,
+        "POST",
+        &format!("/public/booking/{UNKNOWN_PERSONAL_TOKEN}/verbs/booking.confirm"),
+        confirm_as("hold".to_owned(), "ada", "ada@example.test"),
+    )
+    .await;
+    assert_eq!((answered.status(), bytes(answered).await), unknown);
+}

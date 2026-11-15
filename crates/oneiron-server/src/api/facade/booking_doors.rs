@@ -79,6 +79,7 @@ pub(crate) async fn vault_booking_constraint_turn(
         let authority = oneiron::booking::publication::PublicBookingAuthority {
             page_ref,
             publication,
+            personal_link_ref: None,
         };
         let (response, solved) =
             run_public_constraint_turn_listing(server, authority, input.turn, &transport)
