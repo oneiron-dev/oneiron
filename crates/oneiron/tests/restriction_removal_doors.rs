@@ -9,12 +9,16 @@
 //!   (`put_target_admitted_in`) admitted any row its lane reads, so a
 //!   Proposed row or a row of another predicate replaced a paused,
 //!   suppressed or exited `campaign.member` or a delivery window;
-//! - F2, its author's own retract or stale mark: the self-grant admitted
-//!   the close, so an agent lifted the hold it wrote;
-//! - a `campaign.member` head at a fresh key through the generic claim door
-//!   or an import door outranked an exit the fold had settled: the typed
-//!   doors write that family now (`refuse_typed_claim_family`, and
-//!   `ingest::admission::imported_candidate` for every import door).
+//! - F2, its author's own retract, stale mark or weakening: the self-grant
+//!   admitted the close, so an agent lifted the hold it wrote;
+//! - a code run's `vault.claims.put` at the row's id: its candidate writer
+//!   checked authorship alone, then put over the row or closed it behind a
+//!   Proposed successor (Astra review on #8153 F1);
+//! - a `campaign.member` head at a fresh key through the generic claim door,
+//!   an import door or a raw put outranked an exit the fold had settled: the
+//!   typed doors write that family now (`refuse_typed_claim_family`,
+//!   `ingest::admission::imported_candidate` for every import door, and the
+//!   raw put and claim candidate preflights).
 //!
 //! Each red is the agent's write; each control is the same door taking a
 //! row that restricts no one, or the owner lifting the restriction. The
@@ -37,6 +41,7 @@ use oneiron::memory::{
 };
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::code_run_claim_put::put_claim_as_code_run;
 use oneiron::write_envelope::claim_body::encode_claim_body;
 use oneiron::write_envelope::cohort_claims::{
     CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
@@ -44,7 +49,7 @@ use oneiron::write_envelope::cohort_claims::{
 };
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
-    RawEntityPut, TimeRange, Vault, VaultConfig,
+    Error, RawEntityPut, TimeRange, Vault, VaultConfig, WriteActor,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -141,16 +146,7 @@ impl Fixture {
         self.owner_puts(claim_about(
             PREDICATE_CAMPAIGN_MEMBER,
             person,
-            encode_campaign_member_value(&CampaignMemberValue {
-                campaign: EntityId::now(),
-                state,
-                channels: vec![CampaignMemberChannel {
-                    channel: "email".to_owned(),
-                    basis_evidence: EntityId::now(),
-                    sender_ref: EntityId::now(),
-                }],
-                derivation: None,
-            }),
+            member_value(state),
         ))
     }
 
@@ -176,7 +172,23 @@ impl Fixture {
         class: EdgeActorClass,
         id: EntityId,
     ) -> MemoryResult<()> {
-        let mut body = claim_about(NOTE, self.agent, Value::from("a note"));
+        self.raw_puts(
+            actor,
+            class,
+            id,
+            claim_about(NOTE, self.agent, Value::from("a note")),
+        )
+    }
+
+    /// `actor`'s raw put of `body` at `id` through its own bound handle,
+    /// sourceless, in the default facet.
+    fn raw_puts(
+        &self,
+        actor: EntityId,
+        class: EdgeActorClass,
+        id: EntityId,
+        mut body: ClaimBody,
+    ) -> MemoryResult<()> {
         body.source = None;
         body.scope_facet = self.facet;
         let data = encode_claim_body(&body).unwrap();
@@ -268,12 +280,38 @@ impl Fixture {
         class: EdgeActorClass,
         id: EntityId,
     ) -> MemoryResult<ClaimDemoteView> {
+        self.demotes(actor, class, id, ClaimDemoteActionInput::Stale)
+    }
+
+    /// `actor`'s `vault.claims.demote` of `id` by `action` on its own handle.
+    fn demotes(
+        &self,
+        actor: EntityId,
+        class: EdgeActorClass,
+        id: EntityId,
+        action: ClaimDemoteActionInput,
+    ) -> MemoryResult<ClaimDemoteView> {
         self.vault
             .memory(actor, class)
             .claim_demote(&ClaimDemoteRequest {
                 claim_ref: id.to_hex(),
-                action: ClaimDemoteActionInput::Stale,
+                action,
             })
+    }
+
+    /// The agent's code-run `vault.claims.put` at `id` of a `profile.note`
+    /// about itself, through the candidate writer the dispatcher lands it
+    /// by. Returns the id that landed.
+    fn code_run_puts_a_note_at(&self, id: EntityId) -> Result<EntityId, Error> {
+        put_claim_as_code_run(
+            &self.vault,
+            WriteActor::new(self.agent, EdgeActorClass::Agent),
+            id,
+            NOTE,
+            self.agent,
+            Value::from("a code run's note"),
+            LEARNED_AT,
+        )
     }
 
     /// The row stored at `id`.
@@ -296,6 +334,20 @@ fn claim_about(predicate: &str, subject: EntityId, value: Value) -> ClaimBody {
         ClaimLifecycleStatus::Active,
     )
     .unwrap_or_else(|error| panic!("a {predicate} body: {error:?}"))
+}
+
+/// A `campaign.member` value in `state` for a new campaign, on email.
+fn member_value(state: CampaignMemberState) -> Value {
+    encode_campaign_member_value(&CampaignMemberValue {
+        campaign: EntityId::now(),
+        state,
+        channels: vec![CampaignMemberChannel {
+            channel: "email".to_owned(),
+            basis_evidence: EntityId::now(),
+            sender_ref: EntityId::now(),
+        }],
+        derivation: None,
+    })
 }
 
 fn at(time: u64) -> TimeRange {
@@ -517,6 +569,107 @@ fn an_agents_imported_campaign_member_is_refused() {
         });
 
     let refused = imported.expect_err("an import never writes a campaign membership");
+    assert!(
+        refused.message.contains("vault.campaign.enroll"),
+        "the refusal names the typed door: {refused:?}"
+    );
+}
+
+/// Astra review on #8153 F1: the agent's code-run `vault.claims.put` at the
+/// id of the delivery window it wrote. The candidate writer checked only
+/// the agent's authorship, then closed the window behind a Proposed
+/// successor, and the window held nothing.
+#[test]
+fn an_agents_code_run_put_never_lifts_its_own_delivery_window() {
+    let f = Fixture::new();
+    let window = f.agent_lands_a_delivery_window();
+
+    let put = f.code_run_puts_a_note_at(window);
+
+    let stored = f.stored(window);
+    assert_eq!(
+        (stored.predicate.as_str(), stored.lifecycle),
+        (DELIVERY_WINDOW_CONTEXT, ClaimLifecycleStatus::Active),
+        "the delivery window still holds (put: {put:?})"
+    );
+    let refused = put.expect_err("an agent never lifts the restriction it wrote");
+    assert!(
+        refused.to_string().contains(LIFTS_A_RESTRICTION),
+        "the refusal names its reason: {refused:?}"
+    );
+}
+
+/// Control for Astra F1: the agent's code-run put over its own note lands.
+#[test]
+fn an_agents_code_run_put_over_its_own_note_lands() {
+    let f = Fixture::new();
+    let note = f.agent_lands(NOTE, json!("a note"));
+
+    f.code_run_puts_a_note_at(note)
+        .expect("the agent's code-run put over its own note lands");
+}
+
+/// Astra review on #8153 F5: the agent weakens the delivery window it
+/// wrote. The weakening closes it behind a Generated successor, and a
+/// Generated Auto window holds nothing (delivery_window/claims.rs).
+#[test]
+fn an_agent_never_weakens_its_own_delivery_window() {
+    let f = Fixture::new();
+    let window = f.agent_lands_a_delivery_window();
+    // The weakening rung follows a decay, which moves only the window's
+    // weight; its outcome is not under test.
+    let decayed = f.demotes(
+        f.agent,
+        EdgeActorClass::Agent,
+        window,
+        ClaimDemoteActionInput::Decay {
+            new_claim_of_weight: 0.5,
+        },
+    );
+
+    let weakened = f.demotes(
+        f.agent,
+        EdgeActorClass::Agent,
+        window,
+        ClaimDemoteActionInput::Weaken {
+            new_confidence: 0.5,
+        },
+    );
+
+    assert_eq!(
+        f.stored(window).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the delivery window still holds (decay: {decayed:?}; weaken: {weakened:?})"
+    );
+    let refused = weakened.expect_err("an agent never lifts the restriction it wrote");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    assert!(
+        refused.message.contains(LIFTS_A_RESTRICTION),
+        "the refusal names its reason: {refused:?}"
+    );
+}
+
+/// Astra review on #8153 F4: the agent's raw put of an enrolled
+/// `campaign.member` head at a fresh key. The raw door's preflight held
+/// only expression preferences to their typed door, so the head met the
+/// fold as the generic door's did.
+#[test]
+fn an_agents_raw_campaign_member_put_is_refused() {
+    let f = Fixture::new();
+    let person = f.person();
+
+    let put = f.raw_puts(
+        f.agent,
+        EdgeActorClass::Agent,
+        EntityId::now(),
+        claim_about(
+            PREDICATE_CAMPAIGN_MEMBER,
+            person,
+            member_value(CampaignMemberState::Enrolled),
+        ),
+    );
+
+    let refused = put.expect_err("a raw put never writes a campaign membership");
     assert!(
         refused.message.contains("vault.campaign.enroll"),
         "the refusal names the typed door: {refused:?}"

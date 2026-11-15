@@ -106,6 +106,7 @@ pub(super) fn validate_public_raw_put(
                     "expression preference lifecycle is owned by set_expression_preference",
                 ));
             }
+            refuse_campaign_member_claim(&body.predicate)?;
         }
         // A NOTE body carries `author_ref`, so a caller who hand-writes one
         // forges another actor's attribution — and no raw put can be made to
@@ -244,6 +245,22 @@ pub(crate) fn reject_family_owned_candidate(candidate: &ClaimCandidate) -> Resul
     ) {
         return Err(Error::InvalidClaimBody(
             "expression preference lifecycle is owned by set_expression_preference",
+        ));
+    }
+    refuse_campaign_member_claim(candidate.predicate())
+}
+
+/// A `campaign.member` head is the campaign's: `vault.campaign.enroll` (a
+/// claim op its intake reconciles) and the saved-query derivation
+/// (`put_claim_in_txn`) write it, and neither passes a raw put or a claim
+/// candidate door (CA-01; the Engine's RULING RESTRICTION-FIX-SCOPE = A, 15
+/// Nov, as `refuse_typed_claim_family` holds the generic claim doors). A head
+/// at a fresh key through those doors outranked an exit the fold had
+/// settled (Astra review on #8153 F4).
+fn refuse_campaign_member_claim(predicate: &str) -> Result<()> {
+    if predicate == crate::write_envelope::cohort_claims::PREDICATE_CAMPAIGN_MEMBER {
+        return Err(Error::InvalidClaimBody(
+            "campaign membership is written through vault.campaign.enroll, not a raw claim door",
         ));
     }
     Ok(())

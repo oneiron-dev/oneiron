@@ -106,16 +106,24 @@ impl Memory<'_> {
                     &body,
                     self.actor,
                 )?;
-                // The stale mark takes the row out of every surfaceable read,
-                // as a retract does: a row that restricts someone is a live
-                // owner's to mark (FIX
-                // [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT] F2).
+            }
+            // The stale mark takes the row out of every surfaceable read, as
+            // a retract does, and a weakening closes it behind a Generated
+            // successor: a row that restricts someone is a live owner's to
+            // mark or weaken (FIX [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]
+            // F2; Astra review on #8153 F5). A decay only moves its weight.
+            let lifting_verb = match action {
+                ClaimDemotionAction::Decay { .. } => None,
+                ClaimDemotionAction::Weaken { .. } => Some("weaken"),
+                ClaimDemotionAction::MarkStale => Some("mark stale"),
+            };
+            if let Some(verb) = lifting_verb {
                 require_live_owner_to_lift_restriction_in_txn(
                     self.vault,
                     wtxn,
                     self.write_actor(),
                     &body,
-                    "mark stale",
+                    verb,
                 )?;
             }
             Ok(self

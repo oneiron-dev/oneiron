@@ -156,8 +156,10 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
     ))
 }
 
-/// Refuses `actor` a close of `body` that lifts a restriction: a retract or
-/// a stale mark (`verb`) takes the row out of every fold that reads it, and
+/// Refuses `actor` a close of `body` that lifts a restriction: a retract, a
+/// stale mark or a weakening (`verb`) takes the row out of every fold that
+/// reads it (a weakening closes it behind a Generated successor, and a
+/// Generated Auto delivery window holds nothing), and
 /// where the row restricts someone's access or authority
 /// ([`crate::federation::claim_removal_widens_in`]: a paused, suppressed or
 /// exited `campaign.member`, a do-not-contact bar, an opt-out, an
@@ -180,11 +182,7 @@ pub(crate) fn require_live_owner_to_lift_restriction_in_txn(
     body: &crate::claim::ClaimBody,
     verb: &str,
 ) -> MemoryResult<()> {
-    if actor.actor_class() == EdgeActorClass::System
-        || !crate::federation::claim_removal_widens_in(vault, txn, body)?
-        || (actor.actor_class() == EdgeActorClass::Human
-            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor.entity_ref())?)
-    {
+    if !crate::memory::authorship::lifts_restriction_below_owner_in(vault, txn, actor, body)? {
         return Ok(());
     }
     Err(MemoryError::new(
