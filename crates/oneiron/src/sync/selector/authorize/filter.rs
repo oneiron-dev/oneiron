@@ -90,9 +90,6 @@ pub(in crate::sync::selector) fn filter_window_doc(
         scope_position,
     )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
-    // A queued answer leaves only while each link this pass lets it carry is
-    // still shared into its pact (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
-    coreference.record_disclosure();
     // FIX SELECTOR-RELATIONSHIP-LABELS (OPUS-LEAKS): the grant's member
     // reads a row that names a relationship or a private scope only on its
     // own live grants and memberships, as its delegated scoped read does: an
@@ -133,6 +130,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // machines take every row as stored.
     let other_vault = matches!(reach, BirthReach::OtherVault(_));
     let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
+    // Each candidate coreference claim's `same_as` link: written out, the
+    // claim carries it (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
+    let mut coreference_claims =
+        std::collections::BTreeMap::<EntityId, (EntityId, EntityId)>::new();
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -310,6 +311,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
             }
         }
         candidates.insert(id);
+        if let Some(link) = decision.coreference_link {
+            coreference_claims.insert(id, link);
+        }
         if facets.is_some() {
             if decision.facet_visible {
                 kept.insert(id);
@@ -461,6 +465,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     crate::sync::window::test_hooks::run_device_only_flag_race(vault)?;
     kept.retain(|id| !withheld.contains(id));
     shipped.retain(|id| !withheld.contains(id));
+    // A queued answer leaves only while each link it carries is still shared
+    // into its pact (SELECTOR-RELEASE-COREFERENCE-CONSENT = A): the link of
+    // each coreference claim it ships, and below each `same_as` edge it
+    // writes. A link closure pulled a row across is written as an edge too.
+    for (id, (source, target)) in &coreference_claims {
+        if shipped.contains(id) {
+            coreference.record_carried(*source, *target);
+        }
+    }
 
     let out_entities = out.get_map("entities");
     for (id, raw) in &revision_rows {
@@ -528,6 +541,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
             || (kept.contains(&tgt) && authorized_base.contains(&src))
             || window_world
         {
+            if kind == EdgeKind::SameAs {
+                coreference.record_carried(src, tgt);
+            }
             let _ = map_insert_bytes(&out_edges, raw_key, value);
         }
     });

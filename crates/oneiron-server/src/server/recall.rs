@@ -706,17 +706,27 @@ fn recall_did_not_finish() -> MemoryError {
 /// a thread of its own, outside the async context; anywhere else it simply
 /// runs. Not for use inside a `LocalSet`; [`crate::build_app`] asks hosts
 /// not to serve from one.
+///
+/// Work run on a thread of its own hands back the coreference links its
+/// selector filters let it carry, recorded here for the answer this thread
+/// makes (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
 pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
     let work = oneiron::store::carry_idempotency_intent(work);
     match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
         Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
-        Ok(_) => std::thread::scope(|scope| {
-            crate::engine_thread("recall-current-thread".into())
-                .spawn_scoped(scope, work)
-                .expect("failed to spawn thread")
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        }),
+        Ok(_) => {
+            let (done, disclosure) = std::thread::scope(|scope| {
+                crate::engine_thread("recall-current-thread".into())
+                    .spawn_scoped(scope, move || {
+                        oneiron::sync::recording_coreference_disclosure(work)
+                    })
+                    .expect("failed to spawn thread")
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            });
+            disclosure.record();
+            done
+        }
         Err(_) => work(),
     }
 }
