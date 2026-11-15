@@ -185,10 +185,11 @@ impl SyncServer {
         // process's own managed worker, where it launches one for this vault.
         crate::models::install_drafter_serving(&vault);
         // F1-6: this vault's guests run on the isolating backends this build
-        // carries, installed on the vault, not named by a process global. A
-        // vault an earlier server of this process installed keeps its set.
+        // carries, installed on the vault, not named by a process global, and
+        // on the vendor sandboxes this server serves (L8-43). A vault an
+        // earlier server of this process installed keeps its set.
         let _ = vault.install_sandbox_backends(Arc::new(
-            oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends,
+            crate::sandbox_vendor::ServedSandboxBackends::new(&vault),
         ));
         // Provider media replies are booked on their own line (FIX 8615),
         // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).

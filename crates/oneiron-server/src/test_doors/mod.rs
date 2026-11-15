@@ -21,6 +21,8 @@ pub mod native_board;
 pub mod openapi_document;
 pub mod replay_admission;
 pub mod resident_pump;
+#[cfg(target_os = "linux")]
+pub mod sandbox_vendor;
 pub mod siwc_seat;
 pub mod solved_runs;
 pub mod wire_health_sweep;

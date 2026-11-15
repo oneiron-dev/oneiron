@@ -96,6 +96,7 @@ mod protocol;
 pub mod replay_judge;
 mod residence_machines;
 pub mod runtime;
+mod sandbox_vendor;
 mod saved_query_sweep;
 pub mod server;
 mod shared_envs;
