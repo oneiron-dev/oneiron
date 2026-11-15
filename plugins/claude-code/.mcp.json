@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "oneiron": {
+      "command": "oneiron",
+      "args": [
+        "mcp",
+        "--surface",
+        "tool-first",
+        "--credential-file",
+        "${HOME}/.config/oneiron/claude-code.cred"
+      ]
+    }
+  }
+}

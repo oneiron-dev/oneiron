@@ -44,9 +44,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/send.rs` | src | L | 1 struct · 17 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
 | `src/serve.rs` | src | m | 1 struct · 1 fn · 1 const · 1 crate-vis | ServeConfig | The broker's side of the socket: one call per connection, from the daemon's uid only |
 | `src/serve/tests.rs` | test | m | — | — | The broker end to end, on a real Unix socket against the local TLS fake: one send with the key, the… |
-| `src/shape.rs` | src | L | 1 enum · 10 fn · 2 crate-vis | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |
+| `src/shape.rs` | src | L | 1 enum · 11 fn · 2 crate-vis | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |
 | `src/shape/tests.rs` | test | s | — | — | The selector parser's refusals, as `#door-reads-model` and the broker design list them: the parser reads the… |
 | `src/strip.rs` | src | m | 1 fn · 1 const · 5 crate-vis | — | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
 | `src/strip/tests.rs` | test | m | — | — | The strip forms of ARCH-0069 `#model-adapter-strip-forms`, each written the way a provider could echo it… |
 | `src/strip/watch.rs` | src | m | 4 crate-vis | — | The strip rule read as a reply streams (FIX 6103), moved out of the strip module whole: [`KeyWatch`] |
 | `src/testing.rs` | src | s | 3 struct · 8 fn | FakeProvider, FakeReply, SeenRequest | A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture |
+| `tests/drive_content_whole.rs` | test | s | — | — | A Drive file's content through the broker (GOOGLE-DRIVE-CONTENT-READ, REVIEW-8002): the bytes come back as… |
+| `tests/graph_workbook_shapes.rs` | test | s | — | — | The Microsoft Graph workbook rows (L3-17 PR 4): each accepts only its own workbook path, a worksheet name… |
+| `tests/workspace_shapes.rs` | test | s | — | — | The Google Workspace REST rows for Docs, Slides and Drive (L3-17; GOOGLE-DRIVE-CONTENT-READ): each accepts… |

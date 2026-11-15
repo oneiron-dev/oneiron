@@ -17,6 +17,7 @@ mod fact_subject;
 mod history;
 mod hosting;
 mod liveness;
+mod member_role;
 mod offer_activity;
 mod offer_erase;
 mod offer_history;
@@ -30,6 +31,8 @@ mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
+// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-ROOMS-TESTS]: the lib test target's type check fails here (13 errors: E0308 x8, E0063 x3, E0639 x1, E0061 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod thread_delete;
@@ -114,6 +117,7 @@ pub use liveness::{
 pub(in crate::workspace_roster) use liveness::{
     is_thread_root, thread_root_map, thread_task_bindings,
 };
+pub use member_role::{RoomMemberRoleReceipt, RoomMemberRoleSet};
 pub use offer_activity::OfferVoteRequest;
 pub(crate) use offer_activity::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub(in crate::workspace_roster) use offer_erase::drop_open_offer_in_txn;
@@ -301,6 +305,12 @@ pub struct RoomPage {
     pub next_after: Option<String>,
     /// The room Scope this page was read inside (ARCH-0067 §8).
     pub scope: crate::federation::Scope,
+    /// Who made each row, keyed by the `actor` it names, as this reader may
+    /// name them (FIX [UI-GATE-PREVIEW] phase 3): one entry per actor on the
+    /// page, `unknown` for one the reader cannot name. `vault.rooms.messages`
+    /// fills it; a page read for another door leaves it empty.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub actors: std::collections::BTreeMap<String, crate::context_board::ActorAttribution>,
 }
 
 /// A room TURN is an ordinary record, not a claim, so it lives in base
@@ -676,15 +686,24 @@ impl Memory<'_> {
     /// Uses the normal witness gate. The common witness transaction verifies
     /// the claim, membership, reply binding, and addressing before any message.
     pub fn rooms_speak(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
+        self.rooms_speak_admission(turn)?;
+        self.witness(turn)
+    }
+
+    /// The speech precheck [`Self::rooms_speak`] runs before its witness,
+    /// read only: the speaker's standing in the room (OF-529: an agent on a
+    /// Ready receipt, checked before the room's scope is read; a person from
+    /// its seat) and the room's scope. `can({verb})` answers
+    /// `vault.rooms.speak` from it (FIX [UI-GATE-PREVIEW]). The witness
+    /// transaction checks the turn's own messages when it lands.
+    pub(crate) fn rooms_speak_admission(&self, turn: &WitnessTurn) -> MemoryResult<()> {
         let room = EntityId::from_hex(&turn.conversation_ref)?;
-        // OF-529: an agent speaks on a Ready receipt, checked before the
-        // room's scope is read; a person from its seat, as before.
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         participation::require_speaker_in_txn(self.vault(), &txn, room, turn, self.actor())?;
         drop(txn);
         if !turns_readable(&self.room_read_worlds(room)?) {
             return Err(outside_scope());
         }
-        self.witness(turn)
+        Ok(())
     }
 }

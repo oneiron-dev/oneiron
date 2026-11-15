@@ -1,9 +1,11 @@
 //! MCP endpoint surface: modes, verb bindings, and the registered tool listing.
 
+use super::annotations::McpToolAnnotations;
 use super::endpoint_schema::{
     execute_code_tool_schema, invoke_action_tool_schema, read_result_tool_schema,
     setup_tool_schema, verb_tool_schema,
 };
+use oneiron::check_in::verb_act_class;
 use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
 use oneiron::task_verb::sdk::AgentVerb;
 use serde::Serialize;
@@ -43,6 +45,17 @@ pub const MCP_RESULT_TTL_MS: u64 = 0;
 
 /// Cache audience for every actor-derived result.
 pub const MCP_RESULT_CACHE_SCOPE: &str = "private";
+
+/// Cache lifetime of the `server/discover` catalog, the one publicly
+/// cacheable result (canon ARCH-0028, mcp-rc:cache-refusal). Its body changes
+/// only with the server's build, never with a caller or the vault's state,
+/// so an hour of reuse can only keep an old build's summary that long; each
+/// `initialize` still negotiates afresh.
+pub const MCP_DISCOVER_TTL_MS: u64 = 3_600_000;
+
+/// Cache audience of the `server/discover` catalog: every caller gets the
+/// same bytes, so any cache may hold it.
+pub const MCP_DISCOVER_CACHE_SCOPE: &str = "public";
 
 /// Schema version of the result metadata envelope.
 pub const MCP_RESULT_META_SCHEMA_VERSION: &str = "mcp_result_meta.v1";
@@ -93,6 +106,16 @@ impl McpSurfaceMode {
         match self {
             Self::Primary => "primary",
             Self::ToolFirst => "tool_first",
+        }
+    }
+
+    /// The HTTP path the server routes this endpoint at (`api/routes.rs`),
+    /// as `server/discover` lists it.
+    #[must_use]
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::Primary => "/mcp",
+            Self::ToolFirst => "/mcp/tool-first",
         }
     }
 }
@@ -361,12 +384,24 @@ impl McpEndpointTool {
         }
     }
 
+    /// The MCP tool annotations `tools/list` carries for this tool, from
+    /// its verb row's act class ([`McpToolAnnotations`] holds the table).
+    #[must_use]
+    pub fn annotations(self) -> Option<McpToolAnnotations> {
+        match self {
+            Self::Setup | Self::ReadResult => Some(McpToolAnnotations::READ_ONLY),
+            Self::ExecuteCode | Self::InvokeAction => None,
+            Self::Verb(tool) => McpToolAnnotations::for_verb_act_class(verb_act_class(tool.name)),
+        }
+    }
+
     #[must_use]
     pub fn schema(self) -> McpEndpointToolSchema {
         McpEndpointToolSchema {
             name: self.name().to_owned(),
             description: self.description(),
             input_schema: self.input_schema(),
+            annotations: self.annotations(),
         }
     }
 }
@@ -378,6 +413,9 @@ pub struct McpEndpointToolSchema {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    /// The tool's hints; a tool with none carries no `annotations` key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<McpToolAnnotations>,
 }
 
 /// One registered endpoint: its mode, its tools, and the exact listing bytes

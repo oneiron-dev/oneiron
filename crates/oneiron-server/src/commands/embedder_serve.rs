@@ -10,7 +10,7 @@ use crate::config::{
     EmbedderConfig, EmbedderProvider, EnvConfig, LimitsConfig, ServeArgs, default_config_path,
     layer_serve_config, resolve_serve_config_with_sources,
 };
-use crate::embedder::serve::{Listen, run};
+use crate::embedder::serve::{AccountKeys, Listen, run};
 
 pub async fn embedder_serve(args: EmbedderServeArgs) -> anyhow::Result<()> {
     super::init_tracing(&args.log_level);
@@ -25,11 +25,19 @@ pub async fn embedder_serve(args: EmbedderServeArgs) -> anyhow::Result<()> {
             )),
         })
         .transpose()?;
+    // Read before the model loads: a file that does not parse stops the
+    // start at once.
+    let accounts = args
+        .accounts_file
+        .as_deref()
+        .map(AccountKeys::load)
+        .transpose()?;
     run(
         config,
         Listen {
             addr: (args.host, args.port).into(),
             key,
+            accounts,
             aliases: args.model_aliases,
             limits,
         },

@@ -1,4 +1,5 @@
 //! Sync server state and maintenance jobs, split by concern.
+mod agent_wait_settle;
 mod artifact_previews;
 mod board_publisher;
 mod booking_calls;

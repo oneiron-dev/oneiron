@@ -16,7 +16,6 @@
 //! requests the listing returns are kept, as their own kind. What a source
 //! answers in place of a page is recorded on its row with any retry time it
 //! named; its continuation stays, and a later sweep resumes there.
-use serde::{Deserialize, Serialize};
 
 use super::source::{FeedbackTriageSourceError, FeedbackTriageSourceFault, source_row_in_txn};
 use super::{
@@ -32,58 +31,11 @@ pub const FEEDBACK_TRIAGE_GITHUB_PREFIX: &str = "github:";
 /// The domain a GitHub item's revision digest is taken under.
 const REVISION_DOMAIN: &[u8] = b"oneiron:feedback-triage:github-revision:v1";
 
-/// A GitHub item's kind: a repository's issue listing returns its pull
-/// requests too.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GithubIssueKind {
-    /// An issue.
-    Issue,
-    /// A pull request: the listing's entry carries a `pull_request` key.
-    PullRequest,
-}
+#[doc(hidden)]
+pub use oneiron_records::feedback::triage::github::{GithubIssueKind, GithubIssueRevision};
 
-/// One GitHub issue or pull request at one revision, as a sweep read it:
-/// every field the triage keeps. Its canonical encoding is the bytes its
-/// evidence ASSET keeps.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GithubIssueRevision {
-    /// The source the deployment bound it under: `github:<owner>/<repo>`.
-    pub repo: String,
-    /// The upstream numeric id.
-    pub id: u64,
-    /// The upstream node id.
-    pub node_id: String,
-    /// Its number in its repository.
-    pub number: u64,
-    /// Its page on the source.
-    pub html_url: String,
-    /// Its title, whole.
-    pub title: String,
-    /// Its body, whole; `None` when it has none.
-    pub body: Option<String>,
-    /// Its state as the source names it: `open` or `closed`.
-    pub state: String,
-    /// When the source last changed it, as the source names it.
-    pub updated_at: String,
-    /// Issue or pull request.
-    pub kind: GithubIssueKind,
-}
-
-/// Where a GitHub source's walk resumes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GithubSweepContinuation {
-    /// The walk: one more each time a walk reaches the last page.
-    pub generation: u64,
-    /// The next page, as the last page's `Link: rel="next"` named it;
-    /// `None` when the walk starts at the first page.
-    pub next: Option<String>,
-    /// The ETag the last page carried: HTTP evidence of the listing, never
-    /// an item's revision.
-    pub etag: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::feedback::triage::github::GithubSweepContinuation;
 
 /// One page of a GitHub source's listing, as the host read it.
 #[derive(Clone, Debug, PartialEq, Eq)]

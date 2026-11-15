@@ -227,6 +227,7 @@ pub fn classify_status(status: u16, body: &Value) -> LlmError {
             kind: oneiron::llm::SpentKind::Credit,
             retry_after: None,
             resets_at: Vec::new(),
+            seat: None,
         }
         .into();
     }

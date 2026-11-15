@@ -159,7 +159,9 @@ impl From<MediaEmbedRefusal> for oneiron::Error {
 fn llm_code(error: &LlmError) -> &'static str {
     match error {
         LlmError::BudgetDenied(_) => "budget_denied",
-        LlmError::Fatal(FatalLlmError::Auth) => "provider_auth",
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+            "provider_auth"
+        }
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
         LlmError::Fatal(FatalLlmError::JobLost) => "job_lost",

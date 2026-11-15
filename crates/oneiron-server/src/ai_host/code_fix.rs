@@ -579,12 +579,3 @@ pub(super) fn message(role: LlmMessageRole, text: String) -> LlmMessage {
         }],
     }
 }
-
-/// At most `max` bytes of `text`, cut on a character boundary.
-pub(super) fn clip(text: &str, max: usize) -> &str {
-    let mut end = text.len().min(max);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
-}

@@ -151,12 +151,19 @@ pub(super) fn settle_create_in_txn(
     // is born there too.
     let facet =
         (claim.scope_facet != vault.default_facet_in_txn(wtxn)?).then_some(claim.scope_facet);
-    vault
+    let memory = vault
         .memory(proposer, class)
         .with_birth_position(BirthPosition {
             world: claim.world,
             facet,
-        })
+        });
+    // Plan mode `required`: a brief-less TASK pins no plan, so a yes that is
+    // not the owner's lands no run of an agent whose mode turned required
+    // while the proposal was parked.
+    memory
+        .require_settled_plan_admission_in(wtxn, spec.assignee, None, approver)
+        .map_err(settle_refusal)?;
+    memory
         .land_settled_create_in_txn(wtxn, task_ref, claim_id, &spec, origin.as_ref(), now)
         .map_err(settle_refusal)
 }
