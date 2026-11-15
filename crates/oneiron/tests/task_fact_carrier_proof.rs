@@ -10,6 +10,8 @@
 //! in `a_cancel_signed_by_a_key_the_fold_never_admitted_leaves_the_task_open`; the forged
 //! second owner forks the owner in `a_fact_the_hosts_machine_signed_counts_on_the_device`;
 //! the ask record and the malformed fact fail the read in their tests. Green on the head.
+//! `a_row_replaced_under_an_indexed_id_does_not_count` is red on the base when the replay
+//! door lands the new body (the forger owns the task), and a guard when it refuses it.
 //! `an_unrooted_vault_counts_the_facts_its_own_door_wrote` passes on both: this install's own
 //! facts count here with no carrier.
 //!
@@ -109,9 +111,9 @@ fn signed_fact_body(
     encode(entries)
 }
 
-/// Lands one TASK row and its `ScopedTo` link to `task` as another of the owner's devices
-/// sends them: the own-device replay door admits role 6 like any other TASK row.
-fn land_replicated_fact(vault: &Vault, row: EntityId, task: EntityId, body: &[u8]) {
+/// Lands one TASK row as another of the owner's devices sends it: the own-device replay
+/// door admits role 6 like any other TASK row.
+fn replay_task_row(vault: &Vault, row: EntityId, body: &[u8]) -> oneiron::Result<()> {
     let now = vault.now_recorded_at();
     replay_entity(
         vault,
@@ -128,7 +130,11 @@ fn land_replicated_fact(vault: &Vault, row: EntityId, task: EntityId, body: &[u8
         },
         ImportTier::OwnDevice,
     )
-    .expect("the own-device replay door lands the row");
+}
+
+/// [`replay_task_row`], and the row's `ScopedTo` link to `task`.
+fn land_replicated_fact(vault: &Vault, row: EntityId, task: EntityId, body: &[u8]) {
+    replay_task_row(vault, row, body).expect("the own-device replay door lands the row");
     vault
         .batch()
         .edge(&row, EdgeKind::ScopedTo, &task, SCOPED_TO_WEIGHT)
@@ -345,6 +351,39 @@ fn a_fact_the_hosts_machine_signed_counts_on_the_device() {
         .expect("the task's authority reads on the device")
         .expect("the Owner fact the host's machine signed counts on the device");
     assert_eq!(state.owner_ref, host.owner);
+}
+
+#[test]
+fn a_row_replaced_under_an_indexed_id_does_not_count() {
+    let host = host();
+    let task = owner_task(&host.vault, host.owner, "the owner's task");
+    let rows = fact_rows(&host.vault, task);
+    let (owner_fact, _) = rows
+        .first()
+        .expect("the task door wrote the task's Owner fact");
+    // Another device sends a new body under the id of the Owner fact this install wrote: an
+    // Owner fact naming someone else, with no carrier. The door may refuse the row; if it
+    // lands, the written-here mark no longer names its bytes, so it must prove itself.
+    let forger = EntityId::now();
+    let _landed = replay_task_row(
+        &host.vault,
+        *owner_fact,
+        &encode(fact_entries(
+            task,
+            TaskAuthorityFactKind::Owner,
+            forger,
+            host.vault.now_recorded_at(),
+        )),
+    );
+    let state = host
+        .vault
+        .task_authority_state(task)
+        .expect("the task's authority reads");
+    assert_ne!(
+        state.map(|state| state.owner_ref),
+        Some(forger),
+        "a row replaced under a fact's id is not the fact this install wrote"
+    );
 }
 
 #[test]

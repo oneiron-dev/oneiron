@@ -10,7 +10,7 @@ crate::side_table::side_tables! {
     /// wrote (32 bytes). Local truth that never replicates, so no peer can make its own row read
     /// as one this install wrote; another machine's fact proves itself by its carrier's
     /// signature (pass 28 R5). No image keeps it; a restore carries it from the live vault.
-    /// Key: id16 (fact).
+    /// Key: hex32 (fact).
     TASK_FACT_WRITTEN_HERE: SyncState b"tasks.fact_written_here.v1/" Raw
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
 }

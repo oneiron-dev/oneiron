@@ -20,7 +20,7 @@ use crate::authority::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use oneiron_contracts::fingerprint::ContentHash;
 
@@ -33,7 +33,7 @@ pub(crate) const TASK_FACT_CARRIER_DOMAIN: &[u8] = b"oneiron/task-fact/v2";
 /// so this install counts its own facts without asking their carrier again, in an unrooted
 /// vault, before its root and with no signer loaded alike. No peer writes here, and a row
 /// replaced under a fact's id no longer matches its hash.
-const WRITTEN_HERE: SideTable<EntityId, [u8; 32], Raw> =
+const WRITTEN_HERE: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::TASK_FACT_WRITTEN_HERE);
 
 /// Records that this install's door wrote `body` as the fact row `fact_ref`, in the
@@ -44,7 +44,46 @@ pub(super) fn record_written_fact_in_txn(
     fact_ref: &EntityId,
     body: &[u8],
 ) -> Result<()> {
-    WRITTEN_HERE.put(store, wtxn, fact_ref, &ContentHash::of(body).into_bytes())
+    WRITTEN_HERE.put(
+        store,
+        wtxn,
+        &HexId(*fact_ref),
+        &ContentHash::of(body).into_bytes(),
+    )
+}
+
+/// Every fact row this install's doors wrote, with the content hash of the body each wrote.
+pub(super) fn facts_written_here_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, [u8; 32])>> {
+    Ok(WRITTEN_HERE
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(HexId(fact_ref), hash)| (fact_ref, hash))
+        .collect())
+}
+
+/// Forgets that this install wrote the fact row `fact_ref`: the row then counts here only as
+/// it proves itself, as on any other install.
+pub(super) fn forget_written_fact_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    fact_ref: &EntityId,
+) -> Result<()> {
+    WRITTEN_HERE
+        .delete(store, wtxn, &HexId(*fact_ref))
+        .map(drop)
+}
+
+/// Whether a fact this install writes in `txn` gets a carrier signature: the vault is rooted
+/// and the host loaded this install's signer.
+pub(super) fn signs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(vault
+        .authority_view_readonly_in_txn(txn)?
+        .vault_id
+        .is_some()
+        && vault.loaded_install_signer().is_some())
 }
 
 /// Whether this install's door wrote exactly `body` as the fact row `fact_ref`.
@@ -54,7 +93,10 @@ pub(super) fn written_here_in(
     fact_ref: &EntityId,
     body: &[u8],
 ) -> Result<bool> {
-    Ok(WRITTEN_HERE.get(store, txn, fact_ref)? == Some(ContentHash::of(body).into_bytes()))
+    Ok(
+        WRITTEN_HERE.get(store, txn, &HexId(*fact_ref))?
+            == Some(ContentHash::of(body).into_bytes()),
+    )
 }
 
 /// The carrier signature this install puts on the fact row `fact_ref`, whose canonical body
@@ -70,9 +112,10 @@ pub(super) fn carrier_signature_in_txn(
     let Some(vault_id) = vault.authority_view_readonly_in_txn(txn)?.vault_id else {
         return Ok(None);
     };
-    // A host whose keys did not load said so once, at load
-    // (`prepare_install_signing_logged`).
     let Some(signer) = vault.loaded_install_signer() else {
+        tracing::warn!(
+            "no install signer loaded: this task fact is written unsigned and counts on this install only"
+        );
         return Ok(None);
     };
     let transcript = carrier_transcript(

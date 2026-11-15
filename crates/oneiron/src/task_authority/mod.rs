@@ -897,6 +897,48 @@ fn proved_fact(
 }
 
 impl Vault {
+    /// Adopts the facts this install's doors wrote unsigned, before the vault's root or with
+    /// no signer loaded. Each gets a twin: the same fact on a new row, which this install's
+    /// carrier signs. The unsigned row leaves the written-here index. So the fact counts on
+    /// every device of the vault, and still counts here (Engine RULING 16 Nov 03:18,
+    /// TASK-FACT-RULING-CROSSED-OPTION-D = B). The fold absorbs a twin as a set duplicate of
+    /// its fact, so no task changes meaning.
+    ///
+    /// Each root door calls it once the root is minted with this install's signer loaded.
+    /// With no root or no signer it writes nothing. It runs in one transaction, so a failure
+    /// leaves no twin, and a second call finds nothing left to adopt. Returns how many twins
+    /// it wrote.
+    pub fn adopt_unsigned_task_facts(&self) -> Result<usize> {
+        self.with_write_txn(|wtxn| {
+            if !fact_proof::signs_in_txn(self, wtxn)? {
+                return Ok(0);
+            }
+            let mut adopted = 0;
+            for (fact_ref, _) in fact_proof::facts_written_here_in(&self.store, wtxn)? {
+                let Some(raw) = self.get_raw_in(wtxn, &fact_ref)? else {
+                    continue;
+                };
+                if EntityMetadataHeader::parse(&raw)
+                    .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
+                {
+                    continue;
+                }
+                let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+                if !fact_proof::written_here_in(&self.store, wtxn, &fact_ref, body)? {
+                    continue;
+                }
+                let carried = decode_carried_task_authority_fact_body(body)?;
+                if carried.carrier.is_some() {
+                    continue;
+                }
+                put_task_authority_fact_in_txn(self, wtxn, carried.fact)?;
+                fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
+                adopted += 1;
+            }
+            Ok(adopted)
+        })
+    }
+
     /// The authority one TASK's replicated facts prove.
     ///
     /// `Ok(None)` means NO Owner fact exists, and direct authority therefore
