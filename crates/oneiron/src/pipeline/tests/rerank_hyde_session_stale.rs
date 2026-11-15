@@ -137,6 +137,21 @@ fn put_indexed_person(vault: &Vault, id: EntityId, name: &str) -> Result<()> {
         .commit()
 }
 
+/// Opens a test vault that keeps the default policy manifest `Vault::open`
+/// seeds. A pipeline run reads its claim aging profiles from that manifest
+/// and fails closed without it, so the legacy opener's cleared vault cannot
+/// run a query.
+fn open_test_vault_keeping_policy_manifest() -> (tempfile::TempDir, Vault) {
+    let mut config = crate::test_util::embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    (dir, vault)
+}
+
 fn restage_room_person(
     session: &crate::off_record::OffRecordSession<'_>,
     id: EntityId,
@@ -170,7 +185,7 @@ fn restage_room_person(
 
 #[test]
 fn a_room_put_only_restage_publishes_its_revision_at_once() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault) = open_test_vault_keeping_policy_manifest();
     let id = entity_id(0x9B);
     put_indexed_person(&vault, id, "Owen Marsh")?;
     let old_codes = crate::batch::generate_phonetic_codes("Owen Marsh");
@@ -265,7 +280,7 @@ fn a_room_put_only_restage_publishes_its_revision_at_once() -> Result<()> {
 fn a_room_restage_with_its_text_keeps_the_text_it_sent() -> Result<()> {
     use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
 
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault) = open_test_vault_keeping_policy_manifest();
     let id = entity_id(0x9C);
     put_indexed_person(&vault, id, "Owen Marsh")?;
     let session = vault.off_record_session_vault().enter(
