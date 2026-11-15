@@ -13,8 +13,9 @@ use serde::Serialize;
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldPlaceRequest {
     /// Each `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` (a claim's
-    /// gate-decision key partition), or `{"gate_partition": null}` (the
-    /// claim-free partition).
+    /// gate-decision key partition), `{"gate_partition": null}` (the
+    /// claim-free partition), or `{"inquiry": "<hex>"}` (one inquiry this
+    /// vault sent; ARCH-0038 #company-hold).
     pub targets: Vec<LegalHoldTarget>,
     /// An opaque id, never free text: 1 to 128 of A-Z a-z 0-9 . _ : - /.
     #[serde(default)]

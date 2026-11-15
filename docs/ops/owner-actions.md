@@ -2720,8 +2720,9 @@ oneiron legal-holds lift --hold HEX
 oneiron legal-holds produce --hold HEX --recipient-key BASE64
 ```
 
-Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
-`{"gate_partition": null}` (the claim-free partition):
+Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}`,
+`{"gate_partition": null}` (the claim-free partition) or `{"inquiry": "<hex>"}` (one inquiry this
+vault sent; the hold copies its receipts, and the answer only where the company kept a copy):
 
 - `POST /v1/owner/legal-holds` with `{"targets": [...], "matter_ref": "..."}` places a hold, and
   `GET /v1/owner/legal-holds` lists the holds you may see. Add

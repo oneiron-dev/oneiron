@@ -45,8 +45,8 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
 /// The 17-byte spelling of a hold target: `1` then the id for a record or
-/// a claim's partition (the two hold together), all zero for the
-/// claim-free partition.
+/// a claim's partition (the two hold together), `2` then the id for an
+/// inquiry, all zero for the claim-free partition.
 type HeldKey = [u8; 17];
 type Rows = SideTable<EntityId, LegalHold, Named>;
 
@@ -73,6 +73,12 @@ fn held_key(target: &LegalHoldTarget) -> HeldKey {
     match target {
         LegalHoldTarget::Record(id) | LegalHoldTarget::GatePartition(Some(id)) => {
             id_key(id.as_bytes())
+        }
+        LegalHoldTarget::Inquiry(id) => {
+            let mut key = [0; 17];
+            key[0] = 2;
+            key[1..].copy_from_slice(id.as_bytes());
+            key
         }
         LegalHoldTarget::GatePartition(None) => [0; 17],
     }

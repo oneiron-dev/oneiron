@@ -275,6 +275,7 @@ fn open_capture(
                 let source = match &descriptor.source {
                     CaptureSource::Message(id) => ContentSource::Message(*id),
                     CaptureSource::GateDecision(id) => ContentSource::GateDecision(*id),
+                    CaptureSource::Inquiry(id) => ContentSource::Inquiry(*id),
                     CaptureSource::LiveSession(target) => ContentSource::LiveSession {
                         session_ref_digest: live_session_ref_digest(&target.session_ref),
                         instance: target.instance,
@@ -325,7 +326,9 @@ fn open_capture(
                         return Err(invalid("legal hold component digest"));
                     }
                     let source = match open.descriptor.source {
-                        CaptureSource::Message(id) | CaptureSource::GateDecision(id) => id,
+                        CaptureSource::Message(id)
+                        | CaptureSource::GateDecision(id)
+                        | CaptureSource::Inquiry(id) => id,
                         CaptureSource::LiveSession(_) => {
                             return Err(invalid("legal hold live source"));
                         }
@@ -366,6 +369,8 @@ fn component_family(component: SourceComponent) -> &'static str {
         SourceComponent::MessageEdge => "edges_out",
         SourceComponent::MessageResultBody => "code_run:raw_output",
         SourceComponent::MessageRevision => "revision",
+        SourceComponent::InquiryReceipt => "inquiry_receipt",
+        SourceComponent::DeliveryRecord => "federation_delivered_record",
     }
 }
 

@@ -28,6 +28,7 @@ use zeroize::Zeroizing;
 
 use super::super::{HoldCloneCapture, LegalHoldTarget};
 use super::collector::{CaptureSink, Collector, SummaryCounts};
+use super::inquiries::resolve_inquiries_in_txn;
 use super::messages::{RowKind, capture_rows_in_txn};
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -197,9 +198,11 @@ impl Drop for HoldCloneFile {
 }
 
 /// Writes one sealed capture per scope kind in `targets` for `hold_id`:
-/// `Records` for its record targets, then the gate-decision extents for its
-/// gate-partition targets. Each capture streams through a collector in the
-/// exact frame format a host receives, sealed to the hold's own key.
+/// `Records` for its record targets and its inquiries' kept copy CLAIMs,
+/// `Inquiries` for its inquiry targets (ARCH-0038 #company-hold), then the
+/// gate-decision extents for its gate-partition targets. Each capture
+/// streams through a collector in the exact frame format a host receives,
+/// sealed to the hold's own key.
 ///
 /// It runs INSIDE the caller's LMDB writer and reads through `txn`, the
 /// writer's own view, so the hold row and its copies commit or roll back
@@ -234,13 +237,30 @@ pub(crate) fn write_hold_clone_in_txn(
     let mut captures = Vec::new();
     let mut written: Vec<PathBuf> = Vec::new();
     let outcome = (|| -> Result<()> {
+        let mut inquiry_ids: Vec<EntityId> = targets
+            .iter()
+            .filter_map(|target| match target {
+                LegalHoldTarget::Inquiry(id) => Some(*id),
+                LegalHoldTarget::Record(_) | LegalHoldTarget::GatePartition(_) => None,
+            })
+            .collect();
+        inquiry_ids.sort();
+        inquiry_ids.dedup();
+        let inquiries = if inquiry_ids.is_empty() {
+            None
+        } else {
+            Some(resolve_inquiries_in_txn(vault, txn, &inquiry_ids)?)
+        };
         let mut record_ids: Vec<[u8; 16]> = targets
             .iter()
             .filter_map(|target| match target {
                 LegalHoldTarget::Record(id) => Some(*id.as_bytes()),
-                LegalHoldTarget::GatePartition(_) => None,
+                LegalHoldTarget::GatePartition(_) | LegalHoldTarget::Inquiry(_) => None,
             })
             .collect();
+        if let Some(scope) = &inquiries {
+            record_ids.extend(scope.copy_claims.iter().copied());
+        }
         if !record_ids.is_empty() {
             record_ids.sort_unstable();
             record_ids.dedup();
@@ -260,11 +280,37 @@ pub(crate) fn write_hold_clone_in_txn(
             captures.push(capture);
             written.push(path);
         }
+        if let Some(scope) = &inquiries {
+            let ids: Vec<[u8; 16]> = inquiry_ids.iter().map(|id| *id.as_bytes()).collect();
+            let capture_scope = CaptureScope::Inquiries(ids);
+            let (request, capture) = capture_request_for(vault, &hold_id, public, capture_scope)?;
+            let (capture, path) = write_capture_in(&dir, public, &request, capture, |collector| {
+                for row in &scope.rows {
+                    let fingerprint = *blake3::hash(&row.value).as_bytes();
+                    collector.component(
+                        row.component,
+                        CaptureSource::Inquiry(row.inquiry),
+                        row.family,
+                        &row.key,
+                        fingerprint,
+                        row.value.len() as u64,
+                        fingerprint,
+                        &mut &row.value[..],
+                        || Ok(()),
+                    )?;
+                }
+                Ok((SummaryCounts::default(), CaptureExtent::Inquiries))
+            })?;
+            captures.push(capture);
+            written.push(path);
+        }
         let mut claim_partitions: Vec<[u8; 16]> = targets
             .iter()
             .filter_map(|target| match target {
                 LegalHoldTarget::GatePartition(Some(claim)) => Some(*claim.as_bytes()),
-                LegalHoldTarget::GatePartition(None) | LegalHoldTarget::Record(_) => None,
+                LegalHoldTarget::GatePartition(None)
+                | LegalHoldTarget::Record(_)
+                | LegalHoldTarget::Inquiry(_) => None,
             })
             .collect();
         let claim_free = targets

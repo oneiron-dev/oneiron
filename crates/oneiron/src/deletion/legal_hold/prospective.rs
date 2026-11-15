@@ -896,6 +896,7 @@ pub(crate) fn seal_frames(
             instance: target.instance,
         },
         CaptureSource::Message(message) => ContentSource::Message(*message),
+        CaptureSource::Inquiry(inquiry) => ContentSource::Inquiry(*inquiry),
     };
     let descriptor = CaptureDescriptor {
         component: component as u8,

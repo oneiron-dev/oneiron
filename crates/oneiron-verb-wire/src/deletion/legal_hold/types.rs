@@ -39,16 +39,19 @@ pub enum LegalHoldTarget {
     /// One gate-decision key partition: a claim's, or (`None`) the
     /// claim-free one the retention-horizon sweep ages.
     GatePartition(Option<EntityId>),
+    /// One inquiry this vault sent. The hold copies its receipts, and the
+    /// answer only where the company kept a copy (ARCH-0038 #company-hold).
+    Inquiry(EntityId),
 }
 
 impl LegalHoldTarget {
     /// The record or claim this target names; `None` for the claim-free
-    /// partition.
+    /// partition and for an inquiry, which is neither.
     #[must_use]
     pub const fn id(&self) -> Option<EntityId> {
         match self {
             Self::Record(id) | Self::GatePartition(Some(id)) => Some(*id),
-            Self::GatePartition(None) => None,
+            Self::GatePartition(None) | Self::Inquiry(_) => None,
         }
     }
 }

@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::ops::Bound;
 
 use super::edge::{InquiryEdge, InquiryTermsChangeOutcome};
-use super::record::{Inquiry, InquiryOutcome};
+use super::record::{Inquiry, InquiryKeep, InquiryOutcome};
 use super::terms::InquiryTerms;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -269,4 +269,56 @@ pub(crate) fn erase_inquiry_receipt_actor_in_txn(
         RECEIPTS.put(&vault.store, wtxn, &key, &row)?;
     }
     Ok(())
+}
+
+/// One stored receipt row of an inquiry, as stored.
+pub(crate) struct InquiryReceiptRow {
+    /// The full stored key, with the table prefix.
+    pub(crate) key: Vec<u8>,
+    /// The stored value, as the receipt family wrote it.
+    pub(crate) value: Vec<u8>,
+    /// The member asked about, from the receipt fields; `None` once an
+    /// actor's erase scrubbed the member from the receipt.
+    pub(crate) member: Option<EntityId>,
+    /// The keep of the send, from the receipt fields.
+    pub(crate) keep: InquiryKeep,
+}
+
+/// Every receipt row of `inquiry`, in key order (federation.md #inquiry-keep).
+/// Each row is the stored key and value, with the member and keep parsed.
+/// A receipt an actor's erase scrubbed names no member. A member or keep
+/// that does not parse is refused. No write.
+pub(crate) fn inquiry_receipt_rows_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    inquiry: &EntityId,
+) -> Result<Vec<InquiryReceiptRow>> {
+    let prefix = format!("inquiry:{}:", inquiry.to_hex());
+    let mut rows = Vec::new();
+    for row in RECEIPTS.iter_raw_from(store, txn, prefix.as_bytes())? {
+        let (suffix, value) = row?;
+        let mut key = RECEIPTS.decl().prefix.to_vec();
+        key.extend_from_slice(&suffix);
+        let record = RECEIPTS.decode_value(&value)?;
+        let member = record
+            .fields
+            .get(FIELD_MEMBER)
+            .map(|member| EntityId::from_hex(member))
+            .transpose()
+            .map_err(|_| Error::InvariantViolation("an inquiry receipt's member does not parse"))?;
+        let keep = record
+            .fields
+            .get(FIELD_KEEP)
+            .and_then(|keep| InquiryKeep::from_token(keep))
+            .ok_or(Error::InvariantViolation(
+                "an inquiry receipt names no keep",
+            ))?;
+        rows.push(InquiryReceiptRow {
+            key,
+            value,
+            member,
+            keep,
+        });
+    }
+    Ok(rows)
 }

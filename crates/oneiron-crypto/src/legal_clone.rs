@@ -75,6 +75,10 @@ pub enum SourceComponent {
     /// is the BLAKE3 of that message's full stored entity row, the revision
     /// of its `MessageRow`.
     MessageRevision = 12,
+    /// One exact stored inquiry receipt row.
+    InquiryReceipt = 13,
+    /// One exact stored federation delivery ledger row.
+    DeliveryRecord = 14,
 }
 
 impl SourceComponent {
@@ -93,6 +97,8 @@ impl SourceComponent {
             10 => Ok(Self::MessageEdge),
             11 => Ok(Self::MessageResultBody),
             12 => Ok(Self::MessageRevision),
+            13 => Ok(Self::InquiryReceipt),
+            14 => Ok(Self::DeliveryRecord),
             _ => Err(Error::NonCanonical),
         }
     }
@@ -110,6 +116,8 @@ pub enum ContentSource {
     },
     /// One stored on-record MESSAGE entity, by its id.
     Message([u8; 16]),
+    /// One inquiry this vault sent, by its id.
+    Inquiry([u8; 16]),
 }
 
 /// Hashes the registry's exact UTF-8 session reference without normalization.
@@ -198,6 +206,10 @@ impl ContentBinding {
             ContentSource::Message(message) => {
                 out.push(3);
                 out.extend_from_slice(&message);
+            }
+            ContentSource::Inquiry(inquiry) => {
+                out.push(4);
+                out.extend_from_slice(&inquiry);
             }
         }
         out.extend_from_slice(&self.source_key_digest);
