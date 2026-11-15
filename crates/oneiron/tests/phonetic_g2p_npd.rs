@@ -43,11 +43,18 @@ impl Fixture {
     /// The ids a phonetic query for `codes` returns, best first. The limit
     /// is past the sound match's cap, so the cap is what a test sees.
     fn phonetic(&self, codes: &[String]) -> Vec<EntityId> {
+        self.phonetic_of_types(codes, None)
+    }
+
+    /// [`Self::phonetic`], narrowed to `types` when given.
+    fn phonetic_of_types(&self, codes: &[String], types: Option<&[u8]>) -> Vec<EntityId> {
         let codes: Vec<&str> = codes.iter().map(String::as_str).collect();
-        self.vault
-            .query()
-            .search_phonetic(&codes)
-            .limit(20)
+        let query = self.vault.query().search_phonetic(&codes).limit(20);
+        let query = match types {
+            Some(types) => query.filter_types(types),
+            None => query,
+        };
+        query
             .run()
             .expect("phonetic query")
             .into_iter()
@@ -140,4 +147,25 @@ fn far_names_stay_out() {
     let fixture = fixture();
     fixture.person("さとう");
     assert_eq!(fixture.phonetic(&sound_keys("Takeshi")), []);
+}
+
+/// Review #8107: the cut is taken among the rows the call may see. An ORG
+/// holding the query's exact sound is outside a PERSON-only call, so it sets
+/// no nearest distance, and the person one sound off is still found. Before,
+/// the hidden exact sound cut the person, then left the call itself: no hit,
+/// and an answer that told the hidden row was there.
+#[test]
+fn a_sound_the_call_cannot_see_sets_no_cut() {
+    let fixture = fixture();
+    let sato = fixture.person("さとう");
+    let query = sound_keys("Sadou");
+    let people = Some(&[ENTITY_TYPE_PERSON][..]);
+    assert_eq!(fixture.phonetic_of_types(&query, people), [sato]);
+    let sadou = fixture.named(ENTITY_TYPE_ORG, "Sadou");
+    assert_eq!(
+        fixture.phonetic(&query),
+        [sadou],
+        "the exact sound cuts a near one it can see"
+    );
+    assert_eq!(fixture.phonetic_of_types(&query, people), [sato]);
 }
