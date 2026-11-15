@@ -595,12 +595,29 @@ fn covered_closure(
 }
 
 impl Vault {
-    /// This vault's checkpoint v2 image of the history it holds, from one
-    /// read snapshot. Unlinked: [`Vault::write_authority_checkpoint_v2`] sets
-    /// its parent and keeps it.
+    /// This vault's next checkpoint v2 image, from one read snapshot, as
+    /// [`Vault::write_authority_checkpoint_v2`] builds it: on a vault that
+    /// adopted an image, from that baseline and the held tail, which names
+    /// the covered history it lacks with the typed history-required error
+    /// (census L5-22 PR 3: an offload drops covered rows); else of the history
+    /// it holds. Unlinked: the write sets its parent and keeps it.
     pub fn build_authority_checkpoint_v2(&self) -> Result<AuthorityCheckpointV2> {
         let txn = self.store.env.read_txn()?;
-        self.build_authority_checkpoint_v2_in_txn(&txn)
+        self.build_next_authority_checkpoint_in_txn(&txn)
+    }
+
+    /// [`Vault::build_authority_checkpoint_v2`] in the caller's snapshot.
+    pub(super) fn build_next_authority_checkpoint_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<AuthorityCheckpointV2> {
+        match super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, txn)?
+        {
+            Some(adopted) => {
+                self.build_authority_checkpoint_from_adopted_in_txn(txn, adopted.as_ref())
+            }
+            None => self.build_authority_checkpoint_v2_in_txn(txn),
+        }
     }
 
     /// [`Vault::build_authority_checkpoint_v2`] in the caller's snapshot.
