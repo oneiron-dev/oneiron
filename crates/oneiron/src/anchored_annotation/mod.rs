@@ -64,6 +64,7 @@ mod pptx_settle;
 mod pptx_tests;
 mod reanchor;
 mod recovery;
+pub(crate) mod setting_keys;
 mod threads;
 mod verbs;
 mod wire;

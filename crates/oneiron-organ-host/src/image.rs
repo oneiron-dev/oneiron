@@ -56,8 +56,6 @@ pub const VERB_RENDER: &str = "image.render";
 /// The typed body the organ reads and writes, and its schema.
 pub const IMAGE_BODY_KIND: &str = "image";
 pub const IMAGE_BODY_SCHEMA: u32 = 1;
-/// The most ops one edit takes.
-pub const MAX_IMAGE_OPS: usize = 256;
 
 const PNG: &str = "image/png";
 const JPEG: &str = "image/jpeg";
@@ -148,7 +146,8 @@ pub struct ImageEdit {
     pub artifact: EntityId,
     /// The version edited; the head when `None`.
     pub version: Option<u64>,
-    /// 1 to [`MAX_IMAGE_OPS`] ops, applied in order.
+    /// 1 to the vault's `organ_host.image.max_ops` ops (default 256), applied
+    /// in order.
     pub ops: Vec<ImageOp>,
     /// The proposal's ref.
     pub run_ref: String,
@@ -189,8 +188,8 @@ pub enum ImageEditRefusal {
     NotAnImage { media_type: String },
     #[error("an edit names at least one op")]
     NoOps,
-    #[error("an edit names at most 256 ops, not {count}")]
-    TooManyOps { count: usize },
+    #[error("an edit names at most {max} ops, not {count}")]
+    TooManyOps { count: usize, max: usize },
     /// No node can run the edit now. [`edit_image`] no longer answers it:
     /// a whole edit is one call, held when no node can run it (IO-HOLD C).
     /// The code stays for the doors that map it.
@@ -309,9 +308,13 @@ pub fn edit_image(
     if edit.ops.is_empty() {
         return Err(ImageEditRefusal::NoOps);
     }
-    if edit.ops.len() > MAX_IMAGE_OPS {
+    // The vault owner's count (`organ_host.image.max_ops`), read before the
+    // source or the organ.
+    let max = oneiron::blob_artifact::image_edit_max_ops(vault)?;
+    if edit.ops.len() > max {
         return Err(ImageEditRefusal::TooManyOps {
             count: edit.ops.len(),
+            max,
         });
     }
     let source = vault

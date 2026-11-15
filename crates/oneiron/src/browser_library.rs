@@ -17,9 +17,9 @@
 //! `superseded:<new id>`. The retire chain is the lineage, which
 //! [`resolve_workflow_in_txn`] follows to the live program. Each record
 //! keeps its lineage's newest outcomes ([`RECENT_RUNS`]), which a successor
-//! takes over, and its strict misses in a row, the
-//! [`STRICT_MISSES_BEFORE_DRIFT`]th retiring it [`DRIFT_REASON`] in the same
-//! write (CUA E2).
+//! takes over, and its strict misses in a row, the owner's
+//! `browser.library.drift_misses`th (default [`STRICT_MISSES_BEFORE_DRIFT`])
+//! retiring it [`DRIFT_REASON`] in the same write (CUA E2).
 //!
 //! `find` reads a program by its task type too (CUA E4): the node and tree
 //! version its subgoal placed at when it was filed, in the canonical
@@ -46,6 +46,7 @@ mod erase;
 mod evidence;
 mod index;
 mod records;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use admission::admission_payload_actor;
 pub use admission::{
@@ -131,8 +132,9 @@ const SUPERSEDED_PREFIX: &str = "superseded:";
 /// site (its strict misses, counted by the run path).
 pub const DRIFT_REASON: &str = "drift";
 
-/// The strict misses in a row that retire a program [`DRIFT_REASON`] (CUA
-/// E2 drift, CALLS row): the run that makes them this many retires it.
+/// The strict misses in a row that retire a program [`DRIFT_REASON`] by
+/// default (CUA E2 drift, CALLS row): the run that makes them this many
+/// retires it. The owner's `browser.library.drift_misses` key moves the count.
 pub const STRICT_MISSES_BEFORE_DRIFT: u32 = 3;
 
 /// A program's strict misses in a row after one run (CUA E2 drift, CALLS

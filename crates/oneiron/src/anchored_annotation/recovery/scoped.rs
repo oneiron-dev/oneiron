@@ -213,10 +213,17 @@ impl Vault {
         let bytes = self
             .read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, head.version, sight)?
             .ok_or(Error::EntityNotFound)?;
-        if matches!(format, UnitFormat::Text) {
-            return self.text_offers_scoped(&rtxn, artifact_id, head.version, &bytes, &unattached);
-        }
         let limits = self.text_limits_in_txn(&rtxn)?;
+        if matches!(format, UnitFormat::Text) {
+            return self.text_offers_scoped(
+                &rtxn,
+                artifact_id,
+                head.version,
+                &bytes,
+                &unattached,
+                limits.max_offers,
+            );
+        }
         // A resource refusal is the engine's error (FIX 10587), never empty offers.
         let mut offers = Vec::new();
         for (thread_id, words) in unattached
@@ -247,6 +254,7 @@ impl Vault {
         head_version: u64,
         head_sighted: &[u8],
         unattached: &[UnattachedThread],
+        max_offers: usize,
     ) -> Result<Vec<ReattachOffer>> {
         let Some(head_raw) =
             self.read_blob_artifact_version_in_txn(rtxn, artifact_id, head_version)?
@@ -258,7 +266,7 @@ impl Vault {
             let Some(words) = thread.snapshot.as_deref() else {
                 continue;
             };
-            for locator in text_find_text_for_sight(&head_raw, head_sighted, words) {
+            for locator in text_find_text_for_sight(&head_raw, head_sighted, words, max_offers) {
                 offers.push(ReattachOffer {
                     thread_id: thread.thread.thread_id,
                     version: head_version,

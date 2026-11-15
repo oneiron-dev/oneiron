@@ -31,14 +31,14 @@ use xlsx::{find_in_sheets, xlsx_range_text};
 
 /// Paragraphs joined in a shape's text.
 const PARAGRAPH_SEPARATOR: char = '\n';
-/// The most places one reattach offer lists.
-pub(super) const MAX_OFFERS: usize = 16;
 
 /// The format readers' ceilings, resolved once per sweep from live policy.
 #[derive(Clone)]
 pub(super) struct TextLimits {
     pub(super) package: Limits,
     pub(super) docx: oneiron_docedit::ArchiveLimits,
+    /// The most places one reattach offer lists (`anchored_annotation.reattach.max_offers`).
+    pub(super) max_offers: usize,
 }
 
 /// Artifact text formats, with HTML and plain text beside the OOXML edit
@@ -218,19 +218,20 @@ pub(super) fn find_text(
     let mut found = match format {
         UnitFormat::Xlsx => find_in_sheets(bytes, text, limits)?,
         UnitFormat::Docx => {
-            let mut found: Vec<Locator> =
-                docx_blocks(bytes, limits)?
-                    .map(|blocks| {
-                        blocks
-                            .iter()
-                            .flat_map(|(id, block)| {
-                                char_occurrences(block, text).into_iter().filter_map(
-                                    |(start, end)| Locator::docx(id.clone(), start, end).ok(),
-                                )
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+            let mut found: Vec<Locator> = docx_blocks(bytes, limits)?
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .flat_map(|(id, block)| {
+                            char_occurrences(block, text, limits.max_offers)
+                                .into_iter()
+                                .filter_map(|(start, end)| {
+                                    Locator::docx(id.clone(), start, end).ok()
+                                })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             if let Some(read) = stories::units(bytes, limits)? {
                 for story in &read {
                     if read
@@ -242,12 +243,14 @@ pub(super) fn find_text(
                         continue;
                     }
                     for (id, paragraph) in &story.paragraphs {
-                        found.extend(char_occurrences(paragraph, text).into_iter().filter_map(
-                            |(start, end)| {
-                                Locator::docx_story(story.scope.clone(), id.clone(), start, end)
-                                    .ok()
-                            },
-                        ));
+                        found.extend(
+                            char_occurrences(paragraph, text, limits.max_offers)
+                                .into_iter()
+                                .filter_map(|(start, end)| {
+                                    Locator::docx_story(story.scope.clone(), id.clone(), start, end)
+                                        .ok()
+                                }),
+                        );
                     }
                 }
             }
@@ -282,16 +285,18 @@ pub(super) fn find_text(
                     .iter()
                     .filter(|block| counts.get(block.part_id.as_str()).copied().unwrap_or(0) == 1)
                     .flat_map(|block| {
-                        char_occurrences(&block.text, text).into_iter().filter_map(
-                            |(start, end)| Locator::html(block.part_id.clone(), start, end).ok(),
-                        )
+                        char_occurrences(&block.text, text, limits.max_offers)
+                            .into_iter()
+                            .filter_map(|(start, end)| {
+                                Locator::html(block.part_id.clone(), start, end).ok()
+                            })
                     })
                     .collect()
             })
             .unwrap_or_default(),
-        UnitFormat::Text => text::find_in_text(bytes, text),
+        UnitFormat::Text => text::find_in_text(bytes, text, limits.max_offers),
     };
-    found.truncate(MAX_OFFERS);
+    found.truncate(limits.max_offers);
     Ok(found)
 }
 
@@ -755,11 +760,13 @@ pub(super) fn text_units_for_sight(
 
 /// Exact matches in the projected head, named in raw text coordinates. Both
 /// the detached snapshot and head are read as this caller sees them; a masked
-/// match that is not on raw character boundaries is skipped.
+/// match that is not on raw character boundaries is skipped. At most
+/// `max_offers` places, in document order.
 pub(super) fn text_find_text_for_sight(
     raw_bytes: &[u8],
     sighted_bytes: &[u8],
     words: &str,
+    max_offers: usize,
 ) -> Vec<Locator> {
     if words.trim().is_empty() {
         return Vec::new();
@@ -768,10 +775,7 @@ pub(super) fn text_find_text_for_sight(
         return Vec::new();
     };
     if raw_bytes == sighted_bytes {
-        return text::find_in_text(raw_bytes, words)
-            .into_iter()
-            .take(MAX_OFFERS)
-            .collect();
+        return text::find_in_text(raw_bytes, words, max_offers);
     }
     let mut out = Vec::new();
     for (byte_start, matched) in sighted.match_indices(words) {
@@ -786,7 +790,7 @@ pub(super) fn text_find_text_for_sight(
         }
         if let Ok(locator) = Locator::text(start, end) {
             out.push(locator);
-            if out.len() >= MAX_OFFERS {
+            if out.len() >= max_offers {
                 break;
             }
         }
@@ -846,8 +850,9 @@ fn char_slice(text: &str, start: u64, end: u64) -> Option<String> {
     (start < end && end <= chars.len()).then(|| chars[start..end].iter().collect())
 }
 
-/// Every non-overlapping exact occurrence of `needle`, in characters.
-fn char_occurrences(haystack: &str, needle: &str) -> Vec<(u64, u64)> {
+/// Every non-overlapping exact occurrence of `needle`, in characters, at
+/// most `max` of them.
+fn char_occurrences(haystack: &str, needle: &str, max: usize) -> Vec<(u64, u64)> {
     let len = needle.chars().count() as u64;
     let mut out = Vec::new();
     let mut from = 0;
@@ -856,7 +861,7 @@ fn char_occurrences(haystack: &str, needle: &str) -> Vec<(u64, u64)> {
         let start = haystack[..byte].chars().count() as u64;
         out.push((start, start + len));
         from = byte + needle.len().max(1);
-        if out.len() >= MAX_OFFERS {
+        if out.len() >= max {
             break;
         }
     }

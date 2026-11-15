@@ -10,7 +10,7 @@
 //! were read through, offered in the caller's text, and lands at the owner's
 //! offsets (FIX 22109).
 
-use super::super::anchor_text::{MAX_OFFERS, UnitFormat, find_text, text_span};
+use super::super::anchor_text::{UnitFormat, find_text, text_span};
 use super::super::code_units::{
     CodeFile, CodeSpace, FileHash, code_locator_shown_in_txn, code_raw_locator_in_txn,
     code_span_words_in_txn, file_bytes_by_hash_in_txn, file_hash_hex,
@@ -26,7 +26,7 @@ use crate::secret_custody::SecretSight;
 /// each of `unattached` read again, with its files read in `txn` through
 /// `found_in`, the projection the threads' words were read through. Offers
 /// come in thread order, and each thread's places in path order, then file
-/// order, at most [`MAX_OFFERS`] a thread, as one blob search lists them. A
+/// order, at most `anchored_annotation.reattach.max_offers` a thread, as one blob search lists them. A
 /// path the snapshot's custody withholds, or one whose file `reads` refuses,
 /// is skipped; a file that is not text holds no place. A place holds the
 /// raw words the thread's pin held, compared in memory and never stored,
@@ -74,7 +74,7 @@ pub(super) fn code_reattach_offers_in_txn(
     let mut places: Vec<Vec<Locator>> = vec![Vec::new(); wanted.len()];
     for entry in &snapshot.files {
         // Each file is read once, for every thread that still has room.
-        if places.iter().all(|found| found.len() >= MAX_OFFERS) {
+        if places.iter().all(|found| found.len() >= limits.max_offers) {
             break;
         }
         if withheld.contains(&entry.path) || !reads(&entry.content_hash)? {
@@ -90,7 +90,7 @@ pub(super) fn code_reattach_offers_in_txn(
         // place is found.
         let mut raw: Option<Option<(Vec<u8>, CodeSpace, Option<CodeSpace>)>> = None;
         for ((_, words, pinned), found) in wanted.iter().zip(places.iter_mut()) {
-            if found.len() >= MAX_OFFERS {
+            if found.len() >= limits.max_offers {
                 continue;
             }
             for span in find_text(&bytes, UnitFormat::Text, words, &limits)? {
@@ -140,7 +140,7 @@ pub(super) fn code_reattach_offers_in_txn(
                 ) {
                     found.push(locator);
                 }
-                if found.len() >= MAX_OFFERS {
+                if found.len() >= limits.max_offers {
                     break;
                 }
             }
