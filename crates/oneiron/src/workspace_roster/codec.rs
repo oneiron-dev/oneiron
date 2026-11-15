@@ -146,9 +146,9 @@ pub(super) fn write_journal(
     })
 }
 
-/// `workspace_ref` then a NUL separator ([`ROSTER_KEY_SEPARATOR`]) then the raw
-/// member-person id — the same shape [`super::records::RosterMemberKey`] uses,
-/// differing only in how the tail id is spelled (raw bytes here, hex there).
+/// `workspace_ref` then a NUL separator then the raw member-person id — the
+/// same shape [`super::records::RosterMemberKey`] uses, differing only in how
+/// the tail id is spelled (raw bytes here, hex there).
 #[derive(SideKey)]
 #[side_key(sep = b'\0')]
 pub(super) struct MemberIntentKey {
