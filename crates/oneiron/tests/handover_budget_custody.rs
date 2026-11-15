@@ -616,3 +616,50 @@ fn run_back_home_reopens_the_same_scope() {
     let root = SpendScopeId::launch(ROOT).unwrap();
     assert_eq!(x_scope.parent, Some(root));
 }
+
+#[test]
+fn queued_take_back_folds_the_other_share() {
+    let (a, b) = machines();
+    let x = dispatched_run(&a, &b, 20);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    assert!(
+        AgentDispatcher::new(&b.vault)
+            .claim_agent_run(x, "pump-b", T0 + 2)
+            .unwrap()
+            .is_some(),
+        "B claims the run it took"
+    );
+    let scope_id = SpendScopeId::for_attempt(&x);
+    AgentDispatcher::new(&b.vault)
+        .charge(&scope_id, 30)
+        .unwrap();
+    assert_eq!(b.vault.release_agent_run_leases().unwrap(), 1);
+    // B's take, claim and release reach B's doc before the exchange carries
+    // them to A.
+    reload_window(&b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    // A's try never ran, so it is still queued here and A's take keeps it.
+    // B is the elected home, so A takes after the non-home grace.
+    a.vault.resume_executor_leases();
+    a.clock.set(T0 + 400);
+    let reap = a
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "A takes the run back with its queued try");
+    let x_scope = AgentDispatcher::new(&a.vault)
+        .read_spend_scope(&scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(x_scope.state, SpendState::Open);
+    assert_eq!(x_scope.cap_units, RUN_BUDGET);
+    // B's 30 folds into X, so 10 of the 60 is left. On a5195622 the take of a
+    // queued try judged nothing: X stays at spent 20 with 40 left, 90 of 60.
+    assert_eq!(x_scope.spent_units, 50);
+}

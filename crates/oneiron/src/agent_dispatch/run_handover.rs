@@ -605,8 +605,9 @@ fn take_expired_agent_run(
 /// that commits only when the try is a run of the agent run pump's here and
 /// this machine can fund it; then the lease moves here at the next
 /// generation with a fresh hold, and the TASK names a re-created or
-/// successor try as its live one. A kept try is named by its own claim. What
-/// the take folded into the kept scope lands on the TASK's carry (FIX 4889).
+/// successor try as its live one. A kept try is named by its own claim, and
+/// its scope is judged as a re-created try's is. What the take folded into
+/// the kept scope lands on the TASK's carry (FIX 4889).
 fn take_expired_agent_run_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -636,7 +637,38 @@ fn take_expired_agent_run_in_txn(
             if !queued {
                 return Ok(AgentRunTake::Waits(LOCAL_TRY_CHANGED));
             }
-            (id, AgentRunResume::QueuedHere, 0)
+            // The queued try spends under the scope its dispatch or an
+            // earlier take kept for it here. The take judges that scope as
+            // it judges a re-created try's (FIX 4889): the custody machine
+            // folds what the other machines committed since, and elsewhere a
+            // pinned scope comes down to the remainder. A run with no carry
+            // runs as its try stands.
+            let folded = match body.spend.as_ref() {
+                None => 0,
+                Some(carry) => {
+                    let Some(input) = frozen_dispatch_input(&body.queue_payload) else {
+                        return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
+                    };
+                    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+                    match AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
+                        &mut savepoint,
+                        id,
+                        &input,
+                        Some(carry),
+                        node_id,
+                        now,
+                    )? {
+                        super::spend_custody::HandedOverLaunchReserve::Unfunded => {
+                            return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
+                        }
+                        super::spend_custody::HandedOverLaunchReserve::Reserved { folded } => {
+                            savepoint.commit()?;
+                            folded
+                        }
+                    }
+                }
+            };
+            (id, AgentRunResume::QueuedHere, folded)
         }
         LocalTry::Recreate | LocalTry::Succeed(_) => {
             let Some(input) = frozen_dispatch_input(&body.queue_payload) else {
