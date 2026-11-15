@@ -3,7 +3,10 @@
 //! and the provider payment and extends the hold to the checkout window; the
 //! confirm waits for the provider's authorization and makes the capture due;
 //! an unconfirmed deposit is voided when its window ends; a refused card
-//! keeps the hold for a retry; a visitor's cancel refunds by the terms.
+//! keeps the hold for a retry; a visitor's cancel refunds by the terms. A
+//! capture whose reply was lost, a refund the provider holds pending, and a
+//! host cancel stopped before its refund commits each still end with the
+//! visitor's money back (Astra money review, 15 Nov).
 //!
 //! The provider is a recording fake of the settlement port. The deposit
 //! doors are new, so PR 1 cannot build this file: its red is the missing
@@ -81,6 +84,73 @@ impl DepositSettlementPort for OvertakenProvider<'_> {
     }
 }
 
+/// A provider whose first capture is taken while its reply is lost: the
+/// payment stands captured, and the caller hears a timeout. A later void
+/// finds the capture and answers it, as the server's Stripe port does.
+#[derive(Default)]
+struct LostCaptureReplyProvider {
+    captured: u64,
+    recorded: RecordingProvider,
+}
+
+impl DepositSettlementPort for LostCaptureReplyProvider {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        match request.movement {
+            DepositSettleMove::Capture { amount_minor } if self.captured == 0 => {
+                self.captured = amount_minor;
+                Err(DepositProviderFailure::Transient(
+                    "the capture's reply was lost".to_owned(),
+                ))
+            }
+            DepositSettleMove::Void if self.captured > 0 => {
+                self.recorded.calls.push((
+                    request.payment_id.to_owned(),
+                    request.movement,
+                    request.idempotency_key.to_owned(),
+                ));
+                Ok(self.captured)
+            }
+            _ => self.recorded.settle(request),
+        }
+    }
+}
+
+/// A provider that holds a refund pending for its first `pending` asks.
+struct PendingRefundProvider {
+    pending: u32,
+    recorded: RecordingProvider,
+}
+
+impl DepositSettlementPort for PendingRefundProvider {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        if matches!(request.movement, DepositSettleMove::Refund { .. }) && self.pending > 0 {
+            self.pending -= 1;
+            return Err(DepositProviderFailure::Pending(
+                "the refund is pending at the provider".to_owned(),
+            ));
+        }
+        self.recorded.settle(request)
+    }
+}
+
+/// Full refund at least two hours ahead, nothing later.
+fn two_hour_terms() -> DepositTerms {
+    DepositTerms {
+        amount_minor: 4_000,
+        currency: "usd".to_owned(),
+        refund: DepositRefundRule {
+            full_refund_notice_secs: 2 * 3_600,
+            late_cancel_refund_percent: 0,
+        },
+    }
+}
+
 fn yen_terms() -> DepositTerms {
     DepositTerms {
         amount_minor: 5_000,
@@ -148,9 +218,9 @@ fn state_of(fixture: &Fixture, payment_id: &str) -> DepositState {
         .state
 }
 
-fn drain(
+fn drain<P: DepositSettlementPort>(
     fixture: &Fixture,
-    provider: &mut RecordingProvider,
+    provider: &mut P,
     now: u64,
 ) -> BookingDepositSettlementDrain {
     run_booking_deposit_settlement(&fixture.vault, "deposit-settle-worker", provider, 16, now)
@@ -642,6 +712,27 @@ fn poll_host_feed(
     etag: &str,
     now: u64,
 ) {
+    poll_host_feed_at(
+        fixture,
+        bookings,
+        u32::from(cancelled),
+        cancelled,
+        etag,
+        now,
+    )
+    .expect("host feed poll");
+}
+
+/// One poll of the host's feed with each booking at its slot and at
+/// `sequence`, cancelled or not.
+fn poll_host_feed_at(
+    fixture: &Fixture,
+    bookings: &[(&ConfirmReceipt, u64)],
+    sequence: u32,
+    cancelled: bool,
+    etag: &str,
+    now: u64,
+) -> Result<(), CalendarError> {
     let mut body =
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n");
     for (booked, start) in bookings {
@@ -650,7 +741,7 @@ fn poll_host_feed(
         body.push_str("DTSTAMP:20260302T070000Z\r\n");
         body.push_str(&format!("DTSTART:{}\r\n", ics_utc(*start)));
         body.push_str(&format!("DTEND:{}\r\n", ics_utc(*start + 30 * 60)));
-        body.push_str(&format!("SEQUENCE:{}\r\n", u32::from(cancelled)));
+        body.push_str(&format!("SEQUENCE:{sequence}\r\n"));
         body.push_str("SUMMARY:intro-call\r\n");
         if cancelled {
             body.push_str("STATUS:CANCELLED\r\n");
@@ -668,7 +759,7 @@ fn poll_host_feed(
         cadence_min_seconds: 300,
         cadence_max_seconds: 900,
     };
-    run_ics_feed_poll(&fixture.vault, &fetcher, &config, now, 7).expect("host feed poll");
+    run_ics_feed_poll(&fixture.vault, &fetcher, &config, now, 7).map(|_| ())
 }
 
 #[test]
@@ -836,4 +927,176 @@ fn a_cancel_that_overtakes_a_running_capture_owes_the_difference_back() {
             amount_minor: 4_000
         }
     );
+}
+
+#[test]
+fn a_void_that_finds_the_capture_taken_owes_it_back() {
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"lost-capture-reply"),
+        "pi_lost_reply",
+        12,
+    );
+    let mut provider = LostCaptureReplyProvider::default();
+    let step = settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    assert!(
+        matches!(
+            step,
+            DepositSettleStep::Failed(DepositProviderFailure::Transient(_))
+        ),
+        "the capture's reply is lost: {step:?}"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_lost_reply"),
+        DepositState::CaptureDue {
+            amount_minor: 4_000
+        }
+    );
+
+    // 12:00 start, cancelled at 08:01: a full refund, so the capture the
+    // deposit still owes turns into a void.
+    fixture
+        .cancel(&booked.cancel_token, NOW + 60)
+        .expect("cancel");
+    assert_eq!(state_of(&fixture, "pi_lost_reply"), DepositState::VoidDue);
+
+    let first = drain(&fixture, &mut provider, NOW + 70);
+    let second = drain(&fixture, &mut provider, NOW + 80);
+    assert_eq!(first.failed + second.failed, 0);
+    assert_eq!(
+        state_of(&fixture, "pi_lost_reply"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        },
+        "the void found 4000 captured: all of it goes back to the visitor"
+    );
+    assert!(
+        provider
+            .recorded
+            .calls
+            .iter()
+            .any(|(payment, movement, _)| {
+                payment == "pi_lost_reply"
+                    && *movement
+                        == DepositSettleMove::Refund {
+                            amount_minor: 4_000,
+                        }
+            }),
+        "the provider was asked for the refund: {:?}",
+        provider.recorded.calls
+    );
+}
+
+#[test]
+fn a_refund_the_provider_holds_pending_stays_owed_until_it_ends() {
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"pending-refund"),
+        "pi_pending_refund",
+        12,
+    );
+    // More pending answers than a failing move gets claims.
+    let mut provider = PendingRefundProvider {
+        pending: 9,
+        recorded: RecordingProvider::default(),
+    };
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    // The checkout's and the confirm's rows find nothing more to do.
+    drain(&fixture, &mut provider, NOW + 55);
+    fixture
+        .cancel(&booked.cancel_token, NOW + 60)
+        .expect("cancel");
+    assert_eq!(
+        state_of(&fixture, "pi_pending_refund"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+
+    let mut now = NOW + 70;
+    for ask in 1..=9 {
+        let pass = drain(&fixture, &mut provider, now);
+        assert_eq!(pass.failed, 0, "ask {ask}: a pending refund never fails");
+        assert_eq!(pass.refunded, 0, "ask {ask}: a pending refund is no refund");
+        assert_eq!(
+            state_of(&fixture, "pi_pending_refund"),
+            DepositState::RefundDue {
+                amount_minor: 4_000
+            },
+            "ask {ask}: the refund stays owed while the provider holds it"
+        );
+        now += 3_600;
+    }
+    let pass = drain(&fixture, &mut provider, now);
+    assert_eq!(pass.refunded, 1);
+    assert_eq!(
+        state_of(&fixture, "pi_pending_refund"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_cancel_stopped_before_its_refund_is_repaired_by_the_next_poll() {
+    // The poll stops after the cancellation's passport and status commit and
+    // before its refund does. The next poll reads the same feed (the
+    // passport skips it) or the cancellation sent again at a higher
+    // SEQUENCE (the status already stands).
+    for (case, replay_sequence) in [("same feed", 1), ("sent again", 2)] {
+        let fixture = Fixture::open(Some(two_hour_terms()));
+        fixture.enable_host_feed();
+        let mut provider = RecordingProvider::default();
+        let booked = paid_booking(
+            &fixture,
+            SessionKey::derive(case.as_bytes()),
+            "pi_stopped",
+            9,
+        );
+        settle_booking_deposit(
+            &fixture.vault,
+            &booked.calendar.event_ref,
+            &mut provider,
+            NOW + 50,
+        )
+        .expect("capture");
+        let bookings = [(&booked, MONDAY + 9 * 3_600)];
+        poll_host_feed(&fixture, &bookings, false, "v1", NOW + 60);
+
+        oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+        let stopped = poll_host_feed_at(&fixture, &bookings, 1, true, "v2", NOW + 120);
+        assert!(stopped.is_err(), "{case}: the door stops the poll");
+        assert_eq!(
+            state_of(&fixture, "pi_stopped"),
+            DepositState::Captured {
+                amount_minor: 4_000
+            },
+            "{case}: stopped before the refund"
+        );
+
+        poll_host_feed_at(&fixture, &bookings, replay_sequence, true, "v3", NOW + 180)
+            .expect("host feed poll");
+        assert_eq!(
+            state_of(&fixture, "pi_stopped"),
+            DepositState::RefundDue {
+                amount_minor: 4_000
+            },
+            "{case}: the next poll repairs the host cancel's refund"
+        );
+    }
 }
