@@ -46,6 +46,7 @@ crates/oneiron/src/origin/lfs/upload.rs sha256  # git-LFS object id of an upload
 crates/oneiron/src/skill_hub/http_fetch.rs sha256  # agentskills.io publisher sha256 digest
 
 # Class B: part of a signature or key scheme.
+crates/oneiron-authority/src/authority/webauthn_assertion.rs sha256  # WebAuthn ES256 assertion: SHA-256(clientDataJSON) in the signed bytes (W3C WebAuthn), and the challenge, SHA-256 over a domain and the authority transcript, that the passkey signs
 crates/oneiron-organ-host/src/seal/custody_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
 crates/oneiron-organ-host/src/seal/file_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
 crates/oneiron-server/src/control_keys.rs sha256  # HMAC-SHA256 API-key digests at rest
