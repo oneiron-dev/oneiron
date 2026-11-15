@@ -244,7 +244,7 @@ impl Vault {
             {
                 return Ok(ReactionChange {
                     id: live.id,
-                    state: ReactionState::Replayed,
+                    state: ReactionState::Put,
                 });
             }
             let envelope = first_party_envelope(input.actor)?;

@@ -235,7 +235,11 @@ impl Memory<'_> {
             };
             Ok(Some(MessageDurability {
                 message_id: message.to_hex(),
-                completion: message_completion_in_txn(self.vault, txn, &message)?,
+                completion: {
+                    let mut completion = message_completion_in_txn(self.vault, txn, &message)?;
+                    completion.incomplete = true;
+                    completion
+                },
                 latest_receipt: storage::receipt(self.vault, txn, message)?,
                 receipts,
                 next_after_generation,
