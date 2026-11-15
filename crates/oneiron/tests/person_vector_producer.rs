@@ -5,6 +5,12 @@
 //! their own write; the embed worker reads the line at lease and fills the
 //! vector; idle publication never embeds a PERSON's body.
 //!
+//! The vector stays while a plain CLAIM write hides the line, and goes where
+//! the facts its line was written from go (ruling D4): an erase, a door that
+//! drops a fact (the Dreamer's archive), and the wake pass that clears the
+//! lines of a person with no facts left. A wake pass that shows a line again
+//! with no landing marks a person whose vector went while it was hidden.
+//!
 //! Needs the doors and the embed worker (`sync`):
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test person_vector_producer`.
@@ -23,10 +29,14 @@ use oneiron::embed::{
 use oneiron::memory::{IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::consolidation::open_dreamer_vault_with;
-use oneiron::test_doors::derive::{About, Derived, Named, about_facts, commit, revert};
+use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault_with};
+use oneiron::test_doors::derive::{
+    About, Archive, Derived, Named, about_facts, claim_subject, commit, commit_in_attempt, revert,
+    wake_reads_about_facts,
+};
 use oneiron::test_doors::steward::{
-    STEWARD_VERBS, dreamer, revoke_base_agent_bindings, stand_steward_grant,
+    STEWARD_VERBS, archive_every_quiet_claim, dreamer, revoke_base_agent_bindings,
+    stand_steward_grant,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
@@ -114,47 +124,19 @@ struct Fixture {
     vault: Arc<Vault>,
     dreamer: EntityId,
     person: EntityId,
-    /// The person's one fact.
+    /// The person's stated fact.
     fact: EntityId,
     embedder: Arc<LineVectors>,
 }
 
-/// A Dreamer vault with an embedding model over [`DIMENSIONS`], and one
-/// person with one stated, approved fact whose sensitivity stamp is `band`.
-fn fixture(band: &str) -> Fixture {
-    fixture_with_body(band, b"someone")
-}
-
-/// [`fixture`] with the person's body `body`: an empty one is a live
-/// zero-byte payload.
-fn fixture_with_body(band: &str, body: &[u8]) -> Fixture {
-    let dir = tempfile::tempdir().expect("tempdir");
+/// A Dreamer vault with an embedding model over [`DIMENSIONS`].
+fn open_vault(dir: &tempfile::TempDir) -> Arc<Vault> {
     let mut config = VaultConfig::device();
     config.dimensions = DIMENSIONS;
     config.embedding_model = Some(MODEL.to_owned());
     let vault = Arc::new(open_dreamer_vault_with(dir.path(), READER, config).expect("vault"));
     embed_seeded_rows(&vault);
-    let dreamer = dreamer(&vault).expect("the Dreamer");
-    let at = vault.now_recorded_at();
-    let person = EntityId::now();
     vault
-        .put_entity(
-            &person,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: at, end: at },
-            at,
-            body,
-        )
-        .expect("a person");
-    let fact = put_fact(&vault, person, band, "climbing");
-    Fixture {
-        _dir: dir,
-        vault,
-        dreamer,
-        person,
-        fact,
-        embedder: Arc::new(LineVectors::default()),
-    }
 }
 
 /// Room for every row a fresh vault queues for itself in one embed pass.
@@ -176,12 +158,11 @@ fn embed_seeded_rows(vault: &Arc<Vault>) {
     );
 }
 
-/// Puts a stated, approved `profile.hobby` fact `value` about `person`,
-/// stamped `band`. Returns its id.
-fn put_fact(vault: &Vault, person: EntityId, band: &str, value: &str) -> EntityId {
-    let at = vault.now_recorded_at();
+/// Puts a stated, approved fact `predicate: value` about `person`, whose
+/// sensitivity stamp is `band`. Returns the fact.
+fn put_fact(vault: &Vault, person: EntityId, predicate: &str, value: &str, band: &str) -> EntityId {
     let mut body = ClaimBody::new(
-        "profile.hobby",
+        predicate,
         ClaimSubject::Entity(person),
         rmpv::Value::from(value),
         0.9,
@@ -194,11 +175,46 @@ fn put_fact(vault: &Vault, person: EntityId, band: &str, value: &str) -> EntityI
         rmpv::Value::from("sensitivity"),
         rmpv::Value::from(band),
     )]));
+    let at = vault.now_recorded_at();
     let fact = EntityId::now();
     vault
         .put_claim(&fact, &body, TimeRange { start: at, end: at }, at)
         .expect("a fact about the person");
     fact
+}
+
+/// A Dreamer vault with an embedding model over [`DIMENSIONS`], and one
+/// person with one stated, approved fact whose sensitivity stamp is `band`.
+fn fixture(band: &str) -> Fixture {
+    fixture_with_body(band, b"someone")
+}
+
+/// [`fixture`] with the person's body `body`: an empty one is a live
+/// zero-byte payload.
+fn fixture_with_body(band: &str, body: &[u8]) -> Fixture {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_vault(&dir);
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    let at = vault.now_recorded_at();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: at, end: at },
+            at,
+            body,
+        )
+        .expect("a person");
+    let fact = put_fact(&vault, person, "profile.hobby", "climbing", band);
+    Fixture {
+        _dir: dir,
+        vault,
+        dreamer,
+        person,
+        fact,
+        embedder: Arc::new(LineVectors::default()),
+    }
 }
 
 /// Lands the person's `about` lines as the Dreamer, `line(band)` for each
@@ -481,6 +497,28 @@ fn a_person_body_edit_is_refilled_from_the_line_not_the_body() {
     reconcile(&fixture);
     assert_eq!(person_vector(&fixture), Some(PUBLIC_VECTOR.to_vec()));
 
+    let idle = publish_body_edit_at_idle(&fixture);
+
+    assert!(
+        !idle.embedded.lock().unwrap().contains(&fixture.person),
+        "idle publication never embeds a PERSON's body"
+    );
+    reconcile(&fixture);
+    assert_eq!(
+        sent_for_person(&fixture),
+        vec![line_payload(PUBLIC_LINE), line_payload(PUBLIC_LINE)],
+        "the worker embeds the public line again, never the body"
+    );
+    assert_eq!(
+        person_vector(&fixture),
+        Some(PUBLIC_VECTOR.to_vec()),
+        "the person's vector is its line's again"
+    );
+}
+
+/// Edits the person's body and publishes the edit at idle. Returns the idle
+/// publisher's embedder.
+fn publish_body_edit_at_idle(fixture: &Fixture) -> BodyVectors {
     let mut edited = Vec::new();
     rmpv::encode::write_value(
         &mut edited,
@@ -505,7 +543,7 @@ fn a_person_body_edit_is_refilled_from_the_line_not_the_body() {
         )
         .expect("the body edit");
     let idle = BodyVectors::default();
-    let published = publish_at_idle(&fixture, &idle);
+    let published = publish_at_idle(fixture, &idle);
 
     assert!(
         published
@@ -514,21 +552,7 @@ fn a_person_body_edit_is_refilled_from_the_line_not_the_body() {
             .any(|(entity, _)| *entity == fixture.person),
         "FIXTURE: idle publishes the body edit: {published:?}"
     );
-    assert!(
-        !idle.embedded.lock().unwrap().contains(&fixture.person),
-        "idle publication never embeds a PERSON's body"
-    );
-    reconcile(&fixture);
-    assert_eq!(
-        sent_for_person(&fixture),
-        vec![line_payload(PUBLIC_LINE), line_payload(PUBLIC_LINE)],
-        "the worker embeds the public line again, never the body"
-    );
-    assert_eq!(
-        person_vector(&fixture),
-        Some(PUBLIC_VECTOR.to_vec()),
-        "the person's vector is its line's again"
-    );
+    idle
 }
 
 /// D3: a PERSON's vector is a hit of the shared vector index, as main's
@@ -550,6 +574,248 @@ fn a_query_at_the_public_line_finds_the_person_in_the_vector_index() {
         hits.first().map(|hit| hit.id),
         Some(fixture.person),
         "the person is the nearest hit: {hits:?}"
+    );
+}
+
+/// The person's public line as a public reader sees it now.
+fn public_line(fixture: &Fixture) -> Option<String> {
+    fixture
+        .vault
+        .person_about(fixture.person, Some(0))
+        .expect("read")
+}
+
+/// D4, the erase: deleting the fact the public line was written from takes
+/// the lines (FIX 3155) and, in the same write, the person's vector. RED on
+/// 62fd682 (#7438's head): the vector of the erased fact's line stays.
+#[test]
+fn an_erased_fact_drops_the_persons_vector() {
+    let fixture = fixture("public");
+    land(&fixture, &[0, 1, 2, 3], public_then_private);
+    reconcile(&fixture);
+    assert_eq!(
+        person_vector(&fixture),
+        Some(PUBLIC_VECTOR.to_vec()),
+        "FIXTURE: the person holds its line's vector"
+    );
+    // A delete needs this install's keystore, as a host installs it.
+    fixture
+        .vault
+        .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    fixture
+        .vault
+        .prepare_install_signing()
+        .expect("install signing");
+
+    let existed = fixture.vault.delete_entity(&fixture.fact).expect("erase");
+
+    assert!(existed, "FIXTURE: the fact is erased");
+    assert_eq!(
+        public_line(&fixture),
+        None,
+        "FIXTURE: the erase takes the lines"
+    );
+    assert_eq!(
+        person_vector(&fixture),
+        None,
+        "the erase takes the vector of the erased fact's line"
+    );
+    reconcile(&fixture);
+    assert_eq!(
+        person_vector(&fixture),
+        None,
+        "no pass fills it again: the person has no line"
+    );
+}
+
+/// The model's reply to the consolidation pass: one new person, named in T1.
+fn named_owen() -> String {
+    serde_json::json!({
+        "persons": [{"id": "new:P1", "name": "Owen", "evidence_turn_refs": ["T1"]}],
+        "candidates": [{
+            "subject": "new:P1",
+            "predicate": "profile.name",
+            "value": "Owen",
+            "confidence": 0.8,
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
+        }],
+    })
+    .to_string()
+}
+
+/// D4, a drop (FIX 3196): the Dreamer archives its own weak fact about the
+/// person, a door that drops the fact without a new body. The lines hide and
+/// the person's vector goes in the archive's write. The person also has a
+/// stated public fact, so it has a public line and a vector to drop. RED on
+/// 62fd682: the vector stays.
+#[test]
+fn an_archived_fact_drops_the_persons_vector() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_vault(&dir);
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    let pass = consolidate_unbound_turn(&vault, "call me Owen", None, None, &named_owen())
+        .expect("one consolidation pass");
+    let [extracted] = pass.landed.as_slice() else {
+        panic!("FIXTURE: one landed claim, found {}", pass.landed.len());
+    };
+    let extracted = *extracted;
+    let person = claim_subject(&vault, extracted)
+        .expect("read")
+        .expect("FIXTURE: the extracted fact is about a person");
+    let fact = put_fact(&vault, person, "profile.hobby", "climbing", "public");
+    let fixture = Fixture {
+        _dir: dir,
+        vault,
+        dreamer,
+        person,
+        fact,
+        embedder: Arc::new(LineVectors::default()),
+    };
+    land(&fixture, &[0, 1, 2, 3], public_then_private);
+    reconcile(&fixture);
+    assert_eq!(
+        person_vector(&fixture),
+        Some(PUBLIC_VECTOR.to_vec()),
+        "FIXTURE: the person holds its line's vector"
+    );
+    // Every landed claim is quiet and weak; the vault's second-grained clock
+    // passes the policy's 1 ms window.
+    archive_every_quiet_claim(&fixture.vault).expect("strength policy");
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+
+    let committed = commit_in_attempt(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-archive",
+        Some(pass.attempt),
+        &[Derived::Archive(Archive {
+            local: "archive",
+            claim: Named::Stored(extracted),
+            score: 0.1,
+        })],
+    )
+    .expect("commit");
+
+    let [item] = committed.items.as_slice() else {
+        panic!("FIXTURE: one item: {:?}", committed.items);
+    };
+    assert!(
+        item.landed,
+        "FIXTURE: the archive lands: {:?}",
+        item.reasons
+    );
+    assert_eq!(
+        public_line(&fixture),
+        None,
+        "FIXTURE: the archive hides the lines"
+    );
+    assert_eq!(
+        person_vector(&fixture),
+        None,
+        "the archive takes the vector of a line the archived fact backed"
+    );
+}
+
+/// D4, the wake: the owner retracts the person's only fact. That plain CLAIM
+/// write hides the line and keeps its vector; the next wake pass finds no
+/// fact left, clears the lines, and drops the vector with them. RED on
+/// 62fd682: the vector stays after the pass.
+#[test]
+fn a_wake_that_clears_a_person_with_no_facts_drops_its_vector() {
+    let fixture = fixture("public");
+    land(&fixture, &[0, 1, 2, 3], public_then_private);
+    reconcile(&fixture);
+    assert_eq!(
+        person_vector(&fixture),
+        Some(PUBLIC_VECTOR.to_vec()),
+        "FIXTURE: the person holds its line's vector"
+    );
+
+    fixture
+        .vault
+        .retract_claim(&fixture.fact, fixture.vault.now_recorded_at())
+        .expect("the retract");
+
+    assert_eq!(
+        public_line(&fixture),
+        None,
+        "FIXTURE: the retract hides the line"
+    );
+    assert_eq!(
+        person_vector(&fixture),
+        Some(PUBLIC_VECTOR.to_vec()),
+        "a plain CLAIM write keeps the vector until the wake pass (D4)"
+    );
+    wake_reads_about_facts(&fixture.vault).expect("a wake pass");
+    let (_, bands) = about_facts(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        fixture.person,
+    )
+    .expect("facts");
+    assert!(bands.is_empty(), "FIXTURE: no fact is left: {bands:?}");
+    assert_eq!(
+        person_vector(&fixture),
+        None,
+        "the pass that clears the lines drops their vector"
+    );
+}
+
+/// FIX PERSON-VECTOR-IDLE-EDIT-WHILE-HIDDEN: a body edit published at idle
+/// while a CLAIM write hides the line drops the vector and cannot mark the
+/// person. When the facts are back where the line was written from, the
+/// next wake pass shows the line again with no landing, and marks the
+/// person, which holds no vector. RED on 62fd682: the person holds no
+/// vector after the pass.
+#[test]
+fn a_line_shown_again_after_a_hidden_body_edit_embeds_again() {
+    let fixture = fixture("public");
+    land(&fixture, &[0, 1, 2, 3], public_then_private);
+    reconcile(&fixture);
+    assert_eq!(
+        person_vector(&fixture),
+        Some(PUBLIC_VECTOR.to_vec()),
+        "FIXTURE: the person holds its line's vector"
+    );
+    let second = put_fact(
+        &fixture.vault,
+        fixture.person,
+        "profile.city",
+        "Lyon",
+        "public",
+    );
+    assert_eq!(
+        public_line(&fixture),
+        None,
+        "FIXTURE: the new fact hides the line"
+    );
+
+    publish_body_edit_at_idle(&fixture);
+    reconcile(&fixture);
+    assert_eq!(
+        person_vector(&fixture),
+        None,
+        "FIXTURE: idle dropped the vector while the line was hidden"
+    );
+    fixture
+        .vault
+        .retract_claim(&second, fixture.vault.now_recorded_at())
+        .expect("the retract");
+
+    wake_reads_about_facts(&fixture.vault).expect("a wake pass");
+
+    assert_eq!(
+        public_line(&fixture).as_deref(),
+        Some(PUBLIC_LINE),
+        "FIXTURE: the pass shows the line again, with no landing"
+    );
+    reconcile(&fixture);
+    assert_eq!(
+        person_vector(&fixture),
+        Some(PUBLIC_VECTOR.to_vec()),
+        "the line shown again is embedded again"
     );
 }
 
@@ -618,7 +884,13 @@ fn a_swap_while_the_line_is_hidden_leaves_no_idle_refill_over_the_next_line() {
     land(&fixture, &[0, 1, 2, 3], public_then_private);
     reconcile(&fixture);
     assert_eq!(person_vector(&fixture), Some(PUBLIC_VECTOR.to_vec()));
-    put_fact(&fixture.vault, fixture.person, "public", "hiking");
+    put_fact(
+        &fixture.vault,
+        fixture.person,
+        "profile.hobby",
+        "hiking",
+        "public",
+    );
     assert_eq!(
         fixture
             .vault
