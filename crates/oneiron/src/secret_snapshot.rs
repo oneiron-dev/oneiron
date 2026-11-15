@@ -1,6 +1,7 @@
 //! Snapshot-time secret custody filtering (ARCH-0069 S4/S5).
 
 use crate::ports::EntityStoreRead;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
@@ -162,8 +163,14 @@ pub(crate) fn snapshot_root(repo_ref: &RepoRef) -> Option<&str> {
 /// (no suffix matching), absolute directory declarations do exclude children,
 /// and a snapshot without a local root falls back to hash-only exclusion so an
 /// unanchored absolute declaration can never over-match. Reclaiming blobs
-/// persisted by earlier, looser ingests is follow-up ONE-1946.
+/// persisted by earlier, looser ingests is follow-up ONE-1946. A declaration
+/// and the root match by their components ([`lexical_path`]), as the T2
+/// writer walks a declared path.
 fn path_matches_declared(path: &str, declared: &str, root: Option<&str>) -> bool {
+    let declared = lexical_path(declared);
+    let declared = declared.as_ref();
+    let root = root.map(lexical_path);
+    let root = root.as_deref();
     if relative_declaration_matches(path, declared) {
         return true;
     }
@@ -189,6 +196,34 @@ fn relative_declaration_matches(path: &str, declared: &str) -> bool {
         || path
             .strip_prefix(declared)
             .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// `path` spelled by its `/`-separated components alone: a repeated `/`, a
+/// `.` component and a trailing `/` name nothing a component walk does not,
+/// and the T2 writer admits a declared path spelled with them, so the file it
+/// writes there is declared however the record spells it (FIX 2230, review
+/// 8290 round 2). A `..` stays as spelled: the T2 writer refuses one, and
+/// resolving it by text could name another file. A path already in that form
+/// is borrowed.
+fn lexical_path(path: &str) -> Cow<'_, str> {
+    let relative = path.strip_prefix('/').unwrap_or(path);
+    if relative.is_empty()
+        || relative
+            .split('/')
+            .all(|part| !part.is_empty() && part != ".")
+    {
+        return Cow::Borrowed(path);
+    }
+    let components = path
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    Cow::Owned(if path.starts_with('/') {
+        format!("/{components}")
+    } else {
+        components
+    })
 }
 
 #[doc(hidden)]
