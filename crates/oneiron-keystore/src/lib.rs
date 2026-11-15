@@ -53,6 +53,8 @@ mod memory;
 mod user_presence;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+mod windows_presence;
 
 #[cfg(target_vendor = "apple")]
 pub use apple::AppleKeychain;
@@ -72,10 +74,14 @@ pub use user_presence::{
     NoPromptPresence, PRESENCE_PROMPT_SECS, PRESENCE_WINDOW_SECS, PendingPresenceConfirm,
     PresenceCapability, PresenceClock, PresenceConfirmation, PresenceError, PresenceGate,
     PresenceInstant, PresenceWindow, SCREEN_LOCK_POLL_MS, SystemPresenceClock, UserPresence,
-    platform_user_presence,
+    WindowsScreenSession, platform_user_presence,
 };
+// `self::`: the `windows` crate is a dependency on this platform, so the
+// bare name would be ambiguous here.
 #[cfg(windows)]
-pub use windows::WindowsDpapiKeystore;
+pub use self::windows::WindowsDpapiKeystore;
+#[cfg(windows)]
+pub use windows_presence::WindowsUserPresence;
 
 /// What a slot holds. One variant per secret the engine keeps at rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
