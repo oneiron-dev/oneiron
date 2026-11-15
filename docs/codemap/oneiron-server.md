@@ -621,7 +621,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | m | 8 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 8 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
 | `src/api/mcp_gateway/code_mode_verbs/dispatch.rs` | src | m | 11 crate-vis | — | How a code-mode run's agent verbs reach their doors: admitted, executed and answered |
-| `src/api/mcp_gateway/code_mode_verbs/field_writer.rs` | src | m | 3 crate-vis | — | A run's field writer and text check (CUA E6, DESIGN-2 §4 "Field text = A"): the host side of a browser Fill… |
+| `src/api/mcp_gateway/code_mode_verbs/field_writer.rs` | src | s | 3 crate-vis | — | A run's field writer and text check (CUA E6, DESIGN-2 §4 "Field text = A"): the host side of a browser Fill… |
 | `src/api/mcp_gateway/code_mode_verbs/guests.rs` | src | m | 18 crate-vis | — | A code-mode run's browser and desktop guests: started, driven and planned for one run |
 | `src/api/mcp_gateway/code_mode_verbs/guests/press_grants.rs` | src | s | 3 crate-vis | — | The press policy the vault's standing action grants set for a run's browser and desktop sends, and its live… |
 | `src/api/mcp_gateway/code_mode_verbs/held_press.rs` | src | s | 10 crate-vis | — | A code run's held browser and desktop presses (FIX 10423, FIX 11499): the act a refused press held, taken… |
@@ -1815,7 +1815,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/schedule/managed.rs` | src | m | 9 crate-vis | — | The managed backup duty (Engine 10-20 backup shipper row (a)): a managed vault's host backs it up hourly… |
 | `src/owner/secret_bindings.rs` | src | s | 6 crate-vis | — | The owner binds a secret to an effector, and withdraws a binding (OF-560, FIX 2620): shared by `POST… |
 | `src/owner/secrets.rs` | src | m | 28 crate-vis | — | The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6) |
-| `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
+| `src/owner/stamp.rs` | src | s | 4 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
 | `src/owner/synced_folder.rs` | src | s | 3 crate-vis | — | Whether the vault sits in a folder a sync service watches |
 | `src/owner/vault_key.rs` | src | m | 23 crate-vis | — | The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`… |
 | `src/pipe_proof.rs` | src | s | 1 crate-vis | — | An inherited descriptor proven the pipe end a flag promises, before the command reads or writes it: a cold… |
