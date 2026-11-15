@@ -801,6 +801,9 @@ impl RunInner {
     /// The worlds the `Admitted` row of the call holding `lease` named, for
     /// a row that joins it by lease; none for a lease this run did not admit.
     fn worlds_for(&self, lease: &BudgetLease) -> CallWorlds {
+        if !self.issued_here(lease) {
+            return CallWorlds::default();
+        }
         let model = self
             .lock_calls()
             .get(lease.id())
@@ -814,16 +817,26 @@ impl RunInner {
             .unwrap_or_default()
     }
 
+    /// Whether this run's meter issued `lease`. One meter never issues a
+    /// lease id twice, but two meters can issue the same id (two runs of one
+    /// name), so a row joins a call by lease only for a lease its own meter
+    /// issued: a foreign lease's refusal names no call's worlds.
+    fn issued_here(&self, lease: &BudgetLease) -> bool {
+        self.guard.lease_open(lease).is_some()
+    }
+
     /// The revision a row about `lease` carries: the one its call was
     /// admitted under, else the current one.
     fn revision_for(&self, lease: Option<&BudgetLease>) -> u32 {
-        let admitted_under = lease.and_then(|lease| {
-            let model = self
-                .lock_calls()
-                .get(lease.id())
-                .map(|facts| facts.revision);
-            model.or_else(|| self.lock_paid().get(lease.id()).map(|facts| facts.revision))
-        });
+        let admitted_under = lease
+            .filter(|lease| self.issued_here(lease))
+            .and_then(|lease| {
+                let model = self
+                    .lock_calls()
+                    .get(lease.id())
+                    .map(|facts| facts.revision);
+                model.or_else(|| self.lock_paid().get(lease.id()).map(|facts| facts.revision))
+            });
         admitted_under.unwrap_or_else(|| self.lock_declaration().revision)
     }
 

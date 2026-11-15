@@ -130,8 +130,8 @@ impl Vault {
 
     /// The live worlds of `rows`, the rows a model call's input was
     /// assembled from, for the call's run receipts (DEC-0005 world privacy,
-    /// fix 12): every world each row is in, as a run's read ledger proves a
-    /// served row's, base reality by its own id, sorted. `Ok(None)` when
+    /// fix 12): every world each row is in, base reality by its own id and
+    /// kept beside a row's other worlds, sorted. `Ok(None)` when
     /// `rows` is empty, or one row is not held here or proves no world: a
     /// partial or empty set never stands for the whole. Evidence only: no
     /// judge reads it, so whether a call may leave this device is decided as
@@ -144,7 +144,7 @@ impl Vault {
             let Some(row) = self.port_entity_get(&rtxn, id)? else {
                 return Ok(None);
             };
-            let Some(row_worlds) = crate::federation::record_scope::note_world::served_worlds_in(
+            let Some(row_worlds) = crate::federation::record_scope::note_world::every_world_in(
                 &self.store,
                 &rtxn,
                 *id,

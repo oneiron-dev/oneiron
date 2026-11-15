@@ -269,13 +269,35 @@ pub(crate) fn served_worlds_in(
     kind: u8,
     data: &[u8],
 ) -> Result<Option<BTreeSet<EntityId>>> {
+    let base = crate::claim::base_world_id();
+    Ok(every_world_in(store, txn, id, kind, data)?.map(|worlds| {
+        if worlds.contains(&base) {
+            BTreeSet::from([base])
+        } else {
+            worlds
+        }
+    }))
+}
+
+/// Every world the stored row `id` of `kind`, with body `data`, sits in now,
+/// base reality by its own id: a row that [`takes_live_worlds`] by its live
+/// worlds, base reality among others kept beside them (where
+/// [`served_worlds_in`] notes base alone); any other row where
+/// [`super::record_world_in`] places it. `None` where the row proves no
+/// world, a NOTE whose edges did not read among them.
+pub(crate) fn every_world_in(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<BTreeSet<EntityId>>> {
     let base = ScopeId(crate::claim::base_world_id());
     if !takes_live_worlds(kind) {
         return Ok(super::record_world_in(store, txn, id, kind, data)?
             .map(|world| BTreeSet::from([world.unwrap_or(base.0)])));
     }
     Ok(match live_worlds_in(store, txn, id, kind) {
-        NoteWorlds::In(worlds) if worlds.contains(&base) => Some(BTreeSet::from([base.0])),
         NoteWorlds::In(worlds) => Some(worlds.into_iter().map(|world| world.0).collect()),
         NoteWorlds::NoSingleWorld => None,
     })

@@ -248,9 +248,17 @@ pub(crate) async fn asked(
     let model = admitted.request.model.clone();
     let locality = admitted.request.envelope.locality;
     // The call reads the pulled ASSET's pixels and the caller's own question:
-    // the asset is the one row its input was read from (FIX 6935).
+    // the asset is the one row its input was read from (FIX 6935). A call in
+    // an anonymous off-record session names no rows, so its run receipts name
+    // none of their worlds (census L5-25; Astra unbuilt-bp1b-p02 T3).
+    let anonymous = crate::api::call_receipt::session_is_anonymous_for(
+        server,
+        auth.off_record_session(),
+        crate::api::call_receipt::request_principal(auth),
+    );
     let read = EntityId::from_hex(&pulled.asset_ref)
         .ok()
+        .filter(|_| !anonymous)
         .map(|asset| vec![asset]);
     let run = run()?.sourced(read);
     let response = admitted
