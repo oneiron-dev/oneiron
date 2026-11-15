@@ -137,11 +137,11 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
     }
-    if let Some(native_mail) = &config.native_mail {
-        native_mail.validate()?;
-    }
     if let Some(booking) = &config.booking {
         booking.validate()?;
+    }
+    if let Some(native_mail) = &config.native_mail {
+        native_mail.validate()?;
     }
     if let Some(device_sync) = &config.device_sync {
         device_sync.validate()?;
