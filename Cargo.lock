@@ -8216,6 +8216,7 @@ dependencies = [
  "futures-util",
  "libc",
  "memchr",
+ "oneiron-fingerprint",
  "oneiron-hex",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
