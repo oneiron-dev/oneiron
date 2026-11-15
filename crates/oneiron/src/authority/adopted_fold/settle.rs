@@ -21,6 +21,8 @@ pub(super) struct SettledTail {
     /// The image's merged state with every tail state merged in.
     pub(super) merged: FoldState,
     pub(super) writers: BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
+    /// The slip issuers once the tail joined the image's ([`tail_issuers`]).
+    pub(super) issuers: BTreeSet<AuthorityKey>,
     pub(super) uncounted: BTreeSet<AuthorityEntryHash>,
     pub(super) pairs: u64,
     pub(super) counted_pairs: u64,
@@ -192,6 +194,16 @@ pub(super) fn settle_tail(
 ) -> Result<Option<SettledTail>> {
     let mut issues = image.safety.issues.clone();
     let judged = judged_tail(image, tail, &mut issues);
+    // Every body the image carries, decoded once.
+    let carried = image
+        .rows
+        .iter()
+        .filter_map(|(hash, row)| Some((*hash, row.body.as_ref()?)))
+        .map(|(hash, body)| -> Result<_> { Ok((hash, decode_authority_log_entry_body(body)?)) })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let Some(issuers) = tail_issuers(image, &carried, tail) else {
+        return Ok(None);
+    };
     let uncounted: BTreeSet<_> = image
         .safety
         .uncounted
@@ -200,9 +212,7 @@ pub(super) fn settle_tail(
         .chain(
             judged
                 .iter()
-                .filter(|(_, entry)| {
-                    crate::authority::log_budget::is_uncounted(entry, &image.safety.issuers)
-                })
+                .filter(|(_, entry)| crate::authority::log_budget::is_uncounted(entry, &issuers))
                 .map(|(hash, _)| *hash),
         )
         .collect();
@@ -375,15 +385,10 @@ pub(super) fn settle_tail(
     // The rows a fold past the image reads whole: carried bodies of the
     // projected kinds alone, whatever else an image carries, and the judged
     // tail's rows of those kinds (a world key record's envelopes, FIX 4881).
-    let mut projected = BTreeMap::new();
-    for (hash, row) in &image.rows {
-        if let Some(body) = &row.body {
-            let entry = decode_authority_log_entry_body(body)?;
-            if crate::authority::fold_resume::is_projected(&entry.op) {
-                projected.insert(*hash, entry);
-            }
-        }
-    }
+    let mut projected: BTreeMap<_, _> = carried
+        .into_iter()
+        .filter(|(_, entry)| crate::authority::fold_resume::is_projected(&entry.op))
+        .collect();
     // Under another pin than the image's, the guards below read the image's
     // own fold as this install projects it (FIX 3004).
     let here = (log.pin.copied() != image.building_pin)
@@ -440,6 +445,7 @@ pub(super) fn settle_tail(
         states,
         merged,
         writers,
+        issuers,
         uncounted,
         pairs,
         counted_pairs,
@@ -453,6 +459,34 @@ pub(super) fn settle_tail(
         retired_keys,
         closed_handoffs,
     }))
+}
+
+/// The slip issuers once the tail joins the image's history: the consent
+/// structure's own (`log_structure::authority_structure`), read from every
+/// row it rests on, as the store door reads it past an image
+/// (`log_budget::door_view`): the image's carried bodies (it carries each
+/// genesis, enrollment, rotation, re-root, owner key enrollment, root record
+/// and machine profile whole) and the tail's rows. A rotation, an
+/// enrollment or a re-root an admitter signed admits its owner key there
+/// whether or not the fold applies the row, as in the whole history. None
+/// where a key only the tail admits signed a covered slip row: that row
+/// would leave the counted ancestry, which only the whole history counts
+/// again.
+fn tail_issuers(
+    image: &AuthorityCheckpointV2,
+    carried: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> Option<BTreeSet<AuthorityKey>> {
+    let mut issuers = crate::authority::log_structure::authority_structure(
+        carried.values().chain(tail.values().copied()),
+    )
+    .issuers;
+    // Nothing leaves the set.
+    issuers.extend(image.safety.issuers.iter().cloned());
+    let recounted = image.rows.values().any(|row| {
+        row.slip_op && issuers.contains(&row.signer) && !image.safety.issuers.contains(&row.signer)
+    });
+    (!recounted).then_some(issuers)
 }
 
 /// The tail rows a fold judges, as `fold_engine::judged_entries` judges them:
