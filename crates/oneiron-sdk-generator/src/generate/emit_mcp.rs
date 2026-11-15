@@ -295,12 +295,12 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         };
     } else if flag(row, "server_door") {
         // A server door runs the verb with the host's execution inputs, as on REST.
-        let door_call = match name_value
+        let home = name_value
             .as_str()
-            .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name))
-        {
+            .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name));
+        let door_call = match home {
             Some((_, home_door)) => format!(
-                "{home_door}(actor.actor_ref, actor.actor_class, proof, actor.destination(), None, input, actor.home_caller())"
+                "{home_door}(actor.actor_ref, actor.actor_class, actor.auth.as_ref(), actor.destination(), None, input, actor.home_caller())"
             ),
             None => format!(
                 "{}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input)",
@@ -311,8 +311,15 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
             "oneiron::task_verb::sdk::validate_input({name}, &input).map_err(mcp_facade_error)?;\n"
         );
         body += &decode;
+        // A home door reads the caller's auth itself; any other server door
+        // takes the caller's slip alone.
+        let proof_line = if home.is_some() {
+            ""
+        } else {
+            "let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n"
+        };
         body += &format!(
-            "let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\nlet (output, listed) = Box::pin(server.{door_call}).await;\n// Derived from these rows too, though it names none of them.\nserved.extend(listed);\nlet output = output.map_err(mcp_facade_error)?;\n"
+            "{proof_line}let (output, listed) = Box::pin(server.{door_call}).await;\n// Derived from these rows too, though it names none of them.\nserved.extend(listed);\nlet output = output.map_err(mcp_facade_error)?;\n"
         );
     } else {
         body += &decode;

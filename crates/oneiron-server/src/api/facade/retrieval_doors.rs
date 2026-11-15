@@ -393,7 +393,7 @@ pub(crate) async fn vault_retrieval_recall(
         .recall_home_listing(
             actor,
             class,
-            auth.verified_slip().cloned(),
+            Some(auth),
             auth.destination(),
             None,
             input,

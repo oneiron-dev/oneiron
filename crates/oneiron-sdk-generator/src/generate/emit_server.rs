@@ -434,7 +434,7 @@ pub(crate) fn facade_dispatch(
                 .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name))
             {
                 Some((_, home_door)) => format!(
-                    "{home_door}(actor, class, auth.verified_slip().cloned(), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller())"
+                    "{home_door}(actor, class, Some(auth), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller())"
                 ),
                 None => format!(
                     "{}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?)",
