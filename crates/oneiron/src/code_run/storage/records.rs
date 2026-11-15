@@ -19,8 +19,8 @@ use crate::{EntityId, Error, ModelId, Result, Vault};
 
 use super::super::codec::{ReplayHead, validate_raw_output};
 use super::super::replay::{
-    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
-    ResultOccurrence,
+    CodeRunBridgeCall, CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord,
+    CodeRunResultBinding, ResultOccurrence,
 };
 use super::super::support::invalid_code_run_replay;
 use super::replay_bodies::RESPONSE_ERASED;
@@ -313,6 +313,35 @@ impl Vault {
     ) -> Result<Option<CodeRunReplayRecord>> {
         let rtxn = self.store.env.read_txn()?;
         self.get_code_run_replay_record_in_txn(&rtxn, run_id)
+    }
+
+    /// The step checkpoints `run_id`'s replay record holds, if present, without reading the
+    /// record's families.
+    pub(crate) fn code_run_replay_checkpoint_count(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<u64>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(replay_rows::present_counts(&self.store, &rtxn, run_id)?.map(|counts| counts[1]))
+    }
+
+    /// The outputs `run_id`'s replay record holds, if present, without reading the other families.
+    pub(crate) fn code_run_replay_outputs(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunRawOutput>>> {
+        let rtxn = self.store.env.read_txn()?;
+        replay_rows::present_outputs(&self.store, &rtxn, run_id)
+    }
+
+    /// The bridge calls `run_id`'s replay record holds, if present, without reading the other
+    /// families.
+    pub(crate) fn code_run_replay_bridge_calls(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunBridgeCall>>> {
+        let rtxn = self.store.env.read_txn()?;
+        replay_rows::present_bridge_calls(&self.store, &rtxn, run_id)
     }
 
     /// Whether run `run`'s results, which an owner's own whole-vault archive

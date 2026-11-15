@@ -26,9 +26,8 @@ impl ExecutorStorage<'_> {
         handle: &str,
         task: EntityId,
     ) -> Result<Option<serde_json::Value>> {
-        let Some(output) = self.get_code_run_replay_record(&owner)?.and_then(|record| {
-            record
-                .outputs
+        let Some(output) = self.code_run_replay_outputs(&owner)?.and_then(|outputs| {
+            outputs
                 .into_iter()
                 .find(|output| output.path == path && output.handle == handle)
         }) else {
