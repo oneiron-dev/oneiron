@@ -37,7 +37,7 @@ impl GraduationScopeKey {
 }
 
 /// The handle a scope's evidence rows are keyed under.
-fn scope_handle(scope: &GraduationScopeKey) -> Result<EntityId> {
+pub(super) fn scope_handle(scope: &GraduationScopeKey) -> Result<EntityId> {
     address("scope", &scope_value(scope)?)
 }
 
@@ -273,7 +273,7 @@ impl Vault {
         Ok(state)
     }
 
-    fn graduation_offer_in_txn(
+    pub(super) fn graduation_offer_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         scope: &GraduationScopeKey,

@@ -366,7 +366,8 @@ pub(crate) fn attempt_pack_receipt_page(
 }
 
 /// Test fixture for delivered/failed send receipt summary and idempotency.
-#[cfg(test)]
+/// The integration tests reach it through `test_doors::identity_ramp`.
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn persist_send_receipt(
     vault: &Vault,
     task_ref: EntityId,

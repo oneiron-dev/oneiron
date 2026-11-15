@@ -1,7 +1,12 @@
-//! Consent-graduation host doors, under the consent lifecycle's owner proof.
+//! Consent-graduation host doors, and the channel identities' send graduation
+//! offers (ARCH-0063 [INB-04]), under the consent lifecycle's owner proof.
 use std::sync::Arc;
 
 use oneiron::Vault;
+use oneiron::channel_identity_autonomy::api::{
+    self as identity_ramp, ChannelIdentityGraduationAnswerReceipt,
+    ChannelIdentityGraduationAnswerRequest, ChannelIdentityGraduationOfferView,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::consent_graduation::api::{self, *};
 use oneiron::memory::MemoryResult;
@@ -161,6 +166,37 @@ pub(crate) async fn vault_consent_graduation_answer(
         auth,
         "vault.consent.graduation.answer",
         move |vault, owner| api::answer(vault, owner, input),
+    )
+    .await
+}
+
+/// The standing send graduation offers of the vault's channel identities
+/// (ARCH-0063 [INB-04]), the rows its owner's INBOX pile carries.
+pub(crate) async fn vault_channel_identities_graduation_offers(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> Listed<Vec<ChannelIdentityGraduationOfferView>> {
+    as_owner(
+        server,
+        auth,
+        "vault.channel_identities.graduation.offers",
+        move |vault, owner| identity_ramp::offers(vault, owner),
+    )
+    .await
+}
+
+/// The owner's answer to one standing identity send offer, by its id.
+pub(crate) async fn vault_channel_identities_graduation_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelIdentityGraduationAnswerRequest,
+) -> Listed<ChannelIdentityGraduationAnswerReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.channel_identities.graduation.answer",
+        move |vault, owner| identity_ramp::answer(vault, owner, input),
     )
     .await
 }

@@ -6,7 +6,9 @@
 //! rows are the digest notifications already addressed to the agent (FIX
 //! 1261); no channel identity carries them. Meeting rows are the prep packs
 //! and check-ins the calendar delivered to the vault's owners (FIX 12004):
-//! a prep pack is an update, a check-in waits on its answer.
+//! a prep pack is an update, a check-in waits on its answer. Ramp rows are
+//! the identity-ramp graduation offers waiting on the owners' answer
+//! (ARCH-0063 [INB-04]), evaluated from those same outbound receipts.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -187,6 +189,11 @@ impl Vault {
         // A widen proposal waiting on its board's owner (OF-568).
         items.extend(crate::agent_dispatch::widen_doors::widen_inbox_items(self)?);
         items.extend(crate::actor_claims::craft_candidate_inbox_items(self)?);
+        // An identity-ramp graduation offer waiting on the owners (ARCH-0063
+        // [INB-04]): its evidence is the same outbound receipts.
+        items.extend(
+            crate::channel_identity_autonomy::graduation_offer_inbox_items(self, &receipts)?,
+        );
         // A comm widen ask waiting on its recipient (FIX 3901).
         items.extend(self.comm_widen_inbox_items()?);
         // A meeting's prep pack and its check-in, for the owners (FIX 12004),
@@ -201,7 +208,7 @@ impl Vault {
     /// Every outbound receipt, newest first. The receipt substrate serves at
     /// most its work cap a scan, so each scan the cap cuts short resumes
     /// after its last receipt until one comes back complete.
-    fn every_outbound_receipt(&self) -> Result<Vec<ReceiptRecord>> {
+    pub(crate) fn every_outbound_receipt(&self) -> Result<Vec<ReceiptRecord>> {
         let mut query = ReceiptQuery::new(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
             .with_kind(ReceiptKind::Outbound);
         let mut receipts = Vec::new();
