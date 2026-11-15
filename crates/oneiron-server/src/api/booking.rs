@@ -111,6 +111,13 @@ use self::validate::validate_operation_shape;
 // and no runtime effect.
 const _: fn(EntityId) -> String = booking_page_token;
 
+/// The booking boundary's answer to an engine refusal: the integration
+/// tests' door (UC-11).
+#[cfg(oneiron_test_support)]
+pub(super) fn boundary_refusal_for_test(error: oneiron::memory::MemoryError) -> ApiError {
+    booking_error(BookingError::Boundary(error))
+}
+
 // -------------------------------------------------------------------------
 // Route shape
 // -------------------------------------------------------------------------

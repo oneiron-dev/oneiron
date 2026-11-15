@@ -361,7 +361,7 @@ pub(super) fn scratchpad_memory<'a>(
 
 /// The engine's refusal on the board's error contract: its code picks the
 /// status, its message and suggestions pass through.
-fn scratchpad_error(error: oneiron::MemoryError) -> ApiError {
+pub(in crate::api) fn scratchpad_error(error: oneiron::MemoryError) -> ApiError {
     let details = match error.code.as_str() {
         oneiron::MEMORY_CODE_BAD_REQUEST => ApiErrorDetails::BadRequest { field: None },
         oneiron::MEMORY_CODE_NOT_FOUND => return ApiError::not_found("scratchpad", None),

@@ -133,7 +133,7 @@ pub(crate) async fn read_core_message_result(
 
 /// The engine's refusal in the core error envelope, with the receipt of the
 /// read that refused.
-fn refusal(error: MemoryError) -> EnvelopedApiError {
+pub(super) fn refusal(error: MemoryError) -> EnvelopedApiError {
     let receipt = error.read_receipt.clone();
     let api = match error.code.as_str() {
         MEMORY_CODE_NOT_FOUND => ApiError::not_found("message_result", None),

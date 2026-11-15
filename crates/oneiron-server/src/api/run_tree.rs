@@ -594,7 +594,7 @@ fn host_run_control(
 /// The run-control doors' refusal in the core error envelope (FIX 4501): a
 /// caller they do not admit is told why, and a transition the queue refuses
 /// is the malformed intervention it always was.
-fn run_control_refusal(error: oneiron::memory::MemoryError) -> EnvelopedApiError {
+pub(super) fn run_control_refusal(error: oneiron::memory::MemoryError) -> EnvelopedApiError {
     use oneiron::memory::{
         MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
         MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OWNER_BINDING_REQUIRED,

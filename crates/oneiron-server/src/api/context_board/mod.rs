@@ -27,6 +27,9 @@ pub(crate) use mcp_self::{
     connection_brief_state, connection_has_brief, describe_self_for_mcp,
 };
 mod scratchpad;
+// The integration tests' door to the scratchpad's refusal map (UC-11).
+#[cfg(oneiron_test_support)]
+pub(super) use self::scratchpad::scratchpad_error;
 mod session;
 mod source_rows;
 mod split;

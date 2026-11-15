@@ -294,6 +294,22 @@ fn owner_refusal(refusal: &oneiron::MemoryError) -> Option<ApiError> {
     ))
 }
 
+/// What the run control, booking boundary, transcript, scratchpad and
+/// message result refusal maps answer an engine refusal whose code is
+/// `code` with, in that order: the integration tests' door (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) fn memory_code_answers_for_test(code: &str) -> [crate::error::EnvelopedApiError; 5] {
+    let refusal =
+        || oneiron::memory::MemoryError::new(code, "a pinned refusal", &["a pinned suggestion"]);
+    [
+        super::run_tree::run_control_refusal(refusal()),
+        super::booking::boundary_refusal_for_test(refusal()).into(),
+        super::conversation_transcript::refusal(refusal()),
+        super::context_board::scratchpad_error(refusal()).into(),
+        super::message_result::refusal(refusal()),
+    ]
+}
+
 pub(super) fn query_rejection_error(rejection: QueryRejection) -> ApiError {
     if rejection.body_text().contains("invalid_view") {
         ApiError::bad_request("view must be one of summary, standard, full", Some("view"))
