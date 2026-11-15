@@ -429,6 +429,19 @@ impl FoldedMachine {
             .chain(self.anchored.values())
             .any(|chain| &chain.profile.machine_key == machine_key)
     }
+
+    /// The roster's chain names `machine_key`: its head or its accepted
+    /// revision, live or not. A judge every install shares reads this: an
+    /// install believes only the anchor it pins, so an anchor's chain, a
+    /// stranger's root among them, names no key there (Fable pass 29, "a
+    /// chain is read only by a reader that believes its admitter").
+    #[must_use]
+    pub(super) fn roster_names_key(&self, machine_key: &[u8; 32]) -> bool {
+        self.roster
+            .iter()
+            .chain(&self.roster_trusted)
+            .any(|chain| &chain.profile.machine_key == machine_key)
+    }
 }
 
 impl AuthorityFold {

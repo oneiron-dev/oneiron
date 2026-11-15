@@ -273,10 +273,13 @@ impl<'s> Standing<'s> {
         self.trusted_key(id, StandingView::Install)
     }
 
-    /// Some chain admits `id`. Pin-free: it authorizes nothing.
-    pub(super) fn is_admitted(&self, id: EntityId) -> bool {
+    /// The roster's head of `id` is live: a machine linked to this vault, in
+    /// any role. Pin-free: it authorizes nothing. Every install shares this
+    /// reading, so an anchor's chain neither links nor removes `id` here;
+    /// whether `id` is "yours" is a writer's check under its own pin.
+    pub(super) fn is_linked(&self, id: EntityId) -> bool {
         self.view(id, Kind::Roster)
-            .is_some_and(|folded| folded.is_admitted())
+            .is_some_and(|folded| folded.roster.as_ref().is_some_and(MachineRevision::is_live))
     }
 
     /// The chains whose live head names `id` under `signer`, in any role,
@@ -326,11 +329,14 @@ impl<'s> Standing<'s> {
         self.local
     }
 
-    /// Some chain of `id` names `key`, live or not: an owner act's carrier
-    /// signed with that machine's install key at all (FIX 2998).
+    /// The roster's chain of `id` names `key`, live or not: an owner act's
+    /// carrier signed with that machine's install key at all (FIX 2998).
+    /// Every install shares the judges that read this, so an anchor's chain
+    /// names no key here: a stranger's fresh root marking `id` under its
+    /// own keys gives those keys no say (Fable pass 29).
     pub(super) fn names_key(&self, id: EntityId, key: &[u8; 32]) -> bool {
         self.view(id, Kind::Roster)
-            .is_some_and(|folded| folded.names_key(key))
+            .is_some_and(|folded| folded.roster_names_key(key))
     }
 
     /// [`super::owner_act_signer_admits`] for `id` and `key` under `view`:

@@ -614,9 +614,11 @@ pub(super) fn fold_entry_state(
 }
 
 /// Whether a residence result's signer is the install key of the machine it
-/// names under a chain that says "yours" in the result's parent state, or
-/// under that machine's live, answered roster revision there, mine or not
-/// (FIX 8888), past that key's last sequence there. A result that names its
+/// names under that machine's live, answered roster revision in the
+/// result's parent state, mine or not (FIX 8888), past that key's last
+/// sequence there. Every install judges this row, so an anchor's chain,
+/// which only the installs pinning its root believe, names no signer here
+/// (Fable pass 29); a roster head saying "yours" is a live, answered one. A result that names its
 /// directive's row as a parent stands on that alone, as before; one whose
 /// directive is beneath its parents (FIX 5412, CALLS "FIX 5412 result
 /// parents") stands only where its parent state holds that row as a valid
@@ -637,14 +639,11 @@ fn residence_result_stands(
         return Err(AuthorityFoldIssue::InvalidAncestry(hash));
     }
     if !super::machine_claims::folded_machine_in(state, result.machine).is_some_and(|machine| {
-        machine
-            .chains()
-            .any(|(_, chain)| chain.says_yours() && chain.profile.machine_key == *signer)
-            || machine.roster.as_ref().is_some_and(|roster| {
-                roster.is_live()
-                    && roster.profile.role.answered()
-                    && roster.profile.machine_key == *signer
-            })
+        machine.roster.as_ref().is_some_and(|roster| {
+            roster.is_live()
+                && roster.profile.role.answered()
+                && roster.profile.machine_key == *signer
+        })
     }) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
