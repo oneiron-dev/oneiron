@@ -400,6 +400,9 @@ pub(crate) fn page_turns(page: &Value) -> TestResult<Vec<(String, Value)>> {
             row["version"].clone(),
         ));
     }
+    if turns.is_empty() {
+        return Err("the bound inputs page served no TURN".into());
+    }
     Ok(turns)
 }
 
