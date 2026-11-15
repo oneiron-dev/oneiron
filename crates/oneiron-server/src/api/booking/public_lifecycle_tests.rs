@@ -484,6 +484,7 @@ async fn a_confirm_answers_with_its_own_attempt_never_another_visitors() {
         let authority = PublicBookingAuthority {
             page_ref,
             publication,
+            personal_link_ref: None,
         };
         let first_key = format!("confirm-{first}");
         let queued = enqueue_booking_verb_with_publication(
