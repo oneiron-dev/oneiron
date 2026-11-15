@@ -403,8 +403,11 @@ pub(super) fn accept_issuer_in_txn(
 }
 
 /// Opens `transition` on `binding`, with its `issuer_changed` record, unless
-/// an open one already names the same new issuer: one rule for every
-/// recorded change. Answers whether it opened; the caller puts the binding.
+/// an open one already names the same new issuer and credential: one rule
+/// for every recorded change. An authenticated observation of another
+/// credential for the open issuer replaces the change, so the owner's stamp
+/// binds the credential observed and not one the engine carried. Answers
+/// whether it opened; the caller puts the binding.
 fn record_issuer_transition_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -412,10 +415,11 @@ fn record_issuer_transition_in_txn(
     binding: &mut ConnectorCredentialBinding,
     transition: ConnectorIssuerTransition,
 ) -> Result<bool> {
-    let already_open = binding
-        .transition
-        .as_ref()
-        .is_some_and(|open| open.halts() && open.new_issuer == transition.new_issuer);
+    let already_open = binding.transition.as_ref().is_some_and(|open| {
+        open.halts()
+            && open.new_issuer == transition.new_issuer
+            && open.proposed_credential_ref == transition.proposed_credential_ref
+    });
     if already_open {
         return Ok(false);
     }
@@ -544,9 +548,10 @@ impl Vault {
     /// binding of the call's catalog connector whose issuer the metadata no
     /// longer lists records a change, in this writer first so a failed
     /// draft loses no evidence, then drafts the forced re-ask of its
-    /// dependent rows. The new issuer is the first one listed, or an open
-    /// change's own new issuer while the list still names it. The custody
-    /// pointer stays the binding's: the engine saw no new credential. A
+    /// dependent rows. The new issuer is the first one listed, with the
+    /// binding's own custody pointer (the engine saw no new credential), or
+    /// an open change's own new issuer and credential while the list still
+    /// names that issuer, so a detection never undoes an observation. A
     /// listed issuer is not drift, a connector with no binding records
     /// nothing (the baseline stays an owner act), and a key that no longer
     /// resolves meets none. Answers each binding found drifted, as it
@@ -589,15 +594,23 @@ impl Vault {
                 if binding.catalog_key != catalog_key || listed(&binding.issuer) {
                     continue;
                 }
-                let new_issuer = binding
+                let (new_issuer, proposed_credential_ref) = binding
                     .transition
                     .as_ref()
                     .filter(|open| open.halts() && listed(&open.new_issuer))
-                    .map_or_else(|| first_listed.clone(), |open| open.new_issuer.clone());
+                    .map_or_else(
+                        || (first_listed.clone(), binding.credential_ref.clone()),
+                        |open| {
+                            (
+                                open.new_issuer.clone(),
+                                open.proposed_credential_ref.clone(),
+                            )
+                        },
+                    );
                 let transition = detected_transition(
                     &binding,
                     &new_issuer,
-                    &binding.credential_ref,
+                    &proposed_credential_ref,
                     &detection.witness,
                     at,
                 );
