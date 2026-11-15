@@ -73,11 +73,18 @@ async fn ws_upgrade_handler(
     extensions: axum::http::Extensions,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Response, Response> {
+    // The macOS app's device link serves its peers sync and nothing else
+    // (L7-47): no MCP carrier, booking or facade socket, so each socket it
+    // opens is a replication socket the peer gates admitted.
+    let device_link = server.runs_device_link();
     // The MCP carrier serves no sync state, so it admits any holder-bound
     // slip rather than only an owner-grade one, and on a managed vault the
     // owner his supervisor attested. There each call it carries is admitted
     // under the reap freeze as one `POST /mcp` is (FIX 5128).
     if super::mcp_socket::requested(&ws) {
+        if device_link {
+            return Err(StatusCode::FORBIDDEN.into_response());
+        }
         // A member whose supervisor signed the upgrade holds a socket that
         // reaches the member doors and nothing more (FIX 1302 stage 2).
         if let Some(holder) =
@@ -103,7 +110,12 @@ async fn ws_upgrade_handler(
     // socket's life. A slip or a bearer beside him is never him, so a slip
     // that fails below never falls back to him. A booking socket is never a
     // peer session (FIX 4748).
-    let mode = match super::mcp_socket::stale_booking_holder(&headers, &extensions, &server) {
+    let booking = if device_link {
+        None
+    } else {
+        super::mcp_socket::stale_booking_holder(&headers, &extensions, &server)
+    };
+    let mode = match booking {
         Some(holder) => {
             run::SocketMode::Booking(run::BookingCaller::upgraded(holder, &extensions)?)
         }
@@ -193,6 +205,10 @@ fn replication_mode(
         Some(Err(refused)) => return Err(refused.into_response()),
         None => match require_owner_auth(headers, &server.config, server.vault().as_ref()) {
             Ok(auth) => auth,
+            // The macOS app's device link opens no facade socket (L7-47).
+            Err(_) if server.runs_device_link() => {
+                return Err(sync_upgrade_refused(headers, server));
+            }
             Err(_) => {
                 return facade_mode(headers, server)
                     .ok_or_else(|| sync_upgrade_refused(headers, server));

@@ -91,7 +91,8 @@ pub struct SyncServer {
     /// Whether this server's vault syncs as a device of another home through a
     /// link this process runs (the macOS app's `EmbeddedDeviceSync`), so it
     /// serves the vault's other machines as a peer, never as their home (L7-47).
-    pub(crate) runs_device_link: std::sync::atomic::AtomicBool,
+    /// Set by its boot (`SyncServer::new_device_link`).
+    pub(crate) runs_device_link: bool,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
@@ -812,19 +813,11 @@ impl SyncServer {
         &self.vault
     }
 
-    /// Marks this server's vault as syncing as a device of another home through
-    /// a link this process runs, so it serves the vault's other machines as a
-    /// peer, never as their home (L7-47).
-    #[cfg(feature = "mesh")]
-    pub(crate) fn mark_device_link(&self) {
-        self.runs_device_link.store(true, Ordering::Release);
-    }
-
     /// Whether this server's vault syncs as a device of another home through a
     /// link this process runs (the macOS app's `EmbeddedDeviceSync`), so it
     /// serves the vault's other machines as a peer, never as their home (L7-47).
     pub(crate) fn runs_device_link(&self) -> bool {
-        self.runs_device_link.load(Ordering::Acquire)
+        self.runs_device_link
     }
 
     /// Installs this serve's dedicated shared environments once. A second

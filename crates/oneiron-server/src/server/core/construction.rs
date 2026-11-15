@@ -30,6 +30,29 @@ impl SyncServer {
         vault: Arc<oneiron::Vault>,
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
+        Self::boot(vault, config, Boot::Host)
+    }
+
+    /// The macOS app's device-mode server over its already-open vault, which
+    /// syncs as a device of another home and serves the vault's other
+    /// machines as a peer (L7-47). Its boot is [`Self::new`]'s without the
+    /// host's own steps: it roots, provisions and profiles nothing, so an
+    /// install whose seed is not the vault's root still starts, and it runs
+    /// no host-restart cleanup, since the home's runs may be live.
+    #[cfg(feature = "mesh")]
+    pub(crate) fn new_device_link(
+        vault: Arc<oneiron::Vault>,
+        config: SyncServerConfig,
+    ) -> Result<Self, oneiron::Error> {
+        Self::boot(vault, config, Boot::DeviceLink)
+    }
+
+    fn boot(
+        vault: Arc<oneiron::Vault>,
+        config: SyncServerConfig,
+        boot: Boot,
+    ) -> Result<Self, oneiron::Error> {
+        let host = boot.is_host();
         config.validate()?;
         // Authority work past its row waits this server's own queue wait
         // (FIX 8091, L14 s45 09:35); a crossing still only measures.
@@ -39,7 +62,7 @@ impl SyncServer {
         // not a customer auth-secret step. Other postures retain their existing
         // secret-based rooting and rootless warning behavior.
         let hosted = vault.privacy_posture() == oneiron::HostingPrivacyPosture::Hosted;
-        let issuer = if hosted || host_root_secret(&vault, &config).is_some() {
+        let issuer = if host && (hosted || host_root_secret(&vault, &config).is_some()) {
             match vault.bootstrap_host_slip_issuer() {
                 Ok(issuer) => {
                     vault.ensure_host_root_slip(&issuer)?;
@@ -76,7 +99,10 @@ impl SyncServer {
         // This install's own machine profile, before any request is admitted,
         // so it carries the owner's acts from its first start (FIX 4648):
         // self-hosted and embedded serving alike. A start goes on without it.
-        vault.ensure_serving_install_profile_at_start(issuer.as_deref(), "serve");
+        // The macOS app profiled its vault before its device link starts.
+        if host {
+            vault.ensure_serving_install_profile_at_start(issuer.as_deref(), "serve");
+        }
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
@@ -262,19 +288,23 @@ impl SyncServer {
         let self_brief_sessions =
             Arc::new(crate::server::self_brief_custody::SelfBriefCustody::default());
         live_runs.close_briefs_with(Arc::clone(&self_brief_sessions));
-        // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
-        super::desktop_seats::clear_stale_asks(&vault);
-        // FIX 8335: no run-bound record outlives a restart, so a host that
-        // stopped mid-run leaves none behind. A failure is logged; the
-        // records stay as they were.
-        if let Err(error) = vault.erase_all_run_secrets() {
-            tracing::warn!(%error, "run-bound secrets left by the last run of the host did not clear");
-        }
-        // FIX 3837: no connector's live exchange outlives a restart, so the
-        // rounds of questions kept on its calls' rows stand with their
-        // delivery uncertain.
-        if let Err(error) = vault.mark_connector_inputs_uncertain() {
-            tracing::warn!(%error, "connector call questions not marked uncertain");
+        // A host's restart ends the runs it held. A device link is no host:
+        // the home's runs may be live, and these rows sync to it.
+        if host {
+            // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
+            super::desktop_seats::clear_stale_asks(&vault);
+            // FIX 8335: no run-bound record outlives a restart, so a host that
+            // stopped mid-run leaves none behind. A failure is logged; the
+            // records stay as they were.
+            if let Err(error) = vault.erase_all_run_secrets() {
+                tracing::warn!(%error, "run-bound secrets left by the last run of the host did not clear");
+            }
+            // FIX 3837: no connector's live exchange outlives a restart, so the
+            // rounds of questions kept on its calls' rows stand with their
+            // delivery uncertain.
+            if let Err(error) = vault.mark_connector_inputs_uncertain() {
+                tracing::warn!(%error, "connector call questions not marked uncertain");
+            }
         }
         // One machine memory line for the server's work and its organs'
         // own buffers alike (FIX 7649, FIX 7654).
@@ -353,7 +383,7 @@ impl SyncServer {
             housekeeping_passes: Default::default(),
             residence_work_changed: Default::default(),
             queue_driver_started: std::sync::atomic::AtomicBool::new(false),
-            runs_device_link: std::sync::atomic::AtomicBool::new(false),
+            runs_device_link: !host,
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
@@ -427,5 +457,22 @@ impl SyncServer {
         // recalculates through LibreOffice, where this host has it.
         crate::xlsx_recalc::install(&server);
         Ok(server)
+    }
+}
+
+/// Whose boot a server runs (L7-47).
+#[derive(Clone, Copy)]
+enum Boot {
+    /// A host's: it may root the vault, provisions its machine writers and
+    /// install profile, and ends what the host's last run left.
+    Host,
+    /// The macOS app's device link ([`SyncServer::new_device_link`]).
+    #[cfg(feature = "mesh")]
+    DeviceLink,
+}
+
+impl Boot {
+    fn is_host(self) -> bool {
+        matches!(self, Self::Host)
     }
 }

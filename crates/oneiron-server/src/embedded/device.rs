@@ -14,13 +14,16 @@ use crate::server::SyncServer;
 /// listener serving the sync route alone (L7-47).
 ///
 /// It builds a device-mode server over the app's already-open vault: no TCP
-/// listener, no AI host, no Dreamer, no model workers, no home candidacy. With
-/// an explicit `ONEIRON_MESH_BIND` it starts a mesh listener that serves the
-/// sync route alone to the owner's other machines marked mine, as a peer,
-/// never as their home, and the link dials its home and, while the home is
-/// down, its peers through that listener; without one, the home's URL path as
-/// before and no inbound service. The server's window manager is the one the
-/// link uses, so the "no second window manager" rule holds.
+/// listener, no AI host, no Dreamer, no model workers, no home candidacy, and
+/// a boot that roots, provisions and profiles nothing and runs no host-restart
+/// cleanup (`SyncServer::new_device_link`). With an explicit
+/// `ONEIRON_MESH_BIND` it starts a mesh listener that serves the sync route
+/// alone to the owner's other machines marked mine, as a peer, never as their
+/// home, and the link dials its home and, while the home is down, its peers
+/// through that listener; without one, the home's URL path as before and no
+/// inbound service. A link that does not open stops the listener. The
+/// server's window manager is the one the link uses, so the "no second window
+/// manager" rule holds.
 ///
 /// Keep the handle for the app's lifetime. Flush local producers before
 /// calling [`Self::stop`], and await that stop before closing the vault or
@@ -74,16 +77,15 @@ impl EmbeddedDeviceSync {
     ) -> Option<Self> {
         // A vault with no home to dial builds no server.
         let dial = DeviceSyncHost::device_dial(&vault, config)?;
-        let server = match SyncServer::new(vault, config.sync_server_config()) {
+        // Its boot marks it a device link before the listener starts, so the
+        // first socket already reads as a peer's, never as a home's.
+        let server = match SyncServer::new_device_link(vault, config.sync_server_config()) {
             Ok(server) => Arc::new(server),
             Err(error) => {
                 tracing::warn!("device sync disabled: {error:#}");
                 return None;
             }
         };
-        // Before the listener starts, so its first socket already reads as a
-        // peer's, never as a home's.
-        server.mark_device_link();
         let (stopping, stopped) = tokio::sync::watch::channel(false);
         let (app, drained) = crate::embedded::upgrade_lifetime(
             crate::build_sync_router(Arc::clone(&server)),
@@ -111,6 +113,21 @@ impl EmbeddedDeviceSync {
             cleanup(None, listener, Some(drained), server).await;
             return None;
         };
+        // A link that did not open dials no peer, so the listener serves none:
+        // only the archive receiver runs, as for a device its person's removal
+        // left unenrolled.
+        if !host.linked() {
+            let _ = stopping.send(true);
+            cleanup(None, listener, Some(drained), Arc::clone(&server)).await;
+            return Some(Self {
+                host: Some(host),
+                listener: None,
+                server,
+                stopping,
+                drained: None,
+                runtime: tokio::runtime::Handle::current(),
+            });
+        }
         Some(Self {
             host: Some(host),
             listener,

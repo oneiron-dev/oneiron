@@ -91,6 +91,9 @@ pub(crate) struct DeviceSyncHost {
     task: JoinHandle<()>,
     /// The archive receiver, kept after membership loss (FIX 3396).
     removal: Option<removal_delivery::Receiver>,
+    /// Whether the link to the home opened; a host kept for its archive
+    /// receiver alone has none (L7-47).
+    linked: bool,
     /// Whether the link dials the vault's other machines while its home is
     /// down, read by the test door (L7-47).
     #[cfg(oneiron_test_support)]
@@ -204,6 +207,13 @@ impl DeviceSyncHost {
                 removal.map(Self::receiving)
             }
         }
+    }
+
+    /// Whether the link to the home opened, rather than only the archive
+    /// receiver running (L7-47).
+    #[cfg(feature = "mesh")]
+    pub(crate) fn linked(&self) -> bool {
+        self.linked
     }
 
     /// Whether the link dials the vault's other machines while its home is
@@ -377,6 +387,7 @@ async fn open(
         stop,
         task,
         removal: None,
+        linked: true,
         #[cfg(oneiron_test_support)]
         dials_peers,
     })
