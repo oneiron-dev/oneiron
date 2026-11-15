@@ -40,8 +40,8 @@ type CreationCall = CredentialCreationOptions
 type RequestCall = CredentialRequestOptions
 
 function fakeCredentials(options: {
-  algorithm?: number
-  publicKey?: ArrayBuffer | null
+  algorithm?: number | 'absent'
+  publicKey?: ArrayBuffer | null | 'absent'
   assertionRawId?: Uint8Array
 }) {
   const created: CreationCall[] = []
@@ -55,8 +55,14 @@ function fakeCredentials(options: {
         rawId: buffer(RAW_ID),
         response: {
           clientDataJSON: buffer(bytes(1)),
-          getPublicKey: () => (options.publicKey === undefined ? buffer(SPKI) : options.publicKey),
-          getPublicKeyAlgorithm: () => options.algorithm ?? OWNER_PASSKEY_ALGORITHM_ES256,
+          getPublicKey:
+            options.publicKey === 'absent'
+              ? undefined
+              : () => (options.publicKey === undefined ? buffer(SPKI) : options.publicKey),
+          getPublicKeyAlgorithm:
+            options.algorithm === 'absent'
+              ? undefined
+              : () => options.algorithm ?? OWNER_PASSKEY_ALGORITHM_ES256,
         },
       } as unknown as Credential
     },
@@ -112,9 +118,12 @@ describe('base64url, as WebAuthn JSON and the owner passkey routes spell bytes',
     assert.deepEqual(base64UrlDecode(base64UrlEncode(CHALLENGE)), CHALLENGE)
   })
 
-  it('refuses text outside the URL alphabet', () => {
-    assert.throws(() => base64UrlDecode('+/+/'), OwnerPasskeyCeremonyError)
-    assert.throws(() => base64UrlDecode('A'), OwnerPasskeyCeremonyError)
+  it('refuses text outside the URL alphabet, a length no bytes spell, and padding alone', () => {
+    const malformed = (error: unknown) =>
+      error instanceof OwnerPasskeyCeremonyError && error.reason === 'malformed-base64url'
+    for (const text of ['+/+/', 'A', 'A=Q', '=', '==']) {
+      assert.throws(() => base64UrlDecode(text), malformed, text)
+    }
   })
 })
 
@@ -136,6 +145,7 @@ describe('enrolling the browser passkey as an owner key', () => {
       { type: 'public-key', alg: OWNER_PASSKEY_ALGORITHM_ES256 },
     ])
     assert.equal(creation.authenticatorSelection?.userVerification, 'required')
+    assert.equal(creation.authenticatorSelection?.residentKey, 'preferred')
     assert.equal(creation.attestation, 'none')
     assert.deepEqual(creation.rp, { name: 'Oneiron' })
     assert.deepEqual(asBytes(creation.user.id), bytes(7, 7, 7))
@@ -190,14 +200,31 @@ describe('enrolling the browser passkey as an owner key', () => {
   })
 
   it('refuses a credential whose public key the browser does not hand over', async () => {
-    const { calls, transport } = recordingTransport({})
-    const { credentials } = fakeCredentials({ publicKey: null })
-    await assert.rejects(
-      enrollOwnerPasskey({ transport, credentials }, enrollment),
-      (error: unknown) =>
-        error instanceof OwnerPasskeyCeremonyError && error.reason === 'no-public-key',
+    for (const publicKey of [null, 'absent'] as const) {
+      const { calls, transport } = recordingTransport({})
+      const { credentials } = fakeCredentials({ publicKey })
+      await assert.rejects(
+        enrollOwnerPasskey({ transport, credentials }, enrollment),
+        (error: unknown) =>
+          error instanceof OwnerPasskeyCeremonyError && error.reason === 'no-public-key',
+      )
+      assert.deepEqual(calls, [])
+    }
+  })
+
+  it('enrolls when the browser hands over the key but does not name its algorithm', async () => {
+    const { calls, transport } = recordingTransport({
+      '/v1/owner/owner-passkeys/challenge': { challenge: base64UrlEncode(CHALLENGE) },
+      '/v1/owner/owner-passkeys/enroll': ENROLL_RECEIPT,
+    })
+    const { credentials } = fakeCredentials({ algorithm: 'absent' })
+    const receipt = await enrollOwnerPasskey({ transport, credentials }, enrollment)
+    assert.deepEqual(
+      calls.map((call) => call.path),
+      ['/v1/owner/owner-passkeys/challenge', '/v1/owner/owner-passkeys/enroll'],
     )
-    assert.deepEqual(calls, [])
+    assert.equal(calls[0].body?.public_key, base64UrlEncode(SPKI))
+    assert.equal(receipt.credentialId, ENROLL_RECEIPT.credential_id)
   })
 
   it('sends no enrollment when the assertion comes from another credential', async () => {
@@ -277,6 +304,8 @@ describe('vouching for a new device key with an enrolled passkey', () => {
     assert.ok(request)
     assert.deepEqual(asBytes(request.challenge), CHALLENGE)
     assert.equal(request.userVerification, 'required')
+    assert.equal(request.allowCredentials?.length, 1)
+    assert.equal(request.allowCredentials?.[0].type, 'public-key')
     assert.deepEqual(asBytes(request.allowCredentials?.[0].id), RAW_ID)
     assert.deepEqual(receipt, {
       entry: landReceipt.entry,
