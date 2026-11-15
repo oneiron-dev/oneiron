@@ -104586,6 +104586,23 @@
   "oneiron-authority": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Admitted",
+      "Direction",
+      "Permitted"
+     ],
+     "path": "src/authority/act_rule.rs",
+     "purpose": "The authority rule: what an act may do to the row it moves",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -104939,7 +104956,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 39
+      "re-export": 40
      }
     },
     {
@@ -105640,6 +105657,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/act_rule.rs",
+     "purpose": "The authority rule's table (`oneiron_authority::authority::Permitted`): what each reading admits, the lesser…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -105650,7 +105675,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105715,8 +105740,8 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 68,
-   "test_files": 1
+   "source_files": 69,
+   "test_files": 2
   },
   "oneiron-base": {
    "files": [
@@ -117705,7 +117730,7 @@
       "const": 1,
       "enum": 5,
       "fn": 8,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -117766,14 +117791,15 @@
       "PresenceWindow",
       "ScriptedPresence",
       "SystemPresenceClock",
-      "UserPresence"
+      "UserPresence",
+      "WindowsScreenSession"
      ],
      "path": "src/user_presence.rs",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…",
      "surface": {
       "const": 3,
-      "enum": 3,
-      "fn": 26,
+      "enum": 4,
+      "fn": 30,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -117787,6 +117813,19 @@
      ],
      "path": "src/windows.rs",
      "purpose": "Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowsUserPresence"
+     ],
+     "path": "src/windows_presence.rs",
+     "purpose": "Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row…",
      "surface": {
       "fn": 1,
       "struct": 1
@@ -117857,11 +117896,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine…"
+    },
+    "windows_presence": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row…"
     }
    },
    "over_bar": 0,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 1
   },
   "oneiron-lens-wire": {
@@ -170198,6 +170244,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/msgpack_store_rows.rs",
+     "purpose": "PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/phonetic_han_codes.rs",
      "purpose": "L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form…",
      "surface": {}
@@ -171816,7 +171870,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 10
+   "test_files": 11
   },
   "oneiron-testkit": {
    "files": [
