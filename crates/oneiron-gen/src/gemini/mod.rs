@@ -137,7 +137,7 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
         if (200..300).contains(&reply.status) {
             Ok(reply)
         } else {
-            Err(super::wire::classify_media_status(
+            Err(classify_media_status(
                 reply.status,
                 &reply.headers,
                 &reply.json(),
@@ -500,4 +500,19 @@ fn operation_name(name: &str) -> bool {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
         })
+}
+
+/// [`oneiron_llm::gemini::classify_status`] for a media reply, which keeps its
+/// headers: a rate limit's named wait (`Retry-After`) survives.
+fn classify_media_status(
+    status: u16,
+    headers: &BTreeMap<String, String>,
+    body: &Value,
+) -> LlmError {
+    match status {
+        429 if body.pointer("/error/status").and_then(Value::as_str) != Some("BUDGET_EXCEEDED") => {
+            oneiron::llm::limit::limit_refusal(status, headers, body).into()
+        }
+        _ => oneiron_llm::gemini::classify_status(status, body),
+    }
 }

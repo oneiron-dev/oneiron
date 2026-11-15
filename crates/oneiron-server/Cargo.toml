@@ -80,6 +80,10 @@ oneiron-linear = { version = "0.1.0", path = "../oneiron-linear" }
 # `systemone`: the System One seat on the host's decision ladder
 # (decision_host.rs). The `mesh` feature below adds `oneiron-rpc`.
 oneiron-llm = { version = "0.1.0", path = "../oneiron-llm", features = ["systemone"] }
+# Protocol mappers for the generation jobs (`oneiron_gen::gemini`: Gemini
+# images and Veo video); this crate supplies the HTTP transport
+# (models/gemini_media.rs, models/broker_media.rs).
+oneiron-gen = { version = "0.1.0", path = "../oneiron-gen" }
 # The paired-machine mesh listener (OF-535), behind the `mesh` feature.
 oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh", "sync"] }
 # A device renews its paired owner credential at its home (FIX 3377), with
