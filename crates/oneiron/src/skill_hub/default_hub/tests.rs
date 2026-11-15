@@ -81,7 +81,13 @@ fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Re
     let package = crate::skill_hub::SkillHubAdapter::fetch_package(&adapter, &reference)?;
     let hash = package.content_hash()?;
     let at = TimeRange { start: 2, end: 2 };
-    let id = vault.import_default_hub_skill_at_commit("skills/review-evidence", &commit, at, 2)?;
+    let id = vault.import_default_hub_skill_at_commit(
+        &owner,
+        "skills/review-evidence",
+        &commit,
+        at,
+        2,
+    )?;
     assert_eq!(
         vault.get_skill_record(&id)?.expect("imported").content_hash,
         Some(hash)
@@ -95,7 +101,13 @@ fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Re
     );
     assert!(!vault.skill_scan_verdicts_for_content_hash(hash)?.is_empty());
     assert_eq!(
-        vault.import_default_hub_skill_at_commit("skills/review-evidence", &commit, at, 2)?,
+        vault.import_default_hub_skill_at_commit(
+            &owner,
+            "skills/review-evidence",
+            &commit,
+            at,
+            2
+        )?,
         id
     );
     assert_eq!(vault.skill_hub_provenance_count(&id)?, 1);

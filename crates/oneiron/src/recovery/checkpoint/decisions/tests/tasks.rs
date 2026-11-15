@@ -291,16 +291,20 @@ pub(super) fn resident_wakes() -> Result<Case> {
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             occurred_at: 2,
             messages: vec![WitnessMessage {
                 id: Some(node.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "text".into(),
                 content: "room".into(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
+            assertions: Default::default(),
         })
         .map_err(memory)?;
     let auth = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;

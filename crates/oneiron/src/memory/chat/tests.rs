@@ -172,6 +172,7 @@ fn expect_abstained(response: ChatResponse) -> Abstained {
             reason,
             gaps,
             tokens_used,
+            ..
         } => Abstained {
             reason,
             gaps,
@@ -191,8 +192,10 @@ fn seeded_vault(seed: u8, content: &str) -> (tempfile::TempDir, crate::Vault, En
         .witness(&WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, content)],
             occurred_at: 2100,
+            assertions: WitnessAssertions::default(),
         })
         .expect("witness");
     (dir, vault, actor)
@@ -210,8 +213,10 @@ fn seeded_pair(seed: u8, one: &str, two: &str) -> (tempfile::TempDir, crate::Vau
             .witness(&WitnessTurn {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: None,
+                thread_audience: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, content)],
                 occurred_at: 2100,
+                assertions: WitnessAssertions::default(),
             })
             .expect("witness");
     }
@@ -285,6 +290,9 @@ fn chat_minimal_is_zero_model_extractive_and_never_calls_the_composer() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("minimal chat");
@@ -320,6 +328,9 @@ fn chat_minimal_is_zero_model_extractive_and_never_calls_the_composer() {
                 format: Some("md"),
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("minimal chat with a format");
@@ -348,6 +359,9 @@ fn chat_minimal_on_an_empty_pack_abstains_with_insufficient_evidence() {
                 format: None,
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("an empty pack abstains, it does not error");
@@ -360,6 +374,8 @@ fn chat_minimal_on_an_empty_pack_abstains_with_insufficient_evidence() {
             reason: ChatAbstentionReason::InsufficientEvidence,
             gaps: Vec::new(),
             tokens_used: 0,
+            refusal: None,
+            receipt_ref: None,
         }
     );
 }
@@ -382,6 +398,9 @@ fn chat_standard_invokes_the_composer_exactly_once_after_retrieval() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("standard chat");
@@ -436,6 +455,9 @@ fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect_err("deep without a lease");
@@ -454,6 +476,9 @@ fn chat_deep_requires_the_lease_and_propagates_deep_pending() {
                 format: None,
                 lease: Some(&lease),
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
             &crate::retrieval_depth::RecallExecution {
                 reranker: Some(&ranker),
@@ -495,6 +520,9 @@ fn chat_requires_a_composer_before_any_retrieval_at_standard_and_deep() {
                 format: None,
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect_err("standard without a composer");
@@ -513,6 +541,9 @@ fn chat_requires_a_composer_before_any_retrieval_at_standard_and_deep() {
                 format: None,
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect_err("deep without a composer");
@@ -536,6 +567,9 @@ fn chat_rejects_a_blank_question_and_a_zero_limit() {
                     format: None,
                     lease: None,
                     composer: None,
+                    budget: None,
+                    token_budget: None,
+                    reader_agent_ref: None,
                 },
             )
             .expect_err("blank question");
@@ -555,6 +589,9 @@ fn chat_rejects_a_blank_question_and_a_zero_limit() {
                 format: None,
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect_err("zero limit");
@@ -579,6 +616,9 @@ fn chat_answer_carries_the_whole_memory_pack() {
                 format: None,
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("minimal chat");
@@ -625,6 +665,9 @@ fn chat_answers_cite_short_ids_that_hydrate_back_out_of_the_pack() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("standard chat");
@@ -685,11 +728,11 @@ fn chat_abstains_without_fabrication_when_the_citations_do_not_hold() {
 
     // No citation, one the pack never carried, a blank one, and blank text:
     // each sinks the answer rather than quietly dropping the citation.
-    for composer in [
-        CountingComposer::citing(&[]),
-        CountingComposer::citing(&["ms97:a1"]),
-        CountingComposer::citing(&["   "]),
-        CountingComposer::answering("   "),
+    for (composer, refused) in [
+        (CountingComposer::citing(&[]), false),
+        (CountingComposer::citing(&["ms97:a1"]), true),
+        (CountingComposer::citing(&["   "]), false),
+        (CountingComposer::answering("   "), false),
     ] {
         let response = memory
             .chat(
@@ -701,6 +744,9 @@ fn chat_abstains_without_fabrication_when_the_citations_do_not_hold() {
                     format: None,
                     lease: None,
                     composer: Some(&composer),
+                    budget: None,
+                    token_budget: None,
+                    reader_agent_ref: None,
                 },
             )
             .expect("standard chat");
@@ -708,14 +754,34 @@ fn chat_abstains_without_fabrication_when_the_citations_do_not_hold() {
         assert_eq!(composer.calls(), 1, "the composer did run");
         // No composed text escapes, and the tokens it already spent are still
         // reported: the caller is told what the attempt cost.
-        assert_eq!(
-            response,
+        match response {
             ChatResponse::Abstained {
-                reason: ChatAbstentionReason::InsufficientEvidence,
-                gaps: Vec::new(),
-                tokens_used: 42,
+                reason,
+                gaps,
+                tokens_used,
+                refusal,
+                receipt_ref,
+            } => {
+                assert_eq!(reason, ChatAbstentionReason::InsufficientEvidence);
+                assert!(gaps.is_empty());
+                assert_eq!(tokens_used, 42);
+                if refused {
+                    let refusal = refusal.expect("an invented citation is a typed refusal");
+                    assert_eq!(refusal.reason, RefusalReason::InventedReference);
+                    assert_eq!(refusal.code, MEMORY_CODE_INVENTED_REFERENCE);
+                    assert_eq!(refusal.field, "/source_short_ids/0");
+                    let receipt = receipt_ref.expect("the refusal is receipted");
+                    assert!(
+                        receipt.starts_with("reference_refusal:"),
+                        "unexpected receipt {receipt}"
+                    );
+                } else {
+                    assert_eq!(refusal, None);
+                    assert_eq!(receipt_ref, None);
+                }
             }
-        );
+            other => panic!("expected an abstention, got {other:?}"),
+        }
     }
 }
 
@@ -749,6 +815,9 @@ fn chat_citations_dedupe_preserving_first_appearance() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("document chat");
@@ -773,6 +842,9 @@ fn chat_a_declining_composer_is_a_typed_abstention_not_an_error() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("a decline is a value, not an error");
@@ -784,6 +856,8 @@ fn chat_a_declining_composer_is_a_typed_abstention_not_an_error() {
             reason: ChatAbstentionReason::BackendDeclined,
             gaps: vec!["the host would not answer".to_owned()],
             tokens_used: 42,
+            refusal: None,
+            receipt_ref: None,
         }
     );
 }
@@ -820,6 +894,9 @@ fn chat_document_scope_reads_only_the_named_ids_and_cannot_leak() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("document chat");
@@ -852,17 +929,35 @@ fn chat_document_scope_reads_only_the_named_ids_and_cannot_leak() {
                 format: None,
                 lease: None,
                 composer: Some(&leaking),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("document chat");
-    assert_eq!(
-        response,
+    match response {
         ChatResponse::Abstained {
-            reason: ChatAbstentionReason::InsufficientEvidence,
-            gaps: Vec::new(),
-            tokens_used: 42,
+            reason,
+            gaps,
+            tokens_used,
+            refusal,
+            receipt_ref,
+        } => {
+            assert_eq!(reason, ChatAbstentionReason::InsufficientEvidence);
+            assert!(gaps.is_empty());
+            assert_eq!(tokens_used, 42);
+            let refusal = refusal.expect("an out-of-scope citation is a typed refusal");
+            assert_eq!(refusal.reason, RefusalReason::InventedReference);
+            assert_eq!(refusal.code, MEMORY_CODE_INVENTED_REFERENCE);
+            assert_eq!(refusal.field, "/source_short_ids/0");
+            let receipt = receipt_ref.expect("the refusal is receipted");
+            assert!(
+                receipt.starts_with("reference_refusal:"),
+                "unexpected receipt {receipt}"
+            );
         }
-    );
+        other => panic!("expected an abstention, got {other:?}"),
+    }
 }
 
 #[test]
@@ -883,6 +978,9 @@ fn chat_document_scope_without_a_resolving_document_abstains() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("an unresolved document is not an error");
@@ -909,6 +1007,9 @@ fn chat_document_scope_without_a_resolving_document_abstains() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("an empty allowlist abstains");
@@ -918,6 +1019,8 @@ fn chat_document_scope_without_a_resolving_document_abstains() {
             reason: ChatAbstentionReason::NoInScopeDocuments,
             gaps: Vec::new(),
             tokens_used: 0,
+            refusal: None,
+            receipt_ref: None,
         }
     );
     assert_eq!(composer.calls(), 0);
@@ -935,6 +1038,9 @@ fn chat_document_scope_without_a_resolving_document_abstains() {
                 format: None,
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect_err("a malformed ref");
@@ -965,6 +1071,9 @@ fn chat_document_scope_bounds_the_read_and_refuses_an_unknown_format() {
                 format: None,
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("bounded document chat");
@@ -989,6 +1098,9 @@ fn chat_document_scope_bounds_the_read_and_refuses_an_unknown_format() {
                 format: Some("docx"),
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect_err("unknown format");
@@ -1029,6 +1141,9 @@ fn chat_document_scope_renders_the_requested_format_over_only_the_named_ids() {
                     format: Some(format),
                     lease: None,
                     composer: None,
+                    budget: None,
+                    token_budget: None,
+                    reader_agent_ref: None,
                 },
             )
             .expect("rendered document chat");
@@ -1070,6 +1185,9 @@ fn chat_document_scope_renders_the_requested_format_over_only_the_named_ids() {
                 format: None,
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("document chat without a format");
@@ -1104,6 +1222,9 @@ fn chat_document_scope_cites_the_named_ids_with_the_rendered_pack_present() {
                 format: Some("json"),
                 lease: None,
                 composer: Some(&composer),
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("rendered document chat");
@@ -1139,6 +1260,8 @@ fn chat_abstention_wire_tags_and_reasons_are_exact() {
             reason,
             gaps: vec!["missing timeframe".to_owned()],
             tokens_used: 7,
+            refusal: None,
+            receipt_ref: None,
         };
         let json = serde_json::to_value(&response).expect("serialize");
         assert_eq!(json["outcome"], "abstained");

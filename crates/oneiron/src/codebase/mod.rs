@@ -54,8 +54,6 @@ pub(crate) use self::store::{
 #[cfg(test)]
 use self::store::{codebase_asset_entity_id, codebase_snapshot_entity_id};
 
-// FIX [LIBTEST-QUARANTINE-CODEBASE-TESTS]: the lib test target's type check fails here (9 errors: E0063 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

@@ -1,10 +1,11 @@
 //! Source-folder exports and ordinary admission, with no replay/activation bypass.
+use super::archive_rewrite_fixture::rewrite_archive_rows;
 use super::*;
 use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    RelationshipSet,
 };
-use crate::context_pack::PackFormat;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill::{SkillDependency, SkillLifecycle, SkillRecord};
@@ -111,37 +112,41 @@ fn source_bundles_all_five_formats_and_native_json_reimport() -> Result<()> {
     let agent_id = EntityId::now();
     let (skill, selected) = seed_portable_agent(&source, agent_id)?;
     let expected = package();
-    for format in [
-        PackFormat::Json,
-        PackFormat::Yaml,
-        PackFormat::Toon,
-        PackFormat::Markdown,
-        PackFormat::Plaintext,
-    ] {
-        let export = source.export_whole_vault(format)?;
-        export.manifest().validate(format)?;
-        let text = std::str::from_utf8(export.bytes()).expect("bundle fixture");
-        for value in [
-            "SKILL.md",
-            "scripts/count.py",
-            "print(3)",
-            "PACK.md",
-            "identity.md",
-            "policy.md",
-            "skills.json",
-            "knowledge/selected.json",
-        ] {
-            assert!(
-                text.contains(value),
-                "missing source facet {value} in {format:?}"
-            );
+    // The whole-vault export is a single archive shape now: one export
+    // carries every source facet, read from its record members.
+    let export = source.export_whole_vault(false)?;
+    export.manifest().validate()?;
+    // The archive is a ZIP of JSONL records: the exact source bytes travel
+    // inside its record members, not in the raw artifact bytes.
+    let mut text = String::new();
+    {
+        use std::io::Read as _;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(export.bytes()))
+            .expect("exported archive reads");
+        for index in 0..archive.len() {
+            let mut member = archive.by_index(index).expect("archive member reads");
+            if !member.name().starts_with("records/") {
+                continue;
+            }
+            let mut raw = Vec::new();
+            member.read_to_end(&mut raw).expect("record member reads");
+            text.push_str(&String::from_utf8_lossy(&raw));
         }
-        assert!(text.contains(&expected.content_hash()?.to_hex()));
-        if format != PackFormat::Json {
-            continue;
-        }
-        assert_native_reimport(&export, skill, agent_id, selected, &expected)?;
     }
+    for value in [
+        "SKILL.md",
+        "scripts/count.py",
+        "print(3)",
+        "PACK.md",
+        "identity.md",
+        "policy.md",
+        "skills.json",
+        "knowledge/selected.json",
+    ] {
+        assert!(text.contains(value), "missing source facet {value}");
+    }
+    assert!(text.contains(&expected.content_hash()?.to_hex()));
+    assert_native_reimport(&export, skill, agent_id, selected, &expected)?;
     Ok(())
 }
 
@@ -167,18 +172,14 @@ fn an_agent_whose_id_reads_as_messagepack_keeps_its_pack_through_export_and_inst
     let agent_id = EntityId::from_bytes(id)?;
     let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
     seed_portable_agent(&source, agent_id)?;
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    let archive: serde_json::Value = serde_json::from_slice(export.bytes()).expect("archive JSON");
-    let bundle: ExportAgentBundle = serde_json::from_value(
-        archive["agent_packs"]
-            .as_array()
-            .expect("agent bundles")
-            .iter()
-            .find(|bundle| bundle["entity_id"] == agent_id.to_hex())
-            .expect("agent bundle")
-            .clone(),
-    )
-    .expect("agent bundle");
+    let export = source.export_whole_vault(false)?;
+    let document = source.read_whole_vault_archive(export.bytes())?;
+    let bundle = document
+        .agent_packs
+        .iter()
+        .find(|bundle| bundle.entity_id == agent_id.to_hex())
+        .expect("agent bundle")
+        .clone();
     assert_eq!(bundle.omission, None);
     let files = bundle.source_tree.expect("agent source").import_files()?;
     let pack = crate::skill_hub::pack_catalog::PackSource::from_files(files)?;
@@ -222,7 +223,7 @@ fn no_random_id_drops_an_agent_pack() -> Result<()> {
             ClaimLifecycleStatus::Active,
         )?;
         claim.world = Some(random_id(container));
-        claim.rel = Some(random_id(container));
+        claim.rel = Some(RelationshipSet::from([random_id(container)]));
         let knowledge = vec![ExportEntity {
             id: random_id(false).to_hex(),
             short_ref: None,
@@ -244,7 +245,7 @@ fn no_random_id_drops_an_agent_pack() -> Result<()> {
         let dropped: Vec<_> = tree
             .files
             .iter()
-            .filter(|file| file.content.is_none())
+            .filter(|file| matches!(file.content, ExportSourceContent::Redacted))
             .map(|file| &file.path)
             .collect();
         assert!(
@@ -256,7 +257,10 @@ fn no_random_id_drops_an_agent_pack() -> Result<()> {
             .files
             .iter()
             .find(|file| file.path == "knowledge/selected.json")
-            .and_then(|file| file.content.as_deref())
+            .and_then(|file| match &file.content {
+                ExportSourceContent::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
             .expect("knowledge facet");
         assert_eq!(
             crate::agent_def::decode_agent_knowledge(selected.as_bytes())?,
@@ -322,9 +326,8 @@ fn an_archive_with_first_form_agent_knowledge_still_imports() -> Result<()> {
     // A fixed id whose first-form facet the old writer kept whole.
     let agent_id = EntityId::from_bytes([1, 0x52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
     seed_portable_agent(&source, agent_id)?;
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    let mut document: WholeVaultDocument =
-        serde_json::from_slice(export.bytes()).expect("archive JSON");
+    let export = source.export_whole_vault(false)?;
+    let mut document: WholeVaultDocument = source.read_whole_vault_archive(export.bytes())?;
     let bindings = document
         .agent_packs
         .iter()
@@ -352,7 +355,12 @@ fn an_archive_with_first_form_agent_knowledge_still_imports() -> Result<()> {
         .expect("knowledge facet");
     assert_eq!(knowledge.content.first(), Some(&b'['));
     let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
-    target.import_whole_vault_json(&serde_json::to_vec(&document).expect("archive JSON"))?;
+    // The first-form packs travel as the archive's rewritten agent-pack rows,
+    // resealed so the import judges the old form instead of the integrity door.
+    let first_form = rewrite_archive_rows(export.bytes(), "records/agent_pack.jsonl", |_| {
+        document.agent_packs.clone()
+    })?;
+    target.import_whole_vault_archive(&first_form)?;
     Ok(())
 }
 
@@ -364,7 +372,7 @@ fn assert_native_reimport(
     expected: &HubPackage,
 ) -> Result<()> {
     let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
-    let document = target.read_whole_vault_json(export.bytes())?;
+    let document = target.read_whole_vault_archive(export.bytes())?;
     let bundle = document
         .skills
         .iter()
@@ -422,14 +430,18 @@ fn assert_native_reimport(
             .expect("bundle fixture")
             .files
             .iter()
-            .any(|f| f.path == "knowledge/selected.json"
-                && f.content
-                    .as_ref()
-                    .expect("bundle fixture")
-                    .contains(&selected.to_hex()))
+            .any(|f| {
+                if f.path != "knowledge/selected.json" {
+                    return false;
+                }
+                match &f.content {
+                    ExportSourceContent::Text(text) => text.contains(&selected.to_hex()),
+                    _ => false,
+                }
+            })
     );
     assert!(!document.manifest.import_omissions.is_empty());
-    let receipt = target.import_whole_vault_json(export.bytes())?;
+    let receipt = target.import_whole_vault_archive(export.bytes())?;
     // The source root project and its home room map onto this vault's root
     // (ARCH-0067: the vault itself is the root project).
     assert_eq!(
@@ -468,8 +480,8 @@ fn assert_native_reimport(
             .skill_scan_verdicts_for_content_hash(expected.content_hash()?)?
             .is_empty()
     );
-    let exported = target.export_whole_vault(PackFormat::Json)?;
-    let readback = target.read_whole_vault_json(exported.bytes())?;
+    let exported = target.export_whole_vault(false)?;
+    let readback = target.read_whole_vault_archive(exported.bytes())?;
     assert_eq!(
         readback
             .skills
@@ -481,7 +493,7 @@ fn assert_native_reimport(
     );
     assert_eq!(
         target
-            .import_whole_vault_json(export.bytes())?
+            .import_whole_vault_archive(export.bytes())?
             .inserted_entities,
         0
     );
@@ -521,8 +533,8 @@ fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
         time(),
         130,
     )?;
-    let before = vault.export_whole_vault(PackFormat::Json)?;
-    let before = vault.read_whole_vault_json(before.bytes())?;
+    let before = vault.export_whole_vault(false)?;
+    let before = vault.read_whole_vault_archive(before.bytes())?;
     let claim_row = before
         .claims
         .iter()
@@ -544,8 +556,10 @@ fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
         .iter()
         .find(|file| file.path == "knowledge/selected.json")
         .unwrap();
-    let (_, selected) =
-        crate::agent_def::decode_agent_knowledge(selected.content.as_deref().unwrap().as_bytes())?;
+    let ExportSourceContent::Text(facet) = &selected.content else {
+        panic!("knowledge facet")
+    };
+    let (_, selected) = crate::agent_def::decode_agent_knowledge(facet.as_bytes())?;
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].id, claim.to_hex());
     assert_eq!(
@@ -559,8 +573,8 @@ fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
         time(),
         131,
     )?;
-    let after = vault.export_whole_vault(PackFormat::Json)?;
-    let after = vault.read_whole_vault_json(after.bytes())?;
+    let after = vault.export_whole_vault(false)?;
+    let after = vault.read_whole_vault_archive(after.bytes())?;
     let unchanged_parent = after
         .agent_packs
         .iter()
@@ -595,8 +609,8 @@ fn fork_hash_binds_actual_parent_at_fork_not_current_parent_at_export() -> Resul
     let parent = EntityId::now();
     let mut definition = agent("fixture.parent", None);
     vault.put_agent_definition(&parent, &definition, time(), 130)?;
-    let before = vault.export_whole_vault(PackFormat::Json)?;
-    let before = vault.read_whole_vault_json(before.bytes())?;
+    let before = vault.export_whole_vault(false)?;
+    let before = vault.read_whole_vault_archive(before.bytes())?;
     let actual_parent_hash = before
         .agent_packs
         .iter()
@@ -613,8 +627,8 @@ fn fork_hash_binds_actual_parent_at_fork_not_current_parent_at_export() -> Resul
     definition.version = "2.0.0".into();
     definition.instructions = Some("Different source after fork.\n".into());
     vault.update_agent_definition(&parent, &definition, time(), 132)?;
-    let after = vault.export_whole_vault(PackFormat::Json)?;
-    let after = vault.read_whole_vault_json(after.bytes())?;
+    let after_export = vault.export_whole_vault(false)?;
+    let after = vault.read_whole_vault_archive(after_export.bytes())?;
     let child_bundle = after
         .agent_packs
         .iter()
@@ -636,9 +650,9 @@ fn fork_hash_binds_actual_parent_at_fork_not_current_parent_at_export() -> Resul
         Some(&actual_parent_hash)
     );
     let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
-    target.import_whole_vault_json(&serde_json::to_vec(&after).expect("bundle fixture"))?;
-    let imported = target.export_whole_vault(PackFormat::Json)?;
-    let imported = target.read_whole_vault_json(imported.bytes())?;
+    target.import_whole_vault_archive(after_export.bytes())?;
+    let imported = target.export_whole_vault(false)?;
+    let imported = target.read_whole_vault_archive(imported.bytes())?;
     assert_eq!(
         imported
             .agent_packs
@@ -1009,47 +1023,53 @@ fn tampered_files_facets_paths_and_omissions_are_not_admitted() -> Result<()> {
     install(&vault)?;
     let id = EntityId::now();
     vault.put_agent_definition(&id, &agent("fixture.reject", None), time(), 130)?;
-    let export = vault.export_whole_vault(PackFormat::Json)?;
-    let document = vault.read_whole_vault_json(export.bytes())?;
+    let export = vault.export_whole_vault(false)?;
     for mutate in 0..5 {
-        let mut changed = document.clone();
-        match mutate {
-            0 => {
-                changed.skills[0]
-                    .source_tree
-                    .as_mut()
-                    .expect("bundle fixture")
-                    .files[0]
-                    .content = Some("changed instructions".into());
-            }
-            1 => {
-                changed.skills[0]
-                    .source_tree
-                    .as_mut()
-                    .expect("bundle fixture")
-                    .files[0]
-                    .path = "../SKILL.md".into();
-            }
-            2 => {
-                changed
-                    .agent_packs
-                    .iter_mut()
-                    .find(|b| b.entity_id == id.to_hex())
-                    .expect("bundle fixture")
-                    .source_tree
-                    .as_mut()
-                    .expect("bundle fixture")
-                    .files[0]
-                    .content = Some("forged policy".into());
-            }
-            3 => changed.manifest.import_omissions.clear(),
-            _ => changed.manifest.source_boundaries.clear(),
-        }
-        assert!(
-            vault
-                .read_whole_vault_json(&serde_json::to_vec(&changed).expect("bundle fixture"))
-                .is_err()
-        );
+        // Each content tamper rewrites the archive member carrying the rows
+        // it forges, resealed so validation judges the forged rows; the
+        // manifest tampers reuse the manifest-rewriting helper below.
+        let changed: Vec<u8> = match mutate {
+            0 => rewrite_archive_rows(
+                export.bytes(),
+                "records/entity/skill.jsonl",
+                |mut rows: Vec<ExportSkillBundle>| {
+                    rows[0].source_tree.as_mut().expect("bundle fixture").files[0].content =
+                        ExportSourceContent::Text("changed instructions".into());
+                    rows
+                },
+            )?,
+            1 => rewrite_archive_rows(
+                export.bytes(),
+                "records/entity/skill.jsonl",
+                |mut rows: Vec<ExportSkillBundle>| {
+                    rows[0].source_tree.as_mut().expect("bundle fixture").files[0].path =
+                        "../SKILL.md".into();
+                    rows
+                },
+            )?,
+            2 => rewrite_archive_rows(
+                export.bytes(),
+                "records/agent_pack.jsonl",
+                |mut rows: Vec<ExportAgentBundle>| {
+                    rows.iter_mut()
+                        .find(|b| b.entity_id == id.to_hex())
+                        .expect("bundle fixture")
+                        .source_tree
+                        .as_mut()
+                        .expect("bundle fixture")
+                        .files[0]
+                        .content = ExportSourceContent::Text("forged policy".into());
+                    rows
+                },
+            )?,
+            3 => archive_with_changed_manifest(export.bytes(), |manifest| {
+                manifest.import_omissions.clear();
+            })?,
+            _ => archive_with_changed_manifest(export.bytes(), |manifest| {
+                manifest.source_boundaries.clear();
+            })?,
+        };
+        assert!(vault.read_whole_vault_archive(&changed).is_err());
     }
     Ok(())
 }

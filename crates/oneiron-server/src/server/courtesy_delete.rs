@@ -11,18 +11,13 @@
 use std::time::Duration;
 
 use oneiron::deletion::CooperativeDeletionTry;
+use oneiron_base::unix_seconds_now;
 
 use super::SyncServer;
 
 /// Tries per pass; the rest wait for the next tick.
 const TRIES_PER_PASS: usize = 16;
 const TRY_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
 
 /// One POST of `body` to `destination`, read as a try's result.
 fn post(
@@ -60,15 +55,18 @@ impl SyncServer {
         let issuer = self.host_issuer();
         let mut client = None;
         for _ in 0..TRIES_PER_PASS {
-            let delivery =
-                match vault.claim_cooperative_deletion_delivery(&lease_owner, unix_now(), issuer) {
-                    Ok(Some(delivery)) => delivery,
-                    Ok(None) => return,
-                    Err(error) => {
-                        tracing::warn!(kind = ?error.kind(), "courtesy delete claim failed");
-                        return;
-                    }
-                };
+            let delivery = match vault.claim_cooperative_deletion_delivery(
+                &lease_owner,
+                unix_seconds_now(),
+                issuer,
+            ) {
+                Ok(Some(delivery)) => delivery,
+                Ok(None) => return,
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "courtesy delete claim failed");
+                    return;
+                }
+            };
             if client.is_none() {
                 client = reqwest::blocking::Client::builder()
                     .redirect(reqwest::redirect::Policy::none())
@@ -96,7 +94,8 @@ impl SyncServer {
                         .unwrap_or_else(|| post(client, &delivery.destination, &delivery.bytes)),
                 },
             };
-            match vault.settle_cooperative_deletion_delivery(&delivery, result, unix_now()) {
+            match vault.settle_cooperative_deletion_delivery(&delivery, result, unix_seconds_now())
+            {
                 Ok(status) => {
                     tracing::info!(status = status.as_str(), "courtesy delete try settled")
                 }

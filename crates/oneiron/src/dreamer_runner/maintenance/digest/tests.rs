@@ -228,7 +228,7 @@ fn calibration_asks_batch_under_minutes_and_only_human_picks_label() -> Result<(
     let digest = vault.proactivity_digest(&owner, 11, None)?.unwrap();
     assert_eq!(digest.judge_asks.len(), 1);
     assert_eq!(
-        vault.read_proactivity_digest(digest.id)?,
+        vault.proactivity_digest_view(&owner, digest.id)?,
         Some(digest.clone())
     );
     let delivered = digest.judge_asks[0].id;

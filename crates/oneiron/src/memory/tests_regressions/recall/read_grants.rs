@@ -92,6 +92,10 @@ fn scoped_recall_hides_world_ids_without_claim_read_authority() {
         .expect("owner claim");
     let scope = RecallScope {
         world_ref: Some(requested.to_hex()),
+        worlds: None,
+        project_refs: Vec::new(),
+        conversation_refs: Vec::new(),
+        person_ref: None,
         facet: None,
         kinds: None,
     };
@@ -150,6 +154,8 @@ fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
             turn_ref: None,
             messages: vec![message],
             occurred_at: crate::unix_seconds_now(),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .unwrap();
     let hidden = EntityId::from_hex(
@@ -218,6 +224,8 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             turn_ref: None,
             messages: vec![allowed],
             occurred_at: crate::unix_seconds_now(),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("allowed witness");
     let anchor_id = EntityId::from_hex(
@@ -238,6 +246,8 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             turn_ref: None,
             messages: vec![message],
             occurred_at: crate::unix_seconds_now(),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("hidden witness");
     let target = EntityId::from_hex(
@@ -358,14 +368,10 @@ fn scoped_recall_rechecks_a_grant_revoked_during_retrieval() {
 #[test]
 fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
     const WITHHELD_MEANING: [f32; 4] = [0.0, 1.0, 0.0, 0.0];
-    let (_dir, vault, owner, scoped) = recall_after_control_writes_fixture_in(
-        true,
-        crate::config::VaultConfig {
-            embedding_model: Some("test/model@v1".to_owned()),
-            dimensions: WITHHELD_MEANING.len(),
-            ..crate::config::VaultConfig::default()
-        },
-    );
+    let mut vault_config = crate::config::VaultConfig::device();
+    vault_config.embedding_model = Some("test/model@v1".to_owned());
+    vault_config.dimensions = WITHHELD_MEANING.len();
+    let (_dir, vault, owner, scoped) = recall_after_control_writes_fixture_in(true, vault_config);
     let space = EntityId::from_bytes([0x68; 16]).unwrap();
     let mut granted = witness_message(0, WitnessAuthor::User, "harbor view table for two");
     granted.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
@@ -381,6 +387,8 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
             turn_ref: None,
             messages: vec![granted, withheld],
             occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness a turn of two messages");
     let turn = EntityId::from_hex(

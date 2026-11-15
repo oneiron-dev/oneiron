@@ -89,6 +89,7 @@ fn sample_record() -> CachedActionResult {
     let id = EntityId::from_bytes([0x12; 16]).expect("id");
     CachedActionResult {
         action_key: action().action_key().expect("key"),
+        action_size_bytes: 0,
         result: result(ArtifactVersionRef::new(id, 1).expect("ref")),
         referenced_bytes: 5,
     }
@@ -120,6 +121,7 @@ fn mark_live(vault: &Vault, reference: &ArtifactVersionRef) {
             name: "build-token".into(),
             class: CustodyClass::CustodyPortable,
             device_only: false,
+            model_reveal_allowed: false,
             value_bytes: b"wave6-rotation-test-value-v1".to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at: 1_700_000_000,

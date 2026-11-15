@@ -33,8 +33,6 @@ mod toon_format;
 use oneiron_store::serialize::types;
 mod yaml_format;
 
-// FIX [LIBTEST-QUARANTINE-SERIALIZE-TESTS]: the lib test target's type check fails here (9 errors: E0063 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 // The L2 producer must render the same safe value projection as ranked rows.
@@ -61,7 +59,9 @@ mod okf_bundle;
 mod vault_archive;
 mod vault_document;
 pub use export_value::{ExportBody, ExportBodyFile, ExportValue};
-pub(crate) use export_value::{ExportSecrets, attaches_as_file_read};
+pub(crate) use export_value::{
+    ExportSecrets, attaches_as_file_read, release_keeps_text, typed_rule_keeps_text,
+};
 pub(crate) use vault_document::{DocumentTail, DocumentWriter};
 
 mod source_tree;

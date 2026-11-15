@@ -1,6 +1,7 @@
 //! Note takes on claims, author binding, and stale upsert/retract conflicts.
 
 use super::*;
+use crate::note::NoteActor;
 
 /// One point read through `read`'s lane, with its receipt.
 fn point(
@@ -51,7 +52,11 @@ fn two_actor_divergent_takes() {
         );
         assert_eq!(body.markdown, markdown);
         assert_eq!(vault.note_document(note_id).unwrap().markdown, markdown);
-        assert_eq!(body.author_ref, author, "takes must not cross-attribute");
+        assert_eq!(
+            body.author_ref,
+            NoteActor::Actor(author),
+            "takes must not cross-attribute"
+        );
 
         let edges = vault.edges_out(&note_id).expect("edges");
         assert_eq!(
@@ -64,7 +69,8 @@ fn two_actor_divergent_takes() {
             .find(|edge| edge.kind == EdgeKind::AuthoredBy)
             .expect("AuthoredBy edge is mandatory");
         assert_eq!(
-            authored.target, body.author_ref,
+            NoteActor::Actor(authored.target),
+            body.author_ref,
             "the stored author_ref must equal the AuthoredBy target"
         );
         assert!(
@@ -275,8 +281,8 @@ fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
         .expect("take");
     let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
     let body = note_body_of(&vault, &note_id);
-    assert_eq!(body.author_ref, actor);
-    assert_ne!(body.author_ref, impostor);
+    assert_eq!(body.author_ref, NoteActor::Actor(actor));
+    assert_ne!(body.author_ref, NoteActor::Actor(impostor));
     let edges = vault.edges_out(&note_id).expect("edges");
     assert_eq!(edges.len(), 3);
     assert!(
@@ -300,10 +306,9 @@ fn raw_note_put_is_refused_at_the_batch_door() {
     let impostor = put_person(&vault, 0x7A);
     let subject = put_person(&vault, 0x7B);
 
-    let forged = crate::note::encode_note_body(&crate::note::NoteBody {
+    let forged = crate::note::encode_note_core(&crate::note::NoteCore {
         kind: NoteKind::parse("opinion/take").expect("shipped kind"),
-        author_ref: impostor,
-        markdown: "words the impostor never wrote".to_owned(),
+        author_ref: NoteActor::Actor(impostor),
         source_revision_ref: [0x42; 16],
     })
     .expect("body encodes");
@@ -345,7 +350,14 @@ fn raw_note_put_is_refused_at_the_batch_door() {
         .with_write_txn(|wtxn| {
             vault
                 .batch_in()
-                .put_authored_note(&typed_note, &actor, test_time(900), 900, &forged)
+                .put_authored_note(
+                    &typed_note,
+                    &actor,
+                    test_time(900),
+                    900,
+                    &forged,
+                    "words the impostor never wrote",
+                )
                 .apply(wtxn)
         })
         .expect_err("the typed door must refuse a body attributed to another actor");
@@ -367,7 +379,10 @@ fn raw_note_put_is_refused_at_the_batch_door() {
         .author_take(TakeTarget::Subject(subject), "the honest door")
         .expect("take");
     let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
-    assert_eq!(note_body_of(&vault, &note_id).author_ref, actor);
+    assert_eq!(
+        note_body_of(&vault, &note_id).author_ref,
+        NoteActor::Actor(actor)
+    );
 }
 
 #[test]
@@ -560,7 +575,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     let id = EntityId::from_hex(&receipt.id_hex).expect("note id");
     let body = note_body_of(&vault, &id);
     assert_eq!(body.kind, NoteKind::parse("diary").expect("shipped kind"));
-    assert_eq!(body.author_ref, owner);
+    assert_eq!(body.author_ref, NoteActor::Actor(owner));
     assert_eq!(body.source_revision_ref, revision);
     assert!(
         vault
@@ -1359,14 +1374,21 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
         created_at: 1,
         revoked_at: None,
         expires_at: None,
+        companion_bounds: None,
     };
     assert!(
         vault
             .create_access_grant(&EntityId::now(), &forged)
             .is_err()
     );
-    assert_eq!(note_body_of(&vault, &note_a).author_ref, a);
-    assert_eq!(note_body_of(&vault, &note_b).author_ref, b);
+    assert_eq!(
+        note_body_of(&vault, &note_a).author_ref,
+        NoteActor::Actor(a)
+    );
+    assert_eq!(
+        note_body_of(&vault, &note_b).author_ref,
+        NoteActor::Actor(b)
+    );
     let issuer = crate::authority::HostSlipIssuer::from_secret(b"diary coreference read").unwrap();
     let root = vault.ensure_host_root_slip(&issuer).unwrap();
     let proof_of = |actor| diary_coref_proof(&vault, &issuer, &root, actor);
@@ -1945,7 +1967,7 @@ fn empty_or_revoked_diary_link_does_not_use_a_neighbor_slot() {
     vault
         .create_access_grant(
             &wrong_scope_id,
-            &crate::access_grant::AccessGrant::companion_profile_read(a, a, visible, 1),
+            &crate::access_grant::AccessGrant::companion_profile_read(a, a, Some(visible), 1),
         )
         .unwrap();
     let malformed_id = EntityId::now();

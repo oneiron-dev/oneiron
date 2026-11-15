@@ -486,6 +486,7 @@ fn turn_vad_annotation_rejects_edge_vad_range_violations() -> Result<()> {
         },
         source: VadAnnotationSource::UserSelfReport,
         annotated_at: 220,
+        freshness: None,
     };
     let err = vault
         .annotate_turn_vad(&turn, invalid)

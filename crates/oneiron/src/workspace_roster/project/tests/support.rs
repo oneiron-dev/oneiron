@@ -22,7 +22,7 @@ pub(crate) fn signed_depth(
     )
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS]: not ported: create_project_with_owner now takes an AuthenticatedOwner that must revalidate as the vault owner equal to the writer, and an OwnerProjectSigner from a host the authority fold holds; every caller (sync::window and sync::bridge tests) births as a fresh PERSON writer rooted only by root_owner's BindActor, which is not the vault owner, and a person-authorized birth is what they pin; port it with a rooted fixture (as GATE-PROJECT-DEPTH-TESTS-ITEMS), then drop this gate
 #[cfg(any())]
 /// Person-authorized child birth whose immutable policy fact can cross sync.
 #[cfg(feature = "sync")]

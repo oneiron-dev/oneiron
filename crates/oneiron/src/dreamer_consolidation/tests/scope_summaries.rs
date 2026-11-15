@@ -108,10 +108,13 @@ fn run(
         &mut WakeAttemptContext {
             vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ))
 }
@@ -162,10 +165,16 @@ fn dag_conversation(vault: &Vault) -> Result<(WriteActor, EntityId)> {
 fn inline_turn_text_outside_the_dreamers_read_never_reaches_the_model() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (author, conversation) = dag_conversation(&vault)?;
-    vault.append_dag_record(&crate::conversation_dag::AppendRecord {
-        body: turn_body("user", SECRET, None),
-        ..input(conversation, None, true, author)
-    })?;
+    let writer = vault.memory(author.entity_ref(), author.actor_class());
+    vault
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                body: turn_body("user", SECRET, None),
+                ..input(conversation, None, true, author)
+            },
+        )
+        .map_err(|error| Error::InvalidConfig(error.message))?;
     declare(&vault, author.entity_ref(), conversation, None)?;
     let admitted = admit(&vault)?;
     crate::test_util::withhold_dreamer_read(&vault)?;
@@ -178,7 +187,7 @@ fn inline_turn_text_outside_the_dreamers_read_never_reaches_the_model() -> Resul
                 .messages
                 .iter()
                 .flat_map(|message| &message.content)
-                .any(|part| matches!(part, ContentPart::Text { text } if text.contains(SECRET)))
+                .any(|part| matches!(part, ContentPart::Text { text, .. } if text.contains(SECRET)))
         }),
         "the withheld TURN's words reached the model"
     );
@@ -193,20 +202,31 @@ fn inline_turn_text_outside_the_dreamers_read_never_reaches_the_model() -> Resul
 fn a_record_without_text_is_not_covered() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (author, conversation) = dag_conversation(&vault)?;
-    let said = vault.append_dag_record(&crate::conversation_dag::AppendRecord {
-        body: turn_body("user", "the first words", None),
-        ..input(conversation, None, true, author)
-    })?;
+    let writer = vault.memory(author.entity_ref(), author.actor_class());
+    let said = vault
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                body: turn_body("user", "the first words", None),
+                ..input(conversation, None, true, author)
+            },
+        )
+        .map_err(|error| Error::InvalidConfig(error.message))?;
     let mut silent = Vec::new();
     rmpv::encode::write_value(
         &mut silent,
         &Value::Map(vec![(Value::from("spkr"), Value::from("user"))]),
     )
     .expect("text-less turn body");
-    vault.append_dag_record(&crate::conversation_dag::AppendRecord {
-        body: silent,
-        ..input(conversation, Some(said.id), true, author)
-    })?;
+    vault
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                body: silent,
+                ..input(conversation, Some(said.id), true, author)
+            },
+        )
+        .map_err(|error| Error::InvalidConfig(error.message))?;
     declare(&vault, author.entity_ref(), conversation, None)?;
     let backend = RecordingBackend::new(vec![Ok(text_response("a summary".to_owned()))]);
     let outcome = compose(&vault, &backend)?;

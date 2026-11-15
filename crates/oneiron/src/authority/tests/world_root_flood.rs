@@ -18,7 +18,6 @@ use crate::authority::log_budget::with_rows_per_signer_for_test;
 use crate::error::ErrorKind;
 use crate::world_keys::RecoveryRootSeed;
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
 /// The scaled bound: each signer, and all strangers together, store 48
 /// rows, and one fold reads 192.
 const BOUND: usize = 48;
@@ -54,11 +53,14 @@ fn mark_entry(
         machine: request.machine,
         owner,
         machine_key: request.machine_key,
+        device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     };
     let op = AuthorityOp::MachineProfile(profile);
     let entry = anchor_signed_entry(&fold, &seed.anchor(), op, 2).unwrap();
@@ -204,7 +206,6 @@ fn a_flood_of_strangers_rows_never_fails_the_fold() {
             .vault
             .anchor_machine(
                 &issuer.owner,
-                HERE,
                 &root.seed,
                 &request,
                 Some(request.code()),
@@ -252,7 +253,7 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
         let before = decisions(&b, world);
         let fold = b.vault.authority_fold().unwrap();
 
-        let report = b.vault.pin_owner_root(&b.owner, HERE, r1.root).unwrap();
+        let report = b.vault.pin_owner_root(&b.owner, r1.root).unwrap();
         assert_eq!(report.awaiting, Some(r1.root));
         assert_eq!(pinned(&b.vault), Some(r0.root));
         assert_eq!(b.vault.authority_fold().unwrap(), fold);
@@ -277,7 +278,7 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
             arrived: true,
         };
         assert_eq!(awaiting(&b), Some(arrived));
-        let report = b.vault.pin_owner_root(&b.owner, HERE, r1.root).unwrap();
+        let report = b.vault.pin_owner_root(&b.owner, r1.root).unwrap();
         assert_eq!(report.awaiting, None);
         assert_eq!(pinned(&b.vault), Some(r1.root));
         assert_eq!(awaiting(&b), None);
@@ -321,7 +322,7 @@ fn a_carried_re_pin_whose_marks_wait_finishes_on_the_second_pin() {
                 assert_eq!(flood(&b, BOUND).len(), BOUND - 1);
             }
             assert_eq!(drain(&issuer.vault, &b.vault) > 0, flooded);
-            let report = b.vault.pin_owner_root(&b.owner, HERE, r1.root).unwrap();
+            let report = b.vault.pin_owner_root(&b.owner, r1.root).unwrap();
             assert_eq!(pinned(&b.vault), Some(r1.root));
             if !flooded {
                 assert_eq!(report.awaiting, None);
@@ -342,7 +343,7 @@ fn a_carried_re_pin_whose_marks_wait_finishes_on_the_second_pin() {
                 arrived: true,
             };
             assert_eq!(awaiting(&b), Some(arrived));
-            let report = b.vault.pin_owner_root(&b.owner, HERE, r1.root).unwrap();
+            let report = b.vault.pin_owner_root(&b.owner, r1.root).unwrap();
             assert_eq!(report.awaiting, None);
             assert_eq!(awaiting(&b), None);
             assert_eq!(current(), Some(key));
