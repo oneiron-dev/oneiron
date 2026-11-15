@@ -1,4 +1,5 @@
 use super::*;
+use oneiron_contracts::msgpack::Entries;
 
 // ---------------------------------------------------------------------------
 // Claim value codec
@@ -104,11 +105,9 @@ pub(crate) fn map_entry<'a>(
     key: &str,
     reason: &'static str,
 ) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find(|(entry_key, _)| entry_key.as_str() == Some(key))
-        .map(|(_, value)| value)
-        .ok_or_else(|| corrupt(reason))
+    Entries::new(entries)
+        .require(key)
+        .map_err(|_| corrupt(reason))
 }
 
 pub(crate) fn decode_ref(value: &Value, reason: &'static str) -> Result<EntityId> {
@@ -202,14 +201,10 @@ pub fn decode_alias_value(subject: EntityId, value: &Value) -> Result<(String, S
 }
 
 fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
-    let keys: BTreeSet<_> = entries.iter().filter_map(|(key, _)| key.as_str()).collect();
-    if entries.len() != expected.len()
-        || keys.len() != entries.len()
-        || !expected.iter().all(|key| keys.contains(key))
-    {
-        return Err(corrupt("thread claim keys must be exact and unique"));
-    }
-    Ok(())
+    Entries::new(entries)
+        .exact_keys(expected, &[])
+        .map(drop)
+        .map_err(|_| corrupt("thread claim keys must be exact and unique"))
 }
 
 fn validate_minted_thread_ref(value: &str) -> Result<()> {

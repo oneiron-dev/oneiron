@@ -5,11 +5,13 @@
 //! proposal also reviews slot by slot, with each slot's evidence and full
 //! content, and decides per item in one complete verdict (FIX 1758).
 //!
-//! The job proposes first while ARCH-0066's integrity teeth are open: nothing
-//! is archived until the owner accepts, and the engine refuses the automatic
-//! posture until those teeth close. Archive is the only verb; a record
-//! restored here is the same record, never a copy, and the owner keeps it:
-//! cleanup leaves it alone until it changes.
+//! A vault cleans up automatically from birth (owner 2026-10-18; DEC-0006):
+//! each run takes a snapshot, archives what is still empty and records one
+//! digest, badged with ARCH-0066's integrity teeth as they stood, and the
+//! owner can revert the run. An owner who sets propose-first gets proposals
+//! instead: nothing is archived until he accepts. Archive is the only verb; a
+//! record restored here is the same record, never a copy, and the owner
+//! keeps it: cleanup leaves it alone until it changes.
 
 use oneiron::attempt_queue::AttemptId;
 use oneiron::consent::AuthenticatedOwner;
@@ -196,6 +198,19 @@ pub(crate) struct Digest {
     /// there were none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) rejected: Vec<String>,
+    /// An automatic run's proof badge: ARCH-0066's integrity teeth as they
+    /// stood when it archived. Absent on an accepted proposal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) integrity_teeth: Option<IntegrityTeeth>,
+}
+
+/// ARCH-0066 teeth #5 and #9 on an automatic run's digest.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct IntegrityTeeth {
+    /// Tooth #5: read/fold verification coverage at consumption.
+    pub(crate) read_fold_coverage_closed: bool,
+    /// Tooth #9: OS-level separation of the vault's files.
+    pub(crate) os_separation_closed: bool,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -326,16 +341,7 @@ pub(crate) fn configure(
         let posture = CleanupPosture::parse(posture).ok_or_else(|| {
             OwnerError::Invalid("posture must be `propose_first` or `auto_with_digest`".to_owned())
         })?;
-        vault
-            .set_cleanup_posture_as(owner, posture)
-            .map_err(|error| match error.kind() {
-                ErrorKind::InvariantViolation => OwnerError::Refused(
-                    "cleanup stays propose-first until the integrity checks it waits on close \
-                     (ARCH-0066); accept or reject its proposals instead"
-                        .to_owned(),
-                ),
-                _ => OwnerError::from(error),
-            })?;
+        vault.set_cleanup_posture_as(owner, posture)?;
     }
     if let Some(days) = settings.task_retention_days {
         vault.set_task_retention_days_as(owner, Some(days))?;
@@ -459,6 +465,10 @@ fn digest(row: &CleanupDigest) -> Digest {
         archived: slot_hexes(&row.archived),
         skipped: slot_hexes(&row.skipped),
         rejected: slot_hexes(&row.rejected),
+        integrity_teeth: row.integrity_teeth.map(|teeth| IntegrityTeeth {
+            read_fold_coverage_closed: teeth.read_fold_coverage_closed,
+            os_separation_closed: teeth.os_separation_closed,
+        }),
     }
 }
 
