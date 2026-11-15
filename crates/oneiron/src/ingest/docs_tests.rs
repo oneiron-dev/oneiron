@@ -440,10 +440,13 @@ fn mixed_summary_producers_do_not_abort_or_starve_document_hits() -> Result<()> 
         &crate::conversation_dag::fixtures::body("conversation"),
     )?;
     crate::conversation_dag::test_support::put_dag_test_policy(&vault, actor, true)?;
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let turn = vault
-        .append_dag_record(&crate::conversation_dag::fixtures::input(
-            conv, None, true, actor,
-        ))?
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::fixtures::input(conv, None, true, actor),
+        )
+        .expect("append dag record")
         .id;
     let (dag, _) = vault.mint_and_land_scope_summary(
         &crate::conversation_dag::fixtures::scope(

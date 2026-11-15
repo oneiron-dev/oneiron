@@ -48,8 +48,10 @@ fn restore_keeps_live_revocations_and_slips_but_returns_old_content() {
     let minted_later = child_slip(&live, &issuer, 8);
     assert!(!live.capability_slip_id_is_live(&[7; 32]).unwrap());
 
+    let key = live.checkpoint_key().unwrap();
     let (restored, report) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &root.path().join("restored"),
         VaultConfig::device(),
         &live,
@@ -71,6 +73,7 @@ fn restore_keeps_live_revocations_and_slips_but_returns_old_content() {
     // The plain image restore is the rollback this path exists to prevent.
     let (plain, _) = Vault::restore_checkpoint(
         &image,
+        &key,
         &root.path().join("plain"),
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -99,9 +102,11 @@ fn restore_refuses_to_roll_back_a_guarded_grant_before_creating_anything() {
     .unwrap();
     live.create_standing_grant(&owner, bound).unwrap();
 
+    let key = live.checkpoint_key().unwrap();
     let destination = root.path().join("restored");
     let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -125,9 +130,11 @@ fn restore_refuses_another_vaults_checkpoint() {
     let image = root.path().join("backup");
     other.snapshot_checkpoint(&image, 100).unwrap();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let key = other.checkpoint_key().unwrap();
     let destination = root.path().join("restored");
     let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -162,8 +169,10 @@ fn restore_never_revives_a_spent_approval() {
     })
     .unwrap();
 
+    let key = live.checkpoint_key().unwrap();
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &root.path().join("restored"),
         VaultConfig::device(),
         &live,
@@ -187,9 +196,11 @@ fn restore_refuses_to_revive_an_owner_deleted_since() {
     live.delete_entity_with_options(&owner, crate::deletion::DeleteEntityOptions { purge: true })
         .unwrap();
     assert!(live.live_member_ids().unwrap().is_empty());
+    let key = live.checkpoint_key().unwrap();
     let destination = root.path().join("restored");
     let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -235,8 +246,10 @@ fn a_refused_restore_removes_only_the_copy_it_made() {
             });
         }
     });
+    let key = live.checkpoint_key().unwrap();
     let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &link.join("restored"),
         VaultConfig::device(),
         &live,
@@ -272,8 +285,10 @@ fn restore_keeps_the_secret_scan_the_owner_switched_on_since() {
     live.set_secret_scan_mode(&owner, SecretScanMode::On, at + 1)
         .unwrap();
 
+    let key = live.checkpoint_key().unwrap();
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &root.path().join("restored"),
         VaultConfig::device(),
         &live,
@@ -329,9 +344,11 @@ fn restore_refuses_to_bring_back_a_relationship_participant_removed_since() {
     live.put_entity(&relationship, ENTITY_TYPE_RELATIONSHIP, at, 2, &body(&[]))
         .unwrap();
 
+    let key = live.checkpoint_key().unwrap();
     let destination = root.path().join("restored");
     let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -360,8 +377,10 @@ fn restore_goes_ahead_past_an_ordinary_project_edit() {
     record.why = Some("the reason the owner wrote down".to_owned());
     live.put_project(project, &record, 150).unwrap();
 
+    let key = live.checkpoint_key().unwrap();
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &root.path().join("restored"),
         VaultConfig::device(),
         &live,
@@ -400,9 +419,11 @@ fn restore_refuses_a_changed_row_of_another_packs_kind_under_an_engine_prefix() 
     live.snapshot_checkpoint(&image, 100).unwrap();
     live.put_entity(&row, kind, at, 2, b"second").unwrap();
 
+    let key = live.checkpoint_key().unwrap();
     let destination = root.path().join("restored");
     let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -458,9 +479,11 @@ fn restore_refuses_to_return_a_stale_plugin_install_withdrawn_since() {
     live.snapshot_checkpoint(&image, 100).unwrap();
     live.retract_claim(&claim, 10).unwrap();
 
+    let key = live.checkpoint_key().unwrap();
     let destination = backups.path().join("restored");
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -565,9 +588,11 @@ fn restore_refuses_to_roll_back_a_recipient_jurisdiction_moved_since() {
     observe(bystander, "UK", 10);
     let image = backups.path().join("backup");
     live.snapshot_checkpoint(&image, 100).unwrap();
+    let key = live.checkpoint_key().unwrap();
     let restore = |name: &str| {
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &key,
             &backups.path().join(name),
             VaultConfig::device(),
             &live,
@@ -627,9 +652,11 @@ fn restore_refuses_to_reopen_a_jurisdiction_claim_made_private_since() {
         .unwrap();
     assert!(crate::claim::claim_access_axes(&live.get_claim(&older).unwrap().unwrap()).1);
 
+    let key = live.checkpoint_key().unwrap();
     let destination = backups.path().join("restored");
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -674,9 +701,11 @@ fn restore_reads_campaign_recipients_through_their_claim_of_edges() {
     live.put_claim(&observation, &moved, TimeRange { start: 10, end: 10 }, 30)
         .unwrap();
 
+    let key = live.checkpoint_key().unwrap();
     let destination = backups.path().join("restored");
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -725,8 +754,10 @@ fn restore_goes_ahead_past_a_moved_jurisdiction_of_a_non_person() {
     live.snapshot_checkpoint(&image, 100).unwrap();
     observe("US", 30);
 
+    let key = live.checkpoint_key().unwrap();
     Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         VaultConfig::device(),
         &live,
@@ -750,9 +781,11 @@ fn restore_compares_only_the_read_scope_of_a_claim_rewritten_into_a_jurisdiction
         .unwrap();
     let image = backups.path().join("backup");
     live.snapshot_checkpoint(&image, 100).unwrap();
+    let key = live.checkpoint_key().unwrap();
     let restore = |name: &str| {
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &key,
             &backups.path().join(name),
             VaultConfig::device(),
             &live,
@@ -793,7 +826,7 @@ fn restore_refuses_to_revive_a_grant_deleted_since() {
         &crate::AccessGrant::companion_profile_read(
             EntityId::now(),
             EntityId::now(),
-            EntityId::now(),
+            Some(EntityId::now()),
             10,
         ),
     )
@@ -802,9 +835,11 @@ fn restore_refuses_to_revive_a_grant_deleted_since() {
     live.snapshot_checkpoint(&image, 100).unwrap();
     live.with_write_txn(|txn| live.fence_unapplied_delete_in_txn(txn, &grant, &[1; 25]))
         .unwrap();
+    let key = live.checkpoint_key().unwrap();
     let destination = root.path().join("restored");
     let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::device(),
         &live,
@@ -850,7 +885,7 @@ fn restore_refuses_to_revive_a_relationship_deleted_since() {
             ClaimLifecycleStatus::Active,
         )
         .unwrap();
-        fact.rel = Some(relationship);
+        fact.rel = Some(crate::claim::RelationshipSet::from([relationship]));
         live.put_claim(&EntityId::now(), &fact, at, 1).unwrap();
         let backups = crate::test_support::restore_tempdir();
         let image = backups.path().join("backup");
@@ -863,9 +898,11 @@ fn restore_refuses_to_revive_a_relationship_deleted_since() {
             })
             .unwrap();
         }
+        let key = live.checkpoint_key().unwrap();
         let destination = backups.path().join("restored");
         let Err(error) = Vault::restore_checkpoint_keeping_authority(
             &image,
+            &key,
             &destination,
             live.config.clone(),
             &live,

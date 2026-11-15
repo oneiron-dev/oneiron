@@ -90,11 +90,14 @@ fn request() -> LlmRequest {
             seat_effort: None,
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: "step effect test".into(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),
@@ -190,6 +193,7 @@ fn step_derived_effect_rechecks_resident_eligibility_and_still_uses_gate()
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: "different step".into(),
+            signature: None,
         }],
     });
     assert!(matches!(

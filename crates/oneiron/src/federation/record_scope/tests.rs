@@ -157,6 +157,7 @@ fn generic_child_in_scope_cannot_rewrite_an_out_of_scope_habit_parent() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -232,6 +233,7 @@ fn replay_changed_task(vault: &Vault, id: EntityId, marker: &str) {
             ENTITY_TYPE_TASK,
             TimeRange { start: 10, end: 10 },
             10,
+            None,
             &replay_body,
         )
         .commit()

@@ -1,10 +1,10 @@
 //! Observable whole-vault export/import contracts.
+use super::archive_rewrite_fixture::{rewrite_archive_manifest, rewrite_archive_rows};
 use super::*;
 use crate::affect::Vad;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::context_pack::PackFormat;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY};
@@ -417,7 +417,9 @@ fn whole_vault_json_roundtrip_preserves_ids_types_times_fields_graph_and_demotes
     knowledge.valid_from = Some(10);
     knowledge.valid_to = Some(20);
     knowledge.world = Some(crate::EntityId::now());
-    knowledge.rel = Some(crate::EntityId::now());
+    knowledge.rel = Some(crate::claim::RelationshipSet::from(
+        [crate::EntityId::now()],
+    ));
     knowledge.scope = Some(Value::Map(vec![(
         Value::from("export_scope"),
         Value::from("private"),
@@ -432,10 +434,10 @@ fn whole_vault_json_roundtrip_preserves_ids_types_times_fields_graph_and_demotes
         .batch()
         .edge_with_created_at_and_vad(&person, EdgeKind::Mentions, &peer, 0.7, 654, vad)
         .commit()?;
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    let document = target.read_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    let document = target.read_whole_vault_archive(export.bytes())?;
     assert!(document.claims.iter().any(|row| row.id == claim.to_hex()));
-    let receipt = target.import_whole_vault_json(export.bytes())?;
+    let receipt = target.import_whole_vault_archive(export.bytes())?;
     assert!(receipt.inserted_entities >= 3);
     assert_ne!(
         receipt.authority.classification,
@@ -454,7 +456,7 @@ fn whole_vault_json_roundtrip_preserves_ids_types_times_fields_graph_and_demotes
     assert_eq!(target_edges[0].created_at, 654);
     assert_eq!(target_edges[0].vad, Some(vad));
     assert_eq!(target_edges[0].weight, 0.7);
-    let repeated = target.import_whole_vault_json(export.bytes())?;
+    let repeated = target.import_whole_vault_archive(export.bytes())?;
     assert_eq!(repeated.inserted_entities, 0);
     Ok(())
 }
@@ -495,8 +497,8 @@ fn whole_vault_json_reimports_a_scope_id_whose_bytes_parse_as_messagepack() -> R
     source.put_claim(&claim, &knowledge, range(), 789)?;
     let scope_facet = source.get_claim(&claim)?.unwrap().scope_facet;
     assert!(parses_as_container(scope_facet.as_bytes()));
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    target.import_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    target.import_whole_vault_archive(export.bytes())?;
     assert_eq!(target.get_claim(&claim)?.unwrap().scope_facet, scope_facet);
     Ok(())
 }
@@ -601,7 +603,7 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
         raw_residue(&vault, &claim, crate::registry::ENTITY_TYPE_CLAIM, &encoded)?;
         claims.push(claim);
     }
-    let export = vault.export_whole_vault(PackFormat::Json)?;
+    let export = vault.export_whole_vault(false)?;
     let json = std::str::from_utf8(export.bytes()).unwrap();
     for claim in claims {
         assert!(json.contains(&claim.to_hex()), "claim row missing");
@@ -662,8 +664,8 @@ fn whole_vault_json_reimports_credential_free_ids_of_every_container_shape() -> 
         source.put_claim(&claim, &body, range(), 789)?;
         claims.push((claim, world));
     }
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    target.import_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    target.import_whole_vault_archive(export.bytes())?;
     for (claim, world) in claims {
         assert_eq!(target.get_claim(&claim)?.unwrap().world, Some(world));
     }
@@ -675,34 +677,36 @@ fn whole_vault_import_rejects_manifest_drift_false_proof_and_forged_binary() -> 
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     let id = crate::EntityId::now();
     vault.put_entity(&id, ENTITY_TYPE_PERSON, range(), 789, b"public")?;
-    let export = vault.export_whole_vault(PackFormat::Json)?;
-    let value: serde_json::Value = serde_json::from_slice(export.bytes()).unwrap();
+    let export = vault.export_whole_vault(false)?;
     for path in ["manifest_version", "format", "secrets_nulled"] {
-        let mut modified = value.clone();
-        modified["manifest"][path] = match path {
-            "manifest_version" => serde_json::json!(99),
-            "format" => serde_json::json!("yaml"),
-            _ => serde_json::json!(false),
-        };
+        let modified = rewrite_archive_manifest(export.bytes(), |manifest| {
+            manifest[path] = match path {
+                "manifest_version" => serde_json::json!(99),
+                "format" => serde_json::json!("yaml"),
+                _ => serde_json::json!(false),
+            };
+        })?;
         assert!(matches!(
-            vault.read_whole_vault_json(&serde_json::to_vec(&modified).unwrap()),
+            vault.read_whole_vault_archive(&modified),
             Err(Error::InvalidConfig(_))
         ));
     }
-    let mut document = vault.read_whole_vault_json(export.bytes())?;
-    document
-        .evidence_ledger
-        .entities
-        .iter_mut()
-        .find(|row| row.id == id.to_hex())
-        .unwrap()
-        .body =
-        ExportBody::MessagePack(ExportValue::EntityReference(b"a-key-in-bytes!!?".to_vec()));
-    assert!(
-        vault
-            .read_whole_vault_json(&serde_json::to_vec(&document).unwrap())
-            .is_err()
-    );
+    // The forged body is resealed into the PERSON file, so the refusal is
+    // the row's own validation, not the archive's integrity door.
+    let forged = rewrite_archive_rows(
+        export.bytes(),
+        &ArchiveRecordKind::entity_path(ENTITY_TYPE_PERSON),
+        |mut rows: Vec<ExportEntity>| {
+            rows.iter_mut()
+                .find(|row| row.id == id.to_hex())
+                .unwrap()
+                .body = ExportBody::MessagePack(ExportValue::EntityReference(
+                b"a-key-in-bytes!!?".to_vec(),
+            ));
+            rows
+        },
+    )?;
+    assert!(vault.read_whole_vault_archive(&forged).is_err());
     Ok(())
 }
 
@@ -715,8 +719,8 @@ fn whole_vault_import_collision_aborts_without_partial_writes() -> Result<()> {
     source.put_entity(&new, ENTITY_TYPE_PERSON, range(), 789, b"new")?;
     source.put_entity(&collision, ENTITY_TYPE_PERSON, range(), 789, b"source")?;
     target.put_entity(&collision, ENTITY_TYPE_PERSON, range(), 789, b"target")?;
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    assert!(target.import_whole_vault_json(export.bytes()).is_err());
+    let export = source.export_whole_vault(false)?;
+    assert!(target.import_whole_vault_archive(export.bytes()).is_err());
     assert_eq!(target.get(&new)?, None);
     assert_eq!(target.get(&collision)?, Some(b"target".to_vec()));
     Ok(())
@@ -740,8 +744,8 @@ fn whole_vault_export_skips_live_overlay_members_without_refusing_export() -> Re
     segment.commit()?;
     let public = crate::EntityId::now();
     vault.put_entity(&public, ENTITY_TYPE_PERSON, range(), 789, b"public-base")?;
-    let export = vault.export_whole_vault(PackFormat::Json)?;
-    let document = vault.read_whole_vault_json(export.bytes())?;
+    let export = vault.export_whole_vault(false)?;
+    let document = vault.read_whole_vault_archive(export.bytes())?;
     assert!(document.entities().all(|row| row.id != member.to_hex()));
     assert!(document.entities().any(|row| row.id == public.to_hex()));
     session.close()?;
@@ -785,8 +789,8 @@ fn foreign_archive_authority_and_witness_rows_remain_data_not_local_rights() -> 
         raw_residue(&source, &id, kind, b"foreign local-act evidence")?;
         ids.push(id);
     }
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    let document = target.read_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    let document = target.read_whole_vault_archive(export.bytes())?;
     // The seeded root project row (structural kind, no owning import adapter)
     // is the only expected refusal; foreign authority rows are omissions.
     assert_eq!(
@@ -806,13 +810,13 @@ fn foreign_archive_authority_and_witness_rows_remain_data_not_local_rights() -> 
                 .any(|row| row.entity_id == id.to_hex())
         );
     }
-    target.import_whole_vault_json(export.bytes())?;
+    target.import_whole_vault_archive(export.bytes())?;
     assert!(target.get_entity_type(&person)?.is_some());
     for id in ids {
         assert!(target.get_entity_type(&id)?.is_none());
     }
     // Re-import cannot turn omitted foreign rows into native authority either.
-    let replay = target.import_whole_vault_json(export.bytes())?;
+    let replay = target.import_whole_vault_archive(export.bytes())?;
     assert_eq!(replay.inserted_entities, 0);
     Ok(())
 }
@@ -889,10 +893,10 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
         )
         .commit()?;
     source.put_edge_provenance(&chained, &chained_edge, &record, EdgeActorClass::Human, 60)?;
-    let export = source.export_whole_vault(PackFormat::Json)?;
+    let export = source.export_whole_vault(false)?;
     assert_eq!(
         target
-            .read_whole_vault_json(export.bytes())?
+            .read_whole_vault_archive(export.bytes())?
             .manifest
             .import_refusals,
         vec![crate::batch::export::ExportImportRefusal::Entity {
@@ -900,7 +904,7 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
             reason: crate::batch::export::ImportRefusalReason::OwningEntityAdapterRequired,
         }]
     );
-    assert!(target.import_whole_vault_json(export.bytes()).is_err());
+    assert!(target.import_whole_vault_archive(export.bytes()).is_err());
     assert!(target.get_claim(&first)?.is_none());
     assert!(target.get_entity_type(&actor)?.is_none());
     // This fixture explicitly installs a LOCAL Imported-source permit. The
@@ -935,7 +939,7 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
         crate::gate::default_policy_manifest_id()?,
         &encode(&policy),
     )?;
-    let restored = target.import_whole_vault_json(export.bytes())?;
+    let restored = target.import_whole_vault_archive(export.bytes())?;
     assert_eq!(
         restored.remapped_entities.get(&substrate.to_hex()),
         Some(&local_substrate.to_hex())
@@ -961,7 +965,7 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
         target.get_claim(&chained)?.unwrap().lifecycle,
         ClaimLifecycleStatus::Active
     );
-    let replay = target.import_whole_vault_json(export.bytes())?;
+    let replay = target.import_whole_vault_archive(export.bytes())?;
     assert_eq!(replay.inserted_entities, 0);
     Ok(())
 }

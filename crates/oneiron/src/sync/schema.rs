@@ -176,8 +176,6 @@ fn normalize_window_key(raw_key: &str) -> Option<&str> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-SCHEMA-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use loro::ExportMode;
@@ -204,7 +202,7 @@ mod tests {
     fn add_window_to_root_rejects_invalid_key() {
         let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
 
-        add_window_to_root(&doc, &WindowKey::new_unchecked_for_test("2026-02,evil"));
+        add_window_to_root(&doc, &WindowKey("2026-02,evil".to_string()));
 
         let windows = read_window_list(&doc);
         assert_eq!(windows.len(), 1);

@@ -18,7 +18,7 @@ fn put_reserved_fixture(
     body: &crate::claim::ClaimBody,
 ) -> crate::Result<()> {
     vault.with_write_txn(|wtxn| {
-        vault.put_reserved_claim_in_txn(wtxn, id, body, landing_time(), now_secs())
+        vault.put_reserved_claim_in_txn(wtxn, id, body, landing_time(), crate::unix_seconds_now())
     })
 }
 
@@ -239,7 +239,12 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
     unrelated.predicate = "test.unrelated_source".to_owned();
     let unrelated_id = EntityId::now();
     vault
-        .put_claim(&unrelated_id, &unrelated, landing_time(), now_secs())
+        .put_claim(
+            &unrelated_id,
+            &unrelated,
+            landing_time(),
+            crate::unix_seconds_now(),
+        )
         .expect("unrelated active claim");
     assert!(
         vault
@@ -307,7 +312,7 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
         actor_id: attribution.actor_id,
         provenance_claim_id: attribution.provenance_claim_id,
         occurred: landing_time(),
-        learned_at: now_secs(),
+        learned_at: crate::unix_seconds_now(),
     };
     assert!(
         vault
@@ -376,7 +381,7 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
     assert!(
         edits
             .iter()
-            .all(|op| op.actor.entity_ref() == attribution.actor_id)
+            .all(|op| op.actor.map(|actor| actor.entity_ref()) == Some(attribution.actor_id))
     );
     let repo_id = landed_repo_id(&vault, &repo, &root);
     let rows = vault
@@ -504,7 +509,10 @@ fn concurrent_pushes_share_one_document_ingress_and_ref_cas_door() {
             .unwrap();
         if result.is_ok() {
             assert_eq!(edits.len(), 1);
-            assert_eq!(edits[0].actor.entity_ref(), actors[index].actor_id);
+            assert_eq!(
+                edits[0].actor.map(|actor| actor.entity_ref()),
+                Some(actors[index].actor_id)
+            );
             assert_eq!(edits[0].sequence, 1);
             assert_eq!(
                 git(&root, &["rev-parse", "refs/heads/main"]),

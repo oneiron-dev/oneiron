@@ -26,7 +26,10 @@ fn an_in_room_recall_returns_the_turn_only_the_room_holds() {
                     &format!("the room says {ROOM_WORDS}"),
                 )],
                 occurred_at: 900,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("session witness");
@@ -98,10 +101,8 @@ fn an_in_room_recall_returns_the_turn_only_the_room_holds() {
 #[test]
 fn on_record_a_recall_over_the_rooms_turn_keeps_no_run_in_base() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let config = VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
     let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_owner_fixture(&vault, "sess-union-recall-runs");
@@ -118,7 +119,10 @@ fn on_record_a_recall_over_the_rooms_turn_keeps_no_run_in_base() {
                     &format!("the room says {ROOM_WORDS}"),
                 )],
                 occurred_at: 900,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("session witness");

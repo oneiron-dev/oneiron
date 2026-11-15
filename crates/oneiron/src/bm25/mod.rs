@@ -74,8 +74,6 @@ pub(crate) use scoped::{
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 
-// FIX [LIBTEST-QUARANTINE-BM25-TESTS]: the lib test target's type check fails here (4 errors: E0639 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
