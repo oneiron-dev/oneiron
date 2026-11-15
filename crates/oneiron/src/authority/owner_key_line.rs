@@ -23,7 +23,12 @@
 //! [`OwnerKeyLines`] in the context. Only the log and its ancestry decide,
 //! so every replica judges the same rows the same way. The second fold takes
 //! its lines from the first fold's enrolments: a line can only make a row
-//! wait, be held or be refused, never count.
+//! wait, be held or be refused, never count. Two effects of the second fold
+//! follow from that. A row the first fold refused, because it did not name a
+//! choice that the second fold only keeps waiting, can fold in the second:
+//! it is judged against what counts, as every row is. An enrolment that
+//! proved in the first fold and is refused in the second (it descends from a
+//! refused enrolment) keeps its line, which can only add waits.
 
 use std::collections::{BTreeMap, BTreeSet};
 
