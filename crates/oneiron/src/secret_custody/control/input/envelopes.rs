@@ -141,3 +141,87 @@ fn read_array<const N: usize>(reader: &mut impl Read) -> Option<[u8; N]> {
     reader.read_exact(&mut bytes).ok()?;
     Some(bytes)
 }
+
+/// The count a numbered frame states, for `test_doors::custody_numbered_input`
+/// (FIX 5624); `None` when `frame` opens with no numbered label and count.
+#[cfg(oneiron_test_support)]
+pub(crate) fn frame_envelope_count_for_test(frame: &[u8]) -> Option<u32> {
+    let rest = frame.strip_prefix(ENVELOPES_LABEL)?;
+    let (count, _) = rest.split_first_chunk::<4>()?;
+    Some(u32::from_be_bytes(*count))
+}
+
+/// A numbered frame's stated count and the byte span of each envelope in it,
+/// each span its length prefix and its bytes, for the tampers below; `None`
+/// for anything but a well-formed frame closed by its mark.
+#[cfg(oneiron_test_support)]
+fn split_numbered_frame_for_test(frame: &[u8]) -> Option<(u32, Vec<std::ops::Range<usize>>)> {
+    let count = frame_envelope_count_for_test(frame)?;
+    let mut at = ENVELOPES_LABEL.len() + 4;
+    let mut envelopes = Vec::new();
+    for _ in 0..count {
+        let len = u32::from_be_bytes(<[u8; 4]>::try_from(frame.get(at..at + 4)?).ok()?);
+        let start = at;
+        at += 4;
+        let end = at.checked_add(usize::try_from(len).ok()?)?;
+        frame.get(at..end)?;
+        envelopes.push(start..end);
+        at = end;
+    }
+    (frame.get(at..)? == ENVELOPES_END).then_some((count, envelopes))
+}
+
+/// The frame without its first envelope, its stated count kept, for
+/// `test_doors::custody_numbered_input` (FIX 5624); `None` for anything but
+/// a well-formed frame of two envelopes or more.
+#[cfg(oneiron_test_support)]
+pub(crate) fn tamper_drop_first_envelope_for_test(frame: &[u8]) -> Option<Vec<u8>> {
+    let (count, envelopes) = split_numbered_frame_for_test(frame)?;
+    let rest = envelopes.get(1..)?;
+    if rest.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(frame.len());
+    out.extend_from_slice(ENVELOPES_LABEL);
+    out.extend_from_slice(&count.to_be_bytes());
+    for span in rest {
+        out.extend_from_slice(&frame[span.clone()]);
+    }
+    out.extend_from_slice(ENVELOPES_END);
+    Some(out)
+}
+
+/// The frame with its first two envelopes swapped, whole with their lengths,
+/// for `test_doors::custody_numbered_input` (FIX 5624); `None` for anything
+/// but a well-formed frame of two envelopes or more.
+#[cfg(oneiron_test_support)]
+pub(crate) fn tamper_swap_first_two_envelopes_for_test(frame: &[u8]) -> Option<Vec<u8>> {
+    let (count, envelopes) = split_numbered_frame_for_test(frame)?;
+    let [first, second, rest @ ..] = envelopes.as_slice() else {
+        return None;
+    };
+    let mut out = Vec::with_capacity(frame.len());
+    out.extend_from_slice(ENVELOPES_LABEL);
+    out.extend_from_slice(&count.to_be_bytes());
+    out.extend_from_slice(&frame[second.clone()]);
+    out.extend_from_slice(&frame[first.clone()]);
+    for span in rest {
+        out.extend_from_slice(&frame[span.clone()]);
+    }
+    out.extend_from_slice(ENVELOPES_END);
+    Some(out)
+}
+
+/// The frame stating `count` envelopes over its unchanged envelopes, for
+/// `test_doors::custody_numbered_input` (FIX 5624); `None` when `frame`
+/// opens with no numbered label and count.
+#[cfg(oneiron_test_support)]
+pub(crate) fn tamper_rewrite_envelope_count_for_test(frame: &[u8], count: u32) -> Option<Vec<u8>> {
+    let rest = frame.strip_prefix(ENVELOPES_LABEL)?;
+    let (_, after_count) = rest.split_first_chunk::<4>()?;
+    let mut out = Vec::with_capacity(frame.len());
+    out.extend_from_slice(ENVELOPES_LABEL);
+    out.extend_from_slice(&count.to_be_bytes());
+    out.extend_from_slice(after_count);
+    Some(out)
+}

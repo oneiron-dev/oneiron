@@ -55,6 +55,17 @@ use self::input::{
     keep_witnessed_input_in_txn, request_witness_in_txn, seal_leaf_input_in_txn,
     seal_leaf_parts_in_txn, surface_leaf_input, surface_retry_in_txn,
 };
+#[cfg(all(oneiron_test_support, feature = "sync"))]
+pub(crate) use self::input::{
+    KeptNumberedOpen, drop_kept_numbered_part_for_test, keep_numbered_input_for_test,
+    open_kept_numbered_for_test,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::input::{
+    frame_envelope_count_for_test, open_numbered_as_holder_for_test,
+    seal_numbered_register_for_test, tamper_drop_first_envelope_for_test,
+    tamper_rewrite_envelope_count_for_test, tamper_swap_first_two_envelopes_for_test,
+};
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
 pub(crate) use self::revoked::{

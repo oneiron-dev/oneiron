@@ -125,6 +125,17 @@ pub use self::control::{
     CustodyCandidate, CustodyDelivery, CustodyKeptHere, CustodyManifestCheck, CustodyPlan,
     SealedCustodyChange, SecretCustodyView, SecretCustodyWork, SecretRevoked, SecretRotated,
 };
+#[cfg(all(oneiron_test_support, feature = "sync"))]
+pub(crate) use self::control::{
+    KeptNumberedOpen, drop_kept_numbered_part_for_test, keep_numbered_input_for_test,
+    open_kept_numbered_for_test,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::{
+    frame_envelope_count_for_test, open_numbered_as_holder_for_test,
+    seal_numbered_register_for_test, tamper_drop_first_envelope_for_test,
+    tamper_rewrite_envelope_count_for_test, tamper_swap_first_two_envelopes_for_test,
+};
 pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, message_part_original_matches_in_txn,
     put_secret_custody_in_txn, read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
