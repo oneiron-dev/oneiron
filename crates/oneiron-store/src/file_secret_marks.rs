@@ -122,16 +122,47 @@ pub struct KeySpan {
 /// (FIX 11882).
 pub const HANDLE_TEXT_OPEN: &str = "[secret ";
 
+/// How a custody record holds the value a found key stands for, so a
+/// restore puts back the value as it was written (FIX
+/// SEALED-VALUE-RESTORE-KEEPS-ENCODED-TEXT).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeldForm {
+    /// The value's own bytes: a text or a byte string, or a span of one.
+    #[default]
+    Raw,
+    /// The MessagePack encoding of a whole value that is neither text nor
+    /// bytes: a credential field's array, map or number the mask sealed,
+    /// or a whole message part kept sealed.
+    Encoded,
+}
+
+impl HeldForm {
+    /// Whether the value is held as its own bytes.
+    #[must_use]
+    pub const fn is_raw(&self) -> bool {
+        matches!(self, Self::Raw)
+    }
+}
+
 /// [`unmasked_body`] over one decoded value: whether anything changed. The
 /// claim-restore proof recomputes a restored claim body with it (FIX 11882).
-pub fn unmask_value(tree: &mut Value, handle: &str, text_form: &str, value: &[u8]) -> Result<bool> {
+/// `held` says how custody holds `value`: a handle standing for a whole
+/// encoded value takes back that value, not its encoding.
+pub fn unmask_value(
+    tree: &mut Value,
+    handle: &str,
+    text_form: &str,
+    value: &[u8],
+    held: HeldForm,
+) -> Result<bool> {
     let restored = match &*tree {
         Value::String(text) => match text.as_str() {
-            Some(text) => unmasked_text(text, handle, text_form, value)?,
+            Some(text) => unmasked_text(text, handle, text_form, value, held)?,
             None => None,
         },
         Value::Binary(bytes) => match std::str::from_utf8(bytes) {
-            Ok(text) => unmasked_text(text, handle, text_form, value)?,
+            Ok(text) => unmasked_text(text, handle, text_form, value, held)?,
             Err(_) => None,
         },
         _ => None,
@@ -144,13 +175,13 @@ pub fn unmask_value(tree: &mut Value, handle: &str, text_form: &str, value: &[u8
     match tree {
         Value::Array(items) => {
             for item in items {
-                changed |= unmask_value(item, handle, text_form, value)?;
+                changed |= unmask_value(item, handle, text_form, value, held)?;
             }
         }
         Value::Map(fields) => {
             for (key, member) in fields.iter_mut() {
-                changed |= unmask_value(key, handle, text_form, value)?;
-                changed |= unmask_value(member, handle, text_form, value)?;
+                changed |= unmask_value(key, handle, text_form, value, held)?;
+                changed |= unmask_value(member, handle, text_form, value, held)?;
             }
         }
         _ => {}
@@ -159,19 +190,40 @@ pub fn unmask_value(tree: &mut Value, handle: &str, text_form: &str, value: &[u8
 }
 
 /// One string of a body with the value back: the whole of it when it is the
-/// handle a credential field keeps, each span's text form within it
-/// otherwise.
-fn unmasked_text(text: &str, handle: &str, text_form: &str, value: &[u8]) -> Result<Option<Value>> {
+/// handle a credential field keeps (the decoded value when custody holds
+/// its encoding), each span's text form within it otherwise.
+fn unmasked_text(
+    text: &str,
+    handle: &str,
+    text_form: &str,
+    value: &[u8],
+    held: HeldForm,
+) -> Result<Option<Value>> {
     if text == handle {
-        return Ok(Some(match std::str::from_utf8(value) {
-            Ok(value) => Value::from(value),
-            Err(_) => Value::Binary(value.to_vec()),
+        return Ok(Some(match held {
+            HeldForm::Encoded => decoded_whole(value)?,
+            HeldForm::Raw => match std::str::from_utf8(value) {
+                Ok(value) => Value::from(value),
+                Err(_) => Value::Binary(value.to_vec()),
+            },
         }));
     }
     if text.contains(text_form) {
         return Ok(Some(Value::from(text.replace(text_form, as_text(value)?))));
     }
     Ok(None)
+}
+
+/// The one whole value `encoded` holds, as the mask encoded a credential
+/// field's value that is neither text nor bytes.
+fn decoded_whole(encoded: &[u8]) -> Result<Value> {
+    let mut cursor = std::io::Cursor::new(encoded);
+    match rmpv::decode::read_value(&mut cursor) {
+        Ok(value) if cursor.position() == encoded.len() as u64 => Ok(value),
+        _ => Err(Error::InvariantViolation(
+            "a sealed value's encoding is not one whole value",
+        )),
+    }
 }
 
 pub fn as_text(value: &[u8]) -> Result<&str> {

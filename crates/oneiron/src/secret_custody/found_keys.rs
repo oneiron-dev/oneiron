@@ -59,6 +59,7 @@ use super::reveal::names_no_actor;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::file_secret_marks::HeldForm;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -146,6 +147,11 @@ struct FoundKey {
     /// engine's write, or once that person was erased (FIX 3520).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     writer: Option<EntityId>,
+    /// How the key's custody record holds its value: a credential field's
+    /// array, map or number as its encoding, which a restore decodes back.
+    /// A key noted before this field reads as raw.
+    #[serde(default, skip_serializing_if = "HeldForm::is_raw")]
+    held: HeldForm,
 }
 
 impl FoundKey {
@@ -241,6 +247,7 @@ pub(crate) fn note_found_keys_in_txn(
                 found_at: at,
                 settled: None,
                 writer: note.writer,
+                held: note.held,
             });
         }
         FOUND.put(store, txn, &record, &found)?;
@@ -393,6 +400,12 @@ pub(crate) fn move_side_row_custody_in_txn(
                         held.settled = key.settled;
                     }
                     held.found_at = held.found_at.min(key.found_at);
+                    // One custody holds its value one way. A row noted
+                    // before keys recorded the form reads Raw, so a row that
+                    // says Encoded names the custody's form (REVIEW-7873 P3).
+                    if key.held == HeldForm::Encoded {
+                        held.held = HeldForm::Encoded;
+                    }
                 }
                 None => merged.keys.push(key),
             }
