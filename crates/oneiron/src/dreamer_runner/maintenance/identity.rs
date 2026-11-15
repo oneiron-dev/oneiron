@@ -138,15 +138,11 @@ const ASKS: SideTable<[u8; 32], IdentityAsk, Named> =
 /// The last turn the nightly pass read.
 const CURSOR: SideTable<(), EntityId, Named> = SideTable::new(&side_table::DREAMER_IDENTITY_CURSOR);
 
-/// What an agent must do to the person now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum IdentityEffect {
-    Send,
-    Pay,
-    Invite,
-    Share,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::identity::{
+    IdentityActNow, IdentityActNowRequest, IdentityAnswerRequest, IdentityEffect, IdentitySettled,
+    MentionProvenance,
+};
 
 /// Why an ask is open (ask rule B).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,83 +271,11 @@ pub enum IdentityRuling {
     Gone,
 }
 
-/// A settled ask.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct IdentitySettled {
-    pub ask: String,
-    /// The entity the mention names, as 32 hex.
-    pub entity: String,
-}
-
-/// `self.identity.answer`'s input: the person's choice on one ask.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct IdentityAnswerRequest {
-    /// The ask, as 64 hex.
-    pub ask: String,
-    /// One of the ask's options: `is:<id>` or `someone_new`.
-    pub choice: String,
-}
-
-/// `self.identity.settle`'s input: an agent about to act on a person it
-/// knows by the name a conversation used.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct IdentityActNowRequest {
-    /// The name as the conversation said it.
-    pub name: String,
-    /// The conversation it was said in, as 32 hex; any when absent.
-    #[serde(default)]
-    pub conversation: Option<String>,
-    pub effect: IdentityEffect,
-    /// The choice card's question, in the person's language.
-    pub prompt: String,
-    /// The choice card's label for someone new, in the person's language.
-    pub someone_new: String,
-    /// A provisional candidate's label template: `{name}` takes its name
-    /// and `{day}` the day it was first said. None keeps `{name} · {day}`.
-    #[serde(default)]
-    pub provisional: Option<String>,
-}
-
-/// Where a name an agent must act on stands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum IdentityActNow {
-    /// The name settles to this entity: act on it.
-    Settled { entity: String },
-    /// No saved mention names it: there is nothing to settle against.
-    Unknown,
-    /// The host is deciding: ask again shortly, and do not act yet.
-    Deciding { ask: String },
-    /// The person must choose: show the card, and act only on their answer.
-    NeedsPerson {
-        ask: String,
-        card: serde_json::Value,
-    },
-}
-
 /// The person a choice names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Answer {
     Is(EntityId),
     SomeoneNew,
-}
-
-/// Where an effect's person target came from: one saved mention (OF-123
-/// act-now guard). An effect door that carries it refuses while the mention
-/// is unsettled ([`mention_unsettled_in_txn`]), and the agent settles it
-/// through `self.identity.settle` first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MentionProvenance {
-    /// The turn whose tags hold the mention, as 32 hex.
-    pub turn: String,
-    /// The message the mention is in, as 32 hex.
-    pub message: String,
-    /// The mention's byte span in the message text.
-    pub start: u64,
-    pub end: u64,
 }
 
 /// One page of the nightly re-check at `now` (seconds), then every open ask:

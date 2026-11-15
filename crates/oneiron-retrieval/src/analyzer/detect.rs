@@ -47,7 +47,7 @@ pub fn detect_with_whichlang(text: &str) -> Option<LanguageHint> {
     if text.is_empty() {
         return None;
     }
-    let window = truncate_at_char_boundary(text, DETECT_WINDOW_BYTES);
+    let window = &text[..text.floor_char_boundary(DETECT_WINDOW_BYTES)];
     if is_pure_ascii_latin(window)
         && (window.len() < MIN_WHICHLANG_ASCII_BYTES
             || unique_ascii_letter_tokens(window) < MIN_WHICHLANG_ASCII_UNIQUE_WORDS)
@@ -133,17 +133,6 @@ pub fn infer_from_script(class: ScriptClass) -> Option<LanguageHint> {
         ScriptClass::Myanmar => Some(LanguageHint::My),
         _ => None,
     }
-}
-
-fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
-    if text.len() <= max_bytes {
-        return text;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
 }
 
 #[cfg(test)]

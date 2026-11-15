@@ -156,6 +156,12 @@ fn demotion_receipt_record(id: &EntityId, row: &StoredDemotion) -> ReceiptRecord
             grant_ref.clone(),
         );
     }
+    if let Some(demoted_by) = row.demoted_by.as_ref() {
+        fields.insert(
+            crate::store::receipt_row::FIELD_DEMOTED_BY.to_owned(),
+            demoted_by.clone(),
+        );
+    }
 
     ReceiptRecord {
         receipt_id: format!("{RAMP_DEMOTION_RECEIPT_PREFIX}{}", id.to_hex()),

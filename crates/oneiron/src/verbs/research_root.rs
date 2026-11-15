@@ -10,69 +10,19 @@
 //! no control of it. The wire names no attempt, run, parent, result or
 //! approval: the engine mints the run and the queue the attempt.
 
-use serde::{Deserialize, Serialize};
-
 use crate::EdgeActorClass;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, QueuedRequester, ResearchRootRequest,
 };
 use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
-use crate::context_projection::CONTEXT_SPEC_MAX_TEXT_BYTES;
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 /// The verb a Grant lists to name root creation: the row's own name.
 const CREATE_ROOT_VERB: &str = "vault.research.create_root";
 
-/// Byte cap on an intent key: the campaign record's bound on a ref.
-const INTENT_KEY_MAX_BYTES: usize = 256;
-
-/// `vault.research.create_root`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ResearchRootWire {
-    /// The dispatchable agent definition the root attempt runs.
-    pub agent: EntityId,
-    /// The caller's name for this root: a repeat while the root is still
-    /// pending returns that root and its run.
-    pub intent_key: String,
-    /// The root's brief, carried as its context briefing.
-    pub briefing: String,
-}
-
-impl ResearchRootWire {
-    /// Refuses a blank or over-long intent key or brief.
-    ///
-    /// # Errors
-    ///
-    /// BAD_REQUEST naming the field and its bound.
-    pub fn validate(&self) -> MemoryResult<()> {
-        if self.intent_key.trim().is_empty() || self.intent_key.len() > INTENT_KEY_MAX_BYTES {
-            return Err(MemoryError::bad_request(format!(
-                "a research root's intent_key is 1 to {INTENT_KEY_MAX_BYTES} bytes and not blank"
-            )));
-        }
-        if self.briefing.trim().is_empty() || self.briefing.len() > CONTEXT_SPEC_MAX_TEXT_BYTES {
-            return Err(MemoryError::bad_request(format!(
-                "a research root's briefing is 1 to {CONTEXT_SPEC_MAX_TEXT_BYTES} bytes and not blank"
-            )));
-        }
-        Ok(())
-    }
-}
-
-/// The root a `vault.research.create_root` call enqueued or found pending.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ResearchRootReceipt {
-    /// The queued root attempt: bind a campaign to it with `vault.research.bind`.
-    pub root: EntityId,
-    /// The run the root carries.
-    pub run_id: String,
-    /// False when the call returned the pending root an earlier call with the
-    /// same intent enqueued.
-    pub enqueued: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::research_root::{ResearchRootReceipt, ResearchRootWire};
 
 /// `vault.research.create_root` on the caller's handle.
 ///
@@ -101,7 +51,7 @@ pub fn research_create_root(
             requester: QueuedRequester::of_memory(memory),
             now: vault.now_recorded_at(),
         },
-        |txn| admit_creator_in_txn(memory, txn),
+        |txn| admit_owner_or_granted_in_txn(memory, txn, CREATE_ROOT_VERB),
     )?;
     let (status, enqueued) = match outcome {
         AgentDispatchOutcome::Dispatched(status) => (status, true),
@@ -127,8 +77,12 @@ pub fn research_create_root(
 }
 
 /// The vault owner, or an agent one live Grant from a live owner names and
-/// lists [`CREATE_ROOT_VERB`] for, in `txn`.
-fn admit_creator_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+/// lists `verb` for, in `txn`.
+pub(super) fn admit_owner_or_granted_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    verb: &str,
+) -> MemoryResult<()> {
     let vault = memory.vault();
     if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
     {
@@ -136,6 +90,7 @@ fn admit_creator_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryRes
     }
     if memory.actor_class() != EdgeActorClass::Agent {
         return Err(refused(
+            verb,
             "the caller is neither the vault owner nor an agent",
         ));
     }
@@ -144,22 +99,23 @@ fn admit_creator_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryRes
         txn,
         memory.actor(),
         EdgeActorClass::Agent,
-        CREATE_ROOT_VERB,
+        verb,
     )? {
         Ok(standing) if standing.grant.is_some() => Ok(()),
-        Err(NoStanding::PactStandingLapsed) => Err(refused(PACT_STANDING_LAPSED)),
+        Err(NoStanding::PactStandingLapsed) => Err(refused(verb, PACT_STANDING_LAPSED)),
         Ok(_) | Err(NoStanding::NotStanding) => Err(refused(
+            verb,
             "no live Grant from a live owner names this agent and lists the verb",
         )),
     }
 }
 
-/// The verb's refusal of a caller it does not admit.
-fn refused(why: &str) -> MemoryError {
+/// `verb`'s refusal of a caller it does not admit.
+fn refused(verb: &str, why: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         format!(
-            "{CREATE_ROOT_VERB} takes the vault owner's own proof or an agent's own Grant that lists it: {why}"
+            "{verb} takes the vault owner's own proof or an agent's own Grant that lists it: {why}"
         ),
         &["Call as the owner, or have the owner grant this agent the verb by name."],
     )

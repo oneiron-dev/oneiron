@@ -32,6 +32,8 @@ mod agent_definition_doors;
 mod agent_grant_doors;
 mod agent_run_effect_doors;
 mod agent_verb_class_doors;
+// The owner's writer of an agent's world access (ARCH-0067 #tiers).
+mod agent_world_access_doors;
 mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
@@ -49,6 +51,7 @@ mod call_context;
 mod campaign_doors;
 mod campaign_split_doors;
 mod channel_doors;
+mod check_in_doors;
 mod checkout_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
@@ -137,7 +140,10 @@ mod hyde_doors;
 mod identity;
 mod identity_doors;
 mod identity_topology_doors;
+mod image_edit_doors;
 mod inbox_group_doors;
+// The inquiry rows (INQUIRE-1 PR 5): the asking side and the member side.
+mod inquiry_doors;
 mod invocations;
 mod invoke;
 mod learning_doors;

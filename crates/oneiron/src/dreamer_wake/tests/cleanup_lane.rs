@@ -1,5 +1,5 @@
 use super::*;
-use crate::vault_cleanup::cleanup_proposals;
+use crate::vault_cleanup::{CleanupPosture, cleanup_proposals, set_cleanup_posture};
 
 fn timer_input(node: u64) -> RunWakePass {
     let mut input = run_input(DreamerConsolidationScope::Macro, node, 20);
@@ -32,6 +32,9 @@ fn request_timer(vault: &Vault, store: &DreamerRunnerStore<'_>) -> Result<Attemp
 #[test]
 fn timer_driver_executes_cleanup_without_a_consolidation_home_node_and_settles() -> Result<()> {
     let (_dir, vault) = open_vault();
+    // The owner chose propose-first: the run drafts a proposal and archives
+    // nothing.
+    set_cleanup_posture(&vault, CleanupPosture::ProposeFirst)?;
     let store = DreamerRunnerStore::new(&vault);
     let summary = EntityId::now();
     vault.put_entity(
