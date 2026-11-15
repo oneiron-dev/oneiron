@@ -23,7 +23,6 @@
 
 use std::collections::BTreeSet;
 
-use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
@@ -35,6 +34,7 @@ use oneiron::memory::PeopleListRequest;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset, parse_house_role};
 use oneiron::{EntityId, Result, TimeRange, Vault, VaultConfig, WriteActor};
 
@@ -121,9 +121,7 @@ fn an_owner_binds_a_house_at_deputy_and_it_is_gated_as_a_deputy() -> Result<()> 
     );
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
-    let issuer: HostSlipIssuer = oneiron::test_support::provision_engine_machines(&vault);
-    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let (issuer, owner) = provision_act_carrier(&vault);
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let root = vault.root_project()?;
@@ -218,7 +216,7 @@ fn join(
 fn org() -> Result<Org> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let (_, owner) = provision_act_carrier(&vault);
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let row = |entity_type: u8| -> Result<EntityId> {

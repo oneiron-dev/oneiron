@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use oneiron::authority::MachineRole;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     AddOwnerPlan, FederationGrantRole as Role, InitialSharedMember, MemberAskChange,
@@ -26,6 +27,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::shared_act_family::rows_naming;
+use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
@@ -58,7 +60,12 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 fn vault_and_owner(dir: &std::path::Path) -> (Vault, EntityId) {
     let vault = Vault::open(dir, VaultConfig::default()).expect("vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry acts");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    bind_host_owner(&vault, &issuer, owner).expect("the owner's binding under the host root");
     (vault, owner)
 }
 

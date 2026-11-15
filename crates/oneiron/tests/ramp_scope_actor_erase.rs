@@ -22,6 +22,7 @@
 
 use std::sync::Arc;
 
+use oneiron::authority::MachineRole;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::consent_graduation::{
     DemotionReason, RampScope, is_ramp_demotion_receipt, is_ramp_outcome_receipt,
@@ -37,6 +38,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consent_graduation_ramp_rows::{RampTableRows, ramp_rows_spelling};
+use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 
 const OP_KIND: &str = "send_email";
@@ -311,6 +313,14 @@ fn answer_receipts(vault: &Vault) -> Vec<(String, Option<String>, Option<String>
 fn a_hard_erase_takes_a_former_owner_out_of_the_answers_they_gave() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    // Every delete signs as this install first.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry acts");
+    let ramp_owner = vault.ensure_embedded_owner_actor().expect("owner");
+    bind_host_owner(&vault, &issuer, ramp_owner).expect("the owner's binding under the host root");
     let co_owner = co_owner(&vault);
     let co_owner_hex = co_owner.to_hex();
     let agent = EntityId::now().to_hex();
@@ -338,8 +348,6 @@ fn a_hard_erase_takes_a_former_owner_out_of_the_answers_they_gave() {
         "FIXTURE: the answer receipt names the agent's scope and the co-owner"
     );
 
-    // Every delete signs as this install first.
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     vault
         .delete_entity_with_reason(&co_owner, DeleteReason::UserHardDelete)
         .expect("FIXTURE: the co-owner is hard-erased");

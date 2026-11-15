@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
-use oneiron::authority::{HostSlipIssuer, PeerMachine};
+use oneiron::authority::{HostSlipIssuer, MachineRole, PeerMachine};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     FederationDirectionScope, FederationGrantRole, FederationGrantScope, Scope, ScopeAxis, ScopeId,
@@ -506,6 +506,10 @@ fn member_fixture() -> Result<MemberFixture> {
     let owner = scan_off(&vault)?;
     let issuer = HostSlipIssuer::from_secret(b"transport-credential-member")?;
     vault.ensure_host_root_slip(&issuer)?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry acts");
     vault.initialize_shared_vault(&owner, SHARED, None, &[], 1)?;
     let person = store_row(&vault, ENTITY_TYPE_PERSON, person_body(), None)?;
     let clean_person = store_row(
@@ -1201,7 +1205,7 @@ fn assert_member_window_keeps_born_with_prompt_home(
     let fixture = member_fixture()?;
     let vault = &fixture.vault;
     let owner = scan_off(vault)?;
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    // `member_fixture` installed the keystore and this install's profile.
     vault.provision_engine_machine_identities(&fixture.issuer)?;
     vault.ensure_serving_install_profile(&fixture.issuer, MachineRole::Unanswered)?;
     let mut choice = TravelChoice::default();

@@ -13,6 +13,7 @@ use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::registry::ENTITY_TYPE_ORG;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::house_link::is_own_device_grant;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EntityId, Result, TimeRange, Vault, VaultConfig};
 
@@ -24,9 +25,7 @@ const VAULT_ID: u64 = 41;
 fn an_owner_house_grant_is_no_own_device_grant() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
-    let issuer = oneiron::test_support::provision_engine_machines(&vault);
-    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let (issuer, owner) = provision_act_carrier(&vault);
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let signer = vault.owner_project_signer(&issuer)?;

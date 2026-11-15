@@ -14,7 +14,7 @@ use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
-use oneiron::authority::{HostSlipIssuer, PeerMachine};
+use oneiron::authority::{HostSlipIssuer, MachineRole, PeerMachine};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::{ConversationBody, ConversationKind, RoomPinPolicy};
 use oneiron::counterparty_contact::CounterpartyContactRecord;
@@ -312,6 +312,13 @@ fn member_window_room_leaves_without_pins() -> TestResult {
     let fixture = open_fixture()?;
     let issuer = HostSlipIssuer::from_secret(b"room-pins-member")?;
     fixture.vault.ensure_host_root_slip(&issuer)?;
+    fixture
+        .vault
+        .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    fixture
+        .vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry acts");
     fixture
         .vault
         .initialize_shared_vault(&fixture.authenticated_owner, SHARED, None, &[], 1)?;

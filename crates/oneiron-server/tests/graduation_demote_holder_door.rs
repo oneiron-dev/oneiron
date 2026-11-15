@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use ed25519_dalek::SigningKey;
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer, holder_proof};
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof};
 use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use oneiron::consent_graduation::{RAMP_DEMOTE_GRANT_TARGET, RampScope};
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember, ScopeAxis};
@@ -106,6 +106,9 @@ fn served(power: bool) -> Served {
         .expect("a server"),
     );
     let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry acts");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let owner_proof = proof(&vault, owner);
     admit_policy_verb(&vault, &owner_proof, &[Role::Admin])

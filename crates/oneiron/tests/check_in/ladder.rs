@@ -9,6 +9,7 @@ use oneiron::check_in::{ActClass, CheckInTransition, OpenPendingCheckIn, Pending
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::test_doors::check_in::{FixedVerdicts, advance_verified, open_verified};
+use oneiron::test_support::provision_act_carrier;
 
 use crate::fixture::{self, Fixture, T0, request};
 
@@ -35,6 +36,7 @@ pub(crate) struct Ladder {
 impl Ladder {
     pub(crate) fn new() -> Self {
         let fx = Fixture::open();
+        provision_act_carrier(&fx.vault);
         let owner_id = fx.vault.ensure_embedded_owner_actor().expect("owner");
         let owner = (owner_id, fx.owner());
         let first_admin = fx.person();
