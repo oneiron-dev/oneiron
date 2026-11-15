@@ -39,6 +39,7 @@ pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod derivation_floor;
 pub mod derive;
+pub mod derive_spans;
 pub mod derive_verbs;
 pub mod disclosure_word_sources;
 pub mod dreamer_attempt_binding;
