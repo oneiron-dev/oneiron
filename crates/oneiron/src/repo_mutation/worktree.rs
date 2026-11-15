@@ -221,6 +221,44 @@ pub(super) fn write_repo_file_no_symlink(
     write_file_no_follow(&target, content)
 }
 
+/// Writes `content` at `path` as a new file that only its owner may read,
+/// from its first byte. It never writes over a file that exists or through a
+/// symlink. A withheld file holds bytes custody keeps out of every snapshot,
+/// so a restore that writes one anew never widens who may read it (FIX 2230).
+pub(super) fn create_owner_only_repo_file_no_symlink(
+    repo_root: &Path,
+    path: &str,
+    content: &[u8],
+    executable: bool,
+) -> Result<()> {
+    let target = ensure_repo_parent_dirs_no_symlink(repo_root, path)?;
+    create_owner_only_file_no_follow(&target, content, executable)
+}
+
+#[cfg(unix)]
+fn create_owner_only_file_no_follow(path: &Path, content: &[u8], executable: bool) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(if executable { 0o700 } else { 0o600 })
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(content)?;
+    file.flush()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_owner_only_file_no_follow(path: &Path, content: &[u8], _executable: bool) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(content)?;
+    file.flush()?;
+    Ok(())
+}
+
 fn safe_repo_file_target(repo_root: &Path, path: &str) -> Result<PathBuf> {
     let target = ensure_repo_parent_dirs_no_symlink(repo_root, path)?;
     match fs::symlink_metadata(&target) {
