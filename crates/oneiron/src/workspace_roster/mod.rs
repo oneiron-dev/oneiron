@@ -322,6 +322,8 @@ mod join_receipt;
 mod room_leave;
 pub(crate) mod tables;
 mod workplace_join;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::workplace_join::workplace_join_intent_key_for_test;
 pub use join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
     ConsentState, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, MembershipConsent,

@@ -80,6 +80,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::world_keys::MachineSecret;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 pub(crate) use self::attached::{
     Attached, AttachedManifest, Attachment, attach_manifest, attach_no_manifest,
@@ -94,6 +95,8 @@ pub(crate) use self::door_rows::DoorInput;
 pub use self::stream::SealedInput;
 pub(crate) use self::stream::{InputDigests, SealedFrame, kept_input_in_txn};
 pub use self::surface_seal::{CustodyInputBinding, seal_custody_input};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::witness::custody_witness_part_key_for_test;
 pub(crate) use self::witness::{WitnessJoin, keep_witnessed_input_in_txn, witness_joined_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use self::witness::{
@@ -127,7 +130,6 @@ const MAX_PARTS: usize = MAX_INPUT_BYTES / 32;
 const PART_LABEL: &[u8] = b"oneiron/custody-input-part/v1\0";
 const PART_DIGEST_DOMAIN: &[u8] = b"oneiron/custody-input-part-digest/v1";
 const PARTS_DIGEST_DOMAIN: &[u8] = b"oneiron/custody-input-parts-digest/v1";
-const PART_KEY_DOMAIN: &[u8] = b"oneiron/custody-input-part-key/v1";
 
 /// Each input row this vault keeps to relay, or keeps as its holder until
 /// it answers: a whole input by the digest its request names, a part of a
@@ -315,13 +317,18 @@ fn parts_digest(digests: &[[u8; 32]]) -> [u8; 32] {
 }
 
 /// The key part `index` of the split input the request names `digest` of
-/// is kept and relayed under.
+/// is kept and relayed under. Peers recompute it to find the row, so it keeps
+/// its bytes (K, PLAN-UC-04 stage 5).
 fn part_key(digest: &[u8; 32], index: u32) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(PART_KEY_DOMAIN);
-    hasher.update(digest);
-    hasher.update(&index.to_be_bytes());
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::secret::CUSTODY_INPUT_PART_KEY)
+        .raw(digest)
+        .raw(&index.to_be_bytes())
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn custody_input_part_key_for_test(digest: &[u8; 32], index: u32) -> [u8; 32] {
+    part_key(digest, index)
 }
 
 /// Where one row's bytes sit in a split input: the part's index, and every

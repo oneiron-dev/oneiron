@@ -30,6 +30,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// How a custody input's witness past one row travels (CALLS `8088 input
 /// witness form`, Engine 10-22 05:2x).
@@ -53,7 +54,6 @@ pub(crate) const CUSTODY_WITNESS_PART_BYTES: usize = MAX_INPUT_BYTES;
 const PART_LABEL: &[u8] = b"oneiron/custody-input-witness-part/v1\0";
 const REF_LABEL: &[u8] = b"oneiron/custody-input-witness-ref/v1\0";
 const SIGN_DOMAIN: &[u8] = b"oneiron/custody-input-witness-sig/v1\0";
-const KEY_DOMAIN: &[u8] = b"oneiron/custody-input-witness-part-key/v1";
 const COMMIT_DOMAIN: &[u8] = b"oneiron/custody-input-witness-commitment/v1";
 const FRAGMENT_DOMAIN: &[u8] = b"oneiron/custody-input-witness-fragment/v1";
 const ROW_DOMAIN: &[u8] = b"oneiron/custody-input-witness-row/v1";
@@ -134,16 +134,37 @@ impl WitnessGroup {
         self.signer == *signer
     }
 
-    /// The key part `index` of this witness is kept and relayed under.
+    /// The key part `index` of this witness is kept and relayed under. Peers
+    /// recompute it to find the row, so it keeps its bytes (K, PLAN-UC-04
+    /// stage 5).
     fn part_key(&self, index: u32) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(KEY_DOMAIN);
-        hasher.update(&self.request);
-        hasher.update(&self.input);
-        hasher.update(&self.commitment);
-        hasher.update(&index.to_be_bytes());
-        *hasher.finalize().as_bytes()
+        LegacyDigest::new(purposes::secret::CUSTODY_WITNESS_PART_KEY)
+            .raw(&self.request)
+            .raw(&self.input)
+            .raw(&self.commitment)
+            .raw(&index.to_be_bytes())
+            .finish()
     }
+}
+
+/// The key part `index` of a witness over `request`, `input` and `commitment`
+/// is kept under; the part key reads no other field.
+#[cfg(oneiron_test_support)]
+pub(crate) fn custody_witness_part_key_for_test(
+    request: &AuthorityEntryHash,
+    input: &[u8; 32],
+    commitment: &[u8; 32],
+    index: u32,
+) -> [u8; 32] {
+    WitnessGroup {
+        sealed_at: 0,
+        request: *request,
+        input: *input,
+        commitment: *commitment,
+        count: 0,
+        signer: [0; 32],
+    }
+    .part_key(index)
 }
 
 /// One numbered part of a witness.
