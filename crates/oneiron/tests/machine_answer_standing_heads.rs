@@ -1068,6 +1068,16 @@ fn the_owner_removes_a_machine_whose_own_join_names_a_stranger_roots_mark() {
 /// possession proof over this redemption: the credential-only
 /// re-pairing (FIX 8636). Returns what the redemption gives.
 fn re_pair_machine(served: &ServedVault, request: &MachineEnrolmentRequest) -> PairingRedeemed {
+    redeem_machine_link(served, request).expect("M pairs again beside the stranger's mark")
+}
+
+/// The owner makes M a machine pairing link that answers the role M
+/// stands in, and M redeems it with `request` and its machine key's
+/// possession proof over this redemption. Returns the redeem door's answer.
+fn redeem_machine_link(
+    served: &ServedVault,
+    request: &MachineEnrolmentRequest,
+) -> oneiron::Result<PairingRedeemed> {
     let link = served
         .vault
         .issue_machine_pairing_link(
@@ -1096,18 +1106,15 @@ fn re_pair_machine(served: &ServedVault, request: &MachineEnrolmentRequest) -> P
     let possession = signing(JOINING_SEED)
         .sign(&possession_transcript)
         .to_bytes();
-    served
-        .vault
-        .redeem_pairing_link_with_possession(
-            &served.issuer,
-            &link.code,
-            &holder,
-            binding_key,
-            &binding,
-            Some(request),
-            Some(&possession),
-        )
-        .expect("M pairs again beside the stranger's mark")
+    served.vault.redeem_pairing_link_with_possession(
+        &served.issuer,
+        &link.code,
+        &holder,
+        binding_key,
+        &binding,
+        Some(request),
+        Some(&possession),
+    )
 }
 
 /// Credential-only re-pairing reads the heads M stands under here:
@@ -1190,5 +1197,126 @@ fn a_machine_pairs_again_beside_a_stranger_roots_mark_with_other_keys() {
     assert_eq!(
         roster.profile.encryption_key, request.encryption_key,
         "M's roster head keeps M's encryption key"
+    );
+}
+
+/// What one redemption by M left, as far as a stranger's mark must not
+/// change it.
+#[derive(Debug, PartialEq, Eq)]
+struct RedemptionOutcome {
+    /// The redeem door gave a credential.
+    redeemed: bool,
+    /// It was the credential-only re-pairing.
+    re_paired: bool,
+    /// Its machine answer is held.
+    held: bool,
+    /// The class of M's roster head after it.
+    class: MachineDeviceClass,
+    /// The revision of M's roster head after it.
+    revision: u64,
+}
+
+/// M redeems a fresh machine pairing link with `request`. Returns what that
+/// left.
+fn redemption_outcome(
+    served: &ServedVault,
+    request: &MachineEnrolmentRequest,
+) -> RedemptionOutcome {
+    let redeemed = redeem_machine_link(served, request);
+    let fold = served.vault.authority_fold().expect("authority fold");
+    let roster = fold
+        .machine(request.machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("M has a roster chain after the redemption");
+    RedemptionOutcome {
+        redeemed: redeemed.is_ok(),
+        re_paired: redeemed.as_ref().is_ok_and(|given| given.re_paired),
+        held: redeemed
+            .as_ref()
+            .is_ok_and(|given| given.held_answer.is_some()),
+        class: roster.profile.device_class,
+        revision: roster.profile.revision,
+    }
+}
+
+/// A redemption that names another class than the roster holds for M is M's
+/// class revision, whatever class a stranger root's mark names: it answers
+/// as it does with no mark. Before, the re-pairing read the newest head over
+/// every chain as M's class, so a stranger's mark above the roster under the
+/// request's class made the redemption the credential-only re-pairing: M
+/// took a credential, the roster kept the old class, and no carrier was
+/// asked.
+#[test]
+fn a_stranger_roots_mark_under_the_requests_class_never_makes_a_class_change_a_re_pairing() {
+    // With no stranger: what M's redemption under another class gives here.
+    let (plain, plain_request) = enrolled_self_host();
+    let plain_second = plain.joining_machine_with_class(MachineDeviceClass::Phone);
+    assert_ne!(
+        plain_second.device_class, plain_request.device_class,
+        "guard: the redemption declares another class than the roster holds"
+    );
+    let without_mark = redemption_outcome(&plain, &plain_second);
+    assert!(
+        !without_mark.re_paired,
+        "guard: with no mark a redemption under another class is never the credential-only \
+         re-pairing"
+    );
+
+    // Beside a stranger's mark of M under that class, above the roster.
+    let (served, request) = enrolled_self_host();
+    let machine = request.machine;
+    let vault_id = served
+        .vault
+        .authority_fold()
+        .expect("authority fold")
+        .vault_id
+        .expect("the vault is rooted");
+    let second = served.joining_machine_with_class(MachineDeviceClass::Phone);
+    assert_eq!(second.machine, machine, "guard: the redemption names M");
+    assert_eq!(
+        second.machine_key, request.machine_key,
+        "guard: the redemption keeps M's machine key"
+    );
+    assert_eq!(
+        second.encryption_key, request.encryption_key,
+        "guard: the redemption keeps M's encryption key"
+    );
+    assert_ne!(
+        second.device_class, request.device_class,
+        "guard: the redemption declares another class than the roster holds"
+    );
+    let (root, anchor, root_hash) = publish_stranger_root(&served, vault_id);
+    let mark = stranger_mark_with_m_keys(
+        &served,
+        vault_id,
+        root_hash,
+        &anchor,
+        &second,
+        MachineRole::Owned(MachineOwnership::Yours),
+        5,
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&mark),
+        "guard: the stranger's mark is in valid_entries"
+    );
+    assert!(
+        fold.machine(machine)
+            .and_then(|folded| folded.anchored.get(&root.anchor_key))
+            .is_some_and(|anchored| {
+                anchored.profile.revision == 5
+                    && anchored.profile.device_class == MachineDeviceClass::Phone
+            }),
+        "guard: the view holds the stranger's chain of M above the roster, under the \
+         redemption's class"
+    );
+    let with_mark = redemption_outcome(&served, &second);
+    assert!(
+        !with_mark.re_paired,
+        "the stranger's mark does not make the class change a credential-only re-pairing"
+    );
+    assert_eq!(
+        with_mark, without_mark,
+        "beside the stranger's mark the redemption answers as it does with no mark"
     );
 }
