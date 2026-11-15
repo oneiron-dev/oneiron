@@ -521,6 +521,9 @@ pub(super) fn fold_entry_state(
     if !has_authority_consent(&state, &participants, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
+    if !super::owner_proof::owner_key_revoke_proved(&state, &entry.op, &participants) {
+        return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
     if let Some(prior_seq) = state.seqs.get(&signer).copied()
         && entry.seq <= prior_seq
     {
