@@ -74,19 +74,13 @@ pub fn audit_as_owner(
     })
 }
 
-/// The sealed receipt `input` names, for the owner or a holder of a live
-/// audit_read power (RULING AUDIT-READ-POWER-LIST = B), admitted in the
-/// receipt's own read. `None` when no seal has that attempt.
-pub fn receipt_as_reader(
+pub fn receipt_as_owner(
     vault: &Vault,
-    reader: &AuditReader,
+    owner: &AuthenticatedOwner,
     input: &SealAttemptRequest,
 ) -> Result<Option<SealReceiptView>> {
     let txn = vault.store.env.read_txn()?;
-    match reader {
-        AuditReader::Owner(owner) => validate_owner_in_txn(vault, &txn, owner).map(|_| ())?,
-        AuditReader::Holder(_) => reader.admit_in_txn(vault, &txn).map(|_| ())?,
-    };
+    validate_owner_in_txn(vault, &txn, owner)?;
     Ok(vault
         .sealed_attempt_receipt_in_txn(&txn, input.attempt)?
         .map(Into::into))
@@ -128,7 +122,8 @@ pub fn lane_reads_every_row(memory: &Memory<'_>, rows: &[EntityId]) -> MemoryRes
     Ok(true)
 }
 
-/// [`receipt_as_reader`] beside the rows the seal's content was derived from
+/// The stored receipt for the owner, as [`receipt_as_owner`] reads it, or
+/// for a live audit_read holder, beside the rows the seal's content was derived from
 /// ([`seal_source_rows_in_txn`], FIX 8164), read in the receipt's snapshot,
 /// so a host releases it by them right before it serializes it.
 pub fn receipt_sourced_as_reader(
