@@ -23,13 +23,13 @@ oneiron = { path = "../oneiron", features = ["sync", "test-support"] }
 # signs its receipt with the install's key, so each vault gets a keystore in
 # process memory, as a test host's vault does.
 oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
-oneiron-llm-openai = { path = "../oneiron-llm-openai" }
+oneiron-llm = { path = "../oneiron-llm", features = ["oneiron-rpc"] }
 oneiron-organ-protocol = { path = "../oneiron-organ-protocol" }
 rustix = { version = "1.1", features = ["net", "process"] }
 # FIX 6559: `infer --transport own-server` drives the shipped own-server
-# backend, and redeems the loopback server's owner pairing link through the
-# SDK (`OneironClient::pair`), which the backend crate does not re-export.
-oneiron-llm-own-server = { path = "../oneiron-llm-own-server" }
+# backend (`oneiron-llm`'s `oneiron-rpc` feature, above), and redeems the
+# loopback server's owner pairing link through the SDK
+# (`OneironClient::pair`), which the backend module does not re-export.
 oneiron-remote = { path = "../oneiron-remote" }
 blake3.workspace = true
 ed25519-dalek.workspace = true

@@ -578,6 +578,7 @@ pub(super) fn run_with_session(
                     let wedge_bucket: WedgeBucket =
                         serde_json::from_value(labels["wedge_bucket"].clone())?;
                     let mut best_verdict: Option<f64> = None;
+                    let mut best_replicate: Option<f64> = None;
                     let mut judge_costs = Vec::new();
                     for gold_answer in &gold.answers {
                         let judged = score_item(
@@ -595,6 +596,10 @@ pub(super) fn run_with_session(
                         best_verdict = Some(
                             best_verdict.map_or(judged.verdict, |best| best.max(judged.verdict)),
                         );
+                        if let Some(replicate) = judged.replicate_verdict {
+                            best_replicate =
+                                Some(best_replicate.map_or(replicate, |best| best.max(replicate)));
+                        }
                         judge_costs.push(judged.judge_cost);
                     }
                     let row = ModelRow {
@@ -618,6 +623,7 @@ pub(super) fn run_with_session(
                             ability,
                             wedge_bucket,
                             value: best_verdict.ok_or_else(|| refusal("gold aliases required"))?,
+                            replicate_value: best_replicate,
                         }])?,
                         query_cost,
                         judge_overhead: sum_costs(&judge_costs)?,
@@ -679,10 +685,7 @@ pub(super) fn run_with_session(
                             )
                         })
                         .collect();
-                    paired::BeamColumns {
-                        int_cast: columns.iter().map(|c| c.int_cast).sum::<f64>() / n,
-                        fixed: columns.iter().map(|c| c.fixed).sum::<f64>() / n,
-                    }
+                    paired::BeamColumns::mean(&columns)
                 },
                 latency_us: selected
                     .iter()
@@ -750,6 +753,11 @@ pub(super) fn run_with_session(
             .collect(),
         scorer: super::report_model::ScorerReport {
             judge_instruction_sha256: Some(plan.judge.instruction.sha256.clone()),
+            replicate_judge_instruction_sha256: plan
+                .judge
+                .replicate_instruction
+                .as_ref()
+                .map(|pin| pin.sha256.clone()),
             ..super::scorer::BeamScorer::metadata(&FixedBeamScorer)
         },
         execution_contract: "response_format=text; tools=none; provider_options=none",
