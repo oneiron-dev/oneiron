@@ -5,13 +5,16 @@
 //!   and through each kept reader; the verbs they replace are gone;
 //! - the owner sets the fraction, a holder of any `engine.controls` class reads it (a dial), and
 //!   a fraction out of 0..=1 is refused;
-//! - a holder of `engine.controls.work_budget` lowers the snapshot bounds and raises its own
-//!   lowering back up to the defaults, never above; the owner raises them; once the owner's row
-//!   stands, the holder's change asks;
+//! - a holder of `engine.controls.work_budget` lowers the snapshot bounds, and its raise asks,
+//!   its own lowering's too; the owner raises them; the holder lowers under the owner's row too,
+//!   since the rows meet bound by bound (stage 6.0's holder rule, AUTH-1);
 //! - an owner's agent override must name an agent the vault holds, the owner route keeps the other
 //!   layers, and an erase of the agent takes its override out of the value;
 //! - the engine applies the owner's `use_fallback` answer as the setter `engine` naming the ask,
-//!   the kept reader returns it, and an item that is no offer's key is refused.
+//!   the kept reader returns it, and an item that is no offer's key is refused;
+//! - the owner's change of the fraction (through the verb) and of the board layout (through the
+//!   owner door, with its surface) is signed on the key's own target, as the old doors signed
+//!   theirs (stage 7a-1, RULING SETTING-7A-SIGNED-ACT-BASE = A).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_dials_3b`.
 #![cfg(oneiron_test_support)]
@@ -25,12 +28,14 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::context_board::BoardLayout;
 use oneiron::federation::{EngineControlClass, Scope, ScopeAxis};
 use oneiron::memory::Memory;
+use oneiron::policy_setting_doors::policy_setting_target;
+use oneiron::receipt::AuthorityAuditQuery;
 use oneiron::settings::BoardLayoutSettings;
 use oneiron::settings::non_base_world_claim_fraction::NonBaseWorldClaimFraction;
 use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::setting::erase_entity_from_settings;
+use oneiron::test_doors::setting::{erase_entity_from_settings, setting_change};
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -158,6 +163,51 @@ impl Fixture {
             .grant_engine_controls(&self.owner_proof, agent, &[class].into_iter().collect())
             .expect("the owner's engine.controls grant");
     }
+
+    /// The owner's setting acts on the main log, as the owner's audit lists them: each entry's
+    /// hash (hex), its detail (`<key> set` or `<key> clear`) and its target (hex).
+    fn setting_acts(&self) -> Vec<(String, String, String)> {
+        self.vault
+            .authority_audit(
+                &self.owner_proof,
+                &AuthorityAuditQuery {
+                    limit: Some(500),
+                    ..AuthorityAuditQuery::default()
+                },
+            )
+            .expect("the owner's audit")
+            .rows
+            .into_iter()
+            .filter(|row| row.source_op == "policy_setting")
+            .map(|row| {
+                (
+                    row.entry_hash,
+                    row.detail.unwrap_or_default(),
+                    row.subject_ref.unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    /// The act the change row `sequence` names, as `(detail, target)`.
+    fn signed_act_of(&self, sequence: u64) -> (String, String) {
+        let change = setting_change(&self.vault, sequence)
+            .expect("the change stream")
+            .expect("the change row");
+        let entry = hex(&change
+            .signed
+            .expect("the change row names its signed entry"));
+        let acts = self.setting_acts();
+        let (_, detail, target) = acts
+            .iter()
+            .find(|(hash, _, _)| *hash == entry)
+            .unwrap_or_else(|| panic!("the main log holds the entry {entry}: {acts:?}"));
+        (detail.clone(), target.clone())
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn call(memory: &Memory<'_>, verb: &str, input: Value) -> Value {
@@ -320,8 +370,8 @@ fn a_work_budget_holder_tunes_the_snapshot_bounds_inside_the_cap() {
     let back_up = call(&them, SET, set(BOUNDS, bounds_with_page_rows(200)));
     assert_eq!(
         back_up["status"],
-        json!("applied"),
-        "a holder raises its own lowering back up to the default: {back_up}"
+        json!("pending"),
+        "a holder's raise asks, of its own lowering too: {back_up}"
     );
     let above = call(&them, SET, set(BOUNDS, bounds_with_page_rows(300)));
     assert_eq!(
@@ -331,7 +381,7 @@ fn a_work_budget_holder_tunes_the_snapshot_bounds_inside_the_cap() {
     );
     assert_eq!(
         fx.vault.snapshot_read_settings().expect("read").page_rows,
-        200
+        100
     );
 
     let raised = call(&me, SET, set(BOUNDS, bounds_with_page_rows(400)));
@@ -343,10 +393,17 @@ fn a_work_budget_holder_tunes_the_snapshot_bounds_inside_the_cap() {
     let under_owner = call(&them, SET, set(BOUNDS, bounds_with_page_rows(300)));
     assert_eq!(
         under_owner["status"],
-        json!("pending"),
-        "the owner's row stands: only the owner, or an approved ask, replaces it: {under_owner}"
+        json!("applied"),
+        "a holder lowers under the owner's row: the rows meet bound by bound: {under_owner}"
     );
-    assert_eq!(get(&them, BOUNDS)["value"], bounds_with_page_rows(400));
+    assert_eq!(get(&them, BOUNDS)["value"], bounds_with_page_rows(300));
+    let over_owner = call(&them, SET, set(BOUNDS, bounds_with_page_rows(400)));
+    assert_eq!(
+        over_owner["status"],
+        json!("pending"),
+        "back up to the owner's value is a raise, and asks: {over_owner}"
+    );
+    assert_eq!(get(&them, BOUNDS)["value"], bounds_with_page_rows(300));
 
     let lifetime_past_most = json_of(&SnapshotReadSettings {
         default_lifetime_secs: 7_200,
@@ -391,7 +448,14 @@ fn an_agent_override_names_a_held_agent_and_its_erase_takes_it_out() {
 
     let capped = fx
         .vault
-        .set_board_layout_settings(&fx.owner_proof, Some(Some(5_000)), None, None, None)
+        .set_board_layout_settings(
+            &fx.owner_proof,
+            Some(ActSurface::ThisInstall),
+            Some(Some(5_000)),
+            None,
+            None,
+            None,
+        )
         .expect("the owner route sets the cap");
     assert_eq!(capped.cap_tok, Some(5_000));
     assert_eq!(
@@ -401,6 +465,7 @@ fn an_agent_override_names_a_held_agent_and_its_erase_takes_it_out() {
     let one_more: BoardLayout = serde_json::from_value(tasks_layout(10)).expect("a board layout");
     let refused_route = fx.vault.set_board_layout_settings(
         &fx.owner_proof,
+        None,
         None,
         None,
         None,
@@ -459,5 +524,60 @@ fn the_engine_applies_the_owners_fallback_answer() {
     assert_eq!(
         fx.vault.model_fallback(OFFER).expect("read").as_deref(),
         Some(MODEL)
+    );
+}
+
+#[test]
+fn the_owners_change_of_the_fraction_and_the_board_layout_is_signed_on_its_key() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+
+    let applied = call(&me, SET, set(FRACTION, json!({ "fraction": 0.25 })));
+    let sequence = applied["sequence"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("a change sequence: {applied}"));
+    assert_eq!(
+        fx.signed_act_of(sequence),
+        (
+            format!("{FRACTION} set"),
+            policy_setting_target(FRACTION).expect("target").to_hex()
+        ),
+        "the verb signs the owner's change from this install"
+    );
+
+    let before = fx.setting_acts();
+    fx.vault
+        .set_board_layout_settings(
+            &fx.owner_proof,
+            Some(ActSurface::ThisInstall),
+            Some(Some(6_000)),
+            None,
+            None,
+            None,
+        )
+        .expect("the owner door sets the cap");
+    let board: Vec<(String, String)> = fx
+        .setting_acts()
+        .into_iter()
+        .filter(|act| !before.contains(act))
+        .map(|(_, detail, target)| (detail, target))
+        .collect();
+    assert_eq!(
+        board,
+        [(
+            format!("{BOARD} set"),
+            policy_setting_target(BOARD).expect("target").to_hex()
+        )],
+        "the owner door signs its change from the surface it names"
+    );
+
+    let before = fx.setting_acts();
+    fx.vault
+        .set_board_layout_settings(&fx.owner_proof, None, Some(None), None, None, None)
+        .expect("the owner door clears the cap");
+    assert_eq!(
+        fx.setting_acts(),
+        before,
+        "a change that names no surface signs nothing, as before"
     );
 }

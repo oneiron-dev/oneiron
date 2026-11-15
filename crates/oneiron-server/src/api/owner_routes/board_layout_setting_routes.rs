@@ -5,15 +5,17 @@
 //! override's sections win over every agent's own layout of them, and one
 //! agent's override wins over both for that agent. Absent, each reads empty.
 //! They are one catalogue key, `context_board.layout`, which this route sets
-//! as the owner in one change.
+//! as the owner in one change, signed from where the owner spoke (FIX 6465).
 
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::Deserialize;
 
+use super::machine_routes::act_surface_admitted;
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -124,16 +126,21 @@ async fn read(
 /// every harness renders reads them.
 async fn put(
     auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<BoardLayoutSettingsChange>,
 ) -> OwnerReply<BoardLayoutSettings> {
     let owner = owner(&auth, &server)?;
+    // A change records where the owner spoke from (FIX 6465): audit only.
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let change = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<BoardLayoutSettings> {
         server
             .vault()
             .set_board_layout_settings(
                 &owner,
+                Some(surface),
                 change.cap_tok,
                 change.default_layout,
                 change.override_layout,

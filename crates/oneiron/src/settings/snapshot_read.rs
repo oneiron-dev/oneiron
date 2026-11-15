@@ -6,10 +6,10 @@
 //! It is the catalogue key `snapshot_read.bounds` (`settings::setting_keys`),
 //! set through `vault.settings.set` by the owner, or by a holder of
 //! `engine.controls.work_budget` (untangle 6.6f; SNAPSHOT-SETTINGS-IN-6.6).
-//! Every bound's lower value is the tighter one: a holder's value stays at or
-//! below the owner's, or the defaults while the owner set none, so a holder
-//! may raise its own lowering back up to that cap, never above it, and a
-//! change above it waits on the owner's check-in. Every change is one
+//! Every bound's lower value is the tighter one, so the key's rows meet bound
+//! by bound (`each_order!` below). A holder's change that lowers lands, under
+//! the owner's row too, and any change of theirs that raises a bound waits on
+//! the owner's check-in (AUTH-1), its own lowering's too. Every change is one
 //! `SETTING_CHANGE` row. The read (`vault.settings.get`) answers the owner, a
 //! holder, or a whole-vault Steward grant naming any `engine.controls` class,
 //! as every dial read does (S66F-READ = C).
@@ -79,37 +79,6 @@ impl SnapshotReadSettings {
         }
         Ok(())
     }
-
-    /// The first bound of `self` that is above the same bound of `held`.
-    fn first_bound_above(&self, held: &Self) -> Option<&'static str> {
-        [
-            (
-                "open_per_actor",
-                u64::from(self.open_per_actor),
-                u64::from(held.open_per_actor),
-            ),
-            (
-                "default_lifetime_secs",
-                self.default_lifetime_secs,
-                held.default_lifetime_secs,
-            ),
-            (
-                "max_lifetime_secs",
-                self.max_lifetime_secs,
-                held.max_lifetime_secs,
-            ),
-            (
-                "page_rows",
-                u64::from(self.page_rows),
-                u64::from(held.page_rows),
-            ),
-            ("page_bytes", self.page_bytes, held.page_bytes),
-            ("handle_rows", self.handle_rows, held.handle_rows),
-        ]
-        .into_iter()
-        .find(|(_, bound, in_force)| bound > in_force)
-        .map(|(name, _, _)| name)
-    }
 }
 
 impl Default for SnapshotReadSettings {
@@ -125,11 +94,14 @@ impl SettingValue for SnapshotReadSettings {
     }
 }
 
-/// The key's tighter direction: `bounds` is at least as tight as `held` when
-/// no bound of it is above the same bound of `held`.
-pub(super) fn bounds_at_most(bounds: &SnapshotReadSettings, held: &SnapshotReadSettings) -> bool {
-    bounds.first_bound_above(held).is_none()
-}
+oneiron_setting_contract::each_order!(SnapshotReadSettings {
+    open_per_actor: lower,
+    default_lifetime_secs: lower,
+    max_lifetime_secs: lower,
+    page_rows: lower,
+    page_bytes: lower,
+    handle_rows: lower,
+});
 
 impl Vault {
     /// The snapshot bounds in force: the owner's, a holder's lowering inside

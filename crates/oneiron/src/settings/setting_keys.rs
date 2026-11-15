@@ -11,7 +11,7 @@ use super::backup::BackupChoice;
 use super::board_layout::{BoardLayoutSettings, check_agent_overrides_in_txn, drop_agent_override};
 use super::models::is_offer_key;
 use super::non_base_world_claim_fraction::NonBaseWorldClaimFraction;
-use super::snapshot_read::{SnapshotReadSettings, bounds_at_most};
+use super::snapshot_read::SnapshotReadSettings;
 use super::undo_send::UndoSendSetting;
 
 fn no_backup_choice() -> BackupChoice {
@@ -83,12 +83,12 @@ crate::setting::setting_keys! {
         read_by: ReadBy::Dials,
     };
     /// The bounds on primitive A's snapshot handles (slice 6.4b): open handles per actor, the
-    /// default and the most lifetime, rows and bytes per page, and rows per handle. A holder of
-    /// `engine.controls.work_budget` tunes them at or below the owner's, or below the defaults
-    /// while the owner set none; a lower bound is the tighter one. It is a dial, and it travels
-    /// with a restore, as its table did.
+    /// default and the most lifetime, rows and bytes per page, and rows per handle. Each bound's
+    /// lower value is the tighter one, so the rows meet bound by bound. A holder of
+    /// `engine.controls.work_budget` lowers them, under the owner's row too; any raise of theirs
+    /// asks (AUTH-1). It is a dial, and it travels with a restore, as its table did.
     pub(crate) SNAPSHOT_READ_BOUNDS: SnapshotReadSettings = "snapshot_read.bounds" {
-        kind: Kind::new(SnapshotReadSettings::default).tighter(bounds_at_most),
+        kind: Kind::new(SnapshotReadSettings::default).each(),
         set_by: SetBy::Class(EngineControlClass::WorkBudget),
         read_by: ReadBy::Dials,
         restore: Restore::Content,

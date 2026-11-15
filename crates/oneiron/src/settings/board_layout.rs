@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::setting_keys::BOARD_LAYOUT;
 use crate::Vault;
+use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::{BoardLayout, BoardLayoutError};
 use crate::entity_id::EntityId;
@@ -240,8 +241,10 @@ impl Vault {
     /// clears the cap. `agent_override` names the agent and its layout; a
     /// `None` or empty layout clears that agent's override, and a layout set
     /// must name an entity the vault holds. The owner is revalidated in the
-    /// writer, and a value equal to the one in force writes nothing. Answers
-    /// the settings as they now read.
+    /// writer, and a value equal to the one in force writes nothing. A change
+    /// is the owner's act, signed on the key's target from `surface` when it
+    /// names where the owner said so (FIX 6465, stage 7a-1). Answers the
+    /// settings as they now read.
     ///
     /// # Errors
     ///
@@ -250,6 +253,7 @@ impl Vault {
     pub fn set_board_layout_settings(
         &self,
         owner: &AuthenticatedOwner,
+        surface: Option<ActSurface>,
         cap_tok: Option<Option<u64>>,
         default_layout: Option<BoardLayout>,
         override_layout: Option<BoardLayout>,
@@ -276,7 +280,10 @@ impl Vault {
             self.set_setting_in_txn(
                 txn,
                 SettingCaller::Owner(owner),
-                &SetSetting::vault_value(BOARD_LAYOUT.spec.name, value),
+                &SetSetting {
+                    surface,
+                    ..SetSetting::vault_value(BOARD_LAYOUT.spec.name, value)
+                },
             )?;
             board_layout_settings_in_txn(self, txn)
         })
