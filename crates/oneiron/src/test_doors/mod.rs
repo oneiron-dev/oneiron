@@ -45,6 +45,7 @@ pub mod dreamer_attempt_binding;
 pub mod dreamer_partition_window;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
+pub mod extraction_decisions;
 pub mod extraction_inputs;
 pub mod extraction_routing;
 pub mod extraction_single_valued;

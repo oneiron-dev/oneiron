@@ -4,6 +4,7 @@
 //! through the extraction verdict fixture, and counts each generation by family.
 //! Vault, selection and head shapes follow the observed support; big values follow
 //! the packs support; the lender follows the extraction verdict parity fixture.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,6 +40,7 @@ use oneiron::claim::ClaimLifecycleStatus;
 use oneiron::claim::ClaimSource;
 use oneiron::claim::ClaimSubject;
 use oneiron::dreamer_consolidation::selection::SelectionConfig;
+use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::extraction_inputs::enqueue_admitted_extraction_attempt;
 use oneiron::test_doors::extraction_inputs::witness_extraction_turns;
@@ -361,6 +363,44 @@ pub(crate) fn bind_lent(
     String,
     Arc<ExtractionVerdictFixture>,
 )> {
+    let bound = bind_lent_attempt(vault, turns, reasoner)?;
+    Ok((
+        bound.client,
+        bound.attempt,
+        bound.now_ms,
+        bound.page,
+        bound.config,
+        bound.policy_pin,
+        bound.lent,
+    ))
+}
+
+/// Holds one admitted attempt bound with the lent scripted ladder, with its admission kept for a native leg on the same attempt.
+pub(crate) struct LentAttempt {
+    /// Holds the bound client of the attempt.
+    pub(crate) client: OneironClient,
+    /// Names the attempt as 32 lowercase hex digits.
+    pub(crate) attempt: String,
+    /// Holds the attempt's admission, which a native oracle leg runs on.
+    pub(crate) admitted: DreamerAdmittedAttempt,
+    /// Holds the clock for observations and assembly.
+    pub(crate) now_ms: u64,
+    /// Holds the bound inputs page.
+    pub(crate) page: Value,
+    /// Holds the selection policy the page served.
+    pub(crate) config: ExtractionSelectionConfig,
+    /// Names the policy pin the page served.
+    pub(crate) policy_pin: String,
+    /// Holds the lent fixture both legs spend through.
+    pub(crate) lent: Arc<ExtractionVerdictFixture>,
+}
+
+/// Binds one admitted attempt with the lent scripted ladder, reads its inputs page and keeps its admission.
+pub(crate) fn bind_lent_attempt(
+    vault: &Arc<Vault>,
+    turns: &[EntityId],
+    reasoner: Arc<KeyedReasoner>,
+) -> TestResult<LentAttempt> {
     let (id, admitted) = enqueue_admitted_extraction_attempt(vault, turns, 1_000)?;
     let attempt: String = id
         .as_bytes()
@@ -387,7 +427,16 @@ pub(crate) fn bind_lent(
         page["policy"]["selection"].clone(),
         &policy_pin,
     )?;
-    Ok((client, attempt, now_ms, page, config, policy_pin, lent))
+    Ok(LentAttempt {
+        client,
+        attempt,
+        admitted,
+        now_ms,
+        page,
+        config,
+        policy_pin,
+        lent,
+    })
 }
 
 /// Reads served turn refs with versions from a bound inputs page.
