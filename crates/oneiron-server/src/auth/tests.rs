@@ -49,6 +49,15 @@ impl Fixture {
             .mint_capability_slip(&self.issuer, claims)
             .unwrap()
     }
+    /// The vault owner's own full human slip: the credential the owner door
+    /// (`owner_routes::owner`) admits, as a pairing link needs (FIX 8216).
+    fn owner_slip(&self) -> CapabilitySlip {
+        let owner = self.vault.ensure_embedded_owner_actor().unwrap();
+        self.mint(|claims| {
+            claims.holder_ref = owner.to_hex();
+            claims.actor_class = Some("human".into());
+        })
+    }
     fn headers(&self, slip: &CapabilitySlip) -> HeaderMap {
         let mut headers = bearer(&slip.to_token().unwrap());
         headers.insert(

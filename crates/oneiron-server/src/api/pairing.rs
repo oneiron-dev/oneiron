@@ -38,64 +38,47 @@ pub(super) async fn create_link(
     Json(request): Json<CreateLink>,
 ) -> Result<Json<oneiron::authority::PairingLink>, EnvelopedApiError> {
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
+    // Only the owner makes a pairing link, from any surface where he is
+    // authenticated: the owner proof comes from this request's auth,
+    // verified once above, with no second prompt. An owner-grade slip of
+    // anyone else (an agent's, a device's, another person's, a non-root host
+    // slip) is not ownership and gets 403 (FIX 8216, lead ruling
+    // FIX-8216-PAIRING-OWNER-ACT = A). A hosted operator's root acts as
+    // nobody (FIX 2222); `owner()` refuses it.
+    let owner = super::owner_routes::owner(&auth, &server)?;
+    let surface = super::owner_routes::machine_routes::act_surface_admitted(
+        &server,
+        &auth,
+        &parts.headers,
+        &parts.extensions,
+    );
     let link = match request.machine {
         // A link the owner makes records them: a holder that can propose has
         // the OpenAI proxy admitted under that owner when it redeems. A named
         // agent's link mints its default read Grant, an owner act from this
         // request's surface (PAIR-GRANT-DESIGN Q3/Q4).
-        None => match super::owner_routes::owner(&auth, &server).ok() {
-            Some(owner) => {
-                let surface = super::owner_routes::machine_routes::act_surface_admitted(
-                    &server,
-                    &auth,
-                    &parts.headers,
-                    &parts.extensions,
-                );
-                with_issuer(&server, |issuer| {
-                    server.vault().issue_owner_pairing_link_from_surface(
-                        issuer,
-                        &owner,
-                        surface,
-                        request.scope,
-                        request.lifetime_secs,
-                        request.principal,
-                    )
-                })?
-            }
-            None => with_issuer(&server, |issuer| {
-                server.vault().issue_pairing_link_for_principal(
-                    issuer,
-                    request.scope,
-                    request.lifetime_secs,
-                    request.principal,
-                )
-            })?,
-        },
-        // Only the owner answers for a machine, from any surface where he is
-        // authenticated (the mesh ruling, 10-19): the owner proof comes from
-        // this request's auth, verified once above, with no second prompt.
-        // A hosted operator's root acts as nobody (FIX 2222); `owner()`
-        // refuses it.
-        Some(ownership) => {
-            let owner = super::owner_routes::owner(&auth, &server)?;
-            let surface = super::owner_routes::machine_routes::act_surface_admitted(
-                &server,
-                &auth,
-                &parts.headers,
-                &parts.extensions,
-            );
-            with_issuer(&server, |issuer| {
-                server.vault().issue_machine_pairing_link(
-                    issuer,
-                    &owner,
-                    surface,
-                    request.scope,
-                    request.lifetime_secs,
-                    request.principal,
-                    ownership,
-                )
-            })?
-        }
+        None => with_issuer(&server, |issuer| {
+            server.vault().issue_owner_pairing_link_from_surface(
+                issuer,
+                &owner,
+                surface,
+                request.scope,
+                request.lifetime_secs,
+                request.principal,
+            )
+        })?,
+        // Only the owner answers for a machine (the mesh ruling, 10-19).
+        Some(ownership) => with_issuer(&server, |issuer| {
+            server.vault().issue_machine_pairing_link(
+                issuer,
+                &owner,
+                surface,
+                request.scope,
+                request.lifetime_secs,
+                request.principal,
+                ownership,
+            )
+        })?,
     };
     Ok(Json(link))
 }
@@ -644,11 +627,32 @@ pub(super) async fn revoke(
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<RevokeSlip>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    super::scoped_auth::check_request_owner_act(&parts, &server)?;
-    with_issuer(&server, |issuer| {
-        server
-            .vault()
-            .revoke_capability_slip(issuer, request.slip_id)
-    })?;
+    let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
+    // Owner or self (FIX 8216, lead ruling FIX-8216-PAIRING-OWNER-ACT = A):
+    // the owner revokes any slip; any other holder only the slips its own
+    // logged mints name. A host slip, which names no person, revokes none
+    // but as the owner its host action names.
+    match super::owner_routes::owner(&auth, &server) {
+        Ok(owner) => with_issuer(&server, |issuer| {
+            server
+                .vault()
+                .revoke_capability_slip_as_owner(issuer, &owner, request.slip_id)
+        })?,
+        Err(refusal) => {
+            let holder = auth
+                .principal_ref()
+                .and(auth.verified_slip())
+                .map(|slip| slip.claims().holder_ref.as_str())
+                .ok_or(refusal)?;
+            let issuer = server.host_issuer().ok_or_else(ApiError::unauthorized)?;
+            server
+                .vault()
+                .revoke_capability_slip_held_by(issuer, holder, request.slip_id)
+                .map_err(|error| match error.kind() {
+                    oneiron::ErrorKind::AuthorityRefused => ApiError::forbidden_scope("owner"),
+                    _ => ApiError::unauthorized(),
+                })?
+        }
+    };
     Ok(Json(serde_json::json!({"revoked":true})))
 }
