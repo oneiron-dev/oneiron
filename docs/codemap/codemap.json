@@ -98343,6 +98343,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/analyzer_myanmar_zawgyi.rs",
+     "purpose": "ONE-ZAWGYI (ARCH-0031 #deferred, L8-40): Zawgyi queries reach the index as Unicode",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -104252,7 +104260,7 @@
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7605,
-   "test_files": 1345
+   "test_files": 1346
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -136206,7 +136214,7 @@
      "path": "src/analyzer/mod.rs",
      "purpose": "Multilingual analyzer subsystem",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 8,
       "mod": 12,
@@ -136215,7 +136223,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "NormalizedText"
@@ -136287,6 +136295,34 @@
      "surface": {
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/analyzer/zawgyi.rs",
+     "purpose": "Myanmar Zawgyi detection and conversion (ONE-ZAWGYI, ARCH-0031 `#deferred`)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/analyzer/zawgyi/rules.rs",
+     "purpose": "Rabbit zg2uni rules in order (Rabbit-Converter/Rabbit `rabbit.js`, commit 081d464a91ab, WTFPL v2)",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/analyzer/zawgyi/tests.rs",
+     "purpose": "Tests for the Zawgyi detector and converter",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -136380,7 +136416,7 @@
    ],
    "modules": {
     "analyzer": {
-     "files": 18,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -136417,8 +136453,8 @@
    },
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
-   "source_files": 22,
-   "test_files": 5
+   "source_files": 24,
+   "test_files": 6
   },
   "oneiron-ruler": {
    "files": [
