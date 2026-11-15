@@ -21,8 +21,17 @@
 //! - [`PresenceGate`] joins the two for one process: inside an open window it
 //!   confirms with no prompt, else it prompts, and a confirm opens the
 //!   window.
+//! - A device with no prompt of its own may ask for a device PIN instead
+//!   (row OCS-OWNER-PIN; [`PresenceCapability::DevicePin`]): a secret set
+//!   for this purpose, which the device's backend checks. Its confirm
+//!   answers [`PresenceError::PinRequired`], the host collects the PIN, and
+//!   [`PresenceGate::confirm_with_secret`] opens the same window with it.
+//!   [`DEVICE_PIN_WRONG_TRIES`] wrong PINs in a row start a wait of
+//!   [`DEVICE_PIN_WAIT_SECS`]. A backend that holds something for the
+//!   window is told when it ends ([`UserPresence::window_ended`]).
 //!
-//! Nothing here is persisted: a new process asks again.
+//! Nothing here is persisted: a new process asks again, and counts wrong
+//! PINs from none. The gate neither keeps nor logs a PIN.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -40,11 +49,27 @@ pub const PRESENCE_PROMPT_SECS: u64 = 60;
 /// that sends no lock signal, in milliseconds.
 pub const SCREEN_LOCK_POLL_MS: u64 = 1000;
 
+/// How many wrong device PINs in a row a device takes. The last of them
+/// starts the wait of [`DEVICE_PIN_WAIT_SECS`] (Engine ruling 15 Nov,
+/// OCS-PIN-WRONG-TRIES = A).
+pub const DEVICE_PIN_WRONG_TRIES: u32 = 5;
+
+/// How long a device takes no device PIN after [`DEVICE_PIN_WRONG_TRIES`]
+/// wrong ones in a row, in seconds.
+pub const DEVICE_PIN_WAIT_SECS: u64 = 15 * 60;
+
 /// Whether a device can ask its user to confirm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PresenceCapability {
     /// The device shows its own unlock prompt.
     DevicePrompt,
+    /// The device has no prompt of its own and asks for its device PIN,
+    /// which the host collects. `set` says whether a PIN is set: until one
+    /// is, the device cannot confirm.
+    DevicePin {
+        /// Whether this device has a PIN.
+        set: bool,
+    },
     /// The device has no prompt, with the reason.
     NoPrompt(&'static str),
 }
@@ -69,6 +94,22 @@ pub enum PresenceError {
     /// count and opens no window: the act asks again.
     #[error("the screen is locked, or it locked while the confirm prompt was up")]
     ScreenLocked,
+    /// This device asks for its device PIN and no confirm holds: the host
+    /// collects the PIN, hands it to [`PresenceGate::confirm_with_secret`]
+    /// and runs the act again.
+    #[error("this device asks for its device PIN")]
+    PinRequired,
+    /// The typed secret is not this device's PIN.
+    #[error("that is not this device's PIN")]
+    WrongPin,
+    /// Too many wrong PINs in a row: this device takes none for `wait_secs`
+    /// more seconds. The confirm belongs on another of the owner's devices
+    /// until then.
+    #[error("too many wrong PINs: this device takes none for {wait_secs} s")]
+    TooManyTries {
+        /// How long the device still takes no PIN, in whole seconds.
+        wait_secs: u64,
+    },
     /// Any other platform failure, by name and code only.
     #[error("presence check failure: {0} ({1})")]
     Platform(&'static str, i64),
@@ -85,6 +126,9 @@ const LA_ERROR_NOT_INTERACTIVE: i64 = -1004;
 
 const NO_DEVICE_PASSCODE: &str = "no passcode or password is set on this device";
 const PROMPT_NOT_ALLOWED: &str = "this process may not show the device's unlock prompt";
+
+const NO_TYPED_SECRET: &str = "this device confirms without a typed secret";
+const NO_DEVICE_PIN_SET: &str = "no device PIN is set on this device";
 
 // Windows' `UserConsentVerificationResult` values
 // (Windows.Security.Credentials.UI). `UserConsentVerifierAvailability` has
@@ -230,7 +274,35 @@ pub trait UserPresence: Send + Sync + 'static {
     fn capability(&self) -> PresenceCapability;
     /// Shows the device's own unlock prompt with `reason` and blocks until it
     /// is answered. `Ok` only when the user confirmed.
+    ///
+    /// A device that asks for its PIN ([`PresenceCapability::DevicePin`])
+    /// has no prompt to show: it answers [`PresenceError::PinRequired`], or
+    /// [`PresenceError::NoPrompt`] while no PIN is set, and never `Ok`.
     fn confirm(&self, reason: &str) -> Result<(), PresenceError>;
+    /// Checks a secret the user typed: this device's PIN. `Ok` only when it
+    /// is; a wrong one is [`PresenceError::WrongPin`]. A backend whose own
+    /// hardware counts wrong tries answers [`PresenceError::TooManyTries`]
+    /// while that hardware refuses. The backend keeps `secret` nowhere and
+    /// logs nothing of it.
+    ///
+    /// [`PresenceGate::confirm_with_secret`] calls it only on a device whose
+    /// capability says a PIN is set. The default is a device that takes no
+    /// typed secret.
+    fn confirm_with_secret(&self, secret: &[u8]) -> Result<(), PresenceError> {
+        let _ = secret;
+        Err(PresenceError::NoPrompt(NO_TYPED_SECRET))
+    }
+    /// Told that what a confirm of this backend allowed is over: the window
+    /// it opened ended, or its typed secret was right and a screen lock let
+    /// no window open. A backend that holds something for the window (a key
+    /// the device PIN opened) wipes it here. It may be told more than once
+    /// for one window, and is never told while a window is open.
+    ///
+    /// When a window ends it is called under that window's lock, so an end
+    /// and the next confirm reach the backend in their order: return at
+    /// once, and never call the gate or the window. The default does
+    /// nothing.
+    fn window_ended(&self) {}
     /// Whether the device's screen is locked now, or its user's session is
     /// off the screen. [`PresenceGate`] reads it before it answers an act
     /// inside a window and when a prompt's answer comes, and
@@ -363,6 +435,10 @@ fn millis(duration: Duration) -> u64 {
 /// back. A wall clock set behind the confirm ends it too. In memory only.
 pub struct PresenceWindow {
     clock: Arc<dyn PresenceClock>,
+    /// The backend of the gate that keeps this window. It is told, under the
+    /// window's lock, each time an open window ends
+    /// ([`UserPresence::window_ended`]).
+    backend: Option<Arc<dyn UserPresence>>,
     state: Mutex<WindowState>,
 }
 
@@ -392,6 +468,7 @@ impl PresenceWindow {
     pub fn new(clock: Arc<dyn PresenceClock>) -> Self {
         Self {
             clock,
+            backend: None,
             state: Mutex::new(WindowState::default()),
         }
     }
@@ -407,15 +484,38 @@ impl PresenceWindow {
     #[must_use]
     pub fn is_open(&self) -> bool {
         let mut state = self.state();
+        self.still_open(&mut state)
+    }
+
+    /// Whether a confirm still holds now, for a caller that holds the
+    /// window's lock. A window found over is closed.
+    fn still_open(&self, state: &mut WindowState) -> bool {
         // Read under the lock. A reading taken before it could be older than
         // a confirm stored meanwhile, and would end that confirm as a clock
         // set back.
         let now = self.clock.now();
         let open = state.confirmed.is_some_and(|at| within_window(at, now));
         if !open {
-            state.confirmed = None;
+            self.close(state);
         }
         open
+    }
+
+    /// Closes the window, for a caller that holds its lock, and tells the
+    /// gate's backend when a confirm held until now.
+    fn close(&self, state: &mut WindowState) {
+        if state.confirmed.take().is_some()
+            && let Some(backend) = &self.backend
+        {
+            backend.window_ended();
+        }
+    }
+
+    /// Closes a window whose time is over. The watch calls it when no act
+    /// comes to read the window, so the backend is told all the same.
+    fn close_when_over(&self) {
+        let mut state = self.state();
+        let _open = self.still_open(&mut state);
     }
 
     /// Begins a confirm. Call it before the prompt shows, and hand the
@@ -446,7 +546,7 @@ impl PresenceWindow {
     /// A confirm that had begun and is not open yet never opens.
     pub fn end(&self) {
         let mut state = self.state();
-        state.confirmed = None;
+        self.close(&mut state);
         state.ends = state.ends.wrapping_add(1);
     }
 
@@ -484,41 +584,86 @@ pub struct PresenceGate {
     presence: Arc<dyn UserPresence>,
     /// Shared with the screen-lock watch, which holds it weakly.
     window: Arc<PresenceWindow>,
-    /// Held while a prompt shows, so acts that arrive together share one.
+    /// Held while a prompt shows or a typed secret is checked, so acts that
+    /// arrive together share one confirm.
     prompting: Mutex<()>,
+    /// The wrong typed secrets counted, and the wait they started.
+    tries: Mutex<TypedSecretTries>,
 }
 
-#[cfg(any(target_os = "macos", windows))]
+/// The wrong typed secrets a gate has counted. In memory only: a new process
+/// starts at none.
+#[derive(Default)]
+struct TypedSecretTries {
+    /// Wrong secrets in a row, since the last right one or the last wait.
+    wrong: u32,
+    /// The reading at the wrong secret that started the wait, while it runs.
+    waiting_since: Option<PresenceInstant>,
+}
+
+/// How much of [`DEVICE_PIN_WAIT_SECS`] is left at `now`, in milliseconds,
+/// for a wait that began at `since`. Either clock counts it down: the
+/// monotonic clock, which nothing sets, and the wall clock, which counts a
+/// sleep. A wall clock set back counts nothing, so it neither shortens the
+/// wait nor lengthens it. One set forward can end the wait early; whoever
+/// may set the clock may also restart the process, which forgets the count.
+fn wait_left_ms(since: PresenceInstant, now: PresenceInstant) -> u64 {
+    let counted = now
+        .monotonic_ms
+        .saturating_sub(since.monotonic_ms)
+        .max(now.wall_ms.saturating_sub(since.wall_ms));
+    (DEVICE_PIN_WAIT_SECS * 1000).saturating_sub(counted)
+}
+
 const NO_SCREEN_LOCK_WATCH: &str = "the screen-lock watch could not start";
 
 impl PresenceGate {
-    /// A gate that asks through `presence` and keeps `window`.
+    /// A gate that asks through `presence` and keeps `window`. The window
+    /// tells `presence` each time it ends ([`UserPresence::window_ended`]).
     #[must_use]
-    pub fn new(presence: Arc<dyn UserPresence>, window: PresenceWindow) -> Self {
+    pub fn new(presence: Arc<dyn UserPresence>, mut window: PresenceWindow) -> Self {
+        window.backend = Some(Arc::clone(&presence));
         Self {
             presence,
             window: Arc::new(window),
             prompting: Mutex::new(()),
+            tries: Mutex::new(TypedSecretTries::default()),
         }
     }
 
-    /// This platform's prompt on the system's clocks. On a platform that
-    /// sends no screen-lock signal the gate also starts its own watch
-    /// ([`Self::watch_screen_lock`], every [`SCREEN_LOCK_POLL_MS`]).
+    /// This platform's prompt on the system's clocks, with the gate's own
+    /// watch ([`Self::watched`]): the platform sends no screen-lock signal
+    /// that a headless host can take.
+    #[cfg(any(target_os = "macos", windows))]
     #[must_use]
     pub fn platform() -> Self {
-        Self::new(platform_user_presence(), PresenceWindow::system()).watching_platform_lock()
+        Self::watched(platform_user_presence())
     }
 
+    /// This platform's prompt on the system's clocks. The platform has
+    /// none, so the gate answers as a device that cannot ask.
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[must_use]
+    pub fn platform() -> Self {
+        Self::new(platform_user_presence(), PresenceWindow::system())
+    }
+
+    /// A gate over `presence` on the system's clocks, with its watch started
+    /// ([`Self::watch_screen_lock`], every [`SCREEN_LOCK_POLL_MS`]).
+    ///
     /// macOS delivers its lock notification only to a main thread that runs
     /// a run loop, and Windows only to a window whose thread runs a message
     /// loop. A headless host has neither: the gate reads the lock on a
-    /// timer. With no watch a window could outlast a lock, so a gate whose
-    /// watch cannot start answers as a device that cannot ask.
-    #[cfg(any(target_os = "macos", windows))]
-    fn watching_platform_lock(self) -> Self {
-        match self.watch_screen_lock(Duration::from_millis(SCREEN_LOCK_POLL_MS)) {
-            Ok(()) => self,
+    /// timer. A backend that holds something for the window needs the watch
+    /// on every platform: it ends a window whose time is over when no act
+    /// comes. With no watch a window could outlast a lock, and a backend
+    /// could hold on past its window, so a gate whose watch cannot start
+    /// answers as a device that cannot ask.
+    #[must_use]
+    pub fn watched(presence: Arc<dyn UserPresence>) -> Self {
+        let gate = Self::new(presence, PresenceWindow::system());
+        match gate.watch_screen_lock(Duration::from_millis(SCREEN_LOCK_POLL_MS)) {
+            Ok(()) => gate,
             Err(_) => Self::new(
                 Arc::new(NoPromptPresence::new(NO_SCREEN_LOCK_WATCH)),
                 PresenceWindow::system(),
@@ -526,16 +671,14 @@ impl PresenceGate {
         }
     }
 
-    #[cfg(not(any(target_os = "macos", windows)))]
-    fn watching_platform_lock(self) -> Self {
-        self
-    }
-
     /// Starts a thread that reads the device's screen lock
     /// ([`UserPresence::screen_is_locked`]) every `every` and ends the
     /// window on a locked reading, so that a lock ends the window when no
     /// act comes to read it. A lock shorter than `every` that no act meets
-    /// is not seen. The thread stops once the gate is dropped. Call it once.
+    /// is not seen. On an unlocked reading it closes a window whose time is
+    /// over, so the backend is told ([`UserPresence::window_ended`]) within
+    /// `every` of the window's end. The thread stops once the gate is
+    /// dropped. Call it once.
     ///
     /// # Errors
     /// The thread could not start.
@@ -552,6 +695,8 @@ impl PresenceGate {
                     };
                     if presence.screen_is_locked() {
                         live.end();
+                    } else {
+                        live.close_when_over();
                     }
                 }
             })
@@ -582,7 +727,9 @@ impl PresenceGate {
     /// # Errors
     /// The prompt's own refusal, or [`PresenceError::ScreenLocked`] when the
     /// screen reads locked, or when [`Self::end_window`] ran while the
-    /// prompt was up.
+    /// prompt was up. A device that asks for its PIN answers
+    /// [`PresenceError::PinRequired`] outside a window: collect the PIN,
+    /// call [`Self::confirm_with_secret`], and ask again.
     pub fn confirm(&self, reason: &str) -> Result<PresenceConfirmation, PresenceError> {
         if self.earlier_confirm_holds()? {
             return Ok(PresenceConfirmation::WithinWindow);
@@ -631,6 +778,122 @@ impl PresenceGate {
     pub fn end_window(&self) {
         self.window.end();
     }
+
+    /// Confirms with a secret the user typed, on a device that asks for its
+    /// PIN ([`PresenceCapability::DevicePin`]). The right one opens the
+    /// window, as a confirmed prompt does. Anything else opens nothing.
+    ///
+    /// Each typed secret starts over: a window an earlier confirm opened
+    /// ends when the next secret is taken, so a wrong one never rides on
+    /// it. [`DEVICE_PIN_WRONG_TRIES`] wrong secrets in a row start a wait of
+    /// [`DEVICE_PIN_WAIT_SECS`], in which the device takes none: the backend
+    /// does not see a secret that comes then. A right secret, and the end of
+    /// the wait, start the count over.
+    ///
+    /// The count stops a person at the device and an agent that calls the
+    /// door. It is in memory only, so a restart forgets it, and it does not
+    /// stop code that reads what the backend keeps at rest.
+    ///
+    /// The gate neither keeps nor logs `secret`. Never call it while holding
+    /// a lock other work waits on: the backend's check may take a second.
+    ///
+    /// # Errors
+    /// - [`PresenceError::NoPrompt`]: the device takes no typed secret, or
+    ///   no PIN is set on it.
+    /// - [`PresenceError::WrongPin`]; [`PresenceError::TooManyTries`] for
+    ///   the wrong secret that starts the wait and for every secret inside
+    ///   it. A backend may answer the second itself (a chip that refuses):
+    ///   that one is passed on and not counted.
+    /// - [`PresenceError::ScreenLocked`] when the screen reads locked, or
+    ///   when [`Self::end_window`] ran while the secret was checked.
+    pub fn confirm_with_secret(&self, secret: &[u8]) -> Result<(), PresenceError> {
+        let _checking = self
+            .prompting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if self.screen_lock_ends_window() {
+            return Err(PresenceError::ScreenLocked);
+        }
+        match self.presence.capability() {
+            PresenceCapability::DevicePin { set: true } => {}
+            PresenceCapability::DevicePin { set: false } => {
+                return Err(PresenceError::NoPrompt(NO_DEVICE_PIN_SET));
+            }
+            PresenceCapability::DevicePrompt => {
+                return Err(PresenceError::NoPrompt(NO_TYPED_SECRET));
+            }
+            PresenceCapability::NoPrompt(reason) => return Err(PresenceError::NoPrompt(reason)),
+        }
+        if let Some(wait_secs) = self.typed_secret_wait_secs() {
+            return Err(PresenceError::TooManyTries { wait_secs });
+        }
+        // An earlier window still open here could run out while this secret
+        // is checked. The backend would then be told of that end after it
+        // took the secret, with nothing to refuse the new window. So the
+        // earlier window ends first.
+        self.window.end();
+        let pending = self.window.begin_confirm();
+        match self.presence.confirm_with_secret(secret) {
+            Ok(()) => {
+                *self.tries() = TypedSecretTries::default();
+                // A lock that came while the secret was checked outlasts
+                // it, as it outlasts a prompt's answer.
+                if self.screen_lock_ends_window() || !self.window.open(pending) {
+                    // No window opened, so no end of one will tell the
+                    // backend to let go of what the secret gave it.
+                    self.presence.window_ended();
+                    return Err(PresenceError::ScreenLocked);
+                }
+                Ok(())
+            }
+            Err(PresenceError::WrongPin) => Err(self.count_wrong_secret()),
+            Err(refusal) => Err(refusal),
+        }
+    }
+
+    /// How long this device still takes no typed secret, in whole seconds
+    /// rounded up, after [`DEVICE_PIN_WRONG_TRIES`] wrong ones in a row.
+    /// `None` when it takes one now. A wait found over starts the count
+    /// over.
+    #[must_use]
+    pub fn typed_secret_wait_secs(&self) -> Option<u64> {
+        let mut tries = self.tries();
+        let since = tries.waiting_since?;
+        // Read under the count's lock, so the reading is never older than
+        // the wait it is compared with.
+        let left_ms = wait_left_ms(since, self.window.clock.now());
+        if left_ms == 0 {
+            *tries = TypedSecretTries::default();
+            return None;
+        }
+        Some(left_ms.div_ceil(1000))
+    }
+
+    /// Counts one wrong typed secret and answers what its user is told: the
+    /// last of [`DEVICE_PIN_WRONG_TRIES`] in a row starts the wait.
+    fn count_wrong_secret(&self) -> PresenceError {
+        let mut tries = self.tries();
+        tries.wrong = tries.wrong.saturating_add(1);
+        if tries.wrong < DEVICE_PIN_WRONG_TRIES {
+            return PresenceError::WrongPin;
+        }
+        tries.waiting_since = Some(self.window.clock.now());
+        PresenceError::TooManyTries {
+            wait_secs: DEVICE_PIN_WAIT_SECS,
+        }
+    }
+
+    fn tries(&self) -> MutexGuard<'_, TypedSecretTries> {
+        self.tries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Drop for PresenceGate {
+    /// A gate that goes away ends its window, so its backend holds nothing
+    /// for a window that no gate keeps.
+    fn drop(&mut self) {
+        self.window.end();
+    }
 }
 
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
@@ -643,15 +906,29 @@ mod doubles {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, PoisonError};
 
-    use super::{PresenceCapability, PresenceClock, PresenceError, PresenceInstant, UserPresence};
+    use super::{
+        NO_DEVICE_PIN_SET, NO_TYPED_SECRET, PresenceCapability, PresenceClock, PresenceError,
+        PresenceInstant, UserPresence,
+    };
 
-    /// A device whose prompt answers from a script, and whose screen a test
-    /// locks and unlocks.
+    /// A device whose prompt answers from a script, or one that asks for a
+    /// scripted device PIN, and whose screen a test locks and unlocks.
     pub struct ScriptedPresence {
+        asks: Asks,
         answers: Mutex<VecDeque<Result<(), PresenceError>>>,
         reasons: Mutex<Vec<String>>,
         screen_locked: AtomicBool,
         screen_lock_reads: AtomicUsize,
+        secrets_checked: AtomicUsize,
+        window_ends: AtomicUsize,
+    }
+
+    /// How a scripted device asks its user.
+    enum Asks {
+        /// Through its own prompt.
+        Prompt,
+        /// For its device PIN: the one that is set, or none yet.
+        DevicePin(Option<Vec<u8>>),
     }
 
     impl ScriptedPresence {
@@ -659,12 +936,38 @@ mod doubles {
         /// the script is declined.
         #[must_use]
         pub fn new(answers: impl IntoIterator<Item = Result<(), PresenceError>>) -> Self {
+            Self::asking(Asks::Prompt, answers.into_iter().collect())
+        }
+
+        /// A device with no prompt that asks for its device PIN: `pin` when
+        /// one is set, `None` before the owner has set one.
+        #[must_use]
+        pub fn with_device_pin(pin: Option<&[u8]>) -> Self {
+            Self::asking(Asks::DevicePin(pin.map(<[u8]>::to_vec)), VecDeque::new())
+        }
+
+        fn asking(asks: Asks, answers: VecDeque<Result<(), PresenceError>>) -> Self {
             Self {
-                answers: Mutex::new(answers.into_iter().collect()),
+                asks,
+                answers: Mutex::new(answers),
                 reasons: Mutex::new(Vec::new()),
                 screen_locked: AtomicBool::new(false),
                 screen_lock_reads: AtomicUsize::new(0),
+                secrets_checked: AtomicUsize::new(0),
+                window_ends: AtomicUsize::new(0),
             }
+        }
+
+        /// How many typed secrets the device was handed to check.
+        #[must_use]
+        pub fn secrets_checked(&self) -> usize {
+            self.secrets_checked.load(Ordering::SeqCst)
+        }
+
+        /// How many times the device was told its window ended.
+        #[must_use]
+        pub fn window_ends(&self) -> usize {
+            self.window_ends.load(Ordering::SeqCst)
         }
 
         /// Locks or unlocks the device's screen. It starts unlocked.
@@ -700,10 +1003,18 @@ mod doubles {
 
     impl UserPresence for ScriptedPresence {
         fn capability(&self) -> PresenceCapability {
-            PresenceCapability::DevicePrompt
+            match &self.asks {
+                Asks::Prompt => PresenceCapability::DevicePrompt,
+                Asks::DevicePin(pin) => PresenceCapability::DevicePin { set: pin.is_some() },
+            }
         }
 
         fn confirm(&self, reason: &str) -> Result<(), PresenceError> {
+            match &self.asks {
+                Asks::Prompt => {}
+                Asks::DevicePin(Some(_)) => return Err(PresenceError::PinRequired),
+                Asks::DevicePin(None) => return Err(PresenceError::NoPrompt(NO_DEVICE_PIN_SET)),
+            }
             self.reasons
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -713,6 +1024,20 @@ mod doubles {
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop_front()
                 .unwrap_or(Err(PresenceError::Declined))
+        }
+
+        fn confirm_with_secret(&self, secret: &[u8]) -> Result<(), PresenceError> {
+            self.secrets_checked.fetch_add(1, Ordering::SeqCst);
+            match &self.asks {
+                Asks::Prompt => Err(PresenceError::NoPrompt(NO_TYPED_SECRET)),
+                Asks::DevicePin(None) => Err(PresenceError::NoPrompt(NO_DEVICE_PIN_SET)),
+                Asks::DevicePin(Some(pin)) if pin.as_slice() == secret => Ok(()),
+                Asks::DevicePin(Some(_)) => Err(PresenceError::WrongPin),
+            }
+        }
+
+        fn window_ended(&self) {
+            self.window_ends.fetch_add(1, Ordering::SeqCst);
         }
 
         fn screen_is_locked(&self) -> bool {

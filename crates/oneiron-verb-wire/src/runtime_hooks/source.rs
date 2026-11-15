@@ -204,25 +204,14 @@ impl FactKind {
 }
 
 pub fn decode_hex<const N: usize>(text: &str) -> Result<[u8; N]> {
-    let bytes = text.as_bytes();
-    if bytes.len() != N * 2 {
+    if text.len() != N * 2 {
         return Err(invalid("fact position has the wrong length"));
     }
-    let mut out = [0_u8; N];
-    for (slot, pair) in out.iter_mut().zip(bytes.chunks_exact(2)) {
-        let high = hex_digit(pair[0])?;
-        let low = hex_digit(pair[1])?;
-        *slot = (high << 4) | low;
-    }
-    Ok(out)
+    oneiron_hex::decode(text).ok_or_else(|| invalid("fact position is not lowercase hex"))
 }
 
 pub fn hex_digit(byte: u8) -> Result<u8> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        _ => Err(invalid("fact position is not lowercase hex")),
-    }
+    oneiron_hex::nibble(byte).ok_or_else(|| invalid("fact position is not lowercase hex"))
 }
 
 pub fn invalid(reason: &str) -> Error {

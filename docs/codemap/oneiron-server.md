@@ -327,7 +327,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/presentation.rs` | src | m | 6 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/esign_qr.rs` | src | s | 2 crate-vis | — | The public QR page a sealed document's certificate names (ARCH-0064a section 6, [SGN-05])… |
-| `src/api/facade.rs` | src | m | 36 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 37 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 18 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/action_routes/execution.rs` | src | s | 4 crate-vis | — | How one action runs (OF-181): the principal its call reads as, and the driver thread it runs on with its… |
 | `src/api/facade/action_routes/row_door.rs` | src | m | 4 crate-vis | — | The verb door of one action call (OF-181), split from its parent: each verb-table row runs as its own… |
@@ -507,7 +507,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/retrieval_doors.rs` | src | m | 15 crate-vis | — | Typed owner-only retrieval diagnostics |
 | `src/api/facade/role_picks.rs` | src | s | 2 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/root_request_doors.rs` | src | s | 4 crate-vis | — | The owner's root-request doors: the cancel (FIX 5586), `vault.roots.requests.cancel`, over the same engine… |
-| `src/api/facade/run_read_doors.rs` | src | s | 4 crate-vis | — | Reads of committed run state (DOOR-141 A/B): a settled model step, a code run's checkpoints and a code run… |
+| `src/api/facade/run_read_doors.rs` | src | s | 7 crate-vis | — | Reads of committed run state (DOOR-141 A/B): a settled model step, a code run's checkpoints and a code run… |
 | `src/api/facade/run_review_doors.rs` | src | s | 5 crate-vis | — | The owner's read of a run's changes, cross-kind review and run compensation, on the caller's own credential… |
 | `src/api/facade/run_write_polls.rs` | src | s | 1 crate-vis | — | A leased run's write envelope across the polls of an async row (FIX 11698) |
 | `src/api/facade/runner_seat_doors.rs` | src | s | 3 crate-vis | — | The owner's runner seat doors (FIX 7451, FIX 11067): `vault.runners.seats.quotas`… |
@@ -2063,6 +2063,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/consent_revoke_grantee_renounce.rs` | test | m | — | — | A grantee may renounce its own standing consent grant (P-GATE-010, DEC-0006) |
 | `tests/context_pack_conversation_home.rs` | test | m | — | — | Conversation-home clearance on the context-pack route (DEC-0006 #home-clearance) |
 | `tests/context_pack_empty_beside_l2_base.rs` | test | s | — | — | A context pack its rows left empty says so, with the owner's L2 base beside it or not (FIX 22309, E2E… |
+| `tests/core_job_read.rs` | test | m | — | — | L10-05: the generic job status and result read, canon's `GET /v1/core/jobs/{job_id}` (0002c §6.1.13) over… |
 | `tests/decision_read_think_start.rs` | test | s | — | — | L2-33 (FIX 22360; lead ruling THINK-START = C, 13 Nov 2026): a served host's ThinkThreshold row starts at… |
 | `tests/delete_authority_served_door.rs` | test | m | — | — | DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A) |
 | `tests/doctor_off_record_dump_suppression.rs` | test | s | — | — | Census row L6-18: `oneiron doctor` reports the operator's core-dump switch for a process that holds an… |
