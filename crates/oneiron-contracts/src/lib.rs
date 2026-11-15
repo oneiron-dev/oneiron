@@ -13,6 +13,7 @@ pub mod gate;
 pub mod host_descriptors;
 pub mod host_memory;
 pub mod identity_topology;
+pub mod lifecycle;
 pub mod limit_ask;
 pub mod limits;
 pub mod memory;
