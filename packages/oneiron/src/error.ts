@@ -17,7 +17,7 @@ type NativeErrorPayload = {
   suggestions: string[]
   attempted?: string
   replacement?: string
-  schemaRef?: string
+  schema_ref?: string
   hook?: unknown
   retry_after?: unknown
   resets_at?: unknown
@@ -205,7 +205,9 @@ export function translateNativeError(error: unknown): OneironError {
       parsed.suggestions.length > 0
         ? parsed.suggestions
         : ["Retry the call, and check the Oneiron logs for this operation."]
-    const {attempted, replacement, schemaRef} = parsed
+    // The wire names the schema `schema_ref`; the JS property stays
+    // `schemaRef` until UC-02 B2 settles the JS names.
+    const {attempted, replacement, schema_ref: schemaRef} = parsed
     const wrongRoot =
       typeof attempted === "string" && typeof replacement === "string" && typeof schemaRef === "string"
         ? {attempted, replacement, schemaRef}

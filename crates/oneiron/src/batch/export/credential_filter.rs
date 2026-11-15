@@ -437,7 +437,7 @@ pub fn redacted_memory_body(bytes: &[u8]) -> Value {
     } else if crate::batch::secret_scan::scan_undecoded_body(bytes).is_some() {
         Value::String("[redacted]".into())
     } else {
-        serde_json::json!({"bodyBytes": bytes})
+        serde_json::json!({"body_bytes": bytes})
     };
     crate::batch::secret_scan::sanitize_read_credentials(&mut value, false);
     value
@@ -556,7 +556,7 @@ impl Vault {
                 nulled = true;
                 Value::Null
             } else {
-                let mut value = serde_json::json!({"bodyBytes": bytes});
+                let mut value = serde_json::json!({"body_bytes": bytes});
                 nulled |= crate::batch::secret_scan::sanitize_read_credentials(&mut value, true);
                 value
             };

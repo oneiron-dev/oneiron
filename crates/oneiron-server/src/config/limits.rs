@@ -114,7 +114,7 @@ pub struct LimitsConfig {
     /// only the embedder's own input window cuts it.
     pub semantic_query_bytes: usize,
     /// Stored body bytes one multi-row read decodes. A row past it is served
-    /// with a `bodyOmitted` marker in place of its body; a single-entity read
+    /// with a `body_omitted` marker in place of its body; a single-entity read
     /// returns its body whole, whatever its size.
     pub projection_body_bytes: usize,
     /// The most bytes one pushed blob may hold for the push door to scan it.

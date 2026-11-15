@@ -132,7 +132,7 @@ pub(super) fn read_result_tool_schema() -> Value {
 }
 
 /// `invoke_action`'s arguments: the verb, and the body of `POST
-/// /v1/core/actions/{verb}`, field for field. `liveRun` is any string: the
+/// /v1/core/actions/{verb}`, field for field. `live_run` is any string: the
 /// live-run resolver alone judges a handle.
 pub(super) fn invoke_action_tool_schema() -> Value {
     tool_schema_root(
@@ -146,15 +146,15 @@ pub(super) fn invoke_action_tool_schema() -> Value {
                 "type": "array",
                 "items": action_argument_schema(),
             },
-            "idempotencyKey": nonblank_string_schema(),
-            "liveRun": { "type": "string" },
+            "idempotency_key": nonblank_string_schema(),
+            "live_run": { "type": "string" },
         }),
         &[
             "schema_version",
             "consent",
             "verb",
             "args",
-            "idempotencyKey",
+            "idempotency_key",
         ],
     )
 }

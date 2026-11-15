@@ -312,7 +312,7 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
     assert!(shown.get("body_omitted").is_none(), "{shown}");
     let omitted = item(&query["items"], &large);
     assert!(omitted.get("txt").is_none(), "the body stays out");
-    assert!(omitted.get("bodyBytes").is_none(), "no per-byte array");
+    assert!(omitted.get("body_bytes").is_none(), "no per-byte array");
     assert_eq!(omitted["kind"], shown["kind"]);
     let marker = &omitted["body_omitted"];
     assert_eq!(marker["code"], "PROJECTION_BYTES_EXCEEDED", "{omitted}");

@@ -852,7 +852,7 @@ Query parameters:
 
 - `query` required: comma-separated `f32` values, for example `0.1,0.2,0.3`.
 - `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limit_clamped` says so.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `body_omitted` (`code`, `max_bytes`, `body_bytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `count_mode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadline_ms` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
@@ -862,7 +862,7 @@ Response:
 - `meta.total`: estimate count for search unless `count_mode=none`.
 - `meta.count_mode`: `estimate` or `none`.
 - `meta.partial`: `true` only when `deadline_ms` came due before the search finished.
-- Summary item fields: `id`, `kind`, `label`, `updatedAt`.
+- Summary item fields: `id`, `kind`, `label`, `updated_at`.
 - Standard item fields: `id`, `score`.
 - Full item fields: summary metadata, raw projected fields, and `score`.
 
@@ -875,7 +875,7 @@ Example response:
       "id": "0123456789abcdef0123456789abcdef",
       "kind": "TASK",
       "label": "Refund email draft",
-      "updatedAt": 1770000000
+      "updated_at": 1770000000
     }
   ],
   "meta": { "total": 1, "count_mode": "estimate" }
@@ -892,7 +892,7 @@ Request body:
 
 - `text` required: the natural-language question. Original text bytes past `[limits].semantic_query_bytes` (8 MiB unless set) raise a row question without row truncation or refusal. The server prepends the model's query instruction and embeds it; the caller sends no vector. Transport and embedder input-window limits remain separate.
 - `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limit_clamped` says so.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `body_omitted` (`code`, `max_bytes`, `body_bytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `count_mode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadline_ms` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 - `depth` optional: `light`, `medium`, `high`, `xhigh`, or `max`; default `light`.
@@ -900,7 +900,7 @@ Request body:
 Response:
 
 - The same paginated envelope and projection profiles as vector search.
-- `embedder`: the provider that produced the probe, as `provider`, `modelId`, and `dimensions`.
+- `embedder`: the provider that produced the probe, as `provider`, `model_id`, and `dimensions`.
 
 Refusals:
 
@@ -922,13 +922,13 @@ Example response:
       "id": "0123456789abcdef0123456789abcdef",
       "kind": "CLAIM",
       "label": "the embedder slot is a selection",
-      "updatedAt": 1770000000
+      "updated_at": 1770000000
     }
   ],
   "meta": { "total": 1, "count_mode": "estimate" },
   "embedder": {
     "provider": "local",
-    "modelId": "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8",
+    "model_id": "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8",
     "dimensions": 1024
   }
 }
@@ -944,7 +944,7 @@ Query parameters:
 
 - `query` required: natural language, exact phrase, identifier fragment, or keyword string.
 - `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limit_clamped` says so.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `body_omitted` (`code`, `max_bytes`, `body_bytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `count_mode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadline_ms` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
@@ -976,8 +976,8 @@ Query parameters:
 Response:
 
 - Default standard view returns the raw stored entity body bytes.
-- Summary view returns `id`, `kind`, `label`, and `updatedAt`.
-- Full view returns decoded body fields plus `id`, `kind`, numeric `type`, `label`, and `updatedAt`.
+- Summary view returns `id`, `kind`, `label`, and `updated_at`.
+- Full view returns decoded body fields plus `id`, `kind`, numeric `type`, `label`, and `updated_at`.
 
 Example summary response:
 
@@ -986,7 +986,7 @@ Example summary response:
   "id": "0123456789abcdef0123456789abcdef",
   "kind": "TASK",
   "label": "Refund email draft",
-  "updatedAt": 1770000000
+  "updated_at": 1770000000
 }
 ```
 
@@ -1537,16 +1537,16 @@ storage type byte is added.
 ```json
 {
   "summary": {
-    "required": ["id", "kind", "label", "updatedAt"],
+    "required": ["id", "kind", "label", "updated_at"],
     "properties": {
       "id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
       "kind": { "type": "string" },
       "label": { "type": "string" },
-      "updatedAt": { "type": "integer" }
+      "updated_at": { "type": "integer" }
     }
   },
   "standard": "raw entity body bytes",
-  "full": "decoded entity body fields plus id, kind, type, label, updatedAt"
+  "full": "decoded entity body fields plus id, kind, type, label, updated_at"
 }
 ```
 

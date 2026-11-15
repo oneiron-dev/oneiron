@@ -44,5 +44,5 @@ fn malformed_facet_projection_redacts_body_bytes() {
     let rendered = serde_json::to_string(&value).unwrap();
     assert_eq!(value["redacted"], "invalid_facet_body");
     assert!(!rendered.contains("private malformed companion bytes"));
-    assert!(!value.as_object().unwrap().contains_key("bodyBytes"));
+    assert!(!value.as_object().unwrap().contains_key("body_bytes"));
 }

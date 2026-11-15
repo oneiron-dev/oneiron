@@ -16,9 +16,9 @@ pub enum EmptyReason {
     SkippedByProfile,
 }
 
-/// Structured context for an empty context-pack response.
+/// Structured context for an empty context-pack response. Its JSON names are
+/// the field names (`retrieval_quality`, `total_in_scope`), as every REST body.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct EmptyContext {
     #[serde(default)]
     pub retrieval_quality: RetrievalQualityReport,

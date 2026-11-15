@@ -657,7 +657,10 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
             "replacement".to_owned(),
             Value::String(correction.replacement),
         );
-        object.insert("schemaRef".to_owned(), Value::String(correction.schema_ref));
+        object.insert(
+            "schema_ref".to_owned(),
+            Value::String(correction.schema_ref),
+        );
     }
     if let Some(stamp) = error.call_receipt
         && let Some(object) = data.as_object_mut()

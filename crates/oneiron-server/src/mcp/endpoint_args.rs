@@ -203,7 +203,7 @@ impl McpReadResultToolArgs {
 
 /// `invoke_action` arguments: the action `verb`, and the body `POST
 /// /v1/core/actions/{verb}` takes, field for field: its typed `args`, its
-/// `idempotencyKey`, and the `liveRun` handle of the run it acts for. A
+/// `idempotency_key`, and the `live_run` handle of the run it acts for. A
 /// handle is per call, and only the live-run resolver judges one.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -213,9 +213,8 @@ pub struct McpInvokeActionToolArgs {
     pub consent: McpConsentMetadata,
     pub verb: String,
     pub args: Vec<ActionArgument>,
-    #[serde(rename = "idempotencyKey")]
     pub idempotency_key: String,
-    #[serde(default, rename = "liveRun")]
+    #[serde(default)]
     pub live_run: Option<String>,
 }
 
@@ -227,7 +226,7 @@ impl McpInvokeActionToolArgs {
         validate_nonblank(MCP_INVOKE_ACTION_TOOL, "verb", &self.verb)?;
         validate_nonblank(
             MCP_INVOKE_ACTION_TOOL,
-            "idempotencyKey",
+            "idempotency_key",
             &self.idempotency_key,
         )?;
         Ok(())
