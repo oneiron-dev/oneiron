@@ -294,15 +294,10 @@ fn subject_keys_in_txn(
     )?);
     for head in heads.iter().filter(|head| head.subject == *subject) {
         let item = item(subject, &head.key_ref);
-        if !erasable_ref_names_another_in_txn(store, txn, &item)? {
             items.insert(item);
-        }
     }
     for key_ref in refs {
         let item = item(subject, key_ref);
-        if erasable_ref_names_another_in_txn(store, txn, &item)? {
-            return Err(CustodyKind::ErasableKey.corrupt());
-        }
         items.insert(item);
     }
     Ok(items)
