@@ -257,9 +257,8 @@ where
             }
             let next = self.pending.pop()?;
             self.replaced = next.replaced.iter();
-            if next.replaced.is_empty() || next.disputed {
-                return Some(WalkPart::Default);
-            }
+            // RED SCRATCH (not for merge): the walk never brings in the default.
+            let _ = next.disputed;
         }
     }
 }
