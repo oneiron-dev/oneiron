@@ -468,8 +468,9 @@ fn an_instructions_only_edit_keeps_every_file_but_the_description() {
 /// 10878; cold read N3 of #7949): a draft whose text moves the number moves
 /// the dial, a file edit that keeps the text keeps the file, and a drafted
 /// `policy.json` lands only when it is one JSON object, with no key named
-/// twice, that holds the numbers the final text names, so no revision's
-/// text names a dial value its file does not run.
+/// twice, that holds the numbers the final text names and runs them for
+/// each detector dial (review round 2 of #7949), so no revision's text
+/// names a dial value its file does not run.
 #[test]
 fn a_drafted_policy_json_holds_the_numbers_its_text_names() {
     let drafted_policy = |desc: &str, files: &[(&str, &str)]| -> Result<Vec<u8>> {
@@ -514,6 +515,33 @@ fn a_drafted_policy_json_holds_the_numbers_its_text_names() {
     let error = drafted_policy(POLICY_DESC, &[("policy.json", policy_at(9).as_str())])
         .expect_err("a drafted policy.json at another number than its text names is refused");
     assert_eq!(error.kind(), ErrorKind::InvalidSkillBody, "{error}");
+    // A file that leaves a named dial out, or holds it past the dial's
+    // bounds (the loop dial's least is 2), runs the compiled seed, 3.
+    for (desc, policy, shape) in [
+        (POLICY_DESC, "{}\n", "the dial its text names at 4 left out"),
+        (
+            "Follow the guide and report; stop a loop after health.loop.repeats at 1 rounds.",
+            "{\"health.loop.repeats\": 1}\n",
+            "the dial its text names at 1 held out of bounds",
+        ),
+    ] {
+        let error = drafted_policy(desc, &[("policy.json", policy)])
+            .expect_err("a drafted policy.json that does not run its text's number is refused");
+        assert_eq!(
+            error.kind(),
+            ErrorKind::InvalidSkillBody,
+            "{shape}: {error}"
+        );
+    }
+    assert_eq!(
+        drafted_policy(
+            "Follow the guide and report; stop a loop after health.loop.repeats at 3 rounds.",
+            &[("policy.json", "{}\n")],
+        )
+        .expect("drafted"),
+        "{}\n".as_bytes(),
+        "a file that leaves out a dial its text names at the compiled seed runs that number"
+    );
     for (policy, shape) in [
         ("[4]\n", "not one JSON object"),
         (
