@@ -6,9 +6,10 @@
 //! The offer is an ordinary send. It leaves as the page's verified live
 //! publisher through the outbound door, the gate and the intent ledger, with
 //! no sender of its own: the dispatch picks the publisher's email identity as
-//! it does for any send. Its body ref names the page and the offer token
-//! ([`crate::booking::lifecycle::WAITLIST_OFFER_CONTENT_PREFIX`]), so the
-//! frozen intent itself says which offer it is, and three doors check it:
+//! it does for any send. Its body ref names the page and the offer token's
+//! digest ([`crate::booking::lifecycle::WAITLIST_OFFER_CONTENT_PREFIX`]), so
+//! the frozen intent itself says which offer it is without holding the token
+//! a claim presents, and three doors check it:
 //!
 //! * this dispatch door sends only the offer a committed pass made, to the
 //!   contact its entry recorded, under the page's live grant;
@@ -105,7 +106,7 @@ pub(in crate::booking) fn dispatch_waitlist_offer(
         OutboundIntentDraft::new(actor.to_hex(), OFFER_VERB, OFFER_CHANNEL, recipient.clone())
             .content_ref(waitlist_offer_content_ref(
                 &offer.page_ref,
-                &offer.offer_token,
+                &offer_token_hash,
             ))
             .idempotency_key(intent_ref.clone()),
         OutboundIntentTrigger::agent_immediate(format!(
@@ -163,7 +164,7 @@ pub(crate) fn admit_frozen_waitlist_offer_in_txn(
     let Ok(frozen) = serde_json::from_slice::<OfferPublication>(bytes) else {
         return Ok(None);
     };
-    let Some((page_ref, offer_token)) = frozen
+    let Some((page_ref, offer_token_hash)) = frozen
         .content_ref
         .as_deref()
         .and_then(parse_waitlist_offer_content_ref)
@@ -186,7 +187,6 @@ pub(crate) fn admit_frozen_waitlist_offer_in_txn(
             "a waitlist offer must go to its admitted recipient",
         ));
     }
-    let offer_token_hash = offer_token_digest(&offer_token);
     if frozen.idempotency_key.as_deref()
         != Some(waitlist_offer_intent_ref(&page_ref, &offer_token_hash).as_str())
     {

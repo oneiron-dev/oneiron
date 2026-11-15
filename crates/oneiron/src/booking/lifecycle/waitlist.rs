@@ -59,7 +59,9 @@ const CLAIM_SESSION_DOMAIN: &[u8] = b"oneiron.booking.waitlist.claim_session.v1\
 const OFFER_TOKEN_DOMAIN: &[u8] = b"oneiron.booking.waitlist.offer_token.v1\0";
 
 /// Every waitlist offer body ref starts with this:
-/// `booking-waitlist-offer:<page hex>:<offer token>`.
+/// `booking-waitlist-offer:<page hex>:<offer token digest hex>`. The ref names
+/// the offer by its digest, so the intent ledger, its replay rows and any
+/// receipt that carries the ref hold no claim bearer (OPUS-SECREAD-A N1).
 pub const WAITLIST_OFFER_CONTENT_PREFIX: &str = "booking-waitlist-offer:";
 
 const NO_ENTRY: &str = "no waitlist entry on this page matches this token";
@@ -97,16 +99,20 @@ struct WaitlistEntryRow {
     offer: Option<WaitlistOffer>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WaitlistOffer {
     #[serde(with = "time_range_serde")]
     slot: TimeRange,
     offered_until: u64,
     /// The digest of the offer token the offer's claim link carries; a claim
-    /// presents it or the entry token.
+    /// presents it or the entry token, and the offer's send names it.
     #[serde(with = "digest_serde")]
     offer_token_hash: [u8; 32],
+    /// The offer token itself, for the claim link the offer's email renders
+    /// ([`waitlist_offer_text`]). It goes with the offer: a claim, a lapse,
+    /// a pass-on or an erase of the entry drops it.
+    offer_token: OpaqueLifecycleToken,
 }
 
 /// What one waitlist stage decided inside its writer.
@@ -127,7 +133,8 @@ pub(super) struct WaitlistStaged {
 
 /// One offer a committed offer pass made: the slot now held for a waiter,
 /// until when, the contact the offer is sent to, and the offer token its
-/// claim link carries. The token lives only here and in that one send.
+/// claim link carries. Outside this and the entry's offer, the token lives
+/// only in that one email's body.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::booking) struct WaitlistOfferMade {
     pub(in crate::booking) page_ref: EntityId,
@@ -362,6 +369,7 @@ fn find_claimable_entry(
         if key.2 == entry_hash
             || entry
                 .offer
+                .as_ref()
                 .is_some_and(|offer| offer.offer_token_hash == offer_hash)
         {
             return Ok(Some((key, entry)));
@@ -541,7 +549,7 @@ fn claim_in_writer(
         return Err(refused(NO_ENTRY));
     };
     let no_offer = || refused("this waitlist entry holds no offered slot");
-    let Some(offer) = entry.offer else {
+    let Some(offer) = entry.offer.as_ref() else {
         return Err(no_offer());
     };
     let Some(mut hold) = offer_hold(&vault.store, &*wtxn, &key, &entry, offer)
@@ -594,7 +602,7 @@ fn drop_entry(
     WAITLIST
         .delete(&vault.store, wtxn, key)
         .map_err(|error| engine_failure("waitlist delete", error))?;
-    let Some(offer) = entry.offer else {
+    let Some(offer) = &entry.offer else {
         return Ok(None);
     };
     HOLD.delete(&vault.store, wtxn, &hold_digest(&offer_session_key(&key.2)))
@@ -609,7 +617,7 @@ fn offer_hold(
     txn: &heed::RoTxn<'_>,
     key: &WaitlistKey,
     entry: &WaitlistEntryRow,
-    offer: WaitlistOffer,
+    offer: &WaitlistOffer,
 ) -> crate::Result<Option<SoftHoldRow>> {
     let hold: Option<SoftHoldRow> =
         HOLD.get(store, txn, &hold_digest(&offer_session_key(&key.2)))?;
@@ -626,12 +634,36 @@ fn offer_stands(
     txn: &heed::RoTxn<'_>,
     key: &WaitlistKey,
     entry: &WaitlistEntryRow,
-    offer: WaitlistOffer,
+    offer: &WaitlistOffer,
     now_utc: u64,
 ) -> Result<bool, BookingError> {
     Ok(offer_hold(&vault.store, txn, key, entry, offer)
         .map_err(|error| engine_failure("meta read", error))?
         .is_some_and(|hold| hold.is_live_at(now_utc)))
+}
+
+/// The entry on `page_ref` whose offer `offer_token_hash` names, and that
+/// offer, while its hold row is still that offer's.
+fn standing_offer_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    page_ref: &EntityId,
+    offer_token_hash: &[u8; 32],
+) -> crate::Result<Option<(WaitlistEntryRow, WaitlistOffer)>> {
+    for row in WAITLIST.iter_from(store, txn, page_ref.as_bytes())? {
+        let (key, entry) = row?;
+        let Some(offer) = entry.offer.clone() else {
+            continue;
+        };
+        if offer.offer_token_hash != *offer_token_hash {
+            continue;
+        }
+        if offer_hold(store, txn, &key, &entry, &offer)?.is_none() {
+            return Ok(None);
+        }
+        return Ok(Some((entry, offer)));
+    }
+    Ok(None)
 }
 
 /// The offer `offer_token_hash` names on `page_ref`, while its entry holds
@@ -648,25 +680,16 @@ pub(crate) fn standing_waitlist_offer_in_txn(
     page_ref: &EntityId,
     offer_token_hash: &[u8; 32],
 ) -> crate::Result<Option<StandingWaitlistOffer>> {
-    for row in WAITLIST.iter_from(store, txn, page_ref.as_bytes())? {
-        let (key, entry) = row?;
-        let Some(offer) = entry.offer else {
-            continue;
-        };
-        if offer.offer_token_hash != *offer_token_hash {
-            continue;
-        }
-        if offer_hold(store, txn, &key, &entry, offer)?.is_none() {
-            return Ok(None);
-        }
-        return Ok(Some(StandingWaitlistOffer {
-            event_type: entry.event_type,
-            contact_ref: entry.contact_ref,
-            slot: offer.slot,
-            offered_until: offer.offered_until,
-        }));
-    }
-    Ok(None)
+    Ok(
+        standing_offer_in_txn(store, txn, page_ref, offer_token_hash)?.map(|(entry, offer)| {
+            StandingWaitlistOffer {
+                event_type: entry.event_type,
+                contact_ref: entry.contact_ref,
+                slot: offer.slot,
+                offered_until: offer.offered_until,
+            }
+        }),
+    )
 }
 
 /// The contacts of the entries on `page_ref` that hold a standing offer.
@@ -682,7 +705,7 @@ pub(crate) fn offered_waitlist_contacts_in_txn(
     let mut contacts = Vec::new();
     for row in WAITLIST.iter_from(store, txn, page_ref.as_bytes())? {
         let (key, entry) = row?;
-        if let Some(offer) = entry.offer
+        if let Some(offer) = &entry.offer
             && offer_hold(store, txn, &key, &entry, offer)?.is_some()
         {
             contacts.push(entry.contact_ref);
@@ -752,10 +775,10 @@ fn offer_pass_in_writer(
             drop_entry(vault, wtxn, &key, &entry)?;
             continue;
         }
-        match entry.offer {
+        match entry.offer.clone() {
             None => waiting.push((key, entry)),
             Some(offer) => {
-                if !offer_stands(vault, &*wtxn, &key, &entry, offer, now_utc)? {
+                if !offer_stands(vault, &*wtxn, &key, &entry, &offer, now_utc)? {
                     // The waiter let the offer lapse: the entry ends, and the
                     // slot passes on.
                     slots.extend(drop_entry(vault, wtxn, &key, &entry)?);
@@ -817,6 +840,7 @@ fn offer_pass_in_writer(
             slot,
             offered_until,
             offer_token_hash: offer_token_digest(&offer_token),
+            offer_token: offer_token.clone(),
         });
         WAITLIST
             .put(&vault.store, wtxn, &key, &entry)
@@ -833,15 +857,16 @@ fn offer_pass_in_writer(
     Ok(offers)
 }
 
-/// The body ref one offer's send names: its page and its offer token.
+/// The body ref one offer's send names: its page and its offer token's
+/// digest.
 pub(in crate::booking) fn waitlist_offer_content_ref(
     page_ref: &EntityId,
-    offer_token: &OpaqueLifecycleToken,
+    offer_token_hash: &[u8; 32],
 ) -> String {
     format!(
         "{WAITLIST_OFFER_CONTENT_PREFIX}{}:{}",
         page_ref.to_hex(),
-        offer_token.0
+        hex_lower(offer_token_hash)
     )
 }
 
@@ -858,16 +883,12 @@ pub(in crate::booking) fn waitlist_offer_content_ref(
 ///
 /// Storage errors.
 pub fn waitlist_offer_text(vault: &Vault, content_ref: &str) -> crate::Result<Option<String>> {
-    let Some((page_ref, token)) = parse_waitlist_offer_content_ref(content_ref) else {
+    let Some((page_ref, offer_token_hash)) = parse_waitlist_offer_content_ref(content_ref) else {
         return Ok(None);
     };
     let rtxn = vault.store.env.read_txn()?;
-    let Some(offer) = standing_waitlist_offer_in_txn(
-        &vault.store,
-        &rtxn,
-        &page_ref,
-        &offer_token_digest(&token),
-    )?
+    let Some((entry, offer)) =
+        standing_offer_in_txn(&vault.store, &rtxn, &page_ref, &offer_token_hash)?
     else {
         return Ok(None);
     };
@@ -876,26 +897,24 @@ pub fn waitlist_offer_text(vault: &Vault, content_ref: &str) -> crate::Result<Op
          Slot: {start} to {end}\n\
          Held for you until: {until}\n\
          Claim it: {prefix}/{page}?waitlist_offer={token}\n",
-        event_type = offer.event_type.0,
+        event_type = entry.event_type.0,
         start = utc_text(offer.slot.start),
         end = utc_text(offer.slot.end),
         until = utc_text(offer.offered_until),
         prefix = crate::booking::PUBLIC_BOOKING_ROUTE_PREFIX,
         page = crate::booking::PublicBookingPageToken::for_page(page_ref).0,
-        token = token.0,
+        token = offer.offer_token.0,
     )))
 }
 
-/// The page and offer token a waitlist offer body ref names; `None` for any
-/// other ref.
-pub(crate) fn parse_waitlist_offer_content_ref(
-    content_ref: &str,
-) -> Option<(EntityId, OpaqueLifecycleToken)> {
-    let (page_hex, token) = content_ref
+/// The page and offer token digest a waitlist offer body ref names; `None`
+/// for any other ref.
+pub(crate) fn parse_waitlist_offer_content_ref(content_ref: &str) -> Option<(EntityId, [u8; 32])> {
+    let (page_hex, digest_hex) = content_ref
         .strip_prefix(WAITLIST_OFFER_CONTENT_PREFIX)?
         .split_once(':')?;
     let page_ref = EntityId::from_hex(page_hex).ok()?;
-    (!token.is_empty()).then(|| (page_ref, OpaqueLifecycleToken(token.to_owned())))
+    Some((page_ref, super::digest_from_hex(digest_hex)?))
 }
 
 /// An instant as RFC 3339 UTC to the second.

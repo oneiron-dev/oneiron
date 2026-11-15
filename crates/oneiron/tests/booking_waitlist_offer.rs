@@ -9,7 +9,9 @@
 //! own intent. The body names the event type, the slot, the end of the offer
 //! and a claim link whose offer token claims the slot as the entry token
 //! does. The ruling's red cases: a send to a contact holding no offer, a send
-//! to another page's waiter, and a second send of one offer are refused.
+//! to another page's waiter, and a second send of one offer are refused. The
+//! send names its offer by the offer token's digest, so the intent the ledger
+//! keeps holds no token a claim accepts (OPUS-SECREAD-A N1, 15 Nov).
 //!
 //! The lifecycle fixture is `tests/booking_waitlist.rs`'s; the publisher's
 //! email identity, policy manifest and owner binding are
@@ -64,6 +66,8 @@ const IDENTITY_SEED: u8 = 0x79;
 const POLICY_SEED: u8 = 0x7a;
 
 const OFFER_PREFIX: &str = "booking-waitlist-offer:";
+/// The query a claim link carries its offer token in.
+const CLAIM_QUERY: &str = "?waitlist_offer=";
 
 const fn at(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -465,7 +469,8 @@ impl Fixture {
             .collect()
     }
 
-    /// The one offer email sent to `address`: its intent and its offer token.
+    /// The one offer email sent to `address`: its intent, and the offer token
+    /// the claim link in its rendered body carries.
     fn offer_to(&self, address: &str) -> (OutboundIntent, OpaqueLifecycleToken) {
         let sent: Vec<Sent> = self
             .emails()
@@ -475,12 +480,15 @@ impl Fixture {
         assert_eq!(sent.len(), 1, "one offer email to {address}: {sent:?}");
         let intent = sent[0].intent.clone();
         let content_ref = intent.content_ref.clone().expect("an offer names its body");
-        let (_, token) = content_ref
-            .strip_prefix(OFFER_PREFIX)
-            .and_then(|rest| rest.split_once(':'))
-            .expect("an offer body ref names its page and offer token");
-        let token = OpaqueLifecycleToken(token.to_owned());
-        (intent, token)
+        let body = self
+            .vault
+            .outbound_content_text(&content_ref)
+            .expect("render the offer body")
+            .expect("a standing offer renders its body");
+        let (_, token) = body
+            .split_once(CLAIM_QUERY)
+            .expect("the offer body carries its claim link");
+        (intent, OpaqueLifecycleToken(token.trim_end().to_owned()))
     }
 
     /// Dispatches an `(email, send)` as the publisher, outside any booking
@@ -710,11 +718,16 @@ fn a_send_to_another_pages_waiter_is_refused() {
     fixture.cancel(&here, NOW + 60);
     fixture.cancel(&there, NOW + 61);
     let (yuki_offer, _) = fixture.offer_to("yuki@example.com");
-    let (kenji_offer, kenji_token) = fixture.offer_to("kenji@example.com");
+    let (kenji_offer, _) = fixture.offer_to("kenji@example.com");
     let before = fixture.emails().len();
 
-    // Kenji's offer token named under this page's grant.
-    let crossed = format!("{OFFER_PREFIX}{}:{}", page.to_hex(), kenji_token.0);
+    // Kenji's offer named under this page's grant.
+    let kenji_ref = kenji_offer.content_ref.clone().expect("body ref");
+    let (_, kenji_digest) = kenji_ref
+        .strip_prefix(OFFER_PREFIX)
+        .and_then(|rest| rest.split_once(':'))
+        .expect("an offer body ref names its page and its offer");
+    let crossed = format!("{OFFER_PREFIX}{}:{kenji_digest}", page.to_hex());
     let kenji_key = kenji_offer.idempotency_key.clone().expect("offer key");
     for intent in [
         fixture.forged(page, "kenji@example.com", &crossed, &kenji_key),
@@ -784,6 +797,29 @@ fn a_second_offer_send_to_the_same_entry_is_refused() {
         "a second send of one offer is refused"
     );
     assert_eq!(fixture.emails().len(), before, "one offer, one email");
+}
+
+/// An offer's send names its offer by the offer token's digest: the intent
+/// the ledger, its replay rows and its receipts keep holds no token a claim
+/// accepts (OPUS-SECREAD-A N1, 15 Nov). The token is only in the body.
+#[test]
+fn an_offer_send_holds_no_claim_token() {
+    let fixture = Fixture::open();
+    let page = test_id(PAGE_SEED);
+    let noon = slot_at(12);
+    let booking = fixture.book(page, OWEN_SEED, noon, NOW);
+    let entry_token = fixture.wait(page, YUKI_SEED, noon, NOW + 10);
+    fixture.cancel(&booking, NOW + 60);
+
+    let (intent, offer_token) = fixture.offer_to("yuki@example.com");
+    let frozen = format!("{intent:?}");
+    for token in [&offer_token, &entry_token] {
+        assert!(
+            !frozen.contains(&token.0),
+            "the offer's intent holds no claim token: {frozen}"
+        );
+    }
+    fixture.claimed(page, YUKI_SEED, &offer_token, NOW + 120);
 }
 
 /// A send that fails never fails the cancel that freed the slot: the offer
