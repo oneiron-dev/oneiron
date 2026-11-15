@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/witness/wake_outcome.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -40,8 +41,11 @@ impl TurnProgramWakeOutcome {
 
 /// Why a turn's program wake was not recorded. It names the class of cause
 /// only; the storage error and the caller's authority stay out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("unpersisted.wake.reason")]
 pub enum UnpersistedWakeReason {
     /// The turn's caller seals no authority a program could run under (an
     /// operator root acting as nobody, a code run's call, a machine-signed
@@ -49,15 +53,4 @@ pub enum UnpersistedWakeReason {
     NoAuthority,
     /// Reading the armed programs or writing the wake failed in storage.
     StorageFailure,
-}
-
-impl UnpersistedWakeReason {
-    /// The reason's wire name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::NoAuthority => "no_authority",
-            Self::StorageFailure => "storage_failure",
-        }
-    }
 }
