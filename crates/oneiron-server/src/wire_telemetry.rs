@@ -21,6 +21,12 @@ const LIMIT_QUESTION: &str = "wire:limit-question:v1:";
 /// A row keeps one question for each window of this many seconds, and counts
 /// every crossing in the window in it.
 const LIMIT_QUESTION_WINDOW_SECS: u64 = 60;
+/// How many counts may wait on the blocking pool at once
+/// (`record_on_blocking_pool`). A call past it waits for a count to end
+/// before it hands its own over, and that wait ends with the call, so calls
+/// dropped while the counter is held leave at most this many counts behind
+/// (FIX [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+pub const MAX_PENDING_COUNTS: usize = 64;
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireWindowReceipt {
     pub started_at: u64,

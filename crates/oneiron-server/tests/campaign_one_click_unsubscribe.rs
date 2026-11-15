@@ -26,7 +26,7 @@ use oneiron::{
     VaultConfig,
 };
 use oneiron_server::test_doors::one_click_wire_counter::while_wire_counter_held;
-use oneiron_server::wire_telemetry::{WireTelemetry, WireThresholds};
+use oneiron_server::wire_telemetry::{MAX_PENDING_COUNTS, WireTelemetry, WireThresholds};
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
@@ -360,4 +360,76 @@ async fn call_while_counter_held() -> bool {
         "the call answers once the lock is free"
     );
     holder.join().unwrap()
+}
+
+/// Calls to the door dropped while the wire counter is held, as a stalled
+/// window persist holds it, leave at most `MAX_PENDING_COUNTS` counts
+/// behind: a call past the bound waits for a count to end before it hands
+/// its own to the blocking pool, and that wait ends with the call (FIX
+/// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+#[test]
+fn dropped_calls_leave_at_most_the_pending_count_bound_behind() {
+    let run = std::thread::Builder::new()
+        .name("one-click-dropped-calls".into())
+        .stack_size(ENGINE_THREAD_STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(drop_calls_while_counter_held())
+        })
+        .unwrap();
+    let counted = run
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    assert_eq!(
+        counted,
+        u64::try_from(MAX_PENDING_COUNTS).unwrap(),
+        "only the counts handed over before the calls dropped land"
+    );
+}
+
+/// How many calls to the door the kept window counts after more calls than
+/// the bound were dropped while the wire counter was held.
+async fn drop_calls_while_counter_held() -> u64 {
+    let dir = tempfile::tempdir().unwrap();
+    let (vault, server) = serve(&dir);
+    let app = build_app(Arc::clone(&server));
+    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn({
+        let server = Arc::clone(&server);
+        move || {
+            while_wire_counter_held(&server, move || {
+                held_tx.send(()).unwrap();
+                let _ = release_rx.recv_timeout(Duration::from_secs(30));
+            });
+        }
+    });
+    held_rx.recv().unwrap();
+    let calls: Vec<_> = (0..MAX_PENDING_COUNTS + 16)
+        .map(|_| {
+            let app = app.clone();
+            tokio::spawn(async move { call(&app, "POST", UNKNOWN_LINK, ONE_CLICK_BODY).await })
+        })
+        .collect();
+    // Every call runs to its count, or to its wait for a turn, while this
+    // task sleeps (a slow test host gets room); then the callers go away.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    for pending_call in &calls {
+        pending_call.abort();
+    }
+    for pending_call in calls {
+        let _ = pending_call.await;
+    }
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    drop(app);
+    drop(server);
+    kept_window(vault)
+        .by_verb
+        .get(&format!("POST {ONE_CLICK_ROUTE}"))
+        .copied()
+        .unwrap_or(0)
 }
