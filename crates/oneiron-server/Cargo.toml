@@ -44,6 +44,7 @@ heed.workspace = true
 arc-swap.workspace = true
 base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "microvm-firecracker"] }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 # The sandbox backends (core split 5b.1): the QuickJS runtime, Firecracker and the OCI container.
 oneiron-agent-runtime = { version = "0.1.0", path = "../oneiron-agent-runtime", features = ["microvm-firecracker"] }
 oneiron-mail-pack = { version = "0.1.0", path = "../oneiron-mail-pack" }

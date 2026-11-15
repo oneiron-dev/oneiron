@@ -8969,6 +8969,7 @@ dependencies = [
  "objc2-foundation",
  "oneiron",
  "oneiron-agent-runtime",
+ "oneiron-base",
  "oneiron-broker",
  "oneiron-browser",
  "oneiron-code-check",
