@@ -421,6 +421,9 @@ fn person_is_live_with(
         && !crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, id)?.deleted)
 }
 
+/// The pinned Gate `actor_class` for owner-authored consent decisions.
+const CONSENT_ACTOR_CLASS: &str = "human";
+
 // ---------------------------------------------------------------------------
 // The Vault doors
 // ---------------------------------------------------------------------------
