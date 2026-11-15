@@ -256,62 +256,182 @@ pub(crate) fn row_phone_marked(raw: &[u8]) -> bool {
         )
 }
 
-/// The longest chain of carried words [`words_from_phone_thread_in`] follows.
-#[cfg(feature = "sync")]
-const PHONE_WORDS_DEPTH: usize = 4;
-
-/// Whether the words of the row `raw` of `id` came, in whole or in part, from
-/// a phone thread's row (VOICE-PHONE-AGENT-REACH R2 review F2): a source
-/// `scope_summary::word_sources_in` names (a scope SUMMARY's, the TURN that
-/// copies one, a merge header's) is one by its own bytes
-/// ([`row_phone_marked`]) or carries one's words in turn. Fail closed: a
-/// chain deeper than [`PHONE_WORDS_DEPTH`] counts as one. A row with no
-/// readable header, words of its own, or sources that do not resolve here
-/// names none; the gates beside this one judge those.
+/// Whether the words of the row `id` came, in whole or in part, from a phone
+/// thread's row, as a restricted lane judges it (VOICE-PHONE-AGENT-REACH R1
+/// review C-F1, C-F2). `carried` (the bytes a lane would send, when they may
+/// differ from the stored row) and the row stored at `id` are each judged,
+/// so a carrier that the stored row rejected never stands in for it; so is
+/// every row the words of either came from, to the end of that lineage. A
+/// row is a phone row by its own bytes ([`row_phone_marked`]). The lineage
+/// is the source-audience walk's (a MESSAGE's TURN, a TURN's MESSAGEs, every
+/// `DerivedFrom`, a summary's or merge header's word sources, a scope
+/// summary's covers, a CLAIM's subject and every support), the rows the
+/// source-dependency index registers (a promoted CLAIM's cited MESSAGEs) and
+/// the summary a reply TURN or a merge header carries. Fail closed: carried
+/// bytes with no readable header, word sources that do not resolve, an
+/// association that does not decode, and a named word source not held here
+/// each count as phone words. An edge or a dependency to a row gone from
+/// this vault carries no words to judge, as in the source-audience walk.
 ///
 /// # Errors
 ///
 /// Storage failures.
 #[cfg(feature = "sync")]
-pub(crate) fn words_from_phone_thread_in(
+pub(crate) fn phone_words_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-    raw: &[u8],
+    carried: Option<&[u8]>,
 ) -> Result<bool> {
-    words_from_phone_thread_at(vault, txn, id, raw, 0)
+    PhoneLineagePass::default().phone_words(vault, txn, id, carried)
+}
+
+/// One restricted-lane pass of [`phone_words_in`] over the one snapshot
+/// every ask reads: a stored row whose whole lineage holds no phone row
+/// answers at once for every later ask whose lineage reaches it.
+#[cfg(feature = "sync")]
+#[derive(Debug, Default)]
+pub(crate) struct PhoneLineagePass {
+    /// Stored rows whose whole lineage holds no phone row, as read so far.
+    clean: std::collections::BTreeSet<EntityId>,
 }
 
 #[cfg(feature = "sync")]
-fn words_from_phone_thread_at(
+impl PhoneLineagePass {
+    /// [`phone_words_in`], in this pass. Every ask of one pass reads the
+    /// same snapshot `txn`.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn phone_words(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        carried: Option<&[u8]>,
+    ) -> Result<bool> {
+        let mut walk = LineageWalk::default();
+        // Carried bytes equal to the stored row's are judged with it below.
+        if let Some(bytes) = carried
+            && vault.get_raw_in(txn, id)?.as_deref() != Some(bytes)
+        {
+            let Some(lineage) = row_lineage(vault, txn, id, bytes)? else {
+                return Ok(true);
+            };
+            if walk.push_all(lineage) {
+                return Ok(true);
+            }
+        }
+        walk.push(*id, false);
+        let mut visited = Vec::new();
+        while let Some(row) = walk.pending.pop() {
+            if self.clean.contains(&row) {
+                continue;
+            }
+            let Some(raw) = vault.get_raw_in(txn, &row)? else {
+                if walk.required.contains(&row) {
+                    return Ok(true);
+                }
+                walk.missing.insert(row);
+                continue;
+            };
+            let Some(lineage) = row_lineage(vault, txn, &row, &raw)? else {
+                return Ok(true);
+            };
+            if walk.push_all(lineage) {
+                return Ok(true);
+            }
+            visited.push(row);
+        }
+        // Every row read here had its whole lineage read, and none of it was
+        // a phone row.
+        self.clean.extend(visited);
+        Ok(false)
+    }
+}
+
+/// The state of one [`PhoneLineagePass::phone_words`] ask.
+#[cfg(feature = "sync")]
+#[derive(Default)]
+struct LineageWalk {
+    seen: std::collections::BTreeSet<EntityId>,
+    pending: Vec<EntityId>,
+    /// Rows a word-source decoder named: each must be held here.
+    required: std::collections::BTreeSet<EntityId>,
+    /// Rows found gone from this vault.
+    missing: std::collections::BTreeSet<EntityId>,
+}
+
+#[cfg(feature = "sync")]
+impl LineageWalk {
+    /// Queues `row` once; true when it must be held here and is not.
+    fn push(&mut self, row: EntityId, required: bool) -> bool {
+        if required {
+            self.required.insert(row);
+            if self.missing.contains(&row) {
+                return true;
+            }
+        }
+        if self.seen.insert(row) {
+            self.pending.push(row);
+        }
+        false
+    }
+
+    /// Queues every row of `lineage`; true when a named row is gone.
+    fn push_all(&mut self, lineage: RowLineage) -> bool {
+        let mut gone = false;
+        for row in lineage.named {
+            gone |= self.push(row, true);
+        }
+        for row in lineage.recorded {
+            gone |= self.push(row, false);
+        }
+        gone
+    }
+}
+
+/// What the words of one row came from, as [`phone_words_in`] reads them.
+#[cfg(feature = "sync")]
+struct RowLineage {
+    /// The rows `scope_summary::word_sources_in` names: each must be held.
+    named: Vec<EntityId>,
+    /// Every other row: the source-audience walk's, the source-dependency
+    /// index's, and a carried summary.
+    recorded: Vec<EntityId>,
+}
+
+/// The lineage of the row `raw` of `id`; `None` when the row is a phone row
+/// by its own bytes, or its lineage does not read (fail closed).
+#[cfg(feature = "sync")]
+fn row_lineage(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
-    depth: usize,
-) -> Result<bool> {
-    if crate::batch::EntityMetadataHeader::parse(raw).is_none() {
-        return Ok(false);
+) -> Result<Option<RowLineage>> {
+    if crate::batch::EntityMetadataHeader::parse(raw).is_none() || row_phone_marked(raw) {
+        return Ok(None);
     }
-    let sources = match crate::scope_summary::word_sources_in(vault, txn, id, raw) {
+    let named = match crate::scope_summary::word_sources_in(vault, txn, id, raw) {
+        Ok(crate::scope_summary::WordSources::Own) => Vec::new(),
         Ok(crate::scope_summary::WordSources::From(sources)) => sources,
-        Ok(_) | Err(crate::error::Error::InvalidClaimBody(_)) => return Ok(false),
+        Ok(crate::scope_summary::WordSources::Unresolved)
+        | Err(crate::error::Error::InvalidClaimBody(_) | crate::error::Error::Record(_)) => {
+            return Ok(None);
+        }
         Err(error) => return Err(error),
     };
-    if depth >= PHONE_WORDS_DEPTH {
-        return Ok(true);
-    }
-    for source in &sources {
-        let Some(source_raw) = vault.get_raw_in(txn, source)? else {
-            continue;
-        };
-        if row_phone_marked(&source_raw)
-            || words_from_phone_thread_at(vault, txn, source, &source_raw, depth + 1)?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let Ok(carried) = crate::scope_summary::carried_summary(raw) else {
+        return Ok(None);
+    };
+    let (every, supports) = vault.lineage_word_sources_in(txn, *id, raw)?;
+    let mut recorded = every;
+    recorded.extend(supports);
+    recorded.extend(carried);
+    recorded.extend(crate::ports::dependency_sources_in(&vault.store, txn, id)?);
+    Ok(Some(RowLineage { named, recorded }))
 }
 
 /// A phone thread. Parts: the line agent, then the caller's number as kept.
