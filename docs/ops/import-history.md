@@ -131,7 +131,12 @@ object (`name`, `members`, `matched`, `contacts`, `owner_only`) and, on each
 conversation, `sharing` with the count of persons that read it (`readers`) and
 of contacts (`unmapped`). A later import of the same workspace with a longer
 map gives the newly mapped members their conversations, and one that maps a
-member to `null` takes their read away. `--workspace <name>` names the
+member to `null` takes their read away. So does a later export that no longer
+shares a conversation with a member, even one that holds none of its
+messages: every conversation the export lists sets its readers again. A map
+that moves a member to or from `"owner"` lands that member's words again, as a
+revision under their new author. Each message's id carries its workspace, so
+two workspaces never land as one. `--workspace <name>` names the
 workspace in the report; by default it is the export's file or folder name up
 to " Slack export". The generic ingest registry refuses a Slack export: only
 this command keeps its sharing.

@@ -231,7 +231,7 @@ fn oneiron_import_slack_lands_each_channel_bound_to_its_mapped_members() -> Test
     );
 
     let vault = home.open()?;
-    for row in rows(&vault, "C1:1761955400.000100")? {
+    for row in rows(&vault, "T1:C1:1761955400.000100")? {
         assert!(
             reads(&vault, row, &[home.yuki])?,
             "yuki reads general's {row:?}"
@@ -249,7 +249,7 @@ fn oneiron_import_slack_lands_each_channel_bound_to_its_mapped_members() -> Test
             "a person never in the workspace reads nothing of {row:?}"
         );
     }
-    for row in rows(&vault, "G1:1761955600.000100")? {
+    for row in rows(&vault, "T1:G1:1761955600.000100")? {
         assert!(
             reads(&vault, row, &[home.owner])?,
             "the owner reads board's {row:?}"
@@ -333,7 +333,7 @@ fn a_workspace_with_no_member_mapped_reads_to_the_owner_alone() -> TestResult {
         stderr(&output)
     );
     let vault = home.open()?;
-    for native_id in ["C1:1761955300.000100", "G1:1761955600.000100"] {
+    for native_id in ["T1:C1:1761955300.000100", "T1:G1:1761955600.000100"] {
         for row in rows(&vault, native_id)? {
             assert!(
                 reads(&vault, row, &[home.owner])?,
