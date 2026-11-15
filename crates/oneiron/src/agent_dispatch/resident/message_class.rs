@@ -477,3 +477,29 @@ impl AgentDispatcher<'_> {
         )
     }
 }
+
+/// The names door (`test_doors::register_names`): every message class and sender kind with
+/// the name its table writes. Not API.
+#[cfg(oneiron_test_support)]
+impl crate::test_doors::register_names::PrivateNames {
+    /// Every `MessageClass`, as `MessageClass::ALL` lists them, with its name.
+    pub fn message_class() -> Vec<crate::test_doors::register_names::NameRow> {
+        MessageClass::ALL
+            .into_iter()
+            .map(|class| crate::test_doors::register_names::NameRow::of(class, class.as_str()))
+            .collect()
+    }
+
+    /// Every `SenderKind` with its name.
+    pub fn sender_kind() -> Vec<crate::test_doors::register_names::NameRow> {
+        [
+            SenderKind::VaultPerson,
+            SenderKind::Person,
+            SenderKind::Agent,
+            SenderKind::Unknown,
+        ]
+        .into_iter()
+        .map(|kind| crate::test_doors::register_names::NameRow::of(kind, kind.as_str()))
+        .collect()
+    }
+}
