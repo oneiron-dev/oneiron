@@ -27,6 +27,9 @@
 //! The door tests at the end run a real vault whose serving install carries
 //! the owner's acts: an answer it cannot prove is stored and held, and the
 //! owner's answer on an install that holds his key stands and ends the ask.
+//! A choice door refuses a choice it cannot prove, storing nothing, only
+//! where the vault holds an owner key and this install holds none (ruling
+//! CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B and the lead's amendment).
 
 #![cfg(oneiron_test_support)]
 
@@ -45,9 +48,15 @@ use oneiron::authority::{
     machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::dreamer_runner::{
+    ConsolidationHomePickReceipt, ConsolidationHomePickRequest, consolidation_home_pick_as,
+};
+use oneiron::error::OWNER_KEY_REQUIRED;
+use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryResult};
 use oneiron::test_doors::conversation_training_fold::leaves_out;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::{
     ConversationTrainingSet, ConversationTrainingVaultSet, HomeNodePick,
@@ -1455,6 +1464,34 @@ impl ServedVault {
             self.install(),
         )
     }
+
+    /// How many authority log rows the fold holds valid.
+    fn stored_rows(&self) -> usize {
+        self.vault
+            .authority_fold()
+            .expect("authority fold")
+            .valid_entries
+            .len()
+    }
+
+    /// The owner's home pick through this install, as the facade's
+    /// `vault.consolidation.home.pick` makes it.
+    fn pick_home(&self, node: u64) -> MemoryResult<ConsolidationHomePickReceipt> {
+        consolidation_home_pick_as(
+            &self.vault,
+            &self.owner,
+            ActSurface::ThisInstall,
+            ConsolidationHomePickRequest {
+                node_id: Some(node.to_string()),
+                seen: None,
+            },
+        )
+    }
+
+    /// The node the vault's home pick names.
+    fn home_pick(&self) -> Option<u64> {
+        home_pick_in_force(&self.vault.authority_fold().expect("authority fold"))
+    }
 }
 
 /// The answer door on an install that holds no owner key: the owner's
@@ -1501,4 +1538,72 @@ fn the_owners_answer_on_an_install_that_holds_his_key_stands_and_ends_the_ask() 
         BTreeSet::new(),
         "the owner's answer ends the ask"
     );
+}
+
+/// The amendment's first guard, at the home pick door: a vault with no owner
+/// key enrolled keeps today's doors, also from an install that is not the
+/// owner's machine. Nothing there could ever prove the choice.
+#[test]
+fn the_home_pick_door_lands_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    served
+        .pick_home(PICKED_NODE)
+        .expect("the pick lands as it does today");
+    assert_eq!(served.home_pick(), Some(PICKED_NODE));
+}
+
+/// The amendment's second guard, at the home pick door: once the vault holds
+/// an owner key that this install does not hold, the same door refuses with
+/// the owner-key reason and stores no row; the prior pick stays in force.
+#[test]
+fn the_home_pick_door_refuses_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served
+        .pick_home(PICKED_NODE)
+        .expect("guard: the first pick");
+    served.enrol_owner_key();
+    release_owner_keys(&served.vault);
+    let rows = served.stored_rows();
+    let refusal = served
+        .pick_home(LAPTOPS_PICKED_NODE)
+        .err()
+        .expect("an unprovable pick is refused");
+    assert_eq!(refusal.code, MEMORY_CODE_INVALID_STATE, "{refusal:?}");
+    assert_eq!(
+        refusal.reason_codes,
+        [OWNER_KEY_REQUIRED],
+        "the refusal names its stable reason code: {refusal:?}"
+    );
+    assert_eq!(
+        refusal.message,
+        "This machine is not the owner's and holds no owner key: decide it on an owner device."
+    );
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+    assert_eq!(
+        served.home_pick(),
+        Some(PICKED_NODE),
+        "the prior pick stays in force"
+    );
+    assert_eq!(
+        served
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .waiting_owner_choices(),
+        &BTreeSet::new(),
+        "nothing waits: the door stored nothing"
+    );
+}
+
+/// The same pick from an install that holds the owner's key lands: the door
+/// adds his proof.
+#[test]
+fn the_home_pick_door_lands_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.enrol_owner_key();
+    served
+        .pick_home(PICKED_NODE)
+        .expect("the proven pick lands");
+    assert_eq!(served.home_pick(), Some(PICKED_NODE));
 }
