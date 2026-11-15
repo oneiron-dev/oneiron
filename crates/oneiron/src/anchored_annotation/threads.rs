@@ -38,6 +38,25 @@ const BRIEF_ASSIGN_EDGE_WEIGHT: f32 = 1.0;
 /// a cap: the walk reads every page.
 const BRIEF_PAGE: usize = 256;
 
+/// The sub-session an approved plan's run hangs off its approving turn,
+/// recorded on the anchored review thread the owner approved from
+/// (agent-runtime-v1.md:342).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ThreadSubSession {
+    /// The plan-doc NOTE the thread is anchored on.
+    pub(crate) artifact_id: EntityId,
+    /// The review thread that records the run's sub-session.
+    pub(crate) thread_id: EntityId,
+    /// The SESSION the run hangs off the approving turn.
+    pub(crate) session: EntityId,
+    /// The writer the new head is stamped with.
+    pub(crate) actor: WriteActor,
+    /// When the approval happened.
+    pub(crate) occurred: TimeRange,
+    /// When the approval was learned.
+    pub(crate) learned_at: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Vault surface
 // ---------------------------------------------------------------------------
@@ -79,6 +98,7 @@ impl Vault {
             locator: anchor.locator.clone(),
             drift: None,
             body: if on_note { anchor.body.clone() } else { None },
+            sub_session: None,
         };
         let head_envelope = annotation_envelope(author, "open_thread")?;
         let comment_envelope = annotation_envelope(author, "comment")?;
@@ -126,6 +146,7 @@ impl Vault {
             state: ThreadState::Open,
             drift: None,
             head_claim_id,
+            sub_session_id: None,
         })
     }
 
@@ -221,6 +242,7 @@ impl Vault {
                 locator: thread.anchor.locator.clone(),
                 drift: thread.drift,
                 body: thread.anchor.body.clone(),
+                sub_session: thread.sub_session_id,
             };
             let new_head_id = self.write_thread_head_in_txn(
                 wtxn,
@@ -239,8 +261,49 @@ impl Vault {
                 state,
                 drift: thread.drift,
                 head_claim_id: new_head_id,
+                sub_session_id: thread.sub_session_id,
             })
         })
+    }
+
+    /// Records the sub-session an approved plan's run hangs off its
+    /// approving turn on the review thread's head, keeping its state
+    /// (agent-runtime-v1.md:342). A thread that already records `session`
+    /// is left alone, so an approval answered again writes nothing new.
+    ///
+    /// The new head write and the old head supersession share the caller's
+    /// transaction, as [`Self::set_annotation_thread_state`] does.
+    pub(crate) fn record_thread_sub_session_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: ThreadSubSession,
+    ) -> Result<()> {
+        let thread = self
+            .annotation_thread_in_txn(wtxn, &record.artifact_id, &record.thread_id, false)?
+            .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
+        if thread.sub_session_id == Some(record.session) {
+            return Ok(());
+        }
+        let head = ThreadHead {
+            thread_id: record.thread_id,
+            origin_version: thread.origin_version,
+            anchor_version: thread.anchor.version,
+            state: thread.state,
+            locator: thread.anchor.locator.clone(),
+            drift: thread.drift,
+            body: thread.anchor.body.clone(),
+            sub_session: Some(record.session),
+        };
+        let new_head_id = self.write_thread_head_in_txn(
+            wtxn,
+            &record.artifact_id,
+            &head,
+            record.actor,
+            "record_sub_session",
+            record.occurred,
+            record.learned_at,
+        )?;
+        self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, record.learned_at)
     }
 
     /// Reads a single thread head, or `None` if no live thread with that id is
@@ -627,7 +690,7 @@ impl Vault {
         )
     }
 
-    pub(super) fn annotation_thread_in_txn(
+    pub(crate) fn annotation_thread_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         artifact_id: &EntityId,
@@ -792,6 +855,7 @@ pub(super) fn thread_from_head(
         state: head.state,
         drift: head.drift,
         head_claim_id,
+        sub_session_id: head.sub_session,
     }
 }
 

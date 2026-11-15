@@ -9,132 +9,15 @@ pub(super) const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 /// Longest accepted caller-supplied opaque session ref, in bytes.
 pub(super) const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
 
-/// Current write-routing mode of an off-record session.
-///
-/// The mode says where NEW writes land. It never moves rows: flipping to
-/// [`OffRecordMode::OnRecord`] seals the overlay so later writes go to base,
-/// and the room's earlier turns stay overlay-only until promote or close.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OffRecordMode {
-    OffRecord,
-    OnRecord,
-    /// No transcript, derived memory, telemetry, or receipts are retained.
-    /// Entry is explicit; this mode cannot be changed or promoted.
-    Anonymous,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::off_record::lifecycle::types::{
+    OffRecordBackendClass, OffRecordMode, OffRecordNoticeAct,
+};
 
-impl OffRecordMode {
-    pub(crate) const fn write_target(self) -> crate::session_overlay::RouteTarget {
-        match self {
-            Self::OffRecord => crate::session_overlay::RouteTarget::Overlay,
-            Self::OnRecord => crate::session_overlay::RouteTarget::Base,
-            Self::Anonymous => crate::session_overlay::RouteTarget::Discard,
-        }
-    }
-}
-
-/// Backend class the disclosure-honesty line is relative to (OF-326
-/// EF-316-style honesty caveat): evaporation is backend-relative.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OffRecordBackendClass {
-    /// Local inference: real evaporation — nothing leaves the device and
-    /// nothing survives close.
-    Local,
-    /// Cloud or BYO-key inference: this engine persists nothing at close,
-    /// but provider retention applies to what transited the provider API.
-    RemoteProvider,
-}
-
-/// Read-only projection of one in-process off-record session record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OffRecordSessionRecord {
-    pub version: u8,
-    pub session_ref: String,
-    /// This live instance's existing overlay-shell identity, distinct when
-    /// the same session ref is entered again after close. Not authority.
-    pub instance_ref: crate::EntityId,
-    pub mode: OffRecordMode,
-    pub backend: OffRecordBackendClass,
-    pub entered_at: u64,
-    /// Turns promoted into base; close keeps them.
-    pub promoted_turns: Vec<[u8; 16]>,
-    /// Set by the first close transaction. While `true`, every mutator
-    /// (promote, mode flip, emit-receipt record) rejects with
-    /// [`OffRecordError::OffRecordSessionClosing`](crate::error::OffRecordError::OffRecordSessionClosing) — close drains leases and drops the
-    /// overlay across several steps, and a mutation landing in that window
-    /// would write into a room that is already going away.
-    #[serde(default)]
-    pub closing: bool,
-    /// The room (a conversation) this stretch runs in, when a participant
-    /// started it there. `None` is the stretch a vault's owner entered alone:
-    /// a 1:1 with their own companion, where no other person is present.
-    #[serde(default)]
-    pub room: Option<[u8; 16]>,
-    /// The person who started the stretch in its room.
-    #[serde(default)]
-    pub started_by: Option<[u8; 16]>,
-    /// The actor who entered a stretch alone, when the door that entered it
-    /// named one (`OffRecordSessionVault::enter_anonymous_as`): the one
-    /// caller an anonymous 1:1's no-record exception serves
-    /// (`Vault::off_record_session_is_anonymous_for`). `None` on a stretch
-    /// in a room, whose roster decides, and on one entered with no actor.
-    #[serde(default)]
-    pub entered_by: Option<[u8; 16]>,
-    /// The room's timeline of saves, exports and save suggestions (ARCH-0052
-    /// D5, the notice model), oldest first. Only a stretch in a room has
-    /// one: a 1:1 posts no notice. It names who and what, never the content,
-    /// and it evaporates with the room.
-    #[serde(default)]
-    pub notices: Vec<OffRecordNotice>,
-    /// Agents' save suggestions waiting for a holder of this vault's write
-    /// grant to confirm or decline them (ARCH-0052 #d5-save-grant), oldest
-    /// first, one per agent. A save answers every one of them.
-    #[serde(default)]
-    pub suggestions: Vec<OffRecordSaveSuggestion>,
-}
-
-/// What a person did with the talk, as the room hears of it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OffRecordNoticeAct {
-    /// Saved the whole talk so far into their own vault.
-    SavedTalk,
-    /// Saved one turn into their own vault.
-    SavedTurn,
-    /// Saved a selected scratch artifact and its document into this vault.
-    SavedArtifact,
-    /// Put the stretch on record: later turns are saved as they land.
-    SavingFromHere,
-    /// Saving stopped: the person who put the stretch on record left its
-    /// room, or lost this vault or their proof. Later turns stay off record.
-    SavingStopped,
-    /// Took an export file of the talk.
-    Exported,
-    /// An agent suggested a save. Nothing was saved.
-    SaveSuggested,
-    /// A holder of this vault's write grant declined the waiting save
-    /// suggestions. Nothing was saved.
-    SaveDeclined,
-}
-
-/// One notice in the room's timeline: who did what, and when.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OffRecordNotice {
-    pub act: OffRecordNoticeAct,
-    /// The person or agent that acted.
-    pub by: [u8; 16],
-    pub at: u64,
-}
-
-/// An agent's save suggestion, waiting for a holder's answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OffRecordSaveSuggestion {
-    /// The agent that suggested it.
-    pub by: [u8; 16],
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::off_record::lifecycle::types::{
+    OffRecordNotice, OffRecordSaveSuggestion, OffRecordSessionRecord,
+};
 
 /// A copy of the talk, as one person may keep it (ARCH-0052 D5): every
 /// turn in the room they were a member for, saved or not, in the order the

@@ -489,9 +489,9 @@ func closedVocabulariesCompile() {
             break
         }
     }
-    for author in [WitnessAuthor.user, .companion, .system] {
+    for author in [WitnessAuthor.user, .companion, .system, .counterparty] {
         switch author {
-        case .user, .companion, .system:
+        case .user, .companion, .system, .counterparty:
             break
         }
     }

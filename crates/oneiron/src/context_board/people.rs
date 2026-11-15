@@ -9,9 +9,7 @@
 //! reader's cached roster does not hold carries its name inline.
 
 mod prepared;
-pub(crate) use prepared::{
-    PreparedAgentPerson, prepare_agent_person_after_puts_in_txn, prepare_agent_person_in_txn,
-};
+pub(crate) use prepared::{PreparedAgentPerson, prepare_agent_person_after_puts_in_txn};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -76,6 +74,64 @@ pub struct PersonRow {
     pub about: Option<String>,
 }
 
+/// What a read knows of the actor behind one of its rows: a person the
+/// reader reads, human or agent, or no one it can name.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorAttributionKind {
+    Human,
+    Agent,
+    /// No person this reader reads: a PERSON or definition outside the
+    /// reader's read, an erased or archived person, an upkeep agent, or a
+    /// writer that is no person.
+    Unknown,
+}
+
+impl From<PersonKind> for ActorAttributionKind {
+    fn from(kind: PersonKind) -> Self {
+        match kind {
+            PersonKind::Human => Self::Human,
+            PersonKind::Agent => Self::Agent,
+        }
+    }
+}
+
+/// Who made one change, as one reader may name them (FIX [UI-GATE-PREVIEW]
+/// phase 3; GENUI-WIRE-GAPS section 4 item 2: "by eiri"). For an actor that
+/// speaks as a person the reader reads, that person's PERSON id, `pr` handle,
+/// name and kind exactly as `vault.people.list` shows them to this reader,
+/// the name under the same disclosure rule; for any other actor `unknown`
+/// and nothing else. The row keeps the actor's own ref either way, so a
+/// change by an actor later erased still says who it was, and the person an
+/// agent acts for stays its own field on the row: this names the actor alone.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ActorAttribution {
+    pub kind: ActorAttributionKind,
+    /// The PERSON entity the actor speaks as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<String>,
+    /// `pr<n>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl ActorAttribution {
+    /// An actor this reader cannot name.
+    #[must_use]
+    pub const fn unknown() -> Self {
+        Self {
+            kind: ActorAttributionKind::Unknown,
+            person: None,
+            handle: None,
+            name: None,
+        }
+    }
+}
+
 impl PersonRow {
     /// The TOON row `pr<n>: name,kind,role,about`.
     #[must_use]
@@ -109,6 +165,28 @@ impl People {
     pub fn load(
         vault: &Vault,
         at: u64,
+        admit: &mut dyn FnMut(EntityId) -> Result<bool>,
+    ) -> Result<Self> {
+        Self::load_selected(vault, at, None, admit)
+    }
+
+    /// [`Self::load`] for the persons `actors` speak as alone: a PERSON id
+    /// in `actors`, or the PERSON a definition in `actors` is anchored to.
+    /// Each row is the one [`Self::load`] builds; no other PERSON's body is
+    /// read.
+    pub fn load_named(
+        vault: &Vault,
+        at: u64,
+        actors: &BTreeSet<EntityId>,
+        admit: &mut dyn FnMut(EntityId) -> Result<bool>,
+    ) -> Result<Self> {
+        Self::load_selected(vault, at, Some(actors), admit)
+    }
+
+    fn load_selected(
+        vault: &Vault,
+        at: u64,
+        actors: Option<&BTreeSet<EntityId>>,
         admit: &mut dyn FnMut(EntityId) -> Result<bool>,
     ) -> Result<Self> {
         let agents = vault.entities_by_type(ENTITY_TYPE_AGENT_DEF)?;
@@ -171,6 +249,14 @@ impl People {
         // census is taken first and the reader's read runs after it closes.
         let mut found = Vec::new();
         for person in persons {
+            if let Some(actors) = actors
+                && !actors.contains(&person)
+                && !agent_of
+                    .get(&person)
+                    .is_some_and(|(agent, _)| actors.contains(agent))
+            {
+                continue;
+            }
             if hidden.contains(&person) && !agent_of.contains_key(&person) {
                 continue;
             }
@@ -307,6 +393,19 @@ impl People {
         self.index.get(&id).map(|at| &self.rows[*at])
     }
 
+    /// How this roster names `actor` to its reader: the person it speaks as,
+    /// or [`ActorAttribution::unknown`].
+    #[must_use]
+    pub fn attribution(&self, actor: EntityId) -> ActorAttribution {
+        self.get(actor)
+            .map_or_else(ActorAttribution::unknown, |row| ActorAttribution {
+                kind: row.kind.into(),
+                person: Some(row.person.to_hex()),
+                handle: Some(row.handle.clone()),
+                name: Some(row.name.clone()),
+            })
+    }
+
     /// The person a `pr<n>` handle names.
     #[must_use]
     pub fn by_handle(&self, handle: &str) -> Option<&PersonRow> {
@@ -400,35 +499,8 @@ impl People {
     }
 }
 
-/// The `people` block one vault contributes to the cached prefix, and the
-/// persons it made resident.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PeoplePrefix {
-    pub vault: String,
-    pub rows: Vec<String>,
-    pub more: usize,
-    pub resident: BTreeSet<EntityId>,
-}
-
-impl PeoplePrefix {
-    #[must_use]
-    pub fn render(&self) -> String {
-        let mut out = format!("<people vault={}>", self.vault);
-        for row in &self.rows {
-            out.push('\n');
-            out.push_str(row);
-        }
-        // The overflow points at the verb that pages the rest (ARCH-0067).
-        if self.more > 0 {
-            out.push_str(&format!(
-                "\nmore: +{} \u{b7} vault.people.list({}, page)",
-                self.more, self.vault
-            ));
-        }
-        out.push_str("\n</people>");
-        out
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::people::PeoplePrefix;
 
 /// How the live board names a person to one reader: the bare handle when the
 /// reader's cached roster holds it, the handle with its name inline when not,

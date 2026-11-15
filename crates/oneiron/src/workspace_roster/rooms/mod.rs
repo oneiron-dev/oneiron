@@ -17,6 +17,7 @@ mod fact_subject;
 mod history;
 mod hosting;
 mod liveness;
+mod member_role;
 mod offer_activity;
 mod offer_erase;
 mod offer_history;
@@ -116,6 +117,7 @@ pub use liveness::{
 pub(in crate::workspace_roster) use liveness::{
     is_thread_root, thread_root_map, thread_task_bindings,
 };
+pub use member_role::{RoomMemberRoleReceipt, RoomMemberRoleSet};
 pub use offer_activity::OfferVoteRequest;
 pub(crate) use offer_activity::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub(in crate::workspace_roster) use offer_erase::drop_open_offer_in_txn;
@@ -303,6 +305,12 @@ pub struct RoomPage {
     pub next_after: Option<String>,
     /// The room Scope this page was read inside (ARCH-0067 §8).
     pub scope: crate::federation::Scope,
+    /// Who made each row, keyed by the `actor` it names, as this reader may
+    /// name them (FIX [UI-GATE-PREVIEW] phase 3): one entry per actor on the
+    /// page, `unknown` for one the reader cannot name. `vault.rooms.messages`
+    /// fills it; a page read for another door leaves it empty.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub actors: std::collections::BTreeMap<String, crate::context_board::ActorAttribution>,
 }
 
 /// A room TURN is an ordinary record, not a claim, so it lives in base

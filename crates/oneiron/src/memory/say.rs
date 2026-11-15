@@ -186,7 +186,7 @@ impl Memory<'_> {
                         order: 0,
                         quote: None,
                     }],
-                    occurred_at: unix_seconds(),
+                    occurred_at: crate::unix_seconds_now(),
                     assertions: marks.assertions,
                 })?;
                 Ok(SayAnswer::Delivered(SayReceipt {
@@ -268,11 +268,4 @@ impl Memory<'_> {
         }
         Ok(cited)
     }
-}
-
-/// Now, in unix seconds.
-fn unix_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
