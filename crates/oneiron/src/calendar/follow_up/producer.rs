@@ -224,8 +224,14 @@ impl Vault {
             let mut written = Vec::with_capacity(drafts.len());
             for draft in &drafts {
                 let mut savepoint = self.store.env.nested_write_txn(txn)?;
-                match write_meeting_follow_up_draft_in_txn(self, &mut savepoint, author, id, draft)
-                {
+                match write_meeting_follow_up_draft_in_txn(
+                    self,
+                    &mut savepoint,
+                    author,
+                    id,
+                    draft,
+                    &[],
+                ) {
                     Ok(claim_id) => {
                         savepoint.commit()?;
                         written.push(claim_id);

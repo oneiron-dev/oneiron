@@ -10,7 +10,9 @@
 //! that wrote the draft; a second approval pass keeps that one send. A
 //! declined run, and a recipient the vault cannot reach natively, send
 //! nothing. A retracted draft stops the send it scheduled, and its words are
-//! no longer read out for it.
+//! no longer read out for it. The draft's birth names the rows its prompt
+//! carried as prompt inputs (FIX 8192), so the meeting's worlds follow its
+//! words.
 //!
 //! The agent holds the full-access ceiling and a standing `send` grant, so
 //! the outbound gate admits its sends to the queue as it admits a granted
@@ -47,6 +49,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::counterparty_contact::CounterpartyContactRecord;
 use oneiron::genui::{GrantMintIntent, GrantMintIntentScope};
 use oneiron::outbound::ConnectorSendTask;
+use oneiron::provenance::made_by::MadeByInputRole;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
@@ -209,11 +212,21 @@ impl Fixture {
     }
 
     fn write(&self, draft: &MeetingFollowUpDraft) -> oneiron::Result<EntityId> {
+        self.write_prompted(draft, &[])
+    }
+
+    /// Writes `draft` as the agent, from a prompt that also carried `prompt`.
+    fn write_prompted(
+        &self,
+        draft: &MeetingFollowUpDraft,
+        prompt: &[EntityId],
+    ) -> oneiron::Result<EntityId> {
         write_meeting_follow_up_draft(
             &self.vault,
             WriteActor::new(self.agent, EdgeActorClass::Agent),
             AttemptId::now(),
             draft,
+            prompt,
         )
     }
 
@@ -439,4 +452,56 @@ fn a_draft_cites_only_its_own_meetings_turns_and_has_words() {
     uncited.turn_refs.clear();
     assert!(fx.write(&uncited).is_err(), "a draft cites its turns");
     assert!(fx.vault.connector_send_tasks().unwrap().is_empty());
+}
+
+/// E1 review (Astra T5): the draft's words come from its meeting, so its
+/// birth names the cited TURNs, then every other row the prompt carried, as
+/// prompt inputs (FIX 8192): the worlds those rows lie in follow the draft
+/// into every read and listing, the owner's run review included. A row the
+/// vault never held names nothing, and a replay keeps the first birth.
+#[test]
+fn a_drafts_birth_names_the_rows_its_prompt_carried() {
+    let fx = fixture();
+    let recipient = fx.reachable_recipient();
+    assert!(
+        fx.turn_refs.len() >= 2,
+        "precondition: the meeting has two turns"
+    );
+    let mut draft = fx.draft_for(recipient);
+    draft.turn_refs.truncate(1);
+    let other_turn = fx.turn_refs[1];
+    let never_held = common::entity(0xE7);
+
+    let claim = fx
+        .write_prompted(&draft, &[other_turn, recipient, never_held])
+        .expect("the draft is written");
+
+    let birth = fx
+        .vault
+        .row_birth(&claim)
+        .unwrap()
+        .expect("the draft carries a birth");
+    let named: Vec<(EntityId, MadeByInputRole)> = birth
+        .made_by
+        .inputs
+        .iter()
+        .map(|input| (input.row, input.role))
+        .collect();
+    assert_eq!(
+        named,
+        vec![
+            (draft.turn_refs[0], MadeByInputRole::Prompt),
+            (other_turn, MadeByInputRole::Prompt),
+            (recipient, MadeByInputRole::Prompt),
+        ],
+        "the cited turn, then the prompt's other rows, each a prompt input; the unheld id is left out"
+    );
+    assert_eq!(birth.made_by.process.actor, fx.agent);
+
+    assert_eq!(fx.write(&draft).expect("a replayed draft"), claim);
+    assert_eq!(
+        fx.vault.row_birth(&claim).unwrap(),
+        Some(birth),
+        "a replay keeps the first birth"
+    );
 }
