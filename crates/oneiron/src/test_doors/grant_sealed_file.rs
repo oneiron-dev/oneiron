@@ -1,4 +1,4 @@
-//! Doors for `tests/sealed_file_key_grant.rs` (REVIEW-7708 P1): how many key
+//! Doors for `tests/grant_sealed_file.rs` (REVIEW-7708 P1): how many key
 //! groups an agent's read of a stored file asks for, so a test can show that
 //! no grant reaches a file the write door sealed whole. The groups are
 //! crate-private, and a public read only shows the sight they end in.

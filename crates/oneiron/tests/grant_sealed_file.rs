@@ -6,7 +6,7 @@
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
-//! --all-features --test sealed_file_key_grant`.
+//! --all-features --test grant_sealed_file`.
 #![cfg(oneiron_test_support)]
 
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::secret_custody::SecretSight;
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::sealed_file_grant;
+use oneiron::test_doors::grant_sealed_file;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -65,7 +65,7 @@ fn a_marked_file_asks_one_key_group() -> TestResult {
     let id = put_asset(&vault, &body)?;
     let stored = vault.get(&id)?.ok_or("the file is stored")?;
     assert_eq!(
-        sealed_file_grant::marked_key_groups(&vault, &stored)?,
+        grant_sealed_file::marked_key_groups(&vault, &stored)?,
         Some(1),
         "the marked key makes one group"
     );
@@ -95,7 +95,7 @@ fn a_file_sealed_past_the_seal_budget_opens_no_key_grant() -> TestResult {
         "the file past the seal budget is sealed whole: {served:?}"
     );
     assert_eq!(
-        sealed_file_grant::marked_key_groups(&vault, &stored)?,
+        grant_sealed_file::marked_key_groups(&vault, &stored)?,
         None,
         "no key grant reaches a file sealed whole"
     );
