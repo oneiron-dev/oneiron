@@ -208,11 +208,19 @@ impl Vault {
             self.privacy_posture(),
             &txn,
         )?;
+        // Each part's reason stands only while that part still names a row
+        // neither held nor waiting: this vault's own judged its stored rows
+        // alone, so the page and the stage may have closed every row it named.
+        let unheld =
+            |hash: &AuthorityEntryHash| !resident.contains(hash) && !waiting.contains(hash);
+        let reason_of = |part: &AuthorityHistoryRequest| {
+            part.reason
+                .filter(|_| part.missing.iter().any(|hash| unheld(hash)))
+        };
+        let reason = reason_of(&request).or(reason_of(&needed));
         request.missing.extend(needed.missing);
-        request.reason = request.reason.or(needed.reason);
-        request
-            .missing
-            .retain(|hash| !resident.contains(hash) && !waiting.contains(hash));
+        request.missing.retain(|hash| unheld(hash));
+        request.reason = reason;
         txn.commit()?;
         Ok(request)
     }

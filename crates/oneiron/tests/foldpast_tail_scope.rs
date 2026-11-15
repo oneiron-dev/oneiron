@@ -2146,6 +2146,65 @@ fn tail_row_on_an_unheld_row_asks_for_that_row_alone() {
 }
 
 #[test]
+fn device_revocation_on_an_unheld_row_asks_for_that_row() {
+    let fixture = fixture();
+    let first = sign_on_home(
+        &fixture,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xF8)),
+    );
+    let revoke = sign_on_home(
+        &fixture,
+        AuthorityOp::RevokeDevice {
+            revoked_key: agent_key(),
+        },
+    );
+    let first_hash = authority_entry_hash(&first).expect("first hash");
+    let revoke_hash = authority_entry_hash(&revoke).expect("revoke hash");
+    assert_eq!(
+        revoke.parent_hashes,
+        vec![first_hash],
+        "the revocation stands on the first row"
+    );
+    // The adopter stores the revocation alone. A serial row folds past the
+    // image with every covered row in its causal past, and its parent is
+    // neither tail nor covered: the walk stops at a row this vault does not
+    // hold, which proves no covered row concurrent.
+    let err = put_signed_entries(&fixture.adopting, std::slice::from_ref(&revoke))
+        .and_then(|()| fixture.adopting.authority_fold())
+        .expect_err("adopting needs the first row");
+    assert!(
+        matches!(
+            &err,
+            Error::Record(RecordError::AuthorityHistoryRequired {
+                missing,
+                reason: Some(AuthorityHistoryReason::UnheldRows),
+                ..
+            }) if missing.contains(&first_hash)
+        ),
+        "history required for the unheld first row, got {err:?}"
+    );
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&first))
+        .expect("store the named row");
+    let home_fold = fixture.home.authority_fold().expect("home folds revoke");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("the fetched row closes the request");
+    assert!(
+        adopting_fold.valid_entries.contains(&revoke_hash),
+        "the adopter folds the revocation"
+    );
+    assert!(
+        adopting_fold
+            .roster
+            .get(&agent_key())
+            .is_some_and(|device| device.revoked),
+        "the adopter holds the agent key revoked"
+    );
+    assert_eq!(adopting_fold.roster, home_fold.roster, "rosters match");
+}
+
+#[test]
 fn device_revocation_past_an_image_with_issues_still_needs_history() {
     let ConcurrentHome {
         home,

@@ -739,10 +739,8 @@ fn serial_refusal(
         Some(AuthorityHistoryReason::ImageContextMoved)
     } else if !clean_image(image) {
         Some(AuthorityHistoryReason::UncleanImage)
-    } else if !covered_past(image, tail, entry) {
-        Some(AuthorityHistoryReason::CoveredRowConcurrent)
     } else {
-        None
+        covered_past_refusal(image, tail, entry)
     }
 }
 
@@ -756,16 +754,19 @@ fn clean_image(image: &AuthorityCheckpointV2) -> bool {
         && image.covered.iter().all(|hash| valid.contains(hash))
 }
 
-/// Whether every row `image` covers is in the causal past of the tail row
-/// `entry`: each image frontier row is a parent of it or of a tail row it
-/// descends from. Covered rows close over their ancestors and no covered row
-/// names a frontier row, so reaching every frontier row reaches them all. A
-/// parent neither tail nor covered leaves it unproved.
-fn covered_past(
+/// Why a row `image` covers may be outside the causal past of the tail row
+/// `entry`, or None where every one is in it: each image frontier row is a
+/// parent of it or of a tail row it descends from. Covered rows close over
+/// their ancestors and no covered row names a frontier row, so reaching
+/// every frontier row reaches them all. An ancestor neither tail nor covered
+/// leaves it unproved, for that row ([`AuthorityHistoryReason::UnheldRows`]),
+/// even where the walk reached every frontier row elsewhere; a whole walk
+/// that misses a frontier row proves a covered row concurrent with `entry`.
+fn covered_past_refusal(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     entry: &AuthorityLogEntry,
-) -> bool {
+) -> Option<AuthorityHistoryReason> {
     let mut seen = BTreeSet::new();
     let mut reached = BTreeSet::new();
     let mut stack = entry.parent_hashes.clone();
@@ -778,10 +779,11 @@ fn covered_past(
         } else if image.rows.contains_key(&at) {
             reached.insert(at);
         } else {
-            return false;
+            return Some(AuthorityHistoryReason::UnheldRows);
         }
     }
-    image.frontier.iter().all(|leaf| reached.contains(leaf))
+    (!image.frontier.iter().all(|leaf| reached.contains(leaf)))
+        .then_some(AuthorityHistoryReason::CoveredRowConcurrent)
 }
 
 /// Whether `entry` is a main-log row, no world's side row.

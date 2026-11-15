@@ -29,7 +29,8 @@ pub enum AuthorityHistoryReason {
     ImageContextMoved,
     /// The image's fold has an issue, a missing parent, an unsettled handoff
     /// or a covered row it did not accept, and a tail row folds past only a
-    /// clean image, or is a parent a covered row names as missing.
+    /// clean image, or the tail row is a parent a covered row names as
+    /// missing.
     UncleanImage,
     /// A covered row is outside the causal past of a tail row that folds past
     /// the image only with every covered row in its past.
