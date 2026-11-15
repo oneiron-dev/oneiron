@@ -14,6 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `examples/user_presence_probe.rs` | src | s | — | — | Probe of the presence layer on a real device (row OWNER-CONFIRM-SHEET) |
 | `src/apple.rs` | src | s | 1 struct · 1 fn · 6 crate-vis | AppleKeychain | Apple: the data-protection keychain, one generic-password item per slot |
 | `src/apple_enclave.rs` | src | m | 1 struct · 1 fn | SecureEnclaveKeychain | Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES… |
+| `src/apple_names.rs` | src | s | 3 crate-vis | — | The Apple tiers' names: the keychain account each slot's item and each sealed value's item is filed under |
 | `src/auth_bound.rs` | src | s | 1 enum · 1 trait · 1 const · 2 crate-vis | AuthBoundError, AuthBoundSecretStore | A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier) |
 | `src/dpapi_names.rs` | src | s | 4 crate-vis | — | The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI… |
 | `src/file.rs` | src | m | 1 struct · 1 fn · 2 crate-vis | LocalFileKeystore | Unix (not Apple): one 0600 file per slot in a 0700 directory of its own |

@@ -4638,6 +4638,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/full_copy_mark.rs",
+     "purpose": "Folds each machine's signed full-copy mark (L7-47; CROSS-ARCH-0024 `#my-network` item 04: \"A full copy earns…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -5264,7 +5275,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 60,
+      "crate-vis": 61,
       "mod": 2,
       "re-export": 76
      }
@@ -56777,7 +56788,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -84307,6 +84318,7 @@
      "purpose": "FIX 4748 (owner RULING B, 2026-10-19): while the home node is off, linked devices sync device to device over…",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "struct": 1
@@ -89777,6 +89789,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/full_copy_mark.rs",
+     "purpose": "Fixture doors for the peer-route full-copy test (L7-47): a machine the owner marks as their own, another…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/grant_roles.rs",
      "purpose": "Door for `tests/grant_roles_seven.rs` (ROLES R1, the lead 11 Nov 11:38): the default membership scope a…",
      "surface": {
@@ -90049,7 +90071,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 118,
+      "mod": 119,
       "re-export": 1
      }
     },
@@ -100830,6 +100852,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/note_read_pending_document.rs",
+     "purpose": "A replica that holds a NOTE's row before its authority has sent the NOTE's head document answers the typed…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/note_subject_reference.rs",
      "purpose": "—",
      "surface": {}
@@ -101016,6 +101046,14 @@
      "notable": [],
      "path": "tests/peer_redaction_own_attribution.rs",
      "purpose": "A peer's redaction records the refusal before it erases this vault's own attribution (ARCH-0055:162…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/peer_route_full_copy.rs",
+     "purpose": "L7-47 (CROSS-ARCH-0024 `#my-network` item 04: \"A full copy earns roles",
      "surface": {}
     },
     {
@@ -102615,7 +102653,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 282,
+     "files": 283,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104036,7 +104074,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 121,
+     "files": 122,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104213,8 +104251,8 @@
    },
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7603,
-   "test_files": 1343
+   "source_files": 7605,
+   "test_files": 1345
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -104910,6 +104948,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FullCopyMark"
+     ],
+     "path": "src/authority/full_copy_mark.rs",
+     "purpose": "One machine's own declaration that it holds a full copy (L7-47; ARCH-0023b `#peer-fetch`; CROSS-ARCH-0024…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GrantTravelSet"
      ],
      "path": "src/authority/grant_travel.rs",
@@ -105027,7 +105079,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 41
+      "re-export": 42
      }
     },
     {
@@ -105754,7 +105806,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105819,7 +105871,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 70,
+   "source_files": 71,
    "test_files": 3
   },
   "oneiron-base": {
@@ -117962,6 +118014,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/apple_names.rs",
+     "purpose": "The Apple tiers' names: the keychain account each slot's item and each sealed value's item is filed under",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AuthBoundError",
       "AuthBoundSecretStore"
@@ -118175,6 +118237,13 @@
      "layout": "file",
      "purpose": "Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES…"
     },
+    "apple_names": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The Apple tiers' names: the keychain account each slot's item and each sealed value's item is filed under"
+    },
     "auth_bound": {
      "files": 1,
      "impl_vault": false,
@@ -118248,7 +118317,7 @@
    },
    "over_bar": 2,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 14,
+   "source_files": 15,
    "test_files": 3
   },
   "oneiron-lens-wire": {
