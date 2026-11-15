@@ -33,12 +33,18 @@ use axum::{
 };
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
+use oneiron::attempt_queue::{
+    AttemptQueue, AttemptResultRef, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
+    EnqueueOutcome, SetAttemptResult,
+};
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, PairingPrincipal, pairing_binding_transcript,
 };
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::learning::TypeRef;
 use oneiron::receipt::{CallOutcome, CallReceiptInput, CallTransport};
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::self_heal::audit::{AttemptConfession, ObjectiveConfession};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
@@ -465,4 +471,132 @@ async fn as_issuer_bound(
 ) -> (StatusCode, Value) {
     let binding = issuer_bound(fixture, slip);
     post(fixture, "vault.authority.audit", token, binding, json!({})).await
+}
+
+/// Wonder review 8483 F2: the host `vault.seal.receipt` withholds a sourced
+/// receipt whole from an audit_read holder whose own lane cannot read every
+/// source row. The sealed attempt's confession names the owner's private
+/// diary NOTE, which no holder reads, while its result NOTE stays
+/// vault-readable; the owner reads the receipt, and the granted holder reads
+/// none. Before the fix the holder read the whole receipt.
+#[test]
+fn an_audit_read_holder_gets_no_seal_receipt_its_lane_cannot_read() {
+    run_on_engine_stack("audit-read-seal-receipt-withheld", || async {
+        let (fixture, auditor, _) = setup().await;
+        let owner = fixture
+            .vault
+            .ensure_embedded_owner_actor()
+            .expect("embedded owner");
+        let owner_memory = fixture.vault.memory(owner, EdgeActorClass::Human);
+        let subject = owner_memory
+            .create_note(
+                "diary",
+                "The owner's private seal subject, no holder reads.",
+            )
+            .expect("the owner's private diary NOTE");
+        let subject = EntityId::from_hex(&subject.id_hex).expect("the private subject's id");
+        let result = owner_memory
+            .create_note(
+                "research",
+                "The sealed attempt's durable result, readable to every lane.",
+            )
+            .expect("the vault-readable result NOTE");
+
+        let queue = AttemptQueue::new(&fixture.vault);
+        let now = fixture.vault.now_recorded_at();
+        let EnqueueOutcome::Enqueued(_) = queue
+            .enqueue(EnqueueAttempt {
+                kind: "test.seal_receipt".to_owned(),
+                payload: b"seal-receipt-red-test".to_vec(),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            })
+            .expect("enqueue the seal attempt")
+        else {
+            panic!("a fresh seal attempt enqueues");
+        };
+        let ClaimOutcome::Claimed(leased) = queue
+            .claim_kind(
+                "test.seal_receipt",
+                ClaimAttempt {
+                    lease_owner: "seal-receipt-red-test".to_owned(),
+                    now: u64::MAX,
+                },
+            )
+            .expect("claim the seal attempt")
+        else {
+            panic!("the seal attempt claims");
+        };
+        queue
+            .set_executor_model(
+                leased.id,
+                "seal-receipt-red-test",
+                leased.attempt_count,
+                "fixture/seal-model@rev-a",
+            )
+            .expect("stamp the seal attempt's executor");
+        queue
+            .set_result(SetAttemptResult {
+                id: leased.id,
+                lease_owner: "seal-receipt-red-test".to_owned(),
+                attempt_count: leased.attempt_count,
+                result_ref: AttemptResultRef::new(result.id_hex.clone())
+                    .expect("the result reference"),
+                now: leased.updated_at,
+            })
+            .expect("attach the seal attempt's result");
+        queue
+            .complete(CompleteAttempt {
+                id: leased.id,
+                lease_owner: "seal-receipt-red-test".to_owned(),
+                attempt_count: leased.attempt_count,
+                now: leased.updated_at,
+            })
+            .expect("complete the seal attempt");
+
+        let confession = AttemptConfession {
+            attempt: leased.id,
+            subject,
+            type_ref: TypeRef::root(1),
+            objectives: vec![ObjectiveConfession {
+                objective: "summarize the week's notes".to_owned(),
+                met: Some(true),
+                flaw: None,
+                uncertainty: None,
+            }],
+        };
+        let confession = serde_json::to_value(&confession).expect("the confession wire");
+        let (status, body) = as_owner(&fixture, "vault.seal.confess", confession).await;
+        assert_eq!(status, StatusCode::OK, "the owner confesses: {body}");
+        assert!(
+            body["receipt"].is_object(),
+            "the confess answers its receipt: {body}"
+        );
+
+        let get = json!({"attempt": leased.id});
+        let (status, body) = as_agent(&fixture, &auditor, "vault.seal.receipt", get.clone()).await;
+        assert_forbidden(status, &body, "the seal receipt before any grant");
+
+        let (status, body) = as_owner(&fixture, "vault.seal.receipt", get.clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner reads the seal receipt: {body}"
+        );
+        assert!(body["receipt"].is_object(), "the receipt exists: {body}");
+
+        owner_changes(&fixture, "vault.audit_read.grant", &auditor).await;
+        let (status, body) = as_agent(&fixture, &auditor, "vault.seal.receipt", get.clone()).await;
+        assert_eq!(status, StatusCode::OK, "the holder's seal receipt: {body}");
+        assert_eq!(
+            body,
+            Value::Null,
+            "the holder reads none for a receipt its lane cannot read"
+        );
+
+        owner_changes(&fixture, "vault.audit_read.revoke", &auditor).await;
+        let (status, body) = as_agent(&fixture, &auditor, "vault.seal.receipt", get).await;
+        assert_forbidden(status, &body, "the seal receipt after the revoke");
+    });
 }
