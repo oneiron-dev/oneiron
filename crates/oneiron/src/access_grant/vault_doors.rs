@@ -173,9 +173,17 @@ impl Vault {
         self.apply_access_grant_body(wtxn, id, grant.created_at, data)
     }
 
-    /// Revokes an AccessGrant by rewriting the same record as revoked.
+    /// Revokes an AccessGrant by rewriting the same record as revoked. An
+    /// audit_read grant is refused: the owner's own verb alone revokes it,
+    /// and records his act (RULING AUDITREAD-GRANT-HOME = A).
     pub fn revoke_access_grant(&self, id: &EntityId, revoked_at: u64) -> Result<AccessGrant> {
-        self.revoke_admitted_access_grant(id, revoked_at, |_| Ok(()))
+        self.revoke_admitted_access_grant(id, revoked_at, |grant| {
+            if matches!(grant.scope, AccessGrantScope::VaultAudit) {
+                Err(invalid_grant())
+            } else {
+                Ok(())
+            }
+        })
     }
 
     /// Revokes a companion-profile grant through the companion surface. A
@@ -236,11 +244,6 @@ impl Vault {
             }
         };
         admit(&grant)?;
-        // The audit_read power is revoked by the owner's verb alone, which
-        // records his act (RULING AUDITREAD-GRANT-HOME = A).
-        if matches!(grant.scope, AccessGrantScope::VaultAudit) {
-            return Err(invalid_grant());
-        }
         crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
         let revoked = grant.revoked(revoked_at)?;
         let data = encode_access_grant_body(&revoked)?;
