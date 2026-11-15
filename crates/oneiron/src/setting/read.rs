@@ -11,7 +11,7 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
 /// The rows of keys kept live through a restore.
@@ -44,8 +44,11 @@ pub(super) struct StoredRow {
 }
 
 impl StoredRow {
+    /// Whether the row is the owner's: set by the owner, or by the engine, which writes the
+    /// owner's answer or its own path's choice. A holder or a subject asks before it replaces
+    /// either, and a holder's value stays inside either.
     pub(super) const fn by_owner(&self) -> bool {
-        matches!(self.setter, Setter::Owner)
+        matches!(self.setter, Setter::Owner | Setter::Engine { .. })
     }
 }
 
@@ -60,7 +63,7 @@ pub(super) struct Loaded {
 /// and the item-less ones. A row that does not decode is kept, valueless and counted as the
 /// owner's, so it decides as unreadable wherever it would have decided.
 pub(super) fn load_in_txn(
-    store: &Store,
+    dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
     chain: &[SettingScope],
@@ -81,7 +84,7 @@ pub(super) fn load_in_txn(
                     mode,
                     scope: scope.clone(),
                 };
-                let Some(bytes) = table.get_bytes(store, txn, &key.encode())? else {
+                let Some(bytes) = table.get_bytes(dbs, txn, &key.encode())? else {
                     continue;
                 };
                 let row = rmp_serde::from_slice::<StoredRow>(&bytes).ok();
@@ -178,9 +181,26 @@ impl<T: SettingValue> Setting<T> {
         known: &[SettingScope],
         item: Option<&str>,
     ) -> Result<Resolved<T>> {
+        self.read_in_dbs_txn(&vault.store, txn, known, item)
+    }
+
+    /// [`Self::read_in_txn`] below the vault: the same walk over the setting tables of `dbs`
+    /// (a store, or any other holder of its side databases), for a reader that holds no
+    /// [`Vault`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_in_txn`].
+    pub(crate) fn read_in_dbs_txn(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &heed::RoTxn<'_>,
+        known: &[SettingScope],
+        item: Option<&str>,
+    ) -> Result<Resolved<T>> {
         self.spec.check_item(item)?;
         let chain = SettingScope::chain(known, self.spec.scopes)?;
-        let loaded = load_in_txn(&vault.store, txn, self.spec, &chain, item)?;
+        let loaded = load_in_txn(dbs, txn, self.spec, &chain, item)?;
         let tighter = self.kind.tighter_typed();
         let tighter_ref = tighter.as_ref().map(|f| f as &dyn Fn(&T, &T) -> bool);
         Ok(
@@ -264,13 +284,13 @@ pub(super) fn view_in_txn(
 
 /// The value in force for `spec` over `chain`, encoded, with the row that decided it.
 pub(super) fn in_force_in_txn(
-    store: &Store,
+    dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
     chain: &[SettingScope],
     item: Option<&str>,
 ) -> Result<(EncodedValue, SettingSource, u64)> {
-    let loaded = load_in_txn(store, txn, spec, chain, item)?;
+    let loaded = load_in_txn(dbs, txn, spec, chain, item)?;
     let tighter = |a: &EncodedValue, b: &EncodedValue| spec.kind.is_tighter(a, b).unwrap_or(false);
     let tighter_ref = spec
         .kind
