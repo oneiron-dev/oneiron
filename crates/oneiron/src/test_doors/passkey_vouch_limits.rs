@@ -1,8 +1,9 @@
 //! Fixtures for the limits on a key only a passkey vouched for (lead ruling
 //! WEBPASSKEY-BLIND-SIGNATURE = B): a revoke signed by a given owner key,
-//! and a history of signed rows no door writes, which the fold judges.
+//! and a history of signed rows no door writes, at the main-log heads or on
+//! a sibling branch, which the fold judges.
 
-use crate::authority::{AuthorityKey, AuthorityOp};
+use crate::authority::{AuthorityEntryHash, AuthorityKey, AuthorityOp};
 use crate::{Result, Vault};
 
 /// Signs a `RevokeDevice` of `revoked` by `signer` alone (`sign` gets its
@@ -48,10 +49,51 @@ pub fn append_signed_rows<S>(vault: &Vault, rows: Vec<SignedRow>, sign: S) -> Re
 where
     S: FnMut(&AuthorityKey, &[u8]) -> Vec<u8>,
 {
+    append_signed_rows_at(vault, None, rows, sign)
+}
+
+/// As [`append_signed_rows`], the first row on `parents` in place of the
+/// vault's main-log heads: a sibling branch of every row stored since those
+/// heads (Astra stack review finding 1).
+///
+/// # Errors
+///
+/// The store's refusal of the rows.
+pub fn append_signed_rows_on<S>(
+    vault: &Vault,
+    parents: Vec<AuthorityEntryHash>,
+    rows: Vec<SignedRow>,
+    sign: S,
+) -> Result<Vec<bool>>
+where
+    S: FnMut(&AuthorityKey, &[u8]) -> Vec<u8>,
+{
+    append_signed_rows_at(vault, Some(parents), rows, sign)
+}
+
+/// The vault's main-log heads now, the parents a row appended now names.
+///
+/// # Errors
+///
+/// The store's read error.
+pub fn main_log_heads(vault: &Vault) -> Result<Vec<AuthorityEntryHash>> {
+    vault.main_log_heads_for_test()
+}
+
+fn append_signed_rows_at<S>(
+    vault: &Vault,
+    parents: Option<Vec<AuthorityEntryHash>>,
+    rows: Vec<SignedRow>,
+    sign: S,
+) -> Result<Vec<bool>>
+where
+    S: FnMut(&AuthorityKey, &[u8]) -> Vec<u8>,
+{
     vault.append_signed_rows_for_test(
         rows.into_iter()
             .map(|row| (row.op, row.signer, row.cosigners))
             .collect(),
+        parents,
         sign,
     )
 }

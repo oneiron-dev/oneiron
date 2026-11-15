@@ -22,7 +22,9 @@
 //! WEBPASSKEY-PASSKEY-OWN-REVOKE = B). Nor does the limited key shed its
 //! limits through a row no door writes: it rotates to no successor and
 //! enrols no device that could re-root, and its cosign lends no consent to
-//! an agent's revoke of another owner key (Sol xhigh stack review F1, F2).
+//! an agent's revoke of another owner key (Sol xhigh stack review F1, F2),
+//! nor revokes, on a sibling branch, an owner key its own parents do not
+//! hold yet (Astra stack review finding 1).
 //! A passkey that only another passkey vouched for has its own confirmation
 //! door (F5).
 //!
@@ -47,7 +49,8 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::passkey_vouch_limits::{
-    SignedRow, append_signed_rows, revoke_owner_key_signed_by,
+    SignedRow, append_signed_rows, append_signed_rows_on, main_log_heads,
+    revoke_owner_key_signed_by,
 };
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
 use p256::ecdsa::signature::Signer as _;
@@ -421,6 +424,57 @@ fn a_key_only_a_passkey_vouched_for_cannot_fence_the_owners_device_key() {
     assert!(
         hosted.live_owner_key(&ed_key(&owner_device())),
         "the owner's device key stands"
+    );
+}
+
+/// A fresh key the owner's device key enrols on one branch.
+fn fresh_owner_key() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[0x55; 32])
+}
+
+/// Astra stack review finding 1: a key only the passkey vouched for signs a
+/// revoke of a key its parents do not hold, on a sibling branch of the
+/// owner's enrolment of that key. The revoke counts for nothing; else its
+/// tombstone revokes the owner key once the fold merges the two branches.
+#[test]
+fn a_key_only_a_passkey_vouched_for_revokes_no_owner_key_on_a_sibling_branch() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    let fork = main_log_heads(&hosted.vault).expect("the heads before the fork");
+    let fresh = ed_key(&fresh_owner_key());
+    hosted
+        .vault
+        .enrol_owner_signing_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &fresh_owner_key()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key enrols a fresh key");
+    assert!(
+        hosted.live_owner_key(&fresh),
+        "guard: the fresh key is a live owner key"
+    );
+    let counted = append_signed_rows_on(
+        &hosted.vault,
+        fork,
+        vec![SignedRow {
+            op: AuthorityOp::RevokeDevice {
+                revoked_key: fresh.clone(),
+            },
+            signer: ed_key(&host_held()),
+            cosigners: Vec::new(),
+        }],
+        signs_as,
+    )
+    .unwrap_or_default();
+    assert!(
+        !counted.first().copied().unwrap_or(false),
+        "the limited key's revoke of a key its parents do not hold counts for nothing"
+    );
+    assert!(
+        hosted.live_owner_key(&fresh),
+        "the owner's fresh key stands once the branches merge"
     );
 }
 
