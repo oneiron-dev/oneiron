@@ -125,6 +125,7 @@ pub mod verb_hook_ask;
 pub mod wake_d1_park_release;
 pub mod workspace_token;
 pub mod world_access;
+pub mod wake_envelope_ack;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 #[cfg(feature = "sync")]
