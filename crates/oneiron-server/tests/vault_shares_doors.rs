@@ -644,7 +644,7 @@ fn assert_redacted(citation: &Value, claim: &str, call: &str) {
 /// owner's `vault.shares.create`, with the request's digest.
 #[test]
 fn every_share_is_a_receipted_op_naming_its_recipient() {
-    run_on_engine_stack(|| async {
+    run_on_engine_stack("shares-doors-receipted", || async {
         let s = Shared::new().await;
         let created = s.create().await;
         let receipt = created.call_receipt("vault.shares.create");
@@ -688,7 +688,7 @@ fn every_share_is_a_receipted_op_naming_its_recipient() {
 /// receipt unchanged.
 #[test]
 fn a_revoked_share_stops_resolving_and_its_revoke_is_receipted() {
-    run_on_engine_stack(|| async {
+    run_on_engine_stack("shares-doors-revoked", || async {
         let s = Shared::new().await;
         let share = s.share().await;
         s.rendered(&share, None, "the view before the revoke").await;
@@ -746,7 +746,7 @@ fn a_revoked_share_stops_resolving_and_its_revoke_is_receipted() {
 /// refused before the engine; the share still resolves until its issuer stops it.
 #[test]
 fn only_the_issuer_or_the_owner_stops_a_share_and_a_refusal_proves_nothing() {
-    run_on_engine_stack(|| async {
+    run_on_engine_stack("shares-doors-who-stops", || async {
         let s = Shared::new().await;
         let share = s.share().await;
 
@@ -788,7 +788,7 @@ fn only_the_issuer_or_the_owner_stops_a_share_and_a_refusal_proves_nothing() {
 /// nothing, and a credential naming no principal is refused.
 #[test]
 fn only_the_recipient_sees_a_share() {
-    run_on_engine_stack(|| async {
+    run_on_engine_stack("shares-doors-recipient", || async {
         let s = Shared::new().await;
         let share = s.share().await;
 
@@ -837,7 +837,7 @@ fn only_the_recipient_sees_a_share() {
 /// and a viewer's narrowing only takes away.
 #[test]
 fn a_view_re_resolves_live_read_policy_and_narrowing_only_takes_away() {
-    run_on_engine_stack(|| async {
+    run_on_engine_stack("shares-doors-narrowing", || async {
         let s = Shared::new().await;
         let share = s.share().await;
 
@@ -894,7 +894,7 @@ fn a_view_re_resolves_live_read_policy_and_narrowing_only_takes_away() {
 /// share; the recipient gets none, and nobody gets one once the share is revoked.
 #[test]
 fn a_view_link_is_issued_only_for_a_live_share_by_its_issuer() {
-    run_on_engine_stack(|| async {
+    run_on_engine_stack("shares-doors-view-link", || async {
         let s = Shared::new().await;
         let share = s.share().await;
 
