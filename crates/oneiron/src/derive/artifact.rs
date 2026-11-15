@@ -273,12 +273,8 @@ fn land_profile_in_txn(
         .ok_or(Error::InvariantViolation(
             "a landed psych profile reads no row",
         ))?;
-    if !vault.port_dependency_complete_regeneration(txn, id, written_at, spans)? {
-        crate::ports::remove_dependency_rows_for_dependent_in_txn(&vault.store, txn, id)?;
-        for span in spans {
-            crate::ports::record_dependency_in_txn(&vault.store, txn, *span, id)?;
-        }
-    }
+    // RED PIN (6.9i PR 2 proof): no source is registered as a dependency.
+    let _ = (written_at, spans);
     Ok(())
 }
 
