@@ -495,8 +495,11 @@ async fn act(
         Answer {
             vault: Arc::clone(vault),
             agent: context.agent,
-            session_key: None,
-            activity: None,
+            // The sitting the reply joined, which the engine read from its
+            // TURN (FIX 1034): the answer binds it, as a live chat binds its
+            // caller's, and its end signals activity there.
+            session_key: context.sitting,
+            activity: context.sitting,
             open,
             mode: MessageWriteMode::Atomic,
             admitted,
