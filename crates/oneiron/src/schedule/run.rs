@@ -349,8 +349,7 @@ impl Vault {
     }
 
     /// One due job: checked and marked started in one write, run, and its result written in
-    /// another. The result lands only on the row the run started on: a row armed again while the
-    /// run ran keeps its new arming.
+    /// another.
     fn run_one(&self, key: &[u8], due_at: u64, pass: &JobPass<'_>) -> Result<JobRun> {
         let (job, subject) = parse_row_key(key).unwrap_or_default();
         let mut run = JobRun {
@@ -427,19 +426,7 @@ impl Vault {
                 return Ok(());
             };
             let end = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let next = if row.started_at.is_some() && row.trigger == armed.trigger {
-                finished(spec, row.clone(), &ran, due_at, end)
-            } else {
-                // Armed again while it ran, by another write or by the run's own: the run's
-                // outcome is the old arming's, and the new one stands, due no sooner than this
-                // run's first retry after its end.
-                Some(ScheduleRow {
-                    next_due_at: row
-                        .next_due_at
-                        .max(end.saturating_add(spec.retry_first_secs)),
-                    ..row.clone()
-                })
-            };
+            let next = finished(spec, row.clone(), &ran, due_at, end);
             store_row_in_txn(&self.store, txn, key, Some(&row), next.as_ref())
         })?;
         Ok(run)
