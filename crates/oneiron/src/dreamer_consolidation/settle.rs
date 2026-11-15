@@ -469,7 +469,15 @@ pub(crate) fn open_conflict_in_txn(
 /// closes), under the claim lifecycle's own guards: a generated claim still
 /// never supersedes user-stated truth.
 /// Only a `person` closes user-stated truth at all: an agent's settlement
-/// that would is refused, and the conflict stays for the owner. `close_as`
+/// that would is refused, and the conflict stays for the owner. Only a
+/// `person` supersedes a member that restricts someone's access either
+/// (a delivery window, an opt-out, a do-not-contact, a held campaign
+/// membership, ...; [`crate::federation::claim_removal_widens_in`]),
+/// whatever its source: removing a restriction widens access, and an
+/// agent's widening always asks the person affected (canon
+/// #widen-world-floor). An agent holder's or the Dreamer's settlement that
+/// would is refused, and the conflict stays for a person holder or the
+/// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
 /// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
@@ -551,6 +559,11 @@ pub(crate) fn apply_settlement_in_txn(
             if !person && matches!(body.source, None | Some(ClaimSource::UserStated)) {
                 return Err(invalid_consolidation(
                     "only a person supersedes user-stated truth",
+                ));
+            }
+            if !person && crate::federation::claim_removal_widens_in(vault, txn, &body)? {
+                return Err(invalid_consolidation(
+                    "only a person supersedes a claim that restricts someone's access",
                 ));
             }
             vault.cancel_deferred_claim_in_txn(txn, &loser)?;

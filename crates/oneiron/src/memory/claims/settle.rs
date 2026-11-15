@@ -14,8 +14,10 @@
 //! never settles it (DEC-0006). A holder that is no person never settles a
 //! proposal whose settlement closes a claim that restricts someone's access:
 //! a decline of a restricting proposal, an approval that supersedes a
-//! restricting head, or the completion of a close parked on one. A person
-//! who holds a covering Grant, or the owner, settles those.
+//! restricting head, the completion of a close parked on one, or the
+//! approval of a curator finding that retracts, weakens or marks stale a
+//! restricting claim. A person who holds a covering Grant, or the owner,
+//! settles those.
 //!
 //! An approval closes the supersession its proposal proposed (e2e
 //! MEMORY-01, ARCH-0040 `mcp:5`): the approved claim supersedes the standing
@@ -316,7 +318,10 @@ impl ReviewedProposal {
     /// already restricts), except a parked retract's decline, which closes
     /// nothing. An approval closes the head it supersedes, and completes the
     /// action parked on the claim: a retract, a weakening or a stale mark of
-    /// the claim, or the supersession of the claim it names.
+    /// the claim, or the supersession of the claim it names. An approved
+    /// curator finding applies its rung to its target, so a finding that
+    /// retracts, weakens or marks stale a restricting target closes it too
+    /// (RULING RESTRICTION-CLOSE-BY-CURATOR-APPROVAL).
     fn settle_lifts_restriction_in(
         &self,
         vault: &crate::Vault,
@@ -331,6 +336,11 @@ impl ReviewedProposal {
                 if let Some(prior) = &self.prior
                     && crate::federation::claim_removal_widens_in(vault, txn, &prior.body)?
                 {
+                    return Ok(true);
+                }
+                if crate::dreamer_runner::maintenance::curator_finding_lifts_restriction_in(
+                    vault, txn, &self.body,
+                )? {
                     return Ok(true);
                 }
                 vault.deferred_close_lifts_restriction_in_txn(txn, id, &self.body)
