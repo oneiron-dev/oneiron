@@ -6,7 +6,9 @@
 //! `<origin>/unsubscribe/one-click/<campaign hex>/<person hex>/<mac hex>`.
 //! The mac is a keyed BLAKE3 hash of the campaign, the person and the
 //! channel under a 32-byte key the vault makes once and keeps in its own
-//! side table; it never leaves the vault, and nothing rotates it, so a link
+//! side table. No verb or route reads the key out; it travels only inside
+//! the vault's sealed checkpoint images (canonical tier), so a restored
+//! vault still verifies the links it sent. Nothing rotates it, so a link
 //! keeps working for as long as the mail that carries it can be read.
 //!
 //! The origin is the serving host's public https base, installed on the
@@ -91,15 +93,14 @@ pub(crate) fn one_click_unsubscribe_uri_in_txn(
     )))
 }
 
-/// The origin as a link base: `https://` and a host, no query, fragment,
-/// credentials, whitespace or header-breaking character, and no trailing
-/// slash.
+/// The origin as a link base: `https://`, a host and an optional decimal
+/// port, and nothing after them: no path (the door sits at the root, so a
+/// link on a path would never reach it), query, fragment, credentials,
+/// whitespace or header-breaking character, and no trailing slash.
 fn link_origin(origin: &str) -> Result<String> {
     let origin = origin.trim().trim_end_matches('/');
-    let rest = origin.strip_prefix("https://").unwrap_or_default();
-    let host_part = rest.split('/').next().unwrap_or_default();
-    let usable = !host_part.is_empty()
-        && !host_part.contains('@')
+    let authority = origin.strip_prefix("https://").unwrap_or_default();
+    let usable = is_host_and_port(authority)
         && origin.len() <= MAX_ORIGIN_BYTES
         && origin.bytes().all(|byte| {
             byte.is_ascii_graphic() && !matches!(byte, b'?' | b'#' | b'<' | b'>' | b',' | b'"')
@@ -111,6 +112,28 @@ fn link_origin(origin: &str) -> Result<String> {
             "a one-click unsubscribe origin must be an https base URL".into(),
         ))
     }
+}
+
+/// Whether `authority` is a host, or a host and a decimal port, and nothing
+/// else: no path, credentials or empty part. An IPv6 host sits in brackets.
+fn is_host_and_port(authority: &str) -> bool {
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if !port.contains(']') => (host, Some(port)),
+        _ => (authority, None),
+    };
+    let host_usable = match host.strip_prefix('[') {
+        Some(bracketed) => bracketed.strip_suffix(']').is_some_and(|ip| {
+            !ip.is_empty()
+                && ip
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() || matches!(byte, b':' | b'.'))
+        }),
+        None => !host.is_empty() && !host.contains([':', '/', '@', '[', ']']),
+    };
+    host_usable
+        && port.is_none_or(|port| {
+            port.bytes().all(|byte| byte.is_ascii_digit()) && port.parse::<u16>().is_ok()
+        })
 }
 
 impl Vault {

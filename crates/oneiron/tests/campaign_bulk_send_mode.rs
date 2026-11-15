@@ -619,3 +619,37 @@ fn bulk_send_freezes_the_members_one_click_link() {
         "a 1:1 envelope carries neither bulk key: {envelope}"
     );
 }
+
+/// The host's public origin is `https://`, a host and an optional decimal
+/// port, and nothing after them: the one-click door sits at the root, so a
+/// link built on a path or a broken port would never reach it. Such an
+/// origin is refused at install; a bare host, a port and an IPv6 host in
+/// brackets install.
+#[test]
+fn a_one_click_origin_with_a_path_or_a_broken_port_is_refused() {
+    let (_dir, vault, _owner) = open_vault();
+    for origin in [
+        "https://oneiron.test/app",
+        "https://oneiron.test/app/",
+        "https://oneiron.test:abc",
+        "https://oneiron.test:99999",
+        "https://oneiron.test:",
+        "https://owner@oneiron.test",
+        "http://oneiron.test",
+        "https://",
+    ] {
+        let installed = vault.install_one_click_unsubscribe_origin(origin);
+        assert!(
+            matches!(installed, Err(oneiron::Error::InvalidConfig(_))),
+            "{origin} is refused: {installed:?}"
+        );
+    }
+    for origin in [
+        "https://oneiron.test/",
+        "https://oneiron.test:8443",
+        "https://[::1]:8443",
+    ] {
+        let installed = vault.install_one_click_unsubscribe_origin(origin);
+        assert!(installed.is_ok(), "{origin} installs: {installed:?}");
+    }
+}
