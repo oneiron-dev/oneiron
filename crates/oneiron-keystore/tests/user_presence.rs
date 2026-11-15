@@ -1,17 +1,18 @@
 //! Row OWNER-CONFIRM-SHEET, the keystore's presence layer: one confirm opens
 //! a 15-minute window that either clock or a screen lock ends, a refusal
 //! opens nothing, a device with no prompt says so, acts that arrive
-//! together share one prompt, and a screen lock refuses the answer of a
-//! prompt that was up when it came.
+//! together share one prompt, a screen lock refuses the answer of a prompt
+//! that was up when it came, and a clock reading from before a confirm never
+//! ends the window that confirm opened.
 
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use oneiron_keystore::{
-    ManualPresenceClock, NoPromptPresence, PRESENCE_WINDOW_SECS, PresenceCapability,
-    PresenceConfirmation, PresenceError, PresenceGate, PresenceWindow, ScriptedPresence,
-    UserPresence,
+    ManualPresenceClock, NoPromptPresence, PRESENCE_WINDOW_SECS, PresenceCapability, PresenceClock,
+    PresenceConfirmation, PresenceError, PresenceGate, PresenceInstant, PresenceWindow,
+    ScriptedPresence, UserPresence,
 };
 
 const WINDOW_MS: u64 = PRESENCE_WINDOW_SECS * 1000;
@@ -283,4 +284,86 @@ fn a_screen_lock_while_a_prompt_is_up_refuses_its_answer_and_opens_no_window() {
         "a confirm made after the lock serves the next act"
     );
     assert!(prompts.try_recv().is_err(), "two prompts in all");
+}
+
+/// How long [`HeldReadingClock`] keeps its first reading when nobody lets
+/// it go.
+const HELD_READING_MS: u64 = 500;
+
+/// A clock whose first reading is taken at once and handed back late: when
+/// the test lets it go, or after [`HELD_READING_MS`]. Every later reading
+/// comes back at once.
+struct HeldReadingClock {
+    clock: Arc<ManualPresenceClock>,
+    first_reading: Mutex<Option<HeldReading>>,
+}
+
+/// How the test learns the first reading was taken, and lets it go.
+struct HeldReading {
+    taken: mpsc::Sender<()>,
+    let_go: mpsc::Receiver<()>,
+}
+
+impl PresenceClock for HeldReadingClock {
+    fn now(&self) -> PresenceInstant {
+        let reading = self.clock.now();
+        let held = self
+            .first_reading
+            .lock()
+            .expect("the first reading's channels")
+            .take();
+        if let Some(held) = held {
+            held.taken
+                .send(())
+                .expect("the test waits for the first reading");
+            // A timeout is the fixed window's path: the reader holds the
+            // window's lock, so the confirm cannot run until it lets go.
+            let _ = held
+                .let_go
+                .recv_timeout(Duration::from_millis(HELD_READING_MS));
+        }
+        reading
+    }
+}
+
+#[test]
+fn a_clock_reading_from_before_a_confirm_does_not_end_the_window_it_opened() {
+    let manual = clock();
+    let (taken, readings) = mpsc::channel();
+    let (let_go, held) = mpsc::channel();
+    let presence = Arc::new(ScriptedPresence::new(vec![Ok(())]));
+    let gate = Arc::new(PresenceGate::new(
+        presence.clone(),
+        PresenceWindow::new(Arc::new(HeldReadingClock {
+            clock: manual.clone(),
+            first_reading: Mutex::new(Some(HeldReading {
+                taken,
+                let_go: held,
+            })),
+        })),
+    ));
+
+    // One act asks whether the window is open: its clock reading is taken
+    // and not handed back yet.
+    let reader = {
+        let gate = gate.clone();
+        thread::spawn(move || gate.window_is_open())
+    };
+    readings.recv().expect("the reader takes its clock reading");
+
+    // Time passes, and another act's confirm opens the window after that
+    // reading. On a window that reads the clock under its lock the confirm
+    // waits here until the reader is done.
+    manual.advance(1);
+    assert_eq!(gate.confirm(REASON), Ok(PresenceConfirmation::Prompted));
+    // The reader may be done already: then nobody listens, which is fine.
+    let _ = let_go.send(());
+    reader.join().expect("the reader ends");
+
+    assert!(
+        gate.window_is_open(),
+        "a clock reading from before the confirm ended the window it opened"
+    );
+    assert_eq!(gate.confirm(REASON), Ok(PresenceConfirmation::WithinWindow));
+    assert_eq!(presence.prompts(), 1, "the second act asked again");
 }

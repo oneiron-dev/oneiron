@@ -111,15 +111,16 @@ pub struct PresenceInstant {
     /// The wall clock, since the Unix epoch. It counts the time the device
     /// slept, and the user or the network may set it.
     pub wall_ms: u64,
-    /// The monotonic clock, since an origin fixed for the process. It never
-    /// goes back, and on most platforms it stands still while the device
-    /// sleeps.
+    /// The monotonic clock, since an origin the clock fixed when it was
+    /// made. It never goes back, and on most platforms it stands still
+    /// while the device sleeps.
     pub monotonic_ms: u64,
 }
 
 /// The clocks a [`PresenceWindow`] reads.
 pub trait PresenceClock: Send + Sync + 'static {
-    /// Both clocks now.
+    /// Both clocks now. The window reads it while it holds its own lock, so
+    /// an implementation never calls back into the window.
     fn now(&self) -> PresenceInstant;
 }
 
@@ -170,7 +171,9 @@ pub struct PresenceWindow {
     state: Mutex<WindowState>,
 }
 
-/// What a [`PresenceWindow`] keeps, under one lock.
+/// What a [`PresenceWindow`] keeps, under one lock. Every clock reading the
+/// window stores or compares is taken under that lock, so the readings are
+/// in the order of the steps that took them.
 #[derive(Default)]
 struct WindowState {
     /// When the user last confirmed, while that confirm still holds.
@@ -208,8 +211,11 @@ impl PresenceWindow {
     /// clock that moves back later never opens it again.
     #[must_use]
     pub fn is_open(&self) -> bool {
-        let now = self.clock.now();
         let mut state = self.state();
+        // Read under the lock. A reading taken before it could be older than
+        // a confirm stored meanwhile, and would end that confirm as a clock
+        // set back.
+        let now = self.clock.now();
         let open = state.confirmed.is_some_and(|at| within_window(at, now));
         if !open {
             state.confirmed = None;
@@ -233,12 +239,11 @@ impl PresenceWindow {
     /// lock, so an end lands wholly before it or wholly after it.
     #[must_use]
     pub fn open(&self, pending: PendingPresenceConfirm) -> bool {
-        let now = self.clock.now();
         let mut state = self.state();
         if state.ends != pending.ends {
             return false;
         }
-        state.confirmed = Some(now);
+        state.confirmed = Some(self.clock.now());
         true
     }
 
