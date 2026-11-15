@@ -92,15 +92,22 @@ fn checkpoint(deadline: Option<&RetrievalDeadline>) -> Result<()> {
 /// The phonetic channel. Under a deadline it checks in before each code's
 /// posting and every few hundred ids inside one, so a stage past its share
 /// stops there instead of reading a posting that can name much of the vault.
+/// The sound match takes its cut among the rows `admission` admits.
 pub(super) fn execute_phonetic(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     codes: &[String],
     params: &RetrievalParams,
     deadline: Option<&RetrievalDeadline>,
+    admission: &mut crate::ports::SoundMatchAdmission<'_>,
 ) -> Result<Vec<ScoredEntity>> {
     crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search_with_deadline(
-        store, rtxn, codes, params, deadline,
+        store,
+        rtxn,
+        codes,
+        params,
+        deadline,
+        Some(admission),
     )
 }
 

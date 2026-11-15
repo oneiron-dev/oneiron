@@ -410,6 +410,7 @@ impl RetrievalIndexRead for Memory {
         codes: &[String],
         params: &crate::pipeline::RetrievalParams,
         deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
+        admission: Option<&mut crate::ports::SoundMatchAdmission<'_>>,
     ) -> Result<Vec<ScoredEntity>> {
         use crate::ports::phonetic_sound::{SoundScan, is_sound_key, sound_match_score};
         use crate::ports::query::{PHONETIC_IDS_PER_CHECKPOINT, phonetic_checkpoint};
@@ -442,7 +443,7 @@ impl RetrievalIndexRead for Memory {
                     scan.offer(*id, code);
                 }
             }
-            for (id, distance) in scan.finish() {
+            for (id, distance) in scan.finish(admission)? {
                 let entry = matches.entry(id).or_default();
                 entry.0 += sound_match_score(distance);
                 entry.1 += 1;
