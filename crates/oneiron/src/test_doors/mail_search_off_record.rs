@@ -53,6 +53,7 @@ fn memory_invalid(where_: &str, error: crate::memory::MemoryError) -> Error {
 /// `received_at`, and which counts each whole read of it.
 pub struct CountingSearchWire {
     received_at: u64,
+    searches: AtomicU32,
     whole_reads: AtomicU32,
 }
 
@@ -62,8 +63,15 @@ impl CountingSearchWire {
     pub const fn new(received_at: u64) -> Self {
         Self {
             received_at,
+            searches: AtomicU32::new(0),
             whole_reads: AtomicU32::new(0),
         }
+    }
+
+    /// How many times a search asked the provider for a page of hits.
+    #[must_use]
+    pub fn searches(&self) -> u32 {
+        self.searches.load(Ordering::SeqCst)
     }
 
     /// How many times a search read the message whole.
@@ -157,6 +165,7 @@ impl MailProviderWire for CountingSearchWire {
         _limit: u32,
         _page: Option<&str>,
     ) -> Result<MailIdPage> {
+        self.searches.fetch_add(1, Ordering::SeqCst);
         Ok(MailIdPage {
             messages: vec![MailMessageRef {
                 provider_id: PROVIDER_ID.to_owned(),

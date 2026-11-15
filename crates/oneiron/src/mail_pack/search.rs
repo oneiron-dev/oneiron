@@ -20,7 +20,7 @@ use super::source::{MailProvider, MailSourceStatus, SOURCES};
 use super::state::{MailPresence, MailStage, OCCURRENCES, occurrence_key};
 use super::wire::MailProviderWire;
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::off_record::OffRecordSession;
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 use crate::{EntityId, Vault};
@@ -31,6 +31,13 @@ const DEFAULT_SEARCH_HITS: u32 = 25;
 const MAX_SEARCH_HITS: u32 = 100;
 /// The longest query a search takes, in bytes.
 const MAX_SEARCH_QUERY_BYTES: usize = 1024;
+/// What a search inside a room's off-record stretch answers
+/// (UNBUILT-01-ROOM-READERS = A, the lead 15 Nov 20:4x): the room's other
+/// members would read the hits, so it is refused before the provider is
+/// asked, and nothing is fetched or kept. The words are the UI session's
+/// short form (its WORDS-FOR-ENGINE item 3, 15 Nov 20:45), which the owner
+/// has not seen yet: change them here.
+const ROOM_SEARCH_REFUSAL: &str = "Mail is searched only where you are alone.";
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::mail_pack::search::{MailSearchReport, MailSourceSearchRequest};
@@ -118,9 +125,10 @@ impl Vault {
     /// # Errors
     ///
     /// As [`Self::mail_search_step`]; an anonymous session, which keeps
-    /// nothing; a session of a room (UNBUILT-01-ROOM-READERS: the room's
-    /// members would read the owner's mail); a session that belongs to
-    /// another vault open, or that closed.
+    /// nothing; `FORBIDDEN` in a room's session, whose other members would
+    /// read the owner's mail (UNBUILT-01-ROOM-READERS = A), before the
+    /// provider is asked; a session that belongs to another vault open, or
+    /// that closed.
     #[expect(
         clippy::too_many_arguments,
         reason = "the search step's own axes, plus the session it runs in"
@@ -254,9 +262,10 @@ impl Vault {
             }
         }
         if session.room()?.is_some() {
-            return Err(MemoryError::bad_request_with(
-                "a mailbox search keeps its hits in no room's off-record stretch",
-                &["Search outside the room, or in a stretch of your own."],
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                ROOM_SEARCH_REFUSAL,
+                &[],
             ));
         }
         Ok(Some((session, route)))

@@ -4,8 +4,12 @@
 //! search in it reads the overlay and fetches nothing again, and base never
 //! holds the message, before close or after.
 //!
+//! A room's stretch is the one exception (UNBUILT-01-ROOM-READERS = A): its
+//! other members would read the hits, so a search there is refused before
+//! the provider is asked, and nothing is fetched or kept.
+//!
 //! Red on origin/main: no search entry takes a session, so every hit lands
-//! in base, whatever session the search ran in.
+//! in base, whatever session the search ran in, a room's included.
 //!
 //! Reaches the crate-private session view and occurrence table through the
 //! test door `oneiron::test_doors::mail_search_off_record`, so it runs only
@@ -18,12 +22,13 @@
 use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, MachineRole};
+use oneiron::conversation::{ConversationBody, ConversationKind};
 use oneiron::off_record::OffRecordBackendClass;
 use oneiron::test_doors::mail_search_off_record::{
     CountingSearchWire, base_holds_found_message, connect_search_mailbox, search_in_session,
     session_reads_found_message,
 };
-use oneiron::{Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -130,5 +135,53 @@ fn second_search_in_session_reads_overlay_without_refetch() -> TestResult {
         !base_holds_found_message(&vault, &mailbox)?,
         "the found message is in base after both sessions closed"
     );
+    Ok(())
+}
+
+#[test]
+fn search_in_a_room_stretch_is_refused_and_keeps_nothing() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = fresh_vault(directory.path())?;
+    let now = now_sec();
+    let mailbox = connect_search_mailbox(&vault, now)?;
+    let wire = CountingSearchWire::new(now);
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let room = EntityId::now();
+    vault.create_conversation(
+        room,
+        &ConversationBody {
+            kind: ConversationKind::Group,
+            member_ids: vec![owner],
+            ..Default::default()
+        },
+        WriteActor::new(owner, EdgeActorClass::Human),
+        vault.now_recorded_at(),
+    )?;
+    let session = vault.off_record_session_vault().enter_in_room_as(
+        "sess-mail-search-room",
+        OffRecordBackendClass::Local,
+        room,
+        &mailbox.owner,
+    )?;
+
+    let searched = search_in_session(&vault, &mailbox, &session, &wire);
+    assert!(
+        searched.is_err(),
+        "a search inside a room's stretch was not refused: {searched:?}"
+    );
+    assert_eq!(
+        (wire.searches(), wire.whole_reads()),
+        (0, 0),
+        "a refused search in a room's stretch asked the provider"
+    );
+    assert!(
+        !session_reads_found_message(&vault, &mailbox, &session)?,
+        "a refused search in a room's stretch kept the message where the room reads it"
+    );
+    assert!(
+        !base_holds_found_message(&vault, &mailbox)?,
+        "a refused search in a room's stretch kept the message in base"
+    );
+    session.close()?;
     Ok(())
 }
