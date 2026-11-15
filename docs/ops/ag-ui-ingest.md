@@ -229,12 +229,11 @@ skill revision with its predecessor's content hash. Fixed code applies the
 decision through the capture owner's own scoped read, which the Coach gains
 no part of. Both arms pin the decision seat's manifest-bound model at its
 registry serving revision, with the pair's old and candidate skill digests.
-A seed refused as `candidate_failed` is re-proposed with another pair: the
-row is replaced with a fresh seed on the same family. An adjudicated task's
-fresh seed awaits a fresh label, checked against the new arms. The same pair
-again leaves it unchanged. The inventory lists at most 64 repair rows, from
-the window's newest 64 captures, at most 8 task contracts per failure event,
-and at most 64 skill revisions.
+One seed stands per task and seat, whatever it stands at: a seed refused as
+`candidate_failed` is never proposed again with another pair, so no candidate
+is chosen by a sealed task's result. The inventory lists at most 64 repair
+rows, from the window's newest 64 captures, at most 8 task contracts per
+failure event, and at most 64 skill revisions.
 
 ## Remaining feature work
 
