@@ -99,7 +99,7 @@ impl Vault {
                 policy_manifest_version: gate::POLICY_SCHEMA_VERSION.to_owned(),
                 claim_id: None,
                 grant_ref: None,
-                diff_handle: verdict.binding.content_hash.to_vec(),
+                diff_handle: request.content.as_bytes().to_vec(),
                 read_frontier_hash: verdict.binding.read_frontier_hash,
                 context: Default::default(),
                 redacted_at: None,

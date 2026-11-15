@@ -76,7 +76,7 @@ pub(super) fn append_change_in_txn(
     now: u64,
 ) -> Result<PolicyRowReceipt> {
     let next = match vault.store.vault_meta.get(txn, SEQUENCE)? {
-        None => 1,
+        None => 0,
         Some(raw) => u64::from_be_bytes(
             raw.as_ref()
                 .try_into()

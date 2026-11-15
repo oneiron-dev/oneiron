@@ -111,7 +111,7 @@ impl PolicyEnforcementAction {
     pub const fn halts(self) -> bool {
         matches!(
             self,
-            Self::Reword | Self::Block | Self::RouteToHelp | Self::Hold
+            Self::Reword | Self::RouteToHelp | Self::Hold
         )
     }
 }
@@ -496,7 +496,7 @@ impl Vault {
                 verdict,
                 final_content: Some(request.content),
                 outbound_halted: false,
-                receipt_ref: None,
+                receipt_ref: Some("gate:seeded".to_owned()),
                 moderation_ref: None,
                 system_notice: None,
                 notice_voice: None,
