@@ -526,6 +526,12 @@ fn remap_indexes(observations: &mut Observations, request_indexes: &[usize]) -> 
         for index in &mut prior.scope_equal_candidates {
             *index = original_index(*index)?;
         }
+        for index in &mut prior.non_widening_candidates {
+            *index = original_index(*index)?;
+        }
+        for index in &mut prior.subject_predicate_equal_candidates {
+            *index = original_index(*index)?;
+        }
     }
     for replay in &mut observations.replay {
         replay.index = original_index(replay.index)?;
