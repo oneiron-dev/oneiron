@@ -62,6 +62,8 @@ oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 # Default xlsx recalc of the edit round trip: the in-process formula engine on
 # the owned formualizer fork. It depends on docedit, never back on this crate.
 oneiron-xlsx-formula = { version = "0.1.0", path = "../oneiron-xlsx-formula" }
+# One shared e-sign field renderer for the pre-seal burn-in (ARCH-0064 [SGN-07]).
+oneiron-esign-render = { version = "0.1.0", path = "../oneiron-esign-render" }
 # Same Myers chars as docedit (disjoint span remap).
 similar = "2.7"
 lopdf = { version = "=0.44.0", default-features = false }
