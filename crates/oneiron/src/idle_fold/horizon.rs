@@ -15,9 +15,9 @@
 //! cold-start rule D (RULING L2-37-COLD-START = B): Keep through the owner's
 //! `idle_fold.cold_start_keep_through_secs` (thirty minutes unless set), then Fold when the run
 //! holds kind marks, else Expire. A price the catalog does not hold decides Expire. A wait whose
-//! run came back first, or moved off its park, gets no call. The pump sends each refresh outside any vault write through the pass's refresh
-//! callback, which returns the horizon its answer stamped, or nothing when nothing was sent or
-//! nothing answered.
+//! run came back first, or moved off its park, gets no call. The pump sends each refresh outside
+//! any vault write through the pass's refresh callback, which returns the horizon its answer
+//! stamped, or nothing when nothing was sent or nothing answered.
 
 use serde::{Deserialize, Serialize};
 
