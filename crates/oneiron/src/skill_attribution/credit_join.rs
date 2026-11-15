@@ -60,28 +60,8 @@ enum CreditJoinRow {
     Adjustment(CreditAdjustmentReceipt),
 }
 
-/// One immutable change to an anchored outcome's effective late credit.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CreditAdjustmentReceipt {
-    pub receipt_id: String,
-    /// The sealed credit receipt it adjusts, whose evidence key it reuses.
-    pub base: String,
-    /// The adjustment it follows; `None` when it follows the sealed receipt.
-    pub previous: Option<String>,
-    /// Every matched check the effective credit joins beyond the sealed
-    /// receipt's, by receipt.
-    pub checks: Vec<String>,
-    /// Every late landed use it joins beyond the sealed receipt's; each end
-    /// `None` once that entity is erased.
-    pub landed: Vec<CheckedEdge>,
-    /// Each subject credited directly, the sealed receipt's first; `None`
-    /// for one since erased.
-    pub direct_subjects: Vec<Option<EntityId>>,
-    /// The effective shares, each with its used chain.
-    pub shares: Vec<LateCreditShare>,
-    /// When it was appended.
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_attribution::credit_join::CreditAdjustmentReceipt;
 
 /// The adjustments appended to the sealed credit receipt `receipt_id`,
 /// oldest first. The receipt itself reads as it was sealed

@@ -57,8 +57,8 @@ const PHRASE_BYTES: usize = 256;
 /// The longest name: a longer run of capitalized words or of katakana is
 /// running text, not a name.
 const NAME_BYTES: usize = 256;
-/// The date patterns, each its own scan.
-const DATE_PATTERNS: usize = 9;
+#[doc(hidden)]
+use oneiron_records::dreamer_wake::sieve::rules::DATE_PATTERNS;
 
 /// What the text before a segment leaves its reading, so the segment reads
 /// on as one reading of the whole text would: whether it starts inside a

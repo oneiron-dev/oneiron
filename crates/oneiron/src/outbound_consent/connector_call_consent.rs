@@ -24,7 +24,7 @@ use super::approval::{
     ConnectorCallApproval, HeldConnectorAsk, retain_held_ask, scoped_mcp_pinned_gate_input,
 };
 use super::connector_call::{
-    ConnectorCallInvocation, PENDING_CALLS, PendingConnectorCall, connector_call_ref, now_ms,
+    ConnectorCallInvocation, PENDING_CALLS, PendingConnectorCall, connector_call_ref,
 };
 use super::connector_call_erase::put_pending_call_in_txn;
 use super::tool_call::PreparedToolCall;
@@ -264,7 +264,7 @@ impl Vault {
                         call_seq: record.call_seq,
                         principal_ref: candidate.principal_ref.clone(),
                         remember_context: candidate.prepared.remember_context(),
-                        held_at_ms: now_ms(),
+                        held_at_ms: crate::unix_millis_now(),
                         settled: None,
                         held_reasons: Vec::new(),
                         owner_ask_seq: None,
