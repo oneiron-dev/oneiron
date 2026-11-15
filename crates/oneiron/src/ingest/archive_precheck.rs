@@ -26,7 +26,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use oneiron_store::batch::secret_scan::container::archive::declared_zip_entries;
 use serde::{Deserialize, Serialize};
@@ -358,6 +358,51 @@ pub fn refusal_of(error: io::Error) -> ArchiveRefusal {
         .into_inner()
         .and_then(|inner| inner.downcast::<ArchiveRefusal>().ok())
         .map_or(ArchiveRefusal::Unreadable { detail }, |refusal| *refusal)
+}
+
+/// The room the storage cap `cap` leaves the vault whose folder is
+/// `vault_dir` (ARCH-0027 #archive-precheck: an archive that unpacks past it
+/// stops there): the cap less what the folder holds on disk, or `None`
+/// without a cap. Each door that unpacks an archive into a vault measures
+/// its room here: the history import under `[import] storage_cap_bytes`, the
+/// Takeout import under the vault's own `VaultConfig::storage_cap_bytes`.
+///
+/// # Errors
+///
+/// A folder below `vault_dir`, or an entry in one, that cannot be read.
+pub fn storage_room(cap: Option<u64>, vault_dir: &Path) -> io::Result<Option<u64>> {
+    cap.map(|cap| folder_bytes(vault_dir).map(|held| cap.saturating_sub(held)))
+        .transpose()
+}
+
+/// What the folder at `dir` holds on disk: every file below it, through no
+/// link. A folder that does not exist holds nothing.
+fn folder_bytes(dir: &Path) -> io::Result<u64> {
+    let named = |path: &Path, error: io::Error| {
+        io::Error::new(error.kind(), format!("read {}: {error}", path.display()))
+    };
+    let mut held = 0_u64;
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(named(&dir, error)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|error| named(&dir, error))?;
+            // Never through a link: the entry's own metadata.
+            let metadata = entry
+                .metadata()
+                .map_err(|error| named(&entry.path(), error))?;
+            if metadata.is_dir() {
+                pending.push(entry.path());
+            } else if metadata.is_file() {
+                held = held.saturating_add(metadata.len());
+            }
+        }
+    }
+    Ok(held)
 }
 
 /// The archive starts as a zip: a local entry, or an empty archive's end

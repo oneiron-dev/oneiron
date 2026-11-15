@@ -209,6 +209,12 @@ pub struct VaultConfig {
     /// vault's owner to choose checkpoint roots without the host. Never an
     /// owner setting or a request credential; false in both presets.
     pub allow_host_checkpoint_opt_out: bool,
+    /// The most bytes this vault's folder may hold on disk, as its host
+    /// declares it (`[import] storage_cap_bytes`; ARCH-0027
+    /// #archive-precheck): an archive an import unpacks stops at the room
+    /// the cap leaves. Never an owner setting or a request field; `None`, no
+    /// cap, in both presets, so a local vault never stops.
+    pub storage_cap_bytes: Option<u64>,
 }
 
 /// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
@@ -394,6 +400,7 @@ impl VaultConfig {
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
+            storage_cap_bytes: None,
         }
     }
 
@@ -431,6 +438,7 @@ impl VaultConfig {
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
+            storage_cap_bytes: None,
         }
     }
 

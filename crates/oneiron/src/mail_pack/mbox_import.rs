@@ -35,7 +35,12 @@
 //! bytes overlap is refused; an entry whose path would leave the archive, a
 //! symbolic link and a device file, FIFO or socket are skipped, never read,
 //! and listed in the report; and each mbox file's first bytes must start as
-//! an mbox.
+//! an mbox. A `.zip` unpacks into the vault, so a vault whose host set a
+//! storage cap (`VaultConfig::storage_cap_bytes`, `[import]
+//! storage_cap_bytes` on a served vault) reads it only up to the room the
+//! cap leaves: the call stops there, keeps what landed, and says so
+//! (`stopped_at_storage_cap`). A plain mbox is read in place, not unpacked,
+//! and never stops so.
 //!
 //! Trash, spam, drafts and chats never land; a "recent months" copy setting
 //! leaves older mail out; a search-only mailbox imports nothing. One call
@@ -43,8 +48,9 @@
 //! export imports over several calls; a changed file starts over, and what
 //! landed already lands as the same.
 
+use std::fmt;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -65,9 +71,9 @@ use super::state::{MailOccurrence, MailPresence, MailStage, OCCURRENCES, occurre
 use super::wire::{MailFull, MailHeaders};
 use crate::ingest::archive_precheck::{
     ArchiveBounds, ArchiveRefusal, DEFAULT_ARCHIVE_MAX_ENTRIES, EntryReader, SkippedEntry,
-    check_archive,
+    check_archive, storage_room,
 };
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -133,6 +139,12 @@ pub struct MailMboxImportReport {
     pub read_total: u64,
     /// Whether the whole file has been read.
     pub done: bool,
+    /// Whether this call stopped at the room the vault's storage cap leaves
+    /// (ARCH-0027 #archive-precheck): what landed before it stays, the
+    /// message the cap cut did not land, and a later call goes on from there
+    /// once the vault holds less. Only a `.zip` stops so.
+    #[serde(default)]
+    pub stopped_at_storage_cap: bool,
 }
 
 impl MailMboxImportReport {
@@ -146,6 +158,66 @@ impl MailMboxImportReport {
 
 fn unreadable(error: &std::io::Error) -> MemoryError {
     MemoryError::bad_request(format!("the file cannot be read: {error}"))
+}
+
+/// The read error of a zipped mbox past the room the vault's storage cap
+/// leaves ([`RoomBounded`]): the call stops there.
+#[derive(Debug)]
+struct PastStorageCap;
+
+impl fmt::Display for PastStorageCap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the archive unpacks past the room the vault's storage cap leaves")
+    }
+}
+
+impl std::error::Error for PastStorageCap {}
+
+fn past_storage_cap(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<PastStorageCap>())
+}
+
+/// A zipped mbox read under the room the vault's storage cap leaves: it
+/// hands its reader at most `room` more bytes, and fails with
+/// [`PastStorageCap`] where the mbox holds more. It counts the bytes its
+/// reader takes, never those its buffer holds ahead.
+struct RoomBounded<R> {
+    inner: R,
+    room: u64,
+}
+
+impl<R: BufRead> Read for RoomBounded<R> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let available = self.fill_buf()?;
+        let taken = available.len().min(out.len());
+        out[..taken].copy_from_slice(&available[..taken]);
+        self.consume(taken);
+        Ok(taken)
+    }
+}
+
+impl<R: BufRead> BufRead for RoomBounded<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        let available = self.inner.fill_buf()?;
+        if available.is_empty() {
+            return Ok(available);
+        }
+        if self.room == 0 {
+            return Err(io::Error::other(PastStorageCap));
+        }
+        let shown =
+            usize::try_from(self.room).map_or(available.len(), |room| room.min(available.len()));
+        Ok(&available[..shown])
+    }
+
+    fn consume(&mut self, taken: usize) {
+        self.room = self
+            .room
+            .saturating_sub(u64::try_from(taken).unwrap_or(u64::MAX));
+        self.inner.consume(taken);
+    }
 }
 
 /// The call's error for a `.zip` the archive pre-check refused; past the
@@ -476,7 +548,9 @@ impl Intake<'_> {
 }
 
 /// Reads up to `budget` messages of one mbox stream into `intake`, keeping
-/// the place in `progress`. Answers whether the stream ended.
+/// the place in `progress`. Answers whether the stream ended; a stream past
+/// the room the vault's storage cap leaves stops before the message the cap
+/// cut, unended, and the report says so.
 fn read_stream<R: BufRead>(
     mut reader: MboxReader<R>,
     key: &(EntityId, [u8; 32]),
@@ -485,8 +559,14 @@ fn read_stream<R: BufRead>(
     intake: &mut Intake<'_>,
 ) -> MemoryResult<bool> {
     while *budget > 0 {
-        let Some(message) = reader.next_message().map_err(|error| unreadable(&error))? else {
-            return Ok(true);
+        let message = match reader.next_message() {
+            Ok(Some(message)) => message,
+            Ok(None) => return Ok(true),
+            Err(error) if past_storage_cap(&error) => {
+                intake.report.stopped_at_storage_cap = true;
+                return Ok(false);
+            }
+            Err(error) => return Err(unreadable(&error)),
         };
         *budget -= 1;
         intake.take(&message)?;
@@ -501,7 +581,7 @@ fn read_stream<R: BufRead>(
 
 /// Reads the next `limit` messages of the file at `path`: a plain mbox, or
 /// each mbox file of a `.zip` the archive pre-check passed, under `bounds`,
-/// in turn.
+/// in turn, up to the room the vault's storage cap leaves.
 fn read_file(
     path: &Path,
     key: &(EntityId, [u8; 32]),
@@ -551,11 +631,25 @@ fn read_file(
             &["Export Mail from Google Takeout as mbox, then import its .zip or its .mbox file."],
         ));
     }
+    // The room the vault's storage cap leaves, measured once per call: what
+    // this call reads past an earlier call's place counts against it, across
+    // the archive's mbox files. A later call measures it again.
+    let vault = intake.vault;
+    let mut room = storage_room(vault.config.storage_cap_bytes, vault.path())
+        .map_err(|error| {
+            MemoryError::new(
+                MEMORY_CODE_INTERNAL,
+                format!("the vault's folder cannot be measured against its storage cap: {error}"),
+                &[],
+            )
+        })?
+        .unwrap_or(u64::MAX);
     while let Some(&at) = entries.get(progress.entry as usize) {
         // An mbox streams message by message, so no byte bound holds it
-        // whole; its first bytes are checked before any message is read.
-        // The vault's storage cap is a serve row this door does not read
-        // (FIX [TAKEOUT-STORAGE-CAP-UNREAD]).
+        // whole; its first bytes are checked before any message is read. The
+        // room under the storage cap bounds what this call reads of it
+        // below, never the entry's declared size: one Takeout mbox holds
+        // the whole mailbox, and a call lands what fits.
         let entry = archive
             .open_entry(at, EntryReader::Mbox, u64::MAX)
             .map_err(|refusal| archive_refused(&refusal))?;
@@ -567,13 +661,18 @@ fn read_file(
             &mut std::io::sink(),
         )
         .map_err(|error| unreadable(&error))?;
+        let mut bounded = RoomBounded {
+            inner: reader,
+            room,
+        };
         let ended = read_stream(
-            MboxReader::new(reader, progress.offset),
+            MboxReader::new(&mut bounded, progress.offset),
             key,
             progress,
             &mut budget,
             intake,
         )?;
+        room = bounded.room;
         if !ended {
             return Ok(());
         }

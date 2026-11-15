@@ -818,11 +818,8 @@ struct ExportBounds {
 
 impl ExportBounds {
     fn for_config(config: &ServeConfig) -> anyhow::Result<Self> {
-        let room = config
-            .import
-            .storage_cap_bytes
-            .map(|cap| folder_bytes(&config.vault_path).map(|held| cap.saturating_sub(held)))
-            .transpose()?;
+        let room =
+            archive_precheck::storage_room(config.import.storage_cap_bytes, &config.vault_path)?;
         Ok(Self {
             archive: ArchiveBounds {
                 max_entries: config.import.archive_entry_cap(),
@@ -879,34 +876,6 @@ impl ExportBounds {
             ),
         }
     }
-}
-
-/// What the folder at `dir` holds on disk: every file below it, through no
-/// link. A folder that does not exist holds nothing.
-fn folder_bytes(dir: &Path) -> anyhow::Result<u64> {
-    let mut held = 0_u64;
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => anyhow::bail!("read {}: {error}", dir.display()),
-        };
-        for entry in entries {
-            let entry =
-                entry.map_err(|error| anyhow::anyhow!("read {}: {error}", dir.display()))?;
-            // Never through a link: the entry's own metadata.
-            let metadata = entry
-                .metadata()
-                .map_err(|error| anyhow::anyhow!("read {}: {error}", entry.path().display()))?;
-            if metadata.is_dir() {
-                pending.push(entry.path());
-            } else if metadata.is_file() {
-                held = held.saturating_add(metadata.len());
-            }
-        }
-    }
-    Ok(held)
 }
 
 /// The session a Claude Code subagent log ran in: the folder above the

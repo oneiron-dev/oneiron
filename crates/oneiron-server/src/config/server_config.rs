@@ -722,6 +722,10 @@ impl ServeConfig {
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
         config.allow_host_checkpoint_opt_out = self.allow_host_checkpoint_opt_out;
+        // `[import] storage_cap_bytes`: an archive an import unpacks stops at
+        // the room it leaves, in every door that unpacks one (ARCH-0027
+        // #archive-precheck).
+        config.storage_cap_bytes = self.import.storage_cap_bytes;
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
