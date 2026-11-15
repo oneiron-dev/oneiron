@@ -2,6 +2,7 @@
 //! and the first crossing of the advisory threshold in a window leaves one
 //! typed check. A check never refuses, holds or narrows the act that crossed.
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::cursor_text::parse_hex_cursor;
 
 use crate::store::own_rate_rows::{CHECKS, check_kept, checks_in_order_after};
 pub(crate) use crate::store::own_rate_rows::{
@@ -109,7 +110,7 @@ fn order_cursor(kept_at: u64, id: EntityId) -> String {
 fn parse_order_cursor(cursor: &str) -> Result<(u64, EntityId)> {
     let corrupt = || crate::Error::CorruptedIndex("own rate check cursor");
     let (kept_at, id) = cursor.split_at_checked(16).ok_or_else(corrupt)?;
-    let kept_at = u64::from_str_radix(kept_at, 16).map_err(|_| corrupt())?;
+    let kept_at = u64::from_be_bytes(parse_hex_cursor(kept_at).ok_or_else(corrupt)?);
     Ok((kept_at, EntityId::from_hex(id).map_err(|_| corrupt())?))
 }
 

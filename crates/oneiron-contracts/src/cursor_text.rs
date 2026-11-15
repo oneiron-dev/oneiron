@@ -20,3 +20,17 @@ pub fn split_at_id(cursor: &str) -> Option<(u64, EntityId)> {
     let (at, id) = cursor.split_once(':')?;
     Some((at.parse().ok()?, EntityId::from_hex(id).ok()?))
 }
+
+/// The `N` bytes of a hex cursor: exactly `2 * N` hex digits. A cursor
+/// comes back as a request param, so it reads in either case
+/// (HEX-CASE-POLICY = A); every list writes it in lowercase. `None` for
+/// anything else, a sign or a space included.
+pub fn parse_hex_cursor<const N: usize>(cursor: &str) -> Option<[u8; N]> {
+    oneiron_hex::decode_any_case(cursor)
+}
+
+/// [`parse_hex_cursor`] for a cursor whose length varies: the bytes of an
+/// even count of hex digits of either case (`""` gives no bytes).
+pub fn parse_hex_cursor_vec(cursor: &str) -> Option<Vec<u8>> {
+    oneiron_hex::decode_vec_any_case(cursor)
+}

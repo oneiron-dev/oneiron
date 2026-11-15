@@ -6,11 +6,13 @@ use crate::campaign::claims::{
 };
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead, decode_claim_body};
 use crate::edge::EdgeKind;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::saved_query::{MembershipEvent, MembershipTransition, membership_events_in_txn};
 use crate::{EntityId, Vault};
+use oneiron_contracts::cursor_text::parse_hex_cursor;
 
 use self::manual::manual_membership_row;
 
@@ -134,9 +136,7 @@ fn membership_page(
     owner: MembershipOwner,
 ) -> Result<MembershipPage> {
     let limit = effective_limit(req.limit) as usize;
-    if let Some(cursor) = req.cursor.as_deref() {
-        validate_cursor(cursor)?;
-    }
+    let after = req.cursor.as_deref().map(resume_cursor).transpose()?;
     let vault = read.vault();
     let candidates = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
     let txn = vault.store.env.read_txn()?;
@@ -148,7 +148,7 @@ fn membership_page(
     let mut rows = Vec::new();
     let mut last_token = None;
     let mut remaining = heads.iter().filter(|head| {
-        req.cursor
+        after
             .as_deref()
             .is_none_or(|cursor| head.cursor().as_str() > cursor)
     });
@@ -212,15 +212,15 @@ const fn effective_limit(requested: u32) -> u32 {
     }
 }
 
-/// A cursor is exactly three hex entity ids. Rejecting a malformed one is the
-/// difference between "you asked for a page that does not exist" and silently
-/// returning page one under a caller that believes it is paging.
-fn validate_cursor(cursor: &str) -> Result<()> {
-    const CURSOR_LEN: usize = 96;
-    if cursor.len() != CURSOR_LEN || !cursor.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(Error::InvalidKey);
-    }
-    Ok(())
+/// A cursor is exactly three hex entity ids, read in either case and resumed
+/// in lowercase, the case `MembershipHead::cursor` writes: the resume
+/// compares the text, so an upper-case cursor would otherwise resume at
+/// another row. Rejecting a malformed one is the difference between "you
+/// asked for a page that does not exist" and silently returning page one
+/// under a caller that believes it is paging.
+fn resume_cursor(cursor: &str) -> Result<String> {
+    let triple = parse_hex_cursor::<48>(cursor).ok_or(Error::InvalidKey)?;
+    Ok(bytes_to_hex_lower(&triple))
 }
 
 /// Every live `campaign.member` head matching `owner_ref` on the chosen axis
