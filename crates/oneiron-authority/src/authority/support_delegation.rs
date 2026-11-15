@@ -14,6 +14,7 @@
 use std::collections::BTreeSet;
 
 use oneiron_contracts::error::Result;
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::invalid_authority;
@@ -67,8 +68,10 @@ const SUPPORT_NEVER_GRANTABLE: [&str; 20] = [
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("support.repair")]
 pub enum SupportRepair {
     /// Demotes critical-write confirms still Auto past their window.
     CriticalConfirmExpiry,
@@ -97,20 +100,6 @@ impl SupportRepair {
         Self::PprCacheEviction,
         Self::SharedActMaturity,
     ];
-
-    /// The repair's wire id.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::CriticalConfirmExpiry => "critical_confirm_expiry",
-            Self::SymbolLeaseExpiry => "symbol_lease_expiry",
-            Self::EsignExpiry => "esign_expiry",
-            Self::EsignSealBackstop => "esign_seal_backstop",
-            Self::CommitmentLapse => "commitment_lapse",
-            Self::PprCacheEviction => "ppr_cache_eviction",
-            Self::SharedActMaturity => "shared_act_maturity",
-        }
-    }
 
     /// The repair a wire id names; `None` for any other text.
     #[must_use]

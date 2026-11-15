@@ -15,6 +15,7 @@
 //! the bytes any server relays to the owner. Never a byte of the copy: it is
 //! kept by the holder under the request's entry, not in the log.
 
+use oneiron_contracts::register::Register;
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -41,8 +42,10 @@ const SEALED_OUTPUT_KEYS: [&str; 3] = ["digest", "bytes", "envelopes"];
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("owner.work.refusal")]
 pub enum OwnerWorkRefusal {
     /// The target's revision moved past the act's `seen`: a newer act
     /// carries its own work, or did it in its own commit.
@@ -86,43 +89,10 @@ pub enum OwnerWorkRefusal {
 }
 
 impl OwnerWorkRefusal {
-    /// The wire tag.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::StaleRevision => "stale_revision",
-            Self::OwnerNotLive => "owner_not_live",
-            Self::WorldNotLive => "world_not_live",
-            Self::ExecutorNotReader => "executor_not_reader",
-            Self::HomeNotLinked => "home_not_linked",
-            Self::SecretNotPortable => "secret_not_portable",
-            Self::SecretNotActive => "secret_not_active",
-            Self::RecipientChanged => "recipient_changed",
-            Self::InvalidInput => "invalid_input",
-            Self::CustodyConflict => "custody_conflict",
-            Self::WiderThanFloor => "wider_than_floor",
-            Self::RootRevisionMismatch => "root_revision_mismatch",
-        }
-    }
-
     /// The reason a wire tag names; `None` for any other text.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
-        Some(match name {
-            "stale_revision" => Self::StaleRevision,
-            "owner_not_live" => Self::OwnerNotLive,
-            "world_not_live" => Self::WorldNotLive,
-            "executor_not_reader" => Self::ExecutorNotReader,
-            "home_not_linked" => Self::HomeNotLinked,
-            "secret_not_portable" => Self::SecretNotPortable,
-            "secret_not_active" => Self::SecretNotActive,
-            "recipient_changed" => Self::RecipientChanged,
-            "invalid_input" => Self::InvalidInput,
-            "custody_conflict" => Self::CustodyConflict,
-            "wider_than_floor" => Self::WiderThanFloor,
-            "root_revision_mismatch" => Self::RootRevisionMismatch,
-            _ => return None,
-        })
+        <Self as Register>::named(name)
     }
 }
 
@@ -140,8 +110,10 @@ impl OwnerWorkRefusal {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("custody.unchecked.reason")]
 pub enum CustodyUncheckedReason {
     /// The record names no manifest. No ref.
     NoneNamed,
@@ -159,29 +131,10 @@ pub enum CustodyUncheckedReason {
 }
 
 impl CustodyUncheckedReason {
-    /// The wire tag.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::NoneNamed => "none_named",
-            Self::NonePublished => "none_published",
-            Self::Unread => "unread",
-            Self::OtherManifest => "other_manifest",
-            Self::Disagrees => "disagrees",
-        }
-    }
-
     /// The reason a wire tag names; `None` for any other text.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
-        Some(match name {
-            "none_named" => Self::NoneNamed,
-            "none_published" => Self::NonePublished,
-            "unread" => Self::Unread,
-            "other_manifest" => Self::OtherManifest,
-            "disagrees" => Self::Disagrees,
-            _ => return None,
-        })
+        <Self as Register>::named(name)
     }
 
     /// Whether `count` refs are the ones this reason names.

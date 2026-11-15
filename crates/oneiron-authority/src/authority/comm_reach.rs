@@ -4,6 +4,7 @@
 //! generates stay in `oneiron::agent_dispatch`; this crate holds the value so
 //! a capability slip's claims can carry it (`SlipClaims::comm`).
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// Whom a dispatched agent may address. Declaration order is the narrowing
@@ -20,8 +21,10 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("comm.reach")]
 pub enum CommReach {
     /// Its parent and its own children.
     Parent,
@@ -34,27 +37,10 @@ pub enum CommReach {
 }
 
 impl CommReach {
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Parent => "parent",
-            Self::Subtree => "subtree",
-            Self::Project => "project",
-            Self::Vault => "vault",
-        }
-    }
-
     /// The reach a wire spelling names; `None` for any other text.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "parent" => Some(Self::Parent),
-            "subtree" => Some(Self::Subtree),
-            "project" => Some(Self::Project),
-            "vault" => Some(Self::Vault),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 

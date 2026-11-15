@@ -22,6 +22,7 @@
 //! owner act and never the granting Owner's revoke: no [`OwnerAct`] rides it,
 //! because an Admin's change or a member's leave is no Owner's will.
 
+use oneiron_contracts::register::Register;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -52,8 +53,11 @@ const MEMBERSHIP_HANDOVER_KEYS: [&str; 4] = [
 ];
 
 /// The power or act that made one membership change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("membership.execution.cause")]
 pub enum MembershipExecutionCause {
     /// An Admin's `org:assign-role` power moved a member to another non-root
     /// role.
@@ -72,26 +76,13 @@ impl MembershipExecutionCause {
     /// The wire tag.
     #[must_use]
     pub const fn wire(self) -> &'static str {
-        match self {
-            Self::AssignRole => "assign_role",
-            Self::RemoveMember => "remove_member",
-            Self::Leave => "leave",
-            Self::TransferOwnership => "transfer_ownership",
-            Self::RemoveOwner => "remove_owner",
-        }
+        self.as_str()
     }
 
     /// The cause a wire tag names; `None` for any other text.
     #[must_use]
     pub fn parse(wire: &str) -> Option<Self> {
-        Some(match wire {
-            "assign_role" => Self::AssignRole,
-            "remove_member" => Self::RemoveMember,
-            "leave" => Self::Leave,
-            "transfer_ownership" => Self::TransferOwnership,
-            "remove_owner" => Self::RemoveOwner,
-            _ => return None,
-        })
+        <Self as Register>::named(wire)
     }
 
     /// The Owner handover cause an Owner act's record carries; `None` for a
