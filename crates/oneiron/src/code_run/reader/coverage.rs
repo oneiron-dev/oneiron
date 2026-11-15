@@ -70,13 +70,10 @@ impl SourceDeliveryWitness {
     }
 }
 
-/// Each of `ranges` cut to `within`. A range that falls outside it becomes
-/// empty, and [`merge_ranges`] drops it.
-fn clip_ranges(ranges: &[(u64, u64)], within: (u64, u64)) -> impl Iterator<Item = (u64, u64)> {
-    ranges
-        .iter()
-        .map(move |&(start, end)| (start.max(within.0), end.min(within.1)))
-}
+#[doc(hidden)]
+use oneiron_records::code_run::reader::coverage::clip_ranges;
+#[doc(hidden)]
+pub(crate) use oneiron_records::code_run::reader::coverage::merge_ranges;
 
 impl ReaderJob {
     /// The ranges of its primary source that this job's reads are proved to
@@ -92,20 +89,6 @@ impl ReaderJob {
         };
         merge_ranges(clip_ranges(&witness.ranges, self.binding.source.range).collect())
     }
-}
-
-/// `ranges` sorted and merged where they touch or overlap.
-pub(crate) fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
-    ranges.retain(|(start, end)| start < end);
-    ranges.sort_unstable();
-    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
-    for (start, end) in ranges {
-        match merged.last_mut() {
-            Some(last) if start <= last.1 => last.1 = last.1.max(end),
-            _ => merged.push((start, end)),
-        }
-    }
-    merged
 }
 
 /// What of `whole` the merged `covered` ranges leave.

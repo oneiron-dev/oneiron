@@ -13,7 +13,7 @@ use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
 use oneiron::llm::run_admission::{KeyCustody, OfferBinding, OfferRoute, Payer};
 use oneiron::{LlmCatalogEntry, ModelLocality, Vault};
-use oneiron_llm_own_server::{MESH_PEER, MeshLlmTransport, OwnServerBackend, VaultLlmNodes};
+use oneiron_llm::oneiron_rpc::{MESH_PEER, MeshLlmTransport, OwnServerBackend, VaultLlmNodes};
 use oneiron_mesh_transport::{MachineId, MeshTransport};
 
 use super::ladder::{LadderRung, SeatScope, Wire};
@@ -50,7 +50,7 @@ impl MeshRoutes {
         rests: Arc<OfferCooldowns>,
         vault: &Arc<Vault>,
         mesh: Arc<dyn MeshTransport>,
-        staging: oneiron_llm_own_server::StagingBudget,
+        staging: oneiron_llm::oneiron_rpc::StagingBudget,
     ) -> Self {
         let routes = Self {
             router,

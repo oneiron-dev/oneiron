@@ -4,7 +4,7 @@ use super::*;
 #[tokio::test]
 async fn org_admin_routes_render_only_setup_powers_and_refuse_excluded_operations() {
     use ed25519_dalek::{Signer, SigningKey};
-    use oneiron::authority::{HostSlipIssuer, PairingPrincipal, pairing_binding_transcript};
+    use oneiron::authority::{PairingPrincipal, pairing_binding_transcript};
     use oneiron::federation::{OrgAdminPolicy, OrgAdminPower, Scope, ScopeAxis};
 
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -30,7 +30,9 @@ async fn org_admin_routes_render_only_setup_powers_and_refuse_excluded_operation
             b"admin",
         )
         .unwrap();
-    let issuer = HostSlipIssuer::from_secret(b"org-root").unwrap();
+    // The issuer that rooted the vault: the install seed the fixture keystore
+    // holds for this secret (FIX-LIST 3018), not one built from the secret.
+    let (issuer, _) = crate::test_credentials::rooting_host_issuer(server.vault(), b"org-root");
     let holder = SigningKey::from_bytes(&[37; 32]);
     let key = holder.verifying_key().to_bytes();
     let mut scope = Scope::top();
