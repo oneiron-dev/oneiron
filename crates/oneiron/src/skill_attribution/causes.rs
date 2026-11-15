@@ -16,6 +16,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::skill_attribution_causes::{CAUSES, CauseRow};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// Domain of a cause's source id: one id per terminal receipt and evidence
 /// sequence.
@@ -149,8 +150,17 @@ pub(crate) fn attempt_attribution_causes(
     Ok(causes)
 }
 
+/// The key `receipt`'s causes are kept under. Stored, so it keeps its bytes
+/// (K, PLAN-UC-04 stage 5).
 fn receipt_key(receipt: &str) -> [u8; 32] {
-    *blake3::hash(receipt.as_bytes()).as_bytes()
+    LegacyDigest::new(purposes::learning::SKILL_CAUSE_RECEIPT_KEY)
+        .raw(receipt.as_bytes())
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn receipt_key_for_test(receipt: &str) -> [u8; 32] {
+    receipt_key(receipt)
 }
 
 fn source_id(receipt: &str, sequence: u64) -> Result<EntityId> {

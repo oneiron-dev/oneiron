@@ -15,6 +15,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::address::AssignmentKey;
 use super::codec::{decode_channel_identity_body, is_channel_identity_claim_predicate};
@@ -66,15 +67,22 @@ fn unsettled() -> Error {
     Error::CorruptedIndex("channel identity channel or address heads unsettled")
 }
 
+/// The key `key`'s two slots are kept under. The index table holds it, so it
+/// keeps its bytes (K, PLAN-UC-04 stage 5).
 fn index_key(key: &AssignmentKey) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
     let channel = key.channel().as_bytes();
     let address = key.address_or_handle().as_bytes();
-    hasher.update(&(channel.len() as u64).to_be_bytes());
-    hasher.update(channel);
-    hasher.update(&(address.len() as u64).to_be_bytes());
-    hasher.update(address);
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::channel_identity::ASSIGNMENT_INDEX_KEY)
+        .len_u64_be(channel.len())
+        .raw(channel)
+        .len_u64_be(address.len())
+        .raw(address)
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn index_key_for_test(key: &AssignmentKey) -> [u8; 32] {
+    index_key(key)
 }
 
 fn decode_id(bytes: &[u8]) -> Result<Option<EntityId>> {

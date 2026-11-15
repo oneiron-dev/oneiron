@@ -94,9 +94,6 @@ const ANSWER_RECEIPT_PREFIX: &str = "graduation_answer:";
 /// Only accepted schema version for either stored row.
 const ROW_VERSION: u8 = 1;
 
-/// Domain separator for the threshold-pattern digest.
-const PATTERN_DIGEST_DOMAIN: &[u8] = b"oneiron.edit_distance.graduation.pattern.v1";
-
 const THRESHOLD_ROW_LABEL: &str = "graduation threshold row";
 
 const ANSWER_ROW_LABEL: &str = "graduation answer row";
@@ -145,6 +142,8 @@ mod posterior;
 mod receipts;
 mod scope_erase;
 mod threshold_policy;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::threshold_policy::pattern_key_for_test;
 mod trust_table;
 
 pub use self::answers::{

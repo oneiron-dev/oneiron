@@ -78,6 +78,8 @@
 
 mod audit;
 mod causes;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::causes::receipt_key_for_test as cause_receipt_key_for_test;
 mod cells;
 mod evidence_judge;
 mod origin;

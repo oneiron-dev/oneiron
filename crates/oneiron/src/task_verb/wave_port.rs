@@ -28,6 +28,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance};
 use crate::side_table::{self, Raw, SideTable};
 use crate::wave_orchestration::*;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -112,19 +113,32 @@ impl<'a> VaultWaveTaskPort<'a> {
 fn engine_error(error: MemoryError) -> LinearSyncError {
     Error::InvalidConfig(format!("{}: {}", error.code, error.message)).into()
 }
+/// The key a plan's seal (`local` empty) and its per-task rows are kept
+/// under. The index table holds it, so it keeps its bytes (K, PLAN-UC-04
+/// stage 5).
 fn index_key(plan: &str, local: &str) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(&(plan.len() as u64).to_be_bytes());
-    hash.update(plan.as_bytes());
-    hash.update(local.as_bytes());
-    *hash.finalize().as_bytes()
+    LegacyDigest::new(purposes::task::WAVE_PLAN_INDEX_KEY)
+        .len_u64_be(plan.len())
+        .raw(plan.as_bytes())
+        .raw(local.as_bytes())
+        .finish()
 }
 /// The cut's frozen statement row. A derived-key hash, so it never collides
-/// with a seal or a per-task key.
+/// with a seal or a per-task key. Stored, so it keeps its bytes (K).
 fn statement_key(plan: &str) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new_derive_key("oneiron wave plan statement v1");
-    hash.update(plan.as_bytes());
-    *hash.finalize().as_bytes()
+    LegacyDigest::new(purposes::task::WAVE_PLAN_STATEMENT_KEY)
+        .raw(plan.as_bytes())
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn wave_plan_index_key_for_test(plan: &str, local: &str) -> [u8; 32] {
+    index_key(plan, local)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn wave_plan_statement_key_for_test(plan: &str) -> [u8; 32] {
+    statement_key(plan)
 }
 
 /// What applying `plan` mints and spends, stated before any TASK (OF-393): a

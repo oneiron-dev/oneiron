@@ -10,6 +10,7 @@ use crate::booking::BookingError;
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// One session's active soft hold. Key: hash32 (session-key digest).
 pub(in crate::booking) const HOLD: SideTable<
@@ -77,13 +78,13 @@ pub(super) fn claims_for_subject(
 }
 
 /// Receipt identity for a confirm: the hold token's digest, so the retry key is
-/// something only the holder can present and never an advisory input.
+/// something only the holder can present and never an advisory input. The
+/// receipt table holds it, so it keeps its bytes (K, PLAN-UC-04 stage 5).
 pub(super) fn confirm_receipt_key(hold_hash: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(RECEIPT_KEY_DOMAIN);
-    hasher.update(b"confirm\0");
-    hasher.update(hold_hash);
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::booking::LIFECYCLE_RECEIPT_KEY)
+        .raw(b"confirm\0")
+        .raw(hold_hash)
+        .finish()
 }
 
 /// Receipt identity for a revision: the BOOKING and the transition, never the
@@ -99,27 +100,39 @@ pub(super) fn confirm_receipt_key(hold_hash: &[u8; 32]) -> [u8; 32] {
 /// legitimately moves more than once; the caller pairs that with a live
 /// occurrence check, since a move BACK to an earlier target is a new transition
 /// rather than a retry of the old one.
+///
+/// The receipt table holds it, so it keeps its bytes (K, PLAN-UC-04 stage 5).
 pub(super) fn revision_receipt_key(
     event_ref: &EntityId,
     target_slot: Option<TimeRange>,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(RECEIPT_KEY_DOMAIN);
+    let mut digest = LegacyDigest::new(purposes::booking::LIFECYCLE_RECEIPT_KEY);
     match target_slot {
         Some(slot) => {
-            hasher.update(LifecycleTokenScope::Reschedule.tag());
-            hasher.update(&slot.start.to_be_bytes());
-            hasher.update(&slot.end.to_be_bytes());
+            digest
+                .raw(LifecycleTokenScope::Reschedule.tag())
+                .raw(&slot.start.to_be_bytes())
+                .raw(&slot.end.to_be_bytes());
         }
         None => {
-            hasher.update(LifecycleTokenScope::Cancel.tag());
+            digest.raw(LifecycleTokenScope::Cancel.tag());
         }
     }
-    hasher.update(event_ref.as_bytes());
-    *hasher.finalize().as_bytes()
+    digest.raw(event_ref.as_bytes()).finish()
 }
 
-const RECEIPT_KEY_DOMAIN: &[u8] = b"oneiron.booking.receipt.v1\0";
+#[cfg(oneiron_test_support)]
+pub(crate) fn confirm_receipt_key_for_test(hold_hash: &[u8; 32]) -> [u8; 32] {
+    confirm_receipt_key(hold_hash)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn revision_receipt_key_for_test(
+    event_ref: &EntityId,
+    target_slot: Option<TimeRange>,
+) -> [u8; 32] {
+    revision_receipt_key(event_ref, target_slot)
+}
 
 pub(super) fn encode_row<T: Serialize>(value: &T) -> Result<Vec<u8>, BookingError> {
     let mut out = vec![LIFECYCLE_ROW_VERSION];

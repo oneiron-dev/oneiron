@@ -6,12 +6,13 @@ use super::pattern::{
     PATTERN_WILDCARD, WILDCARD_PATTERN, axis_matches, exact_pattern, pattern_axes,
 };
 use super::posterior::posterior_lower_bound;
-use super::{PATTERN_DIGEST_DOMAIN, ROW_VERSION, THRESHOLD, THRESHOLD_ROW_LABEL};
+use super::{ROW_VERSION, THRESHOLD, THRESHOLD_ROW_LABEL};
 use crate::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::{Error, GateError, Result};
 use crate::store::Store;
 use crate::vault::Vault;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The compiled catch-all guard.
 ///
@@ -157,14 +158,20 @@ pub(super) struct StoredThresholdRow {
     pub(super) snooze_backoff_seconds: [u64; 2],
 }
 
-/// The 16-byte storage handle of a threshold pattern.
+/// The 16-byte storage handle of a threshold pattern. Stored, so it keeps its
+/// bytes (K, PLAN-UC-04 stage 5).
 pub(super) fn pattern_key(pattern: &str) -> [u8; ENTITY_ID_LEN] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(PATTERN_DIGEST_DOMAIN);
-    hasher.update(pattern.as_bytes());
+    let digest = LegacyDigest::new(purposes::learning::GRADUATION_PATTERN_KEY)
+        .raw(pattern.as_bytes())
+        .finish();
     let mut key = [0_u8; ENTITY_ID_LEN];
-    key.copy_from_slice(&hasher.finalize().as_bytes()[..ENTITY_ID_LEN]);
+    key.copy_from_slice(&digest[..ENTITY_ID_LEN]);
     key
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn pattern_key_for_test(pattern: &str) -> [u8; ENTITY_ID_LEN] {
+    pattern_key(pattern)
 }
 
 fn threshold_row_parts(row: StoredThresholdRow) -> Result<ThresholdRow> {

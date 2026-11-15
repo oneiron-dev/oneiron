@@ -36,6 +36,8 @@ mod actors;
 use oneiron_authority::channel_address as address;
 mod alias;
 mod assignment;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::assignment::index_key_for_test as assignment_index_key_for_test;
 mod auth_mode;
 mod binding;
 mod codec;

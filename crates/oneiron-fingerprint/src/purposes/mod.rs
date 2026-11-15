@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { testing }
+areas! { agent, booking, channel_identity, learning, task, testing }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 

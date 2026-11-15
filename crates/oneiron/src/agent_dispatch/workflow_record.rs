@@ -15,6 +15,7 @@ use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::task_verb::highway_runner::workflow_try::WorkflowTaskBind;
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 /// Durable saved-composition record for one inert multi-step workflow wrapper
@@ -199,8 +200,17 @@ fn step_kept_frozen(root: &AttemptId, error: &Error) {
     );
 }
 
+/// The key a wrapper's dedupe index row is kept under. Stored, so it keeps
+/// its bytes (K, PLAN-UC-04 stage 5).
 pub(super) fn dedupe_key_hash(key: &str) -> [u8; 32] {
-    *blake3::hash(key.as_bytes()).as_bytes()
+    LegacyDigest::new(purposes::agent::WORKFLOW_DEDUPE_KEY)
+        .raw(key.as_bytes())
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn dedupe_key_hash_for_test(key: &str) -> [u8; 32] {
+    dedupe_key_hash(key)
 }
 /// Every workflow wrapper's working-set row, in creation order. A wrapper's
 /// record is kept under its root's id from admission on, after the root
