@@ -99,6 +99,19 @@ pub(super) fn admit_claim_put(
                     learned_at: input.learned_at,
                 },
             )?;
+            // A stored world-access grant starts or stops governing only by
+            // a live owner: its writer at an approval, its closer at a close.
+            // A replicated row never replaces one (`sync::local_claims`).
+            crate::claim::world_access::admit_world_access_transition(
+                store,
+                txn,
+                &id,
+                body,
+                input
+                    .transition
+                    .and_then(crate::batch::VerifiedClaimTransition::closer)
+                    .map(crate::write_envelope::WriteActor::entity_ref),
+            )?;
         }
         crate::scope_summary::merge_summary_ref(body)?;
         crate::federation::validate_ruling_claim(

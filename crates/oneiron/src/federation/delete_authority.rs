@@ -12,7 +12,8 @@
 //! person delete is a role default, never a Grant it must hold; a Viewer, a
 //! Delegate or a guest has none. An agent deletes only
 //! under ONE live Grant that names the `delete` class and holds the record,
-//! given by a live Owner or by an Admin still holding it. No second
+//! given by a live Owner or by an Admin still holding it, and never a
+//! world-access grant or default, whatever its Grant. No second
 //! permission ledger is kept, and nothing a request carries asserts a role,
 //! an owner or a Grant: the answer is a sealed [`DeleteAuthority`],
 //! read again in each write that deletes.
@@ -127,6 +128,10 @@ pub(crate) enum DeleteRefusal {
     /// The agent holds no one live Grant that names `delete`, holds this
     /// record and was given by a live Owner or an Admin still holding it.
     NoDeleteGrant,
+    /// The record is a world-access grant or default, which an agent never
+    /// deletes, whatever its Grant (ARCH-0067 #tiers: "the agent can never
+    /// self-widen it"; a delete drops the row from the fold as a close does).
+    WorldAccessRow,
     /// The bound credential does not reach this record.
     CredentialBounds,
     /// A row this check reads could not be read.
@@ -142,6 +147,7 @@ impl DeleteRefusal {
             Self::NotOwnerOfItem => "not_owner_of_item",
             Self::OutOfAdminScope => "out_of_admin_scope",
             Self::NoDeleteGrant => "no_delete_grant",
+            Self::WorldAccessRow => "world_access_row",
             Self::CredentialBounds => "credential_bounds",
             Self::Unreadable(_) => "unreadable",
         }
@@ -166,6 +172,9 @@ impl DeleteRefusal {
             }
             Self::NoDeleteGrant => "the agent holds no live Grant that names delete and holds \
                                     this record"
+                .to_owned(),
+            Self::WorldAccessRow => "an agent never deletes a world-access grant or default; \
+                                     only a live owner changes one"
                 .to_owned(),
             Self::CredentialBounds => "the bound credential does not reach this record".to_owned(),
             Self::Unreadable(kind) => {
@@ -254,6 +263,11 @@ fn other_arms(
     };
     let admitted = match caller.class {
         EdgeActorClass::Human => person_arms(vault, txn, caller.actor, &record)?,
+        EdgeActorClass::Agent | EdgeActorClass::System
+            if crate::claim::world_access::is_world_access_claim_row(record.kind, &record.body) =>
+        {
+            Err(DeleteRefusal::WorldAccessRow)
+        }
         EdgeActorClass::Agent | EdgeActorClass::System => {
             agent_arm(vault, txn, caller, &record)?.ok_or(DeleteRefusal::NoDeleteGrant)
         }

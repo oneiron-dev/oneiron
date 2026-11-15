@@ -189,14 +189,102 @@ pub(crate) fn holds_world_access_claim_in(
     id: &EntityId,
 ) -> Result<bool> {
     Ok(vault.get_raw_in(txn, id)?.is_some_and(|raw| {
-        raw.first().copied() == Some(crate::registry::ENTITY_TYPE_CLAIM)
-            && crate::batch::EntityMetadataHeader::parse(&raw).is_some()
+        crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+            is_world_access_claim_row(
+                header.entity_type,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+        })
+    }))
+}
+
+/// Whether a stored row of type `kind` with `body` (its bytes after the
+/// metadata header) is a world-access grant or default, open or closed. An
+/// agent never deletes one, whatever its delete Grant
+/// (`federation::require_delete_authority_in_txn`).
+pub(crate) fn is_world_access_claim_row(kind: u8, body: &[u8]) -> bool {
+    kind == crate::registry::ENTITY_TYPE_CLAIM
+        && crate::claim::decode_claim_body(body, true)
+            .is_ok_and(|body| is_world_access_tier_predicate(&body.predicate))
+}
+
+/// The state rule of a stored ALLOWED-SET grant, checked at each local claim
+/// Put over a stored row (`batch::put_apply::claim_admission`), the one
+/// function every approval and every typed close of a claim row meets: a
+/// grant starts or stops governing only by a live vault owner (FIX
+/// [WORLD-ACCESS-PRESTAGED-GRANT-APPROVAL],
+/// [WORLD-ACCESS-GRANT-RETRACT-BY-FORMER-OWNER-AUTHOR]).
+///
+/// - A stored row that does not govern (a proposal, a closed or stale row)
+///   which this Put makes a governing grant meets [`admit_world_access_write`]
+///   with its stamped writer. So an approval, an inbox accept or edit, a
+///   consent, a merge or a deferred Auto grant lands a grant only while a
+///   live owner wrote it: a proposal staged before the doors took a grant from
+///   an owner only, or by an owner who has left, never governs. The approver
+///   is judged by its own door, as before.
+/// - A governing grant this Put closes, demotes or rewrites stops governing
+///   only by a live owner, when the door stamped the closer it verified
+///   (`VerifiedClaimTransition::closer`): a former owner's retract of the
+///   grant it wrote would widen the agent to the other grants in the meet. A
+///   raw close names no closer and passes, as the raw `Vault` door is owner
+///   authority; a consent's decline closes only a proposal.
+///
+/// A birth (no stored row) is its door's ([`admit_world_access_write`]).
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a grant whose writer or closer is no live
+/// owner, [`Error::InvalidConfig`] from [`decode_world_access_claim_value`],
+/// and the store's and the owner census's own read errors.
+pub(crate) fn admit_world_access_transition(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    next: &ClaimBody,
+    closer: Option<EntityId>,
+) -> Result<()> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(());
+    };
+    let governed = crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             && crate::claim::decode_claim_body(
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 true,
             )
-            .is_ok_and(|body| is_world_access_tier_predicate(&body.predicate))
-    }))
+            .is_ok_and(|prior| governs_as_grant(&prior))
+    });
+    let governs = governs_as_grant(next);
+    if governs && !governed {
+        return admit_world_access_write(
+            store,
+            txn,
+            crate::claim::session_claim_producer(next),
+            next,
+        );
+    }
+    if governed && !governs {
+        let owner_closes = match closer {
+            Some(closer) => crate::policy_model::is_live_vault_owner_for_store_in_txn(
+                store,
+                store.privacy_posture,
+                txn,
+                &closer,
+            )?,
+            None => true,
+        };
+        if !owner_closes {
+            return Err(Error::InvalidClaimBody(
+                "world access grant must be closed by a vault owner",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `body` is an ALLOWED-SET grant the fold honours now.
+fn governs_as_grant(body: &ClaimBody) -> bool {
+    body.predicate == PREDICATE_WORLD_ACCESS_ALLOWED_SET && crate::claim::claim_surfaceable(body)
 }
 
 /// Decodes the strict world-access claim value:
