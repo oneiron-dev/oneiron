@@ -1145,10 +1145,7 @@ fn an_act_that_arrives_while_a_pin_is_checked_rides_on_it() {
     checks.recv().expect("the PIN check begins");
 
     // The act finds the window closed and waits behind the check.
-    let act = {
-        let gate = gate.clone();
-        thread::spawn(move || gate.confirm(REASON))
-    };
+    let act = thread::spawn(move || gate.confirm(REASON));
     let_go.send(()).expect("the check takes its end");
     assert_eq!(typing.join().expect("the typing ends"), Ok(()));
     assert_eq!(
