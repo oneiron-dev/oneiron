@@ -5,9 +5,8 @@ use serde::{Deserialize, Serialize};
 use super::pack::DEFAULT_PREP_MAX_WORDS;
 use crate::entity_id::EntityId;
 
-/// Default lead between the EVENT start and the prep wake: T-45. The shipped
-/// default of the vault setting `calendar.prep.lead_secs`.
-pub const DEFAULT_PREP_LEAD_SECS: u64 = 45 * 60;
+#[doc(hidden)]
+pub use oneiron_records::calendar::prep::wake::{DEFAULT_PREP_LEAD_SECS, PrepWake};
 
 /// Opaque tag the host echoes back when the prep wake fires.
 ///
@@ -94,22 +93,6 @@ pub fn prep_is_eligible(event: &PrepEvent, policy: PrepPolicy) -> bool {
         return true;
     }
     !policy.external_only || event.internal_meeting_opt_in
-}
-
-/// One exact host wake: the three fields of the supervisor wake contract.
-///
-/// The engine-side image of `oneiron_vault_contract::WakeEntry` with
-/// `Schedule::Exact` — see the module note on why the contract type is not
-/// named directly at this commit. `at_utc` maps to `Schedule::Exact { at }`;
-/// the other two fields map by name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrepWake {
-    /// Stable wake id. Rescheduling reuses it so the host REPLACES the entry.
-    pub id: String,
-    /// Exact fire instant, unix seconds UTC.
-    pub at_utc: u64,
-    /// Opaque tag echoed back when the wake fires.
-    pub reason_tag: String,
 }
 
 /// The stable wake id for one EVENT's prep purpose.
