@@ -9,7 +9,8 @@
 //!
 //! The ask erases nothing, and asking again answers the same ask. A record
 //! the agent's Grant does not read, and one that is not live, are refused
-//! alike, and no one is asked.
+//! alike, and no one is asked. An agent the owner switched off asks nothing,
+//! though its Grant still reads the record.
 //!
 //! On main every case fails at its first call: no verb row is named
 //! `vault.records.erase_propose`, so the agent has no door to ask through
@@ -34,7 +35,7 @@ use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::{define_agent, write_root_goal};
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
-use oneiron::{EdgeActorClass, EntityId, Vault};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
 use serde_json::{Value, json};
 
 const PROPOSE: &str = "vault.records.erase_propose";
@@ -179,6 +180,36 @@ fn an_agent_with_read_opens_an_erase_proposal() {
             .expect("project read")
             .is_some(),
         "the ask erases nothing"
+    );
+}
+
+#[test]
+fn a_switched_off_agent_cannot_open_an_erase_proposal() {
+    let fx = Fixture::new(false);
+    let agent = fx.project_reader();
+    let mut off = fx
+        .vault
+        .get_agent_definition(&agent)
+        .expect("read the definition")
+        .expect("the agent's definition");
+    off.enabled = false;
+    off.version = "2".to_owned();
+    fx.vault
+        .update_agent_definition_as(
+            &fx.owner_proof,
+            &agent,
+            &off,
+            TimeRange { start: 2, end: 2 },
+            2,
+        )
+        .expect("the owner switches the agent off");
+    let refused = fx
+        .propose(agent, fx.project)
+        .expect_err("a switched-off agent asks nothing, though its Grant still reads the record");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    assert!(
+        fx.owner_asks(PERSONAL_PRODUCER).is_empty(),
+        "and no one is asked"
     );
 }
 

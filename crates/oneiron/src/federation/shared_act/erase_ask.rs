@@ -38,6 +38,7 @@ pub const NOTIFICATION_PRODUCER_ERASE_PROPOSAL: &str = "vault.erase_proposal";
 /// The refusal for an agent with no live owner Grant whose read reaches the
 /// record, and for a record that is not live: one answer for both.
 const NO_READ: &str = "no live owner Grant of the caller reads the record";
+const NO_STANDING: &str = "the caller is no live agent standing on a read Grant";
 /// The act name an Owner's erase runs under, which a closing answer names.
 const ERASE_ACT: &str = "erase";
 
@@ -253,8 +254,9 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// FORBIDDEN for a caller that is no agent, or that no live owner Grant
-    /// names; one FORBIDDEN for a record the agent does not read and for one
+    /// FORBIDDEN for a caller that is no agent, that is switched off, retired
+    /// or archived, or that no live owner Grant listing `read` names; one
+    /// FORBIDDEN for a record the agent does not read and for one
     /// that is not live; storage errors.
     pub fn propose_erase_as_agent(
         &self,
@@ -272,6 +274,20 @@ impl Vault {
         lane.persist_grant_clock()?;
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
         crate::memory::verify_actor_binding_in_txn(self, &txn, agent, EdgeActorClass::Agent)?;
+        // The one standing rule, in this snapshot: an enabled, active agent
+        // definition the archive has not taken, on a live owner Grant that
+        // lists `read` and keeps its pact membership (review of #8340).
+        if crate::authority::principal_standing_in_txn(
+            self,
+            &txn,
+            agent,
+            EdgeActorClass::Agent,
+            "read",
+        )?
+        .is_none()
+        {
+            return Err(refused(NO_STANDING));
+        }
         let policy = lane.live_policy_manifest_in(&txn)?;
         if !lane.is_ref_readable_with_policy_in(&txn, &policy, &record)?
             || !crate::vault::live_entity_row_in_txn(&self.store, &txn, &record)?.is_live()
