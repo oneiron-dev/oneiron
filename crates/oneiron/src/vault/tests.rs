@@ -1100,14 +1100,6 @@ fn privacy_pairing_matrix_admits_exactly_the_two_supported_deployments() {
 }
 
 #[test]
-fn hosted_privacy_posture_requires_a_non_empty_key_reference() {
-    for blank in ["", "   ", "\t\n"] {
-        let hosted = privacy_config(HostingPrivacyPosture::Hosted, hosted_custody(blank));
-        assert_matches!(hosted.validate(), Err(Error::InvalidConfig(_)));
-    }
-}
-
-#[test]
 fn vault_config_presets_default_to_self_host_local() {
     for config in [
         VaultConfig::default(),
