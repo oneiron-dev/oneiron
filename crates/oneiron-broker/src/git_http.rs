@@ -42,10 +42,11 @@
 //! may hold bytes back while it watches them for the credential. No
 //! redirect is followed and nothing is resent.
 
+use oneiron_fingerprint::{LegacyDigest, purposes};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
-use crate::digest::{BodyDigest, field, is_hex_digest, sorted_headers};
+use crate::digest::{BodyDigest, framed_part, is_hex_digest, sorted_headers};
 use crate::{PROTOCOL_VERSION, Refusal};
 
 #[cfg(unix)]
@@ -57,9 +58,6 @@ mod serve;
 pub use client::{GitReply, PreparedGitCall};
 #[cfg(unix)]
 pub(crate) use serve::serve_git;
-
-/// The blake3 key-derivation context of a git request digest.
-const DIGEST_CONTEXT: &str = "oneiron-broker 2026-11-06 git request digest v1";
 
 /// The longest value the one header a git call may carry can hold, and the
 /// longest call id a git or an LFS exchange may name.
@@ -279,7 +277,8 @@ pub fn check_git_headers(headers: &[(String, String)]) -> Result<(), Refusal> {
 /// method and path it derives, the sorted non-auth headers, the body's
 /// length and its bytes. Each field is length-prefixed. The daemon takes it
 /// as it spools the body; the broker takes it again as it receives the body
-/// and sends nothing whose digest differs.
+/// and sends nothing whose digest differs. Its purpose is
+/// `purposes::broker::GIT_REQUEST`, whose tag is the derive-key context.
 pub struct GitRequestDigest {
     body: BodyDigest,
 }
@@ -289,27 +288,27 @@ impl GitRequestDigest {
     /// `body_len` bytes, before its body.
     #[must_use]
     pub fn new(target: &GitTarget, headers: &[(String, String)], body_len: u64) -> Self {
-        let mut hasher = blake3::Hasher::new_derive_key(DIGEST_CONTEXT);
-        field(&mut hasher, target.repository.origin().as_bytes());
-        field(&mut hasher, target.repository.path().as_bytes());
-        field(&mut hasher, target.service.as_str().as_bytes());
-        field(
-            &mut hasher,
+        let mut digest = LegacyDigest::new(purposes::broker::GIT_REQUEST);
+        framed_part(&mut digest, target.repository.origin().as_bytes());
+        framed_part(&mut digest, target.repository.path().as_bytes());
+        framed_part(&mut digest, target.service.as_str().as_bytes());
+        framed_part(
+            &mut digest,
             match target.exchange {
                 GitExchange::Advertisement => b"advertisement",
                 GitExchange::Rpc => b"rpc",
             },
         );
-        field(&mut hasher, target.method().as_bytes());
-        field(&mut hasher, target.path().as_bytes());
+        framed_part(&mut digest, target.method().as_bytes());
+        framed_part(&mut digest, target.path().as_bytes());
         let sorted = sorted_headers(headers);
-        hasher.update(&(sorted.len() as u64).to_le_bytes());
+        digest.len_u64_le(sorted.len());
         for (name, value) in &sorted {
-            field(&mut hasher, name.as_bytes());
-            field(&mut hasher, value.as_bytes());
+            framed_part(&mut digest, name.as_bytes());
+            framed_part(&mut digest, value.as_bytes());
         }
         Self {
-            body: BodyDigest::new(hasher, body_len),
+            body: BodyDigest::new(digest, body_len),
         }
     }
 

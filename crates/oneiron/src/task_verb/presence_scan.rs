@@ -636,12 +636,7 @@ pub(super) fn cancel_target_state(
 }
 
 pub(super) fn attempt_hex(attempt_id: AttemptId) -> String {
-    let mut out = String::with_capacity(32);
-    for byte in attempt_id.as_bytes() {
-        use std::fmt::Write as _;
-        write!(&mut out, "{byte:02x}").expect("fmt::Write for String is infallible");
-    }
-    out
+    oneiron_hex::encode(attempt_id.as_bytes())
 }
 
 /// Attempt ids replaced by a later try.

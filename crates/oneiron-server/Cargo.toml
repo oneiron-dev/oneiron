@@ -74,6 +74,7 @@ oneiron-organ-host = { path = "../oneiron-organ-host" }
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).
 oneiron-driver = { version = "0.1.0", path = "../oneiron-driver" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-linear = { version = "0.1.0", path = "../oneiron-linear" }
 # Protocol mappers for the `[models]` provider kinds (`oneiron_llm::{openai_compat,
 # anthropic, gemini}`). They own wire mapping only; this crate supplies the
@@ -267,6 +268,12 @@ name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The signing session (ARCH-0064a [SGN-03]) over it_esign_public's fixture.
+[[test]]
+name = "esign_signing_session"
+path = "tests/esign_signing_session.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
@@ -321,6 +328,12 @@ required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 [[test]]
 name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
+required-features = ["oneiron/test-support"]
+
+# L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
+[[test]]
+name = "oauth_named_client_acceptance"
+path = "tests/oauth_named_client_acceptance.rs"
 required-features = ["oneiron/test-support"]
 
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
