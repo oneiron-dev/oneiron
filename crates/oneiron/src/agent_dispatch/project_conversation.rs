@@ -10,10 +10,12 @@ use serde::Deserialize;
 
 use super::widen_record::invalid;
 use super::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, decode_agent_dispatch_input,
-    dispatch_origin_conversation,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchOutcome, AgentDispatcher,
+    AgentSpawnContext, DispatchAgent, decode_agent_dispatch_input, dispatch_origin_conversation,
 };
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
+use crate::claim::dispatch_target::AgentDispatchTarget;
+use crate::context_projection::ContextSpec;
 use crate::dreamer_runner::{DreamerAttemptPayload, decode_dreamer_attempt_payload};
 use crate::skill::LoadedSkillPack;
 use crate::workspace_roster::{ProjectCardState, ProjectDetectionAnswer, ProjectDetectionSource};
@@ -84,7 +86,9 @@ struct DraftBriefing {
     principal: String,
 }
 
-/// The goal-intake run's references (`dispatch_goal_intake`).
+/// The goal-intake run's references (`dispatch_goal_intake`): the
+/// interview's thread root once the host opened one, and the thread turn
+/// that woke the leader for a later run.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct IntakeBriefing {
@@ -92,6 +96,10 @@ struct IntakeBriefing {
     project: String,
     home_room: String,
     card: String,
+    #[serde(default)]
+    thread: Option<String>,
+    #[serde(default)]
+    turn: Option<String>,
 }
 
 /// The leased run, read live.
@@ -176,13 +184,14 @@ impl AgentDispatcher<'_> {
         let Some(briefing) = briefing else {
             return Ok(None);
         };
+        let mut interview = None;
         let skill = match briefing {
             ProjectRunBriefing::ProjectProposal(brief) => {
                 self.check_drafting_run(&run, &brief)?;
                 draft()?
             }
             ProjectRunBriefing::GoalIntake(brief) => {
-                self.check_goal_intake_run(&run, &brief)?;
+                interview = Some(self.check_goal_intake_run(&run, &brief)?);
                 let record = self
                     .vault
                     .get_skill_record(&skills.goal_intake)?
@@ -220,6 +229,12 @@ impl AgentDispatcher<'_> {
                 "project run skill {} has no SKILL.md body",
                 loaded.record.skill_id
             )));
+        }
+        // The interview's context names the run that loaded the skill
+        // (RULING ARM05-GOAL-INTAKE), never one whose run did not.
+        if let Some(project) = interview {
+            self.vault
+                .record_project_goal_interview_attempt(project, run.attempt.id)?;
         }
         Ok(Some(loaded))
     }
@@ -289,8 +304,10 @@ impl AgentDispatcher<'_> {
     }
 
     /// The interview runs on the project the stored card minted, in its home
-    /// room, on its current leader, which is still the card's.
-    fn check_goal_intake_run(&self, run: &LiveRun, brief: &IntakeBriefing) -> Result<()> {
+    /// room, on its current leader, which is still the card's, and in the
+    /// interview thread the host opened, when its brief names one. Returns
+    /// the project.
+    fn check_goal_intake_run(&self, run: &LiveRun, brief: &IntakeBriefing) -> Result<EntityId> {
         if brief.skill != GOAL_INTAKE_SKILL {
             return Err(invalid("goal-intake brief names another skill"));
         }
@@ -314,7 +331,63 @@ impl AgentDispatcher<'_> {
                 "goal-intake run does not execute the project's current leader",
             ));
         }
-        Ok(())
+        if let Some(thread) = brief.thread.as_deref() {
+            let opened = self
+                .vault
+                .project_goal_interview_thread_in_txn(&txn, project)?;
+            if opened != Some(canonical(thread)?) {
+                return Err(invalid("goal-intake brief names another interview thread"));
+            }
+        }
+        if let Some(turn) = brief.turn.as_deref() {
+            canonical(turn)?;
+        }
+        Ok(project)
+    }
+
+    /// Dispatches the project's current leader, which is still the stored
+    /// `card`'s, to run the goal-intake skill in `home_room`, in the caller's
+    /// write `txn`: a root run with no TASK backlink, admitted by the card's
+    /// goal-intake entry. The interview's first run, when the host opens its
+    /// `thread`, has no `turn`; each later run names the thread turn that
+    /// woke the leader (RULING GOAL-INTAKE-DRAFT-RUN = A) and dedupes on it.
+    /// The brief names references only. The caller tells the attempt
+    /// observers after its commit.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one interview run's card, project, room, thread, turn and clock"
+    )]
+    pub(crate) fn dispatch_goal_intake_in_txn(
+        self,
+        txn: &mut heed::RwTxn<'_>,
+        card: &str,
+        project: EntityId,
+        home_room: EntityId,
+        thread: Option<EntityId>,
+        turn: Option<EntityId>,
+        now: u64,
+    ) -> Result<AgentDispatchOutcome> {
+        let leader = self.goal_intake_leader_in_txn(txn, card, project, home_room)?;
+        let (input, spawn) =
+            goal_intake_request(card, project, home_room, leader, thread, turn, now);
+        self.admitting_goal_intake(card, project, home_room, leader)
+            .dispatch_root_in_txn(txn, input, spawn)
+    }
+
+    /// [`Self::dispatch_goal_intake_in_txn`] in a write of its own, for an
+    /// interview the host opened no thread for: the leader the stored `card`
+    /// names.
+    pub(crate) fn dispatch_goal_intake(
+        self,
+        card: &str,
+        project: EntityId,
+        home_room: EntityId,
+        leader: EntityId,
+        now: u64,
+    ) -> Result<AgentDispatchOutcome> {
+        let (input, spawn) = goal_intake_request(card, project, home_room, leader, None, None, now);
+        self.admitting_goal_intake(card, project, home_room, leader)
+            .dispatch_with_context(input, spawn)
     }
 
     /// The leader a goal-intake interview of `project` runs on, read in
@@ -351,6 +424,53 @@ impl AgentDispatcher<'_> {
         }
         Ok(leader)
     }
+}
+
+/// One goal-intake run's dispatch input and spawn context: the leader's root
+/// run in `project`, from its home room, with a brief of references. The
+/// first run dedupes on the project, a later one on the turn that woke it;
+/// every run of the interview shares the project's run id.
+fn goal_intake_request(
+    card: &str,
+    project: EntityId,
+    home_room: EntityId,
+    leader: EntityId,
+    thread: Option<EntityId>,
+    turn: Option<EntityId>,
+    now: u64,
+) -> (DispatchAgent, AgentSpawnContext) {
+    let mut brief = serde_json::json!({
+        "skill": GOAL_INTAKE_SKILL,
+        "project": project.to_hex(),
+        "home_room": home_room.to_hex(),
+        "card": card,
+    });
+    if let Some(thread) = thread {
+        brief["thread"] = serde_json::Value::String(thread.to_hex());
+    }
+    if let Some(turn) = turn {
+        brief["turn"] = serde_json::Value::String(turn.to_hex());
+    }
+    let dedupe_key = match turn {
+        None => format!("project-goal-intake:{}", project.to_hex()),
+        Some(turn) => format!("project-goal-intake:{}:{}", project.to_hex(), turn.to_hex()),
+    };
+    let briefing = serde_json::json!({ "goal_intake": brief }).to_string();
+    (
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(leader),
+            parent_attempt: None,
+            dedupe_key: Some(dedupe_key),
+            run_id: Some(format!("project:{}", project.to_hex())),
+            now,
+        },
+        AgentSpawnContext {
+            project_ref: Some(project),
+            ..AgentSpawnContext::default()
+        }
+        .with_context_spec(ContextSpec::default().with_briefing(briefing))
+        .with_origin_conversation(home_room),
+    )
 }
 
 /// The project job a briefing names: `None` for any other briefing, an

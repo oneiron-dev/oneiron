@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 pub(crate) const PREDICATE: &str = "project.goal_intake";
 mod admission;
 mod context;
+mod intake_run;
 mod interview;
 mod limits;
 mod proposals;
