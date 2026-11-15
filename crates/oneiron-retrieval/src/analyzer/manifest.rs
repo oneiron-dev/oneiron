@@ -6,6 +6,10 @@
 //! order; `BTreeMap` iterates in lexicographic key order; no floats appear
 //! in the payload. That gives a stable byte representation suitable for
 //! sha256 hashing without pulling in a dedicated canonical-JSON crate.
+//!
+//! The manifest hash is stored beside the manifest JSON, so it keeps its
+//! SHA-256 bytes through the fingerprint crate's K door
+//! (`purposes::retrieval::ANALYZER_MANIFEST`; PLAN-UC-04 stage 1.4).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -15,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// v3 (ONE-1118): portable emoji lane — one Surface token per emoji grapheme
 /// cluster (ARCH-0031 dispatch row "Emoji / unknown → Grapheme per token").
@@ -205,11 +210,13 @@ pub fn canonical_json<T: Serialize>(value: &T) -> Result<String, serde_json::Err
     serde_json::to_string(value)
 }
 
+/// SHA-256 of [`canonical_json`], with no tag written: the bytes main stores under
+/// the text index's `_hash` key (K, the stored-hash guard).
 pub fn canonical_hash<T: Serialize>(value: &T) -> Result<[u8; 32], serde_json::Error> {
     let json = canonical_json(value)?;
-    let mut hasher = Sha256::new();
-    hasher.update(json.as_bytes());
-    Ok(hasher.finalize().into())
+    Ok(LegacyDigest::new(purposes::retrieval::ANALYZER_MANIFEST)
+        .raw(json.as_bytes())
+        .finish())
 }
 
 pub fn canonical_hash_hex<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
