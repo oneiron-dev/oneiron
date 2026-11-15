@@ -648,7 +648,7 @@ impl DssRevocation {
                             || extension.extn_id == ID_ISSUING_DISTRIBUTION_POINT
                     })
                 });
-                let issued = match list.this_update {
+                let issued = match &list.this_update {
                     x509_cert::time::Time::UtcTime(time) => time.to_unix_duration(),
                     x509_cert::time::Time::GeneralTime(time) => time.to_unix_duration(),
                 };
