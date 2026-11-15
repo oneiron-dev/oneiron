@@ -631,7 +631,5 @@ pub(in crate::calendar) fn invalidated_in_txn(
         || INVALIDATED_EVENT.contains(&vault.store, txn, &event)?)
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-ORIGIN-TESTS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

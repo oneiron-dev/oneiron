@@ -122,6 +122,7 @@ fn a_forged_signature_in_an_untrusted_pack_grants_the_dreamer_nothing() -> Resul
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
+            None,
             &granting,
         )
         .commit()?;

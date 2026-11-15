@@ -17,8 +17,6 @@ use crate::store::GateDecisionId;
 use crate::world_keys::{RecoveryRootSeed, machine_secret};
 use crate::{Vault, VaultConfig};
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
-
 pub(super) fn hosted() -> VaultConfig {
     let mut config = VaultConfig::default();
     config.privacy = crate::config::VaultPrivacyConfig {
@@ -58,11 +56,14 @@ pub(super) fn anchor_on(host: &Host, seed: &RecoveryRootSeed, request: &MachineE
         machine: request.machine,
         owner: host.owner.actor(),
         machine_key: request.machine_key,
+        device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role: YOURS,
         revision: 1,
         machine_proof: request.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     });
     let entry = anchor_signed_entry(&fold, &seed.anchor(), mark, 2).unwrap();
     host.vault
@@ -73,9 +74,13 @@ pub(super) fn anchor_on(host: &Host, seed: &RecoveryRootSeed, request: &MachineE
 /// The host's stamped root answers "yours" for a machine: refused.
 fn host_root_marks_refused(host: &Host, seed: u8) -> bool {
     let request = request_for(host.vault_id, EntityId::now(), &ed_key(seed));
-    host.vault
-        .enroll_machine(&host.issuer, &host.owner, &request, YOURS)
-        .is_err()
+    let mut txn = host.vault.store.env.write_txn().unwrap();
+    let refused = host
+        .vault
+        .enroll_bootstrap_in_txn(&mut txn, &host.issuer, host.owner.actor(), &request, YOURS)
+        .is_err();
+    drop(txn);
+    refused
         && host
             .vault
             .authority_fold()
@@ -104,7 +109,7 @@ fn a_hosted_vaults_kit_restores_and_the_hosts_material_opens_nothing() {
         let seed = kit_seed(host.vault_id, prepared.seed());
         first
             .vault
-            .activate_owner_root(&first.owner, HERE, prepared, &BTreeSet::new())
+            .activate_owner_root(&first.owner, prepared, &BTreeSet::new())
             .unwrap();
         first
             .vault
@@ -125,7 +130,7 @@ fn a_hosted_vaults_kit_restores_and_the_hosts_material_opens_nothing() {
     let restored = fresh_install_with(&host, hosted());
     let restore = restored
         .vault
-        .restore_world_keys(&restored.owner, HERE, &seed, None)
+        .restore_world_keys(&restored.owner, &seed, None)
         .unwrap();
     assert_eq!(restore.usable, vec![id]);
     assert!(restore.withheld.is_empty() && restore.needs_rehome.is_empty());
@@ -136,7 +141,7 @@ fn a_hosted_vaults_kit_restores_and_the_hosts_material_opens_nothing() {
     let request = own_request(&anchored.vault);
     let report = anchored
         .vault
-        .anchor_machine(&anchored.owner, HERE, &seed, &request, None, None)
+        .anchor_machine(&anchored.owner, &seed, &request, None, None)
         .unwrap()
         .repin
         .unwrap();
@@ -215,7 +220,7 @@ fn a_dishonest_host_never_wins_the_root() {
         let seed = kit_seed(host.vault_id, prepared.seed());
         owner
             .vault
-            .activate_owner_root(&owner.owner, HERE, prepared, &BTreeSet::new())
+            .activate_owner_root(&owner.owner, prepared, &BTreeSet::new())
             .unwrap();
         sync(&owner.vault, &host.vault);
         let theirs = early.unwrap_or_else(|| host_moves(&host));
@@ -231,7 +236,6 @@ fn a_dishonest_host_never_wins_the_root() {
             .vault
             .anchor_machine(
                 &owner.owner,
-                HERE,
                 &seed,
                 &new_request,
                 Some(new_request.code()),
@@ -264,10 +268,7 @@ fn a_dishonest_host_never_wins_the_root() {
 
         sync(&owner.vault, &host.vault);
         let pinned = fresh_install_with(&host, hosted());
-        pinned
-            .vault
-            .pin_owner_root(&pinned.owner, HERE, ours)
-            .unwrap();
+        pinned.vault.pin_owner_root(&pinned.owner, ours).unwrap();
         assert!(trusted(&pinned, owner.machine()));
         assert!(trusted(&pinned, new_request.machine));
         assert!(!trusted(&pinned, host_machine.machine));

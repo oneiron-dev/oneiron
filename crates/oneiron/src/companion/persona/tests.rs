@@ -19,6 +19,7 @@ fn replay_change(vault: &Vault, id: &EntityId, body: &ClaimBody, at: u64) -> Res
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: at, end: at },
             at,
+            None,
             &crate::claim::encode_claim_body(body)?,
         )
         .edge(id, EdgeKind::ClaimOf, &person, 1.0)

@@ -100,8 +100,6 @@ pub(crate) use revision::{
 };
 pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
 pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-REVIEW-TESTS]: the lib test target's type check fails here (6 errors: E0061 x4, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod review_tests;
 pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
@@ -509,19 +507,11 @@ impl ProjectRecord {
 }
 
 pub use crate::store::conversation_body::{ProjectRoom, RoomOriginCard};
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectRoomChange {
-    pub project_id: String,
-    pub room_id: String,
-    pub previous_members: Vec<String>,
-    pub member_ids: Vec<String>,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::ProjectRoomChange;
+#[doc(hidden)]
+pub(super) use oneiron_records::workspace_roster::project::encode;
 
-pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| invalid())
-}
 pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid())
 }

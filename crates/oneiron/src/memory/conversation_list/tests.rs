@@ -25,9 +25,11 @@ fn said(author: WitnessAuthor, content: &str, space: Option<EntityId>) -> Witnes
         author,
         message_type: "dialogue".to_owned(),
         content: content.to_owned(),
+        parts: None,
         metadata: space.map(|space| serde_json::json!({"rel": space.to_hex()})),
         is_visible: true,
         order: 0,
+        quote: None,
     }
 }
 
@@ -44,8 +46,10 @@ fn witness(
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
             messages: vec![message],
             occurred_at: at,
+            assertions: Default::default(),
         })
         .expect("witness a turn");
 }
@@ -243,6 +247,7 @@ fn rooted_reader_with(
                 created_at: crate::unix_seconds_now(),
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .expect("the reader's message grant");
@@ -1268,6 +1273,7 @@ fn a_world_the_credential_cannot_read_adds_no_count() {
                     ENTITY_TYPE_CONVERSATION,
                     TimeRange { start: AT, end: AT },
                     AT,
+                    None,
                     &body,
                 )
                 .commit()

@@ -372,7 +372,7 @@ fn code_sandbox_microvm_whiteouts_and_opaque_directories_are_typed() {
     assert!(writes.iter().any(|write| matches!(write,
         SandboxProposalWrite::DirectoryOpaque(opaque) if opaque.path.as_str() == "/mnt/workspace/renamed")));
     assert!(writes.iter().any(|write| matches!(write,
-        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/new.txt" && file.bytes == b"moved bytes")));
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/new.txt" && file.body.is(b"moved bytes"))));
     assert!(!writes.iter().any(|write| matches!(write,
         SandboxProposalWrite::FileWrite(file) if file.path.as_str().contains(".wh."))));
 }
@@ -402,6 +402,16 @@ fn code_sandbox_microvm_last_clone_releases_scratch_on_success_and_run_error() {
             unreachable!("no credential read")
         }
     }
+    struct DiscardedOutput;
+    impl MicroVmOutputSink for DiscardedOutput {
+        fn write_output_frame(
+            &mut self,
+            _: crate::engine_executor::JsCodeModeStream<'_>,
+            _: Vec<u8>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
     let dir = tempfile::tempdir().expect("tempdir");
     let scratch = dir.path().join("scratch");
     for success in [true, false] {
@@ -425,6 +435,7 @@ fn code_sandbox_microvm_last_clone_releases_scratch_on_success_and_run_error() {
             dir.path().join("rootfs"),
             dir.path().join("component"),
         );
+        let mut output = DiscardedOutput;
         if success {
             for path in [&image.kernel, &image.rootfs, &image.component] {
                 fs::write(path, b"image").expect("artifact");
@@ -432,7 +443,7 @@ fn code_sandbox_microvm_last_clone_releases_scratch_on_success_and_run_error() {
             fs::write(clone.overlay_upper().join("output"), b"proposal").expect("staged write");
             assert_eq!(
                 adapter
-                    .run(&image, ExecutionBudget::new(5, 128, 32))
+                    .run(&image, ExecutionBudget::new(5, 128, 32), &mut output)
                     .expect("run")
                     .status,
                 0
@@ -444,7 +455,7 @@ fn code_sandbox_microvm_last_clone_releases_scratch_on_success_and_run_error() {
         } else {
             assert_eq!(
                 adapter
-                    .run(&image, ExecutionBudget::new(0, 128, 32))
+                    .run(&image, ExecutionBudget::new(0, 128, 32), &mut output)
                     .expect_err("unbounded run refused")
                     .kind(),
                 ErrorKind::MicroVmBackendError
@@ -516,7 +527,7 @@ fn code_sandbox_microvm_opaque_marker_preserves_real_dot_opaque_file_in_both_ord
         let deltas = collect_overlay_writes(dir.path(), SandboxMount::Workspace).expect("delta");
         assert_eq!(deltas.len(), 2);
         assert!(deltas.iter().any(|entry| matches!(entry,
-            SandboxProposalWrite::FileWrite(write) if write.path.as_str() == "/mnt/workspace/nested/.opaque" && write.bytes == b"actual edit")));
+            SandboxProposalWrite::FileWrite(write) if write.path.as_str() == "/mnt/workspace/nested/.opaque" && write.body.is(b"actual edit"))));
         assert!(deltas.iter().any(|entry| matches!(entry,
             SandboxProposalWrite::DirectoryOpaque(dir) if dir.path.as_str() == "/mnt/workspace/nested")));
     }

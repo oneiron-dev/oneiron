@@ -25,7 +25,7 @@ fn micro_rounds(vault: &Vault) -> Result<Vec<Vec<EntityId>>> {
         .iter()
         .map(|row| {
             let payload = decode_dreamer_attempt_payload(&row.payload)?;
-            Ok(decode_partition_payload(&payload.input)?.1)
+            Ok(decode_partition_payload(&payload.input)?.turn_ids())
         })
         .collect()
 }
@@ -244,7 +244,7 @@ fn a_repeat_while_its_round_is_queued_queues_its_own_round() -> Result<()> {
         .filter(|row| row.state == crate::attempt_queue::AttemptState::Queued)
         .map(|row| {
             let payload = decode_dreamer_attempt_payload(&row.payload)?;
-            Ok(decode_partition_payload(&payload.input)?.1)
+            Ok(decode_partition_payload(&payload.input)?.turn_ids())
         })
         .collect::<Result<_>>()?;
     assert!(
@@ -290,6 +290,8 @@ fn witness_into(
             turn_ref: Some(turn.to_hex()),
             messages,
             occurred_at: 10,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witnessed turn");
     turn

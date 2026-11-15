@@ -208,8 +208,8 @@ fn attribution_and_self_model_do_not_cross_resident_forks() -> Result<()> {
     );
     let judgments = run_attribution_projector(&vault, 0)?;
     assert_eq!(judgments.len(), 2);
-    assert_eq!(judgments[0].subject, a_skill);
-    assert_eq!(judgments[1].subject, b);
+    assert_eq!(judgments[0].subject, Some(a_skill));
+    assert_eq!(judgments[1].subject, Some(b));
     assert_eq!(
         project_skill_reliability(&vault, &judgments)?,
         vec![a_skill]

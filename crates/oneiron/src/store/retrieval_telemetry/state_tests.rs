@@ -213,10 +213,9 @@ fn retrieval_telemetry_holds_resolved_config_and_no_hydrated_text() -> crate::Re
 }
 
 fn telemetry_config() -> VaultConfig {
-    VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..VaultConfig::default()
-    }
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    config
 }
 
 fn install_retention_rows(
@@ -339,7 +338,7 @@ fn rejected_retention_policy_never_authorizes_deletion_or_blocks_reopen() -> cra
             vault.store.record_retrieval_run(&second)?;
             vault
                 .store
-                .record_context_pack_provisional_retrieval_run(&provisional)?;
+                .record_context_pack_provisional_retrieval_run(&provisional, None)?;
             install_unusable_retention_manifest(&vault, mode)?;
             let txn = vault.store.env.read_txn()?;
             let resolved = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
@@ -427,7 +426,7 @@ fn crash_orphans_sweep_on_reopen() -> crate::Result<()> {
         let vault = crate::Vault::open(dir.path(), config.clone())?;
         vault
             .store
-            .record_context_pack_provisional_retrieval_run(&orphan)?;
+            .record_context_pack_provisional_retrieval_run(&orphan, None)?;
     }
     let vault = crate::Vault::open(dir.path(), config)?;
     assert!(
@@ -515,7 +514,7 @@ fn open_does_not_sweep_a_provisional_run_while_another_owner_holds_the_vault() -
         let vault = crate::Vault::open(dir.path(), config.clone())?;
         vault
             .store
-            .record_context_pack_provisional_retrieval_run(&run)?;
+            .record_context_pack_provisional_retrieval_run(&run, None)?;
     }
     let lock = std::fs::OpenOptions::new().read(true).write(true).open(
         dir.path()
@@ -562,7 +561,7 @@ fn renamed_root_cannot_redirect_the_orphan_sweep_lock() -> crate::Result<()> {
     let run = record(10);
     vault
         .store
-        .record_context_pack_provisional_retrieval_run(&run)?;
+        .record_context_pack_provisional_retrieval_run(&run, None)?;
 
     // This is the interval after LMDB validation but before a second lease
     // acquisition. A pathname-based lock would be taken in the replacement
@@ -638,7 +637,7 @@ fn pathname_open_cannot_sweep_a_live_replacement_with_unbound_lock() -> crate::R
         let vault = crate::Vault::open(&replacement, config.clone())?;
         vault
             .store
-            .record_context_pack_provisional_retrieval_run(&live)?;
+            .record_context_pack_provisional_retrieval_run(&live, None)?;
     }
     // A shared lock models a live owner in another process. This process
     // must never use EX on the captured empty root as authority to delete B.

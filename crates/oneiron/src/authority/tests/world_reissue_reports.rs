@@ -11,8 +11,6 @@ use super::world_reissue::{admit, edit_on, issue, pinned, read_on, revision, set
 use super::*;
 use crate::world_keys::RecoveryRootSeed;
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
-
 /// 7e: R1 admits A and B, and A mints W's key K, wrapped to every machine
 /// of the owner's. The issuer re-issues R2 carrying B but not A. B re-pins
 /// and K is rewrapped for it: the pin commits, B opens K after a reopen,
@@ -32,7 +30,7 @@ fn a_carried_machine_re_pins_with_its_keys() {
     sync(&a.vault, &issuer.vault);
     let second = issue(&issuer, &[b.machine()]);
     sync(&issuer.vault, &b.vault);
-    let report = b.vault.pin_owner_root(&b.owner, HERE, second.root).unwrap();
+    let report = b.vault.pin_owner_root(&b.owner, second.root).unwrap();
     assert_eq!(report.rewrapped, vec![key]);
     assert!(report.withheld.is_empty());
     assert_eq!(pinned(&b.vault), Some(second.root));
@@ -43,7 +41,7 @@ fn a_carried_machine_re_pins_with_its_keys() {
     let fresh = fresh_install(&host);
     fresh
         .vault
-        .pin_owner_root(&fresh.owner, HERE, second.root)
+        .pin_owner_root(&fresh.owner, second.root)
         .unwrap();
     let fold = fresh.vault.authority_fold().unwrap();
     assert!(fold.trusted_machine(b.machine()).is_some());
@@ -71,7 +69,7 @@ fn an_activation_on_a_roster_mine_install_still_heads_its_anchor_chain() {
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let first = anchor_of(&prepared);
     host.vault
-        .activate_owner_root(&host.owner, HERE, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let fold = host.vault.authority_fold().unwrap();
     assert!(fold.machine(own).unwrap().anchored[&first].says_yours());
@@ -82,12 +80,7 @@ fn an_activation_on_a_roster_mine_install_still_heads_its_anchor_chain() {
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let second = anchor_of(&prepared);
     host.vault
-        .activate_owner_root(
-            &host.owner,
-            HERE,
-            prepared,
-            &BTreeSet::from([other.machine]),
-        )
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::from([other.machine]))
         .unwrap();
     let fold = host.vault.authority_fold().unwrap();
     for machine in [own, other.machine] {
@@ -153,7 +146,7 @@ fn a_model_order_conflict_is_reported_and_never_resolved_by_the_engine() {
             .count()
     };
     let before = edits(&a);
-    let report = a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+    let report = a.vault.pin_owner_root(&a.owner, second.root).unwrap();
     assert_eq!(edits(&a), before);
     let narrowed = report
         .narrowed
@@ -166,7 +159,7 @@ fn a_model_order_conflict_is_reported_and_never_resolved_by_the_engine() {
     a.vault
         .reassert_world_privacy(
             &a.owner,
-            HERE,
+            ActSurface::ThisInstall,
             world,
             ordered("route-a"),
             revision(&a.vault, world),
@@ -226,11 +219,14 @@ fn a_clones_widening_is_never_offered_for_re_assertion() {
         machine: clone.machine,
         owner: a.owner.actor(),
         machine_key: clone.machine_key,
+        device_class: clone.device_class,
         encryption_key: clone.encryption_key.clone(),
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: clone.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     });
     let fold = a.vault.authority_fold().unwrap();
     let entry = anchor_signed_entry(&fold, &host_seed.anchor(), mark, 2).unwrap();
@@ -250,7 +246,7 @@ fn a_clones_widening_is_never_offered_for_re_assertion() {
     sync(&a.vault, &issuer.vault);
     let second = issue(&issuer, &[a.machine()]);
     sync(&issuer.vault, &a.vault);
-    let report = a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+    let report = a.vault.pin_owner_root(&a.owner, second.root).unwrap();
     assert_eq!(read_on(&a, world), EffectiveRead::OneMachine(a.machine()));
     assert!(
         report

@@ -14,10 +14,11 @@ fn malformed_or_misbound_coverage_never_becomes_a_view_decision() -> Result<()> 
         epoch: 1,
         first: 1,
         last: 2,
-        digest: [0; 32],
+        calls: 0,
+        digest: Some([1; 32]),
     };
     let key = (run, summary);
-    let mut raw = encode(&bogus);
+    let mut raw = encode(&bogus, None)?;
     for invalid in [vec![], vec![VERSION + 1; BODY_LEN]] {
         vault.with_write_txn(|txn| COVERAGE.put_undecodable(&vault.store, txn, &key, &invalid))?;
         assert!(vault.code_run_compaction_coverage(run).is_err());
@@ -51,6 +52,7 @@ fn coverage_row_must_match_the_exact_minted_summary_body() -> Result<()> {
     let body = encode_epoch_summary_body(&EpochSummaryBody {
         v: EPOCH_SUMMARY_BODY_VERSION,
         session: session.to_hex(),
+        conversation: None,
         epoch: 1,
         turn_start: 1,
         turn_end: 2,
@@ -72,7 +74,8 @@ fn coverage_row_must_match_the_exact_minted_summary_body() -> Result<()> {
         epoch: 1,
         first: 1,
         last: 2,
-        digest: *blake3::hash(&body).as_bytes(),
+        calls: 0,
+        digest: Some(*blake3::hash(&body).as_bytes()),
     };
     let key = (run, summary);
     let put = |row: &CodeRunCompactionCoverage| -> Result<()> {
@@ -101,6 +104,7 @@ fn coverage_row_must_match_the_exact_minted_summary_body() -> Result<()> {
     let replaced = encode_epoch_summary_body(&EpochSummaryBody {
         v: EPOCH_SUMMARY_BODY_VERSION,
         session: session.to_hex(),
+        conversation: None,
         epoch: 1,
         turn_start: 1,
         turn_end: 2,
