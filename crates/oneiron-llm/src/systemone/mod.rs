@@ -38,9 +38,8 @@ pub const NATIVE_BUDGET_KEY: &str = "budget_ms";
 /// token cap before an answer (Engine ruling L9-19-WIRE).
 pub const TOKEN_CAP_STOP: &str = "token_cap";
 
-/// One request as the seat built it, for a transport to send: the transport
-/// adds only the credential, and seals the request ([`Self::seal`]) at the
-/// moment it sends.
+/// One request as the seat built it, for a transport to send as it is: the
+/// transport adds only the credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemOneHttpRequest {
     /// The seat's endpoint, ending `/v1/systemone`.
@@ -48,61 +47,13 @@ pub struct SystemOneHttpRequest {
     /// The headers beside the credential, names lowercase: the content type,
     /// and the images opt-in on a request that has one.
     pub headers: Vec<(String, String)>,
-    /// The model the body names (`<model>-<version>`), which the reply names too.
-    pub model: String,
-    /// The body as built, its images fitted: one JSON object, without the
-    /// time left, which [`Self::seal`] reads.
-    body: Value,
-    /// The call's deadline, counted from when the seat took the call.
-    deadline: SeatDeadline,
-    /// The seat's server takes a native budget: the sealed body carries the
-    /// time left as [`NATIVE_BUDGET_KEY`].
-    native_budget: bool,
-}
-
-/// A request's exact bytes and wait, read at the moment its transport sends
-/// it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SealedSystemOneRequest {
     /// The exact body, one JSON object.
     pub body: Vec<u8>,
-    /// How long the answer may take: the call's time left at the seal.
+    /// The model the body names (`<model>-<version>`), which the reply names too.
+    pub model: String,
+    /// How long the answer may take: the decision's work time left once the
+    /// request was built, its images fitted.
     pub time_left: Duration,
-}
-
-impl SystemOneHttpRequest {
-    /// The call's time left now.
-    ///
-    /// # Errors
-    /// [`RetryableLlmError::Timeout`] once it is gone.
-    pub fn time_left(&self) -> LlmResult<Duration> {
-        self.deadline
-            .time_left()
-            .ok_or_else(|| RetryableLlmError::Timeout.into())
-    }
-
-    /// The exact body and wait to send now, from one reading of the call's
-    /// time left: a server that takes a native budget gets it as
-    /// [`NATIVE_BUDGET_KEY`], whole milliseconds rounded down, so it never
-    /// gets more time than the call has left, and the transport waits that
-    /// time for the answer. A transport seals once its credential is in
-    /// hand, right before the bytes go out, so the time it spent first (a
-    /// broker reached, a key read at its custody door) is spent from the call.
-    ///
-    /// # Errors
-    /// [`RetryableLlmError::Timeout`] once the call's time is gone: the call
-    /// is then not sent.
-    pub fn seal(&mut self) -> LlmResult<SealedSystemOneRequest> {
-        let time_left = self.time_left()?;
-        if self.native_budget {
-            self.body[NATIVE_BUDGET_KEY] =
-                json!(u64::try_from(time_left.as_millis()).unwrap_or(u64::MAX));
-        }
-        Ok(SealedSystemOneRequest {
-            body: serde_json::to_vec(&self.body).map_err(|_| FatalLlmError::InvalidRequest)?,
-            time_left,
-        })
-    }
 }
 
 /// A reply as it came: its status, and its body for a success, at most
@@ -118,10 +69,7 @@ pub type SystemOneTransportFuture<'a> =
 
 /// What carries one request to the seat and its reply back.
 pub trait SystemOneTransport: Send + Sync {
-    /// Sends `request` once, under the measurement's `lease`, sealed
-    /// ([`SystemOneHttpRequest::seal`]) once the credential is in hand and
-    /// right before the bytes go out; a call out of time by then is answered
-    /// as timed out, unsent.
+    /// Sends `request` once, under the measurement's `lease`.
     fn send<'a>(
         &'a self,
         request: SystemOneHttpRequest,
@@ -137,9 +85,9 @@ pub trait SystemOneTransport: Send + Sync {
 }
 
 /// One seat call's deadline: the work time left when the seat took the call,
-/// counted down from that moment, so time spent before the request goes out
-/// (fitting images, a transport's wait for its credential) is spent from it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// counted down from that moment, so time the seat spends before it sends
+/// (fitting images, the wait for a blocking worker) is spent from it.
+#[derive(Debug, Clone, Copy)]
 struct SeatDeadline {
     started: Instant,
     time_left: Duration,
@@ -269,9 +217,8 @@ impl SystemOneSeat {
         .await
     }
 
-    /// The request for `questions`, for its transport to seal as it sends;
-    /// a call out of time once its images are fitted is answered as timed
-    /// out, unsent.
+    /// The request for `questions`, its time left read once its images are
+    /// fitted; a call out of time by then is answered as timed out, unsent.
     async fn build_questions(
         &self,
         request: &SeatRequest,
@@ -304,21 +251,25 @@ impl SystemOneSeat {
         if !assets.is_empty() {
             body["assets"] = Value::Object(assets);
         }
+        // Read after the images are fitted: the server's budget and the
+        // transport's timeout are both what is left of the call now.
+        let time_left = deadline.time_left().ok_or(RetryableLlmError::Timeout)?;
+        if self.native_budget {
+            // Rounded down, so the server never gets more time than the call has left.
+            body[NATIVE_BUDGET_KEY] =
+                json!(u64::try_from(time_left.as_millis()).unwrap_or(u64::MAX));
+        }
         let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
         if images {
             headers.push((IMAGES_HEADER.to_ascii_lowercase(), "true".to_owned()));
         }
-        let request = SystemOneHttpRequest {
+        Ok(SystemOneHttpRequest {
             endpoint: self.endpoint.clone(),
             headers,
+            body: serde_json::to_vec(&body).map_err(|_| FatalLlmError::InvalidRequest)?,
             model,
-            body,
-            deadline,
-            native_budget: self.native_budget,
-        };
-        // A call the image fitting left out of time goes to no transport.
-        request.time_left()?;
-        Ok(request)
+            time_left,
+        })
     }
 
     async fn ask_inner(
@@ -335,10 +286,10 @@ impl SystemOneSeat {
             let sent = self.build(&request, deadline).await?;
             if capture {
                 // Fingerprint the built JSON tree, not the pre-transform request
-                // or its wire encoding, nor the time left the transport seals
-                // into it: one read hashes the same whenever it is sent. The
-                // host warns/skips missing evidence.
-                digests = native_seat_read_digests(&sent.body).ok();
+                // or its wire encoding. The host warns/skips missing evidence.
+                digests = serde_json::from_slice::<Value>(&sent.body)
+                    .ok()
+                    .and_then(|body| native_seat_read_digests(&body).ok());
             }
             let model = sent.model.clone();
             let response = self.transport.send(sent, lease).await?;
@@ -423,23 +374,20 @@ struct BearerTransport {
 impl SystemOneTransport for BearerTransport {
     fn send<'a>(
         &'a self,
-        mut request: SystemOneHttpRequest,
+        request: SystemOneHttpRequest,
         _lease: &'a BudgetLease,
     ) -> SystemOneTransportFuture<'a> {
         Box::pin(async move {
-            // The bearer is in memory: nothing waits for it, so the request
-            // is sealed here, as it goes out.
-            let sealed = request.seal()?;
             let mut post = self
                 .client
                 .post(&request.endpoint)
-                .timeout(sealed.time_left)
+                .timeout(request.time_left)
                 .bearer_auth(&self.bearer);
             for (name, value) in &request.headers {
                 post = post.header(name.as_str(), value.as_str());
             }
             let mut response = post
-                .body(sealed.body)
+                .body(request.body)
                 .send()
                 .await
                 .map_err(transport_error)?;
