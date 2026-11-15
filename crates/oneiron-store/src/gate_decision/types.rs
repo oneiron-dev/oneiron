@@ -6,21 +6,9 @@ use uuid::Uuid;
 use crate::side_table::key::SideKey;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, SideKey)]
 pub struct GateDecisionId {
     pub bytes: [u8; 16],
-}
-
-impl SideKey for GateDecisionId {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.bytes);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        Some(Self {
-            bytes: bytes.try_into().ok()?,
-        })
-    }
 }
 
 impl GateDecisionId {

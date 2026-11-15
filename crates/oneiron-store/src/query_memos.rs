@@ -33,7 +33,7 @@ pub struct SavedQueryDerivationEnvelope {
 }
 
 /// Memo identity: one verdict per (query, entity, evidence).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub struct VerdictMemoKey {
     /// The saved query.
     pub query_ref: EntityId,
@@ -96,24 +96,6 @@ impl MatchVerdict {
             "no_match" => Some(Self::NoMatch),
             _ => None,
         }
-    }
-}
-
-impl SideKey for VerdictMemoKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.query_ref.as_bytes());
-        out.extend_from_slice(self.entity_ref.as_bytes());
-        out.extend_from_slice(&self.evidence_hash);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (query_ref, rest) = bytes.split_at_checked(16)?;
-        let (entity_ref, evidence_hash) = rest.split_at_checked(16)?;
-        Some(Self {
-            query_ref: EntityId::from_bytes(query_ref.try_into().ok()?).ok()?,
-            entity_ref: EntityId::from_bytes(entity_ref.try_into().ok()?).ok()?,
-            evidence_hash: evidence_hash.try_into().ok()?,
-        })
     }
 }
 

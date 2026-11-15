@@ -6,9 +6,11 @@
 //! malformed inputs (one byte short, one trailing byte, the wrong separator, upper-case hex, a
 //! `+` digit, a reserved id, text that is not UTF-8).
 //!
-//! The store's own public keys are compared with their impls on this branch. Three keys of the
-//! `oneiron` crate (length-prefixed and prefixed) are private there, so their impls are copied
-//! here verbatim from main ea1e495a6605, with the file and lines named at each copy.
+//! The store's own public keys are compared with their impls on this branch. Since UC-06 PR 1
+//! most of them are derived themselves; `side_key_pins.rs` pins their bytes and verdicts to the
+//! hand-written decoders' table. Three keys of the `oneiron` crate (length-prefixed and
+//! prefixed) are private there, so their impls are copied here verbatim from main ea1e495a6605,
+//! with the file and lines named at each copy.
 //!
 //! On main this file does not compile (no derive). The window keys are compiled with the `sync`
 //! feature, as `window_rows` is.

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::side_table::codec::{CodecError, RawValue};
-use crate::side_table::key::{FixedSideKey, SideKey};
+use crate::side_table::key::SideKey;
 use oneiron_contracts::error::{ArtifactError, Error, Result};
 
 const ERR_ATTEMPT_ID_LEN: &str = "attempt id must be 16 bytes";
@@ -22,6 +22,7 @@ const ERR_ATTEMPT_ID_LEN: &str = "attempt id must be 16 bytes";
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    SideKey,
 )]
 pub struct AttemptId {
     pub(crate) bytes: [u8; 16],
@@ -49,22 +50,6 @@ impl AttemptId {
         })?;
         Ok(Self { bytes })
     }
-}
-
-/// Every step-family side table keys on `AttemptId`, so the `SideKey` binding
-/// lives once here, beside the type, rather than once per table module.
-impl SideKey for AttemptId {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        Self::from_bytes(bytes).ok()
-    }
-}
-
-impl FixedSideKey for AttemptId {
-    const WIDTH: usize = 16;
 }
 
 /// A side table that stores a bare attempt reference as its row's raw 16

@@ -1,5 +1,5 @@
 //! Sync-gated import receipt codec, key consts, and status types.
-use crate::side_table::key::SideKey;
+use crate::side_table::key::{HexLower, SideKey};
 use crate::window_key::WindowKey;
 use crate::window_protocol::FederationAdmissionRole;
 use oneiron_base::error::Error;
@@ -12,20 +12,8 @@ pub const VAULT_IMPORT_CONTENT_KEY_PREFIX: &str = "vault_import_content:v1:";
 
 /// A 32-byte id spelled as 64 lower-case hex characters — this family's key
 /// shape, shared by [`RECEIPT`], [`CONTENT`] and [`STAMPS`].
-#[derive(Clone, Copy)]
-pub struct Hex64(pub [u8; 32]);
-
-impl SideKey for Hex64 {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(
-            crate::batch::export::export_authority::hex_lower(&self.0).as_bytes(),
-        );
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        oneiron_hex::decode::<32>(std::str::from_utf8(bytes).ok()?).map(Self)
-    }
-}
+#[derive(Clone, Copy, SideKey)]
+pub struct Hex64(#[side_key(with = HexLower<32>)] pub [u8; 32]);
 
 /// Verdict text `sync::selector::admit_federated_entity_blob` raises when a
 /// REMOTE entity blob is too short to carry its metadata header.
