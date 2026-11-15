@@ -8,23 +8,26 @@
 //! - a holder of the work budget class lowers the sieve's budgets at once, also under the owner's
 //!   row, and its raise and its scoring change do not apply;
 //! - a holder of the maintenance cadence class moves the projector policy either way;
-//! - a holder of the wake cadence class moves the wake policy's cadence at once, and its move of
-//!   the absent role off companion (which widens the Coach's sealed-pad reads) does not apply;
+//! - a holder of the wake cadence class moves the wake policy's cadence at once; its move of the
+//!   absent role off companion (which widens the Coach's sealed-pad reads) files an ask and moves
+//!   nothing until the owner says yes (RULING SETTING-DREAMER-WAKE-ORDER = A);
 //! - a value the type's check refuses is refused, and the value in force stands;
 //! - the owner's action `dreamer.wake_policy.set` sets the key and is signed on the key's target.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_dreamer_3`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, MachineRole};
+use oneiron::check_in::HolderAnswer;
 use oneiron::code_run::actions::{
     ActionArgument, ActionHostBinding, ActionRegistry, AgentActionCall,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_wake::{AgentWakeRole, DreamerWakePolicy, ProjectorPolicy, SievePolicy};
-use oneiron::federation::EngineControlClass;
+use oneiron::federation::{EngineControlClass, Scope, ScopeAxis};
 use oneiron::lens::{LensText, SelfUiActionId};
 use oneiron::policy_setting_doors::{action_principal, policy_setting_target};
 use oneiron::receipt::AuthorityAuditQuery;
@@ -32,7 +35,10 @@ use oneiron::setting::{
     Order, Restore, SetBy, SetSetting, SetSettingOutcome, SettingCaller, ValueKind, spec_named,
 };
 use oneiron::store::GateDecisionId;
-use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
+use oneiron::verbs::{
+    AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
+    mint_agent_grant_as,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -119,6 +125,37 @@ impl Fixture {
 
     fn set_as_owner(&self, key: &str, value: Value) -> oneiron::Result<SetSettingOutcome> {
         self.set(SettingCaller::Owner(&self.owner_proof), key, value)
+    }
+
+    /// An agent the owner creates, Grants `read`, `vault.settings.set` and `vault.settings.get`,
+    /// and gives the `engine.controls` class `class`: a holder that may ask the owner.
+    fn granted_holder(&self, class: EngineControlClass) -> EntityId {
+        let agent = self.agent();
+        let mut scope = Scope::top();
+        scope.verbs = ScopeAxis::Some(
+            ["read", "vault.settings.set", "vault.settings.get"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>(),
+        );
+        let minted = mint_agent_grant_as(
+            &self.vault,
+            &self.owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent,
+                authority_scope: scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: BTreeSet::new(),
+                wallet_ref: None,
+                working_view_bounds: None,
+            },
+        )
+        .expect("the owner mints the Grant");
+        assert!(minted.grant.confers, "the Grant confers");
+        self.controls(agent, class);
+        agent
     }
 
     /// The owner's `engine.controls` grant of `class` to `agent`.
@@ -404,11 +441,10 @@ fn a_maintenance_cadence_holder_moves_the_projector_policy_either_way() {
 }
 
 #[test]
-fn a_wake_cadence_holder_moves_the_cadence_and_does_not_widen_the_coachs_pad_reads() {
+fn a_wake_cadence_holder_moves_the_cadence_and_asks_to_move_the_absent_role_off_companion() {
     let fixture = Fixture::rooted();
     let vault = &fixture.vault;
-    let holder = fixture.agent();
-    fixture.controls(holder, EngineControlClass::WakeCadence);
+    let holder = fixture.granted_holder(EngineControlClass::WakeCadence);
 
     let mut companion = vault.dreamer_wake_policy().unwrap();
     companion.agent_cadence.absent_role = AgentWakeRole::Companion;
@@ -431,18 +467,47 @@ fn a_wake_cadence_holder_moves_the_cadence_and_does_not_widen_the_coachs_pad_rea
     );
     assert_eq!(vault.dreamer_wake_policy().unwrap(), slower);
 
+    // The move off companion widens the Coach's sealed-pad reads: it files an ask.
     let mut worker = slower;
     worker.agent_cadence.absent_role = AgentWakeRole::Worker;
-    let widen = fixture.set(SettingCaller::Agent(holder), WAKE, wake_json(&worker));
-    not_applied(&widen, "the absent role off companion");
+    let ask = SetSetting::vault_value(WAKE, wake_json(&worker));
+    let outcome = vault
+        .set_setting(SettingCaller::Agent(holder), ask.clone())
+        .expect("the holder's move off companion");
+    let SetSettingOutcome::Pending { check_in } = outcome else {
+        panic!("the move off companion asks the owner: {outcome:?}");
+    };
     assert_eq!(
-        vault
-            .dreamer_wake_policy()
-            .unwrap()
-            .agent_cadence
-            .absent_role,
-        AgentWakeRole::Companion
+        vault.dreamer_wake_policy().unwrap(),
+        slower,
+        "nothing moves until the owner says yes"
     );
+
+    let check_in = EntityId::from_hex(&check_in).expect("the check-in's id");
+    let row = vault
+        .pending_check_in(&check_in)
+        .expect("the check-in reads")
+        .expect("the pending check-in");
+    oneiron::test_doors::check_in::answer_verified(
+        vault,
+        &fixture.owner_proof,
+        &check_in,
+        &row.effect_digest,
+        HolderAnswer::Approve,
+    )
+    .expect("the owner approves");
+    applied(
+        vault
+            .set_setting(
+                SettingCaller::Agent(holder),
+                SetSetting {
+                    check_in_ref: Some(check_in),
+                    ..ask
+                },
+            )
+            .expect("the approved move"),
+    );
+    assert_eq!(vault.dreamer_wake_policy().unwrap(), worker);
 }
 
 #[test]
