@@ -8322,6 +8322,7 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-hex",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rand_distr 0.4.3",
@@ -8455,6 +8456,10 @@ dependencies = [
  "wasmtime",
  "wat",
 ]
+
+[[package]]
+name = "oneiron-hex"
+version = "0.1.0"
 
 [[package]]
 name = "oneiron-image"
