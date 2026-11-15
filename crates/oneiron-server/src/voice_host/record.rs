@@ -27,10 +27,12 @@ use std::sync::Arc;
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
 use oneiron::compaction::{ConversationCompactionUnavailable, read_chat_log};
+use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::{WitnessAuthor, WitnessReceipt};
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::{EntityId, Vault, WriteActor};
+use oneiron_driver::SessionHint;
 
 use crate::ai_host::{AiHandle, ChatBreakpointCall};
 use crate::api::ai::chat::witness_turn;
@@ -170,6 +172,8 @@ impl KeptTurn {
             tracing::warn!(%error, "voice: the person's words were not kept; the turn keeps nothing");
             return;
         }
+        // The person's turn landed, as a chat request's does.
+        ai.turn_landed(&vault, WakeTurnSubject::Vault);
         let reply = witness_turn(
             &conversation,
             None,
@@ -193,6 +197,16 @@ impl KeptTurn {
                 return;
             }
         };
+        // The answer is the agent's turn and activity in the sitting, as a
+        // chat answer's is: its own cadence dial counts it.
+        ai.session_hint(record.sitting, SessionHint::Activity, None);
+        ai.turn_landed(
+            &vault,
+            WakeTurnSubject::Agent {
+                id: agent,
+                signals: AgentWakeSignals::default(),
+            },
+        );
         let Some(mode) = ai.chat_self_mode(&vault, agent) else {
             return;
         };

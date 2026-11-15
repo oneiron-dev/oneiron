@@ -184,6 +184,14 @@ fn summaries(log: &ChatLog) -> Vec<(EntityId, u64, String)> {
 fn standalone_call_lands_epoch_in_main_thread() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new().await?;
+        // With the Dreamer off, nothing answers the call's AppOpen hint, so
+        // the owner's sitting on this machine opens here, as the Dreamer's
+        // session policy opens it on a served host.
+        let sitting = fixture.vault.local_session_key(fixture.owner)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        fixture.vault.mint_session(sitting, now)?;
         let mut call = StandaloneCall::open(&fixture.server, fixture.owner)?;
         let home = voice_home_conversation_id(fixture.owner, call.agent())?;
 

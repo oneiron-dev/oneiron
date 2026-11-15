@@ -481,7 +481,9 @@ pub(super) fn prepare_call(
         auth.require(scope).map_err(|_| refused(Refusal::Scope))?;
     }
     let owner = crate::api::owner(auth, server).map_err(|_| refused(Refusal::Owner))?;
-    let person = owner.actor();
+    let person = owner
+        .actor_for_read(vault)
+        .map_err(|_| refused(Refusal::Owner))?;
     // A standalone call is the owner's own: no room, no room roster
     // (VOICE-CALL-SCOPE = A).
     let standalone = room.is_none() && roster.is_none();
