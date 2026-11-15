@@ -58,7 +58,7 @@ use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkSt
 use crate::config::models::{DreamerSettings, DreamerWording, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
-use oneiron_base::unix_millis_now;
+use crate::runtime::wall_clock_ms as now_ms;
 use request_sources::SourcedRunBackend;
 use task_lend::TaskLend;
 
@@ -343,7 +343,7 @@ async fn supervise(
             &runtime,
             &seat,
             &settings,
-            unix_millis_now() / 1_000,
+            now_ms() / 1_000,
         ) {
             tracing::warn!(%error, "dreamer tuning config not recorded");
         }
@@ -387,7 +387,7 @@ async fn supervise(
         let lifecycle = SessionLifecycleDriver::new(
             &vault,
             SessionLifecycleConfig::new(settings.idle_floor_secs, settings.session_ceiling_secs),
-            Arc::new(unix_millis_now),
+            Arc::new(now_ms),
         )?;
         let (push, _wake, hints) =
             PushTick::channel(lifecycle.idle_floor_secs()?.saturating_mul(1_000));
@@ -407,7 +407,7 @@ async fn supervise(
                 ),
                 &vault,
                 idle,
-                Arc::new(unix_millis_now),
+                Arc::new(now_ms),
             )?,
             lifecycle,
         );
@@ -450,7 +450,7 @@ fn claim_home_node(vault: &Vault, device: bool) -> oneiron::Result<u64> {
     let node_id = candidate.node_id;
     if !device {
         crate::home_candidacy::declare(vault, true, false, true);
-        store.elect_home_node(&[candidate], unix_millis_now() / 1_000)?;
+        store.elect_home_node(&[candidate], now_ms() / 1_000)?;
     }
     Ok(node_id)
 }
