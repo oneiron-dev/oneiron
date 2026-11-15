@@ -6,10 +6,17 @@
 //! binding key K of one of their own live human slips. K's secret lives only
 //! on their device; the client signs the fixed statement
 //! ([`conversation_training_statement`]) before the request, and the proof
-//! rides in the op. The judge reads the entry's parent state alone, so every
-//! replica judges the same rows the same way. A person proof either proves at
-//! the parent state or the entry is forged, as [`super::owner_proof`] treats
-//! a bad cosign: there is no waiting on a proof.
+//! rides in the op. The judge reads the entry's parent state and the entry's
+//! own time alone, so every replica judges the same rows the same way. A
+//! person proof either proves there or the entry is forged, as
+//! [`super::owner_proof`] treats a bad cosign: there is no waiting on a
+//! proof.
+//!
+//! The slip must be live at the act's time, the entry's advisory time, which
+//! the person's door writes as the vault clock it judged the slip at: so the
+//! fold and the door agree, and an expired slip's key proves no new choice.
+//! That time is the carrier's word, as an agent act's Grant is judged at it
+//! ([`super::carried_act`]); judging at it only takes a proof's power away.
 //!
 //! The proof lets the act through the not-mine carrier's wait as an owner
 //! key's proof does, and it never answers the owner's asks. The vault owner
@@ -26,14 +33,16 @@ use super::*;
 /// the same class through the authority-side constant.
 const PERSON_PROOF_ACTOR_CLASS: &str = ACTOR_CLASS_HUMAN;
 
-/// Whether `set`'s person proof proves at the parent state `state`: `false`
-/// when the person signed none. A signed proof either proves or the entry is
-/// forged ([`AuthorityFoldIssue::InvalidEntry`]), as
+/// Whether `set`'s person proof proves at the parent state `state` and the
+/// act's time `at` (the entry's advisory time): `false` when the person
+/// signed none. A signed proof either proves or the entry is forged
+/// ([`AuthorityFoldIssue::InvalidEntry`]), as
 /// [`super::owner_proof::owner_proof_key`] treats a bad cosign.
 pub(super) fn person_choice_proved(
     state: &FoldState,
     set: &ConversationTrainingSet,
     hash: AuthorityEntryHash,
+    at: u64,
 ) -> std::result::Result<bool, AuthorityFoldIssue> {
     if set.person_proof.is_none() {
         return Ok(false);
@@ -49,6 +58,7 @@ pub(super) fn person_choice_proved(
         &state.vault_id,
         person_has_human_binding,
         set,
+        at,
     ) {
         Ok(true)
     } else {
@@ -58,17 +68,18 @@ pub(super) fn person_choice_proved(
 
 /// The one judge of a person proof, shared by the fold
 /// ([`person_choice_proved`]) and the person's door: whether the proof `set`
-/// carries holds on the parent state's slips, roster and vault id.
-/// `person_has_human_binding` is whether any human actor binding names the
-/// act's person, which each side reads off its own bindings type. The door
-/// also asks its own clock ([`AuthorityFold::slip_is_live_at`]); the fold
-/// keeps no clock, so this asks none.
+/// carries holds on the parent state's slips, roster and vault id at the
+/// act's time `at`: the entry's advisory time in the fold, and the vault
+/// clock the door writes as that time. `person_has_human_binding` is whether
+/// any human actor binding names the act's person, which each side reads off
+/// its own bindings type.
 pub(super) fn proof_holds(
     slips: &SlipAuthorityState,
     roster: &BTreeMap<AuthorityKey, FoldedDevice>,
     vault_id: &[u8; 32],
     person_has_human_binding: bool,
     set: &ConversationTrainingSet,
+    at: u64,
 ) -> bool {
     let Some(proof) = &set.person_proof else {
         return false;
@@ -96,13 +107,17 @@ pub(super) fn proof_holds(
     if claims.vault_id != *vault_id {
         return false;
     }
-    // 4. Live: the minting hosts live, neither revoked nor consumed.
-    // `FoldState` keeps no valid-entries set, so unlike
-    // [`AuthorityFold::slip_is_live`] there is no entry-hash check here; the
-    // door's own liveness check covers it on its side.
+    // 4. Live at the act's time: the minting hosts live, neither revoked nor
+    // consumed, and minted for a lifetime that holds `at`, as
+    // [`AuthorityFold::slip_is_live_at`] judges it. `FoldState` keeps no
+    // valid-entries set, so unlike [`AuthorityFold::slip_is_live`] there is
+    // no entry-hash check here; the door's own liveness check covers it on
+    // its side.
     if !slips.is_live(&proof.slip, roster)
         || slips.revoked.contains(&proof.slip)
         || slips.consumed.contains(&proof.slip)
+        || at < claims.issued_at
+        || at >= claims.expires_at
     {
         return false;
     }

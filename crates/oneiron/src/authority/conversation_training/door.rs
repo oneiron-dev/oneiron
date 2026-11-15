@@ -144,8 +144,8 @@ impl Vault {
         let now = instant.secs();
         // The person's own slip-key proof (row
         // PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF), judged on the pre-write
-        // fold, the entry's parent state, by the one helper the fold judges
-        // it with.
+        // fold, the entry's parent state, at `now`, the time the entry is
+        // written at, by the one helper the fold judges it with.
         if let Some(proof) = &person_proof {
             // The vault owner proves with the owner key, never a slip key:
             // the same refusal an unproven opt back in meets, so their
@@ -176,6 +176,7 @@ impl Vault {
                     &vault_id,
                     bound,
                     &set,
+                    now,
                 )
             });
             if !fold.slip_is_live_at(&proof.slip, instant) || !proven {

@@ -127,12 +127,13 @@ pub(super) fn apply_conversation_training(
     // Leaving their own messages out narrows the person's own row;
     // letting them back in widens it, and a carrier proves only itself.
     let persons_own_narrowing = set.act.target == set.act.owner && set.leave_out;
-    // A person's own slip key proves their opt back in through any carrier;
-    // a forged proof is an invalid entry, never a waiting one. Their own
-    // narrowing lands with no proof, so a proof on it is never judged: an
-    // opt-out never fails on a proof.
-    let person_proved =
-        !persons_own_narrowing && super::person_proof::person_choice_proved(state, set, hash)?;
+    // A person's own slip key proves their opt back in through any carrier,
+    // judged at the act's time (the entry's advisory time); a forged proof is
+    // an invalid entry, never a waiting one. Their own narrowing lands with
+    // no proof, so a proof on it is never judged: an opt-out never fails on a
+    // proof.
+    let person_proved = !persons_own_narrowing
+        && super::person_proof::person_choice_proved(state, set, hash, entry.ts)?;
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
