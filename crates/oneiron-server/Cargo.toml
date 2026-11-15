@@ -305,6 +305,11 @@ name = "sandbox_vendor_boat"
 path = "tests/sandbox_vendor_boat.rs"
 required-features = ["oneiron/test-support"]
 
+[[test]]
+name = "sandbox_vendor_instabox"
+path = "tests/sandbox_vendor_instabox.rs"
+required-features = ["oneiron/test-support"]
+
 # These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
 # forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.
 [[test]]
