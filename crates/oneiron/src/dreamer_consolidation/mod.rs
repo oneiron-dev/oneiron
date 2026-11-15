@@ -69,6 +69,8 @@ mod resident_for_human;
 mod resident_health;
 pub(crate) mod resources;
 mod retained_conflict;
+#[cfg(oneiron_test_support)]
+pub(crate) use retained_conflict::retained_field_for_test;
 mod retained_keep;
 mod revert;
 pub(crate) mod reviewed;

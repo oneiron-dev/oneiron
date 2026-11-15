@@ -171,6 +171,12 @@ fn field<'v>(entry: &'v Value, key: &str) -> Result<&'v Value> {
     }
 }
 
+/// [`field`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn retained_field_for_test(entry: &Value, key: &str) -> Result<Value> {
+    field(entry, key).cloned()
+}
+
 fn bytes_at<'v>(entry: &'v Value, key: &str) -> Result<&'v [u8]> {
     match field(entry, key)? {
         Value::Binary(bytes) => Ok(bytes.as_slice()),

@@ -28,6 +28,8 @@ mod codec;
 mod doors;
 mod errors;
 mod fit_install;
+#[cfg(oneiron_test_support)]
+pub(crate) use fit_install::fit_map_entry_for_test;
 mod install;
 mod manifest;
 mod pages;

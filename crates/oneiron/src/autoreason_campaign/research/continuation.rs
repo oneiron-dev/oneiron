@@ -768,6 +768,12 @@ fn field<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
         .map(|(_, value)| value)
 }
 
+/// [`field`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn continuation_field_for_test(value: &rmpv::Value, key: &str) -> Option<rmpv::Value> {
+    field(value, key).cloned()
+}
+
 /// The one JSON object in an answer: its first `{` to its last `}`.
 fn answer_object<T: DeserializeOwned>(text: &str) -> Option<T> {
     let start = text.find('{')?;

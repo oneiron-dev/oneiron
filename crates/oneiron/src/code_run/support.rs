@@ -80,6 +80,15 @@ pub(super) fn map_get<'a>(entries: &'a [(Value, Value)], needle: &str) -> Result
         .ok_or(invalid_code_run_replay("missing dispatch outcome key"))
 }
 
+/// [`map_get`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn dispatch_outcome_map_get_for_test(
+    entries: &[(Value, Value)],
+    key: &str,
+) -> Result<Value> {
+    map_get(entries, key).cloned()
+}
+
 pub(super) fn required<'a>(value: Option<&'a Value>, message: &'static str) -> Result<&'a Value> {
     value.ok_or(invalid_code_run_replay(message))
 }

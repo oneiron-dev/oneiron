@@ -32,6 +32,8 @@ mod branch_scope;
 mod participation;
 mod policy;
 mod quote;
+#[cfg(oneiron_test_support)]
+pub(crate) use quote::quote_field_for_test;
 mod quote_birth;
 mod quote_strips;
 mod record_admission;

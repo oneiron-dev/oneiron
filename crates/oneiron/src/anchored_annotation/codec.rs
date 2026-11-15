@@ -478,6 +478,12 @@ fn map_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
         .map(|(_, entry_value)| entry_value)
 }
 
+/// [`map_get`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn annotation_map_get_for_test(value: &Value, key: &str) -> Option<Value> {
+    map_get(value, key).cloned()
+}
+
 fn map_str<'a>(value: &'a Value, key: &'static str) -> Result<&'a str> {
     map_get(value, key)
         .and_then(Value::as_str)

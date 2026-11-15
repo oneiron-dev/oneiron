@@ -60,6 +60,8 @@ mod binding;
 mod budget;
 mod children;
 mod continuation;
+#[cfg(oneiron_test_support)]
+pub(crate) use continuation::continuation_field_for_test;
 mod estimator;
 mod promotion;
 mod recording;

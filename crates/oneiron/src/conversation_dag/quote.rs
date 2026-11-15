@@ -742,6 +742,12 @@ pub(super) fn field<'a>(fields: &'a [(Value, Value)], name: &str) -> Option<&'a 
         .map(|(_, value)| value)
 }
 
+/// [`field`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn quote_field_for_test(fields: &[(Value, Value)], name: &str) -> Option<Value> {
+    field(fields, name).cloned()
+}
+
 /// The scalars `start..end` of `text`, or `None` past its end.
 pub(super) fn scalar_slice(text: &str, start: usize, end: usize) -> Option<String> {
     if start >= end {

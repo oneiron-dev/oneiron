@@ -85,6 +85,8 @@ pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
 mod paging;
 mod plugin;
+#[cfg(oneiron_test_support)]
+pub(crate) use plugin::fit_map_entry_for_test;
 mod readers;
 mod scratchpad;
 mod stream;

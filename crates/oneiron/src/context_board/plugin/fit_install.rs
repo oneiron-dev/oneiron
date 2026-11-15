@@ -268,6 +268,12 @@ fn map_entry<'v>(entries: &'v [(Value, Value)], key: &str) -> Option<&'v Value> 
         .map(|(_, value)| value)
 }
 
+/// [`map_entry`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fit_map_entry_for_test(entries: &[(Value, Value)], key: &str) -> Option<Value> {
+    map_entry(entries, key).cloned()
+}
+
 /// Whether the install claim `claim_id` authorizes its section: the owner's
 /// consent (an Approved claim), or an Auto claim this door landed after a
 /// ready fit and receipted on its skill, bound to the claim's manifest
