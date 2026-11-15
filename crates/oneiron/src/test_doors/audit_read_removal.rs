@@ -4,7 +4,8 @@
 //! Shell cutoff, as the sync receiver applies them, and how it settles the
 //! replay's refusal; the headerless delete leg a delete takes when its header
 //! read found no row, and that leg's tombstone publication past its scope
-//! probe.
+//! probe. The settlement of a privacy erase a hold refused before any grant
+//! check ran (Astra delta-4 F3), and whether it left a use limit.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -95,4 +96,31 @@ pub fn peer_tombstone_refusal_is_quarantined(
     replay_peer_tombstone(vault, id, hard)
         .err()
         .map(|refusal| crate::sync::quarantine::remote_rejection_reason(&refusal).is_some())
+}
+
+/// The last step of a privacy erase that raced the owner's grant and his hold
+/// past its first grant check (Astra delta-4 F3): the hold check refuses
+/// `id` as a privacy erase, and the delete facade settles that refusal in
+/// its own write. Returns the hold check's answer.
+///
+/// # Errors
+/// The hold check's refusal, or the store's.
+pub fn settle_a_privacy_erase_refusal(vault: &Vault, id: &EntityId) -> Result<()> {
+    let refusal = {
+        let txn = vault.store.env.read_txn()?;
+        let actor = crate::store::legal_hold::HoldActor::UNATTRIBUTED.privacy(true);
+        vault.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)
+    };
+    vault.store.flush_legal_hold_refusals_settled();
+    refusal
+}
+
+/// Whether a refused privacy erase keeps `id` under a use limit that a
+/// standing hold backs: the limit hides the record from safe reads.
+///
+/// # Errors
+/// The store's.
+pub fn use_limited(vault: &Vault, id: &EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::store::legal_hold::legal_hold_use_limit_in_txn(&vault.store, &txn, id)?.is_some())
 }

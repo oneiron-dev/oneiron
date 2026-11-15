@@ -33,6 +33,16 @@
 //!   the grant's guard ran, and on a hosted vault that refusal's settlement
 //!   limits the grant's use.
 //!
+//! Astra delta-4 (auditread-8435-pr1-delta4) found three more:
+//!
+//! - F1: the generic telemetry writer that writes only absent rows plants
+//!   either marker, as N1's writers did;
+//! - F2: the owner's confirmed privacy erase of a held grant splits off the
+//!   held record and settles its refusal before any delete door runs;
+//! - F3: a privacy erase whose first grant check ran before the owner wrote
+//!   the grant and held it meets the hold first, and the facade settles that
+//!   refusal: on a hosted vault the settlement limits the grant's use.
+//!
 //! Each removal is refused, or leaves the grant as it was: the holder still
 //! reads, the grant's history stays listed, and the owner's revoke still
 //! finds it standing. Verbs go through the generated verb dispatch
@@ -49,14 +59,17 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
 use oneiron::deletion::{DeleteReason, TombstoneReason, TombstoneValueV2};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
+use oneiron::memory::{EraseOptions, EraseReason, MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
 use oneiron::store::ports::{EntityStore, RetrievalIndex, TombstoneStore};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::audit_read_removal::{
     delete_past_the_header_read, peer_tombstone_refusal_is_quarantined,
-    publish_purge_past_the_scope_probe, replay_peer_tombstone, withdraw_on_received_shell_cutoff,
+    publish_purge_past_the_scope_probe, replay_peer_tombstone, settle_a_privacy_erase_refusal,
+    use_limited, withdraw_on_received_shell_cutoff,
 };
-use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{
+    EdgeActorClass, EdgeKind, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
+};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
 use oneiron_store::window_key::window_label_from_timestamp;
@@ -76,6 +89,12 @@ struct Fixture {
 /// A device vault on a manual clock set to the wall clock, with its host root
 /// and embedded owner.
 fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
+    fixture_in(HostingPrivacyPosture::SelfHostLocal)
+}
+
+/// [`fixture`] under `posture`: a hosted vault keeps a held record's bytes
+/// under a use limit after a refused privacy erase.
+fn fixture_in(posture: HostingPrivacyPosture) -> Result<Fixture, Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let start = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -83,6 +102,7 @@ fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
     let clock = ManualClock::new(start);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
+    config.privacy.posture = posture;
     let vault = Vault::open(dir.path(), config)?;
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
     let issuer = HostSlipIssuer::from_secret(b"oneiron-test-audit-read-removal")?;
@@ -463,6 +483,13 @@ fn a_generic_sync_state_marker_hides_no_audit_read_grant() -> TestResult {
             batch.as_ref().is_err_and(names_the_revoke),
             "sync_state_put_telemetry_batch refuses {key}: {batch:?}"
         );
+        // Delta-4 F1: the writer that writes only absent rows.
+        let if_absent =
+            vault.sync_state_put_telemetry_batch_if_absent(&[(key.as_str(), marker.as_slice())]);
+        assert!(
+            if_absent.as_ref().is_err_and(names_the_revoke),
+            "sync_state_put_telemetry_batch_if_absent refuses {key}: {if_absent:?}"
+        );
     }
     assert_the_grant_stands(&fixture, &granted, "after the refused sync-state markers")
 }
@@ -509,4 +536,62 @@ fn a_held_audit_read_grant_refuses_a_privacy_erase_before_its_hold() -> TestResu
         "the holder still reads after the refused privacy erase: {page}"
     );
     Ok(())
+}
+
+/// Delta-4 F2: the owner's confirmed privacy erase of a held grant meets the
+/// grant's refusal before its hold split keeps the grant (and, on a hosted
+/// vault, limits its use), and the grant stands.
+#[test]
+fn a_confirmed_privacy_erase_of_a_held_audit_read_grant_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    call(
+        &owner(&fixture),
+        "vault.legal_holds.place",
+        json!({ "targets": [{ "record": granted.grant_ref.to_hex() }] }),
+    );
+    let as_owner = owner(&fixture);
+    let preview = as_owner.preview_entity_delete(&granted.grant_ref)?;
+    let erase = as_owner.confirm_entity_erase(
+        &preview,
+        EraseOptions {
+            reason: EraseReason::GdprDelete,
+            also_same_bytes: false,
+            veto_starter: None,
+        },
+    );
+    assert!(
+        erase.as_ref().is_err_and(names_the_revoke),
+        "a confirmed privacy erase of a held audit_read grant is refused: {erase:?}"
+    );
+    assert_the_grant_stands(&fixture, &granted, "after the refused confirmed erase")
+}
+
+/// Delta-4 F3: on a hosted vault, a privacy erase refused by the owner's
+/// hold on the grant before any grant check ran (the delete's first check
+/// raced the owner's grant and hold) is settled with no use limit on the
+/// grant, and the grant stands.
+#[test]
+fn a_settled_privacy_erase_refusal_limits_no_audit_read_grant() -> TestResult {
+    let fixture = fixture_in(HostingPrivacyPosture::Hosted)?;
+    let granted = granted(&fixture)?;
+    call(
+        &owner(&fixture),
+        "vault.legal_holds.place",
+        json!({ "targets": [{ "record": granted.grant_ref.to_hex() }] }),
+    );
+    let refusal = settle_a_privacy_erase_refusal(&fixture.vault, &granted.grant_ref);
+    assert!(
+        refusal.is_err(),
+        "the owner's hold refuses the privacy erase: {refusal:?}"
+    );
+    assert!(
+        !use_limited(&fixture.vault, &granted.grant_ref)?,
+        "the settled refusal limits no audit_read grant's use"
+    );
+    assert_the_grant_stands(
+        &fixture,
+        &granted,
+        "after the settled privacy erase refusal",
+    )
 }
