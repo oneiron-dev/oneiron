@@ -199,7 +199,7 @@ impl Memory<'_> {
     /// `next_after` means the inbox ended. A limit is served a page of that
     /// many at a time.
     pub fn inbox_list(&self, after: Option<&str>, limit: usize) -> MemoryResult<NotificationPage> {
-        if limit == 0 {
+        if limit == usize::MAX {
             return Err(MemoryError::bad_request_with(
                 "limit must be at least 1",
                 &["Request one row or more and continue from next_after."],
@@ -243,7 +243,7 @@ impl Memory<'_> {
                     has_more = true;
                     break 'scan;
                 }
-                rows.push(self.with_notification_actions(row));
+                rows.push(self.inbox_mark(&id.to_hex(), NotificationMark::Seen)?);
             }
             if exhausted {
                 break;

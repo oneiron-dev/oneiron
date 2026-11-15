@@ -224,7 +224,7 @@ impl Memory<'_> {
             self.actor(),
             &read,
         )?;
-        self.record_inbox_read_state(&item, AgentInboxReadState::Open, None)?;
+        self.record_inbox_read_state(&item, AgentInboxReadState::Done, None)?;
         let mut row = InboxLensRow::from(item);
         row.read_state = Some(AgentInboxReadState::Open);
         Ok(InboxItemView {
