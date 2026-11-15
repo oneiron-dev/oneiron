@@ -698,7 +698,10 @@ fn approved_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// `claim_consent_binding_parts` binds consent to it. An amendment that moved
 /// either one would land a claim under a classification that never described
 /// it, which is a substitution wearing an edit's clothes. Everything else —
-/// value, confidence, validity, scope — is exactly what an edit is for.
+/// value, confidence, validity, scope — is exactly what an edit is for. An
+/// edited world-access row still carries a value the fold reads (FIX
+/// [WORLD-ACCESS-GENERIC-DOOR-UNDECODABLE]): the fold fails the agent's reads
+/// closed on one it cannot read.
 fn amended_claim_body(reviewed: &ClaimBody, amended_body: &[u8]) -> Result<ClaimBody> {
     let amended = crate::write_envelope::claim_body::decode_claim_body(amended_body, true)?;
     if amended.predicate != reviewed.predicate {
@@ -711,6 +714,7 @@ fn amended_claim_body(reviewed: &ClaimBody, amended_body: &[u8]) -> Result<Claim
             "amendment changes the reviewed claim's subject",
         ));
     }
+    crate::claim::world_access::admit_world_access_value(&amended)?;
     Ok(amended)
 }
 

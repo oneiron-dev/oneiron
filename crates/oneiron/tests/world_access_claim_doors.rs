@@ -8,7 +8,8 @@
 //! JSON, which has no binary world id, so a default an agent wrote about
 //! itself there landed, counted, and then failed every read of that agent
 //! closed. The door now refuses an in-force world-access row whose value the
-//! fold cannot read, and still takes one it can.
+//! fold cannot read, and still takes one it can. The owner's edit of a
+//! proposal in the inbox writes a new value too, and refuses the same way.
 //!
 //! [WORLD-ACCESS-GRANT-HOLDER-SETTLE]: another writer could stage a
 //! user-stated grant about an agent, and a holder approving it under the
@@ -35,6 +36,7 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::base_world_id;
 use oneiron::consent::{AuthenticatedOwner, consent_receipt_grant_ref};
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+use oneiron::inbox::compilation_target::CompilationTarget;
 use oneiron::memory::{
     AllRelationships, ClaimInput, ClaimProposalReviewRequest, ClaimRelationships, ClaimScope,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict, MemoryAuthoringAction,
@@ -46,6 +48,7 @@ use oneiron::registry::{
 };
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::world_access::put_world_access_row;
+use oneiron::write_envelope::claim_body::encode_claim_body;
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
     PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, ResolvedWorldAuthority, TimeRange, Vault, VaultConfig,
@@ -140,9 +143,15 @@ impl Fixture {
     /// The owner's grant of base reality and the WORLD to the agent, landed
     /// through the cfg door: it puts the agent under world-access law.
     fn grant_agent_the_world(&self) {
+        self.grant_the_world_to(self.agent);
+    }
+
+    /// The owner's grant of base reality and the WORLD to `subject`, landed
+    /// through the cfg door.
+    fn grant_the_world_to(&self, subject: EntityId) {
         let mut body = world_access_claim_body(
             PREDICATE_WORLD_ACCESS_ALLOWED_SET,
-            self.agent,
+            subject,
             &WorldAuthoritySet::new(true, [self.world]).unwrap(),
             ClaimSource::UserStated,
             ClaimApprovalStatus::Approved,
@@ -495,6 +504,115 @@ fn a_readable_default_from_a_claim_door_lands() {
         reads.default_claim_id.is_some(),
         "the agent's own default counts"
     );
+}
+
+/// The proposer (a propose-only agent the owner granted the WORLD) proposes
+/// its own readable default through the claim door; the proposal waits in the
+/// owner's inbox. The owner then approves it there with `value` as the edit
+/// (`Vault::approve_inbox_member_with_edit_as_at`). Returns the proposal's id
+/// and the edit's result.
+fn owner_edits_a_proposed_default(
+    f: &Fixture,
+    value: rmpv::Value,
+) -> (EntityId, oneiron::Result<()>) {
+    f.grant_the_world_to(f.proposer);
+    let claim = EntityId::now();
+    let mut input = f.input(
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+        f.proposer,
+        json_worlds(true, &[]),
+        "observed",
+    );
+    input.id = Some(claim.to_hex());
+    let receipt = f
+        .vault
+        .memory(f.proposer, EdgeActorClass::Agent)
+        .claim_propose(&input)
+        .expect("the proposer proposes its own readable default");
+    assert_eq!(
+        receipt.approval, "proposed",
+        "the default waits for consent"
+    );
+    assert!(
+        f.vault
+            .pending_gate_consents(1_000)
+            .expect("read the owner's inbox")
+            .iter()
+            .any(|row| row.claim_id == *claim.as_bytes()),
+        "the proposal waits in the owner's inbox"
+    );
+    let mut edited = f
+        .vault
+        .get_claim(&claim)
+        .expect("read the proposal")
+        .expect("the proposal");
+    edited.value = value;
+    let edited = encode_claim_body(&edited).expect("encode the edit");
+    let approved = f
+        .vault
+        .approve_inbox_member_with_edit_as_at(
+            WriteActor::new(f.owner, EdgeActorClass::Human),
+            &claim,
+            &edited,
+            &CompilationTarget::Fallback,
+            LEARNED_AT + 10,
+        )
+        .map(|_| ());
+    (claim, approved)
+}
+
+/// [WORLD-ACCESS-GENERIC-DOOR-UNDECODABLE] at the owner's inbox edit: the
+/// owner approves a proposed default with an edit that names the WORLD as
+/// JSON spells it. Before this change the edit landed the row Approved, it
+/// counted, and every read of the proposer failed closed. The edit door now
+/// refuses a value the fold cannot read, and the proposal still waits.
+#[test]
+fn an_owners_unreadable_edit_of_a_default_never_lands() {
+    let f = Fixture::new();
+    let unreadable =
+        rmpv::ext::to_value(json_worlds(true, &[f.world])).expect("the JSON value as MessagePack");
+
+    let (_, edited) = owner_edits_a_proposed_default(&f, unreadable);
+
+    let reads = f.vault.board_world_authority(Some(f.proposer), None);
+    assert!(
+        reads.is_ok(),
+        "the proposer's reads stay open after the owner's edit: {reads:?} (edit: {edited:?})"
+    );
+    let refused = edited.expect_err("an edit the fold cannot read is refused at the inbox");
+    assert!(
+        refused.to_string().contains("world-access claim value"),
+        "the refusal names the value: {refused:?}"
+    );
+}
+
+/// Control: the owner's edit to a value the fold reads lands through the same
+/// inbox door, and is the proposer's default.
+#[test]
+fn an_owners_readable_edit_of_a_default_lands() {
+    let f = Fixture::new();
+    let narrowed = WorldAuthoritySet::new(false, [f.world]).unwrap();
+    let readable = world_access_claim_body(
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+        f.proposer,
+        &narrowed,
+        ClaimSource::UserStated,
+        ClaimApprovalStatus::Approved,
+        None,
+        None,
+    )
+    .unwrap()
+    .value;
+
+    let (claim, edited) = owner_edits_a_proposed_default(&f, readable);
+
+    edited.expect("the owner's readable edit lands");
+    let reads = f
+        .vault
+        .board_world_authority(Some(f.proposer), None)
+        .expect("the proposer's reads resolve");
+    assert_eq!(reads.default_subset, narrowed, "the edited default counts");
+    assert_eq!(reads.default_claim_id, Some(claim));
 }
 
 /// [WORLD-ACCESS-GRANT-HOLDER-SETTLE]: an agent stages a user-stated grant

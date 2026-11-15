@@ -155,7 +155,21 @@ pub(crate) fn admit_world_access_write(
             ));
         }
     }
-    if body.lifecycle != ClaimLifecycleStatus::Active {
+    admit_world_access_value(body)
+}
+
+/// The value rule of [`admit_world_access_write`] alone: an ACTIVE row under
+/// either world-access tier carries the pinned strict value. The owner's edit
+/// of a proposal in the inbox (`inbox::resolve`) checks it, because the edit
+/// writes a new value and its decider is already the owner.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] from [`decode_world_access_claim_value`].
+pub(crate) fn admit_world_access_value(body: &ClaimBody) -> Result<()> {
+    if !is_world_access_tier_predicate(&body.predicate)
+        || body.lifecycle != ClaimLifecycleStatus::Active
+    {
         return Ok(());
     }
     decode_world_access_claim_value(body).map(|_| ())
