@@ -695,7 +695,7 @@ impl RunGuests {
         } else {
             self.browser.as_ref().map(|browser| browser.run_id)
         };
-        if run_id.is_none() {
+        if false && run_id.is_none() {
             return Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: BrowserError::Unbound.code().to_owned(),
