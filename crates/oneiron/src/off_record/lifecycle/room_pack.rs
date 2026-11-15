@@ -20,7 +20,6 @@ pub struct RoomPackSession<'vault> {
     session: OffRecordSession<'vault>,
     route: SessionWriteRoute,
     stretch: Option<StretchRoom>,
-    reader: EntityId,
 }
 
 /// One pack's read of a [`RoomPackSession`]: the stretch's composed view, one
@@ -179,7 +178,6 @@ impl<'vault> OffRecordSessionVault<'vault> {
             session,
             route,
             stretch,
-            reader,
         }))
     }
 }
@@ -212,16 +210,6 @@ impl RoomPackSession<'_> {
     #[must_use]
     pub fn room(&self) -> Option<EntityId> {
         self.stretch.map(|stretch| stretch.room)
-    }
-
-    /// The person or agent this stretch is bound for: the vault's owner on
-    /// their proof ([`OffRecordSessionVault::bind_pack_reader`]), or a member
-    /// on their own live slip ([`OffRecordSessionVault::bind_pack_member`]).
-    /// In a room the bind found them on its roster, and each read of the
-    /// stretch checks it again.
-    #[must_use]
-    pub fn reader(&self) -> EntityId {
-        self.reader
     }
 
     /// `disclosure` bound to this room stretch, for a pack whose caller

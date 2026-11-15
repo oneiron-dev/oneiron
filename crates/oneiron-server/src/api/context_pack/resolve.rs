@@ -518,17 +518,10 @@ fn context_pack_room<'v>(
 /// Whether every interlocutor of a pack bound to `stretch` is seated in the
 /// stretch's room (ARCH-0052 D5 rule 1; ROOM-PACK-STRETCH-TIER-A = A, the
 /// lead 14 Nov 05:3x): the pack names that room as its conversation, its
-/// reader is the one the stretch is bound for, whom the bind found on the
-/// room's roster (the owner on their proof, or a member, a person or an
-/// agent, on their own live slip; ARCH-0052 #e5-read-union-open = B), and
-/// every party its clamp meets came from that roster. Where the room proves
-/// a reader of its own (the owner, or one of the vault's own agents), it is
-/// that same one. A person the room proves no reader for keeps every term
-/// the room's audience gives the clamp, their own included, so passing
-/// rule 1 widens no clearance and no scoped read. A live call's speaker the
-/// roster does not seat, a third party or voice session the request names,
-/// or a principal other than the reader is not seated there, so the
-/// stretch's rows stay Tier A.
+/// proven reader is on the room's roster, and every party its clamp meets
+/// came from that roster. A live call's speaker the roster does not seat, a
+/// third party or voice session the request names, or a principal other
+/// than the reader is not seated there, so the stretch's rows stay Tier A.
 fn seats_every_interlocutor(
     stretch: &oneiron::off_record::RoomPackSession<'_>,
     room: Option<&RoomAudience>,
@@ -538,9 +531,10 @@ fn seats_every_interlocutor(
     let Some(room) = room else {
         return false;
     };
-    let reader = stretch.reader();
+    let Some(reader) = room.reader else {
+        return false;
+    };
     stretch.room() == Some(room.room)
-        && room.reader.is_none_or(|proven| proven == reader)
         && !room.live.reads_unknown()
         && controls.is_none_or(|controls| {
             controls.third_parties.is_empty() && controls.voice_session_ref.is_none()
