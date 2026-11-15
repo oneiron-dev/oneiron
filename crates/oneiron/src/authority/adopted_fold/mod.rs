@@ -261,6 +261,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         states,
         merged,
         writers,
+        issuers,
         uncounted,
         pairs,
         counted_pairs,
@@ -336,7 +337,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         .collect();
     let stale_approvals = super::stale_roster::stale_roster_subject_approvals(&read_whole, &fold);
     let safety = super::checkpoint_image::CheckpointSafety {
-        issuers: image.safety.issuers.clone(),
+        issuers,
         uncounted,
         pairs,
         counted_pairs,
