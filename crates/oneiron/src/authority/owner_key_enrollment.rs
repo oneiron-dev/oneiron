@@ -1,9 +1,10 @@
 //! The fold's judge of the owner's enrollment of one of his devices' own
 //! owner signing keys (FIX 4920; Engine 10-20 00:5x, rulings B and C).
 //!
-//! An `OwnerKeyEnroll` entry puts one fresh Ed25519 key on the roster as an
-//! owner root of its own (`ROLE_OWNER`, Software tier), revocable like any
-//! owner root. Two signatures carry it, the enrollment's one exception to the
+//! An `OwnerKeyEnroll` entry puts one fresh key on the roster as an owner
+//! root of its own (`ROLE_OWNER`, Software tier), revocable like any owner
+//! root: a device's Ed25519 key, or a passkey's P-256 key (row
+//! WEB-PASSKEY-OWNER-KEY), whose signatures are its WebAuthn assertions. Two signatures carry it, the enrollment's one exception to the
 //! owner-act contract's carrier-alone rule (CALLS "FIX 4920 enrollment
 //! signatures"):
 //! - its primary signer is an existing owner root, live and consenting in the
@@ -29,6 +30,8 @@
 //! it with an ordinary `RevokeDevice`, as he revokes any owner root. A resumed
 //! fold refolds in full past an enrollment (`fold_resume::admits_past` takes
 //! none), and a checkpoint image carries its body.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
@@ -59,10 +62,7 @@ pub(super) fn judge_owner_key_enroll(
     if enroll.act.by != ActBy::Owner || enroll.act.answer.is_some() {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    let Some(new_key) = enroll.public_key() else {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    };
-    if !fresh_owner_key(state, &enroll.device.key, new_key) {
+    if !fresh_owner_key(state, &enroll.device.key) {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
     // The predecessor: an owner root on the parents' roster, live and
@@ -104,17 +104,58 @@ pub(super) fn judge_owner_key_enroll(
     Ok(())
 }
 
-/// Whether `key` (`bytes` its Ed25519 form) is fresh in `state`: no roster
-/// row names it, live or revoked, so a revoked key never comes back; no
-/// machine revision named it as an install key, no actor binding names it,
-/// and no owner anchor signed with it. An owner key never doubles as a
-/// machine, actor or anchor key: the carrier rule and the machine fold read
-/// a roster key as no machine's.
-fn fresh_owner_key(state: &FoldState, key: &AuthorityKey, bytes: &[u8; 32]) -> bool {
+/// Whether `key` is fresh in `state`: no roster row names it, live or
+/// revoked, so a revoked key never comes back; no actor binding names it;
+/// and no machine revision named it as an install key and no owner anchor
+/// signed with it. An owner key never doubles as a machine, actor or anchor
+/// key: the carrier rule and the machine fold read a roster key as no
+/// machine's. Install keys and anchor keys are Ed25519 alone, so a passkey's
+/// P-256 key is neither.
+fn fresh_owner_key(state: &FoldState, key: &AuthorityKey) -> bool {
     !state.roster.contains_key(key)
         && !state.actor_bindings.contains_key(key)
-        && !state.machine_keys.contains_key(bytes)
-        && !state.root_anchors.contains_key(bytes)
+        && match key {
+            AuthorityKey::Ed25519(bytes) => {
+                !state.machine_keys.contains_key(bytes) && !state.root_anchors.contains_key(bytes)
+            }
+            AuthorityKey::P256(_) => true,
+        }
+}
+
+/// Whether every passkey-form signature on `entry` (a P-256 signature that
+/// is a WebAuthn assertion envelope, its primary or a cosign) names a
+/// context its key's enrollment pinned in `contexts` (row
+/// WEB-PASSKEY-OWNER-KEY; Sol xhigh F2). An entry with none passes; with
+/// `None` (before genesis) any passkey-form signature fails.
+pub(super) fn passkey_signatures_in_context(
+    contexts: Option<&BTreeMap<AuthorityKey, BTreeSet<WebAuthnContext>>>,
+    entry: &AuthorityLogEntry,
+) -> bool {
+    std::iter::once(&entry.signer)
+        .chain(&entry.cosigns)
+        .filter(|signature| {
+            signature.suite == AuthoritySignatureSuite::P256 && signature.signature.len() != 64
+        })
+        .all(|signature| {
+            let Some(context) = webauthn_assertion_context(&signature.signature) else {
+                return false;
+            };
+            contexts
+                .and_then(|contexts| contexts.get(&signature.public_key))
+                .is_some_and(|pinned| pinned.contains(&context))
+        })
+}
+
+/// Pins a counted passkey enrollment's context for its key (row
+/// WEB-PASSKEY-OWNER-KEY): its own assertion's RP id hash and origin.
+pub(super) fn remember_passkey_context(state: &mut FoldState, enroll: &OwnerKeyEnroll) {
+    if let Some(context) = enroll.passkey_context() {
+        state
+            .passkey_contexts
+            .entry(enroll.device.key.clone())
+            .or_default()
+            .insert(context);
+    }
 }
 
 /// A live machine of the vault, in any role: no chain removed it, and some

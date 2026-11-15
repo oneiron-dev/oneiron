@@ -111,6 +111,10 @@ pub(super) fn fold_entry_state(
         if *entry.signer_key() != device.key || entry.seq != 0 {
             return EntryFold::Invalid(AuthorityFoldIssue::SignerNotInAncestry(hash));
         }
+        // No passkey is enrolled before genesis, so none signs it.
+        if !super::owner_key_enrollment::passkey_signatures_in_context(None, entry) {
+            return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+        }
         let Ok(vault_id) = genesis_vault_id(entry) else {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         };
@@ -159,6 +163,7 @@ pub(super) fn fold_entry_state(
             hosted: context.hosted,
             actor_rows: BTreeSet::new(),
             residence_directives: BTreeMap::new(),
+            passkey_contexts: BTreeMap::new(),
         };
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
@@ -187,6 +192,15 @@ pub(super) fn fold_entry_state(
 
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
+    }
+    // A passkey signs only where its enrollment's assertion was made (row
+    // WEB-PASSKEY-OWNER-KEY; Sol xhigh F2): a sibling origin under the same
+    // RP id gets no owner signature.
+    if !super::owner_key_enrollment::passkey_signatures_in_context(
+        Some(&state.passkey_contexts),
+        entry,
+    ) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     // A frontier join stands for its parents' merge, signed by the key that
     // signs the act it leads to (FIX 7908): only its signer's sequence moves.
@@ -465,6 +479,7 @@ pub(super) fn fold_entry_state(
             return EntryFold::Invalid(issue);
         }
         apply_op(&mut state, &entry.op, hash, entry.signer_key());
+        super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }

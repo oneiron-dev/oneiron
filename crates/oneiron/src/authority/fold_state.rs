@@ -401,6 +401,12 @@ pub(super) struct FoldState {
     /// merged by union: a residence result past its directive's row reads
     /// it here (FIX 5412).
     pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
+    /// Each enrolled passkey's assertion contexts (row WEB-PASSKEY-OWNER-KEY;
+    /// Sol xhigh F2): the RP id hash and origin of its enrollment's own
+    /// assertion, merged by union. A passkey-form signature by the key counts
+    /// only in one of them. An image carries it only once a passkey enrolled.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) passkey_contexts: BTreeMap<AuthorityKey, BTreeSet<WebAuthnContext>>,
 }
 
 impl FoldState {
@@ -664,6 +670,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .iter()
             .map(|(row, directive)| (*row, *directive)),
     );
+    for (key, contexts) in &right.passkey_contexts {
+        merged
+            .passkey_contexts
+            .entry(key.clone())
+            .or_default()
+            .extend(contexts.iter().cloned());
+    }
     merged
 }
 

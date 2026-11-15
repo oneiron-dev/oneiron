@@ -115,6 +115,41 @@ pub struct EnrolledOwnerKey {
     pub at: u64,
 }
 
+/// What a passkey hands its enrollment (row WEB-PASSKEY-OWNER-KEY): its
+/// credential key and its assertion over
+/// [`Vault::owner_passkey_enrollment_challenge_as`], as the browser returns
+/// them. No machine holds a passkey, so none is named: the carrier that
+/// serves the ceremony stands in its place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerPasskeyEnrollment {
+    /// The credential's id (`rawId`), which the enrollment records so a
+    /// browser can ask for this passkey by name.
+    pub credential_id: Vec<u8>,
+    /// The credential's ES256 public key as SEC1 bytes, compressed or not.
+    pub public_key: Vec<u8>,
+    /// The assertion's authenticator data.
+    pub authenticator_data: Vec<u8>,
+    /// The assertion's client data JSON.
+    pub client_data_json: Vec<u8>,
+    /// The assertion's DER signature.
+    pub signature: Vec<u8>,
+}
+
+/// What a counted passkey enrollment answers, only once the fold counted it
+/// here and it committed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerPasskeyEnrollmentReceipt {
+    /// The enrollment's authority entry.
+    pub entry: AuthorityEntryHash,
+    /// The carrier that served the ceremony, which the entry names as the
+    /// key's machine.
+    pub machine: EntityId,
+    /// The passkey's key, compressed SEC1.
+    pub public_key: Vec<u8>,
+    /// The passkey's credential id, as the enrollment records it.
+    pub credential_id: Vec<u8>,
+}
+
 /// An enrollment that does not verify, as the typed integrity refusal.
 fn not_valid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
@@ -129,6 +164,22 @@ fn enrolled_device(public_key: [u8; 32], proof: Vec<u8>) -> DeviceAuthority {
         attestation: AuthorityAttestation {
             kind: OWNER_KEY_POSSESSION_KIND.to_owned(),
             evidence: proof,
+        },
+        tier: AuthorityTier::Software,
+        roles: ROLE_OWNER,
+    }
+}
+
+/// The passkey shape of an enrolled owner key: its P-256 key, `ROLE_OWNER`
+/// alone, Software tier, no transport binding, its credential id and its
+/// assertion's envelope as evidence.
+fn enrolled_passkey(public_key: Vec<u8>, evidence: Vec<u8>) -> DeviceAuthority {
+    DeviceAuthority {
+        key: AuthorityKey::P256(public_key),
+        transport_key_binding: [0; 32],
+        attestation: AuthorityAttestation {
+            kind: OWNER_PASSKEY_POSSESSION_KIND.to_owned(),
+            evidence,
         },
         tier: AuthorityTier::Software,
         roles: ROLE_OWNER,
@@ -198,6 +249,36 @@ impl Vault {
     where
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
+        let device = enrolled_device(input.public_key, input.proof);
+        let (entry, machine) = self.enrol_owner_device_as(
+            authority,
+            Some(input.machine),
+            device,
+            predecessor,
+            sign_predecessor,
+        )?;
+        Ok(OwnerKeyEnrollmentReceipt {
+            entry,
+            machine,
+            public_key: input.public_key,
+        })
+    }
+
+    /// The one writer of the device door and the passkey door: `device` in
+    /// its fixed shape, held by `holder`, or by no machine (a passkey), when
+    /// the carrier is named in its place. Answers the counted entry and the
+    /// machine it names.
+    fn enrol_owner_device_as<S>(
+        &self,
+        authority: &ActAuthority,
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<(AuthorityEntryHash, EntityId)>
+    where
+        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+    {
         let (owner, surface) = match authority {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
@@ -209,10 +290,15 @@ impl Vault {
         let (carrier, carrier_key) = self
             .carrier_in_txn(&txn, &fold)
             .map_err(authority_refusal_as(NO_CARRIER))?;
-        let key = AuthorityKey::Ed25519(input.public_key);
+        let machine = holder.unwrap_or(carrier);
+        let key = device.key.clone();
         if fold.roster.contains_key(&key) {
             return Err(not_valid(KEY_ON_ROSTER));
         }
+        let key_bytes: &[u8] = match &key {
+            AuthorityKey::Ed25519(bytes) => bytes,
+            AuthorityKey::P256(bytes) => bytes,
+        };
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Install(carrier, &carrier_key);
         let fold = self
@@ -231,7 +317,7 @@ impl Vault {
         let act = OwnerAct::by_owner(
             actor,
             OwnerActKind::OwnerKeyEnrollment,
-            owner_key_enrollment_target(&vault_id, &input.public_key)?,
+            owner_key_enrollment_target(&vault_id, key_bytes)?,
             surface,
             OWNER_KEY_ENROLLMENT_SEEN,
         );
@@ -243,9 +329,9 @@ impl Vault {
             parent_hashes: parents.into_iter().collect(),
             op: AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
                 act,
-                machine: input.machine,
+                machine,
                 carrier,
-                device: enrolled_device(input.public_key, input.proof),
+                device,
             }),
             signer: AuthoritySignature {
                 suite: predecessor.suite(),
@@ -279,11 +365,7 @@ impl Vault {
             return Err(authority_refused(NOT_COUNTED));
         }
         txn.commit()?;
-        Ok(OwnerKeyEnrollmentReceipt {
-            entry: hash,
-            machine: input.machine,
-            public_key: input.public_key,
-        })
+        Ok((hash, machine))
     }
 
     /// [`Self::enrol_owner_signing_key_as`] with this host's own root as the
@@ -299,6 +381,98 @@ impl Vault {
         issuer: &HostSlipIssuer,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
         self.enrol_owner_signing_key_as(authority, input, issuer.public_key(), |transcript| {
+            Ok(issuer.sign_slip(transcript))
+        })
+    }
+
+    /// The challenge a passkey's assertion names to enrol on this vault for
+    /// the owner `authority` proves (row WEB-PASSKEY-OWNER-KEY):
+    /// [`webauthn_challenge`] of [`owner_key_enrollment_challenge`] over the
+    /// vault's id, this install as the carrier that names the key's
+    /// machine, the passkey's key (`public_key`, SEC1) and that owner,
+    /// revalidated now.
+    ///
+    /// # Errors
+    /// [`RecordError::AuthorityRefused`] for an agent's act or an install
+    /// that cannot carry it; [`RecordError::InvalidAuthorityLogBody`] for a
+    /// key that is no P-256 point; an owner refusal when the proof is no
+    /// longer the vault's live owner.
+    pub fn owner_passkey_enrollment_challenge_as(
+        &self,
+        authority: &ActAuthority,
+        public_key: &[u8],
+    ) -> Result<[u8; 32]> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
+        };
+        let key = canonical_p256_key_bytes(public_key).map_err(|_| not_valid(NOT_VALID))?;
+        let txn = self.store.env.read_txn()?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let (carrier, _) = self
+            .carrier_in_txn(&txn, &fold)
+            .map_err(authority_refusal_as(NO_CARRIER))?;
+        Ok(webauthn_challenge(&owner_key_enrollment_challenge(
+            &vault_id, carrier, &key, actor,
+        )?))
+    }
+
+    /// The owner enrols `input`'s passkey as an owner root of its own, as
+    /// `authority`, carried by this install, with `predecessor` (an existing
+    /// live owner root of the roster) as the entry's primary signer, as
+    /// [`Self::enrol_owner_signing_key_as`] enrols a device's key. Its
+    /// machine is this install, the carrier. Once counted, the passkey signs
+    /// with its assertions wherever an owner root signs.
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`]; a key, a credential id or an
+    /// assertion that does not decode is
+    /// [`RecordError::InvalidAuthorityLogBody`].
+    pub fn enrol_owner_passkey_as<S>(
+        &self,
+        authority: &ActAuthority,
+        input: &OwnerPasskeyEnrollment,
+        predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<OwnerPasskeyEnrollmentReceipt>
+    where
+        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+    {
+        let public_key =
+            canonical_p256_key_bytes(&input.public_key).map_err(|_| not_valid(NOT_VALID))?;
+        let envelope = webauthn_assertion_envelope(
+            &input.authenticator_data,
+            &input.client_data_json,
+            &input.signature,
+        )
+        .map_err(|_| not_valid(NOT_VALID))?;
+        let evidence = owner_passkey_possession_evidence(&input.credential_id, &envelope)
+            .map_err(|_| not_valid(NOT_VALID))?;
+        let device = enrolled_passkey(public_key.clone(), evidence);
+        let (entry, machine) =
+            self.enrol_owner_device_as(authority, None, device, predecessor, sign_predecessor)?;
+        Ok(OwnerPasskeyEnrollmentReceipt {
+            entry,
+            machine,
+            public_key,
+            credential_id: input.credential_id.clone(),
+        })
+    }
+
+    /// [`Self::enrol_owner_passkey_as`] with this host's own root as the
+    /// predecessor: `issuer` signs the transcript in process.
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_passkey_as`].
+    pub fn enrol_owner_passkey_as_host(
+        &self,
+        authority: &ActAuthority,
+        input: &OwnerPasskeyEnrollment,
+        issuer: &HostSlipIssuer,
+    ) -> Result<OwnerPasskeyEnrollmentReceipt> {
+        self.enrol_owner_passkey_as(authority, input, issuer.public_key(), |transcript| {
             Ok(issuer.sign_slip(transcript))
         })
     }

@@ -32,6 +32,7 @@ crates/oneiron-server/src/oneironer/local/classifier.rs sha256  # question-head 
 crates/oneiron-store/src/origin/lfs/oid.rs sha256  # git-LFS object id (LFS spec)
 crates/oneiron-xlsx-formula/src/measure.rs sha256  # corpus hash that scripts/office/collect_excel_goldens.py recomputes
 crates/oneiron/src/authority/oauth_server/tokens.rs sha256  # PKCE S256 (RFC 7636)
+crates/oneiron-authority/src/authority/webauthn_assertion.rs sha256  # WebAuthn assertion signature scheme (W3C WebAuthn): the clientDataJSON digest it signs and the challenge that client data names
 crates/oneiron/src/authority/step_up/webauthn.rs sha256  # WebAuthn clientDataJSON and rpIdHash (W3C WebAuthn)
 crates/oneiron/src/batch/secret_scan/shapes.rs sha256  # BIP-39 mnemonic checksum
 crates/oneiron/src/build_cache/reapi.rs sha256  # REAPI v2 CAS digest

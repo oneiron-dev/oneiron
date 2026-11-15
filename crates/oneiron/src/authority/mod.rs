@@ -241,6 +241,9 @@ pub use oneiron_authority::authority::RootRevisionBasis;
 pub use oneiron_authority::authority::{
     OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
 };
+// A passkey's assertion as an owner root's signature: its envelope and the
+// challenge it names (row WEB-PASSKEY-OWNER-KEY).
+pub use oneiron_authority::authority::{webauthn_assertion_envelope, webauthn_challenge};
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
 mod federation_status;
@@ -383,7 +386,8 @@ pub(crate) use owner_act::{
 };
 pub use owner_choice::OwnerChoiceHead;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment,
+    OwnerPasskeyEnrollmentReceipt,
 };
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};

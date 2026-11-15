@@ -380,6 +380,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         hosted: false,
         actor_rows: BTreeSet::new(),
         residence_directives: BTreeMap::new(),
+        passkey_contexts: BTreeMap::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(
