@@ -15,7 +15,7 @@
         "HOME": "/tmp/queue-check/home",
         "PATH": "/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin",
         "RUSTUP_HOME": "/opt/rustup",
-        "RUSTUP_TOOLCHAIN": "1.96"
+        "RUSTUP_TOOLCHAIN": "1.100"
       },
       "platform": {},
       "declared_outputs": [],
@@ -38,7 +38,7 @@
         "HOME": "/tmp/queue-check/home",
         "PATH": "/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin",
         "RUSTUP_HOME": "/opt/rustup",
-        "RUSTUP_TOOLCHAIN": "1.96"
+        "RUSTUP_TOOLCHAIN": "1.100"
       },
       "platform": {},
       "declared_outputs": [],

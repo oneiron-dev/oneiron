@@ -5,7 +5,9 @@ pub(crate) use oneiron_store::serialize::token_budget::*;
 
 use super::group_labels::known_group_labels;
 use super::item_budget::is_critical_predicate_claim;
-use super::pack_entry::{PreparedEntity, PreparedPack, SerializeConfig, serialize_prepared_pack};
+use super::pack_entry::{
+    PreparedEntity, PreparedGroups, PreparedPack, SerializeConfig, serialize_prepared_pack,
+};
 use super::pack_preparation::{clone_value_with_depth_limit, value_depth_limit_reached};
 use super::types::{GROUP_ORDER, GroupKey, ValueDepthLimit};
 use crate::context_pack::ContextPack;
@@ -260,69 +262,233 @@ pub(super) fn budget_groups_with_depth_limit(
     (groups, used)
 }
 
+/// Tokens the estimated batch drops beyond the measured deficit, besides an
+/// eighth of the deficit for the spread of the per-row estimates. It covers
+/// the stats the batch itself changes: the `dropped` count and reason and
+/// `critical_over_budget` take about a dozen tokens in JSON and fewer in the
+/// text formats.
+const TOKEN_BUDGET_BATCH_MARGIN: usize = 16;
+
+/// One entry of the serialized-output budget's drop order: a row, by its group
+/// and index in its section, or the L2 base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokenBudgetDrop {
+    Neighbor { group: usize, row: usize },
+    Result { group: usize, row: usize },
+    L2Base,
+}
+
+/// Holds a pack measured at `measured` tokens to a nonzero `token_budget`
+/// (F21-RULINGS-ENGINE B5, H68): one estimated batch, then the minimal pack if
+/// the batch does not fit. That is at most three exact measurements per
+/// preparation, `measured` included, where the old loop re-encoded the whole
+/// pack once per dropped row. Returns the exact count of the pack left in
+/// `prepared`, or `None` once the L2 base is dropped: the caller then prepares
+/// the pack again without it, so this preparation's count is not needed.
+///
+/// Nonzero serialized budgets take precedence over critical-row retention. If
+/// the minimal pack (the fixed format envelope, stats and empty scaffolding)
+/// still exceeds `token_budget`, the budget is unsatisfiable; callers get that
+/// minimal payload and `total_tokens` records the actual emitted count. The
+/// fallback can drop more rows than one-at-a-time trimming would have; the
+/// ruling accepts that trade.
 fn enforce_serialized_token_budget(
     pack: &ContextPack,
     config: &SerializeConfig,
     prepared: &mut PreparedPack,
     token_budget: usize,
+    measured: usize,
     tokenizer: PackTokenizer,
-) {
-    // Nonzero serialized budgets take precedence over critical-row retention.
-    // If every row has been removed and the fixed format envelope/stats/empty
-    // scaffolding alone still exceeds `token_budget`, the budget is
-    // unsatisfiable; callers get that minimal payload and `total_tokens`
-    // records the actual emitted count.
-    let mut may_drop_critical = false;
-    while serialized_prepared_token_count(pack, config, prepared, tokenizer) > token_budget {
-        if !drop_last_token_budget_item(prepared, may_drop_critical) {
-            if may_drop_critical {
-                break;
-            }
-            may_drop_critical = true;
-            if prepared.stats.critical_count > 0 {
-                prepared.stats.critical_over_budget = true;
-            }
-            continue;
-        }
-        prepared.stats.items_dropped.reason =
-            crate::serialize::pack_accounting::PackItemAccountingReason::TokenBudget;
-        prepared.stats.items_dropped.count = prepared.stats.items_dropped.count.saturating_add(1);
-    }
-}
-
-fn drop_last_token_budget_item(prepared: &mut PreparedPack, include_critical: bool) -> bool {
-    if !prepared.merged
-        && drop_last_token_budget_item_from_groups(&mut prepared.neighbors, include_critical)
-    {
-        return true;
-    }
-
-    if drop_last_token_budget_item_from_groups(&mut prepared.results, include_critical) {
-        return true;
-    }
-    prepared.l2_base.take().is_some()
-}
-
-fn drop_last_token_budget_item_from_groups(
-    groups: &mut Vec<(GroupKey, Vec<PreparedEntity>)>,
-    include_critical: bool,
-) -> bool {
-    for group_index in (0..groups.len()).rev() {
-        let rows = &mut groups[group_index].1;
-        let Some(row_index) = rows
+) -> Option<usize> {
+    let (order, noncritical_len) = token_budget_drop_order(prepared, tokenizer);
+    let minimal = minimal_token_budget_pack(prepared, order.len());
+    // The minimal pack is small to encode, and with `measured` it gives what
+    // the droppable entries cost together, which scales their estimates.
+    let minimal_tokens = serialized_prepared_token_count(pack, config, &minimal, tokenizer);
+    let batch_len = if minimal_tokens <= token_budget {
+        token_budget_batch_len(&order, measured, minimal_tokens, token_budget)
+    } else {
+        None
+    };
+    if let Some(batch_len) = batch_len {
+        let batch = &order[..batch_len];
+        let drops_base = batch
             .iter()
-            .rposition(|row| include_critical || !is_critical_predicate_claim(row))
-        else {
-            continue;
-        };
-
-        rows.remove(row_index);
-        if rows.is_empty() {
-            groups.remove(group_index);
+            .any(|(entry, _)| *entry == TokenBudgetDrop::L2Base);
+        drop_token_budget_batch(prepared, batch, batch_len > noncritical_len);
+        if drops_base {
+            return None;
         }
-        return true;
+        let batch_tokens = serialized_prepared_token_count(pack, config, prepared, tokenizer);
+        if batch_tokens <= token_budget {
+            return Some(batch_tokens);
+        }
     }
-    false
+    let had_base = prepared.l2_base.is_some();
+    *prepared = minimal;
+    (!had_base).then_some(minimal_tokens)
+}
+
+/// The order the serialized-output budget drops in, each entry with its
+/// estimated tokens: the non-critical neighbors (none in a merged pack), the
+/// non-critical results and the L2 base, then the critical claims in the same
+/// section order. Within a section the last group goes first, and within a
+/// group the last row. The second value is the length of the non-critical
+/// part.
+fn token_budget_drop_order(
+    prepared: &PreparedPack,
+    tokenizer: PackTokenizer,
+) -> (Vec<(TokenBudgetDrop, usize)>, usize) {
+    let mut order = Vec::new();
+    let mut noncritical_len = 0;
+    for critical in [false, true] {
+        if !prepared.merged {
+            push_token_budget_drops(
+                &prepared.neighbors,
+                critical,
+                |group, row| TokenBudgetDrop::Neighbor { group, row },
+                tokenizer,
+                &mut order,
+            );
+        }
+        push_token_budget_drops(
+            &prepared.results,
+            critical,
+            |group, row| TokenBudgetDrop::Result { group, row },
+            tokenizer,
+            &mut order,
+        );
+        if !critical {
+            if let Some(summary) = &prepared.l2_base {
+                order.push((
+                    TokenBudgetDrop::L2Base,
+                    l2_base_token_estimate(summary, tokenizer),
+                ));
+            }
+            noncritical_len = order.len();
+        }
+    }
+    (order, noncritical_len)
+}
+
+fn push_token_budget_drops(
+    groups: &PreparedGroups,
+    critical: bool,
+    entry: fn(usize, usize) -> TokenBudgetDrop,
+    tokenizer: PackTokenizer,
+    order: &mut Vec<(TokenBudgetDrop, usize)>,
+) {
+    for (group, (_, rows)) in groups.iter().enumerate().rev() {
+        for (row, entity) in rows.iter().enumerate().rev() {
+            if is_critical_predicate_claim(entity) == critical {
+                order.push((
+                    entry(group, row),
+                    estimate_entity_tokens_with_depth_limit(entity, tokenizer, None),
+                ));
+            }
+        }
+    }
+}
+
+/// The L2 base's tokens as the serialized prefix carries it.
+fn l2_base_token_estimate(
+    summary: &crate::store::l2_evidence::L2BaseSummary,
+    tokenizer: PackTokenizer,
+) -> usize {
+    serde_json::to_string(summary).map_or(0, |prefix| tokenizer.count(&prefix))
+}
+
+/// How many leading entries of `order` the estimated batch drops: the fewest
+/// whose estimates cover the deficit plus the margin. Each estimate is scaled
+/// by what the droppable entries measure together, `measured` less the
+/// minimal pack's `minimal_tokens`. `None` when the whole order does not cover
+/// it.
+fn token_budget_batch_len(
+    order: &[(TokenBudgetDrop, usize)],
+    measured: usize,
+    minimal_tokens: usize,
+    token_budget: usize,
+) -> Option<usize> {
+    let deficit = measured.saturating_sub(token_budget);
+    let target = deficit
+        .saturating_add(deficit / 8)
+        .saturating_add(TOKEN_BUDGET_BATCH_MARGIN);
+    let droppable_tokens = measured.saturating_sub(minimal_tokens) as u128;
+    let estimated_tokens: u128 = order.iter().map(|(_, tokens)| *tokens as u128).sum();
+    // Covered once sum(estimates) * droppable_tokens / estimated_tokens >= target.
+    let needed = (target as u128).saturating_mul(estimated_tokens);
+    let mut covered = 0_u128;
+    for (index, (_, tokens)) in order.iter().enumerate() {
+        covered = covered.saturating_add((*tokens as u128).saturating_mul(droppable_tokens));
+        if covered >= needed {
+            return Some(index + 1);
+        }
+    }
+    None
+}
+
+/// Drops `batch` from `prepared` in one pass per group, and records it.
+/// `critical_reached`: the batch reaches past the non-critical rows.
+fn drop_token_budget_batch(
+    prepared: &mut PreparedPack,
+    batch: &[(TokenBudgetDrop, usize)],
+    critical_reached: bool,
+) {
+    let mut neighbors = token_budget_drop_marks(&prepared.neighbors);
+    let mut results = token_budget_drop_marks(&prepared.results);
+    for (entry, _) in batch {
+        match *entry {
+            TokenBudgetDrop::Neighbor { group, row } => neighbors[group][row] = true,
+            TokenBudgetDrop::Result { group, row } => results[group][row] = true,
+            TokenBudgetDrop::L2Base => prepared.l2_base = None,
+        }
+    }
+    retain_unmarked_rows(&mut prepared.neighbors, &neighbors);
+    retain_unmarked_rows(&mut prepared.results, &results);
+    record_token_budget_drops(&mut prepared.stats, batch.len(), critical_reached);
+}
+
+fn token_budget_drop_marks(groups: &PreparedGroups) -> Vec<Vec<bool>> {
+    groups
+        .iter()
+        .map(|(_, rows)| vec![false; rows.len()])
+        .collect()
+}
+
+fn retain_unmarked_rows(groups: &mut PreparedGroups, marks: &[Vec<bool>]) {
+    for ((_, rows), marks) in groups.iter_mut().zip(marks) {
+        let mut marks = marks.iter();
+        rows.retain(|_| marks.next() == Some(&false));
+    }
+    groups.retain(|(_, rows)| !rows.is_empty());
+}
+
+/// The pack with every droppable row and the L2 base gone. `dropped` is the
+/// number of entries that removes.
+fn minimal_token_budget_pack(prepared: &PreparedPack, dropped: usize) -> PreparedPack {
+    let mut minimal = PreparedPack {
+        l2_base: None,
+        merged: prepared.merged,
+        results: Vec::new(),
+        neighbors: Vec::new(),
+        stats: prepared.stats.clone(),
+    };
+    record_token_budget_drops(&mut minimal.stats, dropped, true);
+    minimal
+}
+
+/// Counts `dropped` entries against the token budget. Once the drops reach
+/// past the non-critical rows, a pack that held critical rows is marked
+/// `critical_over_budget`.
+fn record_token_budget_drops(stats: &mut PackStats, dropped: usize, critical_reached: bool) {
+    if dropped > 0 {
+        stats.items_dropped.reason =
+            crate::serialize::pack_accounting::PackItemAccountingReason::TokenBudget;
+        stats.items_dropped.count = stats.items_dropped.count.saturating_add(dropped);
+    }
+    if critical_reached && stats.critical_count > 0 {
+        stats.critical_over_budget = true;
+    }
 }
 
 fn serialized_prepared_token_count(
@@ -343,38 +509,28 @@ pub(super) fn finalize_pack_token_stats(
     tokenizer: PackTokenizer,
     token_budget: Option<usize>,
 ) {
-    for _ in 0..16 {
-        let changed = stamp_pack_token_stats(pack, config, prepared, tokenizer);
-        if let Some(budget) = token_budget {
-            enforce_serialized_token_budget(pack, config, prepared, budget, tokenizer);
+    // The token stats are not in the serialized bytes (`json_stats` and
+    // `append_stats_line` print neither), so one exact count of the final pack
+    // stamps them.
+    let mut total_tokens = serialized_prepared_token_count(pack, config, prepared, tokenizer);
+    if let Some(budget) = token_budget
+        && total_tokens > budget
+    {
+        match enforce_serialized_token_budget(
+            pack,
+            config,
+            prepared,
+            budget,
+            total_tokens,
+            tokenizer,
+        ) {
+            Some(emitted) => total_tokens = emitted,
+            // The L2 base is gone: `prepare_pack_with_l2` prepares again
+            // without it.
+            None => return,
         }
-
-        let total_tokens = serialized_prepared_token_count(pack, config, prepared, tokenizer);
-        let next = collect_pack_token_stats(prepared, total_tokens, tokenizer);
-        let within_budget = token_budget.is_none_or(|budget| total_tokens <= budget);
-        if prepared.stats.tokens == next && within_budget && !changed {
-            return;
-        }
-        prepared.stats.tokens = next;
     }
-
-    if let Some(budget) = token_budget {
-        enforce_serialized_token_budget(pack, config, prepared, budget, tokenizer);
-    }
-    let _ = stamp_pack_token_stats(pack, config, prepared, tokenizer);
-}
-
-fn stamp_pack_token_stats(
-    pack: &ContextPack,
-    config: &SerializeConfig,
-    prepared: &mut PreparedPack,
-    tokenizer: PackTokenizer,
-) -> bool {
-    let total_tokens = serialized_prepared_token_count(pack, config, prepared, tokenizer);
-    let tokens = collect_pack_token_stats(prepared, total_tokens, tokenizer);
-    let changed = prepared.stats.tokens != tokens;
-    prepared.stats.tokens = tokens;
-    changed
+    prepared.stats.tokens = collect_pack_token_stats(prepared, total_tokens, tokenizer);
 }
 
 fn collect_pack_token_stats(
