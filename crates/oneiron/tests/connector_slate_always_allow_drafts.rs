@@ -96,11 +96,14 @@ impl Fixture {
     /// A connector with the one read tool `name`, admitted with a drafted slate; returns the
     /// slate's id.
     fn admit(&self, name: &str) -> EntityId {
+        self.admit_tool(read_tool(name))
+    }
+
+    /// A connector with the one tool `tool`, admitted with a drafted slate; returns the slate's
+    /// id.
+    fn admit_tool(&self, tool: SlateToolManifest) -> EntityId {
         self.vault
-            .draft_connector_admission_slate(
-                &SlateManifest::new(vec![read_tool(name)], false),
-                None,
-            )
+            .draft_connector_admission_slate(&SlateManifest::new(vec![tool], false), None)
             .expect("admission draft")
     }
 
@@ -209,6 +212,23 @@ fn with_the_key_on_thin_evidence_still_drafts_auto() {
         draft.disposition,
         SlateDisposition::Auto,
         "one past connector pre-filled always allow; the drafter needs two"
+    );
+}
+
+#[test]
+fn with_the_key_on_a_kind_of_call_never_ruled_on_still_drafts_auto() {
+    let fx = Fixture::rooted();
+    fx.rule_always_allow_on(2);
+    fx.owner_turns_on_always_allow_drafts();
+
+    let mut tool = read_tool("contacts");
+    tool.data_class = SlateDataClass::Personal;
+    let (draft, _) = fx.draft_of(fx.admit_tool(tool), "contacts");
+    assert_eq!(
+        draft.disposition,
+        SlateDisposition::Auto,
+        "a read tool reaching personal data pre-filled always allow from rulings on public read \
+         tools alone; the owner never ruled on personal data: {draft:?}"
     );
 }
 

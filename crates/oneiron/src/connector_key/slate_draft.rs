@@ -143,19 +143,19 @@ impl SlatePastRulings {
         best
     }
     /// `always allow`, with the line that says why, when the owner chose it
-    /// for every one of the tool's traits the rulings know (at least one):
-    /// on [`PAST_RULING_MIN_CONNECTORS`] connectors or more, and on more
-    /// than half of those he ruled for that trait. The loosest setting needs
-    /// every trait's evidence to agree; the line names the weakest.
+    /// for every one of the tool's traits: on [`PAST_RULING_MIN_CONNECTORS`]
+    /// connectors or more, and on more than half of those he ruled for that
+    /// trait. A trait he never ruled on keeps the row at `auto`, so a tool
+    /// that also reaches personal data or sends outward never borrows the
+    /// evidence of plain reads. The loosest setting needs every trait's
+    /// evidence to agree; the line names the weakest.
     fn recommend_always_allow(
         &self,
         tool: &SlateToolManifest,
     ) -> Option<(SlateDisposition, String)> {
         let mut weakest: Option<(u32, u32, String)> = None;
         for trait_ in SlateTrait::of(tool) {
-            let Some(counts) = self.by_trait.get(&trait_) else {
-                continue;
-            };
+            let counts = self.by_trait.get(&trait_)?;
             let total: u32 = counts.values().sum();
             let allow = counts
                 .get(&SlateDisposition::AlwaysAllow)
