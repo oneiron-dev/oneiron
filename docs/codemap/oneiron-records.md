@@ -119,10 +119,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/ingest/mod.rs` | src | s | 1 mod · 2 re-export | — | — |
 | `src/calendar/invite/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/calendar/invite/payload.rs` | src | s | 1 enum · 2 fn | CalendarInviteMethod | Moved from `crates/oneiron/src/calendar/invite/payload.rs` (lib split R2: record types below the lib) |
-| `src/calendar/mod.rs` | src | s | 5 mod · 39 re-export | — | — |
+| `src/calendar/mod.rs` | src | s | 5 mod · 38 re-export | — | — |
 | `src/calendar/prep/home_node.rs` | src | s | 1 struct · 1 fn | PrepHomeNodeJob | Moved from `crates/oneiron/src/calendar/prep/home_node.rs` (lib split R2: record types below the lib) |
-| `src/calendar/prep/mod.rs` | src | s | 2 mod · 7 re-export | — | — |
-| `src/calendar/prep/wake.rs` | src | s | 1 struct · 1 const | PrepWake | Moved from `crates/oneiron/src/calendar/prep/wake.rs` (lib split R2: record types below the lib) |
+| `src/calendar/prep/mod.rs` | src | s | 2 mod · 6 re-export | — | — |
+| `src/calendar/prep/wake.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/calendar/prep/wake.rs` (lib split R2: record types below the lib) |
 | `src/calendar/transcript.rs` | src | s | 2 struct · 2 re-export | ParsedTranscript, ParsedTranscriptTurn | Moved from `crates/oneiron/src/calendar/transcript.rs` (lib split R2: record types below the lib) |
 | `src/campaign/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/campaign/presets/defaults.rs` | src | s | 1 struct | CampaignPresetDefaults | Moved from `crates/oneiron/src/campaign/presets/defaults.rs` (lib split R1: record types below the lib) |
