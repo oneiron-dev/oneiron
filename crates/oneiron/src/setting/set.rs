@@ -7,6 +7,7 @@ use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey}
 
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
+use super::pack::layer_default_in_txn;
 use super::read::{
     Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
 };
@@ -539,8 +540,9 @@ fn direction_in_txn(
             revision: 0,
         });
     }
-    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain)?;
-    let (after, _, _) = in_force_of(spec, &after, &fits, &chain)?;
+    let layer = layer_default_in_txn(&vault.store, txn, spec)?;
+    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain, &layer)?;
+    let (after, _, _) = in_force_of(spec, &after, &fits, &chain, &layer)?;
     Ok(ChangeDirection::of(&after, &before, no_wider))
 }
 
@@ -622,8 +624,8 @@ fn person_reading_in_txn(
 /// judge it (DESIGN 1.2 step 4). On a key whose rows meet, always: a value row there only
 /// narrows what it meets, and the rule judges every move. On a key that reads one row: no owner's
 /// pin on the chain, no row the owner set in the slot, and on a learned key with an order a value
-/// inside the owner's nearest value row at that scope or wider, else inside the catalogue default
-/// (stage 3's holder rule).
+/// inside the owner's nearest value row at that scope or wider, else inside the default the vault
+/// accepted (stage 3's holder rule).
 fn one_row_bounds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -660,7 +662,7 @@ fn one_row_bounds_in_txn(
             .unwrap_or(false),
         None => spec
             .kind
-            .no_wider(value, &spec.kind.default_value()?)
+            .no_wider(value, &layer_default_in_txn(&vault.store, txn, spec)?.value)
             .unwrap_or(false),
     })
 }

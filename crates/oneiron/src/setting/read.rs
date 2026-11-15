@@ -7,6 +7,9 @@ use oneiron_setting_contract::{
 };
 
 use super::learned::{LoadedFit, SettingFitView, fit_view, fits_in_txn};
+use super::pack::{
+    LayerDefault, ProposedDefaultView, layer_default_in_txn, proposed_defaults_in_txn,
+};
 use super::{
     EncodedValue, Kind, LearnedRange, ReadBy, Resolved, Restore, ScopeKind, SetBy, Setter, Setting,
     SettingMode, SettingScope, SettingSource, SettingSpec, SettingValue,
@@ -184,8 +187,8 @@ pub(super) fn walk_met<V: Clone + PartialEq>(
 }
 
 /// The walk of a key that reads one row, over loaded rows and a learned key's fits, with values
-/// decoded by `decode`; `default` is the catalogue default, and with `no_wider` (a learned key's
-/// comparator) a holder's cap where the owner set no row.
+/// decoded by `decode`; `default` is the default layer's value, and with `no_wider` (a learned
+/// key's comparator) a holder's cap where the owner set no row.
 pub(super) fn walk<V: Clone>(
     loaded: &[Loaded],
     fits: &[LoadedFit],
@@ -250,8 +253,9 @@ pub(super) fn walk<V: Clone>(
 impl<T: SettingValue> Setting<T> {
     /// The value in force for this key in `txn`, where the reader knows the places `known`
     /// (narrowest first or in any order; never the vault, which is always last), for `item` of
-    /// a family key. A missing row reads the catalogue default; an unreadable deciding row reads
-    /// the key's strictest value.
+    /// a family key. With no deciding row it reads the default the vault accepted (the default
+    /// layer); an unreadable deciding row, or a lost accepted default, reads the key's strictest
+    /// value.
     ///
     /// # Errors
     ///
@@ -284,7 +288,8 @@ impl<T: SettingValue> Setting<T> {
         self.spec.check_item(item)?;
         let chain = SettingScope::chain(known, self.spec.scopes)?;
         let loaded = load_in_txn(dbs, txn, self.spec, &chain, item)?;
-        let default = self.kind.default_typed();
+        let layer = layer_default_in_txn(dbs, txn, self.spec)?;
+        let default = Kind::<T>::decode(&layer.value).unwrap_or_else(|| self.kind.default_typed());
         let walked = match self.kind.meet_typed().filter(|_| self.spec.reads_met()) {
             Some(meet) => walk_met(&loaded, &chain, Kind::<T>::decode, &meet, &default),
             None => {
@@ -309,7 +314,9 @@ impl<T: SettingValue> Setting<T> {
             },
             Walked::Default => Resolved {
                 value: default,
-                source: SettingSource::Default,
+                source: layer
+                    .lost
+                    .map_or(SettingSource::Default, SettingSource::Unreadable),
                 revision: 0,
             },
             Walked::Unreadable(scope) => Resolved {
@@ -426,18 +433,21 @@ pub(super) fn in_force_in_txn(
 ) -> Result<(EncodedValue, SettingSource, u64)> {
     let loaded = load_in_txn(dbs, txn, spec, chain, item)?;
     let fits = fits_in_txn(dbs, txn, spec, chain)?;
-    in_force_of(spec, &loaded, &fits, chain)
+    let layer = layer_default_in_txn(dbs, txn, spec)?;
+    in_force_of(spec, &loaded, &fits, chain, &layer)
 }
 
-/// The value in force for `spec` over `chain`, from rows already loaded: [`in_force_in_txn`]'s
-/// walk, for a caller that weighs the rows as a change would leave them.
+/// The value in force for `spec` over `chain`, from rows already loaded and the default layer's
+/// answer `layer`: [`in_force_in_txn`]'s walk, for a caller that weighs the rows as a change
+/// would leave them.
 pub(super) fn in_force_of(
     spec: &SettingSpec,
     loaded: &[Loaded],
     fits: &[LoadedFit],
     chain: &[SettingScope],
+    layer: &LayerDefault,
 ) -> Result<(EncodedValue, SettingSource, u64)> {
-    let default = spec.kind.default_value()?;
+    let default = layer.value.clone();
     let meet =
         |a: &EncodedValue, b: &EncodedValue| spec.kind.meet(a, b).unwrap_or_else(|| a.clone());
     let cap = |a: &EncodedValue, b: &EncodedValue| spec.kind.no_wider(a, b).unwrap_or(false);
@@ -461,7 +471,14 @@ pub(super) fn in_force_of(
             source,
             revision,
         } => (value, source, revision),
-        Walked::Default => (default, SettingSource::Default, 0),
+        Walked::Default => (
+            default,
+            layer
+                .lost
+                .clone()
+                .map_or(SettingSource::Default, SettingSource::Unreadable),
+            0,
+        ),
         Walked::Unreadable(scope) => (
             spec.kind.strictest_value()?.ok_or(Error::CorruptedIndex(
                 "a setting row does not decode and its key names no strictest value",
@@ -484,6 +501,10 @@ pub(super) fn rows_in_txn(
         let Some(key) = RowKey::decode(&key) else {
             continue;
         };
+        // A pack's row is the default layer: the entry's `accepted_default`, not a stored choice.
+        if key.scope.kind() == ScopeKind::Pack {
+            continue;
+        }
         let stored = rmp_serde::from_slice::<StoredRow>(&bytes).ok();
         rows.push(SettingRowView {
             item: key.item,
@@ -580,8 +601,15 @@ pub struct SettingCatalogueEntry {
     pub doc: String,
     /// The value's JSON Schema.
     pub schema: serde_json::Value,
-    /// The catalogue default, as JSON.
+    /// The build's default, as JSON: what the `engine` pack proposes for the key.
     pub default: serde_json::Value,
+    /// The default the vault accepted (the default layer, DESIGN 1.5), as JSON: what a read with
+    /// no deciding row starts from. `null` when the accepted row is lost: the key then reads
+    /// strictest.
+    pub accepted_default: serde_json::Value,
+    /// A pack's default for the key that waits on the owner's yes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_default: Option<ProposedDefaultView>,
     /// Who sets it without asking: `owner`, `subject`, or the `engine.controls` grant verb of
     /// its class.
     pub set_by: String,
@@ -660,6 +688,7 @@ impl Vault {
         filter: &SettingListFilter,
     ) -> Result<Vec<SettingCatalogueEntry>> {
         let txn = self.store.env.read_txn()?;
+        let mut proposed = proposed_defaults_in_txn(&self.store, &txn)?;
         let mut entries = Vec::new();
         for spec in super::catalogue() {
             if filter
@@ -693,6 +722,16 @@ impl Vault {
             } else {
                 None
             };
+            // A lost accepted default (or one whose key names no strictest value) shows null.
+            let accepted_default = layer_default_in_txn(&self.store, &txn, spec)
+                .ok()
+                .filter(|layer| layer.lost.is_none())
+                .and_then(|layer| spec.kind.to_json(&layer.value))
+                .unwrap_or(serde_json::Value::Null);
+            let proposed_default = proposed
+                .iter()
+                .position(|(key, _)| key == spec.name)
+                .map(|at| proposed.swap_remove(at).1);
             entries.push(SettingCatalogueEntry {
                 key: spec.name.to_owned(),
                 doc: spec.doc.trim().to_owned(),
@@ -703,6 +742,8 @@ impl Vault {
                     .ok()
                     .and_then(|value| spec.kind.to_json(&value))
                     .unwrap_or(serde_json::Value::Null),
+                accepted_default,
+                proposed_default,
                 set_by: match spec.set_by {
                     SetBy::Owner => "owner".to_owned(),
                     SetBy::Subject => "subject".to_owned(),

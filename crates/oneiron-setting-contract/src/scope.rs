@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 /// The kinds of place a row may sit at. One enum covers every scope the engine's settings use:
 /// the nested narrowing of DEC-0005 `#precedence` (World, Project, SubProject, Thread), the
-/// learned settings' scopes (Goal, TaskType), and the per-subject rows (Agent, Person, Repo).
+/// learned settings' scopes (Goal, TaskType), the per-subject rows (Agent, Person, Repo), and
+/// the default layer (Pack: what an installed pack ships, DESIGN 1.5 "The four layers").
 #[derive(
     Debug,
     Clone,
@@ -32,13 +33,16 @@ pub enum ScopeKind {
     Agent,
     Person,
     Repo,
+    Pack,
 }
 
 impl ScopeKind {
     /// Every kind, narrowest first: the order a read's chain takes them in. A subject's own row
     /// is narrower than any place; inside a place, the nested narrowing; the task type after the
-    /// places, as the learned settings read it; the vault last.
-    pub const NARROWEST_FIRST: [Self; 10] = [
+    /// places, as the learned settings read it; then the vault, where a chain ends. A pack's row
+    /// is wider than the vault's: it is the default the vault's rows start from, read apart from
+    /// the chain.
+    pub const NARROWEST_FIRST: [Self; 11] = [
         Self::Agent,
         Self::Person,
         Self::Repo,
@@ -49,6 +53,7 @@ impl ScopeKind {
         Self::World,
         Self::TaskType,
         Self::Vault,
+        Self::Pack,
     ];
 
     /// The byte a stored key carries for this kind.
@@ -65,6 +70,7 @@ impl ScopeKind {
             Self::Agent => 7,
             Self::Person => 8,
             Self::Repo => 9,
+            Self::Pack => 10,
         }
     }
 
@@ -99,12 +105,13 @@ impl ScopeKind {
             Self::Agent => "agent",
             Self::Person => "person",
             Self::Repo => "repo",
+            Self::Pack => "pack",
         }
     }
 }
 
-/// One place a row applies. The vault has no id; a task type is named by its type node; every
-/// other kind by its entity.
+/// One place a row applies. The vault has no id; a task type is named by its type node; a pack by
+/// its name; every other kind by its entity.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -120,6 +127,9 @@ pub enum SettingScope {
     Agent(EntityId),
     Person(EntityId),
     Repo(EntityId),
+    /// The default layer of one pack: the value the vault accepted from it. Only the pack door
+    /// writes it (`Setter::Pack`); the `engine` pack is the build's own catalogue.
+    Pack(String),
 }
 
 impl SettingScope {
@@ -137,6 +147,7 @@ impl SettingScope {
             Self::Agent(_) => ScopeKind::Agent,
             Self::Person(_) => ScopeKind::Person,
             Self::Repo(_) => ScopeKind::Repo,
+            Self::Pack(_) => ScopeKind::Pack,
         }
     }
 
@@ -144,7 +155,7 @@ impl SettingScope {
     #[must_use]
     pub const fn entity(&self) -> Option<EntityId> {
         match self {
-            Self::Vault | Self::TaskType(_) => None,
+            Self::Vault | Self::TaskType(_) | Self::Pack(_) => None,
             Self::World(id)
             | Self::Project(id)
             | Self::SubProject(id)
@@ -157,13 +168,13 @@ impl SettingScope {
     }
 
     /// The stored key's scope part: the kind's byte, then the entity's 16 bytes, the type node's
-    /// UTF-8, or nothing for the vault.
+    /// or the pack name's UTF-8, or nothing for the vault.
     #[must_use]
     pub fn key_bytes(&self) -> Vec<u8> {
         let mut out = vec![self.kind().tag()];
         match self {
             Self::Vault => {}
-            Self::TaskType(node) => out.extend_from_slice(node.as_bytes()),
+            Self::TaskType(node) | Self::Pack(node) => out.extend_from_slice(node.as_bytes()),
             other => {
                 if let Some(id) = other.entity() {
                     out.extend_from_slice(id.as_bytes());
@@ -189,6 +200,10 @@ impl SettingScope {
                 let node = std::str::from_utf8(rest).ok()?;
                 (!node.is_empty()).then(|| Self::TaskType(node.to_owned()))?
             }
+            ScopeKind::Pack => {
+                let name = std::str::from_utf8(rest).ok()?;
+                (!name.is_empty()).then(|| Self::Pack(name.to_owned()))?
+            }
             ScopeKind::World => Self::World(entity()?),
             ScopeKind::Project => Self::Project(entity()?),
             ScopeKind::SubProject => Self::SubProject(entity()?),
@@ -207,16 +222,21 @@ impl SettingScope {
     /// # Errors
     ///
     /// `InvalidConfig` when the reader names a vault scope among what it knows: the chain ends
-    /// at the vault by itself.
+    /// at the vault by itself; or a pack: the default layer is read apart from the chain.
     pub fn chain(known: &[Self], admitted: &[ScopeKind]) -> Result<Vec<Self>> {
         if known.iter().any(|scope| *scope == Self::Vault) {
             return Err(Error::InvalidConfig(
                 "a setting read names the places it knows; the vault is always last".into(),
             ));
         }
+        if known.iter().any(|scope| scope.kind() == ScopeKind::Pack) {
+            return Err(Error::InvalidConfig(
+                "a setting read names the places it knows; a pack's default is no place".into(),
+            ));
+        }
         let mut chain: Vec<Self> = Vec::new();
         for kind in ScopeKind::NARROWEST_FIRST {
-            if kind == ScopeKind::Vault || !admitted.contains(&kind) {
+            if matches!(kind, ScopeKind::Vault | ScopeKind::Pack) || !admitted.contains(&kind) {
                 continue;
             }
             if let Some(scope) = known.iter().find(|scope| scope.kind() == kind) {
@@ -243,7 +263,8 @@ mod tests {
             assert_eq!(ScopeKind::from_tag(kind.tag()), Some(kind));
             assert_eq!(ScopeKind::NARROWEST_FIRST[kind.rank()], kind);
         }
-        assert_eq!(ScopeKind::from_tag(10), None);
+        assert_eq!(ScopeKind::from_tag(11), None);
+        assert_eq!(ScopeKind::Pack.rank(), ScopeKind::Vault.rank() + 1);
     }
 
     #[test]
@@ -254,6 +275,7 @@ mod tests {
             SettingScope::Thread(id(2)),
             SettingScope::TaskType("type:invoice".to_owned()),
             SettingScope::Agent(id(3)),
+            SettingScope::Pack("engine".to_owned()),
         ] {
             assert_eq!(
                 SettingScope::from_key_bytes(&scope.key_bytes()),
@@ -263,6 +285,7 @@ mod tests {
         assert_eq!(SettingScope::from_key_bytes(&[0, 1]), None);
         assert_eq!(SettingScope::from_key_bytes(&[1, 1, 2]), None);
         assert_eq!(SettingScope::from_key_bytes(&[6]), None);
+        assert_eq!(SettingScope::from_key_bytes(&[10]), None);
     }
 
     #[test]
@@ -286,5 +309,12 @@ mod tests {
             ]
         );
         assert!(SettingScope::chain(&[SettingScope::Vault], &[ScopeKind::Vault]).is_err());
+        assert!(
+            SettingScope::chain(
+                &[SettingScope::Pack("engine".to_owned())],
+                &[ScopeKind::Vault]
+            )
+            .is_err()
+        );
     }
 }

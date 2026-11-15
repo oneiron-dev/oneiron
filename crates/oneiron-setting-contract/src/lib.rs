@@ -139,6 +139,9 @@ pub enum Setter {
     /// The engine itself, on a path of its own: it applies the owner's answer to this ask, or,
     /// with no ask, makes its own path's change (the change's reason names the path).
     Engine { ask: Option<EntityId> },
+    /// The pack door, on a row of the default layer (`SettingScope::Pack`): a pack's tighter
+    /// default, or a looser one the holders accepted (the change's `by` names who accepted it).
+    Pack,
 }
 
 /// The value in force for one key, and the row that decided it.
@@ -194,6 +197,7 @@ mod tests {
             Setter::Approved { check_in: id },
             Setter::Engine { ask: Some(id) },
             Setter::Engine { ask: None },
+            Setter::Pack,
         ] {
             let row = rmp_serde::to_vec_named(&setter).expect("a setter encodes");
             assert_eq!(
