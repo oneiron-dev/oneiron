@@ -70,6 +70,12 @@ fn role(role: Role) -> &'static str {
     }
 }
 
+/// How often settle is polled, and the least time one poll is given.
+const SETTLE_POLL: Duration = Duration::from_secs(1);
+
+/// The bound on every adapter request.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// One adapter and the store it fills.
 struct Adapter<'a> {
     http: reqwest::blocking::Client,
@@ -80,15 +86,27 @@ struct Adapter<'a> {
 impl Adapter<'_> {
     /// POSTs `body` to `/v1/lives/<op>`; the time covers the round trip.
     fn post(&self, op: &str, body: &Value) -> (f64, Result<Value, String>) {
+        self.post_within(op, body, None)
+    }
+
+    /// `post`, the request bounded by `timeout` where one is given, not by
+    /// `REQUEST_TIMEOUT`.
+    fn post_within(
+        &self,
+        op: &str,
+        body: &Value,
+        timeout: Option<Duration>,
+    ) -> (f64, Result<Value, String>) {
         let url = format!(
             "{}/v1/lives/{op}",
             self.system.url.as_str().trim_end_matches('/')
         );
         let started = Instant::now();
-        let answer = self
-            .http
-            .post(url)
-            .json(body)
+        let mut request = self.http.post(url).json(body);
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
+        let answer = request
             .send()
             .map_err(|e| {
                 if e.is_timeout() {
@@ -110,19 +128,32 @@ impl Adapter<'_> {
     }
 
     /// Polls settle every second until the adapter says ready or `max` passes.
+    /// Each poll is bounded by what is left of `max` (a second at least) and
+    /// each pause ends at the bound, so an adapter that stops answering is
+    /// not ready at the bound, not after `REQUEST_TIMEOUT`.
     fn settle(&self, max: Duration) -> Result<f64, String> {
         let started = Instant::now();
+        let not_ready = || format!("not ready after {} s", max.as_secs());
         loop {
-            let (_, answer) = self.post("settle", &json!({"store": self.store}));
+            let left = max.saturating_sub(started.elapsed());
+            let (_, answer) = self.post_within(
+                "settle",
+                &json!({"store": self.store}),
+                Some(left.clamp(SETTLE_POLL, REQUEST_TIMEOUT)),
+            );
             match answer {
                 Ok(body) if body["ready"] == true => return Ok(started.elapsed().as_secs_f64()),
                 Ok(_) => {}
+                Err(error) if error == "timeout" => {
+                    return Err(format!("{}: the settle poll did not answer", not_ready()));
+                }
                 Err(error) => return Err(format!("settle: {error}")),
             }
-            if started.elapsed() >= max {
-                return Err(format!("not ready after {} s", max.as_secs()));
+            let left = max.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                return Err(not_ready());
             }
-            std::thread::sleep(Duration::from_secs(1));
+            std::thread::sleep(SETTLE_POLL.min(left));
         }
     }
 }
@@ -161,7 +192,7 @@ fn not_ready(name: &str, reason: String) -> System {
 /// their questions at every grade.
 pub(super) fn measure(plan: &Plan, system: &External, lives: &[Life], store: &str) -> System {
     let http = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(600))
+        .timeout(REQUEST_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
     {
@@ -209,8 +240,21 @@ pub(super) fn measure(plan: &Plan, system: &External, lives: &[Life], store: &st
     };
     let mut rows = Vec::new();
     let mut seconds = BTreeMap::new();
+    // The first question, as Oneiron's untimed recall asks it (`oneiron::ask`).
+    let warm = lives.iter().find_map(|life| {
+        life.questions.first().map(|(_, question)| {
+            json!({
+                "store": store, "query": question.question, "k": plan.limit, "as_of": life.end,
+            })
+        })
+    });
     for grade in &plan.grades {
         say(&format!("{}: ask, grade {grade}", system.name));
+        // One untimed search first, so the grade's first row is not a cold
+        // start; it is in no row and no summary.
+        if let Some(body) = &warm {
+            let _ = adapter.post("search", body);
+        }
         let started = Instant::now();
         for life in lives {
             for (set, question) in &life.questions {

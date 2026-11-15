@@ -234,9 +234,12 @@ $B/oneiron-bench load lives --server $B/oneiron-server --embedder none \
     → `{system_ms?}`, with every turn's conversation id, time and text as
     the Oneiron store gets them (`role` is `user`, `assistant` or `tool`);
   - `POST /v1/lives/settle {store}` → `{ready}`, polled every second for up
-    to `--settle-max-seconds`;
+    to `--settle-max-seconds`; a poll that does not answer by then ends the
+    wait at that bound;
   - `POST /v1/lives/search {store, query, k, as_of}` →
-    `{items: [{text}], system_ms?}`, once per question per grade.
+    `{items: [{text}], system_ms?}`, once per question per grade, after one
+    untimed search for the first question per grade, as the Oneiron store
+    gets one untimed recall.
 
   `ms` is the bench's round trip and `system_ms` the adapter's own timing of
   the system's call, so network time sits apart from server time; each grade
