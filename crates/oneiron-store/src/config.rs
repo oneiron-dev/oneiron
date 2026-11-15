@@ -195,6 +195,18 @@ pub struct VaultConfig {
     /// Both presets declare a computer; a phone's host sets
     /// `authority::MachineDeviceClass::Phone`.
     pub machine_device_class: oneiron_authority::authority::MachineDeviceClass,
+    /// The name this install reports for itself in the owner's machine list
+    /// (FIX [DEVICE-DISPLAY-NAME]), as its host declares it: a phone's own
+    /// name (iOS `UIDevice.name`), a computer's host name. Display only: no
+    /// authority, policy or routing code reads it, and it never enters the
+    /// signed machine profile. The owner's own name for the machine wins over
+    /// it; with neither, the list names the machine by its model, else its
+    /// class. `None` in both presets.
+    pub machine_reported_name: Option<String>,
+    /// The model this install reports for itself (`MacBook Air`, `iPhone`,
+    /// `Linux server`), as its host declares it; display only, as
+    /// [`Self::machine_reported_name`] is. `None` in both presets.
+    pub machine_reported_model: Option<String>,
     /// The maximum tier (OF-570): the page seal every LMDB page of the vault
     /// is sealed under. `None` opens a plain vault; a sealed one opens only
     /// with its seal (`world_keys::unlock_page_seal`), and a new one
@@ -391,6 +403,8 @@ impl VaultConfig {
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: oneiron_contracts::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
+            machine_reported_name: None,
+            machine_reported_model: None,
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
@@ -428,6 +442,8 @@ impl VaultConfig {
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: oneiron_contracts::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
+            machine_reported_name: None,
+            machine_reported_model: None,
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
