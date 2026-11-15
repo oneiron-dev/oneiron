@@ -239,7 +239,10 @@ impl Vault {
                 end: signed_at,
             };
             // The sealed row passed the owner's door above; it lands as
-            // history does, and its chain is captured with it.
+            // history does, and its chain is captured with it. A seal that
+            // changes the parents moves the project, and its settings carry
+            // the rows of the lines it leaves (stage 6.0).
+            let lines_before = self.lines_before_move_in_txn(txn, id, &next.parents)?;
             self.batch_in()
                 .put_engine_history(&id, kind, at, signed_at, &encode(&next)?)
                 .put_engine_history(
@@ -250,6 +253,9 @@ impl Vault {
                     &envelope.canonical_bytes()?,
                 )
                 .apply(txn)?;
+            if let Some(before) = lines_before {
+                crate::setting::carry_settings_in_txn(self, txn, id, &before)?;
+            }
             // The owner's act commits only a seal the fold installs: a
             // signature or slip it refuses fails here, not on a later read.
             // The new state can install without its seal, so both must.

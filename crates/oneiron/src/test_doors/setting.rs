@@ -226,3 +226,88 @@ pub fn custom_window_requested(vault: &Vault, ask: u64) -> Result<crate::setting
     let txn = vault.store.env.read_txn()?;
     key.narrowed(key.read_in_txn(vault, &txn, &[], None)?, &ask)
 }
+
+/// Runs the pack door for `pack` over `defaults` (each key's name and its default as JSON), in its
+/// own write, as a new build or a pack's update would: every key not listed keeps its row. The
+/// whole list is the pack's layer.
+///
+/// # Errors
+///
+/// An unknown key or a default its key does not take; as the pack door.
+#[cfg(feature = "test-support")]
+pub fn apply_pack_defaults(
+    vault: &Vault,
+    pack: &str,
+    defaults: &[(&str, serde_json::Value)],
+) -> Result<Option<crate::setting::PackApplied>> {
+    let defaults = defaults
+        .iter()
+        .map(|(key, value)| {
+            let spec = crate::setting::spec_named(key)?;
+            Ok((spec, spec.kind.from_json(value.clone())?))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    vault.apply_pack_defaults(pack, &defaults, None)
+}
+
+/// The `engine` pack's run, as the vault's open makes it.
+///
+/// # Errors
+///
+/// As the pack door.
+#[cfg(feature = "test-support")]
+pub fn apply_engine_pack(vault: &Vault) -> Result<Option<crate::setting::PackApplied>> {
+    vault.apply_engine_pack()
+}
+
+/// The revision of `key`'s row in `pack`'s layer: the sequence of the change that wrote it, 0
+/// for a first default; `None` with no readable row.
+///
+/// # Errors
+///
+/// An unknown key; storage errors.
+#[cfg(feature = "test-support")]
+pub fn pack_row_revision(vault: &Vault, key: &str, pack: &str) -> Result<Option<u64>> {
+    crate::setting::layer_row_revision(vault, key, pack)
+}
+
+/// Loses `key`'s row in `pack`'s layer, as a damaged store would.
+///
+/// # Errors
+///
+/// An unknown key; storage errors.
+#[cfg(feature = "test-support")]
+pub fn lose_pack_row(vault: &Vault, key: &str, pack: &str) -> Result<()> {
+    crate::setting::delete_layer_row(vault, key, pack)
+}
+
+/// Runs the move hook for `project` in its own write, as a door that moved it would, with its
+/// lines either side of the move named: `before` and `after`, each the project and then its
+/// ancestors nearest first. Returns how many carried rows it wrote.
+///
+/// # Errors
+///
+/// A key's `on_change` refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn carry_settings_between(
+    vault: &Vault,
+    project: EntityId,
+    before: &[EntityId],
+    after: &[EntityId],
+) -> Result<usize> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::setting::carry_between_in_txn(vault, txn, project, before, after)
+    })
+}
+
+/// The lines of `project` a setting read walks: the project, then its ancestors over the stored
+/// parents, nearest first.
+///
+/// # Errors
+///
+/// A stored parent that is not an id; storage errors.
+#[cfg(feature = "test-support")]
+pub fn project_lines(vault: &Vault, project: EntityId) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    vault.project_lines_in_txn(&txn, project)
+}
