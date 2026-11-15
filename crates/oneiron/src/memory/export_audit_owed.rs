@@ -124,6 +124,10 @@ pub(super) fn owe(vault: &Vault, owed: &mut ExportAuditOwed) -> bool {
 /// thread, whose members may be told, or the vault has a live Owner beside
 /// its exporter, who reads the audit.
 fn owed_to_anyone(vault: &Vault, owed: &ExportAuditOwed) -> crate::Result<bool> {
+    // RED PROOF ONLY (never for main): no copy is owed its audit.
+    if vault.store.env.read_txn().is_ok() {
+        return Ok(false);
+    }
     if !owed.threads.is_empty() {
         return Ok(true);
     }
