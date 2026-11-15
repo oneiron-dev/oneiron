@@ -42,7 +42,8 @@ pub(crate) use self::archive::{
     archived_message_body,
 };
 pub(crate) use self::codec::{
-    IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
+    IMPORTED_SOURCE_KEY, guard_import_stamp, imported_turn_body_unstamped,
+    turn_admits_message_bodies, witness_message_body,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::foreign_speech::{ForeignTurn, speak_as_counterparty};

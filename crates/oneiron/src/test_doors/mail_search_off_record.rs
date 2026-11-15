@@ -242,11 +242,16 @@ pub fn search_in_session(
     session: &OffRecordSession<'_>,
     wire: &CountingSearchWire,
 ) -> Result<MailSearchReport> {
-    // Red on main: no search entry takes a session, so the step runs as it
-    // runs outside one.
-    let _ = session;
     vault
-        .mail_search_step(&mailbox.owner, mailbox.source, wire, SEARCH_QUERY, None, 10)
+        .mail_search_step_in_session(
+            &mailbox.owner,
+            session,
+            mailbox.source,
+            wire,
+            SEARCH_QUERY,
+            None,
+            10,
+        )
         .map_err(|error| memory_invalid("mail search", error))
 }
 

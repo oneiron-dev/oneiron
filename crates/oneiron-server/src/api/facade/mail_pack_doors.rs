@@ -56,16 +56,28 @@ pub(crate) async fn vault_mail_sources_sync(
 /// `vault.mail.sources.search` (fix list row 15424): the owner searches a
 /// mailbox they read at its provider, under the proof `/v1/owner` takes
 /// from the request, on the blocking pool, as the provider wires are
-/// blocking HTTP.
+/// blocking HTTP. A request inside an off-record session (its
+/// `x-oneiron-session` header) searches inside it, bound for the owner, so
+/// its hits stay in that session and close drops them (ARCH-0063
+/// #searched-mail); a session the owner cannot bind is refused, never
+/// searched outside.
 pub(crate) async fn vault_mail_sources_search(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: MailSourceSearchRequest,
 ) -> MemoryResult<MailSearchReport> {
     let owner = owner_proof(auth, server, "vault.mail.sources.search")?;
+    let session_ref = auth.off_record_session().map(str::to_owned);
     let server = Arc::clone(server);
     super::clock_ingress::run_blocking(move || -> MemoryResult<MailSearchReport> {
-        server.vault().mail_source_search(&owner, &input)
+        let vault = server.vault();
+        let Some(session_ref) = session_ref else {
+            return vault.mail_source_search(&owner, &input);
+        };
+        let session = vault
+            .off_record_session_vault()
+            .bind_for(&session_ref, owner.revalidate(vault)?)?;
+        vault.mail_source_search_in_session(&owner, &session, &input)
     })
     .await
     .map_err(|_| internal("vault.mail.sources.search"))?

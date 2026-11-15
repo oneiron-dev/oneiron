@@ -21,6 +21,8 @@ use super::state::{MailPresence, MailStage, OCCURRENCES, occurrence_key};
 use super::wire::MailProviderWire;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::off_record::OffRecordSession;
+use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 use crate::{EntityId, Vault};
 
 /// The hits one search page lands when the caller names no limit.
@@ -102,7 +104,61 @@ impl Vault {
         page: Option<&str>,
         limit: u32,
     ) -> MemoryResult<MailSearchReport> {
+        self.search_step(owner, None, source_ref, wire, query, page, limit)
+    }
+
+    /// [`Self::mail_search_step`] run inside the off-record session
+    /// `session` (ARCH-0063 #searched-mail): while the session is off record,
+    /// each hit it keeps stays in the session's overlay and is dropped at
+    /// close, and a hit the session reads already, staged there or held in
+    /// base, is not fetched again. A session flipped on record keeps its
+    /// hits in base, as a search outside one does. The owner proof is the
+    /// only proof, as outside a session.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::mail_search_step`]; an anonymous session, which keeps
+    /// nothing; a session of a room (UNBUILT-01-ROOM-READERS: the room's
+    /// members would read the owner's mail); a session that belongs to
+    /// another vault open, or that closed.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the search step's own axes, plus the session it runs in"
+    )]
+    pub fn mail_search_step_in_session(
+        &self,
+        owner: &AuthenticatedOwner,
+        session: &OffRecordSession<'_>,
+        source_ref: EntityId,
+        wire: &dyn MailProviderWire,
+        query: &str,
+        page: Option<&str>,
+        limit: u32,
+    ) -> MemoryResult<MailSearchReport> {
+        self.search_step(owner, Some(session), source_ref, wire, query, page, limit)
+    }
+
+    /// The search step, staging into `session`'s overlay while it is off
+    /// record, else landing in base.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the search step's own axes, plus the session it runs in"
+    )]
+    fn search_step(
+        &self,
+        owner: &AuthenticatedOwner,
+        session: Option<&OffRecordSession<'_>>,
+        source_ref: EntityId,
+        wire: &dyn MailProviderWire,
+        query: &str,
+        page: Option<&str>,
+        limit: u32,
+    ) -> MemoryResult<MailSearchReport> {
         let query = valid_query(query, wire.search_escapes())?;
+        let staging = match session {
+            Some(session) => self.session_staging(session)?,
+            None => None,
+        };
         let actor = owner.revalidate(self)?;
         let unknown = || MemoryError::not_found("no searchable mailbox source by that ref");
         let row = {
@@ -130,18 +186,19 @@ impl Vault {
         for hit in &hits.messages {
             // Held whole, or forgotten: nothing to fetch. A message held by
             // its headers only is fetched whole and lands its body.
+            // Inside a session, held means held in what the session reads:
+            // its overlay over base.
             let held = {
                 let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-                OCCURRENCES
-                    .get(
-                        &self.store,
-                        &txn,
-                        &occurrence_key(source_ref, &hit.provider_id),
-                    )?
-                    .is_some_and(|held| {
-                        matches!(held.stage, MailStage::Body)
-                            || matches!(held.presence, MailPresence::Forgotten { .. })
-                    })
+                let key = occurrence_key(source_ref, &hit.provider_id);
+                match &staging {
+                    Some((session, _)) => OCCURRENCES.get(&session.read_view()?, &txn, &key)?,
+                    None => OCCURRENCES.get(&self.store, &txn, &key)?,
+                }
+                .is_some_and(|held| {
+                    matches!(held.stage, MailStage::Body)
+                        || matches!(held.presence, MailPresence::Forgotten { .. })
+                })
             };
             if held {
                 report.same += 1;
@@ -156,13 +213,70 @@ impl Vault {
                 report.skipped += 1;
                 continue;
             }
-            match landing.land(&row, &full.headers, Some(&full), true)? {
+            let outcome = match &staging {
+                Some((session, route)) => landing.land_in_session(session, route, &row, &full)?,
+                None => landing.land(&row, &full.headers, Some(&full), true)?,
+            };
+            match outcome {
                 LandOutcome::Landed => report.landed += 1,
                 LandOutcome::Same => report.same += 1,
                 LandOutcome::Refused(_) => report.skipped += 1,
             }
         }
         Ok(report)
+    }
+
+    /// Where a search inside `session` keeps its hits: the session and the
+    /// overlay route it stages through while the session is off record;
+    /// `None` once it is on record, so they land in base. The owner's proof
+    /// binds the session at the door (`bind_for`), and every staging writer
+    /// checks the session's participant again.
+    fn session_staging<'s, 'v>(
+        &self,
+        session: &'s OffRecordSession<'v>,
+    ) -> MemoryResult<Option<(&'s OffRecordSession<'v>, SessionWriteRoute)>> {
+        if session.read_view()?.read().base().open_nonce != self.store.open_nonce {
+            return Err(MemoryError::bad_request(
+                "the off-record session belongs to another vault open",
+            ));
+        }
+        let route = session.write_route()?;
+        // An anonymous session keeps nothing, so a search in it keeps no
+        // hit anywhere: refused before the provider is asked.
+        route.require_recording(session.session_ref())?;
+        match route.target() {
+            RouteTarget::Overlay => {}
+            RouteTarget::Base => return Ok(None),
+            RouteTarget::Discard => {
+                return Err(MemoryError::bad_request(
+                    "an anonymous off-record session keeps no searched mail",
+                ));
+            }
+        }
+        if session.room()?.is_some() {
+            return Err(MemoryError::bad_request_with(
+                "a mailbox search keeps its hits in no room's off-record stretch",
+                &["Search outside the room, or in a stretch of your own."],
+            ));
+        }
+        Ok(Some((session, route)))
+    }
+
+    /// [`Self::mail_source_search`] run inside the off-record session
+    /// `session`: [`Self::mail_search_step_in_session`] through this host's
+    /// wire for the source's provider.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::mail_source_search`] and
+    /// [`Self::mail_search_step_in_session`].
+    pub fn mail_source_search_in_session(
+        &self,
+        owner: &AuthenticatedOwner,
+        session: &OffRecordSession<'_>,
+        input: &MailSourceSearchRequest,
+    ) -> MemoryResult<MailSearchReport> {
+        self.source_search(owner, Some(session), input)
     }
 
     /// [`Self::mail_search_step`] through this host's wire for the source's
@@ -178,23 +292,34 @@ impl Vault {
         owner: &AuthenticatedOwner,
         input: &MailSourceSearchRequest,
     ) -> MemoryResult<MailSearchReport> {
+        self.source_search(owner, None, input)
+    }
+
+    /// The source search, inside `session` when one is named.
+    fn source_search(
+        &self,
+        owner: &AuthenticatedOwner,
+        session: Option<&OffRecordSession<'_>>,
+        input: &MailSourceSearchRequest,
+    ) -> MemoryResult<MailSearchReport> {
         let source = EntityId::from_hex(&input.source_ref)?;
         let snapshot = self
             .mail_sync_source(source)?
             .ok_or_else(|| MemoryError::not_found("no searchable mailbox source by that ref"))?;
         let limit = input.limit.unwrap_or(DEFAULT_SEARCH_HITS);
         let page = input.page.as_deref();
+        let query = input.query.as_str();
         if reads_google_mail(snapshot.provider) {
             let wire = HttpGmailMailWire::new(self)?;
-            return self.mail_search_step(owner, source, &wire, &input.query, page, limit);
+            return self.search_step(owner, session, source, &wire, query, page, limit);
         }
         if snapshot.provider == MailProvider::Microsoft365 {
             let wire = HttpGraphMailWire::new(self)?;
-            return self.mail_search_step(owner, source, &wire, &input.query, page, limit);
+            return self.search_step(owner, session, source, &wire, query, page, limit);
         }
         if snapshot.provider == MailProvider::Imap {
             let wire = ImapMailWire::new(self);
-            return self.mail_search_step(owner, source, &wire, &input.query, page, limit);
+            return self.search_step(owner, session, source, &wire, query, page, limit);
         }
         Err(MemoryError::bad_request(
             "this host searches Google, Microsoft 365 and IMAP mailboxes at their provider",
@@ -216,6 +341,17 @@ impl Memory<'_> {
         input: &MailSourceSearchRequest,
     ) -> MemoryResult<MailSearchReport> {
         let owner = self.embedded_owner("vault.mail.sources.search")?;
-        self.vault().mail_source_search(&owner, input)
+        let vault = self.vault();
+        // A handle bound into an off-record session searches inside it, so
+        // its hits stay in that session (ARCH-0063 #searched-mail).
+        match self.off_record_binding() {
+            Some((session_ref, _)) => {
+                let session = vault
+                    .off_record_session_vault()
+                    .bind_for(session_ref, owner.revalidate(vault)?)?;
+                vault.mail_source_search_in_session(&owner, &session, input)
+            }
+            None => vault.mail_source_search(&owner, input),
+        }
     }
 }

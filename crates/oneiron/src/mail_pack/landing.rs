@@ -32,6 +32,8 @@ use crate::memory::{
 };
 use crate::{Result, Vault, source_audience};
 
+mod session;
+
 /// The longest label a CONVERSATION body carries (a subject, a thread key).
 const MAX_LABEL_BYTES: usize = 512;
 
