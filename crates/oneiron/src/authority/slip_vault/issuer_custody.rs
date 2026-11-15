@@ -211,17 +211,25 @@ impl Vault {
     /// Recovers this vault's root on this install after its seed is lost
     /// (L1-07; OF-570): a successor seed drawn here takes this install's
     /// slot, and the restored kit's enrolled authority key moves the root to
-    /// it (`Self::recover_host_root_from_kit`). Refused before any draw
-    /// when the slot holds the live root's seed, one the escrow gave back at
-    /// keystore install included: that root moves by re-root. An empty slot
-    /// is filled create-only; a slot holding a retired seed is replaced in
-    /// place. A recovery that then fails, or whose successor write the
-    /// keystore faulted on, leaves the slot as it was: emptied again, or its
-    /// retired seed put back (`put_back_host_issuer_slot`); a slot another
-    /// seed filled first is left to it. One root move runs at a time in this
-    /// process, this and a re-root alike.
+    /// it (`Self::recover_host_root_from_kit`). The loss is judged here,
+    /// whatever the caller's keystore install did: an empty slot first takes
+    /// back the seed of the live root the vault's key custody still escrows
+    /// (`Self::recover_host_issuer_seed`, FIX-LIST 10770), and a fault in
+    /// that step is the error, since the root is then not known lost and
+    /// nothing is drawn. Refused before any draw when the slot holds the
+    /// live root's seed, one the escrow gave back included: that root moves
+    /// by re-root. An empty slot is filled create-only; a slot holding a
+    /// retired seed is replaced in place. A recovery that then fails, or
+    /// whose successor write the keystore faulted on, leaves the slot as it
+    /// was: emptied again, or its retired seed put back
+    /// (`put_back_host_issuer_slot`); a slot another seed filled first is
+    /// left to it. One root move runs at a time in this process, this and a
+    /// re-root alike.
     pub fn recover_host_root_to_new_seed(&self, secret: RestoredKitSecret) -> Result<HostReRoot> {
         let _moving = lock_host_root_moves()?;
+        // Every outcome leaves the slot as the read below judges it: filled
+        // by the escrow, held as it was, or empty with no live seed escrowed.
+        self.recover_host_issuer_seed()?;
         let keystore = self.device_keystore()?;
         let slot = self.host_issuer_slot()?;
         let kept = keystore.get(&slot).map_err(keystore_error)?;
@@ -389,7 +397,9 @@ impl Vault {
         }
     }
 
-    /// [`Self::prepare_host_issuer_custody_logged`]'s one keystore act. This
+    /// [`Self::prepare_host_issuer_custody_logged`]'s one keystore act, and
+    /// the loss check of a kit recovery, which refuses on its error
+    /// ([`Self::recover_host_root_to_new_seed`]). This
     /// install's signing keys load first, so the slot is named by its own
     /// machine id, never a restored install's. A filled slot is read and
     /// left. For an empty one, the custody's live seeds are read, newest

@@ -50,9 +50,10 @@ pub fn host_recover_root(args: HostRecoverRootArgs) -> anyhow::Result<()> {
         "set the host secret first (ONEIRON_AUTH_SECRET or the config's auth_secret): it admits host commands and the next `oneiron serve`, and any new value works"
     );
     let (vault, secret) = super::owner::open_kit_material(&config, &args.kit, &args.unlock)?;
-    // The keystore install takes back a seed the vault's custody still
-    // escrows for its live root (FIX-LIST 10770) before the slot is read, so
-    // a root that is not lost is never moved by the kit.
+    // The install gives the recovery its keystore. The recovery itself
+    // takes back a seed the vault's custody still escrows for its live root
+    // (FIX-LIST 10770) before it reads the slot, and refuses when that step
+    // faults, so a root that is not lost is never moved by the kit.
     if vault.device_keystore_assurance().is_none() {
         config.keystore.install_on(&vault, &config.vault_path);
     }
