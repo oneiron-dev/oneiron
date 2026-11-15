@@ -36,3 +36,15 @@ pub(crate) fn is_vault_agent_in(
         }
     ))
 }
+
+impl Vault {
+    /// Whether `member` is one of this vault's own agents, read in one
+    /// snapshot ([`is_vault_agent_in`]). A route that has only a principal id
+    /// asks this, as the conversation-home default does (RULING
+    /// L5-02-UNNAMED-HOME = A: the vault's own agents read as homed here).
+    pub fn is_vault_agent(&self, member: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        is_vault_agent_in(self, &txn, &fold, member)
+    }
+}

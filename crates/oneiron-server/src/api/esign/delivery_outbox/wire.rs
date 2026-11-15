@@ -187,5 +187,5 @@ fn is_lower_hex(text: &str) -> bool {
 }
 
 pub(super) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
