@@ -1,66 +1,38 @@
-//! Durable owner policy; no token or partial content is stored here.
+//! The owner's message-stream policy, read from its Setting keys (DESIGN 15-setting-primitive,
+//! stage 1); no token or partial content is stored here.
 use super::*;
-use crate::edge::EdgeActorClass;
-use crate::memory::support::verify_owner_actor_binding_in_txn;
-use crate::side_table::{self, Named, SideTable};
-
-/// Vault default message-streaming policy. Key: `()`.
-const POLICY: SideTable<(), MessageStreamPolicy, Named> =
-    SideTable::new(&side_table::MESSAGE_STREAM_POLICY);
+use crate::memory::setting_keys::{MESSAGE_STREAM_IDLE_TIMEOUT, MESSAGE_STREAM_MODE};
+use crate::setting::SettingScope;
 
 impl MessageStreamPolicy {
-    fn validate(&self) -> MessageStreamResult<()> {
-        if self.idle_timeout_ms == 0 {
-            return Err(MessageStreamError::InvalidRequest(
-                "idle timeout must be positive",
-            ));
-        }
-        self.default_mode.validate()?;
-        for mode in self.agent_overrides.values() {
-            mode.validate()?;
-        }
-        Ok(())
-    }
-    pub(super) fn resolve(
-        &self,
-        actor: &EntityId,
-        explicit: Option<MessageWriteMode>,
-    ) -> MessageWriteMode {
-        explicit
-            .or_else(|| self.agent_overrides.get(actor).copied())
-            .unwrap_or(self.default_mode)
+    /// The mode a call writes in: the one it names, else the policy's.
+    pub(super) fn resolve(&self, explicit: Option<MessageWriteMode>) -> MessageWriteMode {
+        explicit.unwrap_or(self.default_mode)
     }
 }
 impl Vault {
+    /// The vault's message-stream policy: the vault's write mode and its idle timeout.
     pub fn message_stream_policy(&self) -> MessageStreamResult<MessageStreamPolicy> {
-        let txn = self.store.env.read_txn()?;
-        policy_in_txn(self, &txn)
+        policy_for(self, None)
     }
 }
-pub(super) fn policy_in_txn(
+/// The policy in force for `actor`: its own write mode, else the vault's, and the vault's idle
+/// timeout. `None` reads the vault's.
+pub(super) fn policy_for(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
+    actor: Option<EntityId>,
 ) -> MessageStreamResult<MessageStreamPolicy> {
-    let policy = POLICY.get(&vault.store, txn, &())?.unwrap_or_default();
-    MessageStreamPolicy::validate(&policy)?;
-    Ok(policy)
-}
-impl Memory<'_> {
-    /// Changes vault defaults only through the live human owner authority door.
-    pub fn set_message_stream_policy(
-        &self,
-        policy: &MessageStreamPolicy,
-    ) -> MessageStreamResult<()> {
-        policy.validate()?;
-        if self.actor_class != EdgeActorClass::Human {
-            return Err(MessageStreamError::WrongActor);
-        }
-        POLICY.encode_value(policy)?;
-        self.with_verified_actor_write_txn(|txn| {
-            verify_owner_actor_binding_in_txn(self.vault, txn, self.actor)?;
-            POLICY.put(&self.vault.store, txn, &(), policy)?;
-            Ok(())
-        })?;
-        Ok(())
-    }
+    let txn = vault.store.env.read_txn()?;
+    let known: Vec<SettingScope> = actor.into_iter().map(SettingScope::Agent).collect();
+    let default_mode = MESSAGE_STREAM_MODE
+        .read_in_txn(vault, &txn, &known, None)?
+        .value;
+    let idle_timeout_ms = MESSAGE_STREAM_IDLE_TIMEOUT
+        .read_in_txn(vault, &txn, &[], None)?
+        .value
+        .0;
+    Ok(MessageStreamPolicy {
+        default_mode,
+        idle_timeout_ms,
+    })
 }

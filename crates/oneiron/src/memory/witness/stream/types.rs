@@ -13,19 +13,19 @@ pub use oneiron_verb_wire::memory::witness::stream::types::{
     MessageWriteMode, StreamCadence, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
 };
 
-/// Owner-configured defaults. Explicit call mode wins over the actor override.
+/// The owner's message-stream policy as one actor reads it, from its Setting keys: the mode a call
+/// that names none writes in (the actor's own row, else the vault's), and the vault's idle
+/// timeout. An explicit call mode wins over both.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageStreamPolicy {
     pub default_mode: MessageWriteMode,
-    pub agent_overrides: std::collections::BTreeMap<EntityId, MessageWriteMode>,
-    /// Independent of the presence TTL. Must be nonzero.
+    /// Independent of the presence TTL. Never zero.
     pub idle_timeout_ms: u64,
 }
 impl Default for MessageStreamPolicy {
     fn default() -> Self {
         Self {
             default_mode: MessageWriteMode::Atomic,
-            agent_overrides: Default::default(),
             idle_timeout_ms: DEFAULT_MESSAGE_STREAM_IDLE_MS,
         }
     }
