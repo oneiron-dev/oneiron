@@ -365,14 +365,6 @@ impl MediaBackend for VoxCpm2Speech {
         Box::pin(async move { self.speak(request, None).await.map_err(LlmError::from) })
     }
 
-    fn run_progress<'a>(
-        &'a self,
-        request: MediaRequest,
-        _lease: &'a BudgetLease,
-    ) -> MediaProgressFuture<'a> {
-        Box::pin(self.speak(request, None))
-    }
-
     fn run_progress_released<'a>(
         &'a self,
         request: MediaRequest,

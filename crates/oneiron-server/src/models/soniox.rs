@@ -33,7 +33,11 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures_util::{Sink, Stream};
-use oneiron::llm::media::{AiOperation, MediaBackend, MediaFuture, MediaRequest, MediaResponse};
+use oneiron::llm::DispatchRelease;
+use oneiron::llm::media::{
+    AiOperation, MediaBackend, MediaFuture, MediaProgressFuture, MediaRequest, MediaResponse,
+    run_once_released,
+};
 use oneiron::llm::run_admission::OfferBinding;
 use oneiron::voice_cascade::media::{LeasedAsrStream, MediaVoiceRoute, VoiceStreamDoor};
 use oneiron::voice_cascade::spilled_audio::{AudioSpool, SpilledAudio};
@@ -181,6 +185,15 @@ impl MediaBackend for LiveOnly {
         _lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async { Err(FatalLlmError::InvalidRequest.into()) })
+    }
+
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        run_once_released(self, request, lease, release)
     }
 }
 

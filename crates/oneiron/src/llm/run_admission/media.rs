@@ -109,24 +109,12 @@ impl MediaGate {
         answer
     }
 
-    /// [`Self::run`] keeping what a call stopped part way completed (FIX
-    /// 9517): the answer, or the stop with the usage of the requests that
-    /// answered, for the permit's holder to settle once
-    /// ([`RunPermit::settle_interrupted_media`]).
-    pub async fn run_progress(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-    ) -> Result<MediaResponse, InterruptedMediaCall> {
-        let mut opened = self.open(&request, lease)?;
-        let answer = self.inner.run_progress(request, lease).await;
-        let served = answer.as_ref().ok().and_then(served_model);
-        opened.finish(served, answer.is_ok());
-        answer
-    }
-
-    /// [`Self::run_progress`] with a caller's release forwarded through the
-    /// same opened permit and dispatch receipt.
+    /// [`Self::run`] under the caller's release, if any, keeping what a call
+    /// stopped part way completed (FIX 9517): the answer, or the stop with
+    /// the usage of the requests that answered, for the permit's holder to
+    /// settle once ([`RunPermit::settle_interrupted_media`]). The release
+    /// goes through the same opened permit and dispatch receipt to the
+    /// backend, which re-checks it before each physical send.
     pub async fn run_progress_released(
         &self,
         request: MediaRequest,

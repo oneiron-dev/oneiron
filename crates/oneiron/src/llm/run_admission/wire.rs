@@ -12,10 +12,12 @@
 use std::sync::Arc;
 
 use super::super::media::{
-    AiOperation, MediaBackend, MediaCaps, MediaFuture, MediaPart, MediaRequest, MediaResponse,
-    MediaUsage, MediaVoice,
+    AiOperation, MediaBackend, MediaCaps, MediaFuture, MediaPart, MediaProgressFuture,
+    MediaRequest, MediaResponse, MediaUsage, MediaVoice, run_once_released,
 };
-use super::super::{BudgetLease, CallEnvelope, FatalLlmError, LlmError, ModelLocality};
+use super::super::{
+    BudgetLease, CallEnvelope, DispatchRelease, FatalLlmError, LlmError, ModelLocality,
+};
 use super::admission::RunAdmission;
 use super::host::OfferBinding;
 use super::receipt::RunOverageSource;
@@ -143,5 +145,14 @@ impl MediaBackend for HostWire {
         _lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async { Err::<MediaResponse, LlmError>(FatalLlmError::InvalidRequest.into()) })
+    }
+
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        run_once_released(self, request, lease, release)
     }
 }

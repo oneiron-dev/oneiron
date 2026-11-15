@@ -513,6 +513,24 @@ impl GeminiMediaTransport for BrokerMedia {
         })
     }
 
+    fn execute_released<'a>(
+        &'a self,
+        request: GeminiMediaHttpRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> GeminiMediaFuture<'a> {
+        Box::pin(async move {
+            let (status, headers, body) = self
+                .send_released(self.gemini(request)?, lease, release)
+                .await?;
+            Ok(GeminiMediaHttpResponse {
+                status,
+                headers,
+                body,
+            })
+        })
+    }
+
     fn preflight(&self) -> LlmResult<()> {
         self.ready()
     }

@@ -1565,15 +1565,10 @@ impl OfferLadder {
                 }
             };
         }
-        let answered = if let Some(release) = release {
-            call.deadline
-                .bound(gate.run_progress_released(bound, permit.lease(), Some(release)))
-                .await
-        } else {
-            call.deadline
-                .bound(gate.run_progress(bound, permit.lease()))
-                .await
-        };
+        let answered = call
+            .deadline
+            .bound(gate.run_progress_released(bound, permit.lease(), release))
+            .await;
         let Some(answered) = answered else {
             settle_failed(permit);
             return Err(CallDeadline::expiry());
