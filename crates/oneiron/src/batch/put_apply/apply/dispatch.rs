@@ -181,28 +181,31 @@ pub(super) fn dispatch_put_type(
         // History a window carries in two or more rows lands together: the
         // row is judged beside the batch's other authority rows, as the
         // ingest door judged it (FIX 11764).
-        if fixed.replicated
+        // The replicated doors' fold also tells the owner's reserve which
+        // owner keys stand (OWNER-RESERVE-REVOKED-OWNER-KEY = A).
+        let judged = if fixed.replicated
             && let Some(beside) = fixed.authority_beside
         {
-            validate_replicated_authority_log_beside_for_local_vault(
+            Some(validate_replicated_authority_log_beside_for_local_vault(
                 store,
                 wtxn,
                 &fixed.id,
                 data,
                 fixed.posture,
                 beside,
-            )?;
+            )?)
         } else if fixed.replicated {
-            validate_replicated_authority_log_for_local_vault(
+            Some(validate_replicated_authority_log_for_local_vault(
                 store,
                 wtxn,
                 &fixed.id,
                 data,
                 fixed.posture,
-            )?;
+            )?)
         } else {
             oneiron_authority::authority::validate_authority_log_entry_body_bytes(data)?;
-        }
+            None
+        };
         let entry = oneiron_authority::authority::decode_authority_log_entry_body(data)?;
         let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
         // ONE-1604-D1 chokepoint: every materialization path funnels through
@@ -216,7 +219,11 @@ pub(super) fn dispatch_put_type(
         // H72: every store door, local or replicated, holds rows no key that
         // may vouch signed. A vouched key's rows land (FIX 8564); strangers'
         // past their shared bound wait (rule 5), a replica retrying each drain.
-        match crate::authority::authority_door(store, wtxn, &entry)? {
+        let door_fold = match &judged {
+            Some(fold) => crate::authority::DoorFold::Held(fold),
+            None => crate::authority::DoorFold::Snapshot(fixed.posture),
+        };
+        match crate::authority::authority_door(store, wtxn, &entry, door_fold)? {
             crate::authority::AuthorityDoor::Lands => {}
             crate::authority::AuthorityDoor::AtBound => {
                 let signer = crate::authority::authority_signer_label(entry.signer_key());

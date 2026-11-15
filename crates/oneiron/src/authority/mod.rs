@@ -467,7 +467,8 @@ pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use history_admission::{
-    RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
+    AuthorityAdmissionView, RowsBeside, preflight_authority_rows_beside_in_txn,
+    preflight_authority_rows_in_txn,
 };
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
@@ -475,7 +476,7 @@ pub(crate) use import_order::authority_stage_order;
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
-    AuthorityDoor, AuthorityDoorView, OwnerReserveHold, asks_the_owners_work_in_txn,
+    AuthorityDoor, AuthorityDoorView, DoorFold, OwnerReserveHold, asks_the_owners_work_in_txn,
     authority_door, authority_signer_label, carried_work_past_owner_reserve_in_txn,
     end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
