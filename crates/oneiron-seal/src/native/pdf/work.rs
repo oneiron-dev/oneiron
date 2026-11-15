@@ -130,7 +130,9 @@ impl MapExternal for Infallible {
 /// raster-size refusal as too-large, a lopdf failure through the kept
 /// refusal check, an admission refusal as itself, a copier failure passed
 /// through, and each logic failure 1:1. The pure geometry checks cannot
-/// take limits, so they pass none; they perform no lopdf reads.
+/// take limits, so they pass none; they perform no lopdf reads, and a lopdf
+/// failure without limits reads as a malformed PDF, as `lopdf_error` reads
+/// one the ledger did not refuse.
 pub(crate) fn map_leaf<A: MapAdmit, X: MapExternal>(
     limits: Option<&WorkLimits<'_>>,
     err: BurnError<A, X>,
@@ -140,7 +142,7 @@ pub(crate) fn map_leaf<A: MapAdmit, X: MapExternal>(
         BurnError::External(external) => external.map_external(),
         BurnError::Lopdf(err) => match limits {
             Some(limits) => lopdf_error(limits, err),
-            None => unreachable!("pure geometry performs no lopdf reads"),
+            None => WorkError::Invalid(InputInvalidCode::MalformedPdf),
         },
         BurnError::DisplayTooLarge => WorkError::Invalid(InputInvalidCode::InvalidGeometry),
         BurnError::TooLarge => WorkError::Invalid(InputInvalidCode::TooLarge),
