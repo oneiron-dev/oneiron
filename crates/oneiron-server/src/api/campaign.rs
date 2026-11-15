@@ -339,8 +339,20 @@ pub(crate) fn surface_actor(auth: &CoreAuth) -> Result<oneiron::EntityId, ApiErr
 /// One mapping for both transports' shared engine, so `NOT_FOUND` from the HTTP
 /// route and `NOT_FOUND` from the MCP gateway describe the same outcome. The
 /// facade's own code is the discriminator; nothing here re-inspects the message.
+/// A code this map does not name is this server's failure (500), as every
+/// sibling map answers it, never the caller's (UC-11, ruling
+/// UC11-CLIENT-STATUSES item 3).
 pub(crate) fn surface_error(error: oneiron::MemoryError) -> ApiError {
     match error.code.as_str() {
+        // A malformed body or field, and a reference the program's writer
+        // cannot resolve (OF-063), are the caller's to correct.
+        oneiron::MEMORY_CODE_BAD_REQUEST | oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE => {
+            ApiError::new(
+                error.message,
+                ApiErrorDetails::BadRequest { field: None },
+                error.suggestions,
+            )
+        }
         oneiron::MEMORY_CODE_NOT_FOUND => ApiError::not_found("campaign_surface", None),
         oneiron::MEMORY_CODE_FORBIDDEN | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
             ApiError::new(
@@ -358,14 +370,9 @@ pub(crate) fn surface_error(error: oneiron::MemoryError) -> ApiError {
             },
             error.suggestions,
         ),
-        oneiron::MEMORY_CODE_INTERNAL => {
+        _ => {
             tracing::error!(code = %error.code, "campaign surface failed");
             ApiError::internal_server_error("campaign surface failed")
         }
-        _ => ApiError::new(
-            error.message,
-            ApiErrorDetails::BadRequest { field: None },
-            error.suggestions,
-        ),
     }
 }
