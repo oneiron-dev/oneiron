@@ -1,8 +1,8 @@
 //! Budgeted interest-queue spending, one thing per entity or topic (OF-498c,
 //! see `things`): its world, facet and private thread, and the entity a
-//! span's reading bound, else the structural topic. A thing may span
-//! conversations, and its child in each project reads it across them (FIX
-//! 7524, 8724).
+//! span's reading bound, else the topic an unbound Name span names, else the
+//! structural topic. A thing may span conversations, and its child in each
+//! project reads it across them (FIX 7524, 8724).
 //!
 //! A Timer wake that names no partition (FIX 336) plans the same spending
 //! at its enqueue: a typed parent, its children and the remainder land in
@@ -19,7 +19,8 @@ use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope,
     DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
-use crate::{Result, Vault};
+use crate::dreamer_wake::sieve::SieveSpan;
+use crate::{EntityId, Result, Vault};
 
 use super::{recipes, sieve};
 
@@ -179,43 +180,26 @@ fn plan_children_in_txn(
     // `recipe_spans_in_txn`, before its limit.
     let spans = sieve::recipe_spans_in_txn(vault, txn, policy.nightly_spans as usize)?;
     let store = DreamerRunnerStore::new(vault);
-    let mut ids = BTreeSet::new();
-    for span in &spans {
-        if span.owed.is_empty() {
-            ids.insert(span.turn);
-        } else {
-            sieve::enqueue_rungs_in_txn(&store, txn, attempt, span, false, now)?;
-        }
+    for span in spans.iter().filter(|span| !span.owed.is_empty()) {
+        sieve::enqueue_rungs_in_txn(&store, txn, attempt, span, false, now)?;
     }
     let scope = DreamerConsolidationScope::Macro;
-    let turns =
-        read_partition_turns_in_txn(vault, txn, scope, &ids.into_iter().collect::<Vec<_>>())?;
-    let watermark = ConsolidationWatermark::bootstrap();
-    let mut plans = partition_turns_in_txn(vault, txn, &turns, &watermark)?;
-    // Partition iteration is structural order; spending order must instead
-    // follow the highest scored span of each topic.
-    plans.sort_by_key(|plan| {
-        spans
-            .iter()
-            .position(|span| plan.turns.iter().any(|turn| turn.turn_id == span.turn))
-            .unwrap_or(usize::MAX)
-    });
-    // The limit counts topics, as before; every thing a kept topic holds
-    // gets its children, so the night spends the spans it spent before.
-    plans.truncate(policy.nightly_children as usize);
-    let audiences = things::audiences_in_txn(vault, txn, &plans)?;
-    let exposures = exposure::exposures_in_txn(vault, txn, &plans);
-    let thing_plans = things::plan_things(&plans, &spans, &audiences, &exposures);
+    let (partitions, thing_plans) =
+        things_in_txn(vault, txn, &spans, policy.nightly_children as usize)?;
     let child_plans: Vec<_> = thing_plans
         .iter()
         .flat_map(|thing| thing.children.iter().cloned())
         .collect();
     tracing::debug!(
-        partitions = plans.len(),
+        partitions,
         things = thing_plans.len(),
         bound = thing_plans
             .iter()
             .filter(|thing| thing.key.entity.is_some())
+            .count(),
+        topics = thing_plans
+            .iter()
+            .filter(|thing| thing.key.topic.is_some())
             .count(),
         children = child_plans.len(),
         spanning = child_plans
@@ -238,6 +222,10 @@ fn plan_children_in_txn(
             "nightly children and their enqueue outcomes differ in count",
         ));
     }
+    // Two topic things cut the same child where they hold the same TURNs of
+    // one project (a TURN alone naming two unknown names): its enqueue meets
+    // the first's attempt, and the merge reads that child once.
+    let mut merged = BTreeSet::new();
     let children = outcomes
         .iter()
         .map(|outcome| match outcome {
@@ -246,6 +234,7 @@ fn plan_children_in_txn(
                 status.attempt.id
             }
         })
+        .filter(|child| merged.insert(*child))
         .collect();
     crate::dreamer_consolidation::nightly_merge::enqueue_in_txn(
         vault, txn, attempt, children, now,
@@ -272,4 +261,81 @@ fn plan_children_in_txn(
         }
     }
     Ok(())
+}
+
+/// The night's things over `spans`, the queue readout, highest score first:
+/// the structural partitions the spent spans' TURNs fall in, in score order,
+/// at most `limit` of them, then one thing per entity or topic inside them;
+/// with the number of partitions kept.
+fn things_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spans: &[SieveSpan],
+    limit: usize,
+) -> Result<(usize, Vec<things::NightlyThingPlan>)> {
+    let ids: BTreeSet<EntityId> = spans
+        .iter()
+        .filter(|span| span.owed.is_empty())
+        .map(|span| span.turn)
+        .collect();
+    let turns = read_partition_turns_in_txn(
+        vault,
+        txn,
+        DreamerConsolidationScope::Macro,
+        &ids.into_iter().collect::<Vec<_>>(),
+    )?;
+    let watermark = ConsolidationWatermark::bootstrap();
+    let mut plans = partition_turns_in_txn(vault, txn, &turns, &watermark)?;
+    // Partition iteration is structural order; spending order must instead
+    // follow the highest scored span of each partition.
+    plans.sort_by_key(|plan| {
+        spans
+            .iter()
+            .position(|span| plan.turns.iter().any(|turn| turn.turn_id == span.turn))
+            .unwrap_or(usize::MAX)
+    });
+    // The limit counts structural partitions, as before; every thing a kept
+    // partition holds gets its children, so the night spends the spans it
+    // spent before.
+    plans.truncate(limit);
+    let audiences = things::audiences_in_txn(vault, txn, &plans)?;
+    let exposures = exposure::exposures_in_txn(vault, txn, &plans);
+    let topics = things::topics_in_txn(vault, txn, &plans, spans)?;
+    Ok((
+        plans.len(),
+        things::plan_things(&plans, spans, &audiences, &exposures, &topics),
+    ))
+}
+
+/// One planned thing as the nightly test door reads it: the entity it is
+/// bound to, and each child's TURNs with the slice line each is read on.
+#[cfg(oneiron_test_support)]
+pub(crate) type PlannedThingLines = (Option<EntityId>, Vec<Vec<(EntityId, u32)>>);
+
+/// The things `spans` plan into, as [`plan_children_in_txn`] plans them,
+/// with no partition limit (test door).
+#[cfg(oneiron_test_support)]
+pub(crate) fn planned_thing_lines_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spans: &[SieveSpan],
+) -> Result<Vec<PlannedThingLines>> {
+    let (_, things) = things_in_txn(vault, txn, spans, usize::MAX)?;
+    Ok(things
+        .iter()
+        .map(|thing| {
+            let children: Vec<Vec<(EntityId, u32)>> = thing
+                .children
+                .iter()
+                .map(|child| {
+                    child
+                        .parts
+                        .iter()
+                        .flat_map(|part| part.turns.iter().map(|turn| (turn.turn_id, part.line)))
+                        .collect()
+                })
+                .collect();
+            (thing.key.entity, children)
+        })
+        .collect())
 }

@@ -80,8 +80,8 @@ pub const NOTIFICATION_PRODUCER_FOUND_KEY: &str = "secret.found_key";
 /// ([`raise_found_key_notices_page`]).
 const NOTICES_PER_WRITE: usize = 64;
 
-/// The scan's reason codes share this prefix; a key's kind is what follows.
-const REASON_PREFIX: &str = "gate.secret_scan.";
+#[doc(hidden)]
+use oneiron_records::secret_custody::found_keys::REASON_PREFIX;
 
 /// Each record's found keys. Key: the record's id.
 const FOUND: SideTable<EntityId, FoundKeys, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY);

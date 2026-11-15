@@ -603,10 +603,10 @@ pub(crate) fn archive_same_custody_in_txn(
 
 /// The credentials whose value and carrier keys a custody head may carry
 /// (CALLS `KS-6 entry eligibility`, CUSTODY_ENTRY_RECOVERY): each record
-/// custody-portable, not "this device only" and active. A suspended or
-/// revoked one, and a device-bound, cross-vault (K30) or device-only (K29)
-/// one, stays local. Read without custody; the caller keeps every
-/// credential local when this faults.
+/// custody-portable, not "this device only" and active. A revoked one, and
+/// a device-bound, cross-vault (K30) or device-only (K29) one, stays local.
+/// Read without custody; the caller keeps every credential local when this
+/// faults.
 pub(crate) fn credentials_eligible_for_heads(vault: &Vault) -> Result<BTreeSet<[u8; 16]>> {
     match CUSTODY_ENTRY_RECOVERY {
         CustodyEntryRecovery::LocalOnlyUnlessCurrentlyPermittedPortable => {}
@@ -640,7 +640,7 @@ pub(crate) fn head_eligible(record: &SecretCustodyRecord) -> bool {
 enum CustodyEntryRecovery {
     /// An active portable credential's keys ride the head's owner-only
     /// compartment, wrapped to the recovery root alone; every other
-    /// credential's (suspended, revoked, device-bound, device-only,
+    /// credential's (revoked, device-bound, device-only,
     /// cross-vault) stay in this machine's custody: a same-install restore
     /// takes them, a new host re-enters them or imports the owner's
     /// archive.

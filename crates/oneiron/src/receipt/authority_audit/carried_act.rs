@@ -72,6 +72,7 @@ fn carried_owner_act(op: &AuthorityOp) -> Option<&OwnerAct> {
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::HomeCandidacy(_)
+        | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => None,
     }

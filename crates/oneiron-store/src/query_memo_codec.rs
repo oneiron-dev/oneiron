@@ -198,11 +198,7 @@ pub fn vector_pair_fingerprint(subject: &Option<Vec<f32>>, exemplar: &Option<Vec
 }
 
 pub fn hex_lower(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
+    oneiron_hex::encode(bytes)
 }
 
 pub fn validate_bounded_text(value: &str, field: &'static str) -> Result<()> {

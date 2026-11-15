@@ -12,7 +12,6 @@ use crate::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault,
     WriteActor, WriteEnvelope, WriteProvenance,
 };
-use serde::{Deserialize, Serialize};
 mod decision_context;
 mod policy;
 mod read_context;
@@ -33,26 +32,14 @@ const ATTEMPT: SideTable<AttemptId, DreamerAuthorityStamp, LegacyJson> =
 const RESIDENT_ATTEMPT: SideTable<AttemptId, ResidentAuthorityStamp, Named> =
     SideTable::new(&side_table::DREAMER_RESIDENT_ATTEMPT);
 
-/// A resident's stamp on one of its own dreaming attempts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResidentAuthorityStamp {
-    pub attempt_id: [u8; 16],
-    pub resident: EntityId,
-    pub receipt_id: [u8; 16],
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::authority::{
+    DreamerAuthorityStamp, ResidentAuthorityStamp,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DreamerAuthorityStamp {
-    pub attempt_id: [u8; 16],
-    #[serde(with = "crate::serialize::entity_ref")]
-    pub actor: EntityId,
-    pub facet: String,
-    pub receipt_id: [u8; 16],
-}
 use crate::store::base_agent::{ACTOR_BODY, COACH_BODY, base_agent_body};
 pub(crate) use crate::store::base_agent::{
-    coach_actor_id, dreamer_actor_id, guard_actor_delete, guard_actor_put, is_base_agent_actor,
+    coach_actor_id, dreamer_actor_id, guard_actor_delete, is_base_agent_actor,
 };
 /// The Coach as a reader, for a job that reads as the Coach (untangle 6.6d,
 /// F4): its goal reads name it, and go through its grant.
