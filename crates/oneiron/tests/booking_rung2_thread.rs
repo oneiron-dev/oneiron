@@ -13,10 +13,11 @@
 //! continuation, and wears the first send's mask.
 //!
 //! Red on main: `Rung2FirstSend`, `Vault::keep_booking_rung2_first_send`,
-//! `Vault::booking_rung2_thread_first_send`, `NativeMailAdapter::send_message_id`
-//! and the test door do not exist there, so this file does not build. Red
-//! base: the head with only the sent-passport call taken out of
-//! `NativeMailAdapter::dispatch_send`, where the three thread tests fail.
+//! `Vault::booking_rung2_thread_first_send`,
+//! `NativeMailAdapter::send_message_id` and the test door
+//! `test_doors::booking_rung2_thread` do not exist there, so this file does
+//! not build. Red base: the head with only the sent-passport call taken out
+//! of `NativeMailAdapter::dispatch_send`, where the three thread tests fail.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test booking_rung2_thread`.
 
@@ -47,7 +48,7 @@ use oneiron::outbound::{
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::rung2_thread::hold_cold_mail_for_owner_press;
+use oneiron::test_doors::booking_rung2_thread::hold_cold_mail_for_owner_press;
 use oneiron::{
     CanonicalMessageId, EntityId, StickyMaskDecision, ThreadMask, ThreadPassportInput, TimeRange,
     Vault, VaultConfig, canonical_message_id,
