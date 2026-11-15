@@ -16,7 +16,8 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::snapshot_read::{
     EvidenceSourceStatus, EvidenceSpansRequest, SourceVersion, SourceVersionCheck,
     evidence_spans_in_txn, extraction_reader_scope_in_txn, extraction_turn_in_txn,
-    observed_claim_reads_in_txn, queued_extraction_branch_in_txn, source_version_in_txn,
+    extraction_turn_read, observed_claim_reads_in_txn, queued_extraction_branch_in_txn,
+    source_version_in_txn,
 };
 use crate::verbs::{ExtractionPack, PinnedClaim};
 
@@ -29,7 +30,13 @@ impl DreamerAttemptBinding {
         let vault = &*self.vault;
         let memory = vault.memory(self.stamp.actor, self.actor().actor_class());
         let read = memory.read_lane(ClaimReadStatus::Recorded)?;
+        let turn_read = extraction_turn_read(&read, None)?;
         let _pins = read.prepare_point_read::<MemoryError>()?;
+        let _turn_pins = turn_read
+            .as_ref()
+            .map(|read| read.prepare_point_read::<MemoryError>())
+            .transpose()?;
+        let turn_read = turn_read.as_ref().unwrap_or(&read);
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         self.check_in_txn(&txn)?;
         memory.prove_read_authority_in_txn(&txn)?;
@@ -38,7 +45,7 @@ impl DreamerAttemptBinding {
             let (scope, branch) = queued_extraction_branch_in_txn(vault, txn, self.attempt())?;
             check_pack_rows(
                 &memory,
-                &read,
+                (&read, turn_read),
                 txn,
                 reader_scope.as_ref(),
                 pack,
@@ -98,7 +105,7 @@ impl DreamerAttemptBinding {
 /// Rechecks cited TURN projections, spans and claim pins before interpreting proposals.
 fn check_pack_rows(
     memory: &Memory<'_>,
-    read: &ScopedRead<'_>,
+    (read, turn_read): (&ScopedRead<'_>, &ScopedRead<'_>),
     txn: &heed::RoTxn<'_>,
     reader_scope: Option<&Scope>,
     pack: &ExtractionPack,
@@ -110,7 +117,7 @@ fn check_pack_rows(
     for candidate in &pack.candidates {
         for evidence in &candidate.evidence {
             let turn = check_source_pin(
-                read,
+                (read, turn_read),
                 txn,
                 reader_scope,
                 &evidence.turn,
@@ -127,7 +134,7 @@ fn check_pack_rows(
             if extraction_turn_in_txn(
                 memory.vault(),
                 txn,
-                read,
+                (read, turn_read),
                 reader_scope,
                 queued.0,
                 &key,
@@ -139,7 +146,7 @@ fn check_pack_rows(
             }
             let served = evidence_spans_in_txn(
                 memory,
-                read,
+                turn_read,
                 txn,
                 &EvidenceSpansRequest {
                     source: turn,
@@ -156,7 +163,7 @@ fn check_pack_rows(
     }
     for pin in pack.listed.iter().chain(&pack.priors) {
         check_source_pin(
-            read,
+            (read, turn_read),
             txn,
             reader_scope,
             &pin.claim,
@@ -218,7 +225,7 @@ fn check_engine_claim_pins(
 
 /// Reads and rechecks one pinned row under the Dreamer's live record reach.
 fn check_source_pin(
-    read: &ScopedRead<'_>,
+    (read, turn_read): (&ScopedRead<'_>, &ScopedRead<'_>),
     txn: &heed::RoTxn<'_>,
     reader_scope: Option<&Scope>,
     reference: &str,
@@ -244,7 +251,12 @@ fn check_source_pin(
             "extraction evidence locators must name TURNs and claim pins must name CLAIMs",
         ));
     }
-    match version.recheck_in_txn(read, txn)? {
+    let version_read = if kind == ENTITY_TYPE_TURN {
+        turn_read
+    } else {
+        read
+    };
+    match version.recheck_in_txn(version_read, txn)? {
         SourceVersionCheck::Current => Ok(id),
         SourceVersionCheck::Withheld => Err(extraction_not_served()),
         SourceVersionCheck::Moved => Err(extraction_source_moved()),
