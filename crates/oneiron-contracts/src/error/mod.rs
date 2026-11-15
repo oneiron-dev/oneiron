@@ -404,6 +404,8 @@ pub enum ErrorKind {
     InvalidConversationDag,
     InvalidScopeSummary,
     InvalidPairingScope,
+    /// A link named verbs for an app backend that no Grant row names.
+    AppBackendGrantRequired,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,

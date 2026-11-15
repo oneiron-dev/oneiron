@@ -1,5 +1,5 @@
-//! What a pairing link's principal may name: its facets and an
-//! organization's administration powers.
+//! What a pairing link's principal may name: its facets, an
+//! organization's administration powers and an app backend's verbs.
 
 use super::*;
 use crate::federation::OrgAdminPower;
@@ -44,6 +44,41 @@ impl Vault {
         if owner {
             return Err(pairing_scope(
                 "the vault owner's credential takes no facet limit",
+            ));
+        }
+        Ok(())
+    }
+    /// A published app's backend holds verbs only under Grant rows the owner
+    /// mints as their own act, default none (canon ARCH-0050 PUBLIC-BACKEND
+    /// = A; Engine RULING APP-BACKEND-LINK-GRANT = A, 15 Nov 20:30). A link
+    /// that names any verb for a backend that no Grant row names is refused
+    /// with [`crate::error::RecordError::AppBackendGrantRequired`], which
+    /// names `vault.agents.grants.mint`. A link that names no verb, as the
+    /// backend's own first link, and a backend a Grant row names, pass.
+    pub(super) fn validate_pairing_backend_verbs_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        principal: &PairingPrincipal,
+        scope: &Scope,
+    ) -> Result<()> {
+        let Some(holder) = principal
+            .holder_ref
+            .as_deref()
+            .and_then(|holder| crate::EntityId::from_hex(holder).ok())
+        else {
+            return Ok(());
+        };
+        // The act rule's two readings (pass 26; A0 #8320 states this `if` as
+        // `!Permitted::NoWidening.admits(Direction::Widens)`): a link that
+        // names a verb widens its holder's reach, and a link alone may not
+        // widen an ungranted backend's.
+        let widens = !scope.verbs.is_bottom();
+        if widens
+            && self.is_artifact_backend_principal_in_txn(txn, holder)?
+            && !self.agent_grant_names_in_txn(txn, holder)?
+        {
+            return Err(crate::error::Error::Record(
+                crate::error::RecordError::AppBackendGrantRequired,
             ));
         }
         Ok(())

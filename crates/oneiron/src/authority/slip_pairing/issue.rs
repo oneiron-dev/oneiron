@@ -70,7 +70,10 @@ impl Vault {
     /// verbs `read` and `scope`'s other axes, with no expiry, wallet, repo
     /// bounds or verb classes, as an OAuth sign-in's Grant. A mint that fails
     /// refuses the link. Any other holder, and a link naming none, mints
-    /// nothing.
+    /// nothing. A published app's backend mints nothing, and a link that
+    /// names verbs for one no Grant row names is refused
+    /// ([`crate::error::RecordError::AppBackendGrantRequired`],
+    /// APP-BACKEND-LINK-GRANT = A).
     pub fn issue_owner_pairing_link_from_surface(
         &self,
         issuer: &HostSlipIssuer,
@@ -240,6 +243,7 @@ impl Vault {
             let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, txn)?;
             let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
             self.validate_pairing_principal_in_txn(txn, &principal, &scope)?;
+            self.validate_pairing_backend_verbs_in_txn(txn, &principal, &scope)?;
             self.validate_pairing_facets_in_txn(
                 txn,
                 &principal,

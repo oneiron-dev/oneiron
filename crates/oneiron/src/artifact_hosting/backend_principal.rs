@@ -7,6 +7,16 @@ use crate::consent::AuthenticatedOwner;
 use crate::federation::{Scope, ScopeAxis};
 use serde::Serialize;
 
+/// The name prefix of a published app's backend principal: the PERSON
+/// [`Vault::create_artifact_backend_pairing`] derives, never a named agent's.
+const ARTIFACT_BACKEND_NAME_PREFIX: &str = "artifact-backend:";
+
+/// Whether `name`, a named agent PERSON's recorded name, is a published app's
+/// backend principal's.
+pub(crate) fn is_artifact_backend_name(name: &str) -> bool {
+    name.starts_with(ARTIFACT_BACKEND_NAME_PREFIX)
+}
+
 /// The app redeems this link with its own binding key through the normal
 /// pairing door. The artifact fields identify the selected code; they are
 /// not an action grant or proof that a backend process has been started.
@@ -20,6 +30,22 @@ pub struct ArtifactBackendPairing {
 }
 
 impl Vault {
+    /// Whether `holder` is a published app's backend principal in `txn`: a
+    /// live named agent's PERSON whose name
+    /// [`Self::create_artifact_backend_pairing`] gave it.
+    ///
+    /// # Errors
+    /// A store failure reading the row.
+    pub(crate) fn is_artifact_backend_principal_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .live_named_agent_name_in_txn(txn, holder)?
+            .is_some_and(|name| is_artifact_backend_name(&name)))
+    }
+
     /// Creates a fresh app actor and an owner-recorded pairing link with no
     /// engine-action verbs. It neither grants the actor a standing ceiling
     /// nor admits a connector. A backend can compute without either.
@@ -42,7 +68,7 @@ impl Vault {
                 let mut nonce = [0_u8; 32];
                 crate::world_keys::os_fill(&mut nonce)?;
                 let name = format!(
-                    "artifact-backend:{artifact}:{}:{}",
+                    "{ARTIFACT_BACKEND_NAME_PREFIX}{artifact}:{}:{}",
                     super::artifact_hex(fork_hash),
                     super::artifact_hex(&nonce),
                 );
@@ -81,6 +107,8 @@ impl Vault {
         scope.verbs = ScopeAxis::Some(Default::default());
         // This second native writer revalidates the owner and issuer. A
         // failed issue can leave an actor row, never a credential or grant.
+        // A later link that names verbs for this actor is refused until the
+        // owner mints its Grant row (APP-BACKEND-LINK-GRANT = A).
         let link = self.issue_owner_pairing_link_without_grant(
             issuer,
             owner,

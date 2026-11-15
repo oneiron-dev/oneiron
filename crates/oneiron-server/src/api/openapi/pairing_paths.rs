@@ -44,7 +44,7 @@ const PAIRING_ROUTES: &[PairingRoute] = &[
         refusals: &[
             (
                 "400",
-                "The scope the vault refuses (InvalidPairingScope on scope.facets, pairing.rs with_issuer).",
+                "The scope the vault refuses (InvalidPairingScope on scope.facets; AppBackendGrantRequired on scope.verbs, verbs for an app backend no Grant row names; pairing.rs with_issuer).",
             ),
             (
                 "401",

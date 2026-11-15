@@ -616,6 +616,11 @@ pub(super) fn with_issuer<T>(
         oneiron::ErrorKind::InvalidPairingScope => {
             ApiError::bad_request(error.to_string(), Some("scope.facets"))
         }
+        // An app backend's verbs wait on the Grant row the owner mints; the
+        // message names vault.agents.grants.mint (APP-BACKEND-LINK-GRANT = A).
+        oneiron::ErrorKind::AppBackendGrantRequired => {
+            ApiError::bad_request(error.to_string(), Some("scope.verbs"))
+        }
         _ => renewal_error::renewal_refusal(&error).unwrap_or_else(ApiError::unauthorized),
     };
     // The managed issuer, else this install's own self-host root issuer
