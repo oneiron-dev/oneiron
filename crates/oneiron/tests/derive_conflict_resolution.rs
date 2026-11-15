@@ -53,6 +53,9 @@ const SKIP_NOT_ALLOWED: &str = "gate.deny.derive.conflict_resolution_skip_not_al
 const MERGE_REFUSED: &str = "gate.deny.derive.conflict_resolution_merge_refused";
 /// The refusal of a resolution whose claim is already stored.
 const DUPLICATE: &str = "gate.deny.derive.conflict_resolution_duplicate";
+/// The Conflict item's refusal of operands that are not one servable native
+/// conflict.
+const CONFLICT_OPERANDS_REFUSED: &str = "gate.deny.derive.conflict_operands_refused";
 
 /// The predicate the extraction fixture contests.
 const FOOD: &str = "preference.food";
@@ -167,6 +170,16 @@ fn single_attempt(dir: &tempfile::TempDir) -> TestResult<AttemptSetup> {
 /// The two-turn sibling attempt: green tea against black coffee.
 fn sibling_attempt(dir: &tempfile::TempDir) -> TestResult<AttemptSetup> {
     let words = ["owen chooses green tea", "owen chooses black coffee"];
+    extraction_attempt_with_turns(dir, "owen", &words)
+}
+
+/// The three-turn attempt: green tea, then black coffee in two turns.
+fn repeated_attempt(dir: &tempfile::TempDir) -> TestResult<AttemptSetup> {
+    let words = [
+        "owen chooses green tea",
+        "owen chooses black coffee",
+        "owen still chooses black coffee",
+    ];
     extraction_attempt_with_turns(dir, "owen", &words)
 }
 
@@ -794,6 +807,87 @@ fn an_accumulate_lands_every_member() -> TestResult<()> {
     Ok(())
 }
 
+/// Two members that state one candidate are refused: native's assembly
+/// groups two statements of one candidate before any set forms, and two such
+/// members would land at one claim id, which no revert could take back. One
+/// operand sent twice and one value read from two turns both refuse, for the
+/// resolution and for the Conflict item, and nothing lands: the set with each
+/// candidate stated once then lands whole.
+#[test]
+fn two_members_that_state_one_candidate_are_refused() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let (vault, attempt_id, turns, subject) = repeated_attempt(&dir)?;
+    assert_eq!(turns.len(), 3);
+    let hex = subject.to_hex();
+    let green = member(
+        operand_for(&hex, json!("green tea"), &turns[0]),
+        0.0,
+        vec![],
+    );
+    let black = member(
+        operand_for(&hex, json!("black coffee"), &turns[1]),
+        0.0,
+        vec![],
+    );
+    let again = member(
+        operand_for(&hex, json!("black coffee"), &turns[2]),
+        0.0,
+        vec![],
+    );
+    let cases = [
+        ("one operand twice", [&green, &black, &black]),
+        ("one value from two turns", [&green, &black, &again]),
+    ];
+    for (case, members) in cases {
+        let members: Vec<Value> = members.into_iter().cloned().collect();
+        let spec = accumulate_spec("resolve", members.clone(), vec![]);
+        let answer = commit_dreamer(
+            &vault,
+            Some(attempt_id),
+            json!({"items": [spec], "sources": []}),
+        )?;
+        let item = &answer["items"][0];
+        assert_eq!(item["landed"], false, "{case}: {answer}");
+        assert_eq!(item["rows"], json!([]), "{case}: {answer}");
+        assert_eq!(
+            item["reasons"],
+            json!([OPERANDS_REFUSED]),
+            "{case}: {answer}"
+        );
+        let spec = conflict_spec("open", members, vec![]);
+        let answer = commit_dreamer(
+            &vault,
+            Some(attempt_id),
+            json!({"items": [spec], "sources": []}),
+        )?;
+        let item = &answer["items"][0];
+        assert_eq!(item["landed"], false, "{case}: {answer}");
+        assert_eq!(
+            item["reasons"],
+            json!([CONFLICT_OPERANDS_REFUSED]),
+            "{case}: {answer}"
+        );
+    }
+    assert!(
+        open_for(&vault, subject)?.is_empty(),
+        "no refused item opened a conflict"
+    );
+    let spec = accumulate_spec("resolve", vec![green, black], vec![]);
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [spec], "sources": []}),
+    )?;
+    let item = &answer["items"][0];
+    assert_eq!(item["landed"], true, "each stated once: {answer}");
+    assert_eq!(
+        item["rows"].as_array().ok_or("the rows")?.len(),
+        2,
+        "{answer}"
+    );
+    Ok(())
+}
+
 /// A merge of two sibling candidates with no head lands one claim, as native
 /// builds it from the kept member and the whole set, and replaces nothing.
 #[test]
@@ -1087,6 +1181,39 @@ fn the_committer_s_revert_takes_a_resolution_back() -> TestResult<()> {
         "the replacement no longer stands"
     );
     assert_eq!(vault.pending_claim_supersession(&replacement)?, None);
+    Ok(())
+}
+
+/// The committer's revert takes an accumulate back: each member landed at
+/// its own claim id, each row is retracted once, and no row is left.
+#[test]
+fn the_committer_s_revert_takes_an_accumulate_back() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let (vault, attempt_id, turns, subject) = sibling_attempt(&dir)?;
+    assert_eq!(turns.len(), 2);
+    let spec = accumulate_spec("resolve", sibling_pair(&subject, &turns), vec![]);
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [spec], "sources": []}),
+    )?;
+    let item = &answer["items"][0];
+    assert_eq!(item["landed"], true, "{answer}");
+    let rows = item["rows"].as_array().ok_or("the rows")?;
+    assert_eq!(rows.len(), 2, "{answer}");
+    assert_ne!(rows[0], rows[1], "each member lands at its own claim id");
+    let batch = EntityId::from_hex(answer["batch"].as_str().ok_or("the batch")?)?;
+    let reverted = revert_as_owner(&vault, batch)?;
+    assert_eq!(reverted["reverted"], json!(["resolve"]));
+    assert_eq!(reverted["left"], json!([]));
+    for row in rows {
+        let claim = EntityId::from_hex(row.as_str().ok_or("the row")?)?;
+        assert_ne!(
+            claim_lifecycle(&vault, claim)?,
+            Some("active".to_owned()),
+            "the member no longer stands"
+        );
+    }
     Ok(())
 }
 
