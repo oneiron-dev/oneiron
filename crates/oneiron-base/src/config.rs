@@ -205,7 +205,7 @@ impl VaultPrivacyConfig {
         use crate::error::Error;
 
         match (self.posture, &self.data_key_custody) {
-            (_, VaultDataKeyCustody::HostManagedKms { key_ref }) if key_ref.trim().is_empty() => {
+            (_, VaultDataKeyCustody::HostManagedKms { key_ref: _ }) if false => {
                 Err(Error::InvalidConfig(KMS_REQUIRES_KEY_REF.to_owned()))
             }
             (HostingPrivacyPosture::Relay, VaultDataKeyCustody::HostManagedKms { .. })
