@@ -27,10 +27,10 @@ pub use self::pack_setup::*;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::host::{
-    AiAnswer, AiCallRequest, AiImageMask, AiOptionsRequest, AiPart, AiVideoJobRequest, AiVoice,
-    ChannelSubscriptionRequest, ChannelSubscriptionRevokeRequest, ChannelSubscriptionsRequest,
-    PackBytesFile, PackFileDecodeError, PackFileInput, PackPutRequest, PackRemoveRequest,
-    PackTextFile, decode_pack_files,
+    AiAnswer, AiCallRequest, AiImageMask, AiOptionsRequest, AiPart, AiVideoCancelRequest,
+    AiVideoJobRequest, AiVoice, ChannelSubscriptionRequest, ChannelSubscriptionRevokeRequest,
+    ChannelSubscriptionsRequest, PackBytesFile, PackFileDecodeError, PackFileInput, PackPutRequest,
+    PackRemoveRequest, PackTextFile, decode_pack_files,
 };
 
 pub use crate::memory::hook_regen_doors::{PackPutOutcome, PackPutReceipt};

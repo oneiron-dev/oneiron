@@ -93,8 +93,12 @@ pub enum McpTaskSubject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpTaskEnd {
-    /// The record ended; a partial or deferred outcome ends here too, naming itself.
+    /// The record ended.
     Completed,
+    /// The record ended with part of its work deferred (a night step's partial outcome): the
+    /// task ends completed, naming it. Kept apart from [`Self::Completed`], so a later read that
+    /// finds the record settled whole is not this end.
+    CompletedPartial,
     /// The record ended in failure: the task ends completed, its result marked an error.
     CompletedWithError,
     /// The record's work stopped on a cancel.

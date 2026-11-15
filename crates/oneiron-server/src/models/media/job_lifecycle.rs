@@ -22,6 +22,28 @@ use oneiron::agent_dispatch::SpendScopeId;
 use super::run_line::ScopeStage;
 use super::{FatalLlmError, Held, KeptJob, LlmResult, MediaJobState, MediaRuntime, erased_poll};
 
+/// What a cancel does with a job that has already ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaCancelMode {
+    /// Delete it, its row and clips with it.
+    DeleteEnded,
+    /// Keep it with its end and clip: the cancel stops only a job that
+    /// still runs (`ai.video.cancel` with `if_running`).
+    KeepEnded,
+}
+
+/// What a cancel came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaCancelOutcome {
+    /// The job is deleted, its row and clips with it: it was stopped at its
+    /// provider, its submit never reached one, or it had ended under
+    /// [`MediaCancelMode::DeleteEnded`].
+    Deleted,
+    /// The job had ended, and [`MediaCancelMode::KeepEnded`] kept it with
+    /// its end and clip.
+    KeptEnded,
+}
+
 /// What writing a job's end came to.
 pub(super) enum JobWrite {
     /// The row keeps its end now.
@@ -164,22 +186,47 @@ impl MediaRuntime {
     /// A running job is stopped first, under the lock its polls take; only
     /// a stop its provider confirmed settles its permit and lets it go. A
     /// stop that failed is the caller's error, and the job runs on here. A
-    /// job that ended is only dropped.
-    pub(super) async fn cancel_kept_job(&self, id: &str) -> LlmResult<()> {
+    /// job that ended is only dropped under [`MediaCancelMode::DeleteEnded`];
+    /// under [`MediaCancelMode::KeepEnded`] it keeps its end and clip, and
+    /// so does a job whose end a poll wrote while this cancel waited on its
+    /// lock.
+    pub(super) async fn cancel_kept_job(
+        &self,
+        id: &str,
+        mode: MediaCancelMode,
+    ) -> LlmResult<MediaCancelOutcome> {
         let job = match self.held(id)? {
             Held::Running(job) => job,
             // Nothing can stop it at its provider until its submit is
             // answered: the caller asks again (FIX 2248).
             Held::Submitting(_) => return Err(oneiron::RetryableLlmError::ServerError.into()),
-            // Its provider's job cannot be reached: its row is let go.
-            Held::Unsent(_) | Held::Unkept(_) | Held::Ended(_) => return self.drop_kept_job(id),
+            // Its submit never reached its provider: nothing renders, and
+            // its row is let go.
+            Held::Unsent(_) => return self.drop_kept_job(id).map(|()| MediaCancelOutcome::Deleted),
+            // Its provider's job cannot be reached: its row is let go, or
+            // kept with its end.
+            Held::Unkept(_) | Held::Ended(_) => {
+                return match mode {
+                    MediaCancelMode::DeleteEnded => {
+                        self.drop_kept_job(id).map(|()| MediaCancelOutcome::Deleted)
+                    }
+                    MediaCancelMode::KeepEnded => Ok(MediaCancelOutcome::KeptEnded),
+                };
+            }
         };
         let mut held = job.lock().await;
+        if held.permit.is_none() && mode == MediaCancelMode::KeepEnded {
+            // The poll this cancel waited behind wrote the job's end, or a
+            // confirmed stop dropped it: an ended job is kept, and a dropped
+            // one is no job.
+            drop(held);
+            return self.ended(id).map(|_| MediaCancelOutcome::KeptEnded);
+        }
         held.cancel().await?;
         // A confirmed stop settled its permit: what that charged reaches
         // the scope that funds it in the commit that drops its row (FIX
         // 11496, S7299-P1).
-        self.drop_kept_job(id)
+        self.drop_kept_job(id).map(|()| MediaCancelOutcome::Deleted)
     }
 
     /// Drops job `id` from here and its row and clips from the vault, in

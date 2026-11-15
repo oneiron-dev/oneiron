@@ -18,16 +18,24 @@
 //! - A task that ended refuses a cancel (the spec: a task in a terminal
 //!   status is never cancelled), so a cancel never undoes finished work, and
 //!   its end stays.
+//! - A video job that finished ends its task `completed` with the finished
+//!   job as its result, and no task cancel deletes its clip: the task's
+//!   cancel asks `ai.video.cancel` with `if_running`, which refuses a job
+//!   that ended, by name, and keeps it (so a job that finishes after the
+//!   task's last read keeps its clip too).
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test mcp_tasks_records`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
+use axum::http::header::CONTENT_TYPE;
 use axum::http::{Method, Request, StatusCode, Uri};
+use axum::response::IntoResponse;
 use oneiron::agent_def::workflow::WorkflowDefinition;
 use oneiron::agent_dispatch::{AgentDispatcher, WorkflowProgress};
 use oneiron::attempt_queue::{
@@ -55,6 +63,9 @@ const CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
 
 /// The provider's id for the one video job the fake renders.
 const PROVIDER_JOB: &str = "video_task_1";
+
+/// The bytes of the clip the fake renders.
+const CLIP: &[u8] = b"fake mp4 clip";
 
 /// A rooted vault behind the MCP gateway, called by its owner, with the
 /// owner's saved two-step workflow.
@@ -159,44 +170,65 @@ fn sync_server(vault: &Arc<Vault>) -> TestResult<SyncServer> {
 }
 
 /// A plain-HTTP fake video provider: it queues one job, answers every poll
-/// that the job renders at 10%, and stops it on a delete. It keeps every
+/// that the job renders at 10% until [`Self::finish`], then that it
+/// completed with its clip, and stops it on a delete. It keeps every
 /// request it saw, in order.
 struct FakeVideoProvider {
     base_url: String,
     seen: Arc<Mutex<Vec<(String, String)>>>,
+    finished: Arc<AtomicBool>,
 }
 
 impl FakeVideoProvider {
     async fn start() -> TestResult<Self> {
         let seen = Arc::new(Mutex::new(Vec::new()));
+        let finished = Arc::new(AtomicBool::new(false));
         let log = Arc::clone(&seen);
+        let completed = Arc::clone(&finished);
         let app = Router::new().fallback(move |method: Method, uri: Uri| {
             let log = Arc::clone(&log);
+            let finished = completed.load(Ordering::SeqCst);
             async move {
                 let path = uri.path().to_owned();
                 if let Ok(mut seen) = log.lock() {
                     seen.push((method.as_str().to_owned(), path.clone()));
                 }
                 let job = format!("/v1/videos/{PROVIDER_JOB}");
+                let content = format!("{job}/content");
                 match (method.as_str(), path.as_str()) {
                     ("POST", "/v1/videos") => (
                         StatusCode::OK,
                         axum::Json(json!({ "id": PROVIDER_JOB, "status": "queued" })),
-                    ),
+                    )
+                        .into_response(),
+                    ("GET", polled) if polled == job && finished => (
+                        StatusCode::OK,
+                        axum::Json(
+                            json!({ "id": PROVIDER_JOB, "status": "completed", "seconds": 4 }),
+                        ),
+                    )
+                        .into_response(),
                     ("GET", polled) if polled == job => (
                         StatusCode::OK,
                         axum::Json(
                             json!({ "id": PROVIDER_JOB, "status": "in_progress", "progress": 10 }),
                         ),
-                    ),
+                    )
+                        .into_response(),
+                    ("GET", fetched) if fetched == content && finished => {
+                        (StatusCode::OK, [(CONTENT_TYPE, "video/mp4")], CLIP.to_vec())
+                            .into_response()
+                    }
                     ("DELETE", stopped) if stopped == job => (
                         StatusCode::OK,
                         axum::Json(json!({ "id": PROVIDER_JOB, "deleted": true })),
-                    ),
+                    )
+                        .into_response(),
                     _ => (
                         StatusCode::NOT_FOUND,
                         axum::Json(json!({ "error": { "message": "no such route" } })),
-                    ),
+                    )
+                        .into_response(),
                 }
             }
         });
@@ -205,7 +237,16 @@ impl FakeVideoProvider {
         tokio::spawn(async move {
             let _served = axum::serve(listener, app).await;
         });
-        Ok(Self { base_url, seen })
+        Ok(Self {
+            base_url,
+            seen,
+            finished,
+        })
+    }
+
+    /// From now on the job has completed, with its clip.
+    fn finish(&self) {
+        self.finished.store(true, Ordering::SeqCst);
     }
 
     /// Every request the provider saw, as (method, path), in order.
@@ -566,6 +607,77 @@ fn a_video_job_returns_a_task_and_its_cancel_reaches_the_provider() -> TestResul
             provider.seen().iter().filter(|seen| **seen == stop).count(),
             1,
             "the second cancel reached no provider"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_finished_video_job_ends_completed_and_no_task_cancel_deletes_its_clip() -> TestResult {
+    on_engine_stack(|| async {
+        let provider = FakeVideoProvider::start().await?;
+        provider.finish();
+        let fixture = Fixture::with_video_provider(&provider.base_url).await?;
+        let render = json!({
+            "prompt": "A harbour at dawn",
+            "params": { "seconds": 4, "size": "1280x720" },
+        });
+
+        let started = fixture.call("ai.video", render.clone(), true).await?;
+        let id = task_id(&started)?;
+        let done = fixture.tasks("get", &id).await?;
+        assert_eq!(done["result"]["status"], "completed", "{done}");
+        assert_eq!(
+            output(&done["result"]["result"])["state"],
+            "done",
+            "the task's result is the finished job: {done}"
+        );
+        let refused = fixture.tasks("cancel", &id).await?;
+        assert_eq!(
+            refused["error"]["code"], -32602,
+            "a completed task refuses a cancel: {refused}"
+        );
+        let kept = fixture.tasks("get", &id).await?;
+        assert_eq!(
+            output(&kept["result"]["result"])["state"],
+            "done",
+            "the refused cancel kept the job and its clip: {kept}"
+        );
+
+        // The flag the task's cancel sets, on the verb itself: a job that
+        // ended refuses a stop-only cancel, by name, and keeps its clip.
+        let ticket = fixture.call("ai.video", render, false).await?;
+        let job = output(&ticket["result"])["job"]
+            .as_str()
+            .ok_or_else(|| format!("a ticket names its job: {ticket}"))?
+            .to_owned();
+        let polled = fixture
+            .call("ai.video.poll", json!({ "job": job }), false)
+            .await?;
+        assert_eq!(output(&polled["result"])["state"], "done", "{polled}");
+        let stop_only = fixture
+            .call(
+                "ai.video.cancel",
+                json!({ "job": job, "if_running": true }),
+                false,
+            )
+            .await?;
+        assert!(
+            stop_only.to_string().contains("already ended"),
+            "a job that ended refuses a stop-only cancel by name: {stop_only}"
+        );
+        let still = fixture
+            .call("ai.video.poll", json!({ "job": job }), false)
+            .await?;
+        assert_eq!(
+            output(&still["result"])["state"],
+            "done",
+            "the refused cancel kept the job and its clip: {still}"
+        );
+        assert!(
+            !provider.seen().iter().any(|(method, _)| method == "DELETE"),
+            "no cancel reached the provider: {:?}",
+            provider.seen()
         );
         Ok(())
     })

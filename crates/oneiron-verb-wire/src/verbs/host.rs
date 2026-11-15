@@ -320,6 +320,18 @@ pub struct AiOptionsRequest {
 pub struct AiVideoJobRequest {
     pub job: String,
 }
+
+/// `ai.video.cancel`'s input: a video job, by the ticket `ai.video`
+/// answered, and whether a job that has already ended is kept.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiVideoCancelRequest {
+    pub job: String,
+    /// Stop the job only while it runs: a job that has ended is refused and
+    /// kept with its clip. Unset, a job that has ended is deleted.
+    #[serde(default)]
+    pub if_running: bool,
+}
 pub mod ask_image;
 pub mod hooks_replay;
 pub mod pack_setup;

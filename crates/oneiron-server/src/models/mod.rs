@@ -124,7 +124,7 @@ pub(crate) use media::AgentMediaCall;
 #[cfg(oneiron_test_support)]
 pub(crate) use media::JobSpendLedger;
 pub(crate) use media::RungVoices;
-pub use media::{MediaRow, MediaRuntime, MediaTicket};
+pub use media::{MediaCancelMode, MediaCancelOutcome, MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
