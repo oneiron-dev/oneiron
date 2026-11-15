@@ -480,16 +480,7 @@ pub(super) fn card_in_txn(
         {
             actions.push(FoundKeyAction::Delete);
         }
-        if (matches!(key.place.as_str(), "body" | "file" | "claim")
-            || key.place.starts_with("text:"))
-            && status.is_some_and(|status| status != SecretCustodyStatus::Revoked)
-        {
-            actions.extend([FoundKeyAction::NotASecret, FoundKeyAction::KeptAsText]);
-        } else if key.place == "repo:receive-pack"
-            && status.is_some_and(|status| status != SecretCustodyStatus::Revoked)
-        {
-            actions.push(FoundKeyAction::NotASecret);
-        }
+        actions.extend_from_slice(text_answers(key, status));
     }
     let label = crate::secret_custody::secret_handle_label_in_txn(&vault.store, txn, &key.custody)?
         .map(|label| label.label);
@@ -641,6 +632,27 @@ impl Answerer {
             Self::Owner(_) => ActBy::Owner,
             Self::Writer(_) => ActBy::Person,
         }
+    }
+}
+
+/// The text answers a key not yet kept still takes, the owner's and its
+/// writer's alike: not a secret and kept as text for a key found in a
+/// record's body, text, claim or file, not a secret alone for a repository
+/// push, and none once its custody record is revoked or gone. `status` is
+/// the custody record's.
+pub(super) fn text_answers(
+    key: &FoundKey,
+    status: Option<SecretCustodyStatus>,
+) -> &'static [FoundKeyAction] {
+    if !status.is_some_and(|status| status != SecretCustodyStatus::Revoked) {
+        return &[];
+    }
+    if is_record_place(&key.place) {
+        &[FoundKeyAction::NotASecret, FoundKeyAction::KeptAsText]
+    } else if key.place == "repo:receive-pack" {
+        &[FoundKeyAction::NotASecret]
+    } else {
+        &[]
     }
 }
 

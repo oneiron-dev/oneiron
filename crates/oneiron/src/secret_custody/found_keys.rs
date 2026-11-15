@@ -40,6 +40,7 @@ mod actions;
 mod page;
 mod purpose;
 mod ruled_screen;
+mod written_by;
 pub(crate) use purpose::purpose_questions_in_txn;
 use ruled_screen::RuledScreenKey;
 pub(crate) use ruled_screen::{
@@ -71,6 +72,9 @@ pub(crate) use self::actions::{
     kept_as_text_in_txn, ruled_no_secret_in_txn, settle_found_key_in_txn,
 };
 pub use self::page::{FoundKeyCursor, FoundKeyNoticePage};
+pub use self::written_by::{
+    WrittenFoundKeyCard, WrittenFoundKeyCursor, WrittenFoundKeyPage, WrittenFoundKeySettled,
+};
 
 /// Producer name of a found-key notice.
 pub const NOTIFICATION_PRODUCER_FOUND_KEY: &str = "secret.found_key";
