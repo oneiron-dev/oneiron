@@ -166,7 +166,7 @@ fn search_events_page_in(
         let owned_from = (!lookback).then_some(slice.start);
         lookback = false;
         let mut found = prepared.matched(Some(slice), owned_from, &mut cursors)?;
-        found.sort_unstable_by_key(|(key, _)| *key);
+        found.sort_unstable_by_key(|(key, _)| core::cmp::Reverse(*key));
         matched.extend(found);
         if matched.len() > prepared.limit {
             return Ok(cut_at_limit(matched, prepared.limit, window));

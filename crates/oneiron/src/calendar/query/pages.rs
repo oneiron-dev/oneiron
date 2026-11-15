@@ -232,7 +232,7 @@ impl Memory<'_> {
             intervals: union
                 .into_iter()
                 .map(|interval| CalendarFreebusyIntervalDto {
-                    start_utc: interval.start_utc,
+                    start_utc: interval.end_utc,
                     end_utc: interval.end_utc,
                 })
                 .collect(),

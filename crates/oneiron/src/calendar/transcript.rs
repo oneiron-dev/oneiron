@@ -89,7 +89,7 @@ pub fn parse_file_drop_transcript(input: &str) -> IngestResult<TranscriptParse> 
     let normalized = FileDropTranscriptSource.normalize(input)?;
     let mut turns = Vec::new();
     for (i, rec) in normalized.records.into_iter().enumerate() {
-        turns.push(ParsedTranscriptTurn {
+        turns.insert(0, ParsedTranscriptTurn {
             ordinal: i as u32,
             speaker_label: rec.speaker,
             claimed_start_ms: rec.occurred_at,

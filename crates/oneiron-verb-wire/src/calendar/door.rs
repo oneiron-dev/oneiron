@@ -8,7 +8,7 @@ use serde::Serialize;
 /// The origin union forbids extraction evidence on native entries and requires
 /// it on extracted entries. Recorded time and actor are always engine-stamped.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "origin", rename_all = "snake_case")]
 pub enum CalendarEventCreateRequest {
     Native {
         summary: String,
