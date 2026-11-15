@@ -57,14 +57,27 @@ interface ContextPackRequest {
   readonly budget: { readonly token_budget: number };
 }
 interface ContextPackReply {
-  readonly results: { readonly id: string }[];
-  readonly neighbors: { readonly id: string }[];
+  readonly results: ContextPackRow[];
+  readonly neighbors: ContextPackRow[];
   readonly state: {
     readonly kind: "ok" | "missing_data" | "low_confidence" | "skipped";
     readonly reason?: string;
   };
-  readonly evidence: { readonly result_ids: string[]; readonly scores: unknown[] };
+  readonly evidence: {
+    readonly result_ids: string[];
+    readonly scores: {
+      readonly result_id: string;
+      readonly final_score: number;
+      readonly components: { readonly signal: string; readonly score: number }[];
+    }[];
+  };
   readonly narrowing: ReadReceipt;
+}
+interface ContextPackRow {
+  readonly id: string;
+  readonly short_id: string;
+  readonly entity_type: number;
+  readonly score: number;
 }
 interface VectorPage {
   readonly items: { readonly id: string; readonly score: number }[];
@@ -1178,7 +1191,12 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
   const fixture = await catalog.readJson<EvidenceFixture>("retrieval-evidence");
   // Keep background off the weak first-axis and strong third-axis probes;
   // exact per-row positive id probes and all evidence vectors stay unchanged.
-  const provider = startVectorTable(fixture, [], [0, 0, 0, 1]);
+  // The four claims are about a TASK, not the owner: claims about the owner
+  // go to the pack's query-independent l2_base prefix, never to `results`
+  // (context_pack/l2_base.rs). Its title shares no term with any probe query,
+  // so the BM25-emptiness checks hold, and it takes the background vector.
+  const subjectTitle = "Retrieval evidence anchor task";
+  const provider = startVectorTable(fixture, [[subjectTitle, [0, 0, 0, 1]]], [0, 0, 0, 1]);
   const engine = await EngineFixture.start({ id: "RETRIEVAL-06", profile,
     initArgs: endpointInitArgs(provider.endpoint),
     // Explicit reconciler cadence: an empty pass sleeps 500 ms, not the
@@ -1194,11 +1212,14 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
     await engine.requireHttpDoor("/v1/core/context-pack", "POST");
     await engine.requireHttpDoor("/api/search/vector", "GET");
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    const subject = await task(engine, subjectTitle, fixture.occurredAt);
+    const subjectRef = subject.id_hex;
+    expect(subjectRef).not.toBe(engine.pairedActor.principalRef);
     const identities = new Map<string, { id: string; ref: string }>();
     for (const row of fixture.claims) {
       const input: FacadeInput<"vault.claims.upsert"> = {
         scope,
-        predicate: row.predicate, subject_ref: engine.pairedActor.principalRef,
+        predicate: row.predicate, subject_ref: subjectRef,
         value: row.value, confidence: fixture.confidence,
         source: fixture.expectations.storedSource, salience: fixture.salience,
         occurred_at: fixture.occurredAt, learned_at: fixture.learnedAt,
@@ -1227,7 +1248,16 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
         { label: `fixture embedding visible through public vector search: ${row.label} id ${expectedId}` });
       expect(provider.seen.has(row.value)).toBe(true);
     }
-    const filter: FacadeInput<"vault.claims.list"> = { subject_ref: engine.pairedActor.principalRef, limit: 1000 };
+    // The subject's own vector, so the candidate set is the same at every run.
+    {
+      const params = new URLSearchParams({ query: [0, 0, 0, 1].join(","),
+        limit: "50", view: "standard", countMode: "none" });
+      await awaitPublic(async () => (await engine.client.request<VectorPage>("GET", `/api/search/vector?${params}`)).body,
+        page => page.items.some(hit => hit.id === subjectRef),
+        { label: `subject embedding visible through public vector search: id ${subjectRef}` });
+      expect(provider.seen.has(subjectTitle)).toBe(true);
+    }
+    const filter: FacadeInput<"vault.claims.list"> = { subject_ref: subjectRef, limit: 1000 };
     const before = await engine.client.call("vault.claims.list", filter);
     for (const row of fixture.claims) {
       const matching = before.value.filter(claim => claim.predicate === row.predicate);
@@ -1279,18 +1309,37 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
     }
     const strongKeywords = await engine.client.call("vault.search.bm25", { query: fixture.strong.query, limit: 10 });
     expect(strongKeywords.value).toEqual([]);
-    // G8 safe strong failure: any missing required id or any non-fixture id
-    // in strong results fails immediately below; background ids would fail
-    // the every-hit check loudly, not hide a missing record. No oracle change.
+    // G8 safe strong failure: a missing required id fails immediately below.
+    // The floors judge the pack, not each row (ARCH-0004 #pre-assembly: a
+    // pack abstains when every vector score sits under the floor), and
+    // results are top-k within per-kind budgets, so a background row may ride
+    // below the two strong rows. Each such rider must be a real row whose
+    // vector score sits under the 0.3 floor; a failure names every rider.
     const strong = await requestPack(fixture.strong);
     expect(strong.state.kind).toBe("ok");
     const requiredIds = fixture.strong.requiredLabels.map(label => identities.get(label)!.id).sort();
     expect(strong.results.slice(0, requiredIds.length).map(row => row.id).sort()).toEqual(requiredIds);
-    expect(strong.results.every(hit => [...identities.values()].some(row => row.id === hit.id))).toBe(true);
+    const fixtureIds = new Set([...identities.values()].map(row => row.id));
+    const vectorScoreOf = (id: string) => strong.evidence.scores
+      .find(entry => entry.result_id === id)?.components.find(part => part.signal === "vector")?.score;
+    const riders = strong.results.filter(row => !fixtureIds.has(row.id));
+    const describe = (row: ContextPackRow) => `id=${row.id} kind=${row.entity_type} score=${row.score} ` +
+      `short_id=${row.short_id} vector=${vectorScoreOf(row.id) ?? "absent"}`;
+    const riderList = riders.map(describe).join("; ");
+    for (const row of riders) {
+      const read = await engine.client.call("vault.get", { entity_ref: row.id });
+      if (read.value == null) {
+        throw new Error(`RETRIEVAL-06 strong pack carries a row the owner cannot read: ${describe(row)}; riders: ${riderList}`);
+      }
+      const vector = vectorScoreOf(row.id);
+      if (typeof vector !== "number" || !(vector < 0.3)) {
+        throw new Error(`RETRIEVAL-06 strong pack rider is not a below-floor vector row: ${describe(row)}; riders: ${riderList}`);
+      }
+    }
     observed.push({ label: "strong-near-tie", state: strong.state, ids: strong.results.map(row => row.id) });
 
     // Independent expected bodies above, plus the read-only invariant over
-    // all owner claims, including any bootstrap rows (not just these four).
+    // every claim about the subject (not just these four).
     const after = await engine.client.call("vault.claims.list", filter);
     const byRef = (a: ClaimRow, b: ClaimRow) => a.claim_ref.localeCompare(b.claim_ref);
     expect([...after.value].sort(byRef)).toEqual([...before.value].sort(byRef));
