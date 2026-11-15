@@ -153,17 +153,21 @@ pub(crate) struct PhoneCall {
     number: Option<String>,
     /// When the call started, Unix seconds.
     started_at: u64,
-    /// The owner's `voice.call_transcripts.keep`: off keeps the two
-    /// dividers only.
-    keeps_turns: bool,
 }
 
 impl CallRecord {
-    /// Whether the call keeps its answered turns, not only its dividers.
-    pub(crate) fn keeps_turns(&self) -> bool {
+    /// Whether the call keeps its answered turns now, not only its dividers:
+    /// a phone call reads the owner's `voice.call_transcripts.keep` again at
+    /// each turn, so turning it off during a call stops the call's keeping
+    /// from its next turn. A choice that does not read keeps the dividers
+    /// only.
+    pub(crate) fn keeps_turns(&self, vault: &Vault) -> bool {
         match &self.party {
             CallParty::Owner { .. } => true,
-            CallParty::Phone(call) => call.keeps_turns,
+            CallParty::Phone(_) => vault.keeps_call_transcripts().unwrap_or_else(|error| {
+                tracing::warn!(%error, "voice: the call-transcript choice did not read; only the dividers are kept");
+                false
+            }),
         }
     }
 
@@ -215,9 +219,9 @@ fn set_metadata(turn: &mut WitnessTurn, metadata: serde_json::Value) {
 
 /// The record of a phone call the line agent `agent` answered, under
 /// `call_ref`, from the arrival's untrusted `caller` text: the agent's thread
-/// with that number, written by the agent, and the owner's keep choice read
-/// now. A choice that does not read keeps the dividers only. `None`, logged,
-/// when the thread's id does not derive: the call then keeps nothing.
+/// with that number, written by the agent. The owner's keep choice is read at
+/// each turn ([`CallRecord::keeps_turns`]). `None`, logged, when the thread's
+/// id does not derive: the call then keeps nothing.
 pub(crate) fn phone_call_record(
     vault: &Vault,
     agent: EntityId,
@@ -232,10 +236,6 @@ pub(crate) fn phone_call_record(
             return None;
         }
     };
-    let keeps_turns = vault.keeps_call_transcripts().unwrap_or_else(|error| {
-        tracing::warn!(%error, "voice: the call-transcript choice did not read; only the dividers are kept");
-        false
-    });
     Some(CallRecord {
         conversation,
         writer: WriteActor::new(agent, EdgeActorClass::Agent),
@@ -243,7 +243,6 @@ pub(crate) fn phone_call_record(
             call_ref: call_ref.to_owned(),
             number,
             started_at: vault.now_recorded_at(),
-            keeps_turns,
         }),
     })
 }
@@ -432,6 +431,10 @@ impl KeptTurn {
     /// line agent reads no stranger's words back (PHONE-CALL-READ-GRANT, B).
     /// A witness that fails is logged and keeps what landed before it.
     fn keep_phone(self, call: &PhoneCall, answer: String) {
+        // The owner may have turned keep off while the turn answered.
+        if !self.record.keeps_turns(&self.vault) {
+            return;
+        }
         let conversation = self.record.conversation.to_hex();
         let writer = self.record.writer.entity_ref();
         let mut caller = witness_turn(
