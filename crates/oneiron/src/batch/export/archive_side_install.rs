@@ -146,8 +146,6 @@ pub(crate) enum ArchivedSideGroup {
     ConversationRole,
     /// Connector slates retained as nonportable references.
     ConnectorSlate,
-    /// Parked gate consent and its rebuilt answer obligation.
-    PendingGateConsent,
     /// Immutable org-admin policy.
     OrgAdmin,
     /// Shared-act policy change requests.
@@ -265,7 +263,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::CONVERSATION_ROLE_GRANT.name => Some(Group::ConversationRole),
         name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
-        name if name == side_table::PENDING_GATE_CONSENT.name => Some(Group::PendingGateConsent),
         name if name == side_table::ORG_ADMIN_POLICY.name => Some(Group::OrgAdmin),
         name if name == side_table::SHARED_ACT_POLICY_CHANGE.name => Some(Group::SharedAct),
         name if name == side_table::SOURCE_AUDIENCE_POLICY.name => Some(Group::SourceAudience),
@@ -429,11 +426,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::ConnectorSlate => {
             crate::connector_key::land_archived_connector_slate_rows_in_txn(
-                vault, txn, permit, rows,
-            )
-        }
-        ArchivedSideGroup::PendingGateConsent => {
-            crate::store::pending_gate_consent::archive_restore::land_archived_pending_gate_consent_rows_in_txn(
                 vault, txn, permit, rows,
             )
         }
