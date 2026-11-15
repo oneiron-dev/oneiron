@@ -52,6 +52,7 @@ fn listed<'a>(map: &'a Value, key: &str) -> Option<&'a [Value]> {
         .iter()
         .find(|(candidate, _)| candidate.as_str() == Some(key))
         .and_then(|(_, value)| value.as_array())
+        .map(Vec::as_slice)
 }
 
 /// The keys of a MessagePack map, sorted.
