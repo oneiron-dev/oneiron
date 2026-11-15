@@ -10,9 +10,17 @@
 //! Green on main and on the head, with the same verdicts (stored-change path
 //! keep: the sites' comparisons did not change).
 //!
-//! `cargo test --locked -p oneiron --all-features --test expiry_boundaries`.
+//! UC-12 PR 4 (RULING UC12-EXPIRY-INSTANT = A) adds the rows that lived one
+//! second past their deadline and now die at it, as the rest do: a retained
+//! feedback preview (its read and its sweep) and a tagging trace (its age
+//! prune). Each is red on PR 3's head, where that second still read as live,
+//! and green on PR 4's.
+//!
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --test expiry_boundaries` (the tagging case needs the door).
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::checkout::lease::{
@@ -22,6 +30,10 @@ use oneiron::checkout::lease::{
 };
 use oneiron::codebase::RepoRef;
 use oneiron::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound};
+use oneiron::feedback::{
+    FeedbackApprovalScope, FeedbackBundle, FeedbackCategory, FeedbackPlatform, FeedbackSendRoute,
+    RetainedFeedbackPreview, UnredactedFeedback, prepare_feedback_preview,
+};
 use oneiron::genui::ConsentSurface;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
@@ -233,4 +245,127 @@ fn a_voice_offer_confirms_until_one_second_before_its_expiry() {
         0,
         "nothing is left to prune"
     );
+}
+
+/// A vault on a manual recording clock at [`T0`], and the clock. Bound as
+/// `(_d, vault, clock)`: the vault drops before its directory.
+fn manual_vault(mut config: VaultConfig) -> (TempDir, Vault, Arc<ManualClock>) {
+    let clock = ManualClock::new(T0);
+    let dir = tempfile::tempdir().expect("vault directory");
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("vault on its manual clock");
+    (dir, vault, clock)
+}
+
+/// Retains one feedback preview made for `principal_ref`, issued at
+/// `issued_at` and dead from `expires_at` on; answers its approval.
+fn retain_feedback_preview(
+    vault: &Vault,
+    principal_ref: &str,
+    issued_at: u64,
+    expires_at: u64,
+) -> String {
+    let route = FeedbackSendRoute::new("email", "send", "feedback@example.com");
+    let preview = prepare_feedback_preview(
+        FeedbackBundle::new(
+            FeedbackCategory::Bug,
+            "0.0.0-test",
+            FeedbackPlatform::current(),
+        ),
+        &UnredactedFeedback,
+    )
+    .expect("a feedback preview");
+    let approval =
+        preview.approval_component_id(&FeedbackApprovalScope::Send(route.clone()), principal_ref);
+    vault
+        .retain_feedback_preview(
+            &approval,
+            &RetainedFeedbackPreview {
+                preview,
+                source_digest: "source".to_owned(),
+                principal_ref: principal_ref.to_owned(),
+                route,
+                issued_at,
+                expires_at,
+            },
+        )
+        .expect("the preview is retained");
+    approval
+}
+
+/// UC-12 PR 4: a retained feedback preview is dead at its `expires_at`
+/// second. Red on PR 3's head: it still read as live for that second.
+#[test]
+fn a_feedback_preview_is_dead_at_its_expiry_second() {
+    let (_d, vault, _clock) = manual_vault(VaultConfig::default());
+    let approval = retain_feedback_preview(&vault, "principal:owner", T0, T0 + 60);
+    let read = |now| {
+        vault
+            .retained_feedback_preview(&approval, T0, now)
+            .expect("the read")
+    };
+    assert!(read(T0 + 59).is_some(), "live one second before its expiry");
+    assert!(read(T0 + 60).is_none(), "dead at its expires_at second");
+    assert!(read(T0 + 61).is_none(), "dead after it");
+}
+
+/// UC-12 PR 4: the next preview's write sweeps a preview from its
+/// `expires_at` second on. Red on PR 3's head: the write at that second kept
+/// it, so a read that names an earlier second still found it.
+#[test]
+fn a_feedback_preview_write_sweeps_a_preview_from_its_expiry_second_on() {
+    let (_d, vault, clock) = manual_vault(VaultConfig::default());
+    let first = retain_feedback_preview(&vault, "principal:owner", T0, T0 + 60);
+    clock.set(T0 + 60);
+    retain_feedback_preview(&vault, "principal:other", T0 + 60, T0 + 120);
+    assert!(
+        vault
+            .retained_feedback_preview(&first, T0, T0 + 59)
+            .expect("the read")
+            .is_none(),
+        "the write at its expires_at second swept it"
+    );
+}
+
+/// UC-12 PR 4: a tagging trace is past the history's age from the second its
+/// age reaches `max_age_secs`, and the age prune takes it then. Red on PR 3's
+/// head: it was kept for that second.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_tagging_trace_is_pruned_from_the_second_its_age_reaches_the_max() {
+    use oneiron::tagging::{TaggingMarkerConfig, TaggingTraceHistory};
+    use oneiron::test_doors::tagging_trace_age::{prune_expired_traces, record_trace};
+
+    const MAX_AGE: u64 = 100;
+    let mut config = VaultConfig::device();
+    config.tagging = Some(
+        TaggingMarkerConfig::new("0123456789abcdef")
+            .expect("a checkpoint")
+            .with_trace_history(TaggingTraceHistory {
+                per_turn: 8,
+                max_age_secs: MAX_AGE,
+            }),
+    );
+    let (_d, vault, _clock) = manual_vault(config);
+    let turn = EntityId::from_bytes([3; 16]).expect("a turn id");
+    record_trace(&vault, turn, T0).expect("the trace is recorded");
+    let kept = || {
+        vault
+            .tagging_trace_history(Some(&turn))
+            .expect("the history")
+            .len()
+    };
+    assert_eq!(kept(), 1);
+    assert_eq!(
+        prune_expired_traces(&vault, T0 + MAX_AGE - 1).expect("the prune"),
+        0,
+        "kept one second before its age reaches the max"
+    );
+    assert_eq!(kept(), 1);
+    assert_eq!(
+        prune_expired_traces(&vault, T0 + MAX_AGE).expect("the prune"),
+        1,
+        "pruned at the second its age reaches the max"
+    );
+    assert_eq!(kept(), 0);
 }

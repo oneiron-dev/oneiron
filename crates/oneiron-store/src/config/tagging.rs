@@ -29,7 +29,7 @@ pub const DEFAULT_TRACE_MAX_AGE_SECS: u64 = 7 * 86_400;
 pub struct TaggingTraceHistory {
     /// Traces kept per turn, the newest; 0 keeps none.
     pub per_turn: u32,
-    /// Store-clock seconds a trace is kept; an older one is pruned.
+    /// Store-clock seconds a trace is kept; one whose age reaches it is pruned.
     pub max_age_secs: u64,
 }
 

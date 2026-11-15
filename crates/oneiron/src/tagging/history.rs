@@ -4,7 +4,7 @@
 //! Every attempt's trace is recorded in the transaction that settles or
 //! retries it, so a marker is pruned only once its trace is recorded. A turn
 //! keeps its newest [`TaggingTraceHistory::per_turn`] traces, and every trace
-//! older than [`TaggingTraceHistory::max_age_secs`] is pruned when the worker
+//! whose age reaches [`TaggingTraceHistory::max_age_secs`] is pruned when the worker
 //! next starts a pass, in transactions of a bounded size. A worker trims
 //! history kept under a larger per-turn bound in its first passes, one
 //! bounded read outside the writer a pass, and the reader never returns more
@@ -53,8 +53,22 @@ fn turn_key(trace: &TaggingTrace) -> [u8; 16] {
     trace.turn.map_or([0; 16], |turn| *turn.as_bytes())
 }
 
+/// Whether a trace recorded at `recorded_at` is past the history's age at
+/// `now`: it is dead from its `recorded_at + max_age_secs` second on, the one
+/// expiry instant (`oneiron_store::expiry`, UC-12).
 fn expired(recorded_at: u64, now: u64, max_age_secs: u64) -> bool {
-    now.saturating_sub(recorded_at) > max_age_secs
+    oneiron_store::expiry::is_expired(
+        now,
+        oneiron_store::expiry::expires_at_saturating(recorded_at, max_age_secs),
+    )
+}
+
+/// The first recording second whose trace is not yet past the history's age
+/// at `now`: a trace recorded before it is [`expired`], one recorded at or
+/// after it is not. A marker's retry chain keeps, from this second on, the
+/// tries the history would keep.
+pub(super) fn kept_since(now: u64, max_age_secs: u64) -> u64 {
+    now.saturating_add(1).saturating_sub(max_age_secs)
 }
 
 /// Records `trace` at `recorded_at` in the caller's transaction, then drops
@@ -228,5 +242,37 @@ impl Vault {
         let over = records.len().saturating_sub(keep);
         records.drain(..over);
         Ok(records)
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Door for `tests/expiry_boundaries.rs` (UC-12 PR 4): records one first-try trace of
+    /// `turn` at `recorded_at`, as a settling attempt does. Compiled only under
+    /// `--cfg oneiron_test_support`; never API.
+    pub(crate) fn record_tagging_trace_for_test(
+        &self,
+        turn: EntityId,
+        recorded_at: u64,
+    ) -> Result<()> {
+        let trace = TaggingTrace {
+            attempt: String::new(),
+            turn: Some(turn),
+            checkpoint: "0123456789abcdef".to_owned(),
+            stack: None,
+            model: None,
+            input_hash: None,
+            try_number: 1,
+            call_micros: None,
+            execution: None,
+            outcome: super::trace::TaggingOutcome::Rekeyed,
+        };
+        self.with_write_txn_grouped(|txn| record_in_txn(self, txn, &trace, recorded_at))
+    }
+
+    /// Door for `tests/expiry_boundaries.rs`: one round of the history's age prune at `now`,
+    /// as a worker pass runs before it claims; answers how many traces went.
+    pub(crate) fn prune_expired_tagging_traces_for_test(&self, now: u64) -> Result<usize> {
+        self.with_write_txn_grouped(|txn| prune_expired_in_txn(self, txn, now))
     }
 }
