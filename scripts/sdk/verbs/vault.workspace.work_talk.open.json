@@ -1,0 +1,17 @@
+{
+  "name": "vault.workspace.work_talk.open",
+  "description": "The member opens company-homed work talk with their brought companion after acknowledging the one-vault notice in person.",
+  "input": "WorkTalkOpenRequest",
+  "output": "crate::entity_id::EntityId",
+  "call": "memory.workspace_work_talk_open(&input.workspace_ref)?",
+  "scope": "Write",
+  "act_class": "write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

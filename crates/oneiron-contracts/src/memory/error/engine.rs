@@ -166,6 +166,21 @@ impl From<Error> for MemoryError {
                 message,
                 &["Repair the vault's policy manifest, then retry."],
             ),
+            ErrorKind::WorkTalkStaysWithMember => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Keep this talk in the member's vault while one-vault mode is off."],
+            ),
+            ErrorKind::OneVaultNotTold => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Acknowledge the one-vault notice in person before opening work talk."],
+            ),
+            ErrorKind::NoBroughtCompanion => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Use the existing company-homed conversation with the work companion."],
+            ),
             // FIX 2222: its own code, so a client tells it from a gate's or
             // the owner binding's refusal; the remedy is the customer's.
             ErrorKind::HostActionRequiresSupportGrant => Self::new(

@@ -334,6 +334,10 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
             Value::from("companion_facet_ref"),
             optional_ref(row.companion_facet_ref),
         ),
+        (
+            Value::from("companion_brought"),
+            Value::from(row.companion_brought),
+        ),
         (Value::from("identity_ref"), optional_ref(row.identity_ref)),
         (
             Value::from("one_vault_told"),
@@ -353,6 +357,9 @@ pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> 
         companion_person_ref: optional_entity(&entries, "companion_person_ref")?,
         companion_actor_ref: optional_entity(&entries, "companion_actor_ref")?,
         companion_facet_ref: optional_entity(&entries, "companion_facet_ref")?,
+        companion_brought: required(&entries, "companion_brought")?
+            .as_bool()
+            .ok_or_else(|| invalid("roster member companion_brought must be a bool"))?,
         identity_ref: optional_entity(&entries, "identity_ref")?,
         one_vault_told: match required(&entries, "one_vault_told")? {
             Value::Nil => None,

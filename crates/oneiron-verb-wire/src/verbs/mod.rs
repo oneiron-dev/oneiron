@@ -218,6 +218,20 @@ pub struct WorkspaceRefRequest {
     pub workspace_ref: String,
 }
 
+/// The member opens work talk for their own roster row in this workspace.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkTalkOpenRequest {
+    pub workspace_ref: String,
+}
+
+/// The member acknowledges the one-vault notice for their own roster row.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OneVaultAcknowledgeRequest {
+    pub workspace_ref: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {

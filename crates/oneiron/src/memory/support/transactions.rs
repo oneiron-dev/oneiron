@@ -318,4 +318,35 @@ impl Memory<'_> {
         }
         Ok(())
     }
+
+    /// The actor checks for a witness into `conversation` in a vault where a
+    /// work-talk binding may admit it: a bound work-talk writer passes on its
+    /// binding instead of the vault-wide Content grant (the rostered-room
+    /// pattern, L7-05), and only inside that bound conversation. Any other
+    /// witness runs the full check of any actor write. A third writer on a
+    /// bound conversation is refused here, before the landing's guards run.
+    /// Returns the binding that admitted the write, or `None` on the
+    /// ordinary path.
+    pub(crate) fn verify_actor_work_talk_write_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+    ) -> MemoryResult<Option<crate::workspace_roster::WorkTalkBinding>> {
+        let Some(binding) = crate::workspace_roster::admit_work_talk_witness(
+            self.vault,
+            txn,
+            conversation,
+            self.actor,
+        )?
+        else {
+            self.verify_actor_write_in_txn(txn)?;
+            return Ok(None);
+        };
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        if self.vault.shared_vault_creation_in_txn(txn)?.is_some() {
+            self.vault
+                .verify_write_actor_in_txn(txn, &self.write_actor())?;
+        }
+        Ok(Some(binding))
+    }
 }

@@ -324,7 +324,10 @@ impl Memory<'_> {
     /// shared vault; only a save does, through every base check. So a
     /// rostered Viewer speaks off record and still writes nothing durable.
     /// Every other witness, in base or in an overlay, runs the full check of
-    /// any actor write ([`Self::verify_actor_write_in_txn`]).
+    /// any actor write ([`Self::verify_actor_write_in_txn`]), except a base
+    /// witness into the work-talk conversation `work_talk` names (L7-05): a
+    /// writer its binding admits passes on the binding instead of the
+    /// vault-wide Content grant, and a third writer is refused there.
     pub(super) fn with_witness_write_txn_as<T>(
         &self,
         callback: crate::store::Callback,
@@ -332,16 +335,19 @@ impl Memory<'_> {
         rostered: Option<(&OffRecordSession<'_>, EntityId)>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
-        self.with_witness_write_txn_as_after_commit(callback, admit, rostered, write, Ok)
+        self.with_witness_write_txn_as_after_commit(callback, admit, rostered, None, write, Ok)
     }
 
     /// Publishes a landed witness before the write door can reacquire its
     /// writer for postcommit work, under the same admission checks.
+    /// `work_talk` is the base landing's conversation, or `None` for an
+    /// overlay landing, which stages no base row.
     pub(super) fn with_witness_write_txn_as_after_commit<T, U>(
         &self,
         callback: crate::store::Callback,
         admit: Option<Admit<'_>>,
         rostered: Option<(&OffRecordSession<'_>, EntityId)>,
+        work_talk: Option<EntityId>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
         after_commit: impl FnOnce(T) -> MemoryResult<U>,
     ) -> MemoryResult<U> {
@@ -350,7 +356,12 @@ impl Memory<'_> {
             |wtxn| {
                 admit.map_or(Ok(()), |admit| admit(wtxn))?;
                 let Some((session, room)) = rostered else {
-                    self.verify_actor_write_in_txn(wtxn)?;
+                    match work_talk {
+                        Some(conversation) => {
+                            let _ = self.verify_actor_work_talk_write_in_txn(wtxn, conversation)?;
+                        }
+                        None => self.verify_actor_write_in_txn(wtxn)?,
+                    }
                     return write(wtxn);
                 };
                 verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;

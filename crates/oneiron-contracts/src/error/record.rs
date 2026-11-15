@@ -336,6 +336,15 @@ pub enum RecordError {
     /// this refusal; prior journal progress stays resumable.
     #[error("workspace one_vault setting is unreadable: repair the policy manifest, then retry")]
     OneVaultSettingUnreadable,
+    /// The company is not in one-vault mode; work talk stays with the member.
+    #[error("workspace one_vault mode is off: work talk stays with the member")]
+    WorkTalkStaysWithMember,
+    /// The member must acknowledge the company's one-vault notice first.
+    #[error("workspace one_vault notice has not been acknowledged by this member")]
+    OneVaultNotTold,
+    /// A born work companion already holds its talk in the company vault.
+    #[error("work talk requires a brought companion; a work companion is already company-homed")]
+    NoBroughtCompanion,
     /// A CounterpartyContact record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
@@ -517,6 +526,9 @@ impl RecordError {
             }
             Self::WorkCompanionRequired => ErrorKind::WorkCompanionRequired,
             Self::OneVaultSettingUnreadable => ErrorKind::OneVaultSettingUnreadable,
+            Self::WorkTalkStaysWithMember => ErrorKind::WorkTalkStaysWithMember,
+            Self::OneVaultNotTold => ErrorKind::OneVaultNotTold,
+            Self::NoBroughtCompanion => ErrorKind::NoBroughtCompanion,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,

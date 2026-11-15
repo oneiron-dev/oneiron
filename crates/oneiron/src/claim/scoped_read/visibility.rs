@@ -721,15 +721,27 @@ impl<'v> ScopedRead<'v> {
                     allowed && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
                 );
             }
-            match grant {
-                None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
-                Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
-                    policy,
-                    &self.actor_key,
-                    &scope,
-                    Some(grant),
-                ),
-            }
+            // A work-talk binding supplies row authority, never an escape
+            // from a failed policy or an explicit credential/Grant ceiling.
+            let explicit_scope = grant.or(self.actor_key.authority_scope());
+            let bound = !policy.is_fail_closed()
+                && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+                && explicit_scope.is_none_or(|ceiling| {
+                    ceiling.admits("read", &scope, &crate::federation::Scope::top())
+                })
+                && self.work_talk_row_readable_in(rtxn, id, header.entity_type);
+            bound
+                || match grant {
+                    None => {
+                        crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope)
+                    }
+                    Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
+                        policy,
+                        &self.actor_key,
+                        &scope,
+                        Some(grant),
+                    ),
+                }
         };
         Ok(admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?)
     }

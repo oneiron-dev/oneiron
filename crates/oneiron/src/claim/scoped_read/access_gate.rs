@@ -391,6 +391,7 @@ impl ScopedRead<'_> {
         authority.relationship_allows_in(self.vault, txn, self.actor_key.principal_ref, |context| {
             read.allowed_by_snapshot(context)
                 || self.conversation_message_granted_in(txn, id, &read, context)
+                || self.work_talk_message_readable_in(txn, id, &read)
         })
     }
 
@@ -430,6 +431,89 @@ impl ScopedRead<'_> {
             .any(|conversation| {
                 context.allows_conversation_message_at_snapshot(conversation, record)
             })
+    }
+
+    /// Whether the MESSAGE `id` is part of a work-talk conversation whose
+    /// binding admits this lane's reader (L7-05): the binding stands in for
+    /// the relationship check alone, as a `ConversationMessages` grant does
+    /// ([`Self::conversation_message_granted_in`]), and only for a MESSAGE
+    /// that names no relationship and no private scope. Every other check on
+    /// the row still binds. Edges that do not read admit nothing.
+    fn work_talk_message_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        read: &RelationshipRead,
+    ) -> bool {
+        let RelationshipRead::Gated {
+            kind: ENTITY_TYPE_MESSAGE,
+            space: None,
+            private: false,
+            ..
+        } = read
+        else {
+            return false;
+        };
+        self.work_talk_row_readable_in(txn, id, ENTITY_TYPE_MESSAGE)
+    }
+
+    /// Whether the row `id` of `kind` sits in a work-talk conversation whose
+    /// binding admits this lane's reader (L7-05): the conversation itself, a
+    /// TURN by its `ChildOf` edge, or a MESSAGE by its `PartOf` TURN's
+    /// `ChildOf` edge, as the transcript finds it. The two bound PERSONs
+    /// read as ledger members on any lane (the companion's PERSON never
+    /// holds a handle; the rule exists so room-turn peer conjuncts pass);
+    /// the two bound AGENT_DEF actors read only on a lane bound to that
+    /// conversation's room turn, so plain grant-gated doors stay closed for
+    /// them. Any failure to read the walk or the binding withholds the row.
+    /// No grant is minted or consulted; every other gate still binds.
+    pub(super) fn work_talk_row_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+    ) -> bool {
+        match kind {
+            ENTITY_TYPE_CONVERSATION => self.work_talk_conversation_admits_in(txn, id),
+            ENTITY_TYPE_TURN => self
+                .edge_targets_in(txn, id, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
+                .into_iter()
+                .any(|conversation| self.work_talk_conversation_admits_in(txn, &conversation)),
+            ENTITY_TYPE_MESSAGE => self
+                .edge_targets_in(txn, id, EdgeKind::PartOf, ENTITY_TYPE_TURN)
+                .into_iter()
+                .flat_map(|turn| {
+                    self.edge_targets_in(txn, &turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
+                })
+                .any(|conversation| self.work_talk_conversation_admits_in(txn, &conversation)),
+            _ => false,
+        }
+    }
+
+    /// Whether `conversation` carries a work-talk binding that admits this
+    /// lane's reader: a bound PERSON on any lane, or a bound actor on a lane
+    /// bound to this conversation's room turn. Fail closed.
+    fn work_talk_conversation_admits_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: &EntityId,
+    ) -> bool {
+        let Ok(reader) = EntityId::from_hex(self.actor_key.actor_ref()) else {
+            return false;
+        };
+        let Ok(Some(binding)) =
+            crate::workspace_roster::work_talk_binding_in_txn(self.vault, txn, *conversation)
+        else {
+            return false;
+        };
+        reader == binding.member_person
+            || reader == binding.companion_person
+            || ((reader == binding.member_actor || reader == binding.companion_actor)
+                && self
+                    .actor_key
+                    .room_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.room == *conversation))
     }
 
     /// The targets of `id`'s outgoing `kind` edges whose rows are of

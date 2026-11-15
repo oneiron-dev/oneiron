@@ -107,6 +107,12 @@ pub enum ErrorKind {
     /// The vault's `one_vault` row is unreadable; onboarding refuses to say
     /// which joining line applies.
     OneVaultSettingUnreadable,
+    /// One-vault mode is off, so work talk stays with the member.
+    WorkTalkStaysWithMember,
+    /// The member has not acknowledged the one-vault notice.
+    OneVaultNotTold,
+    /// Work talk needs a brought companion, not a born work companion.
+    NoBroughtCompanion,
     InvalidCounterpartyContactBody,
     InvalidCommRecordBody,
     InvalidDiagnosticBody,

@@ -16,6 +16,22 @@ pub(crate) fn validate_put_in_txn(
 ) -> Result<()> {
     let body = ConversationBody::from_bytes(bytes)?;
     let chat_field = crate::workspace_roster::LEADER_CHAT_FIELD;
+    let work_talk_field = crate::workspace_roster::WORK_TALK_FIELD;
+    // A stored work-talk binding never changes: a put that edits or removes
+    // one is refused here, before the new field is decoded or its
+    // registration checked.
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
+        && raw.len() >= ENTITY_METADATA_HEADER_LEN
+    {
+        let previous = ConversationBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if previous
+            .extra
+            .get(work_talk_field)
+            .is_some_and(|prior| Some(prior) != body.extra.get(work_talk_field))
+        {
+            return Err(state("work talk binding is immutable"));
+        }
+    }
     if let Some(value) = body.extra.get(chat_field) {
         let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("leader chat binding"))?;
         let chat: crate::workspace_roster::LeaderChat =
@@ -39,6 +55,35 @@ pub(crate) fn validate_put_in_txn(
                     txn,
                     &[b"project.leader_chat.v1/".as_slice(), id.as_bytes()].concat(),
                 )?
+                .as_deref()
+                != Some(encoded.as_slice())
+        {
+            return Err(denied());
+        }
+    }
+    if let Some(value) = body.extra.get(work_talk_field) {
+        let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("work talk binding"))?;
+        let binding: crate::workspace_roster::WorkTalkBinding =
+            rmp_serde::from_slice(&encoded).map_err(|_| invalid("work talk binding"))?;
+        if body.kind != ConversationKind::Direct
+            || body
+                .member_ids
+                .iter()
+                .any(|person| ![binding.member_person, binding.companion_person].contains(person))
+            || binding.member_person == binding.companion_person
+            || binding.member_actor == binding.companion_actor
+            || binding.workspace_ref.is_empty()
+            || binding.workspace_ref.len() > 256
+            || binding.workspace_ref.contains('\0')
+        {
+            return Err(invalid("work talk binding"));
+        }
+        // A changed or removed binding was refused as immutable above; every
+        // other local put naming the field needs its registration to match.
+        if !replicated
+            && store
+                .vault_meta
+                .get(txn, &[b"work_talk.v1/".as_slice(), id.as_bytes()].concat())?
                 .as_deref()
                 != Some(encoded.as_slice())
         {

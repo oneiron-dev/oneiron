@@ -533,6 +533,7 @@ pub(super) fn record_roster_member(
             companion_person_ref: Some(intent.companion.person_ref()),
             companion_actor_ref: Some(intent.companion.actor_ref()),
             companion_facet_ref: Some(intent.companion.work_facet_ref()),
+            companion_brought: intent.companion.is_bring(),
             identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
             one_vault_told,
         };

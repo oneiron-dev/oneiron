@@ -97,6 +97,7 @@ mod sharing;
 pub mod spend_scope;
 mod steps;
 mod work_companion;
+mod work_talk;
 
 use codec::*;
 use companion_bind::*;
@@ -138,6 +139,10 @@ pub use self::sharing::{
     RoomSharingView,
 };
 pub use self::work_companion::WorkCompanionPolicy;
+pub use self::work_talk::WorkTalkBinding;
+pub(crate) use self::work_talk::{
+    WORK_TALK_FIELD, admit_work_talk_witness, work_talk_binding_in_txn,
+};
 
 // FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-TESTS]: the lib test target's type check fails here (24 errors: E0609 x13, E0308 x5, E0063 x3, E0599 x2, E0560 x1); port it, then drop this gate
 #[cfg(any())]

@@ -153,10 +153,11 @@ pub struct TaskAnswerRequest {
 pub use oneiron_verb_wire::verbs::{
     BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest,
     BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, EmptyRequest, InboxListRequest,
-    InboxMarkRequest, ProjectCardRequest, ProjectConversationRequest, ProjectGoalDismissRequest,
-    ProjectGoalDismissTarget, ProjectRefRequest, ProjectTradeoffRouteRequest, ReceiptsRequest,
-    RoomClaimRequest, RoomHostRequest, RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest,
-    TaskWaveReceipt, TaskWaveRequest, WorkspaceRefRequest,
+    InboxMarkRequest, OneVaultAcknowledgeRequest, ProjectCardRequest, ProjectConversationRequest,
+    ProjectGoalDismissRequest, ProjectGoalDismissTarget, ProjectRefRequest,
+    ProjectTradeoffRouteRequest, ReceiptsRequest, RoomClaimRequest, RoomHostRequest,
+    RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest, TaskWaveReceipt, TaskWaveRequest,
+    WorkTalkOpenRequest, WorkspaceRefRequest,
 };
 
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry

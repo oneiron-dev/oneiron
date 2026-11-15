@@ -271,6 +271,14 @@ fn append_at_in_txn(
         input.actor.entity_ref(),
         false,
     )?;
+    // L7-05: a work-talk conversation admits its two bound writers only, on
+    // this door as on the witness door; a third writer is refused here.
+    let _work_talk = crate::workspace_roster::admit_work_talk_witness(
+        vault,
+        txn,
+        input.conversation,
+        input.actor.entity_ref(),
+    )?;
     migrate_in_txn(vault, txn, &input.conversation)?;
     let old_head = graph::canonical_chain(&vault.store, txn, &input.conversation)?
         .last()
