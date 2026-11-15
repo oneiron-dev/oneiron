@@ -649,7 +649,9 @@ impl ShedSection {
             SectionView::Counts => &section.count_rows,
         };
         let mut rows = Vec::with_capacity(section.pinned_rows.len() + settled.len());
-        rows.extend(section.pinned_rows.iter().cloned());
+        if view == SectionView::Full {
+            rows.extend(section.pinned_rows.iter().cloned());
+        }
         rows.extend(settled.iter().cloned());
         if view == SectionView::Full {
             rows.extend(section.discovery_rows.iter().cloned());

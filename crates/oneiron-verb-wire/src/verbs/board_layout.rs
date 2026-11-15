@@ -11,7 +11,6 @@ use serde::Serialize;
 /// `self.board.fold`'s input: the section to fold, the agent's note on its
 /// fold line, and the rows it keeps open under the line.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct BoardFoldRequest {
     /// The section's layout key: `tasks`, `memories`, `worlds`, `skills`,
     /// `room`, `inbox`, `scratchpad`, `readers`, `packs`, or a plugin

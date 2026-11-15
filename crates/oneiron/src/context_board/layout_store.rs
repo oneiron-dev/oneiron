@@ -232,14 +232,21 @@ impl Vault {
     pub fn board_layout_state(&self, actor: EntityId) -> Result<BoardLayoutState> {
         let rtxn = self.store.env.read_txn()?;
         let settings = crate::settings::board_layout::board_layout_settings_in_txn(self, &rtxn)?;
-        Ok(match BOARD_LAYOUT.get(&self.store, &rtxn, &actor)? {
-            Some(row) => row.state(settings.override_for(actor)),
-            None => BoardLayoutState {
-                owner_override: settings.override_for(actor),
-                live: settings.default_layout,
-                pending: None,
+        Ok(
+            match BOARD_LAYOUT
+                .scan(&self.store, &rtxn)?
+                .into_iter()
+                .next()
+                .map(|(_, row)| row)
+            {
+                Some(row) => row.state(settings.override_for(actor)),
+                None => BoardLayoutState {
+                    owner_override: settings.override_for(actor),
+                    live: settings.default_layout,
+                    pending: None,
+                },
             },
-        })
+        )
     }
 
     /// Selects the layout one actor's board renders under, in one snapshot.
