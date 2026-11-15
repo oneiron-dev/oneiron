@@ -160,7 +160,7 @@ fn fixture() -> Fixture {
         .enrol_recovery_authority_key_as_host(&authority, machine, &restored, &issuer)
         .expect("the owner enrols the root's authority key");
     let root_key = AuthorityKey::Ed25519(receipt.public_key);
-    let root_signing = SigningKey::from_bytes(&released_authority_seed(&restored, &vault_id));
+    let root_signing = SigningKey::from_bytes(&released_authority_seed(&restored, &vault_id, 0));
     assert_eq!(key_of(&root_signing), root_key, "the released key is R");
     let host_root = issuer.public_key();
     assert!(live(&vault, &root_key) && live(&vault, &host_root));

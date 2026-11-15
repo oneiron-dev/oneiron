@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::store::recovery_kit::RestoredKitSecret;
-use crate::world_keys::RecoveryAuthoritySigner;
+use crate::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
 use crate::{Result, Vault};
 
 /// On a hosted vault whose host still serves, a ReRoot signed by a key the
@@ -97,10 +97,21 @@ impl Vault {
         secret: RestoredKitSecret,
         new_device: DeviceAuthority,
     ) -> Result<AuthorityLogEntry> {
+        let seed = RecoveryRootSeed::from_restored_kit(secret)?;
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let signer = RecoveryAuthoritySigner::from_restored_kit(secret, &vault_id)?;
+        // The kit's live generation signs, so the same kit ReRoots with
+        // generation 1 after a rotation. With none live, the highest enrolled
+        // (revoked) or generation 0 goes to the fold, which refuses it as
+        // today: this door keeps its meaning and only looks the live
+        // generation up.
+        let found = self.recovery_authority_generations_in_txn(&txn, &seed, &vault_id)?;
+        let signer = match (found.live, found.enrolled) {
+            (Some((_, live)), _) => live,
+            (None, Some((_, enrolled))) => enrolled,
+            (None, None) => RecoveryAuthoritySigner::from_seed(&seed, &vault_id, 0)?,
+        };
         let sign = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let signer_key = signer.authority_key();
         let (entry, rows) = self.re_root_authority_in_txn(

@@ -485,11 +485,15 @@ impl Vault {
             return Err(refused("the new root's marks do not stand"));
         }
         let vault_id = mid.vault_id.ok_or_else(invalid_authority)?;
-        let authority_signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
-        match mid.roster.get(&authority_signer.authority_key()) {
-            Some(device) if !device.revoked => {}
-            Some(_) => return Err(authority_refused(REVOKED_AUTHORITY_KEY)),
-            None => {
+        // A live generation skips the enrol and hands that generation's seed
+        // out; enrolled but none live is the spent kit; none enrolled enrols
+        // generation 0 as before. Old kits read as generation 0, and after a
+        // rotation the same kit skips on generation 1.
+        let found = self.recovery_authority_generations_in_txn(txn, seed, &vault_id)?;
+        let generation = match (found.live, found.enrolled) {
+            (Some((generation, _)), _) => generation,
+            (None, Some(_)) => return Err(authority_refused(REVOKED_AUTHORITY_KEY)),
+            (None, None) => {
                 self.enrol_recovery_authority_key_in_txn(
                     txn,
                     authority,
@@ -497,11 +501,12 @@ impl Vault {
                     seed,
                     predecessor,
                 )?;
+                0
             }
-        }
+        };
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
         let authority_seed = RecoveryAuthoritySeed::from_guarded(
-            RecoveryAuthoritySigner::authority_seed(seed, &vault_id),
+            RecoveryAuthoritySigner::authority_seed(seed, &vault_id, generation),
         );
         Ok(ActivatedRoot {
             root: root.id,

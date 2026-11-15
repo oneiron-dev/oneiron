@@ -145,6 +145,7 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod recovery;
+mod recovery_authority_generation;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;

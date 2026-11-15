@@ -175,6 +175,9 @@ pub(crate) struct RecoveryPresetSet {
     /// The change committed but the sealed vault's page-seal mirror still
     /// needs repair; the next sealed open repairs it.
     pub(crate) mirror_pending: bool,
+    /// The change committed to `Standard` but the recovery box's release did
+    /// not go through; the box still holds kit-only.
+    pub(crate) box_release_pending: bool,
 }
 
 impl RecoveryPresetSet {
@@ -200,6 +203,7 @@ impl RecoveryPresetSet {
                 .map(RetiredEscrowView::from)
                 .collect(),
             mirror_pending: change.mirror_pending,
+            box_release_pending: change.box_release_pending,
         };
         (view, change.sheet)
     }

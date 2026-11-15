@@ -70,7 +70,9 @@ pub use self::escrow::{
     reseal_escrow_capsule,
 };
 pub(super) use self::recovery_preset::EscrowOrigin;
-pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
+pub use self::recovery_preset::{
+    NoRecoveryBox, RecoveryBoxHold, RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet,
+};
 use self::recovery_preset::{
     admit_delivered_key, admit_escrow_opened_key, admit_presented_capsule, admit_wrap,
 };

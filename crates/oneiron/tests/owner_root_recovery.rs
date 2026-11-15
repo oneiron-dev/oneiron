@@ -193,7 +193,7 @@ impl Fixture {
         let root = self.seed.public(&self.vault_id).expect("the root").id;
         RootMaterial::Released(
             RecoveryAuthoritySigner::from_released_seed(
-                released_authority_seed(&self.seed, &self.vault_id),
+                released_authority_seed(&self.seed, &self.vault_id, 0),
                 &self.vault_id,
                 root,
             )
@@ -581,7 +581,11 @@ fn a_rootless_roster_takes_the_anchor_arm() {
 fn every_reroot_door_refuses_the_root_key_on_a_hosted_vault() {
     let fixture = fixture(HostingPrivacyPosture::Hosted);
     let root_key = fixture.enrol_root_key();
-    let root = SigningKey::from_bytes(&released_authority_seed(&fixture.seed, &fixture.vault_id));
+    let root = SigningKey::from_bytes(&released_authority_seed(
+        &fixture.seed,
+        &fixture.vault_id,
+        0,
+    ));
     assert_eq!(key_of(&root), root_key);
     let stored = fixture.history().len();
 

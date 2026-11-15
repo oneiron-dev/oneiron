@@ -2107,7 +2107,13 @@ the same steps at `GET` and `PUT /v1/owner/vault-key/recovery-preset` with
 preset only while its own device wrap stays (add it with `POST /device` first): if the answer is
 lost, that wrap reopens the key, and `standard` then `nobody_but_me` again issues a new sheet. On a
 maximum-tier vault, `mirror_pending: true` says the change stands but the page-seal mirror was not
-rewritten; the next sealed open repairs it.
+rewritten; the next sealed open repairs it. Once a recovery kit is confirmed, entering the preset
+from `standard` also replaces the root's authority key that the recovery box could release, so it
+needs that kit: `--piece` (two piece files, or one and `--secret-file`) on the command, and
+`"kit": {"pieces": [...], "passphrase": ...}` in the body; without it the switch is refused while
+that key is live. `recovery-kit issue-vault-key --any-two-pieces` takes the kit the same way
+(`--piece`, and `--kit-secret-file` with one piece). `box_release_pending: true` says the switch
+back to `standard` stands but the recovery box still holds the vault as kit-only.
 
 On a new host, the sheet restores the vault:
 

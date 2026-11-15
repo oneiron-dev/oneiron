@@ -143,7 +143,9 @@ fn read_kit(
     Ok((pieces, passphrase))
 }
 
-fn read_kit_args(args: &KitPieceArgs) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
+pub(crate) fn read_kit_args(
+    args: &KitPieceArgs,
+) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
     read_kit(&args.pieces, args.secret_file.as_deref(), false)
 }
 

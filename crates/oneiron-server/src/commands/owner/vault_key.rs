@@ -36,16 +36,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+use oneiron::authority::{ActAuthority, ActSurface};
 use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
 use oneiron::world_keys::{
-    self, EscrowAddWarning, HybridSecretKey, NewVaultKeyWrap, RecoveryPreset, VaultKeyUnlock,
-    VaultKeyWrapInfo, VaultPageSeal,
+    self, EscrowAddWarning, HybridSecretKey, NewVaultKeyWrap, NoRecoveryBox, RecoveryPreset,
+    VaultKeyUnlock, VaultKeyWrapInfo, VaultPageSeal,
 };
 use oneiron_keystore::DeviceKeystore;
 use rand_core::RngCore as _;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
+use super::recovery_kit::read_kit_args;
 use super::secret_input::{TerminalRead, read_stdin_secret};
 use super::{emit, open_stopped_vault};
 use crate::cli::{
@@ -119,6 +121,10 @@ fn recovery_preset(args: VaultKeyRecoveryPresetArgs) -> anyhow::Result<()> {
             args.sheet_out.is_none(),
             "--sheet-out is read only with --set nobody-but-me"
         );
+        anyhow::ensure!(
+            args.kit.pieces.is_empty() && args.kit.secret_file.is_none(),
+            "--piece is read only with --set nobody-but-me"
+        );
         let vault = open(&args.serve, &unlock, KeyNeed::Open)?;
         return emit(&view::RecoveryPresetView {
             preset: vault.recovery_preset()?,
@@ -141,10 +147,30 @@ fn recovery_preset(args: VaultKeyRecoveryPresetArgs) -> anyhow::Result<()> {
             anyhow::bail!("--sheet-out is read only with --set nobody-but-me")
         }
     };
-    let vault = open(&args.serve, &unlock, need)?;
+    let wants_kit = !args.kit.pieces.is_empty() || args.kit.secret_file.is_some();
+    if preset == RecoveryPreset::Standard && wants_kit {
+        anyhow::bail!("--piece is read only with --set nobody-but-me: leaving it takes no kit");
+    }
+    // Entering with one piece and no file reads the kit passphrase from
+    // stdin, coordinated with the unlock as `confirm` coordinates it.
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = if wants_kit {
+        open_with_unlock_for_secret(
+            &config,
+            &unlock,
+            need,
+            INSTEAD,
+            args.kit.secret_file.is_none() && args.kit.pieces.len() == 1,
+            "the kit passphrase",
+            "--secret-file",
+        )?
+    } else {
+        open_with_unlock(&config, &unlock, need, INSTEAD)?
+    };
     let owner = local_owner(&vault)?;
+    let kit = wants_kit.then(|| read_kit_args(&args.kit)).transpose()?;
     let mut kept = None;
-    let changed = vault.set_recovery_preset_as(&owner, preset, |sheet| {
+    let keep_sheet = |sheet: &world_keys::RecoverySheet| -> oneiron::Result<()> {
         let path = sheet_out
             .as_deref()
             .ok_or_else(|| oneiron::Error::Io(std::io::Error::other("no --sheet-out file")))?;
@@ -152,7 +178,22 @@ fn recovery_preset(args: VaultKeyRecoveryPresetArgs) -> anyhow::Result<()> {
             .map_err(|error| oneiron::Error::Io(std::io::Error::other(error.to_string())))?;
         kept = Some(path);
         Ok(())
-    });
+    };
+    let changed = match kit {
+        Some((pieces, passphrase)) => {
+            let refs: Vec<&oneiron::store::recovery_kit::KitPiece> = pieces.iter().collect();
+            let authority = ActAuthority::Owner(owner, ActSurface::ThisInstall);
+            vault.set_recovery_preset_with_kit_as(
+                &authority,
+                preset,
+                &refs,
+                passphrase.as_ref(),
+                keep_sheet,
+                &NoRecoveryBox,
+            )
+        }
+        None => vault.set_recovery_preset_as(&owner, preset, keep_sheet, &NoRecoveryBox),
+    };
     // A kept sheet the vault did not take opens nothing. One the vault may
     // have taken stays: an error after the commit must not drop it.
     let took_sheet = match &changed {

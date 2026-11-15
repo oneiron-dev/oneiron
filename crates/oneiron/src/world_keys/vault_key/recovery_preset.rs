@@ -40,7 +40,7 @@
 use super::kit::IssuedVaultKeyKit;
 use super::*;
 use crate::config::VaultDataKeyCustody;
-use crate::store::recovery_kit::{KitIssue, KitPiece};
+use crate::store::recovery_kit::{KitIssue, KitPassphrase, KitPiece};
 use crate::world_keys::{WORLD_KIT_ESCROW, derive_guarded, os_fill};
 
 const SHEET_KEK_CONTEXT: &str = "oneiron/vault-key-sheet/v1";
@@ -74,6 +74,13 @@ const WORLD_KIT_LABEL: &str = "the world kit's escrow wrap is written by confirm
 const SHEET_MALFORMED: &str = "a recovery sheet's code is 56 letters and digits";
 const SHEET_TYPO: &str = "the recovery sheet's code has a typo: its check does not match";
 const PRESET_RACED: &str = "the recovery preset changed while the sheet was drawn: set it again";
+const KIT_ONLY_NEEDS_KIT: &str = "switching to Nobody but me needs your recovery kit, so the key the \
+                                  recovery box could release is replaced; bring the kit; nothing was \
+                                  written";
+const KIT_NOT_THIS_VAULTS: &str = "this recovery kit does not hold this vault's live way back; nothing \
+                                   was written";
+const PRESET_OWNER_ONLY: &str =
+    "setting the recovery preset is the owner's to do; no Grant action names it";
 
 /// Who writes an escrow wrap, typed by the writing path and never read from
 /// its label: the world kit's confirm, or any other recipient.
@@ -280,6 +287,15 @@ enum SheetHandover {
     Answer { device_wrap: Option<String> },
 }
 
+/// A kit door's prepared authority rotation: the kit's restored seed and the
+/// live generation it held on the pre-write read snapshot, if any. The write
+/// finds the live generation again in its txn and rotates from it; no seed
+/// is handed out by the switch.
+struct PreparedRotation {
+    seed: crate::world_keys::RecoveryRootSeed,
+    live_pre: Option<u32>,
+}
+
 /// What setting the recovery preset did.
 #[derive(Debug)]
 pub struct RecoveryPresetChange {
@@ -299,6 +315,10 @@ pub struct RecoveryPresetChange {
     /// failed after it: the change stands, and the next sealed open repairs
     /// the mirror.
     pub mirror_pending: bool,
+    /// The change committed to `Standard` but the recovery box's release did
+    /// not go through: the preset stands, and the box still holds kit-only.
+    /// Never an error; only the switch back sets it.
+    pub box_release_pending: bool,
 }
 
 /// What turning on "any 2 pieces" did: the preset's change, and the kit its
@@ -309,13 +329,46 @@ pub struct RecoveryPresetAnyTwoChange {
     pub kit: IssuedVaultKeyKit,
 }
 
+/// The recovery box's hold for kit-only (BOX-KIT-ONLY-HOLD = A): the engine
+/// calls it through this trait, and OPUS-WAYBACK-BOX builds the HTTP
+/// implementation on the server. Target kit-only calls `hold_kit_only(true)`
+/// after the no-write checks pass and before the write txn opens; its error
+/// refuses the switch with nothing written. Target `Standard` calls
+/// `hold_kit_only(false)` after the commit; its failure answers
+/// [`RecoveryPresetChange::box_release_pending`], never an error. A switch
+/// refused before the hold makes no hold call; one that fails after it sends
+/// `hold_kit_only(false)` once, best-effort, while the vault still reads
+/// `Standard`, and answers the first error.
+pub trait RecoveryBoxHold {
+    /// Holds kit-only (`true`) or releases it (`false`) on the recovery box.
+    fn hold_kit_only(&self, kit_only: bool) -> Result<()>;
+}
+
+/// No recovery box: every hold answers `Ok`. The preset doors' callers pass
+/// it until OPUS-WAYBACK-BOX wires the HTTP hold.
+pub struct NoRecoveryBox;
+
+impl RecoveryBoxHold for NoRecoveryBox {
+    fn hold_kit_only(&self, _kit_only: bool) -> Result<()> {
+        Ok(())
+    }
+}
+
 impl Vault {
     /// The owner's recovery preset: `Standard` while the vault has no data
     /// key.
     pub fn recovery_preset(&self) -> Result<RecoveryPreset> {
         let txn = self.store.env.read_txn()?;
+        self.recovery_preset_in_txn(&txn)
+    }
+
+    /// [`Self::recovery_preset`] in the caller's transaction (a read or a
+    /// write): `Standard` while the vault has no data key. The root door
+    /// refuses the box's released key under kit-only in its writer through
+    /// it, so the check counts.
+    pub(crate) fn recovery_preset_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<RecoveryPreset> {
         Ok(STATE
-            .get(&self.store, &txn, &())?
+            .get(&self.store, txn, &())?
             .map_or(RecoveryPreset::Standard, |state| state.recovery))
     }
 
@@ -341,8 +394,21 @@ impl Vault {
         owner: &crate::consent::AuthenticatedOwner,
         preset: RecoveryPreset,
         keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
+        box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetChange> {
-        self.set_recovery_preset_handed_over(owner, preset, keep_sheet, SheetHandover::Kept)
+        // No rotation without the kit: the surface never reaches an enrol.
+        let authority = crate::authority::ActAuthority::Owner(
+            owner.clone(),
+            crate::authority::ActSurface::ThisInstall,
+        );
+        self.set_recovery_preset_handed_over(
+            &authority,
+            preset,
+            keep_sheet,
+            SheetHandover::Kept,
+            None,
+            box_hold,
+        )
     }
 
     /// [`Vault::set_recovery_preset_as`] for a caller whose answer is the
@@ -356,13 +422,91 @@ impl Vault {
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         preset: RecoveryPreset,
+        box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetChange> {
         let device_wrap = self.device_wrap_held_here()?;
+        let authority = crate::authority::ActAuthority::Owner(
+            owner.clone(),
+            crate::authority::ActSurface::ThisInstall,
+        );
         self.set_recovery_preset_handed_over(
-            owner,
+            &authority,
             preset,
             |_| Ok(()),
             SheetHandover::Answer { device_wrap },
+            None,
+            box_hold,
+        )
+    }
+
+    /// [`Vault::set_recovery_preset_as`] with the recovery kit: `pieces` and
+    /// `passphrase` read as [`Vault::confirm_world_kit`] reads them. Entering
+    /// "Nobody but me" from `Standard` while a generation is live enrols the
+    /// next generation and revokes the live one in the same write as the
+    /// preset change; the kit's generation must be the live one, else
+    /// `KIT_NOT_THIS_VAULTS`. Kit-only to kit-only, re-entering the same
+    /// preset and the switch back change no roster. No seed is handed out.
+    pub fn set_recovery_preset_with_kit_as(
+        &self,
+        authority: &crate::authority::ActAuthority,
+        preset: RecoveryPreset,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+        keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
+        box_hold: &dyn RecoveryBoxHold,
+    ) -> Result<RecoveryPresetChange> {
+        if matches!(authority, crate::authority::ActAuthority::Agent(_)) {
+            return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
+        }
+        let (rotation, any_live) = self.prepare_kit_rotation(pieces, passphrase)?;
+        if self.recovery_preset()? == RecoveryPreset::Standard
+            && preset.is_nobody_but_me()
+            && rotation.live_pre.is_none()
+            && any_live
+        {
+            return Err(crate::authority::authority_refused(KIT_NOT_THIS_VAULTS));
+        }
+        self.set_recovery_preset_handed_over(
+            authority,
+            preset,
+            keep_sheet,
+            SheetHandover::Kept,
+            Some(rotation),
+            box_hold,
+        )
+    }
+
+    /// [`Vault::set_recovery_preset_with_kit_as`] for a caller whose answer is
+    /// the sheet's only hand-over, as the owner API's is: entering needs this
+    /// install's device wrap to stay, as
+    /// [`Vault::set_recovery_preset_answered_as`] needs it.
+    pub fn set_recovery_preset_answered_with_kit_as(
+        &self,
+        authority: &crate::authority::ActAuthority,
+        preset: RecoveryPreset,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+        box_hold: &dyn RecoveryBoxHold,
+    ) -> Result<RecoveryPresetChange> {
+        if matches!(authority, crate::authority::ActAuthority::Agent(_)) {
+            return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
+        }
+        let device_wrap = self.device_wrap_held_here()?;
+        let (rotation, any_live) = self.prepare_kit_rotation(pieces, passphrase)?;
+        if self.recovery_preset()? == RecoveryPreset::Standard
+            && preset.is_nobody_but_me()
+            && rotation.live_pre.is_none()
+            && any_live
+        {
+            return Err(crate::authority::authority_refused(KIT_NOT_THIS_VAULTS));
+        }
+        self.set_recovery_preset_handed_over(
+            authority,
+            preset,
+            |_| Ok(()),
+            SheetHandover::Answer { device_wrap },
+            Some(rotation),
+            box_hold,
         )
     }
 
@@ -387,20 +531,54 @@ impl Vault {
 
     fn set_recovery_preset_handed_over(
         &self,
-        owner: &crate::consent::AuthenticatedOwner,
+        authority: &crate::authority::ActAuthority,
         preset: RecoveryPreset,
         keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
         handover: SheetHandover,
+        rotation: Option<PreparedRotation>,
+        box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetChange> {
+        let owner = match authority {
+            crate::authority::ActAuthority::Owner(owner, _) => owner,
+            crate::authority::ActAuthority::Agent(_) => {
+                return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
+            }
+        };
+        let current = self.recovery_preset()?;
+        // Entering kit-only without the kit while a generation is live is
+        // refused before anything is drawn or kept. The write checks again.
+        if rotation.is_none() && current == RecoveryPreset::Standard && preset.is_nobody_but_me() {
+            let txn = self.store.env.read_txn()?;
+            if self.any_live_recovery_authority_in_txn(&txn)? {
+                return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
+            }
+        }
         let issue = match preset {
             RecoveryPreset::NobodyButMeAnyTwo => return Err(refused(ANY_TWO_NEEDS_KIT)),
-            RecoveryPreset::NobodyButMe if self.recovery_preset()? != preset => {
-                Some(self.draw_recovery_sheet(keep_sheet)?)
+            RecoveryPreset::NobodyButMe if current != preset => {
+                // Custody first, then the held key, as the draw checked them
+                // before it took the key as an argument.
+                if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
+                    return Err(refused(PRESET_CUSTODY));
+                }
+                let held = self
+                    .held_vault_key()
+                    .ok_or_else(|| refused("unlock the vault key first"))?;
+                Some(self.draw_recovery_sheet(&held, keep_sheet)?)
             }
             RecoveryPreset::NobodyButMe | RecoveryPreset::Standard => None,
         };
-        let transition = self.begin_wrap_transition()?;
-        let mut change = self.with_write_txn(|txn| {
+        // Target kit-only holds the box after the no-write checks pass and
+        // before the write opens; its error refuses with nothing written. A
+        // failure after the hold releases it again on a vault still on
+        // `Standard`.
+        let held_box = preset.is_nobody_but_me();
+        if held_box {
+            box_hold.hold_kit_only(true)?;
+        }
+        let transition =
+            self.release_box_hold_on_failure(self.begin_wrap_transition(), held_box, box_hold)?;
+        let written = self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let mut state = STATE
                 .get(&self.store, txn, &())?
@@ -412,9 +590,16 @@ impl Vault {
                 removed: Vec::new(),
                 retired: Vec::new(),
                 mirror_pending: false,
+                box_release_pending: false,
             };
             if state.recovery == preset {
                 return Ok(change);
+            }
+            // Rotation happens iff Standard goes to kit-only and a generation
+            // is live. Kit-only to kit-only and the switch back change no
+            // roster.
+            if state.recovery == RecoveryPreset::Standard && preset.is_nobody_but_me() {
+                self.maybe_rotate_recovery_authority_in_txn(txn, authority, &rotation)?;
             }
             if preset == RecoveryPreset::NobodyButMe {
                 let Some((_, commitment, envelope)) = &issue else {
@@ -440,29 +625,40 @@ impl Vault {
                 )?;
             }
             state.recovery = preset;
+            // [VAULT-DATA-KEY-ROTATION]: its `start_data_key_generation_in_txn`
+            // will run last in this write, after the STATE put.
             STATE.put(&self.store, txn, &(), &state)?;
             Ok(change)
-        })?;
+        });
+        let mut change = self.release_box_hold_on_failure(written, held_box, box_hold)?;
         change.mirror_pending = finish_or_pending(transition);
+        // Target Standard releases the box after the commit; a failure is
+        // answered as pending, never an error.
+        if preset == RecoveryPreset::Standard {
+            if let Err(error) = box_hold.hold_kit_only(false) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a recovery preset change committed to Standard; the recovery box release is pending"
+                );
+                change.box_release_pending = true;
+            }
+        }
         if change.previous != change.preset {
             change.sheet = issue.map(|(sheet, _, _)| sheet);
         }
         Ok(change)
     }
 
-    /// Draws a printed sheet for the held key, its wrap sealed, and hands it
-    /// to `keep_sheet` before any write. The sheet, the commitment of the key
-    /// it opens and its wrap's envelope.
+    /// Draws a printed sheet for `key`, its wrap sealed, and hands it to
+    /// `keep_sheet` before any write. The sheet, the commitment of the key it
+    /// opens and its wrap's envelope. The caller checks an owner-held key
+    /// custody and passes the held key; the commitment checks keep comparing
+    /// the held key's commitment.
     fn draw_recovery_sheet(
         &self,
+        key: &VaultDataKey,
         keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
     ) -> Result<(RecoverySheet, [u8; 32], Vec<u8>)> {
-        if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
-            return Err(refused(PRESET_CUSTODY));
-        }
-        let key = self
-            .held_vault_key()
-            .ok_or_else(|| refused("unlock the vault key first"))?;
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let sheet = RecoverySheet::generate()?;
@@ -471,10 +667,87 @@ impl Vault {
             &commitment,
             &VaultKeyWrapKind::Sheet,
             &WrapSecret::Kek(sheet.kek(&vault_id)),
-            &key,
+            key,
         )?;
         keep_sheet(&sheet)?;
         Ok((sheet, commitment, envelope))
+    }
+
+    /// Restores the kit's seed from `pieces` and `passphrase` (as
+    /// [`Vault::confirm_world_kit`] reads them: two pieces, or one and the
+    /// passphrase) and finds the live generation it held on a read snapshot,
+    /// deriving the next generation pre-write. No store or keystore write.
+    /// Returns the prepared rotation with whether any generation is live at
+    /// all (for the wrong-kit check). The write finds the live generation
+    /// again in its txn.
+    fn prepare_kit_rotation(
+        &self,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+    ) -> Result<(PreparedRotation, bool)> {
+        let seed = self.kit_seed(pieces, passphrase)?.seed;
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let vault_id = fold
+            .vault_id
+            .ok_or_else(crate::authority::invalid_authority)?;
+        let live_pre = self
+            .recovery_authority_generations_in_txn(&txn, &seed, &vault_id)?
+            .live
+            .map(|(generation, _)| generation);
+        if let Some(generation) = live_pre {
+            let next = generation
+                .checked_add(1)
+                .ok_or_else(crate::authority::invalid_authority)?;
+            let _ = crate::world_keys::RecoveryAuthoritySigner::from_seed(&seed, &vault_id, next)?;
+        }
+        let any_live = self.any_live_recovery_authority_in_txn(&txn)?;
+        Ok((PreparedRotation { seed, live_pre }, any_live))
+    }
+
+    /// Rotates the recovery authority key in the preset's write `txn`, which
+    /// enters kit-only from `Standard`: with `rotation` (a kit door), the
+    /// kit's generation must be the live one, else `KIT_NOT_THIS_VAULTS`,
+    /// then the rotation step; without it (a kitless door), a live
+    /// generation refuses `KIT_ONLY_NEEDS_KIT`. No live generation writes no
+    /// roster row. Returns the new live generation, if it rotated.
+    fn maybe_rotate_recovery_authority_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        authority: &crate::authority::ActAuthority,
+        rotation: &Option<PreparedRotation>,
+    ) -> Result<Option<u32>> {
+        let Some(prepared) = rotation else {
+            if self.any_live_recovery_authority_in_txn(txn)? {
+                return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
+            }
+            return Ok(None);
+        };
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let vault_id = fold
+            .vault_id
+            .ok_or_else(crate::authority::invalid_authority)?;
+        let found = self.recovery_authority_generations_in_txn(txn, &prepared.seed, &vault_id)?;
+        match found.live {
+            Some((live, _)) => {
+                if prepared.live_pre.is_some_and(|before| before != live) {
+                    return Err(crate::authority::authority_refused(KIT_NOT_THIS_VAULTS));
+                }
+                let (next, _, _) = self.rotate_recovery_authority_key_in_txn(
+                    txn,
+                    authority,
+                    &prepared.seed,
+                    live,
+                )?;
+                Ok(Some(next))
+            }
+            None => {
+                if self.any_live_recovery_authority_in_txn(txn)? {
+                    return Err(crate::authority::authority_refused(KIT_NOT_THIS_VAULTS));
+                }
+                Ok(None)
+            }
+        }
     }
 
     /// Turns on "Nobody but me" with its switch "any 2 pieces", rechecked in
@@ -493,7 +766,9 @@ impl Vault {
     /// (FLIP = A); what was sealed before still opens with what opened it
     /// then. With the switch already on, the new kit is issued and no other
     /// wrap changes. A mirror rewrite that fails after the commit is
-    /// answered as `mirror_pending`.
+    /// answered as `mirror_pending`. Entering from `Standard` while a
+    /// generation is live needs the kit:
+    /// [`Self::set_recovery_preset_any_two_with_kit_as`].
     ///
     /// # Errors
     ///
@@ -506,11 +781,91 @@ impl Vault {
         issue: &KitIssue<'_>,
         passkey: Option<KitPasskey<'_>>,
         keep_pieces: impl FnOnce(&[KitPiece]) -> Result<()>,
+        box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetAnyTwoChange> {
+        // No rotation without the kit: the surface never reaches an enrol.
+        let authority = crate::authority::ActAuthority::Owner(
+            owner.clone(),
+            crate::authority::ActSurface::ThisInstall,
+        );
+        self.set_recovery_preset_any_two_handed_over(
+            &authority,
+            issue,
+            passkey,
+            keep_pieces,
+            None,
+            box_hold,
+        )
+    }
+
+    /// [`Vault::set_recovery_preset_any_two_as`] with the recovery kit:
+    /// `pieces` and `passphrase` read as [`Vault::confirm_world_kit`] reads
+    /// them. Entering from `Standard` while a generation is live enrols the
+    /// next generation and revokes the live one in the same write; the kit's
+    /// generation must be the live one, else `KIT_NOT_THIS_VAULTS`. With the
+    /// switch already on, the new kit is issued and no roster changes. No
+    /// seed is handed out.
+    pub fn set_recovery_preset_any_two_with_kit_as(
+        &self,
+        authority: &crate::authority::ActAuthority,
+        issue: &KitIssue<'_>,
+        passkey: Option<KitPasskey<'_>>,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+        keep_pieces: impl FnOnce(&[KitPiece]) -> Result<()>,
+        box_hold: &dyn RecoveryBoxHold,
+    ) -> Result<RecoveryPresetAnyTwoChange> {
+        if matches!(authority, crate::authority::ActAuthority::Agent(_)) {
+            return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
+        }
+        let (rotation, any_live) = self.prepare_kit_rotation(pieces, passphrase)?;
+        if self.recovery_preset()? == RecoveryPreset::Standard
+            && rotation.live_pre.is_none()
+            && any_live
+        {
+            return Err(crate::authority::authority_refused(KIT_NOT_THIS_VAULTS));
+        }
+        self.set_recovery_preset_any_two_handed_over(
+            authority,
+            issue,
+            passkey,
+            keep_pieces,
+            Some(rotation),
+            box_hold,
+        )
+    }
+
+    fn set_recovery_preset_any_two_handed_over(
+        &self,
+        authority: &crate::authority::ActAuthority,
+        issue: &KitIssue<'_>,
+        passkey: Option<KitPasskey<'_>>,
+        keep_pieces: impl FnOnce(&[KitPiece]) -> Result<()>,
+        rotation: Option<PreparedRotation>,
+        box_hold: &dyn RecoveryBoxHold,
+    ) -> Result<RecoveryPresetAnyTwoChange> {
+        let owner = match authority {
+            crate::authority::ActAuthority::Owner(owner, _) => owner,
+            crate::authority::ActAuthority::Agent(_) => {
+                return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
+            }
+        };
         if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
             return Err(refused(PRESET_CUSTODY));
         }
-        let mut drawn = self.draw_vault_key_kit(owner, issue, passkey)?;
+        // Entering from Standard without the kit while a generation is live
+        // is refused before anything is drawn or kept. The write checks
+        // again. The target is always kit-only here.
+        if rotation.is_none() && self.recovery_preset()? == RecoveryPreset::Standard {
+            let txn = self.store.env.read_txn()?;
+            if self.any_live_recovery_authority_in_txn(&txn)? {
+                return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
+            }
+        }
+        let held = self
+            .held_vault_key()
+            .ok_or_else(|| refused("the vault key is not held on this handle: unlock it first"))?;
+        let mut drawn = self.draw_vault_key_kit(&held, owner, issue, passkey)?;
         let point = drawn.point.take();
         let commitment = drawn.commitment;
         // The owner's pieces are kept before this install's slot is
@@ -518,14 +873,25 @@ impl Vault {
         drawn.keep_owner_pieces(keep_pieces)?;
         let kit = drawn.hand_over(true)?;
         let preset = RecoveryPreset::NobodyButMeAnyTwo;
-        let transition = self.begin_wrap_transition()?;
-        let mut change = self.with_write_txn(|txn| {
+        // The target is always kit-only: hold the box after the no-write
+        // checks pass and before the write opens. A failure after the hold
+        // releases it again on a vault still on `Standard`.
+        box_hold.hold_kit_only(true)?;
+        let transition =
+            self.release_box_hold_on_failure(self.begin_wrap_transition(), true, box_hold)?;
+        let written = self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let mut state = STATE
                 .get(&self.store, txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?;
             if state.commitment != commitment {
                 return Err(refused("this handle holds another vault key"));
+            }
+            // Rotation happens iff Standard goes to kit-only and a generation
+            // is live. With the switch already on, the new kit is issued and
+            // no roster changes.
+            if state.recovery == RecoveryPreset::Standard {
+                self.maybe_rotate_recovery_authority_in_txn(txn, authority, &rotation)?;
             }
             self.list_vault_key_kit_in_txn(txn, owner, &kit.manifest)?;
             let (removed, retired) =
@@ -537,13 +903,52 @@ impl Vault {
                 removed,
                 retired,
                 mirror_pending: false,
+                box_release_pending: false,
             };
             state.recovery = preset;
+            // [VAULT-DATA-KEY-ROTATION]: its `start_data_key_generation_in_txn`
+            // will run last in this write, after the STATE put.
             STATE.put(&self.store, txn, &(), &state)?;
             Ok(change)
-        })?;
+        });
+        let mut change = self.release_box_hold_on_failure(written, true, box_hold)?;
         change.mirror_pending = finish_or_pending(transition);
         Ok(RecoveryPresetAnyTwoChange { change, kit })
+    }
+
+    /// `result`, with the recovery box released first when it is an error
+    /// and the door held the box for kit-only ([RECOVERY-BOX-HOLD-ORPHAN]).
+    /// After `hold_kit_only(true)` answered, a failed switch (a refusal in
+    /// the write, a failed commit) leaves the box holding kit-only while the
+    /// vault stays as it was. So the box follows the stored preset again: a
+    /// vault still on `Standard` sends `hold_kit_only(false)` once,
+    /// best-effort. A vault already on kit-only (re-entering it, or turning
+    /// "any 2 pieces" on) keeps the hold, and a preset that cannot be read
+    /// sends nothing. The answer stays the first error.
+    fn release_box_hold_on_failure<T>(
+        &self,
+        result: Result<T>,
+        held_box: bool,
+        box_hold: &dyn RecoveryBoxHold,
+    ) -> Result<T> {
+        if result.is_err() && held_box {
+            match self.recovery_preset() {
+                Ok(RecoveryPreset::Standard) => {
+                    if let Err(error) = box_hold.hold_kit_only(false) {
+                        tracing::warn!(
+                            kind = ?error.kind(),
+                            "a recovery preset switch failed after the recovery box held kit-only; its release did not go through"
+                        );
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "a recovery preset switch failed after the recovery box held kit-only; the preset is unreadable, so the hold stays"
+                ),
+            }
+        }
+        result
     }
 
     /// Unlocks the vault data key with the printed recovery sheet.

@@ -5,12 +5,13 @@
 
 use std::path::{Path, PathBuf};
 
+use oneiron::authority::{ActAuthority, ActSurface};
 use oneiron::recovery::{
     CodeKeeping, KitCoverage, KitIssue, KitMachine, KitPassphrase, KitPiece, KitSecretKind,
     PassphraseCost, PieceHome,
 };
 use oneiron::world_keys::{
-    IssuedVaultKeyKit, IssuedWorldKit, KitPasskey, StoredCost, VaultKeyStatus,
+    IssuedVaultKeyKit, IssuedWorldKit, KitPasskey, NoRecoveryBox, StoredCost, VaultKeyStatus,
 };
 use serde::Serialize;
 
@@ -50,6 +51,11 @@ pub(super) fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
         args.passkey_credential.is_none() && !args.any_two_pieces,
         "a passkey is a piece of the data-key kit only, and \"any 2 pieces\" turns on with one: \
          recovery-kit issue-vault-key"
+    );
+    anyhow::ensure!(
+        args.kit_pieces.is_empty() && args.kit_secret_file.is_none(),
+        "--piece turns on \"any 2 pieces\" with the recovery kit: recovery-kit issue-vault-key \
+         --any-two-pieces"
     );
     let unlock = UnlockRequest::of(&args.unlock);
     let config = resolve_serve_config(&args.serve)?;
@@ -129,6 +135,17 @@ struct IssuedVaultKey {
 /// written and synced first, and only then does the vault drop its sheet,
 /// password and passkey wraps.
 pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
+    let wants_kit = !args.kit_pieces.is_empty() || args.kit_secret_file.is_some();
+    if !args.any_two_pieces && wants_kit {
+        anyhow::bail!(
+            "--piece turns on \"any 2 pieces\" with the recovery kit: give --any-two-pieces"
+        );
+    }
+    // One piece without its file would read the world kit's passphrase from
+    // stdin, but stdin stays for the new kit's passphrase and the unlock.
+    if wants_kit && args.kit_pieces.len() == 1 && args.kit_secret_file.is_none() {
+        anyhow::bail!("one --piece and the kit passphrase: give --kit-secret-file");
+    }
     let unlock = UnlockRequest::of(&args.unlock);
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_with_unlock_for_secret(
@@ -172,11 +189,36 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
         // the old wraps (review of #7781): a failed write leaves the vault
         // as it was, and the files it made are removed.
         let mut files = Vec::new();
-        let switched = vault.set_recovery_preset_any_two_as(&owner, &issue, passkey, |pieces| {
+        // The world kit that replaces the key the box could release, when
+        // given: entering from Standard while a generation is live needs it.
+        let world_kit = wants_kit.then(|| read_world_kit(&args)).transpose()?;
+        let keep_pieces = |pieces: &[KitPiece]| -> oneiron::Result<()> {
             files = write_pieces(&args.out, pieces)
                 .map_err(|error| oneiron::Error::Io(std::io::Error::other(error.to_string())))?;
             Ok(())
-        });
+        };
+        let switched = match &world_kit {
+            Some((pieces, passphrase)) => {
+                let refs: Vec<&KitPiece> = pieces.iter().collect();
+                let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
+                vault.set_recovery_preset_any_two_with_kit_as(
+                    &authority,
+                    &issue,
+                    passkey,
+                    &refs,
+                    passphrase.as_ref(),
+                    keep_pieces,
+                    &NoRecoveryBox,
+                )
+            }
+            None => vault.set_recovery_preset_any_two_as(
+                &owner,
+                &issue,
+                passkey,
+                keep_pieces,
+                &NoRecoveryBox,
+            ),
+        };
         let switched = switched.map_err(|error| {
             if files.is_empty() {
                 anyhow::Error::from(error)
@@ -214,6 +256,25 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
         listed,
         recovery_preset,
     })
+}
+
+/// The world kit's pieces in `--piece` and its passphrase in
+/// `--kit-secret-file` (which one piece needs): read like `confirm` reads
+/// them, but never from stdin.
+fn read_world_kit(
+    args: &RecoveryKitIssueArgs,
+) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
+    anyhow::ensure!(
+        !args.kit_pieces.is_empty(),
+        "the recovery kit's pieces: --piece"
+    );
+    let pieces = super::read_kit_pieces(&args.kit_pieces)?;
+    let passphrase = args
+        .kit_secret_file
+        .as_deref()
+        .map(|file| super::read_passphrase(Some(file)))
+        .transpose()?;
+    Ok((pieces, passphrase))
 }
 
 /// Whether issuing with `args` reads the kit passphrase from stdin: a
