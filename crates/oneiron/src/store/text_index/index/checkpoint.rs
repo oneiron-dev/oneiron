@@ -11,7 +11,7 @@
 use super::INDEX_SOURCE_TEXT;
 use crate::store::checkpoint_payload::rows::OwnerRef;
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, Check, ExactTable, Join,
+    Adapter, Capture, Check, ExactTable, Join, Restore,
 };
 
 /// Every index-source text row, whole under its document's tree, restored
@@ -25,4 +25,5 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };

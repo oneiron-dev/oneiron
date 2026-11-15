@@ -14,8 +14,9 @@ use heed::RoTxn;
 use super::{RECEIPTS, StoredReceipt};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
-use crate::store::checkpoint_payload::rows::{self, ActorPart, Captured, OwnerRef, RowLocator};
+use crate::store::Store;
+use crate::store::checkpoint_payload::rows::descriptor::{AdapterTable, CapturedByAdapter};
+use crate::store::checkpoint_payload::rows::{self, ActorPart, Captured, OwnerRef};
 
 /// The field the receipt's actor fills.
 const ACTOR: &str = "actor";
@@ -37,22 +38,18 @@ fn take_actors(receipt: &mut StoredReceipt, entity: EntityId) -> Vec<(String, En
     }
 }
 
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
-    for row in rows::typed_rows(dbs, txn, RECEIPTS, out)? {
+/// The commit receipts, which the typed-body getter's own capture places.
+pub(crate) const TABLE: &dyn AdapterTable = &CapturedByAdapter(RECEIPTS);
+
+/// Files each receipt under its body's entity, both actors split out.
+pub(crate) fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
+    for row in rows::typed_rows(store, txn, RECEIPTS, out)? {
         let entity = row.key.0;
         rows::split_actors(out, OwnerRef::entity(&entity), RECEIPTS, row, |receipt| {
             take_actors(receipt, entity)
         })?;
     }
     Ok(())
-}
-
-pub(crate) fn owns(at: &RowLocator) -> bool {
-    at.in_table(RECEIPTS.decl())
-}
-
-pub(crate) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    rows::check_row(RECEIPTS, at, value)
 }
 
 /// A live receipt with both actors back, or its erased form when either did

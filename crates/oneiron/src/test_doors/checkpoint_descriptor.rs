@@ -19,7 +19,7 @@ use crate::side_table::{self, Named, SideCodec, SideKey, SideTable};
 use crate::store::Store;
 use crate::store::birth_record::{BIRTH_BY_TRIGGER, ROW_BIRTH, RowBirth};
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, CapturedByAdapter, Check, Join, PlacedTable,
+    Adapter, Capture, CapturedByAdapter, Check, Join, PlacedTable, Restore,
 };
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator,
@@ -64,6 +64,7 @@ fn place_born_from(out: &mut Captured, row: TypedRow<(EntityId, EntityId), ()>) 
 }
 
 fn join_birth(
+    _: &Store,
     _: &RoTxn<'_>,
     at: &RowLocator,
     value: &[u8],
@@ -108,6 +109,7 @@ static TEXT_SOURCE_BY_TABLE: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 static TEXT_SOURCE_OWN_CAPTURE: Adapter = Adapter {
@@ -116,6 +118,7 @@ static TEXT_SOURCE_OWN_CAPTURE: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 /// A table its adapter's own capture places, listed in a by-table capture.
@@ -125,6 +128,7 @@ static TEXT_SOURCE_MISLISTED: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 static TEXT_SOURCE_GATED: Adapter = Adapter {
@@ -136,6 +140,7 @@ static TEXT_SOURCE_GATED: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: Some(text_row_owner),
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 static TEXT_SOURCE_OWN_CHECK: Adapter = Adapter {
@@ -147,6 +152,7 @@ static TEXT_SOURCE_OWN_CHECK: Adapter = Adapter {
     check: Check::Own(refuse_every_part),
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 static BIRTHS: Adapter = Adapter {
@@ -164,6 +170,7 @@ static BIRTHS: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::Row(join_birth),
+    restore: Restore::Parts,
 };
 
 /// The rows [`seed_rows`] wrote.
@@ -266,7 +273,7 @@ pub fn compare_captures(vault: &Vault) -> Result<Vec<CaptureComparison>> {
     let store = &vault.store;
     let txn = store.env.read_txn()?;
     let text = crate::bm25::checkpoint::ADAPTER.capture(store, &txn)?;
-    let births = crate::provenance::birth::checkpoint::capture(store, &txn)?;
+    let births = crate::provenance::birth::checkpoint::ADAPTER.capture(store, &txn)?;
     Ok(vec![
         compare_capture(
             "text source by table",
@@ -287,7 +294,7 @@ pub fn compare_captures(vault: &Vault) -> Result<Vec<CaptureComparison>> {
             &BIRTHS,
             &BIRTHS.capture(store, &txn)?,
             &births,
-            crate::provenance::birth::checkpoint::bytes_for_owner,
+            |rows| crate::provenance::birth::checkpoint::ADAPTER.bytes_for_owner(rows),
         )?,
     ])
 }
@@ -444,7 +451,7 @@ pub fn compare_restores(
             vaults,
             actors_open,
             |store, txn, opened| {
-                crate::provenance::birth::checkpoint::restore_in_txn(store, txn, opened)
+                crate::provenance::birth::checkpoint::ADAPTER.restore_in_txn(store, txn, opened)
             },
             birth_rows,
         )?,

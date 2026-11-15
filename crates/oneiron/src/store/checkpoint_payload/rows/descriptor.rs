@@ -7,15 +7,16 @@
 //!
 //! An adapter is a plain value in a static table, not a trait and not a
 //! macro: its tables are `&'static dyn` [`AdapterTable`] rows, and each step
-//! that varies is a fn pointer. A capture reads [`Store`], the one target
-//! every checkpoint capture reads, so a fn pointer can name it.
+//! that varies is a fn pointer. A capture and a restore read [`Store`], the
+//! one target every checkpoint capture and restore reads, so a fn pointer
+//! can name it.
 //!
 //! The adapters move onto them one family at a time, each pinned to the
 //! bytes its own getter gave before: the getters with no join first (UC-10
-//! PR 3), then the split and the complex ones.
+//! PR 3), then the split ones (PR 4), then the complex ones (PR 5).
 #![allow(
     dead_code,
-    reason = "UC-10 PRs 4-5 move the getters with joins; until then only the test door joins"
+    reason = "UC-10 PR 5 moves the keyed-join getters; until then only the test door joins keyed"
 )]
 
 use heed::{RoTxn, RwTxn};
@@ -26,7 +27,7 @@ use super::{
 };
 use crate::error::{Error, Result};
 use crate::side_table::{SideCodec, SideKey, SideTable, SideTableDecl};
-use crate::store::{ManifestDbs, Store};
+use crate::store::Store;
 
 /// An adapter's own capture: it reads its tables with state one table's rows
 /// hand the next (a set of snapshots, a map of dependencies).
@@ -39,14 +40,24 @@ pub(crate) type OwnCheck = fn(&RowLocator, &[u8]) -> Result<()>;
 pub(crate) type RowOwner = fn(&RowLocator) -> Option<OwnerRef>;
 
 /// A join that answers a no-one-form part's value with its opened actor
-/// parts put back, or `None` when the family's no-one rule leaves it out.
+/// parts put back, or `None` when the family's no-one rule leaves it out. It
+/// reads the restore's store (its clock) and the restore's own view.
 pub(crate) type JoinRow =
-    fn(&RoTxn<'_>, &RowLocator, &[u8], &[&ActorPart]) -> Result<Option<Vec<u8>>>;
+    fn(&Store, &RoTxn<'_>, &RowLocator, &[u8], &[&ActorPart]) -> Result<Option<Vec<u8>>>;
 
 /// A join that answers the row's own locator as well, for a part whose key
 /// names an actor and whose locator does not ([`restore_parts_keyed`]).
-pub(crate) type JoinKeyed =
-    fn(&RoTxn<'_>, &RowLocator, &[u8], &[&ActorPart]) -> Result<Option<(RowLocator, Vec<u8>)>>;
+pub(crate) type JoinKeyed = fn(
+    &Store,
+    &RoTxn<'_>,
+    &RowLocator,
+    &[u8],
+    &[&ActorPart],
+) -> Result<Option<(RowLocator, Vec<u8>)>>;
+
+/// An adapter's own restore: index work around [`Adapter::restore_parts`]
+/// (the office tokens' unref and re-note).
+pub(crate) type OwnRestore = fn(&Store, &mut RwTxn<'_>, OpenedOwnerRows) -> Result<Restored>;
 
 /// One side table an adapter's compartments hold.
 pub(crate) trait AdapterTable: Sync {
@@ -164,6 +175,17 @@ pub(crate) enum Join {
     Keyed(JoinKeyed),
 }
 
+/// How an adapter puts an opened compartment's rows back.
+#[derive(Clone, Copy)]
+pub(crate) enum Restore {
+    /// Each part checked and joined ([`Adapter::restore_parts`]), nothing
+    /// else written.
+    Parts,
+    /// The adapter's own restore, which calls [`Adapter::restore_parts`]
+    /// among its own writes.
+    Own(OwnRestore),
+}
+
 /// One adapter's checkpoint rows.
 pub(crate) struct Adapter {
     /// The tables its compartments hold, in capture order. A part belongs to
@@ -175,6 +197,7 @@ pub(crate) struct Adapter {
     /// from: the owner its own key names is that compartment's.
     pub(crate) row_owner: Option<RowOwner>,
     pub(crate) join: Join,
+    pub(crate) restore: Restore,
 }
 
 impl Adapter {
@@ -229,13 +252,26 @@ impl Adapter {
         frame_owner(rows, |at| self.owns(at))
     }
 
-    /// Puts `opened`'s rows back through the restore-only sink: each part
-    /// checked, each no-one-form part through this adapter's join.
+    /// Puts `opened`'s rows back, as this adapter's restore does.
     pub(crate) fn restore_in_txn(
         &self,
-        dbs: &impl ManifestDbs,
+        store: &Store,
         txn: &mut RwTxn<'_>,
         opened: OpenedOwnerRows,
+    ) -> Result<Restored> {
+        match self.restore {
+            Restore::Parts => self.restore_parts(store, txn, &opened),
+            Restore::Own(restore) => restore(store, txn, opened),
+        }
+    }
+
+    /// Puts `opened`'s rows back through the restore-only sink: each part
+    /// checked, each no-one-form part through this adapter's join.
+    pub(crate) fn restore_parts(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        opened: &OpenedOwnerRows,
     ) -> Result<Restored> {
         let owner = OwnerRef {
             subtype: opened.subtype,
@@ -243,9 +279,17 @@ impl Adapter {
         };
         let check = |at: &RowLocator, value: &[u8]| self.check_restored(owner, at, value);
         match self.join {
-            Join::NoSplit => restore_parts(dbs, txn, &opened, check, no_join),
-            Join::Row(join) => restore_parts(dbs, txn, &opened, check, join),
-            Join::Keyed(join) => restore_parts_keyed(dbs, txn, &opened, check, join),
+            Join::NoSplit => restore_parts(store, txn, opened, check, no_join),
+            Join::Row(join) => {
+                restore_parts(store, txn, opened, check, |view, at, value, parts| {
+                    join(store, view, at, value, parts)
+                })
+            }
+            Join::Keyed(join) => {
+                restore_parts_keyed(store, txn, opened, check, |view, at, value, parts| {
+                    join(store, view, at, value, parts)
+                })
+            }
         }
     }
 

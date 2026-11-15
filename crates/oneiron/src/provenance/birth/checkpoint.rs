@@ -11,58 +11,67 @@
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 
-use super::{BIRTH_BY_TRIGGER, ROW_BIRTH};
+use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
+use crate::store::Store;
+use crate::store::birth_record::{BIRTH_BY_TRIGGER, ROW_BIRTH, RowBirth};
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, Check, Join, PlacedTable, Restore,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
+    self, ActorPart, Captured, OwnerRef, RowLocator, TypedRow,
 };
 
 /// The field the MadeBy process's actor fills.
 const PROCESS: &str = "made_by.process.actor";
 
-/// Every birth and born-from index row in `txn`, by born row.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, ROW_BIRTH, &mut out)? {
-        let born = row.key;
-        rows::split_actors(&mut out, OwnerRef::entity(&born), ROW_BIRTH, row, |birth| {
-            let actor = std::mem::replace(&mut birth.made_by.process.actor, born);
-            vec![(PROCESS.to_owned(), actor)]
-        })?;
-    }
-    for row in rows::typed_rows(dbs, txn, BIRTH_BY_TRIGGER, &mut out)? {
-        let (trigger, born) = row.key;
-        let owner = OwnerRef::entity(&born);
-        out.depends(owner, &row.at, OwnerRef::entity(&trigger));
-        out.exact(owner, row.at, row.bytes);
-    }
-    Ok(out)
+/// Every birth by its born row, its actor split out, and every born-from
+/// index row under its born row, holding while its trigger does.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &PlacedTable {
+            table: ROW_BIRTH,
+            place: place_birth,
+        },
+        &PlacedTable {
+            table: BIRTH_BY_TRIGGER,
+            place: place_born_from,
+        },
+    ],
+    capture: Capture::ByTable,
+    check: Check::ByTable,
+    row_owner: None,
+    join: Join::Row(join),
+    restore: Restore::Parts,
+};
+
+/// A birth under its born row, with the born row in its actor's place.
+fn place_birth(out: &mut Captured, row: TypedRow<EntityId, RowBirth>) -> Result<()> {
+    let born = row.key;
+    rows::split_actors(out, OwnerRef::entity(&born), ROW_BIRTH, row, |birth| {
+        let actor = std::mem::replace(&mut birth.made_by.process.actor, born);
+        vec![(PROCESS.to_owned(), actor)]
+    })
 }
 
-fn owns(at: &RowLocator) -> bool {
-    at.in_table(ROW_BIRTH.decl()) || at.in_table(BIRTH_BY_TRIGGER.decl())
-}
-
-/// The bundle framing of `rows`' birth parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    if at.in_table(ROW_BIRTH.decl()) {
-        rows::check_row(ROW_BIRTH, at, value)
-    } else if at.in_table(BIRTH_BY_TRIGGER.decl()) {
-        rows::check_row(BIRTH_BY_TRIGGER, at, value)
-    } else {
-        Err(rows::bad_part())
-    }
+/// A born-from index row under its born row, holding while its trigger does.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "a placement callback: PlacedTable's fn pointer returns Result"
+)]
+fn place_born_from(out: &mut Captured, row: TypedRow<(EntityId, EntityId), ()>) -> Result<()> {
+    let (trigger, born) = row.key;
+    let owner = OwnerRef::entity(&born);
+    out.depends(owner, &row.at, OwnerRef::entity(&trigger));
+    out.exact(owner, row.at, row.bytes);
+    Ok(())
 }
 
 /// A birth with its actor back; `None` when the actor did not open.
 fn join(
+    _: &Store,
     _: &RoTxn<'_>,
     at: &RowLocator,
     value: &[u8],
@@ -82,14 +91,4 @@ fn join(
         Ok(())
     })?;
     ROW_BIRTH.encode_value(&birth).map(Some)
-}
-
-/// Puts `opened`'s birth rows back: each born-from index row exactly, and
-/// each birth whose actor opened.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, join)
 }

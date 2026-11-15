@@ -11,7 +11,7 @@
 use super::PHONETIC_SOURCE;
 use crate::store::checkpoint_payload::rows::OwnerRef;
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, Check, ExactTable, Join,
+    Adapter, Capture, Check, ExactTable, Join, Restore,
 };
 
 /// Every phonetic source row, whole under its entity's tree, restored
@@ -25,4 +25,5 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
