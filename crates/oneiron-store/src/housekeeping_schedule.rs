@@ -135,9 +135,18 @@ pub const MINUTE: u64 = 60;
 pub const HOUR: u64 = 60 * MINUTE;
 pub const DAY: u64 = 24 * HOUR;
 
+/// Writes [`HousekeepingSweep::ALL`] with its length counted from the list,
+/// so a PR that adds a sweep adds one line and no hand-kept count: two such
+/// PRs then merge into a list that still compiles.
+macro_rules! every_sweep {
+    ($($sweep:expr),+ $(,)?) => {
+        /// Every sweep, in report order.
+        pub const ALL: [Self; [$(stringify!($sweep)),+].len()] = [$($sweep),+];
+    };
+}
+
 impl HousekeepingSweep {
-    /// Every sweep, in report order.
-    pub const ALL: [Self; 26] = [
+    every_sweep![
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
