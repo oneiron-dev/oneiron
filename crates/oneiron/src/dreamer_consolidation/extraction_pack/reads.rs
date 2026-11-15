@@ -14,7 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::ConsolidationBranchPlan;
 use super::super::call_labels::{CallLabelMap, LabelKind};
-use super::super::conflict::{ConflictIdentity, candidate_facts, conflict_open_marker_id};
+use super::super::conflict::{
+    ConflictIdentity, ConflictSet, candidate_facts, conflict_open_marker_id,
+};
 use super::super::executor::extraction::corrections::{
     NumberedCorrectionCandidate, NumberedListedClaim, correction_candidate_bytes,
     correction_choice_specs, correction_frame_bytes, correction_listed_bytes,
@@ -461,16 +463,32 @@ pub(super) fn correction_page_entries(
     })
 }
 
-/// Rebuilds the selected conflict with native nomination and the crate's observed-beside route.
-/// Coverage stays within its original nomination component, with exact restatements allowed.
-/// Returns the selected rows, heads, predicate span, retained identity, evidence and correlation.
-pub(super) fn resolution_conflict(
+/// One routed set as the resolution rebuild selects it: the conflict with the
+/// proposals it was selected from. The derive stager opens this set instead
+/// of asking how it resolves.
+pub(crate) struct SelectedConflict {
+    /// The selected set: its identity, member positions and prior heads.
+    pub(crate) set: ConflictSet,
+    /// The checked proposals in pack order: the set's `candidate_indexes`
+    /// index into these, and into the checked rows they were built from.
+    pub(crate) proposals: Vec<PromotionCandidate>,
+}
+
+/// Selects the one routed set `rows` form: native nomination, the crate's
+/// observed-beside route, the member selector, and the exact-coverage
+/// refusal. Coverage stays within its original nomination component, with
+/// exact restatements allowed.
+///
+/// # Errors
+///
+/// No native conflict, more than one without a selector, a selector naming
+/// no routed set, and candidates that are not exactly one native conflict.
+pub(crate) fn select_routed_conflict(
     rows: &[CheckedCandidate],
     bound: &BoundBranchRead,
     context: &ExtractionRebuildContext<'_>,
-    attempt: AttemptId,
     set_members: Option<&[usize]>,
-) -> MemoryResult<BuiltConflict> {
+) -> MemoryResult<SelectedConflict> {
     let proposals: Vec<PromotionCandidate> = rows.iter().map(|row| row.proposal.clone()).collect();
     let mut embeddings: BTreeMap<EntityId, Vec<f32>> = BTreeMap::new();
     for proposal in &proposals {
@@ -491,7 +509,6 @@ pub(super) fn resolution_conflict(
     )?;
     let (routed, exact) = route_observed_priors(&proposals, bound, context, nominated)?;
     let selected = &routed[select_conflict(&routed, set_members)?];
-    let set = &selected.set;
     let covered: BTreeSet<usize> = selected
         .component_coverage
         .iter()
@@ -503,6 +520,25 @@ pub(super) fn resolution_conflict(
             invalid_consolidation("extraction candidates are not one native conflict").into(),
         );
     }
+    Ok(SelectedConflict {
+        set: selected.set.clone(),
+        proposals,
+    })
+}
+
+/// Rebuilds the selected conflict with native nomination and the crate's observed-beside route.
+/// Coverage stays within its original nomination component, with exact restatements allowed.
+/// Returns the selected rows, heads, predicate span, retained identity, evidence and correlation.
+pub(super) fn resolution_conflict(
+    rows: &[CheckedCandidate],
+    bound: &BoundBranchRead,
+    context: &ExtractionRebuildContext<'_>,
+    attempt: AttemptId,
+    set_members: Option<&[usize]>,
+) -> MemoryResult<BuiltConflict> {
+    let selected = select_routed_conflict(rows, bound, context, set_members)?;
+    let set = &selected.set;
+    let proposals = &selected.proposals;
     let mut members = Vec::with_capacity(set.candidate_indexes.len());
     for index in &set.candidate_indexes {
         let Some(proposal) = proposals.get(*index) else {

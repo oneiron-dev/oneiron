@@ -438,6 +438,46 @@ pub(crate) fn open_conflicts_in_txn(
     Ok(open)
 }
 
+/// What `core.conflict.resolved` answers naming `marker` stand among
+/// `subject`'s claims. The open-conflict read and the derive revert share
+/// this one scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConflictAnswerStanding {
+    /// A surfaceable answer naming the marker stands.
+    pub(crate) standing: bool,
+    /// A retracted answer names the marker.
+    pub(crate) reverted: bool,
+}
+
+/// Scans `subject`'s claims for `core.conflict.resolved` answers naming
+/// `marker`, standing and retracted alike.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn conflict_answer_standing_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: EntityId,
+    marker: EntityId,
+) -> Result<ConflictAnswerStanding> {
+    let mut standing = false;
+    let mut reverted = false;
+    for id in vault.claims_for_subject_in_txn(txn, &subject)? {
+        let Some(answer) = vault.get_claim_in_txn(txn, &id)? else {
+            continue;
+        };
+        if answer.predicate != PREDICATE_CONFLICT_RESOLVED
+            || !marker_ids(&answer.value, "open_marker").any(|named| named == marker)
+        {
+            continue;
+        }
+        standing |= claim_surfaceable(&answer);
+        reverted |= reverted_answer(&answer);
+    }
+    Ok(ConflictAnswerStanding { standing, reverted })
+}
+
 /// The open conflict `marker` asks, or an error when it is no marker, is
 /// closed, or a standing answer already names it.
 pub(crate) fn open_conflict_in_txn(
@@ -454,21 +494,11 @@ pub(crate) fn open_conflict_in_txn(
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation("conflict subject"));
     };
-    let mut reverted = false;
-    for id in vault.claims_for_subject_in_txn(txn, &subject)? {
-        let Some(answer) = vault.get_claim_in_txn(txn, &id)? else {
-            continue;
-        };
-        if answer.predicate != PREDICATE_CONFLICT_RESOLVED
-            || !marker_ids(&answer.value, "open_marker").any(|named| named == marker)
-        {
-            continue;
-        }
-        if claim_surfaceable(&answer) {
-            return Err(invalid_consolidation("the conflict is already settled"));
-        }
-        reverted |= reverted_answer(&answer);
+    let answers = conflict_answer_standing_in_txn(vault, txn, subject, marker)?;
+    if answers.standing {
+        return Err(invalid_consolidation("the conflict is already settled"));
     }
+    let reverted = answers.reverted;
     if !reverted && preference_pair::preference_pair_moot_in_txn(vault, txn, &body)? {
         return Err(invalid_consolidation(
             "the conflict's pair no longer stands: a later claim replaced one side",

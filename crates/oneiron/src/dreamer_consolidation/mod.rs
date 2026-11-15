@@ -56,7 +56,7 @@ mod note_parts;
 mod note_review;
 mod note_text;
 mod note_topics;
-mod open_conflict;
+pub(crate) mod open_conflict;
 mod parallel;
 mod partition;
 mod persistence;

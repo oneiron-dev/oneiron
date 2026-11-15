@@ -35,8 +35,8 @@ mod reads;
 pub(crate) use super::executor::evidence_version_for_row;
 pub(crate) use super::resources::{BoundBranchInput, BoundBranchRead, project_bound_branch};
 pub(crate) use checks::{
-    bound_branch_error, check_extraction_operands_in_txn, check_turn_evidence,
-    extraction_not_served,
+    bound_branch_error, check_engine_claim_pins, check_extraction_operands_in_txn,
+    check_turn_evidence, extraction_not_served,
 };
 pub(crate) use execution::{CheckedExtractionRead, ExtractionReadExecution, execute_checked_read};
 pub(in crate::dreamer_consolidation) use reads::parse_reference;
