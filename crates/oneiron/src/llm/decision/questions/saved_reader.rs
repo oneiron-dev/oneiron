@@ -5,7 +5,10 @@
 //! made_by is admitted through) builds its reader here:
 //! the principal's own live key, or the current caller's credential key on
 //! a proof-bearing workflow, narrowed by the version's frozen lane
-//! ([`crate::claim::FrozenReadLane::narrow_in_txn`]). A version saved as the
+//! ([`crate::claim::FrozenReadLane::narrow_row_key_in_txn`] for the
+//! principal's key, which reads as the class the lane was saved under;
+//! [`crate::claim::FrozenReadLane::narrow_in_txn`] for the caller's, which
+//! reads nothing under another class). A version saved as the
 //! principal's own reads exactly as before; a narrowed one reads only inside
 //! its narrowing, and nothing once its credential is no longer live.
 
@@ -29,7 +32,7 @@ pub(super) fn saved_reader_in_txn(
     read_lane: &FrozenReadLane,
 ) -> Result<ScopedReadActorKey> {
     let key = super::graph_ask::asker_reader_in_txn(vault, txn, principal)?;
-    read_lane.narrow_in_txn(vault, txn, key)
+    read_lane.narrow_row_key_in_txn(vault, txn, key)
 }
 
 /// [`saved_reader_in_txn`] in its own snapshot.
@@ -64,11 +67,13 @@ pub(crate) fn saved_source_key_in_txn(
 ) -> Result<ScopedReadActorKey> {
     let key = super::refresh::source_actor_key(vault, txn, principal, None)?
         .require_access_grants(Some(principal));
-    read_lane.narrow_in_txn(vault, txn, key)
+    read_lane.narrow_row_key_in_txn(vault, txn, key)
 }
 
 /// The saved lane met with the current caller's credential key in the same
-/// snapshot. Without a carried credential, keep the native saved reader.
+/// snapshot: a credential of another class than the lane's reads nothing
+/// (Sol F1 on #8134). Without a carried credential, keep the native saved
+/// reader.
 pub(super) fn saved_reader_in_txn_with_current(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

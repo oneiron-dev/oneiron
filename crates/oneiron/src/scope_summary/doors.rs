@@ -359,7 +359,7 @@ pub(super) fn note_sources_in_txn(
     let read = if lane.is_principal() {
         read
     } else {
-        vault.scoped_read(lane.narrow_in_txn(vault, txn, read.actor_key().clone())?)
+        vault.scoped_read(lane.narrow_row_key_in_txn(vault, txn, read.actor_key().clone())?)
     };
     let rows = read.get_entities_parts_in_txn(txn, &notes)?;
     for (note, row) in notes.iter().zip(rows) {
