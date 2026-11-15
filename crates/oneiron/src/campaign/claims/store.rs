@@ -2,6 +2,7 @@
 
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
+use rmpv::Value;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
