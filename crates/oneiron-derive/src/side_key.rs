@@ -15,8 +15,9 @@ use syn::{Data, DeriveInput, Fields, Ident, Lit, LitByte, LitByteStr, Member, Ty
 enum Role {
     /// The part type's `FixedSideKey::WIDTH` bytes.
     Fixed,
-    /// A big-endian count (a `LengthPrefix` type), then that many bytes.
-    LengthPrefixed(Type),
+    /// A big-endian count (a `LengthPrefix` type), then that many bytes. Boxed, because a
+    /// `syn::Type` is far larger than the other variants.
+    LengthPrefixed(Box<Type>),
     /// The bytes the other parts leave.
     Rest,
 }
@@ -185,7 +186,7 @@ fn parse_part(index: usize, field: &syn::Field) -> syn::Result<Part> {
                 let count = meta.value()?.parse::<Type>()?;
                 set_once(
                     &mut role,
-                    Role::LengthPrefixed(count),
+                    Role::LengthPrefixed(Box::new(count)),
                     &meta,
                     "a part takes one of rest and len",
                 )
