@@ -220,9 +220,9 @@ impl Vault {
                 .ok_or(Error::InvariantViolation("a landed item names no row"))
         };
         match item.kind.as_str() {
-            // A claim, and a person's `about` landing: the Dreamer's own
-            // per-row inverse, for this batch's author.
-            "claim" | "person_about" => {
+            // A claim, a candidate's claim, and a person's `about` landing:
+            // the Dreamer's own per-row inverse, for this batch's author.
+            "claim" | "candidate" | "person_about" => {
                 crate::dreamer_consolidation::revert_authored_change_in_txn(
                     self,
                     txn,

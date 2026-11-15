@@ -28,6 +28,7 @@
 mod archive;
 mod artifact;
 mod batch;
+mod candidate;
 mod claim;
 mod commit;
 mod conflict;
@@ -53,9 +54,14 @@ pub use artifact::{
 };
 pub use batch::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
-    DerivedClaim, DerivedConflict, DerivedConflictMember, DerivedEvidence, DerivedEvidenceSpans,
-    DerivedPersonAbout, DerivedPsychProfile, DerivedSameAs, DerivedSettle, DerivedSettlement,
-    DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
+    DerivedCandidate, DerivedClaim, DerivedConflict, DerivedConflictMember, DerivedEvidence,
+    DerivedEvidenceSpans, DerivedPersonAbout, DerivedPsychProfile, DerivedSameAs, DerivedSettle,
+    DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
+};
+pub use candidate::{
+    CANDIDATE_CONTESTS_HEAD, CANDIDATE_DUPLICATE, CANDIDATE_IMPORTED_EVIDENCE,
+    CANDIDATE_LANDING_REFUSED, CANDIDATE_NEEDS_EXTRACTION_ATTEMPT, CANDIDATE_NOT_ATTEMPT_DREAMER,
+    CANDIDATE_OPERAND_REFUSED, CANDIDATE_OWNER_DECLINED, CANDIDATE_RESTATES_HEAD,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
 pub use conflict::{
@@ -75,11 +81,11 @@ pub use supersede::{
     SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
 };
 pub use wire::{
-    DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveConflictInput,
-    DeriveConflictMember, DeriveEvidenceInput, DeriveEvidenceSpans, DeriveItemInput,
-    DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput, DeriveRevertView,
-    DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals,
-    DeriveSupersedeInput, DeriveTopologyInput,
+    DeriveArchiveInput, DeriveCandidateInput, DeriveClaimInput, DeriveCommitInput,
+    DeriveCommitView, DeriveConflictInput, DeriveConflictMember, DeriveEvidenceInput,
+    DeriveEvidenceSpans, DeriveItemInput, DeriveItemView, DeriveLeftItemView, DeriveRef,
+    DeriveRevertInput, DeriveRevertView, DeriveSameAsInput, DeriveSettleInput,
+    DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it

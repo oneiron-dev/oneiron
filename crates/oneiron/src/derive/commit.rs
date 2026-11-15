@@ -169,6 +169,9 @@ impl Vault {
                     DerivationItem::Conflict(conflict) => {
                         super::conflict::stage_in_txn(self, txn, &context, conflict)?
                     }
+                    DerivationItem::Candidate(candidate) => {
+                        super::candidate::stage_in_txn(self, txn, &context, candidate)?
+                    }
                 }
             };
             match &outcome {

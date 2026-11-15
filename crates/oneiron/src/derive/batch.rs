@@ -155,6 +155,17 @@ pub struct DerivedConflict {
     pub set_members: Option<Vec<usize>>,
 }
 
+/// A candidate an extraction job lands: one extraction candidate that
+/// replaces nothing.
+#[derive(Debug, Clone)]
+pub struct DerivedCandidate {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The candidate, exactly the operand the verdict takes, with the
+    /// confidence and hints it lands with.
+    pub member: DerivedConflictMember,
+}
+
 /// An archive an agent derived: its own weak claim `claim`, with the
 /// strength it scored.
 #[derive(Debug, Clone)]
@@ -273,6 +284,9 @@ pub enum DerivationItem {
     /// A conflict an extraction job opens: the set a bound Resolution read
     /// of `ai.verdict` names, opened instead of asked.
     Conflict(DerivedConflict),
+    /// A candidate an extraction job lands: one extraction candidate that
+    /// replaces nothing.
+    Candidate(DerivedCandidate),
 }
 
 impl DerivationItem {
@@ -289,6 +303,7 @@ impl DerivationItem {
             Self::PsychProfile(profile) => &profile.local,
             Self::Archive(archive) => &archive.local,
             Self::Conflict(conflict) => &conflict.local,
+            Self::Candidate(candidate) => &candidate.local,
         }
     }
 
@@ -305,13 +320,15 @@ impl DerivationItem {
             Self::PsychProfile(_) => "psych_profile",
             Self::Archive(_) => "archive",
             Self::Conflict(_) => "conflict",
+            Self::Candidate(_) => "candidate",
         }
     }
 
     /// Whether the item's first landed row is one the item itself creates:
     /// a claim, a settlement's answer, a link's status claim, a topology
-    /// event, a conflict's marker. Only such an item can be named by a later
-    /// item: a later Settle item names a conflict's marker by the Conflict
+    /// event, a conflict's marker, a candidate's claim. Only such an item
+    /// can be named by a later item: a later Settle item names a conflict's
+    /// marker by the Conflict
     /// item's local name. Every other kind lands on a row that stood before
     /// it (a supersession's replacement, an archived claim, a PERSON) or may
     /// replay one (an evidence record, a profile at its address), and a name
@@ -324,6 +341,7 @@ impl DerivationItem {
                 | Self::SameAs(_)
                 | Self::Topology(_)
                 | Self::Conflict(_)
+                | Self::Candidate(_)
         )
     }
 
@@ -336,7 +354,7 @@ impl DerivationItem {
             // A conflict item holds no `ItemRef`: its pins are checked by
             // its stager through the extraction read, never by
             // `derive/sources.rs`.
-            Self::Conflict(_) => &[],
+            Self::Conflict(_) | Self::Candidate(_) => &[],
             _ => &[],
         }
     }
@@ -362,8 +380,9 @@ impl DerivationItem {
             Self::Archive(archive) => vec![&archive.claim],
             // A conflict item holds no `ItemRef`: its pins are checked by
             // its stager through the extraction read, never by
-            // `derive/sources.rs`.
-            Self::Conflict(_) => Vec::new(),
+            // `derive/sources.rs`. A candidate item's versions are inside
+            // its operand, likewise.
+            Self::Conflict(_) | Self::Candidate(_) => Vec::new(),
         }
     }
 }
@@ -390,10 +409,11 @@ impl DerivationBatch {
     /// local reference naming an earlier item that creates a row
     /// ([`DerivationItem::creates_row`]), at most one `about` item for a
     /// person, a version for every stored source cited, well-formed span
-    /// locators on claim and evidence items, and well-formed conflict items:
+    /// locators on claim and evidence items, well-formed conflict items:
     /// at least one member, bounded collections, every member confidence
     /// finite and in `[0, 1]`, and prospective query hints the lexical
-    /// normaliser admits.
+    /// normaliser admits, and well-formed candidate items: the member
+    /// checks with the evidence bound.
     ///
     /// # Errors
     ///
@@ -456,6 +476,7 @@ impl DerivationBatch {
                     validate_spans(&evidence.sources, &evidence.spans)?;
                 }
                 DerivationItem::Conflict(conflict) => validate_conflict(conflict)?,
+                DerivationItem::Candidate(candidate) => validate_candidate(candidate)?,
                 _ => {}
             }
         }
@@ -496,18 +517,48 @@ fn validate_conflict(item: &DerivedConflict) -> Result<()> {
         ));
     }
     for member in &item.members {
-        if !member.confidence.is_finite() || !(0.0..=1.0).contains(&member.confidence) {
-            return Err(malformed(
-                "a conflict member's confidence is a number from 0 to 1",
-            ));
-        }
-        let hints: Vec<&str> = member
-            .prospective_queries
-            .iter()
-            .map(String::as_str)
-            .collect();
-        crate::claim::normalize_lexical_query_hints(&hints)?;
+        validate_conflict_member(
+            member,
+            "a conflict member's confidence is a number from 0 to 1",
+        )?;
     }
+    Ok(())
+}
+
+/// Checks one candidate item's shape: its member's confidence and hints,
+/// as a conflict member's, with at most [`MAX_DECISION_STATE_BYTES`] TURN
+/// evidence entries. Every other fault of the operand is judged by the
+/// extraction read when the item stages, and refuses the item, not the
+/// batch.
+fn validate_candidate(item: &DerivedCandidate) -> Result<()> {
+    if item.member.operand.evidence.len() > MAX_DECISION_STATE_BYTES {
+        return Err(malformed(
+            "a candidate collection exceeds the native decision state bound",
+        ));
+    }
+    validate_conflict_member(
+        &item.member,
+        "a candidate member's confidence is a number from 0 to 1",
+    )
+}
+
+/// Checks one conflict-shaped member: its confidence finite and in
+/// `[0, 1]` (else `confidence_message`), and prospective query hints the
+/// lexical normaliser admits. The conflict and candidate shape checks
+/// share this one rule.
+fn validate_conflict_member(
+    member: &DerivedConflictMember,
+    confidence_message: &'static str,
+) -> Result<()> {
+    if !member.confidence.is_finite() || !(0.0..=1.0).contains(&member.confidence) {
+        return Err(malformed(confidence_message));
+    }
+    let hints: Vec<&str> = member
+        .prospective_queries
+        .iter()
+        .map(String::as_str)
+        .collect();
+    crate::claim::normalize_lexical_query_hints(&hints)?;
     Ok(())
 }
 
