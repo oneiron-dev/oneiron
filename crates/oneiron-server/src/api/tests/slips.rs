@@ -624,22 +624,31 @@ async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_recor
         persona,
     );
     let compact = "exact stored compact profile";
+    let source = seeded_test_entity_id(0x0002_4004);
+    let persona_key = oneiron::psych_profile::PsychProfileKey {
+        person,
+        facet: Some(persona),
+        world: None,
+    };
+    let profile_id = oneiron::psych_profile::psych_profile_entity_id(&persona_key);
     server
         .vault()
         .put_psych_profile(
-            &persona,
+            &profile_id,
             &oneiron::PsychProfile::new(
                 persona,
                 compact,
                 "text",
                 "narrative",
-                vec![seeded_test_entity_id(0x0002_4004)],
+                vec![source],
                 oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
             )
+            .unwrap()
+            .with_sources(vec![seed_profile_source_record(&server, source)])
             .unwrap(),
         )
         .unwrap();
-    let list_path = format!("/v1/companion/personas?person_ref={}", person.to_hex());
+    let list_path = format!("/v1/companion/profiles?person_ref={}", person.to_hex());
     let (status, _) = route_json(server.clone(), request(&slip, &list_path)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let mut unrestricted = slip.claims.clone();

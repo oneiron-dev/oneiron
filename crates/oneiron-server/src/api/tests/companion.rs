@@ -20,9 +20,14 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
         seeded_test_entity_id(0x1265_0003),
         seeded_test_entity_id(0x1265_0004),
     );
+    seed_companion_profile_targets(
+        &server,
+        seeded_test_entity_id(0x1265_0005),
+        seeded_test_entity_id(0x1265_0004),
+    );
 
     let profile_path_with_override = format!(
-        "/v1/companion/profiles/{persona_ref}?principal_ref={principal_ref}&person_ref={person_ref}"
+        "/v1/companion/profiles/{person_ref}?principal_ref={principal_ref}&facet_ref={persona_ref}"
     );
     let (status, body) = route_json(
         server.clone(),
@@ -54,7 +59,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
         Value::from("core:auth")
     );
 
-    let profile_path = format!("/v1/companion/profiles/{persona_ref}?person_ref={person_ref}");
+    let profile_path = format!("/v1/companion/profiles/{person_ref}?facet_ref={persona_ref}");
     let (status, body) = route_json(
         server.clone(),
         core_request_with_principal_ref(
@@ -79,7 +84,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
         "scope": {
             "kind": "companion_profile",
             "person_ref": person_ref,
-            "persona_ref": persona_ref,
+            "facet_ref": persona_ref,
         },
         "created_at": 10_u64,
     });
@@ -89,7 +94,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
         "scope": {
             "kind": "companion_profile",
             "person_ref": person_ref,
-            "persona_ref": persona_ref,
+            "facet_ref": persona_ref,
         },
         "created_at": 10_u64,
     });
@@ -151,10 +156,10 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["access"]["grant_id"], Value::from(grant_id.clone()));
-    assert_eq!(body["persona_ref"], Value::from(persona_ref.clone()));
+    assert_eq!(body["facet_ref"], Value::from(persona_ref.clone()));
 
     let wrong_scope_path =
-        format!("/v1/companion/profiles/{persona_ref}?person_ref={other_person_ref}");
+        format!("/v1/companion/profiles/{other_person_ref}?facet_ref={persona_ref}");
     let (status, body) = route_json(
         server.clone(),
         core_request_with_principal_ref(
@@ -265,7 +270,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
                 "scope": {
                     "kind": "companion_profile",
                     "person_ref": other_person_ref,
-                    "persona_ref": persona_ref,
+                    "facet_ref": persona_ref,
                 },
                 "created_at": 10_u64,
             })),
@@ -414,6 +419,12 @@ async fn v1_companion_profile_read_returns_persisted_tiers_snapshot() {
     let source_a = seeded_test_entity_id(0x1218_0005);
     let source_b = seeded_test_entity_id(0x1218_0006);
     seed_companion_profile_access(&server, grant_id, principal_ref, person_ref, persona_ref);
+    let profile_key = oneiron::psych_profile::PsychProfileKey {
+        person: person_ref,
+        facet: Some(persona_ref),
+        world: None,
+    };
+    let profile_id = oneiron::psych_profile::psych_profile_entity_id(&profile_key);
 
     let profile = oneiron::PsychProfile::new(
         persona_ref,
@@ -423,16 +434,21 @@ async fn v1_companion_profile_read_returns_persisted_tiers_snapshot() {
         vec![source_b, source_a],
         oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("confidence"),
     )
-    .expect("profile");
+    .expect("profile")
+    .with_sources(vec![
+        seed_profile_source_record(&server, source_a),
+        seed_profile_source_record(&server, source_b),
+    ])
+    .expect("profile sources");
     server
         .vault
-        .put_psych_profile(&persona_ref, &profile)
+        .put_psych_profile(&profile_id, &profile)
         .expect("put psych profile");
 
     let path = format!(
-        "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={},{}",
-        persona_ref.to_hex(),
+        "/v1/companion/profiles/{}?facet_ref={}&sourceRevisionIds={},{}",
         person_ref.to_hex(),
+        persona_ref.to_hex(),
         source_b.to_hex(),
         source_a.to_hex()
     );
@@ -452,15 +468,17 @@ async fn v1_companion_profile_read_returns_persisted_tiers_snapshot() {
     assert_eq!(
         body,
         json!({
-            "persona_ref": persona_ref.to_hex(),
             "person_ref": person_ref.to_hex(),
+            "facet_ref": persona_ref.to_hex(),
+            "world_ref": null,
+            "profile_ref": profile_id.to_hex(),
             "access": {
                 "grant_id": grant_id.to_hex(),
                 "principal_ref": principal_ref.to_hex(),
                 "scope": {
                     "kind": "companion_profile",
                     "person_ref": person_ref.to_hex(),
-                    "persona_ref": persona_ref.to_hex(),
+                    "facet_ref": persona_ref.to_hex(),
                 },
             },
             "state": "fresh",
@@ -537,6 +555,12 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
         person_ref,
         existing_persona_ref,
     );
+    let stale_key = oneiron::psych_profile::PsychProfileKey {
+        person: person_ref,
+        facet: Some(stale_persona_ref),
+        world: None,
+    };
+    let stale_profile_id = oneiron::psych_profile::psych_profile_entity_id(&stale_key);
     let stale_profile = oneiron::PsychProfile::new(
         stale_persona_ref,
         "stale compact",
@@ -546,16 +570,18 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
         oneiron::psych_profile::PsychProfileConfidence::new(0.5, 0.5, 0.5).expect("confidence"),
     )
     .expect("profile")
+    .with_sources(vec![seed_profile_source_record(&server, source_a)])
+    .expect("profile sources")
     .marked_stale();
     server
         .vault
-        .put_psych_profile(&stale_persona_ref, &stale_profile)
+        .put_psych_profile(&stale_profile_id, &stale_profile)
         .expect("put stale profile");
 
     let missing_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}",
-        missing_persona_ref.to_hex(),
-        person_ref.to_hex()
+        "/v1/companion/profiles/{}?facet_ref={}",
+        person_ref.to_hex(),
+        missing_persona_ref.to_hex()
     );
     let (missing_status, missing_body) = route_json(
         server.clone(),
@@ -578,9 +604,9 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
     );
 
     let existing_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}",
-        existing_persona_ref.to_hex(),
-        person_ref.to_hex()
+        "/v1/companion/profiles/{}?facet_ref={}",
+        person_ref.to_hex(),
+        existing_persona_ref.to_hex()
     );
     let (existing_status, existing_body) = route_json(
         server.clone(),
@@ -602,9 +628,9 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
     );
 
     let stale_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={}",
-        stale_persona_ref.to_hex(),
+        "/v1/companion/profiles/{}?facet_ref={}&sourceRevisionIds={}",
         person_ref.to_hex(),
+        stale_persona_ref.to_hex(),
         source_b.to_hex()
     );
     let (stale_status, stale_body) = route_json(
@@ -647,9 +673,9 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
     );
 
     let stale_fallback_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}",
-        stale_persona_ref.to_hex(),
-        person_ref.to_hex()
+        "/v1/companion/profiles/{}?facet_ref={}",
+        person_ref.to_hex(),
+        stale_persona_ref.to_hex()
     );
     let (fallback_status, fallback_body) = route_json(
         server,
@@ -697,6 +723,12 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
     let revert_source = seeded_test_entity_id(0x1218_0206);
     let tune_source = seeded_test_entity_id(0x1218_0207);
     seed_companion_profile_access(&server, grant_id, principal_ref, person_ref, persona_ref);
+    let profile_key = oneiron::psych_profile::PsychProfileKey {
+        person: person_ref,
+        facet: Some(persona_ref),
+        world: None,
+    };
+    let profile_id = oneiron::psych_profile::psych_profile_entity_id(&profile_key);
     let profile = oneiron::PsychProfile::new(
         persona_ref,
         "refresh compact",
@@ -705,17 +737,22 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         vec![revert_source, keep_source],
         oneiron::psych_profile::PsychProfileConfidence::new(0.9, 0.8, 0.7).expect("confidence"),
     )
-    .expect("profile");
+    .expect("profile")
+    .with_sources(vec![
+        seed_profile_source_record(&server, keep_source),
+        seed_profile_source_record(&server, revert_source),
+    ])
+    .expect("profile sources");
     let stored_source_revision_ids = profile.source_revision_ids.clone();
     server
         .vault
-        .put_psych_profile(&persona_ref, &profile)
+        .put_psych_profile(&profile_id, &profile)
         .expect("put profile");
 
     let refresh_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}",
-        persona_ref.to_hex(),
-        person_ref.to_hex()
+        "/v1/companion/profiles/{}?facet_ref={}",
+        person_ref.to_hex(),
+        persona_ref.to_hex()
     );
     let refresh_request = json!({
         "sourceRevisionIds": [
@@ -779,9 +816,9 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
     );
 
     let refresh_query_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={},{}",
-        persona_ref.to_hex(),
+        "/v1/companion/profiles/{}?facet_ref={}&sourceRevisionIds={},{}",
         person_ref.to_hex(),
+        persona_ref.to_hex(),
         keep_source.to_hex(),
         tune_source.to_hex()
     );
@@ -891,9 +928,9 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
     );
 
     let refresh_empty_query_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds=",
-        persona_ref.to_hex(),
-        person_ref.to_hex()
+        "/v1/companion/profiles/{}?facet_ref={}&sourceRevisionIds=",
+        person_ref.to_hex(),
+        persona_ref.to_hex()
     );
     let (empty_query_status, empty_query_body) = route_json(
         server.clone(),
@@ -952,22 +989,31 @@ async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_g
         );
     }
     let literal = "O:45 C:82 E:78 A:35 N:40 — direct and kind";
+    let source = seeded_test_entity_id(0x0002_1210);
+    let first_key = oneiron::psych_profile::PsychProfileKey {
+        person,
+        facet: Some(first),
+        world: None,
+    };
+    let first_profile_id = oneiron::psych_profile::psych_profile_entity_id(&first_key);
     server
         .vault
         .put_psych_profile(
-            &first,
+            &first_profile_id,
             &oneiron::PsychProfile::new(
                 first,
                 literal,
                 "text tier",
                 "narrative tier",
-                vec![seeded_test_entity_id(0x0002_1210)],
+                vec![source],
                 oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
             )
+            .unwrap()
+            .with_sources(vec![seed_profile_source_record(&server, source)])
             .unwrap(),
         )
         .unwrap();
-    let path = format!("/v1/companion/personas?person_ref={}", person.to_hex());
+    let path = format!("/v1/companion/profiles?person_ref={}", person.to_hex());
     let (status, response) = route_json(
         server.clone(),
         core_request_with_principal_ref(
@@ -985,21 +1031,21 @@ async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_g
     assert_eq!(
         items
             .iter()
-            .find(|row| row["persona_ref"] == first.to_hex())
+            .find(|row| row["facet_ref"] == first.to_hex())
             .unwrap()["personalityCompact"],
         literal
     );
     assert!(
         items
             .iter()
-            .find(|row| row["persona_ref"] == second.to_hex())
+            .find(|row| row["facet_ref"] == second.to_hex())
             .unwrap()["personalityCompact"]
             .is_null()
     );
     assert!(
         !items
             .iter()
-            .any(|row| row["persona_ref"] == hidden.to_hex())
+            .any(|row| row["facet_ref"] == hidden.to_hex())
     );
     let (status, _) = route_json(
         server.clone(),
@@ -1021,7 +1067,7 @@ async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_g
             oneiron::AccessGrant::companion_profile_read(principal, person, Some(first), 10),
         )
         .unwrap();
-    let request_path = "/v1/companion/personas/access-requests";
+    let request_path = "/v1/companion/profiles/access-requests";
     let (forbidden, _) = route_json(
         server.clone(),
         core_request("GET", request_path, "companion:profile:read", None),
@@ -1101,24 +1147,29 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
         second,
     );
     seed_companion_profile_access(&server, unrelated_grant, other, person, first);
+    let shared_source = seed_profile_source_record(&server, seeded_test_entity_id(0x0002_5009));
     for (id, compact) in [(first, "first compact"), (second, "second compact")] {
+        let key = oneiron::psych_profile::PsychProfileKey { person, facet: Some(id), world: None };
+        let profile_id = oneiron::psych_profile::psych_profile_entity_id(&key);
         server
             .vault
             .put_psych_profile(
-                &id,
+                &profile_id,
                 &oneiron::PsychProfile::new(
                     id,
                     compact,
                     "text",
                     "narrative",
-                    vec![seeded_test_entity_id(0x0002_5009)],
+                    vec![shared_source.revision_ref],
                     oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
                 )
+                .unwrap()
+                .with_sources(vec![shared_source.clone()])
                 .unwrap(),
             )
             .unwrap();
     }
-    let path = format!("/v1/companion/personas?person_ref={}", person.to_hex());
+    let path = format!("/v1/companion/profiles?person_ref={}", person.to_hex());
     let list = |server: Arc<SyncServer>| {
         let path = path.clone();
         async move {
@@ -1146,33 +1197,40 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
     assert_eq!(rows.len(), 2);
     assert_eq!(
         rows.iter()
-            .find(|row| row["persona_ref"] == first.to_hex())
+            .find(|row| row["facet_ref"] == first.to_hex())
             .unwrap()["personalityCompact"],
         "first compact"
     );
     assert_eq!(
         rows.iter()
-            .find(|row| row["persona_ref"] == second.to_hex())
+            .find(|row| row["facet_ref"] == second.to_hex())
             .unwrap()["personalityCompact"],
         "second compact"
     );
 
+    let first_profile_id = oneiron::psych_profile::psych_profile_entity_id(
+        &oneiron::psych_profile::PsychProfileKey {
+            person,
+            facet: Some(first),
+            world: None,
+        },
+    );
     server
         .vault
-        .delete_entity_with_reason(&first, oneiron::DeleteReason::UserDelete)
+        .delete_entity_with_reason(&first_profile_id, oneiron::DeleteReason::UserDelete)
         .unwrap();
-    assert!(server.vault.is_deleted_shell(&first).unwrap());
+    assert!(server.vault.is_deleted_shell(&first_profile_id).unwrap());
     let rows = list(server.clone()).await;
     assert_eq!(rows.len(), 2);
     assert!(
         rows.iter()
-            .find(|row| row["persona_ref"] == first.to_hex())
+            .find(|row| row["facet_ref"] == first.to_hex())
             .unwrap()["personalityCompact"]
             .is_null()
     );
     assert_eq!(
         rows.iter()
-            .find(|row| row["persona_ref"] == second.to_hex())
+            .find(|row| row["facet_ref"] == second.to_hex())
             .unwrap()["personalityCompact"],
         "second compact"
     );
@@ -1183,7 +1241,7 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
         .unwrap();
     let rows = list(server).await;
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["persona_ref"], second.to_hex());
+    assert_eq!(rows[0]["facet_ref"], second.to_hex());
     assert_eq!(rows[0]["personalityCompact"], "second compact");
 }
 
@@ -1216,30 +1274,39 @@ async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_roll
         .vault
         .create_access_grant(&seeded_test_entity_id(0x0002_6004), &grant)
         .unwrap();
+    let source = seeded_test_entity_id(0x0002_6005);
+    let persona_key = oneiron::psych_profile::PsychProfileKey {
+        person,
+        facet: Some(persona),
+        world: None,
+    };
+    let profile_id = oneiron::psych_profile::psych_profile_entity_id(&persona_key);
     server
         .vault
         .put_psych_profile(
-            &persona,
+            &profile_id,
             &oneiron::PsychProfile::new(
                 persona,
                 "stored compact before expiry",
                 "text",
                 "narrative",
-                vec![seeded_test_entity_id(0x0002_6005)],
+                vec![source],
                 oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
             )
+            .unwrap()
+            .with_sources(vec![seed_profile_source_record(&server, source)])
             .unwrap(),
         )
         .unwrap();
     let list_uri = format!(
-        "/v1/companion/personas?person_ref={}&principal_ref={}",
+        "/v1/companion/profiles?person_ref={}&principal_ref={}",
         person.to_hex(),
         principal.to_hex()
     );
     let get_uri = format!(
-        "/v1/companion/profiles/{}?person_ref={}&principal_ref={}",
-        persona.to_hex(),
+        "/v1/companion/profiles/{}?facet_ref={}&principal_ref={}",
         person.to_hex(),
+        persona.to_hex(),
         principal.to_hex()
     );
     let read = |server: Arc<SyncServer>, uri: &str| {
@@ -1295,6 +1362,12 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
     let persona_ref = seeded_test_entity_id(0x1218_0304);
     let stored_source = seeded_test_entity_id(0x1218_0305);
     seed_companion_profile_access(&server, grant_id, principal_ref, person_ref, persona_ref);
+    let profile_key = oneiron::psych_profile::PsychProfileKey {
+        person: person_ref,
+        facet: Some(persona_ref),
+        world: None,
+    };
+    let profile_id = oneiron::psych_profile::psych_profile_entity_id(&profile_key);
     let profile = oneiron::PsychProfile::new(
         persona_ref,
         "bounded compact",
@@ -1303,15 +1376,17 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
         vec![stored_source],
         oneiron::psych_profile::PsychProfileConfidence::new(0.9, 0.8, 0.7).expect("confidence"),
     )
-    .expect("profile");
+    .expect("profile")
+    .with_sources(vec![seed_profile_source_record(&server, stored_source)])
+    .expect("profile sources");
     server
         .vault
-        .put_psych_profile(&persona_ref, &profile)
+        .put_psych_profile(&profile_id, &profile)
         .expect("put profile");
     let refresh_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}",
-        persona_ref.to_hex(),
-        person_ref.to_hex()
+        "/v1/companion/profiles/{}?facet_ref={}",
+        person_ref.to_hex(),
+        persona_ref.to_hex()
     );
     let refresh = |count: usize| {
         let ids = (0x2218_0000_u128..)
