@@ -132,6 +132,7 @@ mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_vouch;
 mod owner_project_slip;
 mod owner_proof;
 mod owner_roots;
@@ -389,6 +390,11 @@ pub use owner_choice::OwnerChoiceHead;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
 };
+pub use owner_key_vouch::{
+    DeviceOwnerKeyVouch, OWNER_KEY_VOUCH_LABEL_MAX, OWNER_KEY_VOUCH_TEXT_PREFIX,
+    OwnerKeyVouchRequest,
+};
+pub(crate) use owner_key_vouch::{label_is_valid, label_not_valid};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{

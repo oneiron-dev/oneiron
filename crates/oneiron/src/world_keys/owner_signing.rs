@@ -14,7 +14,8 @@
 //! The key signs checkpoint statements alone, a key binding's or an
 //! attestation's: a raw 64-byte Ed25519 signature over `domain || msgpack`.
 //! Its one other signature is the enrollment's proof of possession, made in
-//! this module. The seed is read from its home into guarded memory, the key
+//! this module: for the host root's enrollment of it here, or for the request
+//! another owner device vouches for ([`Vault::device_owner_key_vouch_request`]). The seed is read from its home into guarded memory, the key
 //! is wiped on drop, and neither leaves this install.
 //!
 //! With `[keystore] backend = "off"` this install holds no device keys, so it
@@ -27,8 +28,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 
 use crate::authority::{
-    ActAuthority, AuthorityKey, CheckpointRootSigner, EnrolledOwnerKey, HostSlipIssuer,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, checkpoint_statement_domain, invalid_authority,
+    ActAuthority, AuthorityKey, CheckpointRootSigner, DeviceOwnerKeyVouch, EnrolledOwnerKey,
+    HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerKeyVouchRequest,
+    checkpoint_statement_domain, invalid_authority, label_is_valid, label_not_valid,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -103,6 +105,32 @@ impl CheckpointRootSigner for OwnerRootSigner {
     }
 }
 
+/// This install's owner signing key as an enrollment finds it: live on the
+/// roster already, or not enrolled yet with its challenge for this machine
+/// and the owner.
+enum DeviceOwnerKey {
+    Live {
+        signer: OwnerRootSigner,
+        receipt: OwnerKeyEnrollmentReceipt,
+    },
+    Unenrolled {
+        signer: OwnerRootSigner,
+        machine: EntityId,
+        challenge: Vec<u8>,
+    },
+}
+
+/// The owner signing key whose seed `slot` holds: the one place an install
+/// makes that seed, from the OS CSPRNG on first use.
+fn slot_owner_signer(
+    keystore: &dyn DeviceKeystore,
+    slot: &KeystoreSlot,
+) -> Result<OwnerRootSigner> {
+    Ok(OwnerRootSigner::from_seed(&*super::slot_seed(
+        keystore, slot,
+    )?))
+}
+
 impl Vault {
     /// This install's owner signing key for this vault, from its
     /// [`SlotKind::OwnerSigning`] keystore slot: the seed is made there from
@@ -116,8 +144,7 @@ impl Vault {
     pub fn device_owner_signing_key(&self) -> Result<OwnerRootSigner> {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
-        let seed = super::slot_seed(keystore.as_ref(), &self.owner_signing_slot(machine))?;
-        Ok(OwnerRootSigner::from_seed(&seed))
+        slot_owner_signer(keystore.as_ref(), &self.owner_signing_slot(machine))
     }
 
     /// The owner enrols this install's own owner signing key, made in its
@@ -137,26 +164,97 @@ impl Vault {
         authority: &ActAuthority,
         issuer: &HostSlipIssuer,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
+        let (signer, receipt) = match self.device_owner_key_for_enrollment(authority)? {
+            DeviceOwnerKey::Live { signer, receipt } => (signer, receipt),
+            DeviceOwnerKey::Unenrolled {
+                signer,
+                machine,
+                challenge,
+            } => {
+                let input = OwnerKeyEnrollment {
+                    machine,
+                    public_key: signer.public_key(),
+                    proof: signer.sign_possession(&challenge),
+                };
+                let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
+                (signer, receipt)
+            }
+        };
+        self.hold_checkpoint_root_signer(Arc::new(signer));
+        Ok(receipt)
+    }
+
+    /// The new device's half of an owner key vouching for its key (pass 27
+    /// R2): this install's owner signing key, made in its keystore slot on
+    /// first use, signs its challenge for this install's machine and the
+    /// owner `authority` proves, and the request to hand an owner device
+    /// comes back ([`Vault::enrol_vouched_owner_signing_key`] runs there). It
+    /// writes nothing and needs no owner key of its own. `label` names this
+    /// device for the owner to recognise. Once a vouch put the key on the
+    /// roster and this vault took that row (sync), it answers the
+    /// enrollment's receipt and this handle holds the key. A key the roster
+    /// revoked gives its slot to a fresh key, whose request comes back.
+    ///
+    /// # Errors
+    /// [`crate::error::RecordError::InvalidAuthorityLogBody`] for a label over
+    /// [`crate::authority::OWNER_KEY_VOUCH_LABEL_MAX`] bytes or with a control
+    /// character; `KeystoreUnavailable` while the host installed no keystore;
+    /// an agent's act refused; an owner refusal when the proof is no longer
+    /// the vault's live owner.
+    pub fn device_owner_key_vouch_request(
+        &self,
+        authority: &ActAuthority,
+        label: &str,
+    ) -> Result<DeviceOwnerKeyVouch> {
+        if !label_is_valid(label) {
+            return Err(label_not_valid());
+        }
+        match self.device_owner_key_for_enrollment(authority)? {
+            DeviceOwnerKey::Live { signer, receipt } => {
+                self.hold_checkpoint_root_signer(Arc::new(signer));
+                Ok(DeviceOwnerKeyVouch::Enrolled(receipt))
+            }
+            DeviceOwnerKey::Unenrolled {
+                signer,
+                machine,
+                challenge,
+            } => Ok(DeviceOwnerKeyVouch::Request(OwnerKeyVouchRequest {
+                vault_id: self.authority_vault_id()?.ok_or_else(invalid_authority)?,
+                machine,
+                public_key: signer.public_key(),
+                proof: signer.sign_possession(&challenge),
+                label: label.to_owned(),
+            })),
+        }
+    }
+
+    /// This install's owner signing key as an enrollment by `authority`'s
+    /// owner finds it: its slot's key, made on first use, live on the roster
+    /// with its enrollment's receipt, or not enrolled yet with its challenge.
+    /// A key the roster revoked is never enrolled again: a fresh seed takes
+    /// its slot.
+    fn device_owner_key_for_enrollment(&self, authority: &ActAuthority) -> Result<DeviceOwnerKey> {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
-        let mut signer = OwnerRootSigner::from_seed(&*super::slot_seed(keystore.as_ref(), &slot)?);
+        let mut signer = slot_owner_signer(keystore.as_ref(), &slot)?;
         // The owner's proof is revalidated before the roster is read.
         let mut challenge =
             self.owner_key_enrollment_challenge_as(authority, machine, &signer.public_key())?;
         match self.listed_owner_key(&signer.public_key())? {
             Some(listed) if listed.live => {
-                self.hold_checkpoint_root_signer(Arc::new(signer));
-                return Ok(OwnerKeyEnrollmentReceipt {
-                    entry: listed.entry,
-                    machine: listed.machine,
-                    public_key: listed.public_key,
+                return Ok(DeviceOwnerKey::Live {
+                    signer,
+                    receipt: OwnerKeyEnrollmentReceipt {
+                        entry: listed.entry,
+                        machine: listed.machine,
+                        public_key: listed.public_key,
+                    },
                 });
             }
-            // A revoked key is never enrolled again: a fresh seed takes its slot.
             Some(_) => {
                 DeviceKeystore::delete(keystore.as_ref(), &slot).map_err(super::keystore_error)?;
-                signer = OwnerRootSigner::from_seed(&*super::slot_seed(keystore.as_ref(), &slot)?);
+                signer = slot_owner_signer(keystore.as_ref(), &slot)?;
                 challenge = self.owner_key_enrollment_challenge_as(
                     authority,
                     machine,
@@ -165,14 +263,11 @@ impl Vault {
             }
             None => {}
         }
-        let input = OwnerKeyEnrollment {
+        Ok(DeviceOwnerKey::Unenrolled {
+            signer,
             machine,
-            public_key: signer.public_key(),
-            proof: signer.sign_possession(&challenge),
-        };
-        let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
-        self.hold_checkpoint_root_signer(Arc::new(signer));
-        Ok(receipt)
+            challenge,
+        })
     }
 
     /// The owner enrols the owner signing key of the install that serves

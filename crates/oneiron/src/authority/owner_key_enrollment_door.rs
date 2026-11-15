@@ -35,7 +35,8 @@ use super::*;
 
 /// An owner signing key is the owner's to enrol: no Grant action names it,
 /// so an agent's act never enrols one. Authority; nothing was written.
-const OWNER_ONLY: &str = "an owner signing key is the owner's to enrol; no Grant action names it";
+pub(super) const OWNER_ONLY: &str =
+    "an owner signing key is the owner's to enrol; no Grant action names it";
 /// This install cannot carry the owner's act: it has no machine identity or
 /// install key, or no live profile of it stands under that key. Key
 /// possession: the act is cosigned by the install that carries it, and no
@@ -44,7 +45,7 @@ const NO_CARRIER: &str = "this install has no live machine profile in the vault'
                           the owner's key enrollment";
 /// Integrity: the roster already names the key, live or revoked. A
 /// replacement is a fresh key, and the old one's ordinary revoke.
-const KEY_ON_ROSTER: &str = "the vault's roster already names this key, live or revoked; enrol a \
+pub(super) const KEY_ON_ROSTER: &str = "the vault's roster already names this key, live or revoked; enrol a \
                              fresh key";
 /// Integrity: the enrollment's fixed shape does not hold: a weak key, a
 /// proof that is not the key's own signature over its challenge, or a key
@@ -116,7 +117,7 @@ pub struct EnrolledOwnerKey {
 }
 
 /// An enrollment that does not verify, as the typed integrity refusal.
-fn not_valid(reason: &'static str) -> Error {
+pub(super) fn not_valid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
 }
 
