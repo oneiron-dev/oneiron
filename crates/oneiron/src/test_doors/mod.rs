@@ -117,6 +117,7 @@ pub mod split_phrase_carrier;
 pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
+pub mod summarize_note_set;
 pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod uncertain_send_questions;
