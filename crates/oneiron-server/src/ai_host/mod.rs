@@ -62,6 +62,7 @@ mod judge_swap;
 mod lens_callbacks;
 pub mod live_lease;
 mod local_vision;
+mod meeting_follow_up_drafting;
 pub(crate) mod payer_funding;
 mod policy;
 mod question_timer;

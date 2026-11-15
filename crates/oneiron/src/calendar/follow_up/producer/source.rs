@@ -431,7 +431,14 @@ fn revision_in_txn(
 }
 
 /// The TURNs `session`'s membership rows name, by `(learned_at, id)`, less
-/// a TURN withdrawn (deleted, stale or held from use) or archived.
+/// a TURN whose words no read may serve (gone, deleted, stale, held from
+/// use, or derived from a source that no longer stands) and less an
+/// archived one.
+///
+/// A TURN no read may serve stays out for good, so it must not hold the read
+/// ([`Vault::meeting_follow_up_source_for`] holds on any TURN the
+/// destination's scoped read withholds): left in, a TURN whose source was
+/// withdrawn would hold every try of its SESSION's drafting, forever.
 fn retained_turns_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -442,9 +449,11 @@ fn retained_turns_in_txn(
         .member_turns_in_txn(txn, session, |_, _| true)?
         .unwrap_or_default()
     {
-        if !crate::ports::withdrawn_in_txn(&vault.store, txn, &turn)?
-            && vault.archive_tombstone_in_txn(txn, &turn)?.is_none()
-        {
+        let readable = match vault.get_raw_in(txn, &turn)? {
+            Some(raw) => crate::ports::raw_readable_in_txn(&vault.store, txn, &turn, &raw)?,
+            None => false,
+        };
+        if readable && vault.archive_tombstone_in_txn(txn, &turn)?.is_none() {
             retained.push(turn);
         }
     }

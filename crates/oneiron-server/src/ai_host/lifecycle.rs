@@ -292,6 +292,7 @@ impl AiHost {
         }
         host.handle = handle;
         commitment_reminder_wording::spawn(&vault, &host.handle, models);
+        meeting_follow_up_drafting::spawn(&vault, &host.handle, models);
         // An attached host's worker starts once its server is bound
         // (FIX 6920), so it alone takes up the queue.
         if attached.is_none() {
