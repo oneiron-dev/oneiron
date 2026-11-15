@@ -16,6 +16,7 @@
 
 mod act_rule;
 mod agent_grant_act;
+mod carrier_signature;
 mod checkpoint_policy;
 mod comm_reach;
 mod confirm;
@@ -57,6 +58,7 @@ mod world_privacy;
 
 pub use act_rule::*;
 pub use agent_grant_act::*;
+pub use carrier_signature::*;
 pub use checkpoint_policy::*;
 pub use comm_reach::*;
 pub use confirm::*;
