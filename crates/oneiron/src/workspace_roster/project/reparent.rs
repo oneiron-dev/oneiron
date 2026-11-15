@@ -144,6 +144,8 @@ impl Vault {
                     }
                 }
             }
+            // The move carries the settings rows of the lines it leaves (stage 6.0).
+            let lines_before = self.lines_before_move_in_txn(txn, id, &next.parents)?;
             self.batch_in()
                 .put(
                     &id,
@@ -156,6 +158,9 @@ impl Vault {
                     &encode(&next)?,
                 )
                 .apply(txn)?;
+            if let Some(before) = lines_before {
+                crate::setting::carry_settings_in_txn(self, txn, id, &before)?;
+            }
             ProjectReader::new(&self.store, txn, self.privacy_posture())?
                 .ok_or_else(invalid)?
                 .frontier(id)?

@@ -10,7 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 #[cfg(feature = "test-support")]
 use crate::setting::{
-    EngineSetting, Resolved, SetSetting, SetSettingOutcome, SettingCaller, SettingMode,
+    EngineSetting, FitCell, Resolved, SetSetting, SetSettingOutcome, SettingCaller, SettingMode,
     SettingScope,
 };
 
@@ -139,4 +139,175 @@ pub fn leave_keeps_setting_row(key: &str, scope: SettingScope) -> bool {
     };
     let full = [crate::side_table::SETTING.prefix, row.encode().as_slice()].concat();
     crate::setting::leave_keeps_row(&full)
+}
+
+/// Caches `value`, learned from `runs` runs, as the fit of `key` in `cell`, as the learning
+/// projector does: the fit a learned key's read finds there.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn put_setting_fit(
+    vault: &Vault,
+    key: &str,
+    cell: &FitCell,
+    value: f64,
+    runs: f64,
+) -> Result<()> {
+    let fit_key = crate::learning_setting::setting_fit_key(
+        key,
+        cell.project,
+        cell.goal,
+        cell.task_type.as_deref(),
+    );
+    let mut txn = vault.store.env.write_txn()?;
+    crate::learning::project::SETTING_FIT.put(
+        &vault.store,
+        &mut txn,
+        &fit_key,
+        &crate::learning::project::SettingFit { value, runs, at: 0 },
+    )?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// The seed a fit of `test.learned_rate` starts from at the places `known`, with its weight in
+/// runs (`Setting::seed_in_txn`).
+///
+/// # Errors
+///
+/// A place the key does not admit; storage errors.
+#[cfg(feature = "test-support")]
+pub fn learned_rate_seed(vault: &Vault, known: &[SettingScope]) -> Result<Option<(f64, f64)>> {
+    let txn = vault.store.env.read_txn()?;
+    super::setting_keys::TEST_LEARNED_RATE.seed_in_txn(&vault.store, &txn, known)
+}
+
+/// The setting change of sequence `sequence`, as the change stream stores it.
+///
+/// # Errors
+///
+/// A change row that does not decode; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_change(
+    vault: &Vault,
+    sequence: u64,
+) -> Result<Option<crate::setting::SettingChange>> {
+    let txn = vault.store.env.read_txn()?;
+    crate::setting::change_in_txn(&vault.store, &txn, sequence)
+}
+
+/// `test.ordered_cap` read where the reader knows `known`, and `ask`, one call's request, met
+/// with it: the request layer of the typed read (stage 6.0).
+///
+/// # Errors
+///
+/// As `Setting::read_in_txn` and `Setting::narrowed`.
+#[cfg(feature = "test-support")]
+pub fn ordered_cap_requested(
+    vault: &Vault,
+    known: &[SettingScope],
+    ask: u64,
+) -> Result<crate::setting::Requested<u64>> {
+    let key = &super::setting_keys::TEST_ORDERED_CAP;
+    let txn = vault.store.env.read_txn()?;
+    key.narrowed(key.read_in_txn(vault, &txn, known, None)?, &ask)
+}
+
+/// The same request of `test.custom_window`, a key whose order has no meet.
+///
+/// # Errors
+///
+/// `InvalidConfig`: a request never reaches a key with no meet.
+#[cfg(feature = "test-support")]
+pub fn custom_window_requested(vault: &Vault, ask: u64) -> Result<crate::setting::Requested<u64>> {
+    let key = &super::setting_keys::TEST_CUSTOM_WINDOW;
+    let txn = vault.store.env.read_txn()?;
+    key.narrowed(key.read_in_txn(vault, &txn, &[], None)?, &ask)
+}
+
+/// Runs the pack door for `pack` over `defaults` (each key's name and its default as JSON), in its
+/// own write, as a new build or a pack's update would: every key not listed keeps its row. The
+/// whole list is the pack's layer.
+///
+/// # Errors
+///
+/// An unknown key or a default its key does not take; as the pack door.
+#[cfg(feature = "test-support")]
+pub fn apply_pack_defaults(
+    vault: &Vault,
+    pack: &str,
+    defaults: &[(&str, serde_json::Value)],
+) -> Result<Option<crate::setting::PackApplied>> {
+    let defaults = defaults
+        .iter()
+        .map(|(key, value)| {
+            let spec = crate::setting::spec_named(key)?;
+            Ok((spec, spec.kind.from_json(value.clone())?))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    vault.apply_pack_defaults(pack, &defaults, None)
+}
+
+/// The `engine` pack's run, as the vault's open makes it.
+///
+/// # Errors
+///
+/// As the pack door.
+#[cfg(feature = "test-support")]
+pub fn apply_engine_pack(vault: &Vault) -> Result<Option<crate::setting::PackApplied>> {
+    vault.apply_engine_pack()
+}
+
+/// The revision of `key`'s row in `pack`'s layer: the sequence of the change that wrote it, 0
+/// for a first default; `None` with no readable row.
+///
+/// # Errors
+///
+/// An unknown key; storage errors.
+#[cfg(feature = "test-support")]
+pub fn pack_row_revision(vault: &Vault, key: &str, pack: &str) -> Result<Option<u64>> {
+    crate::setting::layer_row_revision(vault, key, pack)
+}
+
+/// Loses `key`'s row in `pack`'s layer, as a damaged store would.
+///
+/// # Errors
+///
+/// An unknown key; storage errors.
+#[cfg(feature = "test-support")]
+pub fn lose_pack_row(vault: &Vault, key: &str, pack: &str) -> Result<()> {
+    crate::setting::delete_layer_row(vault, key, pack)
+}
+
+/// Runs the move hook for `project` in its own write, as a door that moved it would, with its
+/// lines either side of the move named: `before` and `after`, each the project and then its
+/// ancestors nearest first. Returns how many carried rows it wrote.
+///
+/// # Errors
+///
+/// A key's `on_change` refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn carry_settings_between(
+    vault: &Vault,
+    project: EntityId,
+    before: &[EntityId],
+    after: &[EntityId],
+) -> Result<usize> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::setting::carry_between_in_txn(vault, txn, project, before, after)
+    })
+}
+
+/// The lines of `project` a setting read walks: the project, then its ancestors over the stored
+/// parents, nearest first.
+///
+/// # Errors
+///
+/// A stored parent that is not an id; storage errors.
+#[cfg(feature = "test-support")]
+pub fn project_lines(vault: &Vault, project: EntityId) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    vault.project_lines_in_txn(&txn, project)
 }

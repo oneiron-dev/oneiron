@@ -1,5 +1,6 @@
 //! The Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1): `vault.settings.get`,
-//! `vault.settings.list` and `vault.settings.set`, one each for every catalogue key.
+//! `vault.settings.list` and `vault.settings.set`, one each for every catalogue key; and, from
+//! stage 6.0, `vault.settings.accept_defaults`, the owner's yes to a pack's waiting defaults.
 //!
 //! The caller is the vault owner, on the owner's own proof, or an agent on its verified
 //! binding. Reads follow each key's `read_by`; a change goes through [`Vault::set_setting`],
@@ -22,6 +23,7 @@ use crate::setting::{
 const GET: &str = "vault.settings.get";
 const LIST: &str = "vault.settings.list";
 const SET: &str = "vault.settings.set";
+const ACCEPT_DEFAULTS: &str = "vault.settings.accept_defaults";
 
 /// `vault.settings.get` input: one key, at the places the caller knows.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -74,6 +76,10 @@ pub struct SettingSetRequest {
     /// Whether the row is the owner's pin; a value row when absent.
     #[serde(default)]
     pub pin: bool,
+    /// Whether the row is the one a move carried onto a project (stage 6.0): only a clear, which
+    /// releases it as a loose move. Never with `pin`.
+    #[serde(default)]
+    pub carried: bool,
     /// The new value; absent or null clears the row.
     #[serde(default)]
     pub value: Option<serde_json::Value>,
@@ -86,6 +92,27 @@ pub struct SettingSetRequest {
     /// The approved check-in this change waited on, 32 hex.
     #[serde(default)]
     pub check_in_ref: Option<String>,
+    /// A learned key's seed: its weight in runs, finite and above zero. Only a value row of a
+    /// learned key carries one, and it must.
+    #[serde(default)]
+    pub weight_runs: Option<f64>,
+}
+
+/// `vault.settings.accept_defaults` input: the waiting proposal the owner says yes to.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SettingAcceptDefaultsRequest {
+    /// The pack that proposes the defaults (`engine` for this build's own).
+    pub pack: String,
+    /// The proposal's digest, as `vault.settings.list` shows it in `proposed_default`.
+    pub proposal: String,
+}
+
+/// What `vault.settings.accept_defaults` answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SettingAcceptedDefaults {
+    /// The keys whose default the vault now accepts from the pack, in name order.
+    pub keys: Vec<String>,
 }
 
 fn bad_request(message: String) -> MemoryError {
@@ -158,7 +185,8 @@ pub fn setting_list_embedded(
 }
 
 /// `vault.settings.set`: one row's change through [`Vault::set_setting`]: `applied`, or
-/// `pending` with the check-in it waits on.
+/// `pending` with the check-in it waits on. The owner's applied change is signed on the main log
+/// from the handle's act surface (stage 7a-1).
 ///
 /// # Errors
 ///
@@ -171,10 +199,42 @@ pub fn setting_set_embedded(
     let request = set_request(input)?;
     let vault: &Vault = memory.vault();
     if let Ok(owner) = memory.embedded_owner(SET) {
+        // The owner's change is signed from where the owner's request reached this install, as
+        // the host bound it on the handle (an embedded handle's own call names this install).
+        let request = SetSetting {
+            surface: Some(memory.owner_surface()),
+            ..request
+        };
         return Ok(vault.set_setting(SettingCaller::Owner(&owner), request)?);
     }
     let agent = agent_of(memory, SET)?;
     Ok(vault.set_setting(SettingCaller::Agent(agent), request)?)
+}
+
+/// `vault.settings.accept_defaults`: the owner's yes to a pack's waiting proposal, through
+/// [`Vault::accept_pack_defaults`]. An owner act: a pack holds no widening power, and no agent
+/// accepts a default for the owner.
+///
+/// # Errors
+///
+/// FORBIDDEN for a caller that is not the owner; BAD_REQUEST as [`Vault::accept_pack_defaults`]
+/// (no such proposal, or a default that moved since); storage errors.
+pub fn setting_accept_defaults_embedded(
+    memory: &Memory<'_>,
+    input: SettingAcceptDefaultsRequest,
+) -> MemoryResult<SettingAcceptedDefaults> {
+    let owner = memory.embedded_owner(ACCEPT_DEFAULTS).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{ACCEPT_DEFAULTS} takes the vault owner"),
+            &["Call as the owner: a pack's looser default waits for the owner's yes."],
+        )
+    })?;
+    let mut keys = memory
+        .vault()
+        .accept_pack_defaults(&owner, &input.pack, &input.proposal)?;
+    keys.sort();
+    Ok(SettingAcceptedDefaults { keys })
 }
 
 fn set_request(input: SettingSetRequest) -> MemoryResult<SetSetting> {
@@ -184,18 +244,26 @@ fn set_request(input: SettingSetRequest) -> MemoryResult<SetSetting> {
         .map(EntityId::from_hex)
         .transpose()
         .map_err(|_| bad_request("check_in_ref is a check-in's 32 hex id".to_owned()))?;
+    let mode = match (input.pin, input.carried) {
+        (true, true) => {
+            return Err(bad_request(
+                "a row is a pin or a carried row, not both".to_owned(),
+            ));
+        }
+        (true, false) => SettingMode::Pin,
+        (false, true) => SettingMode::Carried,
+        (false, false) => SettingMode::Value,
+    };
     Ok(SetSetting {
         key: input.key,
         item: input.item,
         scope: input.scope,
-        mode: if input.pin {
-            SettingMode::Pin
-        } else {
-            SettingMode::Value
-        },
+        mode,
         value: input.value.filter(|value| !value.is_null()),
         expected_revision: input.expected_revision,
         why: input.why,
         check_in_ref,
+        weight_runs: input.weight_runs,
+        surface: None,
     })
 }

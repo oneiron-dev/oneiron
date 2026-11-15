@@ -51,20 +51,6 @@ impl SettingValue for f64 {
     }
 }
 
-/// For a key whose smaller value is the tighter one (a cap, a budget): whether `a` is at least
-/// as tight as `b`.
-#[must_use]
-pub fn lower_is_tighter<T: PartialOrd>(a: &T, b: &T) -> bool {
-    a <= b
-}
-
-/// For a key whose larger value is the tighter one (a floor, a wait): whether `a` is at least as
-/// tight as `b`.
-#[must_use]
-pub fn higher_is_tighter<T: PartialOrd>(a: &T, b: &T) -> bool {
-    a >= b
-}
-
 /// A value as a row stores it: its MessagePack named map, carried inside the row as one binary
 /// field, so a row decodes whole whatever its value type is.
 #[derive(Debug, Clone, PartialEq, Eq)]

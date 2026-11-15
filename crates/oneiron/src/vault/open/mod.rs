@@ -762,6 +762,23 @@ impl Vault {
                     "the seeded policy manifest was not upgraded; the vault keeps its own until the next open"
                 ),
             }
+            // The engine pack weighs this build's setting defaults against what the vault
+            // accepted: a tighter one lands, a looser one waits for the owner's yes. A failure
+            // leaves the accepted defaults as they are; the next open tries again.
+            match vault.apply_engine_pack() {
+                Ok(Some(applied)) => tracing::info!(
+                    landed = applied.landed.len(),
+                    moved = applied.moved.len(),
+                    proposed = applied.proposed.len(),
+                    lost = applied.lost.len(),
+                    "the engine pack weighed this build's setting defaults"
+                ),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the engine pack's setting defaults were not weighed; the vault keeps the ones it accepted until the next open"
+                ),
+            }
             if seed_content {
                 crate::skill_hub::seed_bootstrap_skills(&vault)?;
                 crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
