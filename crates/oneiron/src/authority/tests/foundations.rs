@@ -381,6 +381,8 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         actor_rows: BTreeSet::new(),
         residence_directives: BTreeMap::new(),
         passkey_contexts: BTreeMap::new(),
+        passkey_vouched_keys: BTreeSet::new(),
+        passkey_vouch_confirmations: BTreeSet::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(

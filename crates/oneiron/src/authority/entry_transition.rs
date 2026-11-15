@@ -164,6 +164,8 @@ pub(super) fn fold_entry_state(
             actor_rows: BTreeSet::new(),
             residence_directives: BTreeMap::new(),
             passkey_contexts: BTreeMap::new(),
+            passkey_vouched_keys: BTreeSet::new(),
+            passkey_vouch_confirmations: BTreeSet::new(),
         };
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
@@ -473,13 +475,22 @@ pub(super) fn fold_entry_state(
     // root signs it and his act's carrier cosigns it (FIX 4920), so its own
     // judge reads the roster before the generic participant rule.
     if let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op {
-        if let Err(issue) = super::owner_key_enrollment::judge_owner_key_enroll(
+        use super::owner_key_enrollment::OwnerKeyEnrollReading;
+        match super::owner_key_enrollment::judge_owner_key_enroll(
             &state, entry, enroll, hash, context,
         ) {
-            return EntryFold::Invalid(issue);
+            Err(issue) => return EntryFold::Invalid(issue),
+            Ok(OwnerKeyEnrollReading::Enrolment) => {
+                apply_op(&mut state, &entry.op, hash, entry.signer_key());
+                super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
+                super::owner_key_enrollment::remember_passkey_vouch(&mut state, entry, enroll);
+            }
+            Ok(OwnerKeyEnrollReading::Confirmation) => {
+                state
+                    .passkey_vouch_confirmations
+                    .insert(enroll.device.key.clone());
+            }
         }
-        apply_op(&mut state, &entry.op, hash, entry.signer_key());
-        super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
@@ -525,6 +536,14 @@ pub(super) fn fold_entry_state(
         {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
+    }
+
+    // A key only a passkey vouched for acts in full once a non-passkey,
+    // owner-held key vouches for it too (lead ruling
+    // WEBPASSKEY-BLIND-SIGNATURE = B): until then it neither re-roots nor
+    // revokes another owner key.
+    if !super::owner_key_enrollment::passkey_vouch_limits_admit(&state, entry) {
+        return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     if op_reuses_existing_device_key(&state, &entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));

@@ -56,25 +56,37 @@ pub(super) fn judge_owner_key_enroll(
     enroll: &OwnerKeyEnroll,
     hash: AuthorityEntryHash,
     context: FoldContext<'_>,
-) -> std::result::Result<(), AuthorityFoldIssue> {
+) -> std::result::Result<OwnerKeyEnrollReading, AuthorityFoldIssue> {
     // The owner's own say-so alone: the codec and the shape check refuse an
     // agent's act and an answered ask, and the judge holds the same line.
     if enroll.act.by != ActBy::Owner || enroll.act.answer.is_some() {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    if !fresh_owner_key(state, &enroll.device.key) {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     // The predecessor: an owner root on the parents' roster, live and
     // consenting under this fold's consent arm (a managed root as its
-    // context allows), past its own last sequence.
+    // context allows), past its own last sequence. A key only a passkey
+    // vouched for vouches for no further key until it is confirmed (lead
+    // ruling WEBPASSKEY-BLIND-SIGNATURE = B).
     let predecessor = entry.signer_key();
     let Some(root) = state.roster.get(predecessor).filter(|root| !root.revoked) else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     };
-    if root.roles & ROLE_OWNER == 0 || !context.device_can_consent(root) {
+    if root.roles & ROLE_OWNER == 0
+        || !context.device_can_consent(root)
+        || passkey_vouch_unconfirmed(state, predecessor)
+    {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
+    // A fresh key enrols; a key only a passkey vouched for, vouched for
+    // again by a key that may confirm it, is confirmed; anything else is
+    // no enrollment.
+    let reading = if fresh_owner_key(state, &enroll.device.key) {
+        OwnerKeyEnrollReading::Enrolment
+    } else if confirms_passkey_vouch(state, &enroll.device.key, predecessor) {
+        OwnerKeyEnrollReading::Confirmation
+    } else {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    };
     if state
         .seqs
         .get(predecessor)
@@ -101,7 +113,72 @@ pub(super) fn judge_owner_key_enroll(
     {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    Ok(())
+    Ok(reading)
+}
+
+/// What a counted `OwnerKeyEnroll` does.
+pub(super) enum OwnerKeyEnrollReading {
+    /// A fresh key joins the roster.
+    Enrolment,
+    /// A non-passkey key vouches again for a key only a passkey vouched for,
+    /// which then acts in full (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B).
+    /// The roster does not change.
+    Confirmation,
+}
+
+/// Whether `key` is a key only a passkey vouched for, not yet confirmed.
+fn passkey_vouch_unconfirmed(state: &FoldState, key: &AuthorityKey) -> bool {
+    state.passkey_vouched_keys.contains(key) && !state.passkey_vouch_confirmations.contains(key)
+}
+
+/// Whether `predecessor` confirms `key` by vouching for it again: `key` is
+/// live and only a passkey vouched for it, and `predecessor` is another key,
+/// owner-held (on a hosted vault, outside the host's custody) and no passkey. That it is
+/// itself confirmed, live and consenting is the judge's predecessor check.
+fn confirms_passkey_vouch(
+    state: &FoldState,
+    key: &AuthorityKey,
+    predecessor: &AuthorityKey,
+) -> bool {
+    passkey_vouch_unconfirmed(state, key)
+        && predecessor != key
+        && state.roster.get(key).is_some_and(|device| !device.revoked)
+        && !state.passkey_contexts.contains_key(predecessor)
+        && !(state.hosted && super::machine_profile::in_host_custody(state, predecessor))
+}
+
+/// Marks a counted enrollment's key as only passkey-vouched when its
+/// predecessor is a passkey (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B).
+pub(super) fn remember_passkey_vouch(
+    state: &mut FoldState,
+    entry: &AuthorityLogEntry,
+    enroll: &OwnerKeyEnroll,
+) {
+    if state.passkey_contexts.contains_key(entry.signer_key()) {
+        state.passkey_vouched_keys.insert(enroll.device.key.clone());
+    }
+}
+
+/// Whether `entry`'s signer may sign its op under the limits on a key only a
+/// passkey vouched for (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): until
+/// confirmed, it signs no `ReRoot` and no `RevokeDevice` of another live
+/// owner key. Every other signer and op passes.
+pub(super) fn passkey_vouch_limits_admit(state: &FoldState, entry: &AuthorityLogEntry) -> bool {
+    let signer = entry.signer_key();
+    if !passkey_vouch_unconfirmed(state, signer) {
+        return true;
+    }
+    match &entry.op {
+        AuthorityOp::ReRoot { .. } => false,
+        AuthorityOp::RevokeDevice { revoked_key } => {
+            revoked_key == signer
+                || !state
+                    .roster
+                    .get(revoked_key)
+                    .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
+        }
+        _ => true,
+    }
 }
 
 /// Whether `key` is fresh in `state`: no roster row names it, live or
