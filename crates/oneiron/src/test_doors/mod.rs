@@ -56,6 +56,7 @@ pub mod guest_turn_counterparty;
 pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
+pub mod home_pick_fold;
 #[cfg(feature = "sync")]
 pub mod home_sections;
 #[cfg(feature = "sync")]

@@ -10,8 +10,14 @@
 //! owner key the host does not hold signs the same entry; without it the
 //! answer is held, and the machine is not mine.
 //!
+//! Item 2 (the lead's ruling 15 Nov 13:2x, CARRIER-ITEM2-SCOPE = A): on a
+//! self-host vault, an owner act a not-mine carrier delivers without that
+//! proof waits for the owner's confirm. This file covers the shared
+//! owner-choice gate (a home pick) and a machine removal.
+//!
 //! Pure folds over hand-signed rows: a self-host genesis root key, the root's
-//! registration of a hosted node, and the node's own answer.
+//! registration of a hosted node, and the node's own answer, home pick or
+//! removal of another machine.
 
 #![cfg(oneiron_test_support)]
 
@@ -28,10 +34,15 @@ use oneiron::authority::{
     authority_entry_hash, authority_transcript, fold_authority_log, genesis_vault_id,
     machine_profile_proof_transcript,
 };
-use oneiron_authority::authority::machine_answer_revision;
+use oneiron::test_doors::home_pick_fold::home_pick_in_force;
+use oneiron_authority::authority::{HomeNodePick, home_pick_target, machine_answer_revision};
 
 const ROOT_SEED: u8 = 61;
 const NODE_SEED: u8 = 62;
+const VICTIM_SEED: u8 = 63;
+
+/// The node the owner's home pick names in test 3.
+const PICKED_NODE: u64 = 7;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -180,6 +191,85 @@ impl HostedNodeAnswer {
         let node_key = self.node.verifying_key().to_bytes();
         (fold_authority_log(&self.rows), self.machine, node_key)
     }
+
+    /// The node carries the owner's home pick of [`PICKED_NODE`] on the
+    /// registration, signed by its own install key.
+    fn pick_home(mut self, cosigners: &[&SigningKey]) -> AuthorityFold {
+        let registration = hash(&self.rows[1]);
+        let target = home_pick_target(&self.vault_id()).expect("the pick's target");
+        // No pick is live yet, so the pick saw the zero revision.
+        let act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::HomeNodePick,
+            target,
+            ActSurface::ThisInstall,
+            [0; 32],
+        );
+        let pick = signed(
+            Some(self.vault_id()),
+            1,
+            vec![registration],
+            AuthorityOp::HomeNodePick(HomeNodePick {
+                act,
+                machine: self.machine,
+                node_id: Some(PICKED_NODE),
+            }),
+            &self.node,
+            cosigners,
+        );
+        self.rows.push(pick);
+        fold_authority_log(&self.rows)
+    }
+
+    /// The root registers a second machine, an execution node, and the node
+    /// carries the owner's removal of it, signed by its own install key.
+    /// Returns the fold and the removed machine.
+    fn remove_another_machine(mut self) -> (AuthorityFold, EntityId) {
+        let vault_id = self.vault_id();
+        let victim_key = signing(VICTIM_SEED);
+        let victim = EntityId::from_bytes([0x72; 16]).expect("an id");
+        let registration = signed(
+            Some(vault_id),
+            2,
+            vec![hash(&self.rows[1])],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                victim,
+                &victim_key,
+                MachineRole::ExecutionNode,
+                1,
+                None,
+            )),
+            &self.root,
+            &[],
+        );
+        let victim_registration = hash(&registration);
+        self.rows.push(registration);
+        let act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::MachineRemoval,
+            victim,
+            ActSurface::ThisInstall,
+            machine_answer_revision([victim_registration]),
+        );
+        let removal = signed(
+            Some(vault_id),
+            1,
+            vec![victim_registration],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                victim,
+                &victim_key,
+                MachineRole::Removed,
+                2,
+                Some((self.machine, act)),
+            )),
+            &self.node,
+            &[],
+        );
+        self.rows.push(removal);
+        (fold_authority_log(&self.rows), victim)
+    }
 }
 
 fn owner() -> EntityId {
@@ -265,6 +355,55 @@ fn an_owner_key_cosigned_answer_carried_by_the_same_node_stands() {
     assert!(
         mine(&fold, machine, &node_key),
         "the same answer cosigned by the live owner-held root makes the node mine: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 3 of the row (item 2, the shared owner-choice gate). Main: the pick
+/// lands.
+#[test]
+fn a_hosted_nodes_unproven_home_pick_waits() {
+    let fold = HostedNodeAnswer::new().pick_home(&[]);
+    assert_eq!(
+        home_pick_in_force(&fold),
+        None,
+        "a not-mine node's home pick with no owner key's proof waits for the owner: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 3, proven. Main: the gate refuses any cosign, so no pick lands.
+#[test]
+fn an_owner_key_cosigned_home_pick_carried_by_a_hosted_node_lands() {
+    let answer = HostedNodeAnswer::new();
+    let root = answer.root.clone();
+    let fold = answer.pick_home(&[&root]);
+    assert_eq!(
+        home_pick_in_force(&fold),
+        Some(PICKED_NODE),
+        "the same pick cosigned by the live owner-held root lands: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 3b of the row (item 2, a machine removal). Main: the removal lands,
+/// and no later revision brings the machine back.
+#[test]
+fn a_hosted_nodes_unproven_removal_of_another_machine_waits() {
+    let (fold, victim) = HostedNodeAnswer::new().remove_another_machine();
+    let head = fold
+        .machine(victim)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("the root's registration of the victim folds");
+    assert_ne!(
+        head.profile.role,
+        MachineRole::Removed,
+        "a not-mine node's removal with no owner key's proof waits for the owner: {:?}",
+        fold.issues
+    );
+    assert!(
+        head.is_live(),
+        "the victim's registration still stands: {:?}",
         fold.issues
     );
 }
