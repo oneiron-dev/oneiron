@@ -104,11 +104,11 @@ use oneiron::test_doors::derive::{
 };
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ClaimApprovalStatus, ClaimBody,
-    ClaimLifecycleStatus, ClaimSource, ClaimSubject, ContentPart, EdgeActorClass, EntityId, Error,
-    FatalLlmError, FinishReason, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
-    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse,
-    LlmStreamResult, LlmUsage, ModelId, TimeRange, UnsupportedCapability, Vault, VaultConfig,
-    WakeAttemptContext, WakePassDeadline, WriteActor,
+    ClaimLifecycleStatus, ClaimSource, ClaimSubject, ContentPart, EdgeActorClass, EdgeKind,
+    EntityId, Error, FatalLlmError, FinishReason, LlmBackend, LlmCapability, LlmError,
+    LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
+    LlmResponse, LlmStreamResult, LlmUsage, ModelId, TimeRange, UnsupportedCapability, Vault,
+    VaultConfig, WakeAttemptContext, WakePassDeadline, WriteActor,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -1186,6 +1186,90 @@ fn the_dreamer_lifts_its_own_unapproved_restriction_and_the_owners_revert_stands
         "the copy keeps the window's approval"
     );
     assert_eq!(copy.value, lifted.value, "the copy holds the same window");
+}
+
+/// Red: with the key on, the Dreamer still never supersedes a restricting window another standing
+/// claim supersedes too. The owner's revert would leave that window closed, so the conflict waits
+/// for the owner.
+#[test]
+fn the_dreamer_never_lifts_a_restriction_another_standing_claim_supersedes_when_the_key_is_on() {
+    let f = Fixture::new();
+    let (marker, winner, loser) = f.conflict_over_a_delivery_window();
+    let other = f.generated(NOTE, f.subject, Value::from("a standing note"));
+    f.vault
+        .put_edge(&other, EdgeKind::Supersedes, &loser, 1.0)
+        .expect("another standing claim supersedes the window too");
+    assert_eq!(
+        f.stored(loser).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the edge alone closes nothing"
+    );
+    owner_sets_key(&f, Some(json!(true)));
+
+    let settled = f.dreamer_keeps(marker, winner);
+
+    assert_eq!(
+        f.stored(loser).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the window still holds (settle: {settled:?})"
+    );
+    let refused = settled
+        .expect_err("the Dreamer never lifts a window the owner's revert would leave closed");
+    assert!(
+        format!("{refused:?}").contains(NOT_STOOD_AGAIN),
+        "the refusal names why the conflict waits for the owner: {refused:?}"
+    );
+    assert!(f.still_open(marker), "the conflict waits for the owner");
+}
+
+/// Red: the owner's revert stands the Dreamer's lifted window again in the window's own facet,
+/// not in the default facet the owner moved to after the settle.
+#[test]
+fn the_owners_revert_stands_the_dreamers_window_again_in_its_own_facet() {
+    let f = Fixture::new();
+    let loser = f.dreamer_window("asleep", ClaimApprovalStatus::Auto);
+    let winner = f.generated(DELIVERY_WINDOW_CONTEXT, f.subject, window("driving"));
+    let marker = open_conflict(&f.vault, winner, loser).expect("an open conflict");
+    owner_sets_key(&f, Some(json!(true)));
+    let settled = f
+        .dreamer_keeps(marker, winner)
+        .expect("the Dreamer settles under the owner's key");
+    let ConflictSettleOutcome::Settled(receipt) = settled else {
+        panic!("the conflict settles, not stages: {settled:?}");
+    };
+    let lifted = f.stored(loser);
+    let moved = f
+        .vault
+        .create_facet(
+            &f.owner_proof,
+            f.owner,
+            "conflict-settle-second",
+            f.vault.now_recorded_at(),
+        )
+        .expect("a second facet");
+    assert_ne!(
+        moved, lifted.scope_facet,
+        "the second facet is another facet"
+    );
+    f.vault
+        .set_default_facet(moved, WriteActor::new(f.owner, EdgeActorClass::Human))
+        .expect("the owner moves the vault default to the second facet");
+
+    let reverted = f
+        .vault
+        .memory(f.owner, EdgeActorClass::Human)
+        .revert_conflict_settlement(&f.owner_proof, receipt.resolved, f.vault.now_recorded_ms())
+        .expect("the owner reverts the Dreamer's settle");
+
+    let [(member, copy)] = reverted.reverted.copied.as_slice() else {
+        panic!("the revert stands the Dreamer's window again as its copy: {reverted:?}");
+    };
+    assert_eq!(*member, loser, "the copy is of the lifted window");
+    assert_eq!(
+        f.stored(*copy).scope_facet,
+        lifted.scope_facet,
+        "the copy stands in the window's own facet, not the default moved since"
+    );
 }
 
 /// Red, then the owner's answer (the owner, 15 Nov 18:3x): the Dreamer is

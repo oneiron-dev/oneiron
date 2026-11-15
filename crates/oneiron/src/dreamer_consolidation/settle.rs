@@ -602,7 +602,7 @@ pub(crate) fn apply_settlement_in_txn(
                     ));
                 }
                 // Every lift the key allows stays revertible (RULING DREAMER-LIFT-REVERT = A).
-                if !revert_stands_again_as_it_was_in_txn(vault, txn, &body)? {
+                if !revert_stands_again_as_it_was_in_txn(vault, txn, winner, loser, &body)? {
                     return Err(invalid_consolidation(
                         "the owner's revert would not stand this restriction again as it was",
                     ));
@@ -955,19 +955,26 @@ fn superseded_elsewhere_in_txn(
     Ok(standing)
 }
 
-/// Whether the owner's revert of a settlement that superseded `body` stands
-/// it again as it was ([`restore_member_in_txn`]): the Dreamer lifts a
-/// restriction under the owner's key only then (RULING DREAMER-LIFT-REVERT
-/// = A). Any claim but a MACHINE one stands again in place. A Dreamer-born
-/// MACHINE claim stands again as the Dreamer's copy, which keeps a Proposed
-/// or an Auto approval but lands every other one as Auto (a generated Auto
-/// delivery window holds nothing), so an owner-approved one waits for the
-/// owner. Another machine's claim never reopens: the revert leaves it closed.
+/// Whether the owner's revert of a settlement in which `kept` superseded
+/// `loser` (its claim `body`) stands it again as it was
+/// ([`restore_member_in_txn`]): the Dreamer lifts a restriction under the
+/// owner's key only then (RULING DREAMER-LIFT-REVERT = A). A claim another
+/// standing claim supersedes too stays closed. Any other claim but a MACHINE
+/// one stands again in place. A Dreamer-born MACHINE claim stands again as
+/// the Dreamer's copy, which keeps a Proposed or an Auto approval but lands
+/// every other one as Auto (a generated Auto delivery window holds nothing),
+/// so an owner-approved one waits for the owner. Another machine's claim
+/// never reopens: the revert leaves it closed.
 fn revert_stands_again_as_it_was_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    kept: EntityId,
+    loser: EntityId,
     body: &ClaimBody,
 ) -> Result<bool> {
+    if superseded_elsewhere_in_txn(vault, txn, kept, loser)? {
+        return Ok(false);
+    }
     if !crate::authority::machine_claim_needs_history(&vault.store, txn, body)? {
         return Ok(true);
     }
@@ -983,8 +990,9 @@ fn revert_stands_again_as_it_was_in_txn(
 
 /// Stands a Dreamer-born MACHINE member `loser` again as the Dreamer's fresh
 /// copy of it, when `kept` superseded it and it is still closed: the copy
-/// carries its predicate, value, confidence, window and axes, and is born of
-/// the member and the reverted write. `None` for any other member.
+/// carries its predicate, value, confidence, window, facet and axes (its own
+/// facet, not the default the vault holds now), and is born of the member
+/// and the reverted write. `None` for any other member.
 fn restore_dreamer_member_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -1019,7 +1027,8 @@ fn restore_dreamer_member_in_txn(
             body.confidence,
         )
         .with_confidence_details(body.confidence_details())
-        .with_validity(body.valid_from, None),
+        .with_validity(body.valid_from, None)
+        .with_scope_stamps(body.scope_facet, body.scope_project),
         &body,
     );
     let mut provenance = vec![
