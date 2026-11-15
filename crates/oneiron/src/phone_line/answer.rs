@@ -22,6 +22,11 @@ impl PhoneLineReadCeiling {
         &self.frozen_scope
     }
 
+    /// The line agent answering under this ceiling.
+    pub(crate) fn agent_ref(&self) -> EntityId {
+        self.agent_ref
+    }
+
     /// Current consent can narrow the frozen call, but never widen it.
     /// The caller's original credential is checked separately by the read door.
     pub(crate) fn current_scope_in(

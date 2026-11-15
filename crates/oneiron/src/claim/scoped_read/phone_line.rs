@@ -151,6 +151,43 @@ impl ScopedRead<'_> {
         if self.actor_key.phone_lines.is_empty() {
             return Ok(true);
         }
+        // Under the default reach, a marked phone-thread row reads only in
+        // its current caller's call (VOICE-PHONE-AGENT-REACH R1): each phone
+        // ceiling must name the row's thread as its current caller's thread.
+        // A withheld number names no stored thread, so every marked row is
+        // refused. Only marked rows are affected; every other row is judged
+        // as today.
+        let header = crate::batch::EntityMetadataHeader::parse(raw)
+            .ok_or(crate::error::Error::CorruptedIndex("entity header"))?;
+        if matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_CONVERSATION
+                | crate::registry::ENTITY_TYPE_TURN
+                | crate::registry::ENTITY_TYPE_MESSAGE
+        ) {
+            let threads = self.phone_threads_of_row_in(txn, id)?;
+            if !threads.is_empty() {
+                for ceiling in &self.actor_key.phone_lines {
+                    let caller = match ceiling.caller_in(self.vault, txn) {
+                        Ok(caller) => caller,
+                        Err(_) => return Ok(false),
+                    };
+                    let Some(number) = crate::voice_call::caller_number(caller.as_deref()) else {
+                        return Ok(false);
+                    };
+                    let Ok(current) = crate::voice_call::voice_phone_conversation_id(
+                        ceiling.agent_ref(),
+                        Some(&number),
+                        "",
+                    ) else {
+                        return Ok(false);
+                    };
+                    if threads.iter().any(|thread| *thread != current) {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
         let record = match self.session_view {
             Some(view) => crate::federation::record_scope::scope_for_blob(view, txn, *id, raw)?,
             None => {

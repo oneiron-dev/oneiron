@@ -435,7 +435,7 @@ impl ScopedRead<'_> {
     /// The targets of `id`'s outgoing `kind` edges whose rows are of
     /// `entity_type`, on this read's content; none when the edges do not
     /// read.
-    fn edge_targets_in(
+    pub(super) fn edge_targets_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,

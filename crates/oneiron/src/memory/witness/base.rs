@@ -79,7 +79,10 @@ impl Memory<'_> {
     pub fn witness(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
-            WitnessTarget::Base { route: None },
+            WitnessTarget::Base {
+                route: None,
+                mint_conversation_body: None,
+            },
             WitnessDoor::Guest,
             || {},
             |_| Ok(()),
@@ -157,6 +160,7 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Base {
                 route: session_route,
+                mint_conversation_body: None,
             },
             WitnessDoor::Guest,
             before_txn,
@@ -177,6 +181,7 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Base {
                 route: session_route,
+                mint_conversation_body: None,
             },
             WitnessDoor::HostExecutor,
             || {},
@@ -205,6 +210,34 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Base {
                 route: session_route,
+                mint_conversation_body: None,
+            },
+            WitnessDoor::Guest,
+            before_txn,
+            prepare,
+            |txn, _| effect(txn),
+        )
+    }
+
+    /// [`Self::witness_with_route_prepare_and_txn_effect`] with the body a
+    /// base landing mints its conversation with, when it mints one. Only the
+    /// phone keep path sets it (its line agent's mark); an existing
+    /// conversation's body is never rewritten by the landing.
+    pub(crate) fn witness_with_minted_conversation_body_and_txn_effect(
+        &self,
+        turn: &WitnessTurn,
+        minted_conversation_body: Vec<u8>,
+        callback: crate::store::Callback,
+        before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<Option<RoomRegenerationPermit>>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.run_witness_as(
+            callback,
+            turn,
+            WitnessTarget::Base {
+                route: None,
+                mint_conversation_body: Some(minted_conversation_body),
             },
             WitnessDoor::Guest,
             before_txn,
@@ -263,7 +296,10 @@ impl Memory<'_> {
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
-            WitnessTarget::Base { route: None },
+            WitnessTarget::Base {
+                route: None,
+                mint_conversation_body: None,
+            },
             WitnessDoor::Guest,
             || {},
             prepare,

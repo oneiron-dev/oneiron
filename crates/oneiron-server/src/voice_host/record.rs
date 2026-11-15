@@ -28,8 +28,10 @@
 //!   (Counterparty, labelled with the call's speaker key), the answer the
 //!   agent's own, and the call opens and closes with a divider row. With the
 //!   owner's `voice.call_transcripts.keep` off, only the dividers are kept.
-//!   The line agent reads no stranger's words back, so a phone thread stays
-//!   raw: it does not compact (PHONE-CALL-READ-GRANT, recommendation B).
+//!   The line agent reads its caller's thread back under its per-caller
+//!   witness-read grant (owner ruling 16 Nov 00:44 replaces
+//!   PHONE-CALL-READ-GRANT = B for this); a phone thread still stays raw
+//!   until R3 wires its compaction.
 //! - With the owner's `voice.call_transcripts.announce` on (PR 3B), the agent
 //!   opens a phone call by saying it is transcribed ([`phone_call_opening`]).
 //!   With keep on, that line is the call's first answer, kept after the
@@ -46,6 +48,7 @@ use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::{WitnessAuthor, WitnessReceipt, WitnessTurn};
 use oneiron::session_lifecycle::SessionKey;
+use oneiron::voice_call::{caller_number, voice_phone_conversation_id};
 use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use oneiron_driver::SessionHint;
 use serde_json::json;
@@ -58,13 +61,6 @@ use crate::server::SyncServer;
 
 /// A standalone call's home conversation. Parts: the person, then the agent.
 const VOICE_HOME_DOMAIN: &[u8] = b"oneiron.conversation.voice_home.v1";
-/// A phone thread. Parts: the line agent, then the caller's number as kept.
-const VOICE_PHONE_DOMAIN: &[u8] = b"oneiron.conversation.voice_phone.v1";
-/// The thread of a call whose number is withheld. Parts: the line agent,
-/// then the call.
-const VOICE_PHONE_CALL_DOMAIN: &[u8] = b"oneiron.conversation.voice_phone_call.v1";
-/// The most characters a kept caller number holds, its `+` included.
-const CALLER_NUMBER_MAX: usize = 20;
 /// The speaker key a phone call's caller speaks under on its turns.
 const PHONE_CALLER_SPEAKER: &str = "caller";
 
@@ -79,46 +75,6 @@ pub fn voice_home_conversation_id(person: EntityId, agent: EntityId) -> oneiron:
         VOICE_HOME_DOMAIN,
         &[person.as_bytes(), agent.as_bytes()],
     )?)
-}
-
-/// The number a phone thread keeps for `caller`, the line provider's
-/// untrusted text: a leading `+` and its digits, at most
-/// [`CALLER_NUMBER_MAX`] characters, nothing else. `None` when it holds no
-/// digit, as a withheld number does.
-#[must_use]
-pub fn caller_number(caller: Option<&str>) -> Option<String> {
-    let text = caller?.trim();
-    let plus = text.starts_with('+');
-    let digits: String = text
-        .chars()
-        .filter(char::is_ascii_digit)
-        .take(CALLER_NUMBER_MAX - usize::from(plus))
-        .collect();
-    (!digits.is_empty()).then(|| if plus { format!("+{digits}") } else { digits })
-}
-
-/// The thread the line agent `agent`'s calls from `number` (as
-/// [`caller_number`] keeps it) land in: one per agent and number, the same
-/// id on every host of the vault. A call whose number is withheld (`None`)
-/// gets a thread of its own, derived from `call_ref`.
-///
-/// # Errors
-///
-/// The id does not derive.
-pub fn voice_phone_conversation_id(
-    agent: EntityId,
-    number: Option<&str>,
-    call_ref: &str,
-) -> oneiron::Result<EntityId> {
-    Ok(match number {
-        Some(number) => {
-            EntityId::derive(VOICE_PHONE_DOMAIN, &[agent.as_bytes(), number.as_bytes()])?
-        }
-        None => EntityId::derive(
-            VOICE_PHONE_CALL_DOMAIN,
-            &[agent.as_bytes(), call_ref.as_bytes()],
-        )?,
-    })
 }
 
 /// Where a call keeps its turns, and as whom.
@@ -487,8 +443,10 @@ impl KeptTurn {
     /// Keeps a phone call's turn: the caller's words as theirs, labelled
     /// with the call's speaker key, then the answer as the agent's own, each
     /// a TURN of the call's thread held in the thread's own SESSION. No
-    /// sitting opens or hears of it, and the thread does not compact: the
-    /// line agent reads no stranger's words back (PHONE-CALL-READ-GRANT, B).
+    /// sitting opens or hears of it, and the thread does not compact yet
+    /// (R3 wires that): the line agent already reads its caller's thread
+    /// back under its per-caller witness-read grant (owner ruling 16 Nov
+    /// 00:44 replaces PHONE-CALL-READ-GRANT = B for this).
     /// A witness that fails is logged and keeps what landed before it.
     fn keep_phone(self, call: &PhoneCall, answer: String) {
         // The owner may have turned keep off while the turn answered.

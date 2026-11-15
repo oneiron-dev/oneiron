@@ -58,8 +58,12 @@ pub(super) enum WitnessTarget<'a, 'v> {
     /// continuation carries the turn (K10): it is the sole evidence the room
     /// was ON RECORD when the turn was admitted, so the program revalidates it
     /// as the last statement of the write transaction.
+    /// `mint_conversation_body` is the body a base landing mints its
+    /// conversation with, when it mints one; `None` mints the empty map, as
+    /// before. Only the phone keep path sets it (its line agent's mark).
     Base {
         route: Option<&'a SessionWriteRoute>,
+        mint_conversation_body: Option<Vec<u8>>,
     },
     /// A session (ARCH-0052 §7, ONE-1728): the room's overlay while it is off
     /// record, the base continuation shell after a flip to on record. The
@@ -138,6 +142,7 @@ enum Landing<'a, 'v> {
         continuation: Option<EntityId>,
         imported: Option<&'a ImportedTurnStamp>,
         held: Option<HeldTags<'a>>,
+        mint_conversation_body: Option<Vec<u8>>,
     },
     Overlay {
         session: &'a OffRecordSession<'v>,

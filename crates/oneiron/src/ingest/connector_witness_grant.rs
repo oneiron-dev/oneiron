@@ -2,7 +2,9 @@
 //! that witnesses a connector conversation reads that conversation's
 //! witnessed MESSAGEs through its own read lane, by a durable, revocable
 //! AccessGrant the engine issues on the owner's standing policy (DEC-0006:
-//! consent is durable grants). The grant goes through the read lane, never
+//! consent is durable grants). A phone thread's line agent holds the same
+//! grant over its caller's thread, from its first kept turn (owner ruling
+//! 16 Nov 00:44). The grant goes through the read lane, never
 //! around it: every other check on a MESSAGE still binds.
 //!
 //! The grant sits at an id derived from the agent and the conversation, so
@@ -211,8 +213,8 @@ impl Vault {
     /// # Errors
     /// `owner` no longer proves the vault's owner; `EntityNotFound` when
     /// `agent` names no live agent, `conversation` names no live connector
-    /// conversation, or the row at the grant's id is no witness-read grant;
-    /// or the vault write fails.
+    /// conversation or phone thread, or the row at the grant's id is no
+    /// witness-read grant; or the vault write fails.
     pub(crate) fn grant_connector_witness_read_grant(
         &self,
         owner: &AuthenticatedOwner,
@@ -274,7 +276,7 @@ impl Vault {
     }
 
     /// Whether `agent` names a live agent and `conversation` a live
-    /// connector conversation, as `txn` reads them.
+    /// connector conversation or phone thread, as `txn` reads them.
     fn witness_read_parties_live_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -296,6 +298,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_CONVERSATION,
                 body,
             } if is_connector_conversation_body(&body)
+                || crate::voice_call::phone_thread_agent(&body).is_some()
         ))
     }
 
@@ -406,7 +409,7 @@ pub(crate) struct WitnessReadGrantChange {
     pub(crate) grant_ref: EntityId,
     /// The grant as it now stands.
     pub(crate) grant: AccessGrant,
-    /// The connector conversation whose MESSAGEs it lets its agent read.
+    /// The connector conversation or phone thread whose MESSAGEs it lets its agent read.
     pub(crate) conversation: EntityId,
     /// False when the grant already stood so and the call changed nothing.
     pub(crate) changed: bool,

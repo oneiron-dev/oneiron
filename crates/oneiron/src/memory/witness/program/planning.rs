@@ -51,6 +51,13 @@ impl Memory<'_> {
             Landing::Base { imported, .. } => imported.cloned(),
             Landing::Overlay { .. } => None,
         };
+        let minted_body = match landing {
+            Landing::Base {
+                mint_conversation_body,
+                ..
+            } => mint_conversation_body.clone(),
+            Landing::Overlay { .. } => None,
+        };
         // A source landing's proof stamps every row of the turn with the
         // source-audience obligation (fix list row 16256).
         let source_bound = imported
@@ -102,7 +109,14 @@ impl Memory<'_> {
                 ));
             }
             Some(stamp) => stamp.conversation_body.clone(),
-            None => encode_rmpv(&Value::Map(Vec::new()))?,
+            // A native base landing mints its conversation with the carrier
+            // its door set, when it mints one; an existing conversation's
+            // body is never rewritten by the landing (`stage_in_base` puts
+            // this only when `mint_conversation` is true).
+            None => match minted_body {
+                Some(body) => body,
+                None => encode_rmpv(&Value::Map(Vec::new()))?,
+            },
         };
         Ok(WitnessPlan {
             turn,

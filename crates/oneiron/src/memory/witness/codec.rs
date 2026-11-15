@@ -220,6 +220,40 @@ pub(crate) fn guard_import_stamp(
     Ok(())
 }
 
+/// A phone thread's line agent is a birth fact (VOICE-PHONE-AGENT-REACH R1):
+/// when a stored CONVERSATION row has a non-empty body, an incoming
+/// non-empty body must state the same `phone_line_agent` (absent stays
+/// absent, present stays the identical value). A bodiless erase shell passes,
+/// and a fresh row passes from any door (a forged mark on a new conversation
+/// only narrows who reads it). Every put door runs this beside
+/// [`guard_import_stamp`], replay included.
+pub(crate) fn guard_phone_thread_mark(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: crate::EntityId,
+    body: &[u8],
+) -> crate::Result<()> {
+    use crate::ports::EntityStoreRead;
+    if body.is_empty() {
+        return Ok(());
+    }
+    let Some(previous) = store.port_entity_record(txn, &id)? else {
+        return Ok(());
+    };
+    if previous.body.is_empty() {
+        return Ok(());
+    }
+    let before = crate::voice_call::phone_thread_agent(&previous.body);
+    let after = crate::voice_call::phone_thread_agent(body);
+    if before != after {
+        return Err(crate::error::RecordError::InvalidConversationBody(
+            "a phone thread's line agent is a birth fact",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// What a TURN or CONVERSATION body says about where its words came from.
 /// The Dreamer reads any `import_source` key as imported evidence, so a body
 /// whose stamp is present but not one non-empty string is its own state:

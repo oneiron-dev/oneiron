@@ -36,6 +36,7 @@ impl ScopedRead<'_> {
                 &raw,
                 &HeldAuthority::default(),
             )? && self.private_threads_readable_in(txn, id, &raw)?
+                && self.phone_threads_readable_in(txn, id, &raw, &HeldAuthority::default())?
                 && self.own_entry_readable_in(txn, id, &raw)?);
         }
         let Some(record) = self.entity_record_in(txn, id)? else {
@@ -139,6 +140,7 @@ impl ScopedRead<'_> {
         }
         if !self.scoped_comm_audience_readable_in(txn, id, raw, authority)?
             || !self.private_threads_readable_in(txn, id, raw)?
+            || !self.phone_threads_readable_in(txn, id, raw, authority)?
             || !self.own_entry_readable_in(txn, id, raw)?
         {
             return Ok(false);
