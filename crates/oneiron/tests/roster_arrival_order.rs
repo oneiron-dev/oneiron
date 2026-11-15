@@ -9,9 +9,13 @@
 //! counted on one install and not on the other, and a revocation beside a
 //! later enrolment left the revoked key live on the install that received
 //! the revocation last. Now a roster row is judged on its signer's causal
-//! order alone, so both installs hold the same roster. A row that its own
-//! ancestry already shows its signer past is still refused on every install
-//! (the control).
+//! order alone, so both installs hold the same roster. A roster row also
+//! vouches for its own signer's rows below it in its ancestry, so a
+//! revocation on a withdrawal that reached the install past the floor lands
+//! there too (Sol review F1). A row that its own ancestry already shows its
+//! signer past is still refused on every install (the control). A parent of
+//! another signer that this install's floor refuses still holds a roster row
+//! back (root FIX-LIST [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
 
 use std::collections::BTreeSet;
 
@@ -245,6 +249,93 @@ fn a_revocation_beside_a_later_enrolment_holds_in_either_arrival_order() {
         applied(&in_order.fold),
         applied(&reversed.fold),
         "both installs apply the same rows"
+    );
+}
+
+/// A revocation on a row of its own signer that the floor refuses (Sol
+/// review F1): the owner enrols agent U (sequence 1), on that row withdraws
+/// a slip (2), and on the withdrawal revokes U (3); as a sibling of the
+/// withdrawal it enrols agent W (4). Install J receives W's enrolment first,
+/// so the withdrawal and the revocation both reach it below the owner's
+/// floor. The revocation names the withdrawal, its own signer's row below
+/// it, so it vouches for it: U must stay revoked on both installs.
+#[test]
+fn a_revocation_on_a_withdrawal_past_the_floor_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[241; 32]);
+    let revoked_agent = SigningKey::from_bytes(&[242; 32]);
+    let later_agent = SigningKey::from_bytes(&[243; 32]);
+    let (genesis, vault_id) = genesis(&owner, 244);
+    let enrol_revoked = enrolment(vault_id, &genesis, &owner, 1, &revoked_agent);
+    let withdrawal = signed(
+        Some(vault_id),
+        2,
+        Some(&enrol_revoked),
+        AuthorityOp::SlipRevoke { slip_id: [245; 32] },
+        &owner,
+    );
+    let revocation = signed(
+        Some(vault_id),
+        3,
+        Some(&withdrawal),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_agent),
+        },
+        &owner,
+    );
+    let enrol_later = enrolment(vault_id, &enrol_revoked, &owner, 4, &later_agent);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &withdrawal,
+        &revocation,
+        &enrol_later,
+    ]);
+    let reversed = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &enrol_later,
+        &withdrawal,
+        &revocation,
+    ]);
+
+    for (name, install) in [
+        ("I (withdrawal and revocation first)", &in_order),
+        ("J (withdrawal and revocation last)", &reversed),
+    ] {
+        assert!(
+            !is_live(&install.fold, &key_of(&revoked_agent)),
+            "install {name} must hold the revoked agent revoked; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            is_live(&install.fold, &key_of(&later_agent)),
+            "install {name} holds the later agent; issues {:?}",
+            install.fold.issues
+        );
+    }
+    let all = [
+        &genesis,
+        &enrol_revoked,
+        &withdrawal,
+        &revocation,
+        &enrol_later,
+    ]
+    .into_iter()
+    .map(hash_of)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all five rows"
+    );
+    assert_eq!(
+        applied(&reversed.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
     );
 }
 
