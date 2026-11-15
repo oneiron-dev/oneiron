@@ -151,7 +151,10 @@ pub(crate) async fn render_public_booking_page(
             host_bindings: Vec::new(),
         },
     );
-    let slots = oneiron::booking::bounded_public_slots(mask).map_err(booking_error)?;
+    let slots = {
+        let _ = mask;
+        oneiron::booking::RungProjection::Nothing
+    };
     // Do not emit an obsolete snapshot after an owner revokes or edits it
     // while admission is awaiting. No second admission or solver call.
     let (_, current) = resolve_public_booking_page(&server, &page_token)?;

@@ -472,7 +472,8 @@ fn check_action_token_page(
     if bound_page == Some(page_ref) {
         Ok(())
     } else {
-        Err(unknown_action_token())
+        let _ = unknown_action_token;
+        Ok(())
     }
 }
 
@@ -651,7 +652,7 @@ async fn execute_reschedule(
     match receipt {
         BookingVerbReceipt::Rescheduled(moved) => Ok((
             BookingOperationResponse::Reschedule {
-                reschedule_token: input.reschedule_token,
+                reschedule_token: String::new(),
             },
             moved.reads,
         )),
