@@ -13,23 +13,22 @@
 //! not a grant lifetime (DEC-0006, reading not ruled), so no ask offers a
 //! duration.
 //!
-//! The owner alone sets it (`vault.consent.undo_send.set`), under the
-//! owner's proof, and a change records the owner's act in the same commit.
-//! The read (`vault.consent.undo_send`) answers the owner, with the first
-//! agent send through each channel: the send that carries the one-line hint
-//! that a delay can be set. The hold itself, the undo and the list of sends
-//! in a window live in `outbound::undo_send`.
+//! It is the catalogue key `outbound.undo_send` (`settings::setting_keys`):
+//! the owner alone sets it, through `vault.settings.set`, and every change is
+//! one `SETTING_CHANGE` row. The read (`vault.consent.undo_send`) answers the
+//! owner, with the first agent send through each channel: the send that
+//! carries the one-line hint that a delay can be set. The hold itself, the
+//! undo and the list of sends in a window live in `outbound::undo_send`.
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::ActSurface;
+use super::setting_keys::UNDO_SEND;
+use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
 use crate::outbound::{UndoSendFirstAgentSend, outbound_capability_manifest};
-use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
-use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Vault};
+use crate::setting::SettingValue;
 
 /// The connector whose sends never take a window: a legal send (prepare and
 /// send for signature) has no delay proof in the act table (ARCH-0082
@@ -39,15 +38,7 @@ pub const UNDO_SEND_EXCLUDED_CHANNEL: &str = "esign";
 /// The read verb's name, as a refusal names it.
 const READ_VERB: &str = "vault.consent.undo_send";
 
-/// The set verb's name, as a refusal names it.
-const SET_VERB: &str = "vault.consent.undo_send.set";
-
-/// The owner's setting. Key: ().
-const UNDO_SEND: SideTable<(), UndoSendSetting, Named> =
-    SideTable::new(&side_table::UNDO_SEND_SETTING);
-
-/// The owner's undo-send window: `vault.consent.undo_send.set`'s input and
-/// answer.
+/// The owner's undo-send window: the value of the key `outbound.undo_send`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UndoSendSetting {
@@ -144,12 +135,19 @@ impl UndoSendSetting {
     }
 }
 
+impl SettingValue for UndoSendSetting {
+    /// The setting as [`Self::normalized`] stores it.
+    fn check(self) -> Result<Self> {
+        self.normalized()
+    }
+}
+
 /// The setting in `txn`: the owner's row, or off while there is none.
 pub(crate) fn undo_send_setting_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<UndoSendSetting> {
-    Ok(UNDO_SEND.get(&vault.store, txn, &())?.unwrap_or_default())
+    Ok(UNDO_SEND.read_in_txn(vault, txn, &[], None)?.value)
 }
 
 impl Vault {
@@ -172,47 +170,6 @@ impl Vault {
             first_agent_sends: crate::outbound::undo_send_first_agent_sends_in_txn(self, &txn)?,
         })
     }
-
-    /// The owner sets the undo-send window; the next send reads it. A
-    /// send already in a window keeps the release instant it was given. The
-    /// owner is revalidated in the writer. A change records the owner's act,
-    /// with the setting it replaces, in the same commit when `surface` names
-    /// where the owner said so; a setting equal to the one in force writes
-    /// and records nothing. Answers the setting as it now reads.
-    ///
-    /// # Errors
-    ///
-    /// A setting [`UndoSendSetting::normalized`] refuses, a proof that no
-    /// longer holds, and storage errors.
-    pub fn set_undo_send(
-        &self,
-        owner: &AuthenticatedOwner,
-        surface: Option<ActSurface>,
-        setting: &UndoSendSetting,
-    ) -> Result<UndoSendSetting> {
-        let setting = setting.normalized()?;
-        self.with_write_txn_grouped(|txn| {
-            let actor: EntityId = owner.revalidate_in_txn(self, txn)?;
-            let prior = undo_send_setting_in_txn(self, txn)?;
-            if setting != prior {
-                UNDO_SEND.put(&self.store, txn, &(), &setting)?;
-                let signed = record_policy_setting_act_in_txn(
-                    self,
-                    txn,
-                    PolicySetting::UndoSend,
-                    actor,
-                    surface,
-                    &prior,
-                    &setting,
-                )?;
-                // The signed record goes last, best effort (FIX 4624).
-                if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
-                }
-            }
-            Ok(setting)
-        })
-    }
 }
 
 /// `vault.consent.undo_send` on the embedded owner's handle.
@@ -224,22 +181,4 @@ pub fn read_undo_send_embedded(memory: &Memory<'_>) -> MemoryResult<UndoSendSett
     Ok(memory
         .vault()
         .undo_send_settings_as_owner(&memory.embedded_owner(READ_VERB)?)?)
-}
-
-/// `vault.consent.undo_send.set` on the embedded owner's handle. The owner's
-/// act records this install as where the owner said so.
-///
-/// # Errors
-///
-/// A handle that is not the vault owner's, a setting the setter refuses, and
-/// storage errors.
-pub fn set_undo_send_embedded(
-    memory: &Memory<'_>,
-    input: UndoSendSetting,
-) -> MemoryResult<UndoSendSetting> {
-    Ok(memory.vault().set_undo_send(
-        &memory.embedded_owner(SET_VERB)?,
-        Some(ActSurface::ThisInstall),
-        &input,
-    )?)
 }

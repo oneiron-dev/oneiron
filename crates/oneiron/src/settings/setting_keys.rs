@@ -1,11 +1,13 @@
-//! The catalogue keys `settings` declares (DESIGN 15-setting-primitive, stage 1): the owner's
-//! plain choices that each had a table, a codec and a setter. The owner sets each through
-//! `vault.settings.set`; every change is one `SETTING_CHANGE` row.
+//! The catalogue keys `settings` declares (DESIGN 15-setting-primitive, stages 1 and 2): the
+//! owner's choices that each had a table, a codec and a setter, some of them recorded as an owner
+//! act. The owner sets each through `vault.settings.set`; every change is one `SETTING_CHANGE`
+//! row.
 
 use crate::setting::{Kind, ReadBy, SettingSync};
 
 use super::CustomizationSettings;
 use super::backup::BackupChoice;
+use super::undo_send::UndoSendSetting;
 
 fn no_backup_choice() -> BackupChoice {
     BackupChoice(None)
@@ -45,5 +47,22 @@ crate::setting::setting_keys! {
     /// switched off.
     pub(crate) PLUGIN_SUGGESTIONS: bool = "dreamer.plugin_suggestions" {
         kind: Kind::new(on).strictest(off),
+    };
+    /// The owner's switch over an Admin walking into a private room thread (owner ruling
+    /// 2026-10-20, FIX 6382): off, an Admin may not walk in, from now on. On by default: a vault
+    /// that never set it lets its Admins walk in. The Owner never depends on it.
+    pub(crate) ROOM_THREADS_ADMIN_WALK_IN: bool = "rooms.private_threads.admin_walk_in" {
+        kind: Kind::new(on),
+    };
+    /// The owner's switch over an Admin deleting a private room thread (owner ruling 2026-10-20,
+    /// FIX 6382): off, an Admin may not delete one. On by default. The Owner never depends on it.
+    pub(crate) ROOM_THREADS_ADMIN_DELETE: bool = "rooms.private_threads.admin_delete" {
+        kind: Kind::new(on),
+    };
+    /// The owner's undo-send window (DEC-0006 #undo-send; REV-8 = B): the seconds every send
+    /// waits on every outbound channel, and each channel's own length, before it goes. Off by
+    /// default: every send goes at once.
+    pub(crate) UNDO_SEND: UndoSendSetting = "outbound.undo_send" {
+        kind: Kind::new(UndoSendSetting::default),
     };
 }

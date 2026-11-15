@@ -3,17 +3,17 @@
 //! Admin may not walk into a private thread
 //! (`rooms.private_threads.admin_walk_in`), or delete one
 //! (`rooms.private_threads.admin_delete`). Both read ON until the Owner
-//! turns one off, and the Owner never depends on either.
+//! turns one off, and the Owner never depends on either. Each is a catalogue
+//! key, which this route sets as the owner through `Vault::set_setting`.
 
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::setting::{SetSetting, SettingCaller, SettingMode, SettingScope};
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::act_surface_admitted;
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -102,29 +102,38 @@ async fn read(
     Ok(Json(settings))
 }
 
-/// `POST /v1/owner/settings/room-threads`: sets either switch, or both, and
-/// answers the two as they now read; the next walk-in or delete reads them.
+/// `POST /v1/owner/settings/room-threads`: sets either switch, or both, as
+/// the owner, and answers the two as they now read; the next walk-in or
+/// delete reads them. Each switch is its own key and its own change.
 async fn put(
     auth: CoreAuth,
-    headers: HeaderMap,
-    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<RoomThreadSettingsChange>,
 ) -> OwnerReply<RoomThreadSettings> {
     let owner = owner(&auth, &server)?;
-    // A change records where the owner spoke from (FIX 6465): audit only.
-    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let change = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<RoomThreadSettings> {
-        Ok(server
-            .vault()
-            .set_room_thread_admin_settings(
-                &owner,
-                Some(surface),
-                change.admin_walk_in,
-                change.admin_delete,
-            )?
-            .into())
+        let vault = server.vault();
+        for (key, on) in [
+            ("rooms.private_threads.admin_walk_in", change.admin_walk_in),
+            ("rooms.private_threads.admin_delete", change.admin_delete),
+        ] {
+            let Some(on) = on else { continue };
+            vault.set_setting(
+                SettingCaller::Owner(&owner),
+                SetSetting {
+                    key: key.to_owned(),
+                    item: None,
+                    scope: SettingScope::Vault,
+                    mode: SettingMode::Value,
+                    value: Some(serde_json::Value::Bool(on)),
+                    expected_revision: None,
+                    why: None,
+                    check_in_ref: None,
+                },
+            )?;
+        }
+        Ok(vault.room_thread_admin_settings()?.into())
     })
     .await?;
     Ok(Json(settings))
