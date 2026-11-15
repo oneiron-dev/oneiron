@@ -440,6 +440,23 @@ pub(crate) struct ReplayedClaimVersion {
     content_hash: [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 }
 
+impl ReplayedClaimVersion {
+    /// The ids besides the claim whose legal hold keeps this version: its artifact and its ASSET,
+    /// as [`release_replayed_claim_version_in_txn`] reads them. The replay refuses the claim's
+    /// purge while either is held (Engine ruling BLOB-VERSION-HELD-PURGE, 15 Nov 19:25), so a held
+    /// version never outlives the claim it names.
+    ///
+    /// # Errors
+    ///
+    /// The ASSET id of the version's content hash does not derive.
+    pub(crate) fn legal_hold_ids(&self) -> Result<[EntityId; 2]> {
+        Ok([
+            self.artifact,
+            blob_artifact_asset_entity_id(&self.content_hash)?,
+        ])
+    }
+}
+
 /// The chain version a replayed tombstone of `claim` takes with it: `Some` when `claim` is a
 /// `blob.version` claim of a live artifact here and this vault's chain of that artifact keeps a
 /// version under it. `None` for any other record. Read before the replay's purge takes the
