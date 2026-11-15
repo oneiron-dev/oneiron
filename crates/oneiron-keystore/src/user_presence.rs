@@ -12,7 +12,9 @@
 //!   [`PresenceError::NoPrompt`], and the caller hands the confirm to another
 //!   of the owner's devices.
 //! - [`PresenceWindow`]: one confirm lasts [`PRESENCE_WINDOW_SECS`] and ends
-//!   at once on a screen lock ([`PresenceWindow::end`]).
+//!   at once on a screen lock ([`PresenceWindow::end`]). A lock also refuses
+//!   the answer of a prompt that was up when it came
+//!   ([`PresenceError::ScreenLocked`]): no confirm outlasts a lock.
 //! - [`PresenceGate`] joins the two for one process: inside an open window it
 //!   confirms with no prompt, else it prompts, and a confirm opens the
 //!   window.
@@ -48,6 +50,11 @@ pub enum PresenceError {
     /// The prompt was shown and nobody answered it in time.
     #[error("nobody answered the confirm prompt")]
     NoAnswer,
+    /// The screen locked, or the user signed out, after the prompt showed
+    /// and before its answer was taken. The answer does not count and opens
+    /// no window: the act asks again.
+    #[error("the screen locked while the confirm prompt was up")]
+    ScreenLocked,
     /// Any other platform failure, by name and code only.
     #[error("presence check failure: {0} ({1})")]
     Platform(&'static str, i64),
@@ -160,7 +167,25 @@ fn millis(duration: Duration) -> u64 {
 /// back. A wall clock set behind the confirm ends it too. In memory only.
 pub struct PresenceWindow {
     clock: Arc<dyn PresenceClock>,
-    confirmed: Mutex<Option<PresenceInstant>>,
+    state: Mutex<WindowState>,
+}
+
+/// What a [`PresenceWindow`] keeps, under one lock.
+#[derive(Default)]
+struct WindowState {
+    /// When the user last confirmed, while that confirm still holds.
+    confirmed: Option<PresenceInstant>,
+    /// How many times [`PresenceWindow::end`] ran. It wraps: only a change
+    /// is read.
+    ends: u64,
+}
+
+/// A confirm that has begun: the reading [`PresenceWindow::begin_confirm`]
+/// takes before the prompt shows. [`PresenceWindow::open`] opens the window
+/// for it only when no end came since.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingPresenceConfirm {
+    ends: u64,
 }
 
 impl PresenceWindow {
@@ -169,7 +194,7 @@ impl PresenceWindow {
     pub fn new(clock: Arc<dyn PresenceClock>) -> Self {
         Self {
             clock,
-            confirmed: Mutex::new(None),
+            state: Mutex::new(WindowState::default()),
         }
     }
 
@@ -184,28 +209,49 @@ impl PresenceWindow {
     #[must_use]
     pub fn is_open(&self) -> bool {
         let now = self.clock.now();
-        let mut confirmed = self.confirmed();
-        let open = confirmed.is_some_and(|at| within_window(at, now));
+        let mut state = self.state();
+        let open = state.confirmed.is_some_and(|at| within_window(at, now));
         if !open {
-            *confirmed = None;
+            state.confirmed = None;
         }
         open
     }
 
-    /// Opens the window: the user confirmed now.
-    pub fn open(&self) {
-        *self.confirmed() = Some(self.clock.now());
+    /// Begins a confirm. Call it before the prompt shows, and hand the
+    /// reading to [`Self::open`] with the prompt's answer.
+    #[must_use]
+    pub fn begin_confirm(&self) -> PendingPresenceConfirm {
+        PendingPresenceConfirm {
+            ends: self.state().ends,
+        }
+    }
+
+    /// Opens the window: the user confirmed the prompt `pending` began.
+    /// `false`, with the window left closed, when [`Self::end`] ran since
+    /// `pending` was read: an answer from before a screen lock opens
+    /// nothing. The check and the opening are one step under the window's
+    /// lock, so an end lands wholly before it or wholly after it.
+    #[must_use]
+    pub fn open(&self, pending: PendingPresenceConfirm) -> bool {
+        let now = self.clock.now();
+        let mut state = self.state();
+        if state.ends != pending.ends {
+            return false;
+        }
+        state.confirmed = Some(now);
+        true
     }
 
     /// Ends the window at once: the screen locked, or the user signed out.
+    /// A confirm that had begun and is not open yet never opens.
     pub fn end(&self) {
-        *self.confirmed() = None;
+        let mut state = self.state();
+        state.confirmed = None;
+        state.ends = state.ends.wrapping_add(1);
     }
 
-    fn confirmed(&self) -> MutexGuard<'_, Option<PresenceInstant>> {
-        self.confirmed
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn state(&self) -> MutexGuard<'_, WindowState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -275,8 +321,12 @@ impl PresenceGate {
     /// A confirm opens the window; a refusal opens nothing. Never call it
     /// while holding a lock other work waits on.
     ///
+    /// The answer is true when it is read. A screen lock after that is not
+    /// seen here, so the caller signs at once.
+    ///
     /// # Errors
-    /// The prompt's own refusal.
+    /// The prompt's own refusal, or [`PresenceError::ScreenLocked`] when
+    /// [`Self::end_window`] ran while the prompt was up.
     pub fn confirm(&self, reason: &str) -> Result<PresenceConfirmation, PresenceError> {
         if self.window.is_open() {
             return Ok(PresenceConfirmation::WithinWindow);
@@ -289,12 +339,17 @@ impl PresenceGate {
         if self.window.is_open() {
             return Ok(PresenceConfirmation::WithinWindow);
         }
+        let pending = self.window.begin_confirm();
         self.presence.confirm(reason)?;
-        self.window.open();
+        // A lock that came while the prompt was up outlasts its answer.
+        if !self.window.open(pending) {
+            return Err(PresenceError::ScreenLocked);
+        }
         Ok(PresenceConfirmation::Prompted)
     }
 
     /// Ends the window at once: the screen locked, or the user signed out.
+    /// A prompt that is up is refused when its answer comes.
     pub fn end_window(&self) {
         self.window.end();
     }

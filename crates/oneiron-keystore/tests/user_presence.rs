@@ -1,7 +1,8 @@
 //! Row OWNER-CONFIRM-SHEET, the keystore's presence layer: one confirm opens
 //! a 15-minute window that either clock or a screen lock ends, a refusal
-//! opens nothing, a device with no prompt says so, and acts that arrive
-//! together share one prompt.
+//! opens nothing, a device with no prompt says so, acts that arrive
+//! together share one prompt, and a screen lock refuses the answer of a
+//! prompt that was up when it came.
 
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
@@ -229,4 +230,57 @@ fn two_acts_at_once_show_one_prompt() {
         ]
     );
     assert!(prompts.try_recv().is_err(), "one prompt served both acts");
+}
+
+#[test]
+fn a_screen_lock_while_a_prompt_is_up_refuses_its_answer_and_opens_no_window() {
+    let (shown, prompts) = mpsc::channel();
+    let (answer, answers) = mpsc::channel();
+    let gate = Arc::new(PresenceGate::new(
+        Arc::new(HeldPrompt {
+            shown: Mutex::new(shown),
+            answer: Mutex::new(answers),
+        }),
+        PresenceWindow::new(clock()),
+    ));
+    let spawn_act = || {
+        let gate = gate.clone();
+        thread::spawn(move || gate.confirm(REASON))
+    };
+
+    let first = spawn_act();
+    prompts.recv().expect("the first act's prompt shows");
+    // A second act arrives while that prompt is up and waits behind it.
+    let second = spawn_act();
+
+    // The screen locks with the prompt still up, and the answer lands after.
+    gate.end_window();
+    answer.send(()).expect("the first prompt takes its answer");
+    assert_eq!(
+        first.join().expect("the first act ends"),
+        Err(PresenceError::ScreenLocked),
+        "an answer from before the lock confirmed the act"
+    );
+    assert!(
+        !gate.window_is_open(),
+        "an answer from before the lock opened the window"
+    );
+
+    // The act that waited does not ride on the refused answer: it asks for
+    // itself, after the lock, and its confirm opens the window.
+    prompts
+        .recv()
+        .expect("the second act shows a prompt of its own");
+    answer.send(()).expect("the second prompt takes its answer");
+    assert_eq!(
+        second.join().expect("the second act ends"),
+        Ok(PresenceConfirmation::Prompted)
+    );
+    assert!(gate.window_is_open());
+    assert_eq!(
+        gate.confirm(REASON),
+        Ok(PresenceConfirmation::WithinWindow),
+        "a confirm made after the lock serves the next act"
+    );
+    assert!(prompts.try_recv().is_err(), "two prompts in all");
 }

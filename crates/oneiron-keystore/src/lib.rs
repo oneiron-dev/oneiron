@@ -65,9 +65,9 @@ pub use memory::MemoryKeystore;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 pub use user_presence::{ManualPresenceClock, ScriptedPresence};
 pub use user_presence::{
-    NoPromptPresence, PRESENCE_WINDOW_SECS, PresenceCapability, PresenceClock,
-    PresenceConfirmation, PresenceError, PresenceGate, PresenceInstant, PresenceWindow,
-    SystemPresenceClock, UserPresence, platform_user_presence,
+    NoPromptPresence, PRESENCE_WINDOW_SECS, PendingPresenceConfirm, PresenceCapability,
+    PresenceClock, PresenceConfirmation, PresenceError, PresenceGate, PresenceInstant,
+    PresenceWindow, SystemPresenceClock, UserPresence, platform_user_presence,
 };
 #[cfg(windows)]
 pub use windows::WindowsDpapiKeystore;
