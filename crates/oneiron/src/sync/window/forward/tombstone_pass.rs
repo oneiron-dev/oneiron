@@ -132,6 +132,9 @@ enum Gate {
     Protected(EntityId),
     /// A world tombstone whose residence is unknown here: not replayed.
     Unproven,
+    /// A tombstone naming a world-access grant or default stored here: local
+    /// authority, never replayed ([`TombstoneStep::Skip`]).
+    LocalAuthority,
     Replay {
         id: EntityId,
         hard: bool,
@@ -248,7 +251,7 @@ impl Pass<'_> {
     ) -> Result<()> {
         let vault = self.ctx.vault;
         let (id, hard) = match self.gate(Some(&**parent), key, value)? {
-            Gate::Unproven => return Ok(()),
+            Gate::Unproven | Gate::LocalAuthority => return Ok(()),
             Gate::Protected(id) => {
                 staged.push(Staged::Terminal(Some(id)));
                 return Ok(());
@@ -303,7 +306,7 @@ impl Pass<'_> {
     fn replay_one(&mut self, key: &str, value: &[u8]) {
         match self.gate(None, key, value) {
             Err(error) => self.defer(error),
-            Ok(Gate::Unproven) => {}
+            Ok(Gate::Unproven | Gate::LocalAuthority) => {}
             Ok(Gate::Protected(id)) => self.ledger.terminal_quarantines.push(id),
             Ok(Gate::Refuse { id, err }) => self.quarantine(key, value, id, &err),
             Ok(Gate::Replay { id, hard }) => {
@@ -325,6 +328,7 @@ impl Pass<'_> {
         };
         let (id, hard) = match step {
             TombstoneStep::Refuse { id, err } => return Ok(Gate::Refuse { id, err }),
+            TombstoneStep::Skip => return Ok(Gate::LocalAuthority),
             TombstoneStep::Replay { id, hard } => (id, hard),
         };
         if self.ledger.protected_admissions.contains(&id) {
