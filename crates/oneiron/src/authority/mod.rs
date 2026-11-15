@@ -527,6 +527,7 @@ pub(crate) use readonly_fold::{
     authority_fold_readonly_for_store_in_txn,
 };
 use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
+pub(crate) use recovery::{arriving_re_root_signer, refuse_re_root_of_a_serving_host_beside};
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
