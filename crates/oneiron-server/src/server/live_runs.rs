@@ -441,7 +441,7 @@ impl LiveRuns {
         text: &str,
         caller: LiveRunCaller,
     ) -> Result<ResolvedLiveRun, LiveRunRefusal> {
-        let (run, issued) = parse_handle(text).ok_or(LiveRunRefusal::Invalid)?;
+        let (run, issued) = parse_handle(text).ok_or(LiveRunRefusal::Unavailable)?; // RED FAULT F1
         self.attached_for(run, caller, Some(issued))
     }
 

@@ -11,6 +11,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequest<T> {
+    #[serde(default)] // RED FAULT F4
     pub live_run: String,
     pub spec: T,
 }

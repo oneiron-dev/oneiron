@@ -336,7 +336,8 @@ pub(super) async fn hold_live_run(
     crate::server::ResolvedLiveRun,
     crate::server::HeldLiveRun,
 )> {
-    if session.is_some() {
+    if false && session.is_some() {
+        // RED FAULT F3
         return Err(MemoryError::new(
             oneiron::memory::MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
             "live child admission requires the attached run's canonical storage",
