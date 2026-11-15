@@ -1458,7 +1458,7 @@ mod tests {
 
     #[test]
     fn sets_share_rows_and_bindings_move() {
-        let host = r#""context": "board", "scope": "Write", "host": {"input": "HostIn", "description": "D."}"#;
+        let host = r#""context": "board", "scope": "Write", "host": {"input": "HostIn", "description": "D.", "host_door_precheck": false}"#;
         let generic = r#""handle_args": "old", "binding": {"generic": true, "args": [{"name": "text", "type": "String"}]}"#;
         let root = tree(
             "sets",
