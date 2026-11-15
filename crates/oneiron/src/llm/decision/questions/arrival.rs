@@ -208,7 +208,9 @@ pub(super) enum SavedLaneJudge<'a> {
     /// for that judgment is marked ([`QUESTION_DEFERRED_OUTCOME`]), and the
     /// question pump's next pass judges it under the lane
     /// ([`project_deferred_outcomes`]), whether its window is open, due or
-    /// closed. Live calibration judges every label again at each read.
+    /// closed. Live calibration judges every label again at each read; the
+    /// raw label and window reads do not yet (FIX
+    /// STORED-OUTCOME-READS-SKIP-SAVED-LANE).
     Deferred,
 }
 
@@ -684,11 +686,12 @@ fn judge_fact(
 /// OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE). Its claims are read at
 /// every status: the derivation keeps its own status checks. Without a vault
 /// handle such a lane reads nothing ([`SavedLaneJudge::Deferred`]), and so
-/// does one whose principal's row is gone.
+/// does one whose principal's row is gone. A census that fails to read
+/// proves no owner ([`principal_is_live_owner_in`]).
 ///
 /// # Errors
-/// A store, fold, clock or decode failure reading the owners census,
-/// rebuilding the lane or reading a row.
+/// A store, fold, clock or decode failure rebuilding the lane or reading a
+/// row.
 pub(super) fn saved_lane_reads_in_txn(
     store: &Store,
     lane: SavedLaneJudge<'_>,
@@ -708,11 +711,7 @@ fn saved_lane_verdict_in_txn(
     record: &QuestionRecord,
     rows: &[EntityId],
 ) -> Result<SavedLaneVerdict> {
-    if record.read_lane.is_principal()
-        && store_home(store)
-            .owners_in(txn)?
-            .contains(&record.principal)
-    {
+    if record.read_lane.is_principal() && principal_is_live_owner_in(store, txn, record.principal) {
         return Ok(SavedLaneVerdict::Reads);
     }
     let SavedLaneJudge::Vault(vault) = lane else {
@@ -736,6 +735,18 @@ fn saved_lane_verdict_in_txn(
         }
     }
     Ok(SavedLaneVerdict::Reads)
+}
+
+/// Whether `principal` is a live owner of the vault, by the owners census
+/// `store` reads. A census that fails to read (a shared vault left with no
+/// live Owner, an undecodable grant) proves no owner: the lane is judged as
+/// any other principal's, deferred at a fact's arrival and rebuilt under a
+/// vault handle. So a census fault here delays an owner's label rather than
+/// failing the write a fact arrives on, and never skips the saved lane.
+fn principal_is_live_owner_in(store: &Store, txn: &heed::RoTxn<'_>, principal: EntityId) -> bool {
+    store_home(store)
+        .owners_in(txn)
+        .is_ok_and(|owners| owners.contains(&principal))
 }
 
 /// Whether `answer`'s claim still stands as the prediction it recorded: live,
