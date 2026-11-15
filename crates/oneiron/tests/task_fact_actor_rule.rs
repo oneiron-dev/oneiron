@@ -14,7 +14,9 @@
 //! skipped the read for the kinds that count from any actor): the failed read refuses the
 //! cancel. Green on the head. (Before FIX TASK-ID-COMMITS-TO-MAKER that test failed the read
 //! with a second Owner fact naming another owner, a fork; now such a fact is skipped, so it
-//! fails the read with an Owner fact this install wrote with no maker commitment.)
+//! fails the read with the owner's two human assignments naming different agents, a fork
+//! the fold still refuses. An Owner fact with no maker commitment cannot stand in: the
+//! owner index decodes every TASK row it stores, and refuses that body before it lands.)
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test task_fact_actor_rule`.
@@ -331,19 +333,21 @@ fn the_owner_taking_its_own_task_counts() {
 fn a_cancel_lands_on_a_task_whose_facts_fail_the_read() {
     let host = host();
     let task = owner_task(&host.vault, host.owner, "the owner's task");
-    // An Owner fact with no maker commitment, written past the door: this install reads
-    // the facts its own door wrote strictly, so the task's read fails.
-    write_unjudged_fact(
-        &host.vault,
-        task,
-        TaskAuthorityFactKind::Owner,
-        EntityId::now(),
-        None,
-    )
-    .expect("the host's carrier signs an Owner fact with no maker");
+    // The owner's two human assignments naming different agents, written past the door: a
+    // fork the fold refuses, so the task's read fails.
+    for agent in [EntityId::now(), EntityId::now()] {
+        write_unjudged_fact(
+            &host.vault,
+            task,
+            TaskAuthorityFactKind::HumanAssigned,
+            host.owner,
+            Some(agent),
+        )
+        .expect("the host's carrier signs the owner's human assignment");
+    }
     assert!(
         host.vault.task_authority_state(task).is_err(),
-        "a malformed fact this install wrote fails the task's read"
+        "a forked human assignment fails the task's read"
     );
     // The vault owner's force cancel writes this fact once it stops a branch, whatever
     // the task's facts read.

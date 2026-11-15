@@ -76,6 +76,21 @@ fn fact_entries(
     ]
 }
 
+/// An Owner fact's entries naming `owner`, with a maker commitment that derives some other
+/// task's id: the owner index decodes every TASK row it stores, so an Owner body lands only
+/// with its maker keys, and only the fold judges the commitment.
+fn owner_entries(task: EntityId, owner: EntityId, at: u64) -> Vec<(Value, Value)> {
+    let mut entries = fact_entries(task, TaskAuthorityFactKind::Owner, owner, at);
+    entries.extend([
+        (
+            Value::from("maker_ref"),
+            Value::from(EntityId::now().to_hex()),
+        ),
+        (Value::from("nonce"), Value::from(EntityId::now().to_hex())),
+    ]);
+    entries
+}
+
 /// One fact signed by `key` as machine `machine`'s carrier signature over the fact row
 /// `row` of the vault `vault_id`: a valid signature, whoever holds the key.
 fn signed_fact_body(
@@ -338,9 +353,8 @@ fn a_fact_the_hosts_machine_signed_counts_on_the_device() {
         &device.vault,
         forged,
         task,
-        &encode(fact_entries(
+        &encode(owner_entries(
             task,
-            TaskAuthorityFactKind::Owner,
             EntityId::now(),
             host.vault.now_recorded_at(),
         )),
@@ -368,12 +382,7 @@ fn a_row_replaced_under_an_indexed_id_does_not_count() {
     let _landed = replay_task_row(
         &host.vault,
         *owner_fact,
-        &encode(fact_entries(
-            task,
-            TaskAuthorityFactKind::Owner,
-            forger,
-            host.vault.now_recorded_at(),
-        )),
+        &encode(owner_entries(task, forger, host.vault.now_recorded_at())),
     );
     let state = host
         .vault
