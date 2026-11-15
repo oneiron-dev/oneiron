@@ -37,13 +37,14 @@ use std::collections::BTreeSet;
 use super::doors::world_recovery_state_in;
 use super::kit_piece::keep_this_machine_piece;
 use super::page_seal::WrapTransition;
+use super::root_doors::ACTIVATION_OWNER_ONLY;
 use super::state::world_pad_availability_in;
 use super::{
     ActivatedRoot, KitConfirmation, OwnerWorkReceipt, OwnerWorkStatus, PreparedRoot, RecoveryRoot,
     RecoveryRootId, RecoveryRootSeed, RootRestore, VaultKeyStatus, VaultKeyWrapInfo,
     WorldPadAvailability, WorldRecoveryState, refused,
 };
-use crate::authority::AuthorityEntryHash;
+use crate::authority::{ActAuthority, ActSurface, AuthorityEntryHash, authority_refused};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -415,13 +416,31 @@ impl Vault {
         passphrase: Option<&KitPassphrase>,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ConfirmedWorldKit> {
+        let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
+        self.confirm_world_kit_as(&authority, pieces, passphrase, carry)
+    }
+
+    /// [`Self::confirm_world_kit`] as `authority`, which carries the true act
+    /// surface for R's enrolment row: `ThisInstall` on the CLI chain,
+    /// `act_surface_admitted` on the two HTTP chains.
+    pub fn confirm_world_kit_as(
+        &self,
+        authority: &ActAuthority,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+        carry: &BTreeSet<EntityId>,
+    ) -> Result<ConfirmedWorldKit> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
+        };
         let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
         // The `world-kit` wrap is a wrap change: a sealed vault's page-seal
         // mirror is staged in the activation's transaction and rewritten
         // after it commits (OF-570).
         let transition = self.begin_wrap_transition()?;
         let (activated, (replaced, escrow)) =
-            self.activate_owner_root_with(owner, prepared, carry, |txn| {
+            self.activate_owner_root_with(authority, prepared, carry, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
         self.settle_pending_kit_pieces(Some(row.kit));

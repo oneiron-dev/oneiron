@@ -21,13 +21,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::repin::{RepinDoor, RepinReport, Withheld};
 use super::{
-    MachineSecret, NarrowedWorld, PreparedRoot, RecoveryRoot, RecoveryRootId, RecoveryRootSeed,
-    SeedOrigin, WorldKey, WorldKeyId, refused,
+    MachineSecret, NarrowedWorld, PreparedRoot, RecoveryAuthoritySeed, RecoveryAuthoritySigner,
+    RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin, WorldKey, WorldKeyId, refused,
 };
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, FoldedMachine, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MachineEncryptionKey, MachineEnrolmentRequest, OwnerRootRecord, PinnedRoot, RequestCode,
-    anchor_mark_stands, invalid_authority, owner_root_records_in_txn, read_pin_row_in_txn,
+    ActAuthority, ActSurface, ActivationPredecessor, AuthorityEntryHash, AuthorityFold,
+    FoldedMachine, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
+    MachineEnrolmentRequest, OwnerRootRecord, PinnedRoot, RequestCode, anchor_mark_stands,
+    authority_refused, invalid_authority, owner_root_records_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
@@ -74,11 +75,28 @@ impl KitConfirmation {
     }
 }
 
+/// A kit's activation is the owner's to confirm: no Grant action names it,
+/// so an agent's act never activates one. Authority; nothing was written.
+/// Shared by the activation's `_as` doors (`confirm_world_kit_as`,
+/// `run_root_request_as`).
+pub(super) const ACTIVATION_OWNER_ONLY: &str =
+    "a kit's activation is the owner's to confirm; no Grant action names it";
+/// The kit's authority key R is on the roster but revoked: the kit is spent.
+/// The owner issues a new kit. Nothing was written.
+const REVOKED_AUTHORITY_KEY: &str = "the kit's authority key was revoked; issue a new kit, then \
+                                     confirm it; nothing was written";
+
 /// A root activated on this install.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivatedRoot {
     pub root: RecoveryRootId,
     pub keys: RepinReport,
+    /// R's authority seed, handed out once for the box deposit
+    /// (WAYBACK-BOX-AUTHORITY-SEED = A). A field (not a value beside
+    /// `ActivatedRoot`) so every activation path carries it without changing
+    /// its return shape: one construction site, and readers of `root`/`keys`
+    /// need no change. Its `Debug` prints no bytes.
+    pub authority_seed: RecoveryAuthoritySeed,
 }
 
 /// A machine anchored with the kit's seed.
@@ -351,55 +369,86 @@ impl Vault {
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ActivatedRoot> {
-        self.activate_owner_root_with(owner, prepared, carry, |_| Ok(()))
+        let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
+        self.activate_owner_root_with(&authority, prepared, carry, |_| Ok(()))
             .map(|(activated, ())| activated)
     }
 
     /// [`Self::activate_owner_root`], with `also` run in its transaction once
     /// the new root stands: a kit's inventory and its vault-key wrap commit
-    /// with the root or not at all.
+    /// with the root or not at all. `authority` carries the true act surface
+    /// for R's enrolment row. The predecessor loads in
+    /// [`Self::activation_prep`], before the write txn opens.
     pub(crate) fn activate_owner_root_with<T>(
         &self,
-        owner: &AuthenticatedOwner,
+        authority: &ActAuthority,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(ActivatedRoot, T)> {
-        let (secret, request) = self.activation_prep(owner, &prepared, carry)?;
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
+        };
+        let (secret, request, predecessor) = self.activation_prep(owner, &prepared, carry)?;
         self.with_write_txn(|txn| {
-            let activated =
-                self.activate_owner_root_in_txn(txn, owner, &secret, &request, &prepared, carry)?;
+            let activated = self.activate_owner_root_in_txn(
+                txn,
+                authority,
+                &secret,
+                &request,
+                &prepared,
+                carry,
+                &predecessor,
+            )?;
             Ok((activated, also(txn)?))
         })
     }
 
-    /// An activation's checks in a read snapshot, before this install's
-    /// machine identity is minted, then its own request and secret.
+    /// An activation's checks in a read snapshot, then the predecessor of
+    /// R's enrolment ([`Vault::load_activation_predecessor`], read only),
+    /// both before this install's machine identity is minted, then its own
+    /// request and secret. A refusal for want of a predecessor therefore
+    /// writes nothing at all (WAYBACK-R4-NO-PREDECESSOR = A).
     pub(super) fn activation_prep(
         &self,
         owner: &AuthenticatedOwner,
         prepared: &PreparedRoot,
         carry: &BTreeSet<EntityId>,
-    ) -> Result<(MachineSecret, MachineEnrolmentRequest)> {
+    ) -> Result<(
+        MachineSecret,
+        MachineEnrolmentRequest,
+        ActivationPredecessor,
+    )> {
         self.precheck_root_door(owner, |txn, fold| {
             let me = crate::identity::read_machine_id_in_txn(self, txn)?;
             carried_marks(fold, prepared, carry, me).map(drop)
         })?;
-        self.own_request()
+        let predecessor = self.load_activation_predecessor()?;
+        let (secret, request) = self.own_request()?;
+        Ok((secret, request, predecessor))
     }
 
     /// [`Self::activate_owner_root`]'s transaction, in the caller's: the
     /// root's record, the marks, the pin and the re-wraps, with `secret` and
-    /// `request` this install's own from [`Self::activation_prep`].
+    /// `request` this install's own from [`Self::activation_prep`], plus R's
+    /// enrolment after the marks and the pin move (WAYBACK-R4-FIRST-KEY = B).
+    /// `authority` carries the true act surface for R's row; `predecessor`
+    /// was loaded before the write txn opened.
     pub(super) fn activate_owner_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
+        authority: &ActAuthority,
         secret: &MachineSecret,
         request: &MachineEnrolmentRequest,
         prepared: &PreparedRoot,
         carry: &BTreeSet<EntityId>,
+        predecessor: &ActivationPredecessor,
     ) -> Result<ActivatedRoot> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
+        };
         let seed = prepared.seed();
         let anchor = seed.anchor();
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
@@ -435,10 +484,29 @@ impl Vault {
         if !stands || mid.pinned_root != Some(pin) {
             return Err(refused("the new root's marks do not stand"));
         }
+        let vault_id = mid.vault_id.ok_or_else(invalid_authority)?;
+        let authority_signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
+        match mid.roster.get(&authority_signer.authority_key()) {
+            Some(device) if !device.revoked => {}
+            Some(_) => return Err(authority_refused(REVOKED_AUTHORITY_KEY)),
+            None => {
+                self.enrol_recovery_authority_key_in_txn(
+                    txn,
+                    authority,
+                    secret.machine,
+                    seed,
+                    predecessor,
+                )?;
+            }
+        }
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
+        let authority_seed = RecoveryAuthoritySeed::from_guarded(
+            RecoveryAuthoritySigner::authority_seed(seed, &vault_id),
+        );
         Ok(ActivatedRoot {
             root: root.id,
             keys: report,
+            authority_seed,
         })
     }
 

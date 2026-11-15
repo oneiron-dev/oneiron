@@ -144,7 +144,8 @@ pub use self::page_seal::{
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{
-    RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin,
+    RecoveryAuthoritySeed, RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed,
+    SeedOrigin,
 };
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;

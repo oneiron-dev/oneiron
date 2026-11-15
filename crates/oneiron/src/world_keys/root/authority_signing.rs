@@ -15,6 +15,34 @@ use crate::store::recovery_kit::RestoredKitSecret;
 
 const RECOVERY_AUTHORITY_CONTEXT: &str = "oneiron/owner-recovery-authority/v1";
 
+/// R's authority seed, handed out once by the kit's activation for the box
+/// deposit (pass 27 R4 PR 2, WAYBACK-BOX-AUTHORITY-SEED = A). Holds
+/// `Zeroizing<[u8; 32]>`: no `Serialize`, a `Debug` that prints no bytes.
+/// `Clone` only because [`crate::world_keys::ActivatedRoot`] derives it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RecoveryAuthoritySeed(Zeroizing<[u8; 32]>);
+
+impl std::fmt::Debug for RecoveryAuthoritySeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RecoveryAuthoritySeed(<redacted>)")
+    }
+}
+
+impl RecoveryAuthoritySeed {
+    /// The seed bytes, for OPUS-WAYBACK-BOX's deposit. Public so the server
+    /// crate reads it; the server drops it until that lands.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// The seed from its guarded bytes, in-crate only. The producer is
+    /// [`RecoveryAuthoritySigner::authority_seed`].
+    pub(crate) fn from_guarded(seed: Zeroizing<[u8; 32]>) -> Self {
+        Self(seed)
+    }
+}
+
 /// A distinct authority key derived from an owner's recovery seed and the
 /// consuming vault's identity. It is neither the world-recovery key nor the owner
 /// anchor or checkpoint signer. It gains standing only through explicit counted

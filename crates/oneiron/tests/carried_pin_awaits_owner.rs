@@ -28,8 +28,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AwaitedRoot, HostSlipIssuer, MachineOwnership, MachineRole, OwnerRootView,
-    RecoveryRootId, RootChange,
+    ActAuthority, ActSurface, AwaitedRoot, HostSlipIssuer, MachineOwnership, MachineRole,
+    OwnerRootView, RecoveryRootId, RootChange,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -87,6 +87,12 @@ impl Host {
     /// install: its record, its anchor's mark of the host's machine, and the
     /// host's own pin.
     fn mint_own_root(&self) -> RecoveryRootId {
+        self.vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall),
+                &self._issuer,
+            )
+            .expect("this install holds a predecessor for the activation");
         let prepared = self
             .vault
             .prepare_owner_root(&self.owner)

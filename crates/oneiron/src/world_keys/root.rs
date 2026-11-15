@@ -14,7 +14,7 @@
 
 mod authority_signing;
 
-pub use authority_signing::RecoveryAuthoritySigner;
+pub use authority_signing::{RecoveryAuthoritySeed, RecoveryAuthoritySigner};
 
 use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 use zeroize::Zeroizing;

@@ -49,9 +49,10 @@ use std::sync::Arc;
 
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::post;
-use oneiron::authority::{Destination, OwnerWorkRefusal, PeerMachine, RequestCode};
+use oneiron::authority::{ActAuthority, Destination, OwnerWorkRefusal, PeerMachine, RequestCode};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
     KitCoverage, KitIssue, KitPassphrase, KitPiece, KitSecretKind, PassphraseCost, PieceHome,
@@ -65,6 +66,7 @@ use oneiron::{EntityId, HostingPrivacyPosture, Vault};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use super::machine_routes::act_surface_admitted;
 use super::owner_work_routes::request_entry;
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
@@ -408,11 +410,14 @@ fn issue_homes(vault: &Vault, homes: &[PieceHome; 3]) -> OwnerResult<()> {
 /// answered refused and closed.
 async fn run(
     auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     _: OwnerDevice,
     payload: OwnerJsonBody<RunRootRequest>,
 ) -> OwnerReply<RootWorkAnswer> {
     let owner = owner(&auth, &server)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     kit_target(&server, &body.target)?;
     // The enrolment request reads as pairing reads it, before any work.
@@ -420,9 +425,16 @@ async fn run(
         Material::Anchor { enrolment, .. } => Some(enrolment.request()?),
         _ => None,
     };
+    let authority = ActAuthority::Owner(owner, surface);
     let answer = blocking(move || -> OwnerResult<RootWorkAnswer> {
         let request = request_entry("request", &body.request)?;
-        let done = run_material(server.vault(), &owner, request, body.material, enrolment)?;
+        let done = run_material(
+            server.vault(),
+            &authority,
+            request,
+            body.material,
+            enrolment,
+        )?;
         Ok(RootWorkAnswer::of(server.vault(), done))
     })
     .await?;
@@ -431,11 +443,16 @@ async fn run(
 
 fn run_material(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    authority: &ActAuthority,
     request: [u8; 32],
     material: Material,
     enrolment: Option<oneiron::authority::MachineEnrolmentRequest>,
 ) -> OwnerResult<RootWorkDone> {
+    let ActAuthority::Owner(owner, _) = authority else {
+        return Err(OwnerError::Refused(
+            "a root request is the owner's to run".to_owned(),
+        ));
+    };
     let done = match material {
         Material::IssueKit { homes, passphrase } => {
             issue_homes(vault, &homes)?;
@@ -466,7 +483,7 @@ fn run_material(
                 passphrase: kit.passphrase.as_ref(),
                 carry: &carry,
             };
-            vault.run_root_request(owner, request, material)?
+            vault.run_root_request_as(authority, request, material)?
         }
         Material::Restore { pieces, passphrase } => {
             let kit = Kit::parse(pieces, passphrase)?;
@@ -697,6 +714,9 @@ impl RootWorkAnswer {
                 kit,
                 mirror_pending,
             } => {
+                // OPUS-WAYBACK-BOX's deposit takes R's authority seed later; the
+                // server drops it for now.
+                let _ = &kit.activated.authority_seed;
                 let vault_id = vault.vault_key_vault_id();
                 RootWorkReport::KitConfirmed(Box::new(ConfirmedView {
                     kit_id: kit_id(kit.kit),

@@ -524,6 +524,10 @@ fn a_host_root_or_the_root_key_is_never_a_lost_key() {
 fn a_rootless_roster_takes_the_anchor_arm() {
     let fixture = fixture(HostingPrivacyPosture::SelfHostLocal);
     let owner = fixture.owner();
+    fixture
+        .vault
+        .enrol_device_owner_signing_key(&fixture.authority(), &fixture.issuer)
+        .expect("this install holds a predecessor for the activation");
     let prepared = fixture
         .vault
         .prepare_owner_root(&owner)

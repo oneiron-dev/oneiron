@@ -263,6 +263,9 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let confirmed = vault.confirm_world_kit(&owner, &pieces, passphrase.as_ref(), &carry)?;
+    // OPUS-WAYBACK-BOX's deposit takes R's authority seed later; the server
+    // drops it for now.
+    let _ = &confirmed.activated.authority_seed;
     let vault_id = vault.vault_key_vault_id();
     let keys = &confirmed.activated.keys;
     emit(&Confirmed {

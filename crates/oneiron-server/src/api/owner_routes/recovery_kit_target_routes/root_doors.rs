@@ -25,16 +25,17 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EntityId;
-use oneiron::authority::RecoveryRootId;
+use oneiron::authority::{ActAuthority, RecoveryRootId};
 use oneiron::recovery::{KitIssue, PassphraseCost, PieceHome};
 use oneiron::world_keys::{KitConfirmation, RootWorkDone};
 use serde::Deserialize;
 use zeroize::Zeroizing;
 
-use super::super::machine_routes::parse_revision;
+use super::super::machine_routes::{act_surface_admitted, parse_revision};
 use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use super::{
     Kit, OwnerDevice, RootWorkAnswer, issue_homes, kit_target, passphrase_of, request_code,
@@ -294,11 +295,14 @@ async fn issue(
 /// escrow wrap.
 async fn confirm(
     auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     _: OwnerDevice,
     payload: OwnerJsonBody<ConfirmDoor>,
 ) -> OwnerReply<RootWorkAnswer> {
     let owner = owner(&auth, &server)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     kit_target(&server, &body.target)?;
     let answer = blocking(move || -> OwnerResult<RootWorkAnswer> {
@@ -310,8 +314,9 @@ async fn confirm(
             .collect::<OwnerResult<BTreeSet<EntityId>>>()?;
         let kit = Kit::parse(body.pieces, body.passphrase)?;
         let pieces = kit.pieces();
+        let authority = ActAuthority::Owner(owner, surface);
         let confirmed =
-            vault.confirm_world_kit(&owner, &pieces, kit.passphrase.as_ref(), &carry)?;
+            vault.confirm_world_kit_as(&authority, &pieces, kit.passphrase.as_ref(), &carry)?;
         let mirror_pending = confirmed.mirror_pending;
         Ok(RootWorkAnswer::of(
             vault,

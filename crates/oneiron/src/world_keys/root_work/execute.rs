@@ -21,13 +21,15 @@
 use std::collections::BTreeSet;
 
 use super::super::kit::KitSeed;
+use super::super::root_doors::ACTIVATION_OWNER_ONLY;
 use super::super::{ConfirmedWorldKit, RecoveryRootSeed, WorldKitRestore, refused};
 use super::{
     RootMaterial, RootRecheck, RootSecret, RootWorkDone, material_refused, request_confirmation,
 };
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest, OwnerWorkBody, OwnerWorkOutcome,
-    OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId, RequestCode, RootChange,
+    ActAuthority, ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest,
+    OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
+    RequestCode, RootChange, authority_refused,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -184,6 +186,23 @@ impl Vault {
         request: AuthorityEntryHash,
         material: RootMaterial<'_>,
     ) -> Result<RootWorkDone> {
+        let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
+        self.run_root_request_as(&authority, request, material)
+    }
+
+    /// [`Self::run_root_request`] as `authority`, which carries the true act
+    /// surface for R's enrolment row on the confirm-kit path: `ThisInstall`
+    /// on the CLI chain, `act_surface_admitted` on the HTTP chain.
+    pub fn run_root_request_as(
+        &self,
+        authority: &ActAuthority,
+        request: AuthorityEntryHash,
+        material: RootMaterial<'_>,
+    ) -> Result<RootWorkDone> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
+        };
         let asked = self.pending_root_request(owner, request)?;
         match (asked.change, material) {
             (RootChange::Activate, RootMaterial::IssueKit(issue)) => {
@@ -196,7 +215,7 @@ impl Vault {
                     passphrase,
                     carry,
                 },
-            ) => self.run_kit_confirm(owner, asked, pieces, passphrase, carry),
+            ) => self.run_kit_confirm(authority, asked, pieces, passphrase, carry),
             (RootChange::Restore { root }, RootMaterial::Restore(secret)) => {
                 self.run_restore(owner, asked, root, secret)
             }
@@ -317,18 +336,29 @@ impl Vault {
     /// mirror pending, and draws nothing again.
     fn run_kit_confirm(
         &self,
-        owner: &AuthenticatedOwner,
+        authority: &ActAuthority,
         asked: Asked,
         pieces: &[&KitPiece],
         passphrase: Option<&KitPassphrase>,
         carry: &BTreeSet<EntityId>,
     ) -> Result<RootWorkDone> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
+        };
         let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
-        let (secret, request) = self.activation_prep(owner, &prepared, carry)?;
+        let (secret, request, predecessor) = self.activation_prep(owner, &prepared, carry)?;
         let transition = self.begin_wrap_transition()?;
         let confirmed = self.answer_root_request(asked, Answer::Enacted, |txn| {
-            let activated =
-                self.activate_owner_root_in_txn(txn, owner, &secret, &request, &prepared, carry)?;
+            let activated = self.activate_owner_root_in_txn(
+                txn,
+                authority,
+                &secret,
+                &request,
+                &prepared,
+                carry,
+                &predecessor,
+            )?;
             let (replaced, escrow) = self.confirm_kit_rows_in_txn(txn, &transition, &row)?;
             Ok(ConfirmedWorldKit {
                 kit: row.kit,
