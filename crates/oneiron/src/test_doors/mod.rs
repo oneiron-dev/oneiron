@@ -88,6 +88,7 @@ pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
 pub mod provenance_body_checkpoint;
+pub mod question_saved_lane;
 pub mod re_root_stale_sweep;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
@@ -99,7 +100,6 @@ pub mod room_turn_backfill;
 pub mod run_changes;
 pub mod run_hold;
 pub mod run_lifecycle;
-pub mod saved_question_reader;
 pub mod scope_summary;
 pub mod seat_park_model_step;
 pub mod shared_act_family;

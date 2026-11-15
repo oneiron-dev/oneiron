@@ -521,26 +521,6 @@ impl FrozenReadLane {
     }
 }
 
-/// Whether a lane read under `proof` by `key` keeps its read Scope even at
-/// top (PR 5614; FIX 14344, Astra F2 on #8029): `key` lacks the vault
-/// owner's full floor, and its principal's own key would regain what it
-/// lacked. A credential that names no grant keeps it so. So does one that
-/// names a grant but failed the owner's own path (`credential_key.rs`): an
-/// owner's attenuated credential, which kept only the owner's exemption,
-/// one handed to another key, whose holder is a delegate, and one of
-/// another actor class on its holder's PERSON. A guest's own credential
-/// names a grant and holds no owner standing its principal's key could
-/// regain, so it reads as its principal's own
-/// ([`FrozenReadLane::reads_as_principal`]).
-fn keeps_top_scope(key: &ScopedReadActorKey, proof: &crate::authority::VerifiedSlip) -> bool {
-    let claims = proof.claims();
-    !key.reads_as_vault_owner()
-        && (claims.grant_ref.is_none()
-            || key.owner_exemption.is_some()
-            || proof.is_transferred()
-            || !matches!(claims.actor_class.as_deref(), None | Some("human")))
-}
-
 /// Keeps each id `axis` names that `covered` holds (FIX 12285); whether it
 /// cut one. An open or empty axis names no id and stays; one cut to no id
 /// is bottom.
@@ -632,4 +612,24 @@ impl ScopedRead<'_> {
             .as_ref()
             .is_none_or(|records| records.contains(&id.to_hex()))
     }
+}
+
+/// Whether a lane read under `proof` by `key` keeps its read Scope even at
+/// top (PR 5614; FIX 14344, Astra F2 on #8029): `key` lacks the vault
+/// owner's full floor, and its principal's own key would regain what it
+/// lacked. A credential that names no grant keeps it so. So does one that
+/// names a grant but failed the owner's own path (`credential_key.rs`): an
+/// owner's attenuated credential, which kept only the owner's exemption,
+/// one handed to another key, whose holder is a delegate, and one of
+/// another actor class on its holder's PERSON. A guest's own credential
+/// names a grant and holds no owner standing its principal's key could
+/// regain, so it reads as its principal's own
+/// ([`FrozenReadLane::reads_as_principal`]).
+fn keeps_top_scope(key: &ScopedReadActorKey, proof: &crate::authority::VerifiedSlip) -> bool {
+    let claims = proof.claims();
+    !key.reads_as_vault_owner()
+        && (claims.grant_ref.is_none()
+            || key.owner_exemption.is_some()
+            || proof.is_transferred()
+            || !matches!(claims.actor_class.as_deref(), None | Some("human")))
 }
