@@ -1,8 +1,6 @@
 //! The owner anchor's entries (world privacy P6b, contract §4 and E2(b)): a
 //! root record, which its own anchor signs alone, and the `Owned` or `Removed`
-//! marks a valid root's anchor signs in its own chain of a machine, and the
-//! kit's `Cancel` of a recovery hold, which the anchor signs beside the hold
-//! root's authority key R.
+//! marks a valid root's anchor signs in its own chain of a machine.
 //!
 //! Both fold before the roster, consent and quorum checks: on a hosted vault
 //! the roster key is the host's, and its cosign would let the host refuse the
@@ -38,33 +36,6 @@ pub(super) fn fold_anchor_entry(
             if state.root_anchors.contains_key(key) =>
         {
             *key
-        }
-        // A recovery hold's Cancel, signed by a valid root's anchor beside
-        // the hold root's authority key R: the kit stops the attempt. The
-        // one cosign binds the Cancel to the hold's root: R is a live roster
-        // key here, and the hold view counts the Cancel only for a hold R
-        // signed, so a foreign anchor's Cancel is inert. An ItIsMe never
-        // folds here, so one the anchor signs falls through to the roster
-        // rules and is refused there: the anchor never ends a wait early.
-        // Like a mark, the Cancel moves the anchor's sequence and rests on
-        // no roster key.
-        (AuthorityOp::RecoveryHoldAnswer(answer), AuthorityKey::Ed25519(key))
-            if answer.answer == RecoveryHoldAnswerKind::Cancel
-                && state.root_anchors.contains_key(key) =>
-        {
-            let [cosign] = entry.cosigns.as_slice() else {
-                return Some(Err(AuthorityFoldIssue::InvalidEntry(hash)));
-            };
-            let live = state
-                .roster
-                .get(&cosign.public_key)
-                .is_some_and(|device| !device.revoked);
-            if !state.recovery_authority_keys.contains(&cosign.public_key) || !live {
-                return Some(Err(AuthorityFoldIssue::InvalidEntry(hash)));
-            }
-            return Some(advance(state, entry, signer, hash).map(|()| {
-                state.anchor_entries.insert(hash);
-            }));
         }
         _ => return None,
     };

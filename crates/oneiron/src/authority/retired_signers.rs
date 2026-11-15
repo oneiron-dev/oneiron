@@ -21,12 +21,11 @@
 //!   fork, say): none installs its successor, and all their fences stay
 //!   closed. A handoff or conflict that a closed fence fences yields: it
 //!   installs nothing and retires nothing. The rest settle.
-//! - An owner anchor's entries, its root, its marks and the kit's Cancel of
-//!   a recovery hold, rest on no roster key, so no fence holds them, even
-//!   when a roster enrolled the anchor's public key: anyone may enrol a
-//!   public key. Those are the rows the anchor fold took, and a removal
-//!   whose own proof took it through an anchor's chain; a root the fold
-//!   refused makes no row the anchor's.
+//! - An owner anchor's entries, its root and its marks, rest on no roster
+//!   key, so no fence holds them, even when a roster enrolled the anchor's
+//!   public key: anyone may enrol a public key. Those are the rows the anchor
+//!   fold took, and a removal whose own proof took it through an anchor's
+//!   chain; a root the fold refused makes no row the anchor's.
 //! - A `RevokeDevice` retires its one key the same way
 //!   (REVOKED-OWNER-ROOT-SIBLING-ENROL). The revoked key signs nothing that
 //!   stands outside the revocation and its own ancestry, so a row it signed
@@ -518,31 +517,21 @@ fn close_fences(
 }
 
 /// Whether a door reads `entry` as an owner anchor's row, which rests on no
-/// roster key: a root record its own anchor signs, a machine mark or a root
-/// appointment signed alone by a key `anchor` names as the anchor of a root,
-/// or the kit's Cancel of a recovery hold, which the anchor signs beside
-/// the hold root's authority key R.
+/// roster key: a root record its own anchor signs, or a machine mark or a
+/// root appointment signed alone by a key `anchor` names as the anchor of a
+/// root.
 fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
-    match (&entry.op, &entry.signer.public_key) {
-        (AuthorityOp::OwnerRoot(record), AuthorityKey::Ed25519(key)) => {
-            entry.cosigns.is_empty() && *key == record.anchor_key
+    entry.cosigns.is_empty()
+        && match (&entry.op, &entry.signer.public_key) {
+            (AuthorityOp::OwnerRoot(record), AuthorityKey::Ed25519(key)) => {
+                *key == record.anchor_key
+            }
+            (
+                AuthorityOp::MachineProfile(_) | AuthorityOp::RootAppointment(_),
+                AuthorityKey::Ed25519(key),
+            ) => anchor(key),
+            _ => false,
         }
-        (
-            AuthorityOp::MachineProfile(_) | AuthorityOp::RootAppointment(_),
-            AuthorityKey::Ed25519(key),
-        ) => entry.cosigns.is_empty() && anchor(key),
-        // The kit's Cancel of a recovery hold, signed by a root's anchor
-        // with R's one cosign beside it: it rests on no roster key, as a
-        // mark does, so a later rotation of R never fences it or a row
-        // that descends from it. An ItIsMe stays a roster row: the anchor
-        // never ends a wait early.
-        (AuthorityOp::RecoveryHoldAnswer(answer), AuthorityKey::Ed25519(key))
-            if answer.answer == RecoveryHoldAnswerKind::Cancel =>
-        {
-            entry.cosigns.len() == 1 && anchor(key)
-        }
-        _ => false,
-    }
 }
 
 /// The primary signer and every co-signer of `entry`.

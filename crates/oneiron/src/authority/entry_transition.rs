@@ -617,9 +617,9 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     // A recovery hold needs its signer R (a live recovery-authority key)
-    // and a fresh successor; a roster-signed answer needs a live owner
-    // device key that is not R, never an admin's or a host's (an anchor's
-    // Cancel folded through the anchor's branch above). The answer's pairing to its hold is the doors' and the view's
+    // and a fresh successor; an answer needs a live owner device key that
+    // is not R, never an admin's or a host's, or a live R for a Cancel (the
+    // kit's). The answer's pairing to its hold is the doors' and the view's
     // check, not the fold's: a successor is never live while its hold is
     // live, so a successor-signed answer is refused above as
     // not-in-ancestry, and any other live answer to an unknown hold is

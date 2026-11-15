@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use oneiron_keystore::{DeviceKeystore, KeystoreError, KeystoreSlot, SlotKind};
 use zeroize::Zeroizing;
 
@@ -43,15 +43,18 @@ pub(super) fn judge_recovery_hold(
     Ok(())
 }
 
-/// A roster-signed answer's signer, judged at the parents' state: a live
-/// owner device key that is not R, with no cosign. R never answers a hold:
-/// the box releases R, so an R-signed answer would end the wait for the
-/// attacker. Nor does an admin's key or a host's ([`answers_recovery_holds`]):
-/// the generic consent rule admits both, and either answer would end or stop
-/// an owner's wait with no owner device (WAYBACK-7: no staff override). (An
-/// anchor's Cancel, beside R's cosign, folded through the anchor's branch
-/// before the roster rules; an anchor's ItIsMe is refused as not-in-ancestry
-/// before this arm.)
+/// An answer's signer, judged at the parents' state, with no cosign: a live
+/// owner device key that is not R, or, for a `Cancel` only, a live R (the
+/// kit's). The kit acts through R like any owner key, and an anchor is no
+/// voice in a shared judge (lead ANCHORS-3 = A; Fable pass 29, ANCHORS-E6):
+/// the hold view counts R's Cancel only for a hold that R signed. R never
+/// says `ItIsMe`: the box releases R, so that answer would end the wait for
+/// the attacker. R's Cancel gives the box's release nothing it lacks: R
+/// alone already voids its holds by revoking itself, and a direct R holder
+/// is outside the wait (WAYBACK-WAIT-PLACEMENT = A). Nor does an admin's key
+/// or a host's answer ([`answers_recovery_holds`]): the generic consent rule
+/// admits both, and either answer would end or stop an owner's wait with no
+/// owner device (WAYBACK-7: no staff override).
 pub(super) fn judge_recovery_hold_answer(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -61,7 +64,20 @@ pub(super) fn judge_recovery_hold_answer(
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
     if state.recovery_authority_keys.contains(entry.signer_key()) {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+        let cancel = matches!(
+            &entry.op,
+            AuthorityOp::RecoveryHoldAnswer(answer)
+                if answer.answer == RecoveryHoldAnswerKind::Cancel
+        );
+        let live = state
+            .roster
+            .get(entry.signer_key())
+            .is_some_and(|device| !device.revoked);
+        return match (cancel, live) {
+            (true, true) => Ok(()),
+            (true, false) => Err(AuthorityFoldIssue::MissingAuthorityConsent(hash)),
+            (false, _) => Err(AuthorityFoldIssue::InvalidEntry(hash)),
+        };
     }
     if !state
         .roster
@@ -81,6 +97,38 @@ pub(super) fn answers_recovery_holds(device: &FoldedDevice) -> bool {
     folded_device_can_authority_consent(device) && device.roles & ROLE_OWNER != 0
 }
 
+/// The rows the hold view reads off the counted log: each hold with its
+/// signer R, each answer with its kind and signer, and every key a valid
+/// enrolment made a recovery root's authority key (the fold's own memory of
+/// the R keys), which tells the kit's Cancel from an owner device's.
+#[derive(Default)]
+struct HoldRows {
+    holds: Vec<(AuthorityEntryHash, RecoveryHold, AuthorityKey)>,
+    answers: BTreeMap<AuthorityEntryHash, Vec<(RecoveryHoldAnswerKind, AuthorityKey)>>,
+    root_keys: BTreeSet<AuthorityKey>,
+}
+
+impl HoldRows {
+    fn read(&mut self, hash: AuthorityEntryHash, entry: &AuthorityLogEntry) {
+        match &entry.op {
+            AuthorityOp::RecoveryHold(hold) => {
+                self.holds
+                    .push((hash, hold.clone(), entry.signer_key().clone()));
+            }
+            AuthorityOp::RecoveryHoldAnswer(answer) => {
+                self.answers
+                    .entry(answer.hold)
+                    .or_default()
+                    .push((answer.answer, entry.signer_key().clone()));
+            }
+            AuthorityOp::OwnerKeyEnroll(enroll) if enroll.is_recovery_authority() => {
+                self.root_keys.insert(enroll.device.key.clone());
+            }
+            _ => {}
+        }
+    }
+}
+
 /// One recovery hold as this install reads it: the attempt, its successor
 /// and lost keys, its landing second, its state on the reader's clock, and
 /// who answered it. Every owner device folds the same rows; only the
@@ -90,9 +138,8 @@ pub struct RecoveryHoldView {
     /// The hold's entry hash: the attempt id.
     pub hold: AuthorityEntryHash,
     /// The hold's signer R: the recovery root's authority key whose released
-    /// seed the landing signs with. The kit's Cancel counts for this hold
-    /// only beside R's cosign; a kit whose live root key is another key's
-    /// cancels another root's holds.
+    /// seed the landing signs with. An R-signed Cancel (the kit's) counts for
+    /// this hold only when this R signed it; another root's R is inert here.
     pub root_key: AuthorityKey,
     /// The successor key the landing enrols.
     pub successor_key: AuthorityKey,
@@ -105,9 +152,9 @@ pub struct RecoveryHoldView {
     /// What the attempt is now.
     pub state: RecoveryHoldState,
     /// The signers of the hold's valid answers that count for it,
-    /// ascending, each once: a roster key's answers, and the kit's Cancel
-    /// only beside this hold's signer R (a foreign anchor's Cancel is
-    /// inert, and leaves no name here).
+    /// ascending, each once: an owner device key's answers, and this hold's
+    /// signer R for the kit's Cancel (another root's R is inert, and leaves
+    /// no name here).
     pub answered_by: Vec<AuthorityKey>,
 }
 
@@ -141,10 +188,10 @@ impl Vault {
     /// Every recovery hold this install's log holds, with its state: Landed
     /// once the successor key is on the roster (live or since revoked: the
     /// attempt completed), else Cancelled on any valid Cancel that counts
-    /// for the hold (a roster key's, or the kit's anchor-signed Cancel
-    /// beside this hold's signer R; a foreign anchor's Cancel is inert, and
-    /// an ItIsMe never revives one), else Void when the hold's signer R is
-    /// no longer live, else Due on a valid ItIsMe or when this reader's
+    /// for the hold (an owner device key's, or the kit's, which this hold's
+    /// signer R signs; another root's R is inert, and an ItIsMe never
+    /// revives one), else Void when the hold's signer R is no longer live,
+    /// else Due on a valid ItIsMe or when this reader's
     /// `instant_in_txn` reached `lands_at`, else Waiting. Only rows this
     /// install's fold counts are read: a refused hold or answer is as if
     /// unwritten, and an answer to an unknown hold is inert. On a vault
@@ -159,46 +206,14 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
         let history = super::history_transfer::history_in_txn(self, txn)?;
-        let mut holds: Vec<(AuthorityEntryHash, RecoveryHold, AuthorityKey)> = Vec::new();
-        let mut answers: BTreeMap<
-            AuthorityEntryHash,
-            Vec<(RecoveryHoldAnswerKind, AuthorityKey, Option<AuthorityKey>)>,
-        > = BTreeMap::new();
-        let read = |hash: AuthorityEntryHash,
-                    entry: &AuthorityLogEntry,
-                    holds: &mut Vec<(AuthorityEntryHash, RecoveryHold, AuthorityKey)>,
-                    answers: &mut BTreeMap<
-            AuthorityEntryHash,
-            Vec<(RecoveryHoldAnswerKind, AuthorityKey, Option<AuthorityKey>)>,
-        >| {
-            match &entry.op {
-                AuthorityOp::RecoveryHold(hold) => {
-                    holds.push((hash, hold.clone(), entry.signer_key().clone()));
-                }
-                AuthorityOp::RecoveryHoldAnswer(answer) => {
-                    // A counted answer carries no cosign (the roster arm) or
-                    // exactly one (the anchor arm): the fold refused any
-                    // other shape.
-                    let cosigner = match entry.cosigns.as_slice() {
-                        [cosign] => Some(cosign.public_key.clone()),
-                        _ => None,
-                    };
-                    answers.entry(answer.hold).or_default().push((
-                        answer.answer,
-                        entry.signer_key().clone(),
-                        cosigner,
-                    ));
-                }
-                _ => {}
-            }
-        };
+        let mut rows = HoldRows::default();
         let mut stored = BTreeSet::new();
         for (hash, (_, entry)) in &history {
             stored.insert(*hash);
             if !fold.valid_entries.contains(hash) {
                 continue;
             }
-            read(*hash, entry, &mut holds, &mut answers);
+            rows.read(*hash, entry);
         }
         if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
         {
@@ -206,30 +221,36 @@ impl Vault {
                 if !fold.valid_entries.contains(hash) {
                     continue;
                 }
-                read(*hash, entry, &mut holds, &mut answers);
+                rows.read(*hash, entry);
             }
         }
+        let HoldRows {
+            holds,
+            answers,
+            root_keys,
+        } = rows;
         let mut views: Vec<RecoveryHoldView> = holds
             .into_iter()
             .map(|(hash, hold, signer)| {
                 let successor_key = hold.successor_key();
                 let named = answers.get(&hash);
-                // A Cancel counts for this hold when a roster key signed it
-                // (no cosign), or when its single cosign is this hold's
-                // signer R (the kit's Cancel). An anchor Cancel whose cosign
-                // is another key is inert for this hold.
-                let counts = |kind: RecoveryHoldAnswerKind, cosigner: &Option<AuthorityKey>| {
+                // A Cancel counts for this hold when an owner device key
+                // signed it, or when this hold's signer R did (the kit's
+                // Cancel). Another root's R is inert for this hold. The fold
+                // refused an ItIsMe that any R signs.
+                let counts = |kind: RecoveryHoldAnswerKind, answerer: &AuthorityKey| {
                     kind == RecoveryHoldAnswerKind::ItIsMe
-                        || cosigner.as_ref().is_none_or(|key| *key == signer)
+                        || !root_keys.contains(answerer)
+                        || *answerer == signer
                 };
                 let cancelled = named.is_some_and(|list| {
-                    list.iter().any(|(kind, _, cosigner)| {
-                        *kind == RecoveryHoldAnswerKind::Cancel && counts(*kind, cosigner)
+                    list.iter().any(|(kind, answerer)| {
+                        *kind == RecoveryHoldAnswerKind::Cancel && counts(*kind, answerer)
                     })
                 });
                 let affirmed = named.is_some_and(|list| {
                     list.iter()
-                        .any(|(kind, _, _)| *kind == RecoveryHoldAnswerKind::ItIsMe)
+                        .any(|(kind, _)| *kind == RecoveryHoldAnswerKind::ItIsMe)
                 });
                 let state = if fold.roster.contains_key(&successor_key) {
                     RecoveryHoldState::Landed
@@ -248,8 +269,8 @@ impl Vault {
                 };
                 let mut answered_by: Vec<AuthorityKey> = named.map_or(Vec::new(), |list| {
                     list.iter()
-                        .filter(|(kind, _, cosigner)| counts(*kind, cosigner))
-                        .map(|(_, key, _)| key.clone())
+                        .filter(|(kind, answerer)| counts(*kind, answerer))
+                        .map(|(_, answerer)| answerer.clone())
                         .collect()
                 });
                 answered_by.sort();
@@ -313,9 +334,10 @@ const HOLD_NOT_LIVE: &str = "the recovery hold is not live: it landed, was cance
 /// owner device answers. Nothing was written.
 const ANSWER_KEY_IS_SUCCESSOR: &str = "the hold's successor key never answers its own hold; \
                                         another owner device answers; nothing was written";
-/// The root's authority key never answers a recovery hold: the box released
-/// it, so its answer would end the wait for the attacker. Another owner
-/// device answers. Nothing was written.
+/// The root's authority key never answers at this door: the box released
+/// it, so its ItIsMe would end the wait for the attacker, and the kit
+/// cancels through R at its own door. Another owner device answers. Nothing
+/// was written.
 const ANSWER_KEY_IS_ROOT: &str = "the root's authority key never answers a recovery hold; \
                                    another owner device answers; nothing was written";
 /// This install holds no live owner key to answer with: sign-in alone cannot
@@ -333,10 +355,6 @@ const ANSWER_NOT_COUNTED: &str =
 /// The answer would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test.
 const ANSWER_TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one recovery answer may name; nothing was written";
-/// The fold did not count the kit's hold cancellation here: it never reports
-/// success. Nothing was written.
-const KIT_CANCEL_NOT_COUNTED: &str =
-    "this install's fold does not count the kit's hold cancellation; nothing was written";
 /// The kit's root key did not sign the named hold: a kit cancels only the
 /// holds its own live root key signed. Nothing was written.
 const KIT_ROOT_NOT_HOLD_SIGNER: &str =
@@ -619,57 +637,37 @@ impl Vault {
         Ok(hash)
     }
 
-    /// An anchor-signed `Cancel` for each of `holds`, in the caller's write
-    /// transaction, before its rows: the kit's cancel (W3). Each answer
-    /// names the main-log heads and the anchor's own, takes the anchor's
-    /// next sequence, carries R's cosign beside the anchor (`r`, the kit's
-    /// live root key: the hold view counts the Cancel only for a hold R
-    /// signed), and must count, or nothing commits. Answers the
-    /// answers' hashes in `holds`' order.
+    /// R's own `Cancel` for each of `holds`, in the caller's write
+    /// transaction, before its rows: the kit's cancel (W3). The kit acts
+    /// through R like any owner key (lead ANCHORS-3 = A): each answer is a
+    /// roster row `r`, the kit's live root key, signs alone
+    /// ([`Self::append_recovery_hold_answer_in_txn`]); the hold view counts
+    /// it only for a hold R signed. Each must count, or nothing commits.
+    /// Answers the answers' hashes in `holds`' order.
     ///
     /// # Errors
-    /// An entry the fold does not count; the log's.
-    pub(crate) fn append_anchor_cancels_in_txn(
+    /// An entry the fold does not count; the log's and the clock's.
+    pub(crate) fn append_root_key_cancels_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        anchor: &SigningKey,
         r: &RecoveryAuthoritySigner,
         holds: &[AuthorityEntryHash],
     ) -> Result<Vec<AuthorityEntryHash>> {
+        let r_key = r.authority_key();
+        let sign = |transcript: &[u8]| r.sign_authority_transcript(transcript);
         let mut answers = Vec::with_capacity(holds.len());
         for hold in holds {
-            let fold = self.authority_view_readonly_in_txn(txn)?;
-            let fold = self
-                .join_anchor_frontier_in_txn(txn, &fold, anchor)?
-                .unwrap_or(fold);
             let now = self.instant_in_txn(txn)?.secs();
-            let mut entry = anchor_signed_entry(
-                &fold,
-                anchor,
-                AuthorityOp::RecoveryHoldAnswer(RecoveryHoldAnswer {
+            answers.push(self.append_recovery_hold_answer_in_txn(
+                txn,
+                &r_key,
+                &sign,
+                RecoveryHoldAnswer {
                     hold: *hold,
                     answer: RecoveryHoldAnswerKind::Cancel,
-                }),
+                },
                 now,
-            )?;
-            // R's cosign beside the anchor's, over the one transcript both
-            // sign (row CARRIER-OWNER-PROOF's shape): the key goes in before
-            // either signature, so the anchor signs again over it.
-            let r_key = r.authority_key();
-            entry.cosigns.push(AuthoritySignature {
-                suite: r_key.suite(),
-                public_key: r_key,
-                signature: vec![0; 64],
-            });
-            let transcript = authority_transcript(&entry)?;
-            entry.cosigns[0].signature = r.sign_authority_transcript(&transcript)?;
-            entry.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
-            let hash = self.put_anchor_entry_in_txn(txn, entry)?;
-            let after = self.authority_view_readonly_in_txn(txn)?;
-            if !after.valid_entries.contains(&hash) || after.install.held_back.contains(&hash) {
-                return Err(authority_refused(KIT_CANCEL_NOT_COUNTED));
-            }
-            answers.push(hash);
+            )?);
         }
         Ok(answers)
     }
@@ -1053,14 +1051,15 @@ impl Vault {
     }
 
     /// Cancels the live recovery hold `hold`, or every live hold when none
-    /// is named, with the vault's anchor from the kit `pieces` rebuild
-    /// (with `passphrase` when the kit takes one): the kit stops the
-    /// attempt. A kit cancels only the live holds its live root key R
-    /// signed: cancelling every hold skips another root's holds, and a
-    /// named hold another key signed is refused. A kit cannot cosign as
-    /// another root key (a co-owner's, or an earlier kit's that is still
-    /// live), so that root's hold stays live until the key is revoked,
-    /// which voids it. With no live R from the kit, cancelling every hold
+    /// is named, with the kit's live root key R, which the kit `pieces`
+    /// rebuild (with `passphrase` when the kit takes one): the kit stops the
+    /// attempt, through R like any owner key (lead ANCHORS-3 = A). A kit
+    /// cancels only the live holds its live root key R signed: cancelling
+    /// every hold skips another root's holds, and a named hold another key
+    /// signed is refused. A kit holds no other root's key (a co-owner's, or
+    /// an earlier kit's that is still live), so that root's hold stays live
+    /// until the key is revoked, which voids it. With no live R from the
+    /// kit, cancelling every hold
     /// cancels nothing. One write transaction; cancelling nothing is no
     /// refusal.
     ///
@@ -1090,7 +1089,6 @@ impl Vault {
             crate::recovery::restore_kit(vault_id, KitSecretKind::RecoveryRoot, pieces, passphrase)
                 .map_err(|_| authority_refused(KIT_PIECES_UNREADABLE))?;
         let seed = crate::world_keys::RecoveryRootSeed::from_restored_kit(secret)?;
-        let anchor = seed.anchor();
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let views = self.recovery_holds_in_txn(&txn)?;
@@ -1135,7 +1133,7 @@ impl Vault {
             let Some(r) = &live_r else {
                 return Err(authority_refused(KIT_ROOT_NOT_HOLD_SIGNER));
             };
-            self.append_anchor_cancels_in_txn(&mut txn, &anchor, r, &targets)?;
+            self.append_root_key_cancels_in_txn(&mut txn, r, &targets)?;
         }
         let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &before)?;
         txn.commit()?;

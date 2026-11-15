@@ -570,13 +570,12 @@ impl Vault {
         Ok(rows)
     }
 
-    /// The kit's anchor cancels every live hold the kit's live root key R
-    /// signed in the caller's write transaction, before its rows (W3): a kit
-    /// recovery lands over any hold, so an attacker's hold never lands after
-    /// the owner's kit. Another root's holds are skipped (the kit cannot
-    /// cosign as that root; such a hold voids when its key is revoked), and
-    /// with no live R from the kit it cancels nothing. The anchor arm of
-    /// this door needs
+    /// The kit's live root key R cancels every live hold R signed, in the
+    /// caller's write transaction, before its rows (W3): a kit recovery lands
+    /// over any hold, so an attacker's hold never lands after the owner's
+    /// kit. Another root's holds are skipped (the kit holds no other root's
+    /// key; such a hold voids when its key is revoked), and with no live R
+    /// from the kit it cancels nothing. The anchor arm of this door needs
     /// none: with no live root key no hold is live, since a live hold's
     /// signer R is one.
     pub(super) fn cancel_live_holds_for_kit_in_txn(
@@ -607,7 +606,7 @@ impl Vault {
             })
             .map(|view| view.hold)
             .collect();
-        self.append_anchor_cancels_in_txn(txn, &seed.anchor(), &r, &live)?;
+        self.append_root_key_cancels_in_txn(txn, &r, &live)?;
         Ok(())
     }
 

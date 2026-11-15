@@ -7,8 +7,9 @@
 //! keys, `lands_at`), keeps R's seed in this install's keystore slot, and
 //! answers `RootRecovery::Held`. Another owner device ends the wait early
 //! (`ItIsMe`) or stops the attempt (`Cancel`) with a `RecoveryHoldAnswer`
-//! signed by its own live owner key, and the kit stops it with an
-//! anchor-signed `Cancel`. At the wait's end the seed holder lands the
+//! signed by its own live owner key, and the kit stops it with a `Cancel`
+//! its live root key R signs alone (lead ANCHORS-3 = A: the kit acts
+//! through R like any owner key). At the wait's end the seed holder lands the
 //! ordinary enrolment + revocations. A zero wait vouches as today; the kit
 //! arm never waits.
 //!
@@ -20,7 +21,7 @@
 //! of the door-clock test runs at `lands_at - 60`: the anchor measures
 //! real elapsed seconds, so a literal one-second margin would be flaky.
 //!
-//! The 21 tests: the 13 build-leg tests (`a_released_recovery_waits_then_lands`,
+//! The 23 tests: the 13 build-leg tests (`a_released_recovery_waits_then_lands`,
 //! `zero_wait_lands_at_once`, `a_sheet_cancel_stops_the_attempt_and_a_retry_lands`,
 //! `a_cancel_without_an_owner_key_is_refused`,
 //! `a_device_the_recovery_removes_still_cancels`,
@@ -37,13 +38,18 @@
 //! `a_kit_recovery_cancels_a_due_hold_on_the_door_install`), and the three
 //! Sol-fix pins (`a_foreign_anchors_cancel_never_stops_a_hold`,
 //! `a_kit_cancel_reaches_a_hold_only_an_adopted_checkpoint_carries`
-//! (ignored: needs an adopted image), `a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands`).
+//! (ignored: needs an adopted image), `a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands`),
+//! and the two ANCHORS-E6 pins (Fable pass 29: an anchor is no voice in a
+//! shared judge): `a_fresh_roots_anchor_beside_the_root_key_never_stops_a_hold`
+//! and `the_kits_cancel_is_the_root_keys_own_row`.
 //!
 //! Red on the kit-only rotation head `5adc0295753f`: the file does not
 //! compile there (no `RecoveryHold` ops, no hold view, no answer doors, no
 //! landing, no `RootRecovery::Held`, no `recover_owner_root_waiting`).
 //! The five review-fix pins fail at `699bba4fa53` (the review fixes'
-//! parent); the Sol-fix pins fail at `86b9c4cd3b07`.
+//! parent); the Sol-fix pins fail at `86b9c4cd3b07`; the ANCHORS-E6 pins
+//! fail at `14e0d18770df`, where the kit's Cancel was the anchor's beside
+//! R's cosign and any valid root's anchor passed.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_root_recovery_wait`.
 #![cfg(oneiron_test_support)]
@@ -132,6 +138,15 @@ fn assert_refused(error: &oneiron::Error, words: &str) {
         error.to_string().contains(words),
         "the exact words {words:?}: {error}"
     );
+}
+
+/// Imports `row` when the wire encodes it; a row the wire refuses (an
+/// answer with a cosign) is never stored. Either way the caller asserts
+/// that the fold does not count it.
+fn import_if_encodable(vault: &Vault, row: &AuthorityLogEntry) {
+    if let Ok(bytes) = encode_authority_log_entry_body(row) {
+        let _ = vault.import_signed_authority_history(&[bytes]);
+    }
 }
 
 /// Another owner device's key, held on this handle: what the answer doors
@@ -2046,9 +2061,8 @@ fn a_foreign_anchors_cancel_never_stops_a_hold() {
     assert!(view.answered_by.is_empty());
 
     // The same anchor's Cancel beside one cosign by a key that is not the
-    // vault's recovery root key R: the structure vouches the shape (an
-    // anchor and one cosign), and the fold refuses it, since the cosign is
-    // no live recovery root key. Stored or left out, it never counts.
+    // vault's recovery root key R: the wire refuses an answer with any
+    // cosign, so it never encodes. Stored or left out, it never counts.
     let stranger = SigningKey::from_bytes(&[STRANGER_KEY_SEED; 32]);
     let stranger_key = key_of(&stranger);
     let mut cosigned = AuthorityLogEntry {
@@ -2076,11 +2090,7 @@ fn a_foreign_anchors_cancel_never_stops_a_hold() {
     cosigned.cosigns[0].signature = stranger.sign(&transcript).to_bytes().to_vec();
     cosigned.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
     let cosigned_hash = authority_entry_hash(&cosigned).expect("a hash");
-    let _ = fixture
-        .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&cosigned).expect("the bytes")
-        ]);
+    import_if_encodable(&fixture.vault, &cosigned);
     assert!(
         !fixture
             .vault
@@ -2093,6 +2103,179 @@ fn a_foreign_anchors_cancel_never_stops_a_hold() {
     let view = fixture.hold_view(&hold);
     assert_eq!(view.state, RecoveryHoldState::Waiting);
     assert!(view.answered_by.is_empty());
+}
+
+/// ANCHORS-E6 (Fable pass 29; lead ANCHORS-3 = A): whoever holds R alone
+/// (the box's release) mints a fresh root, valid by its own anchor, and
+/// signs a Cancel with that anchor beside R's cosign. An anchor is no voice
+/// in a shared judge: the row never counts, and the hold waits on. Red at
+/// `14e0d18770df`, where any valid root's anchor beside R cancelled.
+#[test]
+fn a_fresh_roots_anchor_beside_the_root_key_never_stops_a_hold() {
+    let fixture = fixture();
+    let root_key = AuthorityKey::Ed25519(fixture.generation_key(0));
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+
+    let (hold, _) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("the box recovery holds"),
+    );
+    // R's seed as the box releases it, and a fresh root that is not the
+    // vault's kit, published by its own anchor.
+    let r_signing = SigningKey::from_bytes(&released_authority_seed(
+        &fixture.seed(),
+        &fixture.vault_id,
+        0,
+    ));
+    assert_eq!(key_of(&r_signing), root_key);
+    let fresh = RecoveryRootSeed::generate().expect("a fresh root seed");
+    let root = fresh.public(&fixture.vault_id).expect("the fresh root");
+    let anchor = fresh.anchor();
+    let anchor_key = AuthorityKey::Ed25519(anchor.verifying_key().to_bytes());
+    let record = OwnerRootRecord {
+        owner: fixture.person,
+        root: root.id,
+        recovery_key: MachineEncryptionKey {
+            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+            key: root.recovery_key.to_bytes(),
+        },
+        anchor_key: root.anchor_key,
+    };
+    let mut published = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: 0,
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::OwnerRoot(record),
+        signer: AuthoritySignature {
+            suite: anchor_key.suite(),
+            public_key: anchor_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&published).expect("the transcript");
+    published.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
+    let published_hash = authority_entry_hash(&published).expect("a hash");
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&published).expect("the bytes")
+        ])
+        .expect("the fresh root stores");
+    assert!(
+        fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(&published_hash),
+        "a fresh root is valid by its own anchor alone"
+    );
+
+    // That anchor's Cancel naming the hold, beside R's one cosign.
+    let mut row = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: 1,
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::RecoveryHoldAnswer(RecoveryHoldAnswer {
+            hold,
+            answer: RecoveryHoldAnswerKind::Cancel,
+        }),
+        signer: AuthoritySignature {
+            suite: anchor_key.suite(),
+            public_key: anchor_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: vec![AuthoritySignature {
+            suite: root_key.suite(),
+            public_key: root_key.clone(),
+            signature: vec![0; 64],
+        }],
+        ts: T0,
+    };
+    let transcript = authority_transcript(&row).expect("the transcript");
+    row.cosigns[0].signature = r_signing.sign(&transcript).to_bytes().to_vec();
+    row.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
+    let hash = authority_entry_hash(&row).expect("a hash");
+    import_if_encodable(&fixture.vault, &row);
+    assert!(
+        !fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(&hash),
+        "an anchor's Cancel beside R never counts"
+    );
+    let view = fixture.hold_view(&hold);
+    assert_eq!(view.state, RecoveryHoldState::Waiting, "the hold waits on");
+    assert!(view.answered_by.is_empty());
+    assert!(
+        encode_authority_log_entry_body(&row).is_err(),
+        "the wire refuses an answer with a cosign"
+    );
+}
+
+/// The kit cancels through R like any owner key (lead ANCHORS-3 = A): its
+/// Cancel is a roster row the kit's live root key R signs alone, with no
+/// anchor and no cosign, and R is the hold's one answerer. Red at
+/// `14e0d18770df`, where the anchor signed it beside R's cosign.
+#[test]
+fn the_kits_cancel_is_the_root_keys_own_row() {
+    let fixture = fixture();
+    let root_key = AuthorityKey::Ed25519(fixture.generation_key(0));
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+
+    let (hold, _) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("the box recovery holds"),
+    );
+    fixture
+        .vault
+        .cancel_recovery_holds_with_kit_as(
+            &fixture.authority(),
+            &fixture.kit_refs(),
+            None,
+            Some(hold),
+        )
+        .expect("the kit cancels the live hold");
+    let cancels: Vec<AuthorityLogEntry> = fixture
+        .history()
+        .into_iter()
+        .filter(|row| {
+            matches!(&row.op, AuthorityOp::RecoveryHoldAnswer(answer)
+                if answer.hold == hold && answer.answer == RecoveryHoldAnswerKind::Cancel)
+        })
+        .collect();
+    assert_eq!(cancels.len(), 1, "one Cancel names the hold");
+    assert_eq!(
+        cancels[0].signer_key(),
+        &root_key,
+        "the kit's live root key R signs the Cancel"
+    );
+    assert!(cancels[0].cosigns.is_empty(), "no anchor, no cosign");
+    let view = fixture.hold_view(&hold);
+    assert_eq!(view.state, RecoveryHoldState::Cancelled);
+    assert_eq!(view.answered_by, vec![root_key]);
 }
 
 #[test]

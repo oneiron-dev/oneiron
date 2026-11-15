@@ -238,7 +238,7 @@ pub enum AuthorityOp {
     /// One answer to a box recovery's wait: the hold's attempt id and
     /// whether the attempt stops or is due at once. Signed by a live owner
     /// key other than the hold's successor, or, for a `Cancel` only, by the
-    /// vault's anchor alone. A main-log entry.
+    /// hold root's authority key R (the kit's). No cosign. A main-log entry.
     RecoveryHoldAnswer(RecoveryHoldAnswer),
 }
 
