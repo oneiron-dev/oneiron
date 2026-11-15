@@ -6,7 +6,7 @@
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test recovery_box_deposit_answer`
 //!
-//! Red on d6e43e3ea7ea: the doors do not exist there, so the file does not compile.
+//! Red on fa6a6fcc2c5d (R4 PR 2): the doors do not exist there, so the file does not compile.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
@@ -21,9 +21,10 @@ use oneiron::recovery::{CodeKeeping, KitIssue, KitPiece, PassphraseCost, PieceHo
 use oneiron::store::GateDecisionId;
 use oneiron::test_support::bind_host_owner;
 use oneiron::verbs::{RootRequestCreateRequest, create_root_request_as};
-use oneiron::world_keys::{IssuedWorldKit, RecoveryPreset};
+use oneiron::world_keys::{IssuedWorldKit, KitPasskey, RecoveryPreset};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::test_doors::root_work_answer as doors;
+use zeroize::Zeroizing;
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -114,6 +115,42 @@ fn nobody_but_me() -> SelfHosted {
         .vault
         .set_recovery_preset_as(&fixture.owner(), RecoveryPreset::NobodyButMe, |_| Ok(()))
         .expect("the owner enters Nobody but me");
+    fixture
+}
+
+/// A self-hosted vault under "Nobody but me, any 2 pieces", the other
+/// "Nobody but me" preset: entered from "Nobody but me" with its own kit,
+/// the way `recovery_preset_nobody_but_me` enters it.
+fn any_two_pieces() -> SelfHosted {
+    let fixture = nobody_but_me();
+    let prf = Zeroizing::new([6u8; 32]);
+    let switched = fixture
+        .vault
+        .set_recovery_preset_any_two_as(
+            &fixture.owner(),
+            &KitIssue {
+                vault_id: fixture.vault.vault_key_vault_id(),
+                homes: [
+                    PieceHome::RecoveryCode(CodeKeeping::Paper),
+                    PieceHome::Passkey,
+                    PieceHome::TrustedPerson,
+                ],
+                passphrase: None,
+                cost: PassphraseCost::DEFAULT,
+                only_machine: false,
+            },
+            Some(KitPasskey {
+                credential: "phone",
+                prf: &prf,
+            }),
+            |_| Ok(()),
+        )
+        .expect("the owner turns on any 2 pieces");
+    assert_eq!(
+        switched.change.preset,
+        RecoveryPreset::NobodyButMeAnyTwo,
+        "the vault is under any 2 pieces"
+    );
     fixture
 }
 
@@ -375,7 +412,17 @@ fn the_run_answer_carries_the_box_deposit_once() {
 
 #[test]
 fn under_nobody_but_me_the_confirm_answer_has_no_box_deposit() {
-    let fixture = nobody_but_me();
+    confirm_answer_has_no_box_deposit(&nobody_but_me());
+}
+
+#[test]
+fn under_any_two_pieces_the_confirm_answer_has_no_box_deposit() {
+    confirm_answer_has_no_box_deposit(&any_two_pieces());
+}
+
+/// The confirm answer of `fixture`, a vault under a "Nobody but me"
+/// preset, carries no box deposit.
+fn confirm_answer_has_no_box_deposit(fixture: &SelfHosted) {
     let issued = fixture.issue();
     let answer = doors::confirm_answer_json(
         &fixture.vault,
@@ -556,7 +603,17 @@ fn the_cli_refuses_an_existing_deposit_file_before_confirming() {
 
 #[test]
 fn under_nobody_but_me_the_cli_writes_no_deposit_file() {
-    let fixture = nobody_but_me();
+    cli_writes_no_deposit_file(&nobody_but_me());
+}
+
+#[test]
+fn under_any_two_pieces_the_cli_writes_no_deposit_file() {
+    cli_writes_no_deposit_file(&any_two_pieces());
+}
+
+/// The CLI confirm on `fixture`, a vault under a "Nobody but me" preset,
+/// writes no deposit file and answers no path.
+fn cli_writes_no_deposit_file(fixture: &SelfHosted) {
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("deposit.json");
     let issued = fixture.issue();

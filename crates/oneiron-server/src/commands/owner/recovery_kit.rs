@@ -11,7 +11,7 @@
 //! (FIX 2063).
 
 use std::collections::BTreeSet;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -55,6 +55,10 @@ pub(super) use self::custody::{kit_custody_root, kit_custody_seed};
 
 /// The most a piece file is: an export is 89 bytes, a code 99 characters.
 const PIECE_LIMIT: usize = 1024;
+
+/// Room for a box deposit file's JSON: it is about 190 bytes (a label, then
+/// two 64-hex strings).
+const DEPOSIT_FILE_ROOM: usize = 512;
 
 /// The window manager's user for a bundle restore, as the server names its own.
 const RESTORE_USER_ID: &str = "server";
@@ -287,10 +291,11 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
 /// (WAYBACK-BOX-DEPOSIT-PATH = A): the file is created, a new one its owner
 /// alone may read, before anything is confirmed, so an existing file refuses
 /// the confirm; a failed confirm removes it again. After the confirm the
-/// deposit is written and synced, and a write failure removes the file and
-/// is answered with a fresh kit to issue; under "Nobody but me" no deposit
-/// is written and the file is removed. Without the flag the seed is dropped,
-/// zeroized, and nothing reaches stdout but [`Confirmed`].
+/// deposit is written and synced with its directory entry, and a failure to
+/// encode, write or sync it removes the file and is answered with a fresh
+/// kit to issue; under "Nobody but me" no deposit is written and the file is
+/// removed. Without the flag the seed is dropped, zeroized, and nothing
+/// reaches stdout but [`Confirmed`].
 pub(crate) fn confirm_on(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -316,15 +321,19 @@ pub(crate) fn confirm_on(
     let seed = confirmed.activated.authority_seed;
     let deposit = box_deposit(vault, seed, &confirmed.activated.root);
     let box_deposit_out = match (pending, deposit) {
-        (Some((path, mut file)), Some(deposit)) => {
-            let bytes = Zeroizing::new(serde_json::to_vec(&deposit)?);
-            let written = file
-                .write_all(&bytes)
-                .and_then(|()| file.write_all(b"\n"))
-                .and_then(|()| file.sync_all());
-            drop(file);
+        (Some((path, file)), Some(deposit)) => {
+            // Room for the whole deposit up front, so no growth leaves an
+            // unwiped copy of the seed behind.
+            let mut bytes = Zeroizing::new(Vec::with_capacity(DEPOSIT_FILE_ROOM));
+            let written = match serde_json::to_writer(&mut *bytes, &deposit) {
+                Ok(()) => credential_file::write_created(path, file, &bytes),
+                Err(error) => {
+                    drop(file);
+                    let _ = std::fs::remove_file(path);
+                    Err(error.into())
+                }
+            };
             if let Err(error) = written {
-                let _ = std::fs::remove_file(path);
                 anyhow::bail!(
                     "kit {} is confirmed and its root is live here, but its box deposit was not \
                      written to {}: {error}; issue and confirm a new kit to deposit",

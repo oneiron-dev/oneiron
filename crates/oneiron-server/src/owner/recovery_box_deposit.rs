@@ -6,7 +6,9 @@
 //!
 //! Under "Nobody but me" the box holds no deposit: the answer carries none
 //! and the CLI writes no file. The deposit is never logged: its serializer
-//! wipes the hex after writing it, and its `Debug` prints no seed bytes.
+//! wipes the hex after writing it, and its `Debug` prints no seed bytes. The
+//! seed's hex is made here, not by `owner::vault_key::hex`, which no secret
+//! passes through.
 
 use oneiron::world_keys::{RecoveryAuthoritySeed, RecoveryRootId};
 use serde::Serialize;
@@ -47,8 +49,20 @@ fn seed_hex<S: serde::Serializer>(
     seed: &RecoveryAuthoritySeed,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    let guarded = Zeroizing::new(hex(seed.bytes()));
-    serializer.serialize_str(&guarded)
+    serializer.serialize_str(&secret_hex(seed.bytes()))
+}
+
+/// `bytes` as lowercase hex in one buffer sized up front and wiped when
+/// dropped, so no part of the secret is left in a temporary or a buffer the
+/// string outgrew.
+fn secret_hex(bytes: &[u8]) -> Zeroizing<String> {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut text = Zeroizing::new(String::with_capacity(bytes.len() * 2));
+    for &byte in bytes {
+        text.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        text.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    text
 }
 
 /// The box deposit for a kit confirm that activated `root`: `None` under
