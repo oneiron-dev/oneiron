@@ -418,22 +418,22 @@ async fn recall(
         .as_ref()
         .and_then(crate::auth::CoreAuth::verified_slip)
         .cloned();
-    // The most recalled items one call injects: the owner's
-    // `proxy.openai.recall_limit` (8 unless set).
-    let limit =
-        oneiron::connector_key::openai_proxy_recall_limit(&server.vault).map_err(|failed| {
-            error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "api_error",
-                "recall_failed",
-                failed.to_string(),
-            )
-        })?;
     let input = RecallRequest {
         query,
         effort: Some(RecallEffort::Call),
         scope: None,
-        limit: Some(limit),
+        // The most recalled items one call injects: the owner's
+        // `proxy.openai.recall_limit` (8 unless set).
+        limit: Some(
+            oneiron::connector_key::openai_proxy_recall_limit(&server.vault).map_err(|failed| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "api_error",
+                    "recall_failed",
+                    failed.to_string(),
+                )
+            })?,
+        ),
         format: Some("md".to_owned()),
         token_budget: None,
         reader_agent_ref: None,
