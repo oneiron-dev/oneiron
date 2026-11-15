@@ -128,12 +128,6 @@ impl Vault {
             .map(|bytes| *blake3::hash(bytes).as_bytes())
             .collect();
         self.with_write_txn_grouped(|txn| {
-            let fold = self.authority_fold_readonly_in_txn(txn)?;
-            if fold.machine_proof_key(machine) != Some(key) {
-                return Err(refused(
-                    "a custody proof names a machine not proved here on that key",
-                ));
-            }
             if crate::identity::read_machine_id_in_txn(self, txn)? == Some(machine) {
                 return Err(refused("a machine proves no archive custody to itself"));
             }
