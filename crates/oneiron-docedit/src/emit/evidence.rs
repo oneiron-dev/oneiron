@@ -97,9 +97,11 @@ impl FitEvidence {
                     index,
                     detail: error.to_string(),
                 })?;
-            let candidate = digest(&read.input.sha256).ok_or_else(|| EvidenceError::Receipt {
-                index,
-                detail: "input.sha256 is not 64 lower-case hex digits".to_owned(),
+            let candidate = oneiron_hex::decode::<32>(&read.input.sha256).ok_or_else(|| {
+                EvidenceError::Receipt {
+                    index,
+                    detail: "input.sha256 is not 64 lower-case hex digits".to_owned(),
+                }
             })?;
             if let Some(first) = index_of.insert(candidate, index) {
                 return Err(EvidenceError::Duplicate {
@@ -168,24 +170,6 @@ struct RowFile {
     shape_id: u32,
     block: String,
     verdict: FitVerdict,
-}
-
-/// 64 lower-case hex digits as 32 bytes.
-fn digest(hex: &str) -> Option<[u8; 32]> {
-    let nibble = |byte: u8| match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    };
-    let digits = hex.as_bytes();
-    if digits.len() != 64 {
-        return None;
-    }
-    let mut out = [0_u8; 32];
-    for (slot, pair) in out.iter_mut().zip(digits.chunks_exact(2)) {
-        *slot = (nibble(pair[0])? << 4) | nibble(pair[1])?;
-    }
-    Some(out)
 }
 
 /// The candidate's fit: every unit geometry leaves undecided stays unverified unless the clean receipt for these exact bytes measured it as fitting; a measured overflow is also named. Returns the consulted receipt's SHA-256.
