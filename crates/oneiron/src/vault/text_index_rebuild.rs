@@ -18,9 +18,7 @@
 //! idempotent (`write_index` drops a document's old rows first), so a document
 //! a foreground write indexed after the clear ends the same when the pass
 //! reaches it, and a document deleted meanwhile has no source row left for the
-//! pass to find. A source row past the per-document text ceiling, written
-//! before the ceiling, stays unindexed, as the checkpoint restore and the
-//! leave's reindex leave it. Text reads fail closed while the marker stands.
+//! pass to find. Text reads fail closed while the marker stands.
 
 use std::ops::Bound;
 use std::sync::atomic::Ordering;
@@ -28,7 +26,7 @@ use std::sync::atomic::Ordering;
 use super::Vault;
 use crate::analyzer::MultilingualAnalyzer;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, StoreError};
+use crate::error::{Error, Result};
 use crate::ports::{EntityStoreRead, IndexRows, RetrievalIndexInventory};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
@@ -51,9 +49,7 @@ pub(crate) struct TextIndexRebuildMarker {
     pub(crate) cursor: Option<EntityId>,
     /// Documents indexed again so far.
     pub(crate) done: u64,
-    /// Documents with stored source text when the rebuild started: a
-    /// start-time count, so a document deleted during the rebuild leaves the
-    /// final `done` below it.
+    /// Documents with stored source text when the rebuild started.
     pub(crate) total: u64,
 }
 
@@ -180,9 +176,7 @@ pub(crate) fn end_text_index_rebuild_in_txn(
 pub(crate) struct TextIndexRebuildRun {
     /// Documents indexed again.
     pub(crate) reindexed: u64,
-    /// Source rows left unindexed: their entity is gone, or their text is
-    /// past `MAX_INDEXED_TEXT_BYTES` (written before the ceiling; the write
-    /// door refuses such text now).
+    /// Source rows whose entity is gone, left as they are.
     pub(crate) skipped: u64,
     /// No rebuild is left: the pass ended it, or none stood.
     pub(crate) complete: bool,
@@ -231,25 +225,12 @@ impl Vault {
                 .collect::<Result<Vec<_>>>()?;
             let last_page = rows.len() < page;
             for (id, fields) in &rows {
-                if !self.store.port_entity_present(&wtxn, id)? {
+                if self.store.port_entity_present(&wtxn, id)? {
+                    crate::bm25::index_text(&self.store, &mut wtxn, &self.analyzer, id, fields)?;
+                    run.reindexed = run.reindexed.saturating_add(1);
+                    marker.done = marker.done.saturating_add(1);
+                } else {
                     run.skipped = run.skipped.saturating_add(1);
-                    continue;
-                }
-                match crate::bm25::index_text(&self.store, &mut wtxn, &self.analyzer, id, fields) {
-                    Ok(()) => {
-                        run.reindexed = run.reindexed.saturating_add(1);
-                        marker.done = marker.done.saturating_add(1);
-                    }
-                    Err(Error::Store(StoreError::IndexedTextTooLarge { bytes, limit })) => {
-                        tracing::warn!(
-                            entity = %id.to_hex(),
-                            bytes,
-                            limit,
-                            "text index rebuild left a document past the text ceiling out of search"
-                        );
-                        run.skipped = run.skipped.saturating_add(1);
-                    }
-                    Err(error) => return Err(error),
                 }
             }
             if last_page {
