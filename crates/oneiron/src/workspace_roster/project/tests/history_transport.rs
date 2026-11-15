@@ -214,8 +214,6 @@ fn a_squatter_or_poisoned_carrier_never_hides_the_signed_removal() -> Result<()>
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-TRANSPORT-ITEMS]: retired seam, not a port (2 errors: E0061 x1, E0308 x1): its last case signs the state and the seal through a caller closure; seal_project now signs both inside the door with one OwnerProjectSigner, so no caller can make the state verify and the seal fail; the cases above it are ported; drop that case or reach the split through a lower door, then drop this gate
-#[cfg(any())]
 /// Bug repro: a board removal that a vault from before this PR stored with
 /// no companion is lost on main when the project is deleted, and a replayed
 /// older row or a restore brings the removed member back. Here history
@@ -336,31 +334,6 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
         Some(ProjectDisposition::Settled)
     ));
     assert_eq!(seats_of(&vault, id), ids(&[second]));
-    // Nor does one whose new state verifies but whose seal does not: the
-    // state alone would install, the seal would not (Sol r2 S2).
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    let head = vault
-        .project_frontier(id)?
-        .and_then(|frontier| frontier.witness)
-        .map(|witness| witness.head)
-        .ok_or(Error::EntityNotFound)?;
-    let calls = std::cell::Cell::new(0);
-    let sealed = vault.seal_project(&owner, id, authority, head, slip.to_token()?, |challenge| {
-        calls.set(calls.get() + 1);
-        if calls.get() == 1 {
-            issuer.binding_proof(&slip, challenge)
-        } else {
-            Ok(vec![9; 64])
-        }
-    });
-    assert_eq!(calls.get(), 2);
-    assert!(
-        sealed
-            .as_ref()
-            .is_err_and(|error| error.to_string().contains("does not install")),
-        "{:?}",
-        sealed.map(drop)
-    );
     Ok(())
 }
 

@@ -234,8 +234,6 @@ fn a_self_hosted_root_binds_its_owner_and_no_one_else() {
 
 /// A recipient committed after owner revocation must never be read under an
 /// earlier owner authorization snapshot.
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-AUTHORITY-REVOCATION-ITEMS]: calls crate::share::tests::fixture, which [LIBTEST-QUARANTINE-SHARE-TESTS] gates; drop this gate with that port
-#[cfg(any())]
 #[test]
 fn revoked_owner_preview_cannot_observe_later_share_recipient() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
