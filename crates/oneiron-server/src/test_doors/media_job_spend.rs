@@ -2,13 +2,15 @@
 //! ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped media job's
 //! own guard on its spend scope, whose use the job's ledger books there, or
 //! stages before its process dies; and a video job a scope funds, kept in
-//! the vault by a media runtime, whose end its poll writes.
+//! the vault by a media runtime, whose end its poll writes, or whose end the
+//! vault refused and two polls at once write again (S7299 review round 3
+//! P1).
 
 use std::sync::Arc;
 
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::llm::media::MediaJobState;
-use oneiron::{BudgetGuard, Error, Result, Vault};
+use oneiron::{BudgetGuard, Error, LlmResult, Result, Vault};
 
 use crate::models::{JobSpendLedger, ModelRuntime};
 
@@ -126,5 +128,41 @@ impl ScopedMediaJob {
             .write_kept_end_for_test(ticket, state)
             .map(drop)
             .map_err(door_error)
+    }
+
+    /// The job's poll sees its end `state`, its permit settled, and the
+    /// vault refuses both its end row and its held end: the job is held
+    /// here with its end, its row still reads running, and its scope's part
+    /// is staged nowhere.
+    pub fn end_refused(&self, ticket: &str, state: &MediaJobState) {
+        self.runtime.media().end_refused_for_test(ticket, state);
+    }
+
+    /// Two polls of job `ticket` at once, each on a thread of its own, and
+    /// what each answered. Each poll's end waits after its snapshot of the
+    /// scope's part until the other poll's end took one too, or 5 s pass:
+    /// where nothing serializes the two ends, both snapshot that part before
+    /// either commits it.
+    pub fn poll_twice_at_once(&self, ticket: &str) -> Result<[LlmResult<MediaJobState>; 2]> {
+        let media = self.runtime.media();
+        media.meet_end_snapshots_for_test(ticket);
+        let poll = || -> Result<LlmResult<MediaJobState>> {
+            let thread_runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| Error::InvalidConfig(format!("poll thread runtime: {error}")))?;
+            Ok(thread_runtime.block_on(media.poll(ticket)))
+        };
+        std::thread::scope(|threads| -> Result<[LlmResult<MediaJobState>; 2]> {
+            let first = threads.spawn(poll);
+            let second = threads.spawn(poll);
+            let panicked = |_: Box<dyn std::any::Any + Send>| {
+                Error::InvalidConfig("a poll thread panicked".to_owned())
+            };
+            Ok([
+                first.join().map_err(panicked)??,
+                second.join().map_err(panicked)??,
+            ])
+        })
     }
 }

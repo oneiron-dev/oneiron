@@ -748,6 +748,36 @@ impl ContextPackPlan<'_, '_> {
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(self)
     }
+
+    /// [`Self::admit`] for a read composed over `room`'s view
+    /// ([`super::OwnedScopedRead::into_borrowed_in_room`]): the pack reads
+    /// the stretch's overlay ∪ base, and registers its retrieval run through
+    /// the room's telemetry door, so nothing it derives from a room's row
+    /// lands in base (ARCH-0052 #e5-read-union-open, ONE-1729).
+    ///
+    /// # Errors
+    ///
+    /// A plan whose read is not composed over `room`'s view.
+    pub fn admit_in_room<'b>(
+        &'b self,
+        builder: crate::ContextPackBuilder<'b>,
+        room: &'b crate::off_record::RoomPackRead<'_>,
+    ) -> Result<crate::ContextPackBuilder<'b>> {
+        if !self
+            .read
+            .session_view
+            .is_some_and(|view| std::ptr::addr_eq(view, &room.view))
+        {
+            return Err(crate::Error::InvalidConfig(
+                "a room's context pack reads through a read composed over that room".to_owned(),
+            ));
+        }
+        Ok(self.admit(
+            builder
+                .reading(self.read.store_read())
+                .in_session(&room.telemetry),
+        ))
+    }
 }
 
 impl crate::store::retrieval_values::CandidateGate for ContextPackPlan<'_, '_> {

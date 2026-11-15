@@ -31,6 +31,26 @@ pub(in crate::code_run) const SELF_PROVENANCE_CALL_KEY: &str = "call";
 
 const SELF_MEMORY_EDGE_OPERATION_ID_DOMAIN: &[u8] = b"oneiron:self-memory-edge-operation:v1";
 
+/// The run reference a code run's dispatcher wrote into `envelope`'s
+/// provenance (its `run`, beside the self surface): the run the write belongs
+/// to, from the dispatcher's own binding, never from the guest. `None` for an
+/// envelope no code run built.
+pub(crate) fn envelope_run_ref(envelope: &WriteEnvelope) -> Option<&str> {
+    let Value::Map(fields) = envelope.provenance().value() else {
+        return None;
+    };
+    let field = |key: &str| {
+        fields
+            .iter()
+            .find(|(name, _)| name.as_str() == Some(key))
+            .and_then(|(_, value)| value.as_str())
+    };
+    if field(SELF_PROVENANCE_SURFACE_KEY) != Some(SELF_SURFACE_NAME) {
+        return None;
+    }
+    field(SELF_PROVENANCE_RUN_KEY)
+}
+
 impl HostSelfDispatcher<'_> {
     pub(super) fn write_envelope(
         &self,

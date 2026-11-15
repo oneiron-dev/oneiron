@@ -91,6 +91,10 @@ impl Drop for Lease {
 /// Persistent-COW in-memory overlay shared by one live session.
 pub struct SessionOverlay {
     pub(in crate::session_overlay) state: ArcSwap<OverlayState>,
+    /// The preview of this overlay's open write segment, published for the
+    /// K4 base-write taint guard on other threads (ARCH-0052, the open-segment
+    /// window). None when no segment is open.
+    pub(in crate::session_overlay) open_segment_preview: arc_swap::ArcSwapOption<OverlayState>,
     pub(in crate::session_overlay) lifecycle: Mutex<Lifecycle>,
     lease_drained: Condvar,
     pub(super) segment_available: Condvar,
@@ -115,8 +119,12 @@ impl SessionOverlay {
     // Budget failures belong exclusively to preflight, before the base commit.
     // This apply helper deliberately has no budget input or budget-error branch.
     pub fn new(budget_bytes: usize) -> Arc<Self> {
+        // A room's bytes live here from now on: no core file holds them
+        // (ARCH-0052 threat-model note).
+        super::super::dump_suppression::suppress_process_dumps();
         Arc::new(Self {
             state: ArcSwap::from_pointee(OverlayState::empty()),
+            open_segment_preview: arc_swap::ArcSwapOption::empty(),
             lifecycle: Mutex::new(Lifecycle {
                 state: OverlayLifecycleState::Live,
                 generation: NEXT_OVERLAY_GENERATION.fetch_add(1, Ordering::Relaxed),

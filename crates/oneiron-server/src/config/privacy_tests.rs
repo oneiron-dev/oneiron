@@ -91,10 +91,11 @@ fn privacy_reference_uses_its_highest_precedence_source() {
         ] {
             let error =
                 resolve_privacy_layers([Some(Hosted), None, Some(Hosted)], key_refs).unwrap_err();
+            // e8ac4951713 (#2955): the blank check names the custody, not the posture.
             assert!(
                 error
                     .to_string()
-                    .contains("non-empty host-managed KMS key reference")
+                    .contains("KMS key custody requires a non-empty key reference")
             );
             assert!(!format!("{error:?}").contains(file_ref));
             assert!(!format!("{error:?}").contains(env_ref));
@@ -102,28 +103,55 @@ fn privacy_reference_uses_its_highest_precedence_source() {
     }
 }
 
+/// e8ac4951713 (#2955, HOSTED_OWNER_KEY_SUPPORT): only a blind relay refuses
+/// a KMS reference now, so the same-source and higher-source rule is pinned
+/// on Relay. A blank reference is refused first, on any posture.
 #[test]
-fn self_host_privacy_rejects_same_source_and_higher_source_key_references() {
-    use HostingPrivacyPosture::SelfHostLocal;
+fn relay_privacy_rejects_same_source_and_higher_source_key_references() {
+    use HostingPrivacyPosture::Relay;
 
     for posture_source in 0..3 {
         for key_ref_source in posture_source..3 {
             for key_ref in ["kms://example/stray-ref", "", "   "] {
                 let mut postures = [None; 3];
-                postures[posture_source] = Some(SelfHostLocal);
+                postures[posture_source] = Some(Relay);
                 let mut key_refs = [None; 3];
                 key_refs[key_ref_source] = Some(key_ref);
                 let error = resolve_privacy_layers(postures, key_refs).unwrap_err();
+                let expected = if key_ref.trim().is_empty() {
+                    "KMS key custody requires a non-empty key reference"
+                } else {
+                    "a blind relay holds no data key"
+                };
                 assert!(
-                    error
-                        .to_string()
-                        .contains("rejects host-managed KMS key custody"),
+                    error.to_string().contains(expected),
                     "posture source {posture_source}, reference source {key_ref_source}: {error}"
                 );
                 assert!(!format!("{error:?}").contains("kms://example/stray-ref"));
             }
         }
     }
+}
+
+/// e8ac4951713 (#2955): a self-hosted vault keeps a KMS reference as the
+/// custody of its own key.
+#[test]
+fn self_host_privacy_keeps_its_key_reference_as_kms_custody() {
+    use HostingPrivacyPosture::SelfHostLocal;
+
+    let key_ref = "kms://example/owner-ref";
+    let resolved = resolve_privacy_layers(
+        [Some(SelfHostLocal), None, None],
+        [Some(key_ref), None, None],
+    )
+    .unwrap();
+    assert_eq!(resolved.hosted_kms_key_ref.as_deref(), Some(key_ref));
+    assert_eq!(
+        resolved.vault_config().privacy.data_key_custody,
+        VaultDataKeyCustody::HostManagedKms {
+            key_ref: key_ref.to_owned(),
+        }
+    );
 }
 
 #[test]
@@ -139,6 +167,16 @@ fn direct_vault_config_conversion_preserves_valid_privacy_pairs() {
                 key_ref: "kms://example/direct-ref".to_owned(),
             },
         ),
+        // e8ac4951713 (#2955): the owner's own KMS on a self-hosted vault,
+        // and a hosted vault on the owner's key.
+        (
+            SelfHostLocal,
+            Some("kms://example/direct-ref"),
+            VaultDataKeyCustody::HostManagedKms {
+                key_ref: "kms://example/direct-ref".to_owned(),
+            },
+        ),
+        (Hosted, None, VaultDataKeyCustody::OwnerHeldLocal),
     ] {
         // Bypass the resolver, as a public library caller can.
         let direct = ServeConfig {
@@ -176,14 +214,15 @@ fn direct_vault_config_conversion_preserves_valid_privacy_pairs() {
 
 #[test]
 fn direct_vault_config_conversion_preserves_invalid_pairs_for_side_effect_free_refusal() {
-    use HostingPrivacyPosture::{Hosted, SelfHostLocal};
+    use HostingPrivacyPosture::{Hosted, Relay, SelfHostLocal};
 
+    // e8ac4951713 (#2955): a self-hosted KMS reference and a hosted vault
+    // with no reference are valid now; a relay holds no data key.
     for (posture, key_ref) in [
-        (SelfHostLocal, Some("kms://example/stray-ref")),
+        (Relay, Some("kms://example/stray-ref")),
         (SelfHostLocal, Some("")),
         (SelfHostLocal, Some("   ")),
         (SelfHostLocal, Some("\t\n")),
-        (Hosted, None),
         (Hosted, Some("")),
         (Hosted, Some("   ")),
         (Hosted, Some("\t\n")),

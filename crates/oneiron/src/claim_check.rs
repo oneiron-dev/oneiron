@@ -180,14 +180,7 @@ pub trait AutoCheckNotes: Send + Sync {
 
 /// Truncates `value` to at most `max_bytes`, never splitting a character.
 pub(crate) fn truncate_on_char_boundary(value: &str, max_bytes: usize) -> &str {
-    if value.len() <= max_bytes {
-        return value;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    &value[..end]
+    &value[..value.floor_char_boundary(max_bytes)]
 }
 
 /// A calibrated check can only hold. Shadow emits a receipt reason without holding.

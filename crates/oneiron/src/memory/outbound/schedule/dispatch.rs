@@ -113,7 +113,13 @@ impl Memory<'_> {
         }
 
         let outcome = self.with_verified_actor_write_txn(|wtxn| {
-            self.enqueue_scheduled_send_in_txn(wtxn, &send, payload, &dedupe_actor_ref)
+            self.enqueue_scheduled_send_in_txn(
+                wtxn,
+                &send,
+                payload,
+                &dedupe_actor_ref,
+                &result.gate_reason_codes,
+            )
         })?;
         let attempt = match outcome {
             EnqueueOutcome::Enqueued(attempt) => attempt,

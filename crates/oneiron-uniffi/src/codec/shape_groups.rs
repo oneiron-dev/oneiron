@@ -23,7 +23,7 @@ impl Lift<UnifiedInboxGroupPage> for crate::UnifiedInboxGroupPage {
                 .iter_mut()
                 .filter_map(|group| match group {
                     UnifiedInboxGroup::Shape { group } => Some(group),
-                    UnifiedInboxGroup::Dreamer { .. } => None,
+                    UnifiedInboxGroup::Dreamer { .. } | UnifiedInboxGroup::Restore { .. } => None,
                 })
                 .flat_map(group_rows),
         )?;
@@ -34,7 +34,8 @@ impl Lift<UnifiedInboxGroupPage> for crate::UnifiedInboxGroupPage {
                 .iter_mut()
                 .filter_map(|group| match group {
                     crate::UnifiedInboxGroup::Shape { group } => Some(group),
-                    crate::UnifiedInboxGroup::Dreamer { .. } => None,
+                    crate::UnifiedInboxGroup::Dreamer { .. }
+                    | crate::UnifiedInboxGroup::Restore { .. } => None,
                 })
                 .flat_map(output_group_rows),
             row_json,
@@ -50,6 +51,9 @@ impl Lift<InboxGroupResolution> for crate::InboxGroupResolution {
                 receipt: Lift::lift(receipt)?,
             },
             InboxGroupResolution::Dreamer { resolution } => Self::Dreamer {
+                resolution: lift_record("vault.inbox.groups.resolve", &resolution)?,
+            },
+            InboxGroupResolution::Restore { resolution } => Self::Restore {
                 resolution: lift_record("vault.inbox.groups.resolve", &resolution)?,
             },
         })

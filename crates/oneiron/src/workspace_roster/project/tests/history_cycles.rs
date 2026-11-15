@@ -114,7 +114,7 @@ pub(super) fn scaffold(graph: &Graph) -> Result<Scaffold> {
         let mut next = base.clone();
         next.parents = vec![rev.parent.map_or(root, |parent| ids[parent]).to_hex()];
         next.slice.readable = readable(rev.mask);
-        next.depth_remaining = rev.depth;
+        next.depth_remaining = u64::from(rev.depth);
         let anchor = base.anchor()?;
         let version = ProjectProofVersion::V3;
         // Each revision signs at its own second: equal content never shares a hash.
@@ -171,6 +171,7 @@ impl Scaffold {
                     kind,
                     TimeRange { start: at, end: at },
                     at,
+                    None,
                     &revision.canonical_bytes()?,
                 );
             }
@@ -194,7 +195,7 @@ impl Scaffold {
             .and_then(|parent| (self.ids.iter()).position(|id| id.to_hex() == *parent));
         Some(View {
             mask,
-            depth: effective.depth_remaining,
+            depth: u8::try_from(effective.depth_remaining).expect("a fixture depth fits a u8"),
             parent,
         })
     }

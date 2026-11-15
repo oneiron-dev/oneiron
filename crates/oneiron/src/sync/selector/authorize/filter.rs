@@ -1,3 +1,4 @@
+use super::release::{RowRelease, released_for_other_vault};
 use super::*;
 use crate::workspace_roster::project::extra_room_redaction;
 
@@ -89,6 +90,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
         scope_position,
     )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
+    // FIX SELECTOR-RELATIONSHIP-LABELS (OPUS-LEAKS): the grant's member
+    // reads a row that names a relationship or a private scope only on its
+    // own live grants and memberships, as its delegated scoped read does: an
+    // export counts as a read (ARCH-0006a:363-364). Every Owner reads every
+    // row: the vault owner, and each co-Owner on an Owner-role grant
+    // (federation:G, co-ownership is direct access to the whole vault).
+    // Admin, Steward, Member, Viewer, Delegate and Guest grants are gated. An
+    // owner check that fails gates.
+    let member_access = member_label_access(vault, &rtxn, &grant)?;
     // Credentials never leave through a selector, whatever the carrier says, and neither does
     // this vault's embedding setup (OF-370): a peer or a guest keeps its own.
     let mut custody_withheld = BTreeSet::new();
@@ -113,6 +123,13 @@ pub(in crate::sync::selector) fn filter_window_doc(
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
+    // SCOPED-EXPORT-RULE = A (ARCH-0027 :382): a row bound for another vault
+    // is judged by the typed release rule before it can be a candidate, so a
+    // row the rule withholds pulls no closure, edge, birth or file reference
+    // after it, and its stored bytes never enter this copy. The owner's own
+    // machines take every row as stored.
+    let other_vault = matches!(reach, BirthReach::OtherVault(_));
+    let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -195,6 +212,26 @@ pub(in crate::sync::selector) fn filter_window_doc(
         {
             return;
         }
+        match member_reads_labels(vault, &rtxn, member_access.as_ref(), &id, blob) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
+        // FIX SELECTOR-SCOPE-SUMMARY-WORDS (OPUS-LEAKS): a row that carries
+        // other rows' words (a scope SUMMARY, the TURN that copies one, a
+        // merge header) reaches the member only when it reads every one of
+        // those sources at the same gate, as its scoped read admits it.
+        match member_reads_word_sources(vault, &rtxn, member_access.as_ref(), &id, blob) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
         match super::super::scope::settled_position_selected(&id, blob, &scope, scope_position) {
             Ok(true) => {}
             Ok(false) => return,
@@ -229,16 +266,20 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 )? {
                     return Ok(false);
                 }
-                Ok(source_selected(
-                    vault,
-                    &rtxn,
-                    (source, raw),
-                    &grant.authority_scope,
-                    selector,
-                    scope_position,
-                    &facet_scope,
-                )? && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
-                    .is_none())
+                Ok(
+                    member_reads_labels(vault, &rtxn, member_access.as_ref(), source, raw)?
+                        && source_selected(
+                            vault,
+                            &rtxn,
+                            (source, raw),
+                            &grant.authority_scope,
+                            selector,
+                            scope_position,
+                            &facet_scope,
+                        )?
+                        && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
+                            .is_none(),
+                )
             }) {
                 Ok(true) => {}
                 Ok(false) => return,
@@ -254,6 +295,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
                     scope_error = Some(error);
                     return;
                 }
+            }
+        }
+        if other_vault && !is_tombstoned {
+            match released_for_other_vault(vault, &rtxn, &id, blob) {
+                RowRelease::Exact => {}
+                RowRelease::Rewritten(bytes) => {
+                    rewritten.insert(id, bytes);
+                }
+                RowRelease::Withheld => return,
             }
         }
         candidates.insert(id);
@@ -364,6 +414,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // authority-mode NOTE drop).
     let grant_selector = Some((grant.scope, selector));
     let notes = NoteSelection::judged_in(vault, &rtxn, &flagged, source, &kept, grant_selector)?;
+    // SCOPED-EXPORT-RULE = A: a copy bound for another vault also keeps
+    // home each NOTE whose review carriers (proposal values, a bundle's
+    // explainer) hold a credential; copy_selected below writes no carrier
+    // of it.
+    let notes = if other_vault {
+        notes.withholding_credential_carriers(source)?
+    } else {
+        notes
+    };
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
     // after every other withholding and before anything is written.
@@ -380,6 +439,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 crate::workspace_roster::exportable_revisions_in_txn(&vault.store, &rtxn, *project)?
             {
                 if let Some(raw) = vault.get_raw_in(&rtxn, &companion)? {
+                    let raw = if other_vault {
+                        match released_for_other_vault(vault, &rtxn, &companion, &raw) {
+                            RowRelease::Exact => raw,
+                            RowRelease::Rewritten(bytes) => bytes,
+                            RowRelease::Withheld => continue,
+                        }
+                    } else {
+                        raw
+                    };
                     revision_rows.push((companion, raw));
                 }
             }
@@ -395,7 +463,6 @@ pub(in crate::sync::selector) fn filter_window_doc(
     for (id, raw) in &revision_rows {
         map_insert_bytes(&out_entities, &id.to_hex(), raw)?;
     }
-    let strip_extra_room = matches!(reach, BirthReach::OtherVault(_));
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         let Ok(id) = EntityId::from_hex(raw_key) else {
@@ -404,21 +471,32 @@ pub(in crate::sync::selector) fn filter_window_doc(
         if id.to_hex() != raw_key || !shipped.contains(&id) {
             return;
         }
-        if strip_extra_room
-            && let Some(header) = EntityMetadataHeader::parse(blob)
+        // The release judged the stored row; the extra-room strip only
+        // removes a CONVERSATION's project group from what leaves.
+        let bytes = rewritten.get(&id).map_or(blob, Vec::as_slice);
+        if other_vault
+            && let Some(header) = EntityMetadataHeader::parse(bytes)
             && let Some(stripped) = extra_room_redaction::strip_project_group_from_record_bytes(
                 header.entity_type,
-                blob,
+                bytes,
             )
         {
             let _ = map_insert_bytes(&out_entities, raw_key, &stripped);
             return;
         }
-        let _ = map_insert_bytes(&out_entities, raw_key, blob);
+        let _ = map_insert_bytes(&out_entities, raw_key, bytes);
     });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position, withhold)?
+        authorized_base_edge_endpoints(
+            vault,
+            &source_edges,
+            &kept,
+            selector,
+            position,
+            withhold,
+            reach,
+        )?
     } else {
         BTreeSet::new()
     };
@@ -491,4 +569,85 @@ pub(in crate::sync::selector) fn filter_window_doc(
     crate::sync::note::copy_selected(source, &out, &notes)?;
     out.commit();
     Ok(out)
+}
+
+/// The access context `grant`'s member reads with at the relationship gate
+/// (FIX SELECTOR-RELATIONSHIP-LABELS): `None` for an Owner's member, the
+/// vault owner or a co-Owner on an Owner-role grant, which reads every row.
+/// An owner check that fails gates.
+pub(in crate::sync::selector) fn member_label_access<'v>(
+    vault: &'v Vault,
+    rtxn: &heed::RoTxn<'_>,
+    grant: &crate::federation::FederationGrant,
+) -> Result<Option<crate::access_grant::AccessContext<'v>>> {
+    if grant.role == crate::federation::FederationGrantRole::Owner
+        || crate::memory::owner_exemption_holds_in_txn(vault, rtxn, grant.member_ref)
+            .unwrap_or(false)
+    {
+        return Ok(None);
+    }
+    Ok(Some(crate::access_grant::AccessContext::load(
+        vault,
+        rtxn,
+        Some(grant.member_ref),
+    )?))
+}
+
+/// Whether the selector's member reads the row `raw` of `id` at the
+/// relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is an
+/// Owner's member (the vault owner, or a co-Owner on an Owner-role grant),
+/// which reads every row. A CLAIM body that does not decode is withheld, as
+/// the causal check withholds it.
+pub(in crate::sync::selector) fn member_reads_labels(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    member: Option<&crate::access_grant::AccessContext<'_>>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let Some(member) = member else {
+        return Ok(true);
+    };
+    match crate::claim::relationship_label_read(&vault.store, rtxn, id, raw) {
+        Ok(read) => Ok(read.allowed_by(member)),
+        Err(Error::InvalidClaimBody(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether the selector's member reads, at the relationship gate, every
+/// source the words of the row `raw` of `id` came from (FIX
+/// SELECTOR-SCOPE-SUMMARY-WORDS): the sources
+/// `scope_summary::word_sources_in` names, as the scoped read admits a
+/// derived row (`claim/scoped_read/visibility.rs`). A row with words of its
+/// own passes; one whose sources no longer resolve, or name a row not held
+/// here, is withheld. `None` is an Owner's member, which reads every row.
+/// Only a member the label gate binds pays for the lookup.
+fn member_reads_word_sources(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    member: Option<&crate::access_grant::AccessContext<'_>>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    if member.is_none() {
+        return Ok(true);
+    }
+    let sources = match crate::scope_summary::word_sources_in(vault, rtxn, id, raw) {
+        Ok(crate::scope_summary::WordSources::Own) => return Ok(true),
+        Ok(crate::scope_summary::WordSources::Unresolved) => return Ok(false),
+        Ok(crate::scope_summary::WordSources::From(sources)) => sources,
+        // A CLAIM body that does not decode is withheld, as at the label gate.
+        Err(Error::InvalidClaimBody(_)) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for source in &sources {
+        let Some(source_raw) = vault.get_raw_in(rtxn, source)? else {
+            return Ok(false);
+        };
+        if !member_reads_labels(vault, rtxn, member, source, &source_raw)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

@@ -13,6 +13,8 @@ pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
 mod person;
+mod refusal;
+pub use refusal::is_device_local_row_refusal;
 #[cfg(feature = "sync")]
 mod release;
 mod repo_projection;
@@ -362,13 +364,13 @@ impl PendingEmbeddingReconciler {
     }
 
     pub fn reconcile_once(&self) -> Result<PendingEmbeddingReconcileReport> {
-        self.reconcile_once_at(unix_millis_now())
+        self.reconcile_once_at(crate::unix_millis_now())
     }
 
     /// Replaces `report` with this pass's progress, including committed fills
     /// before a later error. The original error still propagates.
     pub fn reconcile_once_into(&self, report: &mut PendingEmbeddingReconcileReport) -> Result<()> {
-        self.reconcile_once_into_at(unix_millis_now(), report)
+        self.reconcile_once_into_at(crate::unix_millis_now(), report)
     }
 
     fn reconcile_once_at(&self, now_ms: u64) -> Result<PendingEmbeddingReconcileReport> {
@@ -521,14 +523,7 @@ impl PendingEmbeddingReconciler {
             return embedder.embed_marked_measured(inputs);
         }
         embedder.embed_released_measured(inputs, &|rows| {
-            if self.vault.rows_may_leave_for(rows, destination)? {
-                Ok(())
-            } else {
-                Err(Error::UpstreamToolFailure {
-                    tool: "embedder-remote",
-                    code: "device_local_row".to_owned(),
-                })
-            }
+            self.vault.release_embed_rows(rows, destination)
         })
     }
 
@@ -552,7 +547,7 @@ impl PendingEmbeddingReconciler {
                         entity_id: item.input.entity_id,
                         source_version: item.input.pending_embedding_token.clone(),
                         input_tokens,
-                        occurred_at: unix_millis_now() / 1000,
+                        occurred_at: crate::unix_millis_now() / 1000,
                     });
                 }
             } else {
@@ -1002,13 +997,6 @@ fn clear_pending_embedding_lease_if_matches(
         return Ok(false);
     }
     PENDING_EMBEDDING_LEASE.delete(&vault.store, wtxn, &key)
-}
-
-#[cfg(feature = "sync")]
-fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis().min(u128::from(u64::MAX)) as u64)
 }
 
 pub(crate) mod tables;

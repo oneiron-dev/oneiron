@@ -70,6 +70,9 @@ pub(super) const KEY_TASK_TYPE_PARENTS: &str = AGENT_DISPATCH_INPUT_KEYS[24];
 pub(super) const KEY_CALLER_ORIGIN: &str = AGENT_DISPATCH_INPUT_KEYS[25];
 /// FIX 7766: the owner's agent Grant an unmetered lineage is funded by.
 pub(super) const KEY_FUNDING: &str = AGENT_DISPATCH_INPUT_KEYS[26];
+/// AGM-4: the inbox wake keys a resident's held wake carries besides its own
+/// dedupe key.
+pub(super) const KEY_CARRIED_WAKE_KEYS: &str = AGENT_DISPATCH_INPUT_KEYS[27];
 
 /// The depth a lineage with no explicit slice once stopped at. Such a
 /// lineage spends no depth (FIX 9560): past this many ancestors its walk
@@ -172,6 +175,12 @@ pub struct AgentDispatchInput {
     ///
     /// [`AgentDispatcher::funded_by`]: super::AgentDispatcher::funded_by
     pub funding: Option<super::GrantSpendBinding>,
+    /// AGM-4 wake hold: the inbox wake key of every message a resident's
+    /// held wake carries besides the one its dedupe key names, so the
+    /// resident's inbox pass knows each one as woken. Engine-minted by that
+    /// pass, never read from a briefing; empty for every other dispatch.
+    /// Provenance only: never authority, and never part of the spawn intent.
+    pub carried_wake_keys: Vec<String>,
 }
 
 impl AgentDispatchInput {
@@ -203,6 +212,7 @@ impl AgentDispatchInput {
             requester: None,
             caller_origin: super::CallerOrigin::Unknown,
             funding: None,
+            carried_wake_keys: Vec::new(),
         }
     }
 }
@@ -281,6 +291,11 @@ pub struct AgentSpawnContext {
     /// grant and this request; asking a power above the parent's refuses.
     /// `None` asks nothing narrower. Ignored for a root.
     pub powers: Option<crate::agent_def::ChildPowerRequest>,
+    /// AGM-4 wake hold: the inbox wake keys a resident's held wake carries
+    /// besides its dedupe key's, frozen onto the dispatch as
+    /// [`AgentDispatchInput::carried_wake_keys`]. Only the resident inbox
+    /// pass sets it; empty asks nothing.
+    pub carried_wake_keys: Vec<String>,
 }
 
 impl AgentSpawnContext {

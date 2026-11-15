@@ -223,6 +223,10 @@ crate::side_table::side_tables! {
     /// Seat parks by seat, so one available write wakes every park of its seat. Key: id16 + id16.
     MODEL_SEAT_WAITS: VaultMeta b"llm:model_seat_waits:v1:" Named Engine
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
+    /// Executor-error parks an owner policy write clears, by the policy they wait on, each holding
+    /// the try's lease generation at its park (FIX 23347). Key: u8(kind) + id16(attempt).
+    DREAMER_POLICY_WAITS: VaultMeta b"dreamer:policy_waits:v1:" Named Engine
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored [accepts: crate::dreamer_runner::dreamer_parked_accepts_masked]
         [restore: not_imaged] [family: not_imaged] [tier: runtime];

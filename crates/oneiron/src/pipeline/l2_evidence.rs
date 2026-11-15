@@ -1,4 +1,5 @@
-//! Unranked, explicitly addressed L2 subject evidence through the retrieval gates.
+//! Unranked, explicitly addressed L2 subject evidence through the retrieval gates:
+//! each subject's base-reality claims.
 
 use super::builder::PipelineBuilder;
 use super::corpus_filter::CorpusFilter;
@@ -41,7 +42,6 @@ impl PipelineBuilder<'_> {
         let mut filters = corpus.config(self, &admission, self.occurred_range, authority_filter);
         filters.world_active_set = authority.as_ref().map(|authority| &authority.active_set);
         filters.device_local = device_local.as_ref();
-        let stale_worlds = crate::federation::stale_stamped_worlds(store, txn)?;
         let subjects: BTreeSet<_> = subjects.iter().copied().collect();
         let mut ids = BTreeSet::new();
         for subject in &subjects {
@@ -104,14 +104,16 @@ impl PipelineBuilder<'_> {
                 continue;
             };
             // Never infer subject membership from ranking or a hostile edge.
-            // A stale federated world is not stable persona/user evidence.
+            // The prefix is the subject's base-reality profile. A claim in a
+            // named world (a story world, a federated one, stale or fresh) is
+            // no part of it: it stays a delta row, which the pack partitions,
+            // labels and caps by world (ARCH-0004 #world-scope: "the
+            // base-reality section first, labeled per-world sections after").
             if !subjects.contains(&subject)
+                || body.world.is_some()
                 || !crate::claim::claim_surfaceable(&body)
                 || body.valid_from.is_some_and(|from| from > now)
                 || body.valid_to.is_some_and(|to| to <= now)
-                || body
-                    .world
-                    .is_some_and(|world| stale_worlds.contains_key(&world))
             {
                 continue;
             }

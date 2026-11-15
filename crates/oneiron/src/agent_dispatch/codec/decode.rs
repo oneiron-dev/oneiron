@@ -58,6 +58,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut requester = None;
     let mut caller_origin = None;
     let mut funding = None;
+    let mut carried_wake_keys = Vec::new();
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -366,6 +367,22 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                 }
                 funding = Some(binding);
             }
+            KEY_CARRIED_WAKE_KEYS => {
+                let Value::Array(keys) = value else {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "carried_wake_keys must be an array of nonempty strings",
+                    )));
+                };
+                for key in keys {
+                    let key = key
+                        .as_str()
+                        .filter(|key| !key.is_empty())
+                        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "carried_wake_keys must be an array of nonempty strings",
+                        )))?;
+                    carried_wake_keys.push(key.to_owned());
+                }
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -454,5 +471,6 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         requester,
         caller_origin,
         funding,
+        carried_wake_keys,
     })
 }

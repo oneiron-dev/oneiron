@@ -152,18 +152,8 @@ pub struct UncertainSendHold {
     pub resend_released: bool,
 }
 
-/// What the owner's answer to an uncertain send's ask came to (FIX 4747).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum UncertainSendAnswerOutcome {
-    /// The TASK's executor sends it once more, under the same engine send id.
-    ResendReleased,
-    /// The TASK settles with the owner's word, unsent again.
-    Declined,
-    /// An earlier answer settled the ask, or the send settled without one:
-    /// this answer changed nothing.
-    AlreadySettled,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::outbound::connector_task::UncertainSendAnswerOutcome;
 
 /// The sticky send executor of one connector-send TASK (FIX 4747; canon
 /// ARCH-0023b, pending outbound send): only the machine `node_id` names
@@ -1225,6 +1215,27 @@ pub(super) fn project_connector_send_task_outcome(
     update_connector_send_task_body(vault, task_ref, now, |body| {
         body.outcome = Some(outcome);
         body.suppression = None;
+        Ok(())
+    })
+}
+
+/// The synced suppression of a send the owner took back inside its
+/// undo-send window (DEC-0006 #undo-send).
+pub(super) const UNDO_SEND_SUPPRESSION: &str = "undo_send";
+
+/// Settles the TASK of a send the owner took back inside its undo-send
+/// window (DEC-0006 #undo-send), in the caller's write: failed, with the
+/// synced reason [`UNDO_SEND_SUPPRESSION`], so no machine takes it to send
+/// again ([`connector_send_task_permits_send`]).
+pub(super) fn project_connector_send_task_undone_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    now: u64,
+) -> Result<(), Error> {
+    update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
+        body.outcome = Some(ConnectorSendTaskOutcome::Failed);
+        body.suppression = Some(UNDO_SEND_SUPPRESSION.to_owned());
         Ok(())
     })
 }

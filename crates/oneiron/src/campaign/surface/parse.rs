@@ -5,8 +5,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::{
-    CAMPAIGN_SCHEMA_VERSION, CreateCampaignRequest, MembershipReadRequest, SavedQueryCreateRequest,
-    SavedQueryUpdateRequest, UpdateCampaignRequest,
+    CAMPAIGN_SCHEMA_VERSION, CopyReviewMode, CreateCampaignRequest, MembershipReadRequest,
+    SavedQueryCreateRequest, SavedQueryUpdateRequest, UpdateCampaignRequest,
 };
 use crate::EntityId;
 use crate::campaign::presets::SnoozePolicyData;
@@ -18,6 +18,8 @@ pub(super) fn parse_create_campaign_request(body: &Value) -> MemoryResult<Create
         schema_version: optional_u32(body, "schema_version")?.unwrap_or(CAMPAIGN_SCHEMA_VERSION),
         name: required_string(body, "name")?,
         reply_snooze_policy: optional_snooze_policy(body)?,
+        voice_guide_ref: optional_voice_guide(body)?.flatten(),
+        copy_review: optional_copy_review(body)?,
     })
 }
 
@@ -26,7 +28,31 @@ pub(super) fn parse_update_campaign_request(body: &Value) -> MemoryResult<Update
         expected_definition_version: required_u64(body, "expected_definition_version")?,
         name: required_string(body, "name")?,
         reply_snooze_policy: optional_snooze_policy(body)?,
+        voice_guide_ref: optional_voice_guide(body)?,
+        copy_review: optional_copy_review(body)?,
     })
+}
+
+/// The request's `voice_guide_ref`: absent is `None`, an explicit `null`
+/// clears it (`Some(None)`), and a hex entity id names the NOTE.
+fn optional_voice_guide(body: &Value) -> MemoryResult<Option<Option<EntityId>>> {
+    match body.get("voice_guide_ref") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(_) => required_entity_ref(body, "voice_guide_ref").map(|guide| Some(Some(guide))),
+    }
+}
+
+/// The request's `copy_review` mode, `judge` or `human`.
+fn optional_copy_review(body: &Value) -> MemoryResult<Option<CopyReviewMode>> {
+    match body.get("copy_review") {
+        None | Some(Value::Null) => Ok(None),
+        Some(mode) => mode
+            .as_str()
+            .and_then(CopyReviewMode::parse)
+            .map(Some)
+            .ok_or_else(|| field_error("copy_review", "must be judge or human")),
+    }
 }
 
 /// The request's `reply_snooze_policy`, in the preset's own strict shape.

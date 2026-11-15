@@ -35,6 +35,17 @@ pub fn campaign_record_to_json(record: &CampaignRecord) -> Value {
         "reply_snooze_policy".to_owned(),
         record.definition.reply_snooze_policy.to_json(),
     );
+    definition.insert(
+        "voice_guide_ref".to_owned(),
+        record
+            .definition
+            .voice_guide_ref
+            .map_or(Value::Null, |guide| Value::String(guide.to_hex())),
+    );
+    definition.insert(
+        "copy_review".to_owned(),
+        Value::String(record.definition.copy_review.as_str().to_owned()),
+    );
 
     let mut root = JsonMap::new();
     root.insert(

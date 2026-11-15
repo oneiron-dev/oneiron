@@ -1590,6 +1590,13 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
     );
 }
 
+/// The served app with each request from a loopback peer: a hatch server
+/// answers only callers on this device.
+fn loopback_app(server: Arc<crate::server::SyncServer>) -> Router {
+    let loopback = axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
+    crate::build_app(server).layer(axum::Extension(loopback))
+}
+
 async fn wait_for_vectors(vault: &oneiron::Vault, ids: &[oneiron::entity_id::EntityId]) -> bool {
     for _ in 0..200 {
         let filled = ids
@@ -1678,7 +1685,7 @@ fn the_semantic_door_refuses_with_503_when_no_embedder_is_configured() {
         .build()
         .expect("runtime");
     let (status, body) = runtime.block_on(async {
-        let response = crate::build_app(server)
+        let response = loopback_app(server)
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -1703,8 +1710,12 @@ fn the_semantic_door_refuses_with_503_when_no_embedder_is_configured() {
 /// A query is a question. Past `[limits].retrieval_query_bytes` (here set to
 /// eight kilobytes) it is a document, and the door says which field and which
 /// bound rather than truncating it silently.
+///
+/// The semantic door no longer refuses past the row: it asks and serves
+/// (a4f08d2553f #3594, 9ccb38714a6 #4890, Rule 5). The text search door still
+/// checks the row (`api/search.rs`, field `query`), so the 413 is pinned there.
 #[test]
-fn the_semantic_door_refuses_oversized_text_with_413() {
+fn the_text_search_door_refuses_an_oversized_query_with_413() {
     use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use tower::ServiceExt;
@@ -1731,15 +1742,12 @@ fn the_semantic_door_refuses_oversized_text_with_413() {
         .build()
         .expect("runtime");
     let (status, body) = runtime.block_on(async {
-        let response = crate::build_app(server)
+        let response = loopback_app(server)
             .oneshot(
                 Request::builder()
-                    .method("POST")
-                    .uri("/api/search/semantic")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({ "text": "q".repeat(9 * 1024) }).to_string(),
-                    ))
+                    .method("GET")
+                    .uri(format!("/api/search/text?query={}", "q".repeat(9 * 1024)))
+                    .body(Body::empty())
                     .expect("request"),
             )
             .await
@@ -1751,9 +1759,9 @@ fn the_semantic_door_refuses_oversized_text_with_413() {
             serde_json::from_slice::<Value>(&bytes).expect("json"),
         )
     });
-    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
     assert_eq!(body["code"], json!("PAYLOAD_TOO_LARGE"));
-    assert_eq!(body["details"]["field"], json!("text"));
+    assert_eq!(body["details"]["field"], json!("query"));
     assert_eq!(body["details"]["maxBytes"], json!(8 * 1024));
 }
 
@@ -1869,7 +1877,7 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
         let worker = server
             .spawn_embedding_worker()
             .expect("a configured slot starts a worker");
-        let text = crate::build_app(Arc::clone(&server))
+        let text = loopback_app(Arc::clone(&server))
             .oneshot(
                 Request::builder()
                     .uri("/api/search/text?query=anything")
@@ -1880,7 +1888,7 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
             .expect("text response");
         let text_status = text.status();
         let _ = to_bytes(text.into_body(), 1 << 20).await;
-        let semantic = crate::build_app(Arc::clone(&server))
+        let semantic = loopback_app(Arc::clone(&server))
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -2226,10 +2234,16 @@ fn the_startup_probe_of_a_remote_rung_is_a_paid_call() {
             .is_some()
     );
     assert_eq!(remote.requests().len(), 1, "one probe post at the remote");
-    assert!(matches!(
-        remote_batches(&receipts).as_slice(),
-        [(reserved, settled)] if reserved == settled
-    ));
+    assert_eq!(local.requests().len(), 1, "one probe post at the primary");
+    // 19579c8caea (#2489, OF-131): the primary endpoint's probe is admitted
+    // too, first. The primary here names no key, so it is the owner's own
+    // keyless work (Payer::Local) and reserves and settles nothing; the
+    // remote rung's probe reserves and settles PROBE_TEXT's 22 bytes plus 8.
+    assert_eq!(
+        remote_batches(&receipts),
+        vec![(0, 0), (30, 30)],
+        "the primary endpoint's probe, then the remote rung's probe"
+    );
 }
 
 #[test]

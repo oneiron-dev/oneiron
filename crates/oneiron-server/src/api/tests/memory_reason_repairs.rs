@@ -194,15 +194,17 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
     )
     .unwrap();
     let unscoped = scoped.search_text("launch", 2, None).unwrap();
-    // ONE-2702: a two-row pool z-normalizes relevance to +1 and -1, so the scores are e and 1/e.
+    // ONE-2702: a two-row pool z-normalizes relevance to +1 and -1. With the
+    // bootstrap relevance weight 0.50 (e0d43f1d225, #4257) the scores are
+    // exp(0.5) and exp(-0.5).
     assert_eq!(
         unscoped
             .iter()
             .map(|hit| (hit.id, hit.score))
             .collect::<Vec<_>>(),
         vec![
-            (outside, 1.0_f64.exp() as f32),
-            (inside, (-1.0_f64).exp() as f32)
+            (outside, 0.5_f64.exp() as f32),
+            (inside, (-0.5_f64).exp() as f32)
         ]
     );
     assert_eq!(

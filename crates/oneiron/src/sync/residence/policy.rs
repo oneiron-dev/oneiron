@@ -1,16 +1,23 @@
 //! This machine's residence choice: sync every window it may read, or sync
-//! what it opened. The choice is node-local, never synced and never an
-//! authority entry: it decides which copies the machine wants, not what its
-//! actor may read or where a world's readable copies may live.
+//! what it opened, and the worlds the owner picked for it to follow. Both
+//! are node-local, never synced and never an authority entry: they decide
+//! which copies the machine wants, not what its actor may read or where a
+//! world's readable copies may live.
+
+use std::collections::BTreeSet;
 
 use crate::Vault;
 use crate::dreamer_runner::DreamerRunnerStore;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::sync::client::SyncResidenceMode;
 
 /// The one local preference row (`rs:mode`). Key: ().
 const PREFERENCE_KEY: &str = "rs:mode";
 const PREFERENCE_LEN: usize = 9;
+/// The one local row of the owner's world pick (`rs:worlds`): each picked
+/// world's 16 id bytes, ascending. Key: ().
+const WORLD_PICK_KEY: &str = "rs:worlds";
 
 /// The owner's last explicit choice for this machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +89,51 @@ pub(crate) fn set_device_sync_preference_in_txn(
         .sync_state
         .put(txn, PREFERENCE_KEY, &preference.encode())?;
     Ok(preference)
+}
+
+/// The worlds the owner picked for this machine to follow (ARCH-0023b
+/// #partial-sync), read in `txn`; none until the owner picks. Under sync all the
+/// machine follows every world it may read, whatever it picked.
+pub(crate) fn device_world_pick_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let Some(bytes) = vault.store.sync_state.get(txn, WORLD_PICK_KEY)? else {
+        return Ok(BTreeSet::new());
+    };
+    if bytes.len() % 16 != 0 {
+        return Err(Error::CorruptedIndex("device world pick"));
+    }
+    bytes
+        .chunks_exact(16)
+        .map(|chunk| {
+            let mut id = [0; 16];
+            id.copy_from_slice(chunk);
+            EntityId::from_bytes(id).map_err(|_| Error::CorruptedIndex("device world pick"))
+        })
+        .collect()
+}
+
+/// [`device_world_pick_in`] in its own read.
+pub fn load_device_world_pick(vault: &Vault) -> Result<BTreeSet<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    device_world_pick_in(vault, &rtxn)
+}
+
+/// Record the owner's pick of the worlds this machine follows, replacing
+/// the one before, in the caller's transaction. The live connection applies
+/// it by renegotiating; see `SyncConnection::set_followed_worlds`.
+pub(crate) fn set_device_world_pick_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    worlds: &BTreeSet<EntityId>,
+) -> Result<()> {
+    let bytes: Vec<u8> = worlds
+        .iter()
+        .flat_map(|world| world.as_bytes().iter().copied())
+        .collect();
+    vault.store.sync_state.put(txn, WORLD_PICK_KEY, &bytes)?;
+    Ok(())
 }
 
 /// Whether this vault is a replica of a vault another machine started: its

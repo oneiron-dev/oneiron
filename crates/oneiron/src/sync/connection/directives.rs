@@ -124,9 +124,9 @@ impl SyncConnection {
         Ok(finished)
     }
 
-    /// Runs one directive and records its result. A mode switch and a prune
-    /// commit with their result; an open and the index read commit nothing
-    /// a second run would change, then the result.
+    /// Runs one directive and records its result. A mode switch, a world
+    /// pick and a prune commit with their result; an open and the index read
+    /// commit nothing a second run would change, then the result.
     async fn apply_residence_directive(
         &self,
         pending: &ResidenceDirectiveState,
@@ -147,6 +147,11 @@ impl SyncConnection {
                     applied(vault, txn, pending, count)
                 })
                 .await?;
+            }
+            ResidenceAct::Follow { worlds } => {
+                self.switch_followed_worlds(worlds.clone(), |txn| {
+                    applied(vault, txn, pending, worlds.len())
+                })?;
             }
             ResidenceAct::Open { window, item } => {
                 let window = crate::sync::WindowKey::try_new(window.as_str())

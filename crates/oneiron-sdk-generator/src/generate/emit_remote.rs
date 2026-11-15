@@ -184,9 +184,11 @@ const REMOTE_AGENT_VERB_OUTPUT: &str =
 const AGENT_VERB_HEAD: &str = "pub fn agent_verb(&self, verb: &str, input: serde_json::Value) -> Result<serde_json::Value, MemoryError> {
         self.ensure_dispatch_pid()?;
         if !oneiron::task_verb::sdk::AgentVerb::from_name(verb).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade) { return Err(oneiron::task_verb::sdk::wrong_root(verb).unwrap_or_else(|| crate::error::bad_request(\"unknown SDK agent verb\", &[\"Use a verb from the SDK catalog.\"]))); }
-        oneiron::task_verb::sdk::validate_input(verb, &input)?;
+        // A Dreamer attempt's call takes its facet's own input, which the binding decodes and checks in the engine.
+        if !matches!(self.backend, Backend::DreamerAttempt(_)) { oneiron::task_verb::sdk::validate_input(verb, &input)?; }
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
+            Backend::DreamerAttempt(binding) => binding.invoke(verb, input, None),
             Backend::Remote(client) => match verb {
 ";
 
@@ -205,7 +207,7 @@ const TYPED_AGENT_VERB: &str = "fn typed_agent_verb<R: serde::de::DeserializeOwn
                 oneiron::task_verb::sdk::validate_input(verb, &input)?;
                 client.call(verb, &input)
             }
-            Backend::Embedded(_) => {
+            Backend::Embedded(_) | Backend::DreamerAttempt(_) => {
                 let result = self.agent_verb(verb, input)?;
                 serde_json::from_value(result).map_err(|error| crate::error::transport_error(
                     format!(\"the embedded SDK answered {verb} with a body this verb could not decode: {error}\")

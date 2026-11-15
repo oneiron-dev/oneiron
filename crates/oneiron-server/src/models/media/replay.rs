@@ -431,8 +431,13 @@ impl MediaRuntime {
         let mut job = match answer {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
-                self.lock_jobs().remove(id);
-                return Ok(self.lost(id, row));
+                // Its end is written under the jobs lock, as `held` writes a
+                // lost end (S7299 review round 3 P1).
+                let mut jobs = self.lock_jobs();
+                jobs.remove(id);
+                let lost = self.lost(id, row);
+                drop(jobs);
+                return Ok(lost);
             }
             Err(error) => {
                 self.lock_jobs().remove(id);
@@ -456,7 +461,10 @@ impl MediaRuntime {
     /// provider's answer never reached its row, and nothing here can find
     /// the job again; it may still run and bill there. The row keeps the
     /// end, so its ticket says so on every poll, and the loss is logged. An
-    /// end the vault refuses is answered all the same.
+    /// end the vault refuses is answered all the same. Its caller holds the
+    /// jobs lock, so the snapshot of its scope's part, the commit that
+    /// stages it and the ledger's let-go run as one (S7299 review round 3
+    /// P1).
     fn lost(&self, id: &str, mut row: JobRow) -> MediaJobState {
         tracing::error!(
             reason = "media_job_lost",

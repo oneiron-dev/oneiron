@@ -38,7 +38,7 @@ pub fn mail_calendar_pack_files() -> Vec<HubFile> {
 /// it. Anyone else is refused as the owner door refuses them.
 pub fn install_mail_calendar_pack_embedded(memory: &Memory<'_>) -> MemoryResult<PackPutReceipt> {
     Ok(memory
-        .put_pack_as_embedded_owner(mail_calendar_pack_files())?
+        .put_pack_as_embedded_owner("vault.mail.pack.install", mail_calendar_pack_files())?
         .into())
 }
 
