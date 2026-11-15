@@ -8,6 +8,7 @@
 //! vault, metric and UTC-day rollup moves in the row's own write.
 use std::collections::BTreeMap;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -23,8 +24,11 @@ use super::model::UsageRollupStatus;
 pub const METER_PERIOD_SECS: u64 = 86_400;
 
 /// One operational meter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("operational.metric")]
 pub enum OperationalMetric {
     /// Tokens of an accepted MESSAGE revision.
     IngestTokens,
@@ -37,15 +41,6 @@ pub enum OperationalMetric {
 }
 
 impl OperationalMetric {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::IngestTokens => "ingest_tokens",
-            Self::EmbedTokens => "embed_tokens",
-            Self::RetrievalQueries => "retrieval_queries",
-            Self::AssetGbDays => "asset_gb_days",
-        }
-    }
-
     /// The unit a row's quantity counts in.
     pub fn unit(self) -> &'static str {
         match self {
