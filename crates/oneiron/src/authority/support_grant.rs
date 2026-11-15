@@ -24,6 +24,7 @@
 
 use std::collections::BTreeSet;
 
+use super::setting_keys::SUPPORT_GRANT_MAX_TTL;
 use super::slip_vault::{random_slip_id, require_host};
 use super::support_receipt::{
     SUPPORT_GRANT_REASON_MINTED, SUPPORT_GRANT_REASON_REVOKED, SupportReceipt, slip_hex,
@@ -61,7 +62,9 @@ pub struct SupportGrantRequest {
     /// Exact records the grant reads (empty: every record inside `scope`).
     /// A relationship's rows open to support only when named here.
     pub records: BTreeSet<EntityId>,
-    /// Lifetime in seconds; [`SUPPORT_GRANT_DEFAULT_TTL_SECS`] when `None`.
+    /// Lifetime in seconds; [`SUPPORT_GRANT_DEFAULT_TTL_SECS`] when `None`,
+    /// or the owner's cap (`support.grant.max_ttl_secs`) when that is
+    /// shorter.
     pub ttl_secs: Option<u64>,
     pub purpose: String,
     pub ticket_ref: Option<String>,
@@ -129,9 +132,11 @@ impl Vault {
     /// class other than human or agent, a key that is the host's, a roster
     /// or bound actor key, or already holds an owner-grade or another
     /// holder's credential, bounds outside the support policy hook
-    /// ([`support_scope_admissible`]), and a lifetime of zero or over
-    /// [`SUPPORT_GRANT_MAX_TTL_SECS`]. The wall deadline is host recording
-    /// time plus the lifetime; no caller names a `now`.
+    /// ([`support_scope_admissible`]), and a lifetime of zero or over the
+    /// owner's cap: `support.grant.max_ttl_secs`, read in this writer,
+    /// [`SUPPORT_GRANT_MAX_TTL_SECS`] until the owner sets another. The wall
+    /// deadline is host recording time plus the lifetime; no caller names a
+    /// `now`.
     ///
     /// # Errors
     ///
@@ -143,16 +148,24 @@ impl Vault {
         issuer: &HostSlipIssuer,
         request: SupportGrantRequest,
     ) -> Result<SupportGrantMinted> {
-        let ttl = request.ttl_secs.unwrap_or(SUPPORT_GRANT_DEFAULT_TTL_SECS);
-        if ttl == 0 || ttl > SUPPORT_GRANT_MAX_TTL_SECS {
+        let mut txn = self.store.env.write_txn()?;
+        // The owner's cap, read in the minting writer; never under a second.
+        let cap = SUPPORT_GRANT_MAX_TTL
+            .read_in_txn(self, &txn, &[], None)?
+            .value
+            .max(1);
+        let ttl = request
+            .ttl_secs
+            .unwrap_or_else(|| SUPPORT_GRANT_DEFAULT_TTL_SECS.min(cap));
+        if ttl == 0 || ttl > cap {
             return Err(refused(
-                "a support grant lasts between one second and SUPPORT_GRANT_MAX_TTL_SECS",
+                "a support grant lasts between one second and the owner's cap, \
+                 support.grant.max_ttl_secs",
             ));
         }
         let scope = support_slip_scope(request.scope)?;
         let records: BTreeSet<String> = request.records.iter().map(EntityId::to_hex).collect();
         support_scope_admissible(&scope, &records, &BTreeSet::new()).map_err(refused)?;
-        let mut txn = self.store.env.write_txn()?;
         let approver = support_owner_in_txn(owner, self, &txn)?;
         let vault_id = {
             let fold = self.authority_view_readonly_in_txn(&txn)?;

@@ -16,11 +16,12 @@ use super::codec::SECRET_LOCAL_REGISTRATION;
 use super::delivery::{SecretHostDelivery, no_destination};
 use super::files::SecretFileGuard;
 use super::grant::{
-    SECRET_GRANT_DEFAULT_TTL_SECS, SECRET_GRANT_MAX_TTL_SECS, SECRET_GRANT_RENEW_HANDOVER,
-    SecretGrantCaller, SecretGrantHandover, SecretGrantHolder, SecretGrantMinted,
-    SecretGrantStatus, SecretGrantTarget, SecretLeaseGrant, grant_mismatch, live_held_grant_in_txn,
-    read_grant_in_txn, read_held_grant_in_txn, retire_grant_in_txn, write_grant_in_txn,
+    SECRET_GRANT_DEFAULT_TTL_SECS, SECRET_GRANT_RENEW_HANDOVER, SecretGrantCaller,
+    SecretGrantHandover, SecretGrantHolder, SecretGrantMinted, SecretGrantStatus,
+    SecretGrantTarget, SecretLeaseGrant, grant_mismatch, live_held_grant_in_txn, read_grant_in_txn,
+    read_held_grant_in_txn, retire_grant_in_txn, write_grant_in_txn,
 };
+use super::setting_keys::SECRET_GRANT_MAX_TTL;
 use super::storage::{read_local_registration_in_txn, stamp_secret_lease_in_txn};
 use super::types::{FileIdentity, LocalRegistration, SecretLease, VaultInstant};
 use crate::entity_id::EntityId;
@@ -79,8 +80,10 @@ impl Vault {
     /// destination `delivery` registered for the caller's run, and only
     /// there; a declared local file is a T2 grant. The record's binding for
     /// the effector must grant read and admit the rung under the live floor.
-    /// `ttl_secs` is cut to [`super::SECRET_GRANT_MAX_TTL_SECS`] (`None`
-    /// takes the default) and `not_after` bounds it absolutely, as
+    /// `ttl_secs` is cut to the owner's cap, `secrets.grant.max_ttl_secs`
+    /// ([`Vault::secret_grant_max_ttl_secs`]; `None` takes the default
+    /// lifetime), read in the minting writer, and `not_after` bounds it
+    /// absolutely, as
     /// [`Vault::materialize_secret_lease_bounded`] does. Grant, lease,
     /// materialization receipt and T2 registration commit in one writer
     /// before any byte leaves the vault. Answers metadata only.
@@ -162,6 +165,7 @@ impl Vault {
                 })?,
         };
         let rec = live_record_in_txn(&self.store, &wtxn, &custody)?;
+        let cap = secret_grant_max_ttl_in_txn(self, &wtxn)?;
         let stamped = self.stamp_grant_in_txn(
             &mut wtxn,
             now,
@@ -171,7 +175,7 @@ impl Vault {
                 rec: &rec,
                 effector: &effector,
                 target,
-                ttl_secs: grant_ttl(ttl_secs),
+                ttl_secs: grant_ttl(ttl_secs, cap),
                 not_after,
                 registered: None,
             },
@@ -237,6 +241,7 @@ impl Vault {
             }
             _ => None,
         };
+        let cap = secret_grant_max_ttl_in_txn(self, &wtxn)?;
         let stamped = self.stamp_grant_in_txn(
             &mut wtxn,
             now,
@@ -246,7 +251,7 @@ impl Vault {
                 rec: &rec,
                 effector: &effector,
                 target,
-                ttl_secs: grant_ttl(ttl_secs),
+                ttl_secs: grant_ttl(ttl_secs, cap),
                 not_after,
                 registered: moved.map(|(_, identity)| identity),
             },
@@ -270,6 +275,19 @@ impl Vault {
         }
         wtxn.commit()?;
         self.deliver_stamped(stamped, delivery, (!retire_now).then_some(old.grant_id))
+    }
+
+    /// The longest lifetime a secret grant takes now, in seconds: the
+    /// owner's `secrets.grant.max_ttl_secs`, one hour
+    /// ([`super::SECRET_GRANT_MAX_TTL_SECS`]) until the owner sets another,
+    /// and never under one second. A mint and a renewal read it in their own
+    /// writer; a run host reads it here to cut the lifetime it asks for.
+    ///
+    /// # Errors
+    /// A storage failure.
+    pub fn secret_grant_max_ttl_secs(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        secret_grant_max_ttl_in_txn(self, &txn)
     }
 
     /// The target as a grant keeps it, and the effector it presents for:
@@ -498,11 +516,20 @@ pub(super) fn live_record_in_txn(
     Ok(rec)
 }
 
-/// The lifetime a grant asks for, at least a second and at most the cap.
-fn grant_ttl(ttl_secs: Option<u64>) -> u64 {
+/// The cap on one grant's lifetime in force in `txn`: the owner's
+/// `secrets.grant.max_ttl_secs`, at least a second.
+fn secret_grant_max_ttl_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
+    Ok(SECRET_GRANT_MAX_TTL
+        .read_in_txn(vault, txn, &[], None)?
+        .value
+        .max(1))
+}
+
+/// The lifetime a grant asks for, at least a second and at most `cap`.
+fn grant_ttl(ttl_secs: Option<u64>, cap: u64) -> u64 {
     ttl_secs
         .unwrap_or(SECRET_GRANT_DEFAULT_TTL_SECS)
-        .clamp(1, SECRET_GRANT_MAX_TTL_SECS)
+        .clamp(1, cap.max(1))
 }
 
 /// A door grant's expiry: `now + ttl`, never past `not_after`; a bound

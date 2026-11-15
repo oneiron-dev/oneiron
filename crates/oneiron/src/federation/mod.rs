@@ -83,6 +83,7 @@ pub(crate) use ruling_integrity::{
 };
 mod own_device;
 mod pending_act;
+pub(crate) mod setting_keys;
 mod shared_act;
 mod shared_creation;
 pub(crate) use own_device::is_own_device_grant;

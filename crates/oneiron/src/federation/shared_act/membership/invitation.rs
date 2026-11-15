@@ -19,6 +19,7 @@ use crate::authority::{CapabilitySlip, HostSlipIssuer, PairingLink, PendingInvit
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
+use crate::federation::setting_keys::SHARED_INVITATION_TTL;
 use crate::federation::{FederationGrantRole as Role, OrgAdminPower, SharedVaultWrite};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -27,7 +28,8 @@ use std::collections::BTreeSet;
 const INVITATION_PREFIX: &[u8] = b"shared-vault:invitation:v1:";
 /// `side_table::SHARED_VAULT_INVITATION_KEY`: the key an invitation's slips bind.
 const INVITATION_KEY_PREFIX: &[u8] = b"shared-vault:invitation-key:v1:";
-/// How long an invitation stays open on the store clock.
+/// How long an invitation stays open on the store clock until the owner sets
+/// another lifetime (the Setting key `federation.invitation.ttl_secs`).
 pub const SHARED_INVITATION_TTL_SECS: u64 = 14 * 24 * 60 * 60;
 
 #[doc(hidden)]
@@ -273,7 +275,10 @@ impl Vault {
     /// The `add_member` effect: one pending invitation of `member` at `role`,
     /// refused while another of theirs to this vault is still open. `founding`
     /// marks the creation writer's own invitations. It names no key: the
-    /// invitee binds one ([`Vault::mint_invitation_slip`]).
+    /// invitee binds one ([`Vault::mint_invitation_slip`]). It stays open for
+    /// the owner's `federation.invitation.ttl_secs`, read in this writer
+    /// ([`SHARED_INVITATION_TTL_SECS`] until the owner sets another, never
+    /// under a second).
     pub(super) fn issue_invitation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -287,6 +292,10 @@ impl Vault {
         if self.open_invitation_stands_in_txn(txn, vault_id, member, now)? {
             return Err(invalid());
         }
+        let ttl_secs = SHARED_INVITATION_TTL
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .max(1);
         let invitation = SharedInvitation {
             id: self.store.clock.entity_id()?.to_hex(),
             vault_id,
@@ -294,9 +303,8 @@ impl Vault {
             invitee: member.to_hex(),
             role,
             issued_at: now,
-            expires_at: now
-                .checked_add(SHARED_INVITATION_TTL_SECS)
-                .ok_or_else(invalid)?,
+            // An owner's lifetime past the clock's end is one that never ends.
+            expires_at: now.saturating_add(ttl_secs),
             state: SharedInvitationState::Pending,
             founding,
         };

@@ -22,8 +22,12 @@ use crate::federation::{Scope, ScopeAxis, SensitivityCeiling};
 /// A support grant's lifetime when the owner names none: one hour (OF-606,
 /// CALLS "support TTL").
 pub const SUPPORT_GRANT_DEFAULT_TTL_SECS: u64 = 60 * 60;
-/// The longest support grant an owner can mint: one day. More time is a
-/// fresh owner mint; nothing renews one (OF-606, CALLS "support TTL").
+/// The longest support grant an owner can mint until the owner sets another
+/// cap (the Setting key `support.grant.max_ttl_secs`): one day. More time is
+/// a fresh owner mint; nothing renews one (OF-606, CALLS "support TTL"). The
+/// mint door holds a grant to the cap in force; a delegation's own shape
+/// names no ceiling, so a grant minted under a raised cap decodes and
+/// verifies wherever its log entry travels.
 pub const SUPPORT_GRANT_MAX_TTL_SECS: u64 = 24 * 60 * 60;
 /// The longest purpose or ticket reference a delegation carries, in bytes.
 pub const SUPPORT_DELEGATION_TEXT_MAX: usize = 256;
@@ -142,7 +146,8 @@ pub struct SupportDelegation {
 
 impl SupportDelegation {
     /// The delegation's own shape: a purpose, a canonical owner ref, and a
-    /// deadline after its approval by at most [`SUPPORT_GRANT_MAX_TTL_SECS`].
+    /// deadline after its approval. How long after is the mint door's check,
+    /// against the owner's cap ([`SUPPORT_GRANT_MAX_TTL_SECS`] by default).
     pub fn validate(&self) -> Result<()> {
         let text_ok = |text: &str| {
             !text.trim().is_empty()
@@ -153,7 +158,6 @@ impl SupportDelegation {
             || self.ticket_ref.as_deref().is_some_and(|t| !text_ok(t))
             || !canonical_entity_hex(&self.owner_ref)
             || self.approved_at >= self.wall_expires_at
-            || self.wall_expires_at - self.approved_at > SUPPORT_GRANT_MAX_TTL_SECS
         {
             return Err(invalid_authority());
         }

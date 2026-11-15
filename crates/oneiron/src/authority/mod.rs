@@ -149,6 +149,7 @@ mod revoke_proof;
 mod seat_child_slip;
 mod sequence_ancestry;
 mod sequence_observation;
+pub(crate) mod setting_keys;
 mod slip;
 mod slip_pairing;
 mod slip_renewal;

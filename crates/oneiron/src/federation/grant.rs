@@ -34,7 +34,8 @@ pub const FEDERATION_GRANT_SCHEMA_VERSION: u64 = 3;
 
 const FEDERATION_GRANT_LEGACY_SCHEMA_VERSION: u64 = 1;
 
-/// Maximum delegate time-to-live: 90 days.
+/// Maximum delegate time-to-live until the owner sets another cap (the
+/// Setting key `federation.delegate.max_ttl_secs`): 90 days.
 pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 
 /// Pinned ON-DISK MessagePack key set for FEDERATION_GRANT bodies.
@@ -543,20 +544,40 @@ impl FederationGrant {
     /// in `delegated_by`, and expires no later than
     /// [`MAX_DELEGATE_TTL_SECS`] past `now_secs`. Only an
     /// [`FederationGrantRole::is_admin`] parent may delegate, so the chain is
-    /// exactly one hop deep and no role can widen itself.
+    /// exactly one hop deep and no role can widen itself. The vault's
+    /// delegate doors mint under the owner's cap instead
+    /// ([`Self::attenuated_delegate_within`]).
     pub fn attenuated_delegate(
         parent: &FederationGrant,
         member_ref: EntityId,
         now_secs: u64,
         expires_at_secs: u64,
     ) -> Result<Self> {
+        Self::attenuated_delegate_within(
+            parent,
+            member_ref,
+            now_secs,
+            expires_at_secs,
+            MAX_DELEGATE_TTL_SECS,
+        )
+    }
+
+    /// [`Self::attenuated_delegate`] under the cap `max_ttl_secs`: the
+    /// delegate expires no later than that long past `now_secs`. The vault's
+    /// delegate doors pass the owner's `federation.delegate.max_ttl_secs`,
+    /// read in their own writer. A cap past the clock's end bounds nothing.
+    pub(crate) fn attenuated_delegate_within(
+        parent: &FederationGrant,
+        member_ref: EntityId,
+        now_secs: u64,
+        expires_at_secs: u64,
+        max_ttl_secs: u64,
+    ) -> Result<Self> {
         parent.validate()?;
         if !parent.role.is_admin() {
             return Err(invalid_grant());
         }
-        let ceiling = now_secs
-            .checked_add(MAX_DELEGATE_TTL_SECS)
-            .ok_or_else(invalid_grant)?;
+        let ceiling = now_secs.saturating_add(max_ttl_secs);
         if expires_at_secs <= now_secs || expires_at_secs > ceiling {
             return Err(invalid_grant());
         }
