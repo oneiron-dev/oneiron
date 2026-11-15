@@ -97,19 +97,9 @@ impl Vault {
         let sign = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let signer_key = signer.authority_key();
         refuse_re_root_of_a_serving_host(&fold, &signer_key)?;
-        let live: Vec<AuthorityEntryHash> = self
-            .recovery_holds_in_txn(&txn)?
-            .into_iter()
-            .filter(|view| {
-                matches!(
-                    view.state,
-                    RecoveryHoldState::Waiting | RecoveryHoldState::Due
-                )
-            })
-            .map(|view| view.hold)
-            .collect();
-        self.append_anchor_cancels_in_txn(&mut txn, &seed.anchor(), &live)?;
-        let (entry, rows) = self.re_root_authority_in_txn(
+        self.cancel_live_holds_for_kit_in_txn(&mut txn, &seed)?;
+        let cancels = self.mark_authority_rows_counted_since_in_txn(&mut txn, &fold)?;
+        let (entry, mut rows) = self.re_root_authority_in_txn(
             &mut txn,
             new_device,
             (
@@ -119,6 +109,7 @@ impl Vault {
             &sign,
         )?;
         txn.commit()?;
+        rows.extend(cancels);
         self.note_committed_authority_rows(rows);
         Ok(entry)
     }

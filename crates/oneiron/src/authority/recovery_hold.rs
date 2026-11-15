@@ -43,8 +43,11 @@ pub(super) fn judge_recovery_hold(
 }
 
 /// A roster-signed answer's signer, judged at the parents' state: a live
-/// owner key that is not R. R never answers a hold: the box releases R, so
-/// an R-signed answer would end the wait for the attacker. (An anchor's
+/// owner device key that is not R. R never answers a hold: the box releases
+/// R, so an R-signed answer would end the wait for the attacker. Nor does an
+/// admin's key or a host's ([`answers_recovery_holds`]): the generic
+/// consent rule admits both, and either answer would end or stop an owner's
+/// wait with no owner device (WAYBACK-7: no staff override). (An anchor's
 /// Cancel folded through the anchor's branch before the roster rules; an
 /// anchor's ItIsMe is refused as not-in-ancestry before this arm.)
 pub(super) fn judge_recovery_hold_answer(
@@ -55,7 +58,22 @@ pub(super) fn judge_recovery_hold_answer(
     if state.recovery_authority_keys.contains(entry.signer_key()) {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    if !state
+        .roster
+        .get(entry.signer_key())
+        .is_some_and(answers_recovery_holds)
+    {
+        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
     Ok(())
+}
+
+/// Whether `device` may answer a recovery hold: a live owner key on its own
+/// device, the local consent rule's owner half. Never an admin-only key, and
+/// never a key stamped as the host's (`ROLE_CLOUD` or `CloudCustodial`), on
+/// any posture. The fold and the answer door both ask it.
+pub(super) fn answers_recovery_holds(device: &FoldedDevice) -> bool {
+    folded_device_can_authority_consent(device) && device.roles & ROLE_OWNER != 0
 }
 
 /// One recovery hold as this install reads it: the attempt, its successor
@@ -568,13 +586,19 @@ impl Vault {
     /// hold: a hold whose seed slot is here. In the transaction the hold is
     /// folded again on this install's clock: Due (by this install's own
     /// `instant_in_txn`, or an `ItIsMe`) with R and the held owner live
-    /// enrols the held input (predecessor R, kind `Device`) and revokes
-    /// each lost key still live, all signed by R from the slot, commits,
-    /// then deletes the slot. `Cancelled`, `Void` and a successor already
+    /// revokes each lost key still live and then enrols the held input
+    /// (predecessor R, kind `Device`), all signed by R from the slot, as
+    /// the root door's vouch orders them (a self-hosted owner whose lost
+    /// key held their binding is bound again by the enrolment), marks the
+    /// rows for the live mirror, commits, announces them, then deletes the
+    /// slot. `Cancelled`, `Void` and a successor already
     /// on the roster delete the slot, report the state and write nothing;
     /// `Waiting` is nothing. A hold with no row here keeps its slot: its
     /// write may still be committing. With no keystore installed no slot
-    /// is here, so the run lands nothing.
+    /// is here, so the run lands nothing; with no hold in the log it
+    /// writes nothing at all. The root door's box arm calls it first; the
+    /// host's poll of a waiting recovery calls it too (the keystore is
+    /// installed after each open, so an open never lands).
     ///
     /// # Errors
     /// A hold's write that the fold does not count; the store's, the
@@ -585,13 +609,16 @@ impl Vault {
             Err(Error::Secret(SecretError::KeystoreUnavailable(_))) => return Ok(Vec::new()),
             Err(other) => return Err(other),
         }
-        let machine = self.prepare_install_signing()?;
         let (vault_id, views) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
             (vault_id, self.recovery_holds_in_txn(&txn)?)
         };
+        if views.is_empty() {
+            return Ok(Vec::new());
+        }
+        let machine = self.prepare_install_signing()?;
         let mut landings = Vec::new();
         for view in views {
             let AuthorityKey::Ed25519(successor) = view.successor_key else {
@@ -660,20 +687,9 @@ impl Vault {
                     let sign_revoke = |transcript: &[u8]| {
                         RecoveryAuthoritySigner::sign_transcript_with_seed(&seed, transcript)
                     };
-                    let enrollment = self.enrol_owner_signing_key_for_actor_in_txn(
-                        &mut txn,
-                        hold.owner,
-                        ActSurface::ThisInstall,
-                        OwnerKeyEnrollment {
-                            machine: hold.enrolment.machine,
-                            public_key: hold.enrolment.public_key,
-                            proof: hold.enrolment.proof.clone(),
-                        },
-                        EnrolledOwnerKeyKind::Device,
-                        root_key.clone(),
-                        &mut sign_enrolment,
-                    )?;
-                    let fold = self.authority_view_readonly_in_txn(&txn)?;
+                    // The lost keys go first, as at the root door's vouch: the
+                    // enrolment binds a self-hosted owner whose lost key held
+                    // their binding.
                     let mut revoked = Vec::with_capacity(hold.lost.len());
                     for key in &hold.lost {
                         let live = fold.roster.get(key).is_some_and(|device| !device.revoked);
@@ -687,7 +703,22 @@ impl Vault {
                             key.clone(),
                         )?);
                     }
+                    let enrollment = self.enrol_owner_signing_key_for_actor_in_txn(
+                        &mut txn,
+                        hold.owner,
+                        ActSurface::ThisInstall,
+                        OwnerKeyEnrollment {
+                            machine: hold.enrolment.machine,
+                            public_key: hold.enrolment.public_key,
+                            proof: hold.enrolment.proof.clone(),
+                        },
+                        EnrolledOwnerKeyKind::Device,
+                        root_key.clone(),
+                        &mut sign_enrolment,
+                    )?;
+                    let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &fold)?;
                     txn.commit()?;
+                    self.note_committed_authority_rows(rows);
                     self.delete_recovery_hold_seed(&slot)?;
                     landings.push(RecoveryHoldLanding {
                         hold: view.hold,
@@ -705,9 +736,12 @@ impl Vault {
 
     /// Answers the live recovery hold `hold` with `answer`, signed by this
     /// install's held live owner key: the device unlock is the confirm
-    /// sheet, and the surface stays audit-only. The key is any owner key
-    /// this install holds that is live, is not the hold's successor and is
-    /// not the root's authority kind; R's held seed answers nothing. An
+    /// sheet, and the surface stays audit-only. The key is any key this
+    /// install holds that may answer ([`answers_recovery_holds`]: a live
+    /// owner device key, never an admin's or a host's), is not the hold's
+    /// successor and is not the root's authority kind; R's held seed
+    /// answers nothing. The answer is marked for the live mirror and
+    /// announced, so the door install sees it at the next mirror pass. An
     /// unknown hold is [`HOLD_NOT_LIVE`]; a terminal one too, once no held
     /// key speaks for it first.
     ///
@@ -748,11 +782,8 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let enrolled = self.enrolled_owner_keys_in_txn(&txn)?;
-        let live_owner = |key: &AuthorityKey| {
-            fold.roster
-                .get(key)
-                .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
-        };
+        let live_owner =
+            |key: &AuthorityKey| fold.roster.get(key).is_some_and(answers_recovery_holds);
         let is_root_kind = |key: &AuthorityKey| {
             enrolled.iter().any(|listed| {
                 AuthorityKey::Ed25519(listed.public_key) == *key
@@ -792,7 +823,9 @@ impl Vault {
             RecoveryHoldAnswer { hold, answer },
             now,
         )?;
+        let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         Ok(())
     }
 
@@ -850,8 +883,11 @@ impl Vault {
                 .map(|found| found.hold)
                 .collect(),
         };
+        let before = self.authority_view_readonly_in_txn(&txn)?;
         self.append_anchor_cancels_in_txn(&mut txn, &anchor, &targets)?;
+        let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &before)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         Ok(())
     }
 }

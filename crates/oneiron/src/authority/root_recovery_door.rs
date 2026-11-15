@@ -143,7 +143,9 @@ impl Vault {
     /// seam, so tests cover zero and nonzero waits. A box recovery
     /// (`RootMaterial::Released`) with a nonzero wait holds instead of
     /// vouching: [`RootRecovery::Held`]; a zero wait vouches as today. The
-    /// kit arm never waits. This install's due holds land first.
+    /// kit arm never waits. On a box call this install's due holds land
+    /// first, and a landing that enrolled this call's successor answers
+    /// [`RootRecovery::Vouched`]: the call completes the attempt it held.
     ///
     /// # Errors
     /// As [`Self::recover_owner_root`].
@@ -156,7 +158,14 @@ impl Vault {
         lost: &[AuthorityKey],
         wait: std::time::Duration,
     ) -> Result<RootRecovery> {
-        self.land_due_recovery_holds()?;
+        // A kit recovery lands nothing first: it cancels every live hold in
+        // its write, a due one too, so no hold's landing stands in its way.
+        if matches!(material, RootMaterial::Released(_)) {
+            let landed = self.land_due_recovery_holds()?;
+            if let Some(done) = self.landing_for_successor(&landed, &successor)? {
+                return Ok(done);
+            }
+        }
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
@@ -451,11 +460,62 @@ impl Vault {
             },
             now,
         )?;
+        let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         if let Some(key) = held {
             self.hold_checkpoint_root_signer(Arc::new(key));
         }
         Ok(RootRecovery::Held { hold, lands_at })
+    }
+
+    /// The landing among `landed` that enrolled `successor`'s key, as the
+    /// box call's [`RootRecovery::Vouched`]: this install's own key for
+    /// [`RootSuccessor::ThisInstall`], the named key for a device.
+    ///
+    /// # Errors
+    /// Preparing this install's signing keys.
+    fn landing_for_successor(
+        &self,
+        landed: &[RecoveryHoldLanding],
+        successor: &RootSuccessor,
+    ) -> Result<Option<RootRecovery>> {
+        if landed.iter().all(|landing| landing.enrollment.is_none()) {
+            return Ok(None);
+        }
+        let machine = match successor {
+            RootSuccessor::ThisInstall => Some(self.prepare_install_signing()?),
+            RootSuccessor::Device(_) => None,
+        };
+        Ok(landed.iter().find_map(|landing| {
+            let receipt = landing.enrollment.as_ref()?;
+            let names = match successor {
+                RootSuccessor::Device(input) => receipt.public_key == input.public_key,
+                RootSuccessor::ThisInstall => machine == Some(receipt.machine),
+            };
+            names.then(|| RootRecovery::Vouched {
+                enrollment: receipt.clone(),
+                revoked: landing.revoked.clone(),
+            })
+        }))
+    }
+
+    /// Marks the rows `txn` counted since `before` for the live mirror, as
+    /// the vouch writer does: the caller commits, then announces them with
+    /// [`Self::note_committed_authority_rows`], so other owner devices see
+    /// a hold, an answer or a landing at the next mirror pass.
+    ///
+    /// # Errors
+    /// The log's and the mirror marks'.
+    pub(super) fn mark_authority_rows_counted_since_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        before: &AuthorityFold,
+    ) -> Result<BTreeSet<EntityId>> {
+        let rows =
+            authority_rows_counted_since(before, &self.authority_view_readonly_in_txn(txn)?)?;
+        self.mark_authority_rows_in_txn(txn, &rows)?;
+        Ok(rows)
     }
 
     /// The kit's anchor cancels every live hold in the caller's write
@@ -463,7 +523,7 @@ impl Vault {
     /// hold, so an attacker's hold never lands after the owner's kit. The
     /// anchor arm of this door needs none: with no live root key no hold
     /// is live, since a live hold's signer R is one.
-    fn cancel_live_holds_for_kit_in_txn(
+    pub(super) fn cancel_live_holds_for_kit_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         seed: &RecoveryRootSeed,
