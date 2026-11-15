@@ -76,6 +76,8 @@ mod surface_routes;
 mod vad_and_error_mapping;
 use support_contract::*;
 use support_mcp::*;
+// The facade room tests grant a room member's peer key its read too.
+pub(super) use support_mcp::put_actor_read_grant;
 
 pub(super) const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT: &str =
     include_str!("../../../tests/fixtures/v1_core_success_contract.snapshot.json");
@@ -270,6 +272,61 @@ pub(super) fn seed_active_claim(
         .expect("seed active claim");
 }
 
+/// A companion-profile grant names a live PERSON and a live FACET persona
+/// (`check_companion_profile_target`): seeds each that no row backs yet.
+pub(super) fn seed_companion_profile_targets(
+    server: &SyncServer,
+    person_ref: oneiron::EntityId,
+    persona_ref: oneiron::EntityId,
+) {
+    for (id, kind, body) in [
+        (
+            person_ref,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            &b"companion person"[..],
+        ),
+        (
+            persona_ref,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"companion persona"[..],
+        ),
+    ] {
+        if !server.vault.entity_exists(&id).expect("read target row") {
+            server
+                .vault
+                .put_entity(&id, kind, oneiron::TimeRange { start: 1, end: 1 }, 1, body)
+                .expect("seed companion profile target");
+        }
+    }
+}
+
+/// Since OF-531 a founding member other than the creator is only invited:
+/// `invitee` accepts its one pending invitation to shared vault `vault_id`.
+/// Returns the member grants the acceptance wrote.
+pub(super) fn accept_founding_invitation(
+    vault: &oneiron::Vault,
+    invitee: oneiron::EntityId,
+    vault_id: u64,
+) -> Vec<String> {
+    let proof = vault
+        .authenticate_owner(
+            invitee,
+            &invitee.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("invitee proof");
+    let mut open = vault
+        .shared_invitations(&proof, vault_id)
+        .expect("invitee's open invitations");
+    assert_eq!(open.len(), 1, "one founding invitation per invitee");
+    let invitation = open.remove(0);
+    vault
+        .accept_shared_invitation(&proof, vault_id, &invitation.id)
+        .expect("accept founding invitation")
+        .grants
+}
+
 pub(super) fn seed_companion_profile_access(
     server: &SyncServer,
     grant_id: oneiron::EntityId,
@@ -277,6 +334,7 @@ pub(super) fn seed_companion_profile_access(
     person_ref: oneiron::EntityId,
     persona_ref: oneiron::EntityId,
 ) {
+    seed_companion_profile_targets(server, person_ref, persona_ref);
     let grant = oneiron::AccessGrant::companion_profile_read(
         principal_ref,
         person_ref,
@@ -904,6 +962,29 @@ pub(super) fn seed_reactive_turn(vault: &oneiron::Vault, id: &oneiron::EntityId,
         .expect("seed reactive turn");
 }
 
+/// A TURN whose body is the canonical empty `txt` map: the sync plane births
+/// its document lazily on the first edit (FIX 11794). Any other TURN body
+/// stays on the sequence-row plane, which has no head document to edit.
+pub(super) fn seed_reactive_document_turn(
+    vault: &oneiron::Vault,
+    id: &oneiron::EntityId,
+    learned_at: u64,
+) {
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"txt": ""})).unwrap();
+    vault
+        .put_entity(
+            id,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        )
+        .expect("seed reactive document turn");
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ONE-1704 MATERIAL7 — fail-closed acceptance
 // ═══════════════════════════════════════════════════════════════════════════
@@ -929,6 +1010,9 @@ pub(super) fn seed_world_claim(
     )
     .unwrap();
     body.world = Some(world);
+    // The subject has no stored row, so no substrate FACET of its own, and a
+    // CLAIM birth needs a stored one: the claim takes the vault's default facet.
+    body.scope_facet = server.vault.default_facet().expect("default facet");
     server
         .vault
         .put_claim(
