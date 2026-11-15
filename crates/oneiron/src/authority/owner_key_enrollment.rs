@@ -66,14 +66,16 @@ pub(super) fn judge_owner_key_enroll(
     // consenting under this fold's consent arm (a managed root as its
     // context allows), past its own last sequence. A key only a passkey
     // vouched for vouches for no further key until it is confirmed (lead
-    // ruling WEBPASSKEY-BLIND-SIGNATURE = B).
+    // ruling WEBPASSKEY-BLIND-SIGNATURE = B), unless the owner's choice
+    // "Let my passkey remove devices and keys" is on in the parents (Engine
+    // ruling WEBPASSKEY-OPTIN-HOME = A).
     let predecessor = entry.signer_key();
     let Some(root) = state.roster.get(predecessor).filter(|root| !root.revoked) else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     };
     if root.roles & ROLE_OWNER == 0
         || !context.device_can_consent(root)
-        || state.passkey_vouch_unconfirmed(predecessor)
+        || (state.passkey_vouch_unconfirmed(predecessor) && !state.passkey_full_owner())
     {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
@@ -129,9 +131,33 @@ pub(super) enum OwnerKeyEnrollReading {
 impl FoldState {
     /// Whether `key` is a key only a passkey vouched for, not yet confirmed
     /// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): it vouches for no
-    /// further key, and [`Self::passkey_limited`] holds for it.
+    /// further key, and [`Self::passkey_limited`] holds for it, while the
+    /// owner's choice [`Self::passkey_full_owner`] is off.
     pub(super) fn passkey_vouch_unconfirmed(&self, key: &AuthorityKey) -> bool {
         self.passkey_vouched_keys.contains(key) && !self.passkey_vouch_confirmations.contains(key)
+    }
+
+    /// Whether `key` is a passkey or a key only a passkey vouched for, not
+    /// yet confirmed: a key the passkey limits reach whenever the owner's
+    /// choice [`Self::passkey_full_owner`] is off, read whatever the choice.
+    fn passkey_bound(&self, key: &AuthorityKey) -> bool {
+        self.passkey_contexts.contains_key(key) || self.passkey_vouch_unconfirmed(key)
+    }
+
+    /// Whether the owner's choice "Let my passkey remove devices and keys"
+    /// ([`PolicySetting::PasskeyFullOwner`], Engine ruling
+    /// WEBPASSKEY-OPTIN-HOME = A) is on in this state: the setting has a live
+    /// act, and every live act of it is on ([`passkey_full_owner_value`]).
+    /// No act, an act that turned it off, and two acts that did not see each
+    /// other unless both are on, all read off. It reads the register as every
+    /// replica holds it, with no pin and no install's counting, as the judge
+    /// of each entry's parents must.
+    pub(super) fn passkey_full_owner(&self) -> bool {
+        let Ok(Some(target)) = PolicySetting::PasskeyFullOwner.reserved_target() else {
+            return false;
+        };
+        self.policy_settings
+            .every_live_choice_is(target, &passkey_full_owner_value(true))
     }
 
     /// Whether `key` authorizes no `ReRoot`, no `RotateKey`, no
@@ -140,11 +166,23 @@ impl FoldState {
     /// and no roster-signed machine answer as the owner's or removal, from
     /// any signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
     /// or a key only a passkey vouched for, until confirmed (lead ruling
-    /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
-    /// rule that counts an entry's participants asks it of each.
+    /// WEBPASSKEY-BLIND-SIGNATURE = B), while the owner's choice
+    /// [`Self::passkey_full_owner`] is off; with it on, no key is limited
+    /// (Engine ruling WEBPASSKEY-OPTIN-HOME = A). The one reader of these
+    /// limits: a rule that counts an entry's participants asks it of each.
     pub(super) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
-        self.passkey_contexts.contains_key(key) || self.passkey_vouch_unconfirmed(key)
+        self.passkey_bound(key) && !self.passkey_full_owner()
     }
+}
+
+/// Whether `target` is the reserved target of the owner's choice "Let my
+/// passkey remove devices and keys": the frontier
+/// [`FoldState::passkey_full_owner`] reads.
+pub(super) fn is_passkey_full_owner_target(target: crate::entity_id::EntityId) -> bool {
+    matches!(
+        PolicySetting::PasskeyFullOwner.reserved_target(),
+        Ok(Some(reserved)) if reserved == target
+    )
 }
 
 /// Whether `predecessor` confirms `key` by vouching for it again: `key` is
@@ -162,27 +200,33 @@ fn confirms_passkey_vouch(
         && may_confirm_passkey_vouch(state, predecessor)
 }
 
-/// Whether `predecessor`'s vouch confirms a key: it is no passkey and it is
+/// Whether `predecessor`'s vouch confirms a key: it is no passkey and no
+/// key only a passkey vouched for, whatever the owner's choice (with the
+/// choice on, such a key vouches, and its vouch confirms nothing), and it is
 /// owner-held (on a hosted vault, outside the host's custody). That it is
-/// itself confirmed, live and consenting is the judge's predecessor check.
+/// live and consenting is the judge's predecessor check.
 fn may_confirm_passkey_vouch(state: &FoldState, predecessor: &AuthorityKey) -> bool {
-    !state.passkey_contexts.contains_key(predecessor)
+    !state.passkey_bound(predecessor)
         && !(state.hosted && super::machine_profile::in_host_custody(state, predecessor))
 }
 
 /// Marks a counted enrollment's key as passkey-vouched when its predecessor
-/// is a passkey (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B), and as
-/// confirmed when its predecessor is a key that may confirm one: a fresh
-/// enrolment by such a key is its confirmation too, so a passkey's vouch for
-/// the same key on a sibling branch limits nothing once the fold merges the
-/// two (both sets merge by union; Astra delta review finding 2).
+/// is a passkey (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B), or a key only
+/// a passkey vouched for, which vouches only while the owner's choice
+/// [`FoldState::passkey_full_owner`] is on: turning it off brings back the
+/// limits of the key it vouched for too (Engine ruling WEBPASSKEY-OPTIN-HOME
+/// = A). It marks the key as confirmed when its predecessor is a key that
+/// may confirm one: a fresh enrolment by such a key is its confirmation too,
+/// so a passkey's vouch for the same key on a sibling branch limits nothing
+/// once the fold merges the two (both sets merge by union; Astra delta
+/// review finding 2).
 pub(super) fn remember_passkey_vouch(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
     enroll: &OwnerKeyEnroll,
 ) {
     let predecessor = entry.signer_key();
-    if state.passkey_contexts.contains_key(predecessor) {
+    if state.passkey_bound(predecessor) {
         state.passkey_vouched_keys.insert(enroll.device.key.clone());
     } else if may_confirm_passkey_vouch(state, predecessor) {
         state
@@ -234,6 +278,30 @@ fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -
             matches!(profile.role, MachineRole::Owned(_) | MachineRole::Removed)
         }
         _ => false,
+    }
+}
+
+/// Marks the key a passkey or a key only a passkey vouched for re-roots,
+/// rotates or enrols a device to, by a counted entry it signs, as
+/// passkey-vouched: the owner's choice [`FoldState::passkey_full_owner`]
+/// was on in its parents, or the limits would have barred it, and turning
+/// the choice off brings back the limits of each key it handed its standing
+/// to (Engine ruling WEBPASSKEY-OPTIN-HOME = A).
+pub(super) fn remember_passkey_successor(
+    state: &mut FoldState,
+    op: &AuthorityOp,
+    signer: &AuthorityKey,
+) {
+    let successor = match op {
+        AuthorityOp::EnrollDevice { device }
+        | AuthorityOp::RotateKey {
+            new_device: device, ..
+        }
+        | AuthorityOp::ReRoot { new_device: device } => &device.key,
+        _ => return,
+    };
+    if state.passkey_bound(signer) {
+        state.passkey_vouched_keys.insert(successor.clone());
     }
 }
 

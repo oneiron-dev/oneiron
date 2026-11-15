@@ -33,6 +33,17 @@
 //! enrolled later. The register keys an act by its target alone and a
 //! free-time policy act names any target, so an act of another setting that
 //! names the web sign-in target is valid and without effect there.
+//!
+//! A second is the fold's own the same way: the owner's choice "Let my
+//! passkey remove devices and keys" ([`PolicySetting::PasskeyFullOwner`],
+//! Engine ruling WEBPASSKEY-OPTIN-HOME = A), off by default, which lifts the
+//! passkey limits ([`FoldState::passkey_limited`]) while it is on. Its act
+//! turns it on when its value is [`passkey_full_owner_value`] of on: it then
+//! counts only with an owner key's proof, and a proof by a key those limits
+//! reach in its parents leaves it waiting, so no passkey prompt lifts its
+//! own limits. Any other value is kept as a clear, which reads off, and is
+//! any owner act. An act of another setting on its target is valid and
+//! without effect there.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -104,24 +115,29 @@ pub(super) fn apply_policy_setting(
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    // The web sign-in frontier is judged by its target, whatever setting
-    // an act on it names: the register keys an act by its target alone.
+    // The web sign-in and passkey full owner frontiers are judged by their
+    // targets, whatever setting an act on them names: the register keys an
+    // act by its target alone.
     let on_web_sign_in = super::owner_proof::is_web_sign_in_target(set.act.target);
     let web_sign_in = on_web_sign_in && set.setting == PolicySetting::WebSignIn;
     let switches_back = web_sign_in
         && set.value.is_some()
         && set.value == super::owner_proof::web_sign_in_switch(state);
+    let on_full_owner = super::owner_key_enrollment::is_passkey_full_owner_target(set.act.target);
+    let full_owner = on_full_owner && set.setting == PolicySetting::PasskeyFullOwner;
+    let turns_on = full_owner && set.value == Some(passkey_full_owner_value(true));
+    let fold_read = on_web_sign_in || on_full_owner;
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
-        choice: if on_web_sign_in && !switches_back {
+        choice: if fold_read && !switches_back && !turns_on {
             None
         } else {
             set.value.as_ref()
         },
         context: POLICY_SETTING_REVISION_CONTEXT,
         persons_own_narrowing: false,
-        owner_key_only: switches_back,
+        owner_key_only: switches_back || turns_on,
     };
     let landing = owner_choice_landing(
         state,
@@ -132,12 +148,20 @@ pub(super) fn apply_policy_setting(
         counting,
         restriction_only,
     )?;
-    // Another setting's act on the web sign-in target lands nothing there.
+    // Another setting's act on the web sign-in or the passkey full owner
+    // target lands nothing there. An act that turns the passkey full owner
+    // choice on, proved by a key the passkey limits reach in its parents,
+    // waits for the proof of one they do not.
     let landing = match landing {
         OwnerChoiceLanding::Recorded { hash, .. } | OwnerChoiceLanding::Waiting { hash, .. }
-            if on_web_sign_in && !web_sign_in =>
+            if (on_web_sign_in && !web_sign_in) || (on_full_owner && !full_owner) =>
         {
             OwnerChoiceLanding::Refused(hash)
+        }
+        OwnerChoiceLanding::Recorded { target, hash, .. }
+            if turns_on && proved_by_a_passkey_limited_key(state, entry, hash) =>
+        {
+            OwnerChoiceLanding::Waiting { target, hash }
         }
         landing => landing,
     };
@@ -149,6 +173,20 @@ pub(super) fn apply_policy_setting(
         state.agent_carried_acts.insert(hash, agent);
     }
     Ok(())
+}
+
+/// Whether `entry`'s owner key proof ([`super::owner_proof::owner_proof_key`])
+/// is by a key the passkey limits reach in its parent state `state`
+/// ([`FoldState::passkey_limited`]).
+fn proved_by_a_passkey_limited_key(
+    state: &FoldState,
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+) -> bool {
+    matches!(
+        super::owner_proof::owner_proof_key(state, entry, hash),
+        Ok(Some(key)) if state.passkey_limited(&AuthorityKey::Ed25519(key))
+    )
 }
 
 /// The fold's view of every setting's acts, under this install's pin and

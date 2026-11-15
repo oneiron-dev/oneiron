@@ -641,6 +641,10 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
+    // A key a limited key hands its standing to while the owner's choice
+    // lifts the limits keeps them once the choice is off (Engine ruling
+    // WEBPASSKEY-OPTIN-HOME = A).
+    super::owner_key_enrollment::remember_passkey_successor(&mut state, &entry.op, &signer);
     apply_op(&mut state, &entry.op, hash, &signer);
     if !state_has_authority_consent(&state, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
