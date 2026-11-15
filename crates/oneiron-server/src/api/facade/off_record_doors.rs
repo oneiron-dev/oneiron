@@ -60,7 +60,7 @@ use oneiron::task_verb::sdk::{
     OffRecordExecuted, OffRecordNoteRequest, OffRecordRecallRequest, OffRecordRunStatus,
     OffRecordSessionRequest, OffRecordSessionView, OffRecordStartRequest, OffRecordWitnessRequest,
 };
-use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault};
 
 use super::host_doors::support::{Listed, internal, naming, off_runtime_listing, refused};
 use crate::api::off_record_rooms::pre_embed_turn;
@@ -654,7 +654,9 @@ async fn off_record_execute(
                 creator,
                 caller: auth.clone(),
             },
-            WriteActor::new(actor, class),
+            // The run writes as this request's credential: a slip handed on
+            // to another key runs as its holder, never as the person.
+            auth.write_actor(actor, class),
             input.run_ref.clone(),
             input.task,
             run_id,

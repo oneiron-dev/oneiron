@@ -331,6 +331,12 @@ name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The handed-on slip's session-run actor mints its slips on a `MemoryKeystore` too.
+[[test]]
+name = "handed_on_session_run"
+path = "tests/handed_on_session_run.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 
