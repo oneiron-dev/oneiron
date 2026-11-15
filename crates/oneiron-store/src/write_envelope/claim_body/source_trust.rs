@@ -1,6 +1,7 @@
 //! CLAIM scope-map values used by write envelopes and stored-body codecs.
 use super::*;
 use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 pub(crate) const CLAIM_SCOPE_SENSITIVITY_KEY: &str = "sensitivity";
@@ -125,16 +126,11 @@ pub enum MapValue<'a> {
 /// The single duplicate-aware scope-map lookup. Shared with
 /// the recognized provenance/taint/sensitivity entries of the opaque map.
 pub fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
-    let mut found = None;
-    for (key, value) in entries {
-        if key.as_str() == Some(needle) {
-            if found.is_some() {
-                return MapValue::Duplicate;
-            }
-            found = Some(value);
-        }
+    match Entries::new(entries).get(needle) {
+        Ok(Some(value)) => MapValue::Present(value),
+        Ok(None) => MapValue::Missing,
+        Err(_) => MapValue::Duplicate,
     }
-    found.map_or(MapValue::Missing, MapValue::Present)
 }
 
 /// Reads the demotion rung recorded in a claim's scope map. `None` means the

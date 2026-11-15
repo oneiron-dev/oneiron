@@ -35,8 +35,10 @@ pub(crate) use erase::{
     scrub_hook_source_in_txn,
 };
 
-/// A run's identity: BLAKE3 over its derivation envelope and its position.
-pub(super) type RunKey = [u8; 32];
+#[doc(hidden)]
+pub(super) use oneiron_records::runtime_hooks::store::{
+    HookIntentState, HookRunRef, HookRunState, RunKey,
+};
 
 /// The saved result of each run, by run key.
 pub(super) const MEMOS: SideTable<RunKey, HookRunRecord, Named> =
@@ -110,15 +112,6 @@ pub(super) fn run_key(
     key.update(&[fact.position.source().tag()]);
     key.update(&fact.position.bytes());
     Ok(*key.finalize().as_bytes())
-}
-
-/// How a run ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum HookRunState {
-    Completed,
-    Refused,
-    Failed,
 }
 
 /// One read a run made, pinned by what it answered.
@@ -449,24 +442,6 @@ pub(super) struct HookRunRecord {
     pub(super) committed_at: u64,
 }
 
-/// The saved row a run index entry names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum HookRunRef {
-    /// A fact run's memo row.
-    Fact(RunKey),
-    /// A verb run's saved record.
-    Verb(RunKey),
-}
-
-impl HookRunRef {
-    pub(super) const fn key(self) -> RunKey {
-        match self {
-            Self::Fact(key) | Self::Verb(key) => key,
-        }
-    }
-}
-
 /// Indexes `run` under `binding` at `at`, its commit time in Unix ms, in
 /// `dbs`: the vault's, or a room's along its run's route. A rewrite of the
 /// same run drops the row its earlier write left at `previous`, so each run
@@ -484,15 +459,6 @@ pub(super) fn index_run_in_txn(
         RUN_INDEX.delete(dbs, txn, &(binding, previous, key))?;
     }
     RUN_INDEX.put(dbs, txn, &(binding, at, key), &run)
-}
-
-/// Where a saved intent stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum HookIntentState {
-    Pending,
-    Applied,
-    Refused,
 }
 
 /// Queued work a run saved before its cursor moved.
