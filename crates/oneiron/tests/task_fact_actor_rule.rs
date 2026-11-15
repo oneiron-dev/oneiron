@@ -9,7 +9,10 @@
 //! counts on the host and the device; the stranger's assignment forks the owner's and fails
 //! the task's read; the stranger's take counts; the mint door writes the stranger's ack.
 //! `the_owner_taking_its_own_task_counts` passes on both: the owner reclaims or takes over
-//! its own task. Green on the head.
+//! its own task. `a_cancel_lands_on_a_task_whose_owner_forked` passes there too, since part
+//! 1's door reads no fact; it is red at 256f9a3d012a (part 2 before its door skipped the
+//! read for the kinds that count from any actor): the forked read refuses the cancel. Green
+//! on the head.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test task_fact_actor_rule`.
@@ -320,6 +323,34 @@ fn the_owner_taking_its_own_task_counts() {
     )
     .expect("the owner takes over its own task");
     assert_eq!(standing(&host.vault, task).taker, Some(host.owner));
+}
+
+#[test]
+fn a_cancel_lands_on_a_task_whose_owner_forked() {
+    let host = host();
+    let task = owner_task(&host.vault, host.owner, "the owner's task");
+    write_unjudged_fact(
+        &host.vault,
+        task,
+        TaskAuthorityFactKind::Owner,
+        EntityId::now(),
+        None,
+    )
+    .expect("the host's carrier signs a second owner");
+    assert!(
+        host.vault.task_authority_state(task).is_err(),
+        "two owners fork the task's read"
+    );
+    // The vault owner's force cancel writes this fact once it stops a branch, whatever
+    // the task's facts read.
+    mint_fact(
+        &host.vault,
+        task,
+        TaskAuthorityFactKind::Cancelled,
+        host.owner,
+        None,
+    )
+    .expect("the door writes a cancel on a forked task");
 }
 
 #[test]
