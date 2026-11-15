@@ -99,6 +99,10 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
         "/v1/federation/courtesy-delete/succession",
         PublicProof,
     ),
+    // An inquiry edge's two host routes: the edge's guest slip (or its
+    // reciprocal grant's) with the calling host's holder proof.
+    ("POST", "/v1/federation/inquiry", PublicProof),
+    ("POST", "/v1/federation/inquiry/push", PublicProof),
     ("GET", "/v1/feedback", PublicProof),
     ("POST", "/v1/feedback", PublicProof),
     ("POST", "/v1/hooks/line/webhook", PublicProof),

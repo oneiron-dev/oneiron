@@ -243,9 +243,12 @@ impl SyncServer {
             // FIX 4747 slice 4: a connector send whose machine closed or
             // vanished is taken here, in the ruled order, when this machine
             // can send it.
-            let reaper = Arc::clone(server.vault());
+            let reaper = Arc::clone(&server);
             if let Err(error) = tokio::task::spawn_blocking(move || {
-                super::connector_sends::reap_connector_send_leases(&reaper);
+                super::connector_sends::reap_connector_send_leases(
+                    reaper.vault(),
+                    reaper.host_issuer(),
+                );
             })
             .await
             {

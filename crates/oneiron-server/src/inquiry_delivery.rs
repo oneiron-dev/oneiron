@@ -6,6 +6,11 @@
 //! `x-oneiron-binding` holder proof every slip-bound call carries). The
 //! reply is the answer's wire bytes.
 //!
+//! The same transport carries the member host's told statements (the
+//! member's [Now], L7-03): one POST of the push's wire bytes to the company
+//! host's `INQUIRY_PUSH_PEER_PATH`, under the guest slip the company's
+//! vault minted for this host on its reciprocal grant, signed the same way.
+//!
 //! Blocking: call it off the async runtime, as every host door does.
 
 use std::io::Read;
@@ -15,7 +20,10 @@ use oneiron::EntityId;
 use oneiron::authority::{
     AuthorityVaultId, CapabilitySlip, HostSlipIssuer, holder_proof_challenge,
 };
-use oneiron::inquiry::{INQUIRY_PEER_PATH, InquiryTransport, InquiryTransportError};
+use oneiron::inquiry::{
+    INQUIRY_PEER_PATH, INQUIRY_PUSH_PEER_PATH, InquiryPushTransport, InquiryTransport,
+    InquiryTransportError,
+};
 
 /// How long one exchange may take before the member host counts as
 /// unreachable. The member's vault answers at once (`pending` while the
@@ -27,8 +35,8 @@ const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 /// answer is held whole (review round 1 of #7603).
 const MAX_ANSWER_BYTES: u64 = 64 * 1024;
 
-/// An [`InquiryTransport`] over HTTP that signs each call with `issuer`,
-/// the key the route's slip is bound to.
+/// An [`InquiryTransport`] and [`InquiryPushTransport`] over HTTP that
+/// signs each call with `issuer`, the key the route's slip is bound to.
 pub struct HttpInquiryTransport<'a> {
     issuer: &'a HostSlipIssuer,
 }
@@ -57,41 +65,16 @@ impl<'a> HttpInquiryTransport<'a> {
                 .to_string(),
         )
     }
-}
 
-fn refused(why: &str) -> InquiryTransportError {
-    InquiryTransportError::Refused(why.to_owned())
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
-/// The member host's inquiry route under `member_host`, an origin: HTTPS,
-/// or plain HTTP on loopback only, with no credentials, query or fragment.
-fn destination(member_host: &str) -> Result<String, InquiryTransportError> {
-    let url = format!(
-        "{}{INQUIRY_PEER_PATH}",
-        member_host.trim().trim_end_matches('/')
-    );
-    crate::feedback_delivery::check_endpoint(&url)
-        .map_err(|_| refused("the route's member host is not an https origin"))?;
-    Ok(url)
-}
-
-impl InquiryTransport for HttpInquiryTransport<'_> {
-    fn exchange(
+    /// One POST of `body` to `url` under `slip_token`, with this host's
+    /// holder proof: the 2xx answer; a 4xx (but 408 and 429) is the host's
+    /// refusal, anything else a failure to reach it.
+    fn post_signed(
         &self,
-        member_host: &str,
-        _member_vault_id: &AuthorityVaultId,
+        url: String,
         slip_token: &str,
-        inquiry: &[u8],
-    ) -> Result<Vec<u8>, InquiryTransportError> {
-        // The slip names the member's vault itself; the member host checks
-        // it was issued there.
-        let url = destination(member_host)?;
+        body: &[u8],
+    ) -> Result<reqwest::blocking::Response, InquiryTransportError> {
         let slip = CapabilitySlip::from_token(slip_token)
             .map_err(|_| refused("the route's slip does not decode"))?;
         let binding = self.holder_proof(&slip, unix_now())?;
@@ -109,7 +92,7 @@ impl InquiryTransport for HttpInquiryTransport<'_> {
             .header("x-oneiron-binding", binding)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::USER_AGENT, "oneiron-inquiry")
-            .body(inquiry.to_vec())
+            .body(body.to_vec())
             .send()
             .map_err(|error| {
                 InquiryTransportError::Unreachable(if error.is_timeout() {
@@ -128,6 +111,41 @@ impl InquiryTransport for HttpInquiryTransport<'_> {
                 },
             );
         }
+        Ok(response)
+    }
+}
+
+fn refused(why: &str) -> InquiryTransportError {
+    InquiryTransportError::Refused(why.to_owned())
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// The route `path` under `host`, an origin: HTTPS, or plain HTTP on
+/// loopback only, with no credentials, query or fragment.
+fn destination(host: &str, path: &str) -> Result<String, InquiryTransportError> {
+    let url = format!("{}{path}", host.trim().trim_end_matches('/'));
+    crate::feedback_delivery::check_endpoint(&url)
+        .map_err(|_| refused("the route's host is not an https origin"))?;
+    Ok(url)
+}
+
+impl InquiryTransport for HttpInquiryTransport<'_> {
+    fn exchange(
+        &self,
+        member_host: &str,
+        _member_vault_id: &AuthorityVaultId,
+        slip_token: &str,
+        inquiry: &[u8],
+    ) -> Result<Vec<u8>, InquiryTransportError> {
+        // The slip names the member's vault itself; the member host checks
+        // it was issued there.
+        let url = destination(member_host, INQUIRY_PEER_PATH)?;
+        let response = self.post_signed(url, slip_token, inquiry)?;
         let too_large = || refused("the member host's answer is too large");
         if response
             .content_length()
@@ -145,5 +163,21 @@ impl InquiryTransport for HttpInquiryTransport<'_> {
         } else {
             Err(too_large())
         }
+    }
+}
+
+impl InquiryPushTransport for HttpInquiryTransport<'_> {
+    fn push(
+        &self,
+        company_host: &str,
+        _company_vault_id: &AuthorityVaultId,
+        slip_token: &str,
+        wire: &[u8],
+    ) -> Result<(), InquiryTransportError> {
+        // The slip names the company's vault itself; the company host
+        // checks it was issued there. Its answer carries nothing to read.
+        let url = destination(company_host, INQUIRY_PUSH_PEER_PATH)?;
+        self.post_signed(url, slip_token, wire)?;
+        Ok(())
     }
 }

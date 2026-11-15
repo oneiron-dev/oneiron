@@ -3,12 +3,16 @@
 use std::time::Duration;
 
 use oneiron::Vault;
+use oneiron::authority::HostSlipIssuer;
+use oneiron::inquiry::{INQUIRY_PUSH_CHANNEL, InquiryPushSink};
 use oneiron::outbound::{
     EngineSendId, OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
     OutboundIntent, SentLookup, SentLookupTarget, ServedChannelSink,
 };
 use oneiron::outbound_intent_ledger::DeliveryReadBack;
 use reqwest::header::HeaderValue;
+
+use crate::inquiry_delivery::HttpInquiryTransport;
 
 mod caldav;
 mod card_pass;
@@ -77,6 +81,10 @@ pub(crate) struct CalendarChannelSink<'a> {
     vault: &'a Vault,
     ordinary: ServedChannelSink<'a>,
     client: reqwest::blocking::Client,
+    /// The member's told statements (`inquiry_push`, L7-03), sent over the
+    /// host's HTTP inquiry transport; absent on a host that holds no
+    /// signing key, or on a sink that drains calendar invites alone.
+    inquiry_push: Option<InquiryPushSink<'a, HttpInquiryTransport<'a>>>,
 }
 
 impl<'a> CalendarChannelSink<'a> {
@@ -91,16 +99,32 @@ impl<'a> CalendarChannelSink<'a> {
             ordinary: ServedChannelSink::with_client(vault, clients.ordinary.clone())
                 .with_line_push_allowance(line_push_allowance),
             client: clients.calendar.clone(),
+            inquiry_push: None,
         }
+    }
+
+    /// The sink that also sends the vault's told statements over
+    /// `transport`, which signs each with the host's key: the connector-send
+    /// executor's, the one pass that claims every channel's sends.
+    pub(crate) fn with_inquiry_push(mut self, transport: &'a HttpInquiryTransport<'a>) -> Self {
+        self.inquiry_push = Some(InquiryPushSink::new(self.vault, transport));
+        self
     }
 
     /// Whether this machine holds what this sink sends `intent` with (FIX
     /// 4747 slice 4), the send lease reaper's read-only check: an invite
     /// needs the iMIP submission transport `invite` reads before its send;
-    /// every other send is the served sink's to judge
-    /// ([`ServedChannelSink::holds_channel`]).
-    pub(crate) fn holds_channel(vault: &Vault, intent: &OutboundIntent) -> bool {
-        if intent.channel == "calendar" && intent.verb == "calendar.invite" {
+    /// a told statement needs the host's signing key `issuer`, the key its
+    /// route's slip is bound to; every other send is the served sink's to
+    /// judge ([`ServedChannelSink::holds_channel`]).
+    pub(crate) fn holds_channel(
+        vault: &Vault,
+        issuer: Option<&HostSlipIssuer>,
+        intent: &OutboundIntent,
+    ) -> bool {
+        if intent.channel == INQUIRY_PUSH_CHANNEL {
+            issuer.is_some()
+        } else if intent.channel == "calendar" && intent.verb == "calendar.invite" {
             matches!(
                 oneiron::calendar::connectors::door::imip_transport(vault),
                 Ok(Some(_))
@@ -236,32 +260,53 @@ impl<'a> CalendarChannelSink<'a> {
 
 impl OutboundExecutionSink for CalendarChannelSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        if request.intent.channel == "calendar" && request.intent.verb == "calendar.invite" {
+        if request.intent.channel == INQUIRY_PUSH_CHANNEL {
+            match self.inquiry_push.as_mut() {
+                Some(sink) => sink.execute(request),
+                None => OutboundExecutionOutcome::failed(
+                    "this sink holds no key to sign a told statement",
+                ),
+            }
+        } else if request.intent.channel == "calendar" && request.intent.verb == "calendar.invite" {
             self.invite(request)
         } else {
             self.ordinary.execute(request)
         }
     }
 
-    /// FIX 4747: an iMIP invite keeps no id of ours to look up; every other
-    /// send is the served sink's to look up.
+    /// FIX 4747: an iMIP invite keeps no id of ours to look up; a told
+    /// statement is its own sink's to look up; every other send is the
+    /// served sink's.
     fn lookup_sent(
         &mut self,
         engine_send_id: &EngineSendId,
         target: &SentLookupTarget<'_>,
     ) -> SentLookup {
-        if target.intent.channel == "calendar" && target.intent.verb == "calendar.invite" {
+        if target.intent.channel == INQUIRY_PUSH_CHANNEL {
+            self.inquiry_push
+                .as_mut()
+                .map_or(SentLookup::CannotTell, |sink| {
+                    sink.lookup_sent(engine_send_id, target)
+                })
+        } else if target.intent.channel == "calendar" && target.intent.verb == "calendar.invite" {
             SentLookup::CannotTell
         } else {
             self.ordinary.lookup_sent(engine_send_id, target)
         }
     }
 
-    /// FIX 22348: an iMIP invite keeps no id of ours to read back; every
-    /// other send is the served sink's to read back (FIX 8814 follow-up), as
-    /// it is the served sink's to look up.
+    /// FIX 22348: an iMIP invite keeps no id of ours to read back; a told
+    /// statement is its own sink's to read back; every other send is the
+    /// served sink's to read back (FIX 8814 follow-up), as it is the served
+    /// sink's to look up.
     fn read_back_delivery(&self, request: &OutboundExecutionRequest<'_>) -> DeliveryReadBack {
-        if request.intent.channel == "calendar" && request.intent.verb == "calendar.invite" {
+        if request.intent.channel == INQUIRY_PUSH_CHANNEL {
+            self.inquiry_push
+                .as_ref()
+                .map_or(DeliveryReadBack::Unknown, |sink| {
+                    sink.read_back_delivery(request)
+                })
+        } else if request.intent.channel == "calendar" && request.intent.verb == "calendar.invite" {
             DeliveryReadBack::Unknown
         } else {
             self.ordinary.read_back_delivery(request)

@@ -29,7 +29,9 @@
 //!
 //! The prompt that offers [Now], and the member's saved choice for it,
 //! belong to the companion's stamped-need prompt and are not built here.
-//! The verbs and the host routes are a later PR.
+//! The verbs are `vault.inquiry.push_route.open` and `vault.inquiry.push`;
+//! the member host's connector-send executor carries the send, and the
+//! company host's route `INQUIRY_PUSH_PEER_PATH` lands it (oneiron-server).
 
 use serde::{Deserialize, Serialize};
 
@@ -58,9 +60,9 @@ use crate::{EdgeActorClass, OutboundDraftInput, Vault};
 /// The internal outbound channel a told statement goes out on.
 pub const INQUIRY_PUSH_CHANNEL: &str = "inquiry_push";
 
-/// The company host's route a told statement is sent to (the host route is
-/// a later PR): the member host POSTs the push's wire bytes there under the
-/// company's guest slip, with its own signature on each call.
+/// The company host's route a told statement is sent to: the member host
+/// POSTs the push's wire bytes there under the company's guest slip, with
+/// its own signature on each call.
 pub const INQUIRY_PUSH_PEER_PATH: &str = "/v1/federation/inquiry/push";
 
 /// The most bytes a told statement's words take.
@@ -523,6 +525,30 @@ impl Vault {
         }) else {
             return Ok(None);
         };
+        self.inquiry_push_view(record).map(Some)
+    }
+
+    /// Every statement this vault told unasked, newest first, and how each
+    /// stands: the member's own record of what left over each edge.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn inquiry_pushes(&self) -> Result<Vec<InquiryPushView>> {
+        let records = {
+            let txn = self.store.env.read_txn()?;
+            PUSHES.scan(&self.store, &txn)?
+        };
+        let mut views = records
+            .into_iter()
+            .map(|(_, record)| self.inquiry_push_view(record))
+            .collect::<Result<Vec<_>>>()?;
+        views.sort_by_key(|view| std::cmp::Reverse((view.push.told_at, view.push.push)));
+        Ok(views)
+    }
+
+    /// `record` and how it stands, read from its send's connector TASK.
+    fn inquiry_push_view(&self, record: InquiryPush) -> Result<InquiryPushView> {
         let state = match record.task_ref {
             None => InquiryPushState::Queued,
             Some(task_ref) => match self.connector_send_task(&task_ref)? {
@@ -530,10 +556,10 @@ impl Vault {
                 Some(task) => push_state_of(&task),
             },
         };
-        Ok(Some(InquiryPushView {
+        Ok(InquiryPushView {
             push: record,
             state,
-        }))
+        })
     }
 
     /// The route and wire bytes of the released push `push`, read when the

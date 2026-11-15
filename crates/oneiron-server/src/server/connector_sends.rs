@@ -1,5 +1,7 @@
 //! The served connector-send drain (OF-187): the one consumer of the
 //! `bridge.outbound.schedule` queue that owner-approved sends wait in.
+//! The member's told statements (`inquiry_push`, L7-03) go out here too,
+//! on the host's HTTP inquiry transport, signed with the host's key.
 //!
 //! The engine schedules a send as a connector-send TASK and its executor runs
 //! each one through the common dispatch pipeline; it never starts a thread.
@@ -20,7 +22,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
+use crate::inquiry_delivery::HttpInquiryTransport;
 use oneiron::Vault;
+use oneiron::authority::HostSlipIssuer;
 use oneiron::outbound::ConnectorSendLeaseReap;
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -67,12 +71,12 @@ impl SyncServer {
             // signal already waiting; a commit after this point still wakes
             // the wait below.
             while let Ok(()) | Err(TryRecvError::Lagged(_)) = wake.try_recv() {}
-            let vault = Arc::clone(self.vault());
+            let server = Arc::clone(&self);
             let line_push_allowance = self.config.line.monthly_push_allowance();
             let mut kept = clients.take();
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                let next = send_pass(&vault, line_push_allowance, &mut kept, tick);
+                let next = send_pass(&server, line_push_allowance, &mut kept, tick);
                 (next, kept)
             })
             .await
@@ -140,10 +144,11 @@ impl SyncServer {
 /// One send lease reaper pass (FIX 4747 slice 4), on the housekeeping tick:
 /// a connector send whose lease expired is taken here, in the ruled order,
 /// when this machine holds what its channel needs, the check the worker's
-/// sink makes before it sends ([`CalendarChannelSink::holds_channel`]).
-pub(super) fn reap_connector_send_leases(vault: &Vault) {
+/// sink makes before it sends ([`CalendarChannelSink::holds_channel`]); a
+/// told statement needs the host's signing key `issuer`.
+pub(super) fn reap_connector_send_leases(vault: &Vault, issuer: Option<&HostSlipIssuer>) {
     let holds_channel = |task: &oneiron::outbound::ConnectorSendTask| {
-        CalendarChannelSink::holds_channel(vault, &task.intent)
+        CalendarChannelSink::holds_channel(vault, issuer, &task.intent)
     };
     match vault.reap_connector_send_leases(&holds_channel) {
         Ok(ConnectorSendLeaseReap {
@@ -172,18 +177,25 @@ pub(super) fn reap_connector_send_leases(vault: &Vault) {
 /// A LINE push is counted against the account plan's monthly allowance.
 /// The worker's kept clients are built here, off the runtime, when it has
 /// none yet. A pass a timer started (`tick`) opens with the general write
-/// door's per-write work, as the surface-event drain's does.
+/// door's per-write work, as the surface-event drain's does. A told
+/// statement is signed with the server's host key; a host that holds none
+/// fails it as not sent.
 fn send_pass(
-    vault: &Vault,
+    server: &SyncServer,
     line_push_allowance: u32,
     clients: &mut Option<CalendarSendClients>,
     tick: bool,
 ) -> oneiron::Result<Option<u64>> {
+    let vault = server.vault();
     let clients = match clients {
         Some(clients) => clients,
         None => clients.insert(CalendarSendClients::new()?),
     };
+    let inquiry_transport = server.host_issuer().map(HttpInquiryTransport::new);
     let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
+    if let Some(transport) = inquiry_transport.as_ref() {
+        sink = sink.with_inquiry_push(transport);
+    }
     super::connector_events::carry_write_piggybacks(vault, tick)?;
     let delivered = vault
         .run_connector_task_executor(&mut sink, unix_now())
@@ -198,4 +210,20 @@ fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+#[cfg(oneiron_test_support)]
+impl SyncServer {
+    /// One connector-send pass now, as the drain runs it, with fresh send
+    /// clients and no timer work: the test door
+    /// `test_doors::connector_sends`. Blocking.
+    pub(crate) fn run_connector_send_pass(&self) -> oneiron::Result<Option<u64>> {
+        let mut clients = None;
+        send_pass(
+            self,
+            self.config.line.monthly_push_allowance(),
+            &mut clients,
+            false,
+        )
+    }
 }

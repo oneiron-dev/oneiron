@@ -103,6 +103,7 @@ mod esign;
 mod esign_qr;
 mod first_party_html;
 mod inquiry_peer;
+mod inquiry_push_peer;
 mod oauth_server;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;

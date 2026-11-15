@@ -214,6 +214,7 @@ use utoipa::OpenApi;
         super::courtesy_delete::take_reply,
         super::courtesy_delete::take_succession,
         super::inquiry_peer::take_inquiry,
+        super::inquiry_push_peer::take_inquiry_push,
         super::recovery_bundle::part,
         super::recovery_bundle::index,
         super::recovery_bundle::custody::custody_page,
