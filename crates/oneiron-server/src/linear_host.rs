@@ -460,9 +460,7 @@ async fn spawn_bridge(
                     )?;
                     let outbound =
                         ServedLinearEgress::new(&vault, scheduler_actor, inbound.clone());
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |time| time.as_secs());
+                    let now = oneiron_base::unix_seconds_now();
                     synchronize_once(
                         &vault,
                         inbound,

@@ -24,8 +24,8 @@ use oneiron::{
     EntityId, LlmRequest, LlmResult, LlmUsage, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
     WriteActor,
 };
-use oneiron_llm_anthropic::parse_anthropic_usage;
-use oneiron_llm_openai::parse_openai_usage;
+use oneiron_llm::anthropic::parse_anthropic_usage;
+use oneiron_llm::openai_compat::parse_openai_usage;
 use serde_json::Value as JsonValue;
 
 use super::ModelRuntime;
