@@ -8,7 +8,8 @@
 //!   run that fails stays requested on its retry, and a run that ends done clears it;
 //! - one job runs alone, now, while another is due;
 //! - a door pulls a due time forward, but not while the job backs off;
-//! - a run's `due_by` makes its job due before its next occurrence;
+//! - a run's `due_by` makes its job due before its next occurrence, and one already past makes
+//!   it due at its first retry, not again in the same pass;
 //! - a pass whose budget is spent still starts one due job; a stopped pass starts none.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test schedule_runner_sweeps`.
@@ -170,12 +171,16 @@ fn a_cadence_key_arms_its_job_and_a_change_rearms_it_in_the_same_write() {
     assert_eq!(fx.run_due(), vec![ran("test.cadence", JobOutcome::Done)]);
     assert_eq!(fx.due("test.cadence"), Some(T0 + 100 + HOUR));
 
-    fx.set_cadence(json!({ "kind": "every", "secs": 0 }))
+    let zero = fx
+        .set_cadence(json!({ "kind": "every", "secs": 0 }))
         .expect_err("an interval of zero never fires");
-    fx.set_cadence(json!({
-        "kind": "civil", "hour": 9, "minute": 0, "zone": "Nowhere/Atlantis"
-    }))
-    .expect_err("the engine knows no such zone: the arming refuses the change");
+    assert!(zero.contains("can never fire"), "{zero}");
+    let nowhere = fx
+        .set_cadence(json!({
+            "kind": "civil", "hour": 9, "minute": 0, "zone": "Nowhere/Atlantis"
+        }))
+        .expect_err("the engine knows no such zone: the arming refuses the change");
+    assert!(nowhere.contains("IANA zone"), "{nowhere}");
     let cadence = fx.cadence();
     assert_eq!(
         (&cadence["kind"], &cadence["secs"]),
@@ -371,4 +376,17 @@ fn a_pass_whose_budget_is_spent_starts_one_due_job_and_a_stopped_pass_starts_non
         "a pass whose budget is spent still starts one due job"
     );
     assert_eq!(fx.run_due().len(), 1, "the other waits for the next pass");
+}
+
+#[test]
+fn a_due_by_already_past_makes_its_job_due_at_its_first_retry_not_again_in_the_pass() {
+    let fx = Fixture::rooted();
+    arm_cadence_jobs(&fx.vault).expect("arming");
+    set_cadence_due_by(&fx.vault, Some(T0 - 1));
+    assert_eq!(
+        fx.run_due(),
+        vec![ran("test.cadence", JobOutcome::Done)],
+        "it runs once in the pass"
+    );
+    assert_eq!(fx.due("test.cadence"), Some(T0 + MINUTE));
 }

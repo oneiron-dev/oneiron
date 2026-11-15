@@ -109,7 +109,8 @@ pub struct JobPass<'a> {
 pub struct JobResult {
     pub ran: Ran,
     /// For a repeating job that ran to its end: due again no later than this, whatever its
-    /// trigger says (work it saw coming before its next occurrence). Ignored otherwise.
+    /// trigger says (work it saw coming before its next occurrence), but never sooner than its
+    /// first retry after the run's end. Ignored otherwise.
     pub due_by: Option<u64>,
     /// A housekeeping sweep's account of its work, for the housekeeping report.
     pub sweep_work: Option<SweepWork>,

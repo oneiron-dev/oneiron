@@ -143,7 +143,8 @@ impl Vault {
     }
 
     /// Runs `job` about `subject` alone, now, whatever its due time: a support holder's repair
-    /// of one sweep. The run answers a "run now". `None` when the job is not armed.
+    /// of one sweep. The run answers a "run now". A start marker an interrupted run left counts
+    /// as its failure, and the job then runs. `None` when the job is not armed.
     ///
     /// # Errors
     ///
@@ -171,9 +172,21 @@ impl Vault {
             store_row_in_txn(&self.store, txn, &key, Some(&prior), Some(&row))?;
             Ok(Some(row.due_at()))
         })?;
-        match due {
+        let Some(due_at) = due else {
+            return Ok(None);
+        };
+        let run = self.run_one(&key, due_at, pass)?;
+        if run.outcome != JobOutcome::Interrupted {
+            return Ok(Some(run));
+        }
+        // The marker is cleared and the request kept: the job runs now.
+        let due_at = {
+            let txn = self.store.env.read_txn()?;
+            ROWS.get(&self.store, &txn, &key)?.map(|row| row.due_at())
+        };
+        match due_at {
             Some(due_at) => self.run_one(&key, due_at, pass).map(Some),
-            None => Ok(None),
+            None => Ok(Some(run)),
         }
     }
 
@@ -374,8 +387,8 @@ impl Vault {
 
 /// The row after a run that ended at `end`, or `None` when the job is done for good.
 /// - done: a deadline is done; a repeating job is next due at its next occurrence after now, or
-///   at the run's `due_by` when that is earlier, its failures, cursor and answered request
-///   cleared;
+///   at the run's `due_by` when that is earlier but never sooner than its first retry after the
+///   end, its failures, cursor and answered request cleared;
 /// - more: due again at once, going on from its cursor;
 /// - items failed: due again after the backoff, its cursor cleared;
 /// - failed: due again after the backoff, its cursor kept.
@@ -398,9 +411,12 @@ fn finished(
             .trigger
             .next_due(due_at, end, &EngineZones)
             .map(|next_due_at| ScheduleRow {
-                next_due_at: result
-                    .due_by
-                    .map_or(next_due_at, |due_by| due_by.min(next_due_at)),
+                // A `due_by` already past means soon, never again in this pass.
+                next_due_at: result.due_by.map_or(next_due_at, |due_by| {
+                    due_by
+                        .max(end.saturating_add(spec.retry_first_secs))
+                        .min(next_due_at)
+                }),
                 failures: 0,
                 cursor: None,
                 answering: false,
