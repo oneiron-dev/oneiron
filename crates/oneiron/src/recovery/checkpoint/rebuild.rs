@@ -179,6 +179,13 @@ pub(super) fn rebuild(
                         body,
                     )?;
                 }
+                // The extra-room index is derived from the room body's
+                // `project_group` at every put, so a restore rebuilds it
+                // from the body it kept: an image that does not carry the
+                // row leaves the index empty until then (FIX 23301).
+                crate::registry::ENTITY_TYPE_CONVERSATION => {
+                    crate::workspace_roster::index_extra_room(&vault.store, txn, *id, body)?;
+                }
                 _ => {}
             }
             if has_embedding_source(raw)? {
