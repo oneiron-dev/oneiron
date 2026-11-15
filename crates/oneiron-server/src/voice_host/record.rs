@@ -201,7 +201,7 @@ impl CallRecord {
         let CallParty::Phone(call) = &self.party else {
             return;
         };
-        if !call.keeps_turns {
+        if !self.keeps_turns(vault) {
             return;
         }
         let mut turn = witness_turn(
