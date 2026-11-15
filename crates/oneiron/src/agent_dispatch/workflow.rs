@@ -421,6 +421,12 @@ impl AgentDispatcher<'_> {
             frozen.target.agent_definition_ref()?,
             record.intent.powers.unwrap_or_default(),
         )?;
+        // Plan mode: a leaf an agent's run releases pins no plan.
+        self.refuse_unplanned_child_in_txn(
+            txn,
+            record.intent.parent,
+            frozen.target.agent_definition_ref()?,
+        )?;
         let model = frozen.plan.as_ref().map(|plan| &plan.plan.model);
         let launch = self.admit_leaf_in_txn(txn, record.root, requested, ordinal, model, now)?;
         frozen.launch = Some(launch.statement.clone());

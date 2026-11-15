@@ -1,9 +1,10 @@
 //! The attribution a run's proposal records (FIX 6867, G1 PR2b; CALL "FIX
 //! 6867 review policy and provenance"), minted by the host, never named by
-//! the guest: the actor's canonical session on this install, and an
-//! ordinary gated `repo.provenance` claim naming the real actor, the model
-//! and request the run's executor bound before the call, and the exact work
-//! and change. A run whose host holds no such witness answers
+//! the guest: the actor's canonical session on this install, and a gated
+//! `repo.provenance` claim, stored through the engine's reserved door,
+//! naming the real actor, the model and request the run's executor bound
+//! before the call, and the exact work and change. A run whose host holds
+//! no such witness answers
 //! `repo_provenance_required`: no author is made up. A session is
 //! attribution, not work isolation; one already open is the one used.
 
@@ -194,20 +195,24 @@ impl HostSelfDispatcher<'_> {
             None => candidate,
         };
         let envelope = self.write_envelope(effect, admission.as_ref())?;
-        let gate_body = candidate.clone().into_claim_body(
+        let mut body = candidate.into_claim_body(
             &envelope,
             crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
         )?;
-        self.check_write_gate(id, &gate_body, &envelope, false)?;
-        let at = vault.now_recorded_at();
-        vault.put_claim_candidate_with_landing(
-            &id,
-            candidate,
-            &envelope,
-            TimeRange { start: at, end: at },
-            at,
-            |_| Ok(()),
-        )?;
+        self.check_write_gate(id, &body, &envelope, false)?;
+        // `repo.*` is engine-owned (claim_predicate.rs), so the generic
+        // candidate door refuses this predicate for every caller. The policy
+        // gate above stays the refusal point; the engine's reserved door then
+        // stores the gated body as built, approval Proposed, under the run's
+        // envelope.
+        vault.with_write_txn_grouped(|txn| {
+            // The claim is about a SESSION and its actor is not a PERSON, so
+            // neither has a stored FACET, and a CLAIM's birth needs a live
+            // one (#4389): it is born in the vault default facet.
+            body.scope_facet = vault.default_facet_in_txn(&*txn)?;
+            let at = vault.now_recorded_at();
+            vault.put_reserved_claim_in_txn(txn, &id, &body, TimeRange { start: at, end: at }, at)
+        })?;
         Ok(id)
     }
 }

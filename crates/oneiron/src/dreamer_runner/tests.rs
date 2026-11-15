@@ -687,7 +687,7 @@ fn milestone_write_refusal_rolls_back_lease_budget_and_claim_across_reopen() -> 
     // production reopen above seeded the default policy again.
     let manifest = crate::gate::default_policy_manifest_id()?;
     reopened.with_write_txn(|wtxn| {
-        crate::batch::deindex_entity_for_test(&reopened.store, wtxn, &manifest)?;
+        crate::batch::deindex_entity_for_test(&reopened, wtxn, &manifest)?;
         Ok(())
     })?;
     let milestone = milestone_fixture(&reopened, claim_id, 21)?;

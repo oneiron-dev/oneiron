@@ -181,7 +181,7 @@ impl DeterministicRunner for JsonRules {
             return Err("unsupported rule version".into());
         }
         let class = match failure {
-            FatalLlmError::Auth => "auth",
+            FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. } => "auth",
             FatalLlmError::InvalidRequest => "invalid_request",
             FatalLlmError::InvalidRequestDetail { .. }
             | FatalLlmError::ContextWindowExceeded { .. } => "invalid_request",

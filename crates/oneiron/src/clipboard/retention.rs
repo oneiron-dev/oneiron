@@ -1,12 +1,10 @@
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
+use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteReason;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Vault};
 
 /// Low-disk cleanup targets this many free bytes. The host supplies a real
 /// filesystem observation. Selected text bytes are not filesystem-free bytes.
@@ -15,31 +13,8 @@ const DAY_SECONDS: u64 = 86_400;
 const SETTINGS: SideTable<(), ClipboardRetention, Named> =
     SideTable::new(&side_table::CLIPBOARD_RETENTION);
 
-/// The three owner cleanup arms. Only low-disk cleanup is enabled initially.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClipboardRetention {
-    pub max_text_bytes: Option<u64>,
-    pub low_disk: bool,
-    pub older_than_days: Option<u32>,
-}
-
-impl Default for ClipboardRetention {
-    fn default() -> Self {
-        Self {
-            max_text_bytes: None,
-            low_disk: true,
-            older_than_days: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClipboardCleanupReport {
-    pub erased: Vec<EntityId>,
-    /// Masked clip-text bytes selected under the policy, not measured freed
-    /// filesystem pages, other vault content or secret-custody bytes.
-    pub selected_text_bytes: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::clipboard::retention::{ClipboardCleanupReport, ClipboardRetention};
 
 impl Vault {
     /// The owner's current Clipboard cleanup settings; no clipboard text is read.
