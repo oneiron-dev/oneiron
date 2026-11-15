@@ -11,6 +11,13 @@
 //! still adds a member. Guards (pass on the base too): an Admin's acts with
 //! no stored setup, the Owner's act under a setup that names only another
 //! power, and a setup stored for an org that no preset here names.
+//!
+//! The owner's amend (RULING ORG-ADMIN-SETUP-AMEND, the lead 16 Nov 02:1x =
+//! B): `vault.org_admin.amend` replaces a stored setup's Admins and named
+//! powers, and may add a power the setup lacks; no Admin or agent can amend.
+//! The amend rows call the verb by name as the embedded owner, so on a tree
+//! without it each fails at run time as an unknown verb; an Admin's or an
+//! agent's amend is refused on both trees.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test org_admin_setup_policy`.
 #![cfg(oneiron_test_support)]
@@ -21,6 +28,8 @@
 mod admin_step_up;
 
 use std::collections::BTreeSet;
+use std::path::Path;
+use std::sync::Arc;
 
 use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
@@ -31,7 +40,8 @@ use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TY
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
-use oneiron::{EntityId, Vault};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use serde_json::{Value, json};
 
 const SHARED: u64 = 42;
 const WORKSPACE: &str = "T-setup-policy";
@@ -39,6 +49,10 @@ const WORKSPACE: &str = "T-setup-policy";
 /// The gate's refusal of a write no role or named power authorizes
 /// (`ClaimError::ActorLacksClaimAuthority`), named by its variant.
 const NO_AUTHORITY: &str = "ActorLacksClaimAuthority";
+
+const AMEND: &str = "vault.org_admin.amend";
+/// The amend's refusal with no stored setup (`OrgAdminError::NotConfigured`).
+const NOT_CONFIGURED: &str = "organization administration is not configured";
 
 fn person(vault: &Vault, id: EntityId) {
     vault
@@ -117,8 +131,28 @@ struct Org {
 }
 
 fn org() -> Org {
+    org_with(admin_step_up::rooted_vault)
+}
+
+/// [`org`] on a vault this process owns: the handle holds the writer lease,
+/// so the owner verbs answer the embedded owner on it.
+fn owned_org() -> Org {
+    org_with(rooted_owned_vault)
+}
+
+/// `admin_step_up::rooted_vault`, opened with the writer lease.
+fn rooted_owned_vault(dir: &Path) -> (Vault, HostSlipIssuer, EntityId) {
+    let vault = Vault::open_owned(dir, VaultConfig::device()).expect("owned vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    (vault, issuer, owner)
+}
+
+fn org_with(rooted: fn(&Path) -> (Vault, HostSlipIssuer, EntityId)) -> Org {
     let dir = tempfile::tempdir().expect("tempdir");
-    let (vault, issuer, owner) = admin_step_up::rooted_vault(dir.path());
+    let (vault, issuer, owner) = rooted(dir.path());
     let admin = EntityId::now();
     person(&vault, admin);
     let member = |member_ref, role| InitialSharedMember {
@@ -198,6 +232,39 @@ impl Org {
         let id = EntityId::now();
         person(&self.vault, id);
         id
+    }
+
+    /// The owner's amend of this org's setup through the verb: `admins`
+    /// hold `powers` from now on.
+    fn amend(&self, admins: &[EntityId], powers: &[OrgAdminPower]) -> Result<Value, String> {
+        self.amend_as(self.owner, EdgeActorClass::Human, admins, powers)
+    }
+
+    /// `caller`'s call of the amend verb at `class`, on this handle.
+    fn amend_as(
+        &self,
+        caller: EntityId,
+        class: EdgeActorClass,
+        admins: &[EntityId],
+        powers: &[OrgAdminPower],
+    ) -> Result<Value, String> {
+        let policy = OrgAdminPolicy::new(
+            self.org,
+            admins.iter().copied().collect::<BTreeSet<_>>(),
+            powers.iter().copied().collect::<BTreeSet<_>>(),
+        )
+        .expect("a well-formed setup");
+        let input = json!({ "policy": serde_json::to_value(&policy).expect("the policy as JSON") });
+        oneiron::task_verb::sdk::invoke(&self.vault.memory(caller, class), AMEND, input)
+            .map_err(|error| format!("{error:?}"))
+    }
+
+    /// The powers this org's stored setup gives `admin`.
+    fn stored_powers(&self, admin: EntityId) -> Vec<OrgAdminPower> {
+        self.vault
+            .org_admin_policy(self.org)
+            .expect("a stored setup")
+            .visible_powers(admin)
     }
 }
 
@@ -297,4 +364,128 @@ fn a_setup_for_an_org_no_preset_here_names_narrows_nothing() {
         .change_shared_member_role(&admin, SHARED, member, Role::Admin, None)
         .expect("an Admin assigns a role: the stored setup is another org's");
     assert_eq!(role_of(&org.vault, member), Some(Role::Admin));
+}
+
+#[test]
+fn the_owner_seats_a_later_admin_by_an_amend() {
+    let org = owned_org();
+    let named = org.newcomer();
+    org.configure(org.org, &[named], &[OrgAdminPower::AddMember]);
+    let amended = org
+        .amend(&[named, org.admin], &[OrgAdminPower::AddMember])
+        .expect("the owner's amend lands");
+    assert_eq!(
+        amended.get("amended"),
+        Some(&Value::Bool(true)),
+        "{amended}"
+    );
+    let member = org.newcomer();
+    let admin = org.admin_acts();
+
+    org.vault
+        .add_shared_member(&admin, SHARED, member, Some(Role::Member))
+        .expect("the AddMember of an Admin the amend seated lands");
+    assert!(invited_at(&org.vault, member, Role::Member));
+}
+
+#[test]
+fn an_amend_drops_a_power() {
+    let org = owned_org();
+    org.configure(
+        org.org,
+        &[org.admin],
+        &[OrgAdminPower::AddMember, OrgAdminPower::AssignRole],
+    );
+    org.amend(&[org.admin], &[OrgAdminPower::AddMember])
+        .expect("the owner's amend lands");
+    let member = org.newcomer();
+    let admin = org.admin_acts();
+
+    org.vault
+        .add_shared_member(&admin, SHARED, member, Some(Role::Member))
+        .expect("the AddMember the amend kept lands");
+    accept_invitation(&org.vault, member, Role::Member);
+    refused_for_authority(
+        org.vault
+            .change_shared_member_role(&admin, SHARED, member, Role::Admin, None),
+        "an Admin's AssignRole that the amend dropped",
+    );
+    assert_eq!(role_of(&org.vault, member), Some(Role::Member));
+}
+
+/// RULING ORG-ADMIN-SETUP-AMEND = B (the lead 16 Nov 02:1x): the owner may
+/// add a power the stored setup lacks, and an Admin's act under it lands.
+#[test]
+fn an_owner_amend_adds_a_power_and_a_later_admin_act_under_it_lands() {
+    let org = owned_org();
+    org.configure(org.org, &[org.admin], &[OrgAdminPower::AddMember]);
+    org.amend(
+        &[org.admin],
+        &[OrgAdminPower::AddMember, OrgAdminPower::AssignRole],
+    )
+    .expect("the owner's amend that adds a power lands");
+    assert_eq!(
+        org.stored_powers(org.admin),
+        vec![OrgAdminPower::AddMember, OrgAdminPower::AssignRole]
+    );
+    let member = org.newcomer();
+    let admin = org.admin_acts();
+
+    org.vault
+        .add_shared_member(&admin, SHARED, member, Some(Role::Member))
+        .expect("the Admin's AddMember lands");
+    accept_invitation(&org.vault, member, Role::Member);
+    org.vault
+        .change_shared_member_role(&admin, SHARED, member, Role::Admin, None)
+        .expect("the Admin's AssignRole the amend added lands");
+    assert_eq!(role_of(&org.vault, member), Some(Role::Admin));
+}
+
+#[test]
+fn an_amend_needs_a_stored_setup() {
+    let org = owned_org();
+
+    let refusal = org
+        .amend(&[org.admin], &[OrgAdminPower::AddMember])
+        .expect_err("an amend with no setup stored");
+    assert!(
+        refusal.contains(NOT_CONFIGURED),
+        "refused for another reason: {refusal}"
+    );
+    assert!(
+        org.vault.org_admin_policy(org.org).is_err(),
+        "the refused amend stores no setup"
+    );
+}
+
+#[test]
+fn only_the_owner_amends_the_setup() {
+    let org = owned_org();
+    org.configure(org.org, &[org.admin], &[OrgAdminPower::AddMember]);
+    let named = org.newcomer();
+    let (house, _) = org
+        .vault
+        .get_seeded_agent_definition_by_logical_id("sys.default")
+        .expect("read the seeded agents")
+        .expect("sys.default is seeded on open");
+    let widened = [OrgAdminPower::AddMember, OrgAdminPower::AssignRole];
+
+    org.amend_as(
+        org.admin,
+        EdgeActorClass::Human,
+        &[org.admin, named],
+        &widened,
+    )
+    .expect_err("an Admin's amend of the owner's setup");
+    org.amend_as(house, EdgeActorClass::Agent, &[org.admin, named], &widened)
+        .expect_err("an agent's amend of the owner's setup");
+    assert!(
+        org.stored_powers(named).is_empty(),
+        "the refused amends seat no one"
+    );
+    assert_eq!(
+        org.stored_powers(org.admin),
+        vec![OrgAdminPower::AddMember],
+        "the refused amends add no power"
+    );
 }
