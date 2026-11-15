@@ -5,13 +5,15 @@
 //! and verb. Slack, LINE, Gmail and native mail ship here (FIX 11641,
 //! FIX 11642).
 //!
-//! Every campaign email ends with one plain opt-out line naming its sender
-//! address (ARCH-0059 #opt-out; Engine ruling L3-02-SEND-MODE-SCOPE = A):
+//! The opt-out follows the campaign's send mode (ARCH-0059 #opt-out; Engine
+//! ruling L3-02-SEND-MODE-SCOPE = A). A genuine 1:1 email ends with one
+//! plain opt-out line naming its sender address and carries no bulk header:
 //! the reader replies STOP, which the STOP-reply path turns into a send hold
 //! and a standing opt-out. The line is appended to the step body before the
 //! send plan or the native message is sealed, so the content ref names it
-//! and a retry seals the same ref. No send carries the bulk List-Unsubscribe
-//! header; a bulk send mode waits for its unsubscribe minter.
+//! and a retry seals the same ref. A bulk email carries List-Unsubscribe and
+//! List-Unsubscribe-Post for the member's one-click link the leg froze, and
+//! no body line; a bulk envelope without its link is not sendable.
 //!
 //! The envelope decode is strict: any other shape — including a program
 //! written before the body filer, whose raw bytes carry no envelope —
@@ -27,6 +29,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::Vault;
+use crate::campaign::send_hygiene::{ListUnsubscribeTarget, list_unsubscribe_headers};
 use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailSendPlan, GmailSendSink, HttpGmailSendWire,
@@ -37,6 +40,7 @@ use crate::channel_identity_provider::stalwart::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
+use crate::memory::campaign_records::CampaignSendMode;
 use crate::outbound::{
     OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionRequest,
     OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
@@ -53,8 +57,9 @@ use crate::outbound_intent_ledger::{
 /// pinned step-body ref, the member's party key (so erasing the person
 /// stops the send), and the enrollment event's owner actor and ref. Email
 /// steps (FIX 11641) carry three more keys: the program subject, the
-/// composition time, and the sticky sender. No other keys; a non-email
-/// leg emits exactly the five base keys.
+/// composition time, and the sticky sender; a bulk email step two more:
+/// the send mode and the member's one-click link (ARCH-0059 #opt-out). No
+/// other keys; a non-email leg emits exactly the five base keys.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CampaignOutboundEnvelope {
@@ -73,6 +78,12 @@ struct CampaignOutboundEnvelope {
     /// Email-only: the step's sticky sender identity, entity hex.
     #[serde(default)]
     sender_ref: Option<String>,
+    /// Bulk email only: the campaign's send mode, `bulk`.
+    #[serde(default)]
+    send_mode: Option<String>,
+    /// Bulk email only: the member's one-click unsubscribe link.
+    #[serde(default)]
+    list_unsubscribe: Option<String>,
 }
 
 /// The frozen email keys of one campaign send (FIX 11641), required iff
@@ -81,6 +92,37 @@ struct EmailSendKeys {
     subject: String,
     composed_at: u64,
     sender_ref: EntityId,
+    opt_out: CampaignEmailOptOut,
+}
+
+/// How one campaign email carries its opt-out, by its campaign's send mode
+/// (ARCH-0059 #opt-out).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CampaignEmailOptOut {
+    /// A genuine 1:1 mail: the plain opt-out line in the body, no bulk
+    /// header.
+    BodyLine,
+    /// A bulk send: List-Unsubscribe and List-Unsubscribe-Post for this
+    /// one-click link, and no body line.
+    ListUnsubscribe(String),
+}
+
+impl CampaignEmailOptOut {
+    /// The hygiene headers this opt-out sends: none for a 1:1 mail, the
+    /// RFC 8058 pair for a bulk send.
+    ///
+    /// # Errors
+    /// As [`list_unsubscribe_headers`]: a link that is not a header-safe
+    /// https URI.
+    pub(crate) fn hygiene_headers(&self) -> Result<BTreeMap<String, String>> {
+        match self {
+            Self::BodyLine => Ok(BTreeMap::new()),
+            Self::ListUnsubscribe(uri) => list_unsubscribe_headers(&ListUnsubscribeTarget {
+                mailto_uri: None,
+                https_one_click_uri: uri.clone(),
+            }),
+        }
+    }
 }
 
 /// The opt-out line's words before the sender address (Engine ruling
@@ -91,21 +133,31 @@ const OPT_OUT_LINE_HEAD: &str = "If you would rather not hear from me again, rep
 /// The opt-out line's words after the sender address.
 const OPT_OUT_LINE_TAIL: &str = " and I will not write to you again.";
 
-/// The body a campaign email carries: the step body, then a blank line and
-/// the plain opt-out line naming `sender_address`, the mailbox the reader
-/// replies to (ARCH-0059 #opt-out). The step body's trailing whitespace is
-/// dropped, so the line always follows one blank line. Deterministic: the
-/// same step body and sender give the same bytes.
-fn campaign_email_body(step_body: &str, sender_address: &str) -> String {
-    format!(
-        "{}\n\n{OPT_OUT_LINE_HEAD}{sender_address}{OPT_OUT_LINE_TAIL}",
-        step_body.trim_end()
-    )
+/// The body a campaign email carries (ARCH-0059 #opt-out). A 1:1 mail: the
+/// step body, then a blank line and the plain opt-out line naming
+/// `sender_address`, the mailbox the reader replies to; the step body's
+/// trailing whitespace is dropped, so the line always follows one blank
+/// line. A bulk send: the step body as filed, its opt-out in the headers.
+/// Deterministic: the same step body, sender and opt-out give the same
+/// bytes.
+fn campaign_email_body(
+    step_body: &str,
+    sender_address: &str,
+    opt_out: &CampaignEmailOptOut,
+) -> String {
+    match opt_out {
+        CampaignEmailOptOut::BodyLine => format!(
+            "{}\n\n{OPT_OUT_LINE_HEAD}{sender_address}{OPT_OUT_LINE_TAIL}",
+            step_body.trim_end()
+        ),
+        CampaignEmailOptOut::ListUnsubscribe(_) => step_body.to_owned(),
+    }
 }
 
 /// Seals one campaign gmail send from the filed step body: the member
-/// mailbox's plan whose body ends with the opt-out line naming that mailbox.
-/// The gmail branch sends exactly this plan.
+/// mailbox's plan whose body carries `opt_out`'s form (a 1:1 mail ends with
+/// the opt-out line naming that mailbox). The gmail branch sends exactly
+/// this plan.
 ///
 /// # Errors
 /// As [`GmailSendPlan::new`]: a malformed recipient, a header-unsafe
@@ -117,8 +169,9 @@ pub(crate) fn seal_campaign_gmail_plan(
     subject: &str,
     step_body: &str,
     composed_at: u64,
+    opt_out: &CampaignEmailOptOut,
 ) -> Result<GmailSendPlan> {
-    let body = campaign_email_body(step_body, adapter.config().mailbox_address());
+    let body = campaign_email_body(step_body, adapter.config().mailbox_address(), opt_out);
     GmailSendPlan::new(
         adapter,
         logical_ref,
@@ -131,8 +184,9 @@ pub(crate) fn seal_campaign_gmail_plan(
 }
 
 /// Seals one campaign native mail message from the filed step body: its text
-/// ends with the opt-out line naming `sender_address`, the sending
-/// identity's own mailbox. The stalwart branch submits exactly this message.
+/// carries `opt_out`'s form (a 1:1 mail ends with the opt-out line naming
+/// `sender_address`, the sending identity's own mailbox). The stalwart
+/// branch submits exactly this message.
 ///
 /// # Errors
 /// As [`NativeMailMessage::new`]: a malformed recipient, an unsafe subject,
@@ -142,11 +196,12 @@ pub(crate) fn seal_campaign_native_message(
     subject: &str,
     step_body: &str,
     sender_address: &str,
+    opt_out: &CampaignEmailOptOut,
 ) -> Result<NativeMailMessage> {
     NativeMailMessage::new(
         target,
         subject.to_owned(),
-        Some(campaign_email_body(step_body, sender_address)),
+        Some(campaign_email_body(step_body, sender_address, opt_out)),
         None,
     )
 }
@@ -218,7 +273,8 @@ impl CampaignChannelSender {
     /// row; `intent.content_ref` is the registered plan ref, never the
     /// step-body ref (K1 stays on the envelope ref); the intent target and
     /// the counterparty are both the plan's canonical recipient;
-    /// `calendar_invite` is none; hygiene headers are empty.
+    /// `calendar_invite` is none; hygiene headers are the opt-out's (none
+    /// for a 1:1 mail, the RFC 8058 pair for a bulk send).
     fn send_gmail(
         &mut self,
         call: &FrozenOutboundCall,
@@ -242,6 +298,7 @@ impl CampaignChannelSender {
             &keys.subject,
             &body_text,
             keys.composed_at,
+            &keys.opt_out,
         ) else {
             return self.invalid();
         };
@@ -251,6 +308,9 @@ impl CampaignChannelSender {
         // never the envelope's party key.
         let recipient = plan.recipient().to_owned();
         let plan_ref = plan.content_ref().to_owned();
+        let Ok(hygiene_headers) = keys.opt_out.hygiene_headers() else {
+            return self.invalid();
+        };
         let Ok(wire) = HttpGmailSendWire::new() else {
             return self.invalid();
         };
@@ -281,7 +341,7 @@ impl CampaignChannelSender {
             space_posting: None,
             counterparty_ref: Some(recipient.as_str()),
             linkedin_sandbox_policy: None,
-            hygiene_headers: BTreeMap::new(),
+            hygiene_headers,
             apns_interruption_level: None,
             calendar_invite: None,
             engine_send_id: None,
@@ -304,7 +364,7 @@ impl CampaignChannelSender {
     /// the sealed message ref, never the step-body ref (K1 stays on the
     /// envelope ref); the intent target and the counterparty are both the
     /// message's canonical recipient; `calendar_invite` is none; hygiene
-    /// headers are empty. The composed time stays frozen on the envelope
+    /// headers are the opt-out's. The composed time stays frozen on the envelope
     /// but the wire ignores it: the Message-ID derives from the ledger
     /// key at send time.
     fn send_stalwart(
@@ -338,6 +398,7 @@ impl CampaignChannelSender {
             &keys.subject,
             &body_text,
             &sender_facts.address_or_handle,
+            &keys.opt_out,
         ) else {
             return self.invalid();
         };
@@ -346,6 +407,9 @@ impl CampaignChannelSender {
         // key.
         let recipient = message.to.clone();
         let Ok(message_ref) = message.content_ref() else {
+            return self.invalid();
+        };
+        let Ok(hygiene_headers) = keys.opt_out.hygiene_headers() else {
             return self.invalid();
         };
         let execution = {
@@ -383,7 +447,7 @@ impl CampaignChannelSender {
                 space_posting: None,
                 counterparty_ref: Some(recipient.as_str()),
                 linkedin_sandbox_policy: None,
-                hygiene_headers: BTreeMap::new(),
+                hygiene_headers,
                 apns_interruption_level: None,
                 calendar_invite: None,
                 engine_send_id: None,
@@ -468,7 +532,9 @@ impl OutboundResultSender for CampaignChannelSender {
         // FIX 11641: the leg freezes the email keys iff the step's channel
         // is email; the sender requires them iff the frozen server is
         // email, and refuses them otherwise, so slack/line envelopes stay
-        // exactly the five base keys.
+        // exactly the five base keys. ARCH-0059 #opt-out: a bulk email
+        // envelope carries its send mode and one-click link together, a 1:1
+        // one neither, and any other shape is not sendable.
         let email_keys = match (
             call.server() == EMAIL_CHANNEL,
             envelope.subject.as_ref(),
@@ -479,13 +545,28 @@ impl OutboundResultSender for CampaignChannelSender {
                 let Ok(sender_ref) = EntityId::from_hex(sender_ref) else {
                     return self.invalid();
                 };
+                let opt_out = match (
+                    envelope.send_mode.as_deref().map(CampaignSendMode::parse),
+                    envelope.list_unsubscribe.as_ref(),
+                ) {
+                    (None, None) => CampaignEmailOptOut::BodyLine,
+                    (Some(Some(CampaignSendMode::Bulk)), Some(uri)) => {
+                        CampaignEmailOptOut::ListUnsubscribe(uri.clone())
+                    }
+                    _ => return self.invalid(),
+                };
                 Some(EmailSendKeys {
                     subject: subject.clone(),
                     composed_at,
                     sender_ref,
+                    opt_out,
                 })
             }
-            (false, None, None, None) => None,
+            (false, None, None, None)
+                if envelope.send_mode.is_none() && envelope.list_unsubscribe.is_none() =>
+            {
+                None
+            }
             _ => return self.invalid(),
         };
         if let Some(keys) = &email_keys {
@@ -532,9 +613,9 @@ impl OutboundResultSender for CampaignChannelSender {
             space_posting: None,
             counterparty_ref: Some(envelope.counterparty_ref.as_str()),
             linkedin_sandbox_policy: None,
-            // Campaign sends freeze no hygiene headers: email ships empty
-            // as slack/line do (FIX 11641, FIX 11642); the unsubscribe
-            // minter is a follow-on.
+            // A slack or LINE send carries no hygiene headers; each email
+            // branch sends its opt-out's own (FIX 11641, FIX 11642,
+            // ARCH-0059 #opt-out).
             hygiene_headers: BTreeMap::new(),
             apns_interruption_level: None,
             calendar_invite: None,

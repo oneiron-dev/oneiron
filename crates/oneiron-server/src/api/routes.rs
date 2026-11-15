@@ -336,6 +336,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // The QR page a sealed certificate names: keyless, its capability
         // checked in the vault on each report.
         .merge(self::esign_qr::public_routes())
+        // A bulk campaign email's one-click unsubscribe link (RFC 8058):
+        // keyless, its mac checked in the vault on each call.
+        .merge(self::one_click_unsubscribe::public_routes())
         // OF-519: the served built-in channels' provider webhooks. Keyless;
         // the provider's HMAC over the raw body authenticates each one.
         .merge(crate::builtin_host::routes())

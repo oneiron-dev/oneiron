@@ -52,6 +52,11 @@ pub mod sender;
 /// rule in Rust.
 pub mod compliance;
 
+/// The one-click unsubscribe link a bulk campaign email carries (ARCH-0059
+/// #opt-out, RFC 8058): the vault-held key, the per-member minter and the
+/// redemption that writes the suppression at once.
+pub mod one_click_unsubscribe;
+
 /// CA-05's send hygiene: the one-transaction bounce/unsubscribe suppression
 /// door, the deterministic RFC 8058 `List-Unsubscribe` headers folded into the
 /// frozen outbound payload, and the sticky-sender binding. Sender health itself

@@ -13,6 +13,7 @@ use super::runner::{
 use super::storage::{CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, invalid};
 use crate::Vault;
 use crate::attempt_queue::AttemptRecord;
+use crate::campaign::one_click_unsubscribe::one_click_unsubscribe_uri_in_txn;
 use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -95,8 +96,10 @@ pub(super) enum CampaignEnvelopeBytes {
 /// Derives the v1 envelope bytes the outward leg freezes: the five base
 /// keys, never the raw body (FIX 11513), plus the three email keys
 /// (`subject`, `composed_at`, `sender_ref`) iff the step's channel is
-/// email (FIX 11641). Both resolutions are read-only fns of `(vault,
-/// event, step)`, so the membership leg calls this too and
+/// email (FIX 11641), plus `send_mode` and `list_unsubscribe` (the member's
+/// one-click link) iff the email step's campaign sends bulk (ARCH-0059
+/// #opt-out). Every resolution is a read-only fn of `(vault, event,
+/// step)`, so the membership leg calls this too and
 /// `enrollment_intent_id` hashes the bytes the leg freezes (FIX 11670).
 ///
 /// # Errors
@@ -141,25 +144,35 @@ pub(super) fn campaign_envelope_bytes_in_txn(
     // ARCH-0059 #opt-out (Engine ruling L3-02-SEND-MODE-SCOPE = A): a bulk
     // send carries List-Unsubscribe, which the channel adapter injects, and
     // a bulk send without it blocks. The header is a mail header, so the
-    // send mode governs email steps only. No host mints a one-click target
-    // yet, so a bulk campaign's email step blocks here, before anything is
-    // frozen. A 1:1 step's envelope is unchanged, byte for byte.
-    if step.channel == EMAIL_CHANNEL
+    // send mode governs email steps only. A bulk email step freezes the
+    // member's one-click link; on a vault that mints none it blocks here,
+    // before anything is frozen. A 1:1 step's envelope is unchanged, byte
+    // for byte.
+    let list_unsubscribe = if step.channel == EMAIL_CHANNEL
         && campaign_send_mode_in_txn(vault, txn, event.campaign_ref)? == CampaignSendMode::Bulk
     {
-        return Ok(CampaignEnvelopeBytes::ListUnsubscribeUnminted);
-    }
+        let Some(uri) =
+            one_click_unsubscribe_uri_in_txn(vault, txn, event.campaign_ref, event.entity_ref)?
+        else {
+            return Ok(CampaignEnvelopeBytes::ListUnsubscribeUnminted);
+        };
+        Some(uri)
+    } else {
+        None
+    };
     // The wire payload is the v1 envelope the channel sender decodes with
     // `deny_unknown_fields`, never the raw body: the five base keys, none
     // of the chokepoint-sniffed ones (FIX 11513), plus the email keys iff
-    // the step's channel is email (FIX 11641). `composed_at` is the
-    // event's detection time, never now(): a redrive must freeze the same
-    // bytes, or the ledger would mint a fresh intent — a second send.
+    // the step's channel is email (FIX 11641), plus the two bulk keys iff
+    // the email step is bulk. `composed_at` is the event's detection time,
+    // never now(): a redrive must freeze the same bytes, or the ledger would
+    // mint a fresh intent — a second send. The one-click link is a pure
+    // read of the vault's key, so it freezes the same bytes too.
     let envelope = if step.channel == EMAIL_CHANNEL {
         let Some(subject) = outbound.subject.as_ref() else {
             return Err(invalid("a campaign email step's subject is absent"));
         };
-        serde_json::json!({
+        let mut envelope = serde_json::json!({
             "target": target.target,
             "content_ref": content_ref,
             "counterparty_ref": target.party_key,
@@ -168,7 +181,15 @@ pub(super) fn campaign_envelope_bytes_in_txn(
             "subject": subject,
             "composed_at": event.detected_at,
             "sender_ref": step.sender_ref.to_hex(),
-        })
+        });
+        if let (Some(uri), Some(keys)) = (list_unsubscribe, envelope.as_object_mut()) {
+            keys.insert(
+                "send_mode".to_owned(),
+                CampaignSendMode::Bulk.as_str().into(),
+            );
+            keys.insert("list_unsubscribe".to_owned(), uri.into());
+        }
+        envelope
     } else {
         serde_json::json!({
             "target": target.target,
