@@ -19,6 +19,7 @@ use crate::secret_record::{SecretCustodyStatus, policy_manifest_bodies_strict};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::store::secret_name_index::resolve_secret_ref_in_txn;
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 mod owner_door;
@@ -258,17 +259,7 @@ fn rotation_cause_at(entries: &[(Value, Value)]) -> Result<RotationCause> {
 // ---------------------------------------------------------------------------
 
 fn decode_map_body(bytes: &[u8], reason: &'static str) -> Result<Vec<(Value, Value)>> {
-    use std::io::Cursor;
-
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_body(reason))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_body(reason));
-    }
-    let Value::Map(entries) = value else {
-        return Err(invalid_body(reason));
-    };
-    Ok(entries)
+    msgpack::decode_map(bytes).map_err(|_| invalid_body(reason))
 }
 
 fn string_at(entries: &[(Value, Value)], key: &str, reason: &'static str) -> Result<String> {

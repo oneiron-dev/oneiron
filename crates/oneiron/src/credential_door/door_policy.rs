@@ -9,6 +9,7 @@ use super::door_types::{
 };
 use crate::secret_custody::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 use crate::store::Store;
+use oneiron_contracts::msgpack::Entries;
 
 /// MessagePack keys this door reads out of POLICY_MANIFEST bodies.
 pub(super) mod door_policy_keys {
@@ -36,16 +37,11 @@ enum MapValue<'a> {
 }
 
 fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
-    let mut found = None;
-    for (key, value) in entries {
-        if key.as_str() == Some(needle) {
-            if found.is_some() {
-                return MapValue::Duplicate;
-            }
-            found = Some(value);
-        }
+    match Entries::new(entries).get(needle) {
+        Ok(Some(value)) => MapValue::Present(value),
+        Ok(None) => MapValue::Missing,
+        Err(_) => MapValue::Duplicate,
     }
-    found.map_or(MapValue::Missing, MapValue::Present)
 }
 
 fn as_u64(value: &Value) -> Option<u64> {

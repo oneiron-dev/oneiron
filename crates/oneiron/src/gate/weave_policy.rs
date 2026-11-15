@@ -1,5 +1,6 @@
 //! Trusted manifest rows for the weave lens: nested narrowing, never read authority.
 use crate::EntityId;
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 use std::collections::BTreeSet;
 
@@ -200,9 +201,7 @@ const SECTION_NAMES: &[&str] = &[
     "digest",
 ];
 fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    let mut matching = entries.iter().filter(|(k, _)| k.as_str() == Some(name));
-    let value = &matching.next()?.1;
-    matching.next().is_none().then_some(value)
+    Entries::new(entries).get(name).ok().flatten()
 }
 
 /// A strict, bounded row grammar. No duplicate or unknown keys/roles, no

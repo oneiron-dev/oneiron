@@ -22,6 +22,7 @@ use self::charter::{
     decode_optional_charter_block, decode_optional_pending_charter, encode_charter_block,
     encode_pending_charter,
 };
+use oneiron_contracts::msgpack::Entries;
 
 /// Current ConnectorKeyRecord body schema version.
 ///
@@ -409,33 +410,33 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
             entries,
             KEY_PENDING_CHARTER,
         )?)?,
-        suggested_budgets: optional_value(entries, KEY_SUGGESTED_BUDGETS)
+        suggested_budgets: optional_value(entries, KEY_SUGGESTED_BUDGETS)?
             .map_or_else(|| Ok(Vec::new()), decode_budget_rows)?,
-        secret_ref: optional_value(entries, KEY_SECRET_REF)
+        secret_ref: optional_value(entries, KEY_SECRET_REF)?
             .map_or_else(|| Ok(None), decode_optional_string)?,
-        key_generation: optional_value(entries, KEY_KEY_GENERATION)
+        key_generation: optional_value(entries, KEY_KEY_GENERATION)?
             .map_or_else(|| Ok(0), decode_key_generation)?,
-        catalog: optional_value(entries, KEY_CATALOG)
+        catalog: optional_value(entries, KEY_CATALOG)?
             .map_or_else(|| Ok(None), decode_optional_catalog_entry)?,
-        slate_ref: optional_value(entries, KEY_SLATE_REF)
+        slate_ref: optional_value(entries, KEY_SLATE_REF)?
             .map_or_else(|| Ok(None), decode_optional_entity_id)?,
-        protocol_revision: optional_value(entries, KEY_PROTOCOL_REVISION)
+        protocol_revision: optional_value(entries, KEY_PROTOCOL_REVISION)?
             .map_or_else(|| Ok(None), decode_optional_string)?,
-        slate_revision: optional_value(entries, KEY_SLATE_REVISION)
+        slate_revision: optional_value(entries, KEY_SLATE_REVISION)?
             .map_or_else(|| Ok(None), decode_optional_u64)?,
-        admission_epoch: optional_value(entries, KEY_ADMISSION_EPOCH)
+        admission_epoch: optional_value(entries, KEY_ADMISSION_EPOCH)?
             .map_or(Ok(0), |v| v.as_u64().ok_or_else(malformed))?,
-        consent_required: optional_value(entries, KEY_CONSENT_REQUIRED)
+        consent_required: optional_value(entries, KEY_CONSENT_REQUIRED)?
             .map_or(Ok(false), |v| v.as_bool().ok_or_else(malformed))?,
-        retained_manifest: optional_value(entries, KEY_RETAINED_MANIFEST)
+        retained_manifest: optional_value(entries, KEY_RETAINED_MANIFEST)?
             .map_or_else(|| Ok(None), decode_json_option)?,
-        pending_manifest: optional_value(entries, KEY_PENDING_MANIFEST)
+        pending_manifest: optional_value(entries, KEY_PENDING_MANIFEST)?
             .map_or_else(|| Ok(None), decode_json_option::<PendingConnectorManifest>)?,
         qualification_receipt: decode_json_option(required_value(
             entries,
             KEY_QUALIFICATION_RECEIPT,
         )?)?,
-        staged_slate_ref: optional_value(entries, KEY_STAGED_SLATE_REF)
+        staged_slate_ref: optional_value(entries, KEY_STAGED_SLATE_REF)?
             .map_or_else(|| Ok(None), decode_optional_entity_id)?,
     };
     record.validate()?;
@@ -565,58 +566,29 @@ fn decode_compiled_policy(value: &Value) -> Result<CompiledConnectorPolicy> {
 }
 
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(malformed)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(malformed());
-        };
-        if seen[index] {
-            return Err(malformed());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(malformed())
-    }
+    Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map(drop)
+        .map_err(|_| malformed())
 }
 
 fn validate_connector_key_body_keys(entries: &[(Value, Value)]) -> Result<()> {
-    let mut seen = vec![false; CONNECTOR_KEY_BODY_KEYS.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(malformed)?;
-        let Some(index) = CONNECTOR_KEY_BODY_KEYS
-            .iter()
-            .position(|known| *known == key)
-        else {
-            return Err(malformed());
-        };
-        if seen[index] {
-            return Err(malformed());
-        }
-        seen[index] = true;
-    }
-    for (index, key) in CONNECTOR_KEY_BODY_KEYS.iter().enumerate() {
-        if !seen[index] && !OPTIONAL_CONNECTOR_KEY_BODY_KEYS.contains(key) {
-            return Err(malformed());
-        }
-    }
-    Ok(())
+    let required: Vec<&str> = CONNECTOR_KEY_BODY_KEYS
+        .into_iter()
+        .filter(|key| !OPTIONAL_CONNECTOR_KEY_BODY_KEYS.contains(key))
+        .collect();
+    Entries::new(entries)
+        .exact_keys(&required, &OPTIONAL_CONNECTOR_KEY_BODY_KEYS)
+        .map(drop)
+        .map_err(|_| malformed())
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(malformed)
+    Entries::new(entries).require(key).map_err(|_| malformed())
 }
 
-fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
+fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
+    Entries::new(entries).get(key).map_err(|_| malformed())
 }
 
 fn decode_non_empty_string(value: &Value) -> Result<String> {

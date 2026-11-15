@@ -1,6 +1,7 @@
 //! Typed behaviour values and deterministic, scoped manifest-row selection.
 
 use crate::entity_id::EntityId;
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -213,9 +214,7 @@ impl PolicyValueRow {
 }
 
 fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    let mut values = entries.iter().filter(|(key, _)| key.as_str() == Some(name));
-    let value = &values.next()?.1;
-    values.next().is_none().then_some(value)
+    Entries::new(entries).get(name).ok().flatten()
 }
 
 pub(crate) fn parse_optional_why(entries: &[(Value, Value)]) -> Option<Option<PolicyWhy>> {

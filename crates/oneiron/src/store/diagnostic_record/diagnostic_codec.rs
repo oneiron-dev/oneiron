@@ -13,8 +13,8 @@ use super::invariant_canonical::{canonical_invariant_value, stored_invariant_fie
 use super::untrusted_text::{is_forbidden_text_scalar, validate_untrusted_detail};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
 use rmpv::Value;
-use std::io::Cursor;
 
 /// Canonicalizes and encodes one DIAGNOSTIC body.
 ///
@@ -104,16 +104,13 @@ struct DecodedBody {
 }
 
 fn decode_body(bytes: &[u8]) -> Result<DecodedBody> {
-    let mut cursor = Cursor::new(bytes);
-    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
-        return Err(invalid_diagnostic("body is not MessagePack"));
-    };
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_diagnostic("trailing bytes after body map"));
-    }
-    let Value::Map(entries) = &value else {
-        return Err(invalid_diagnostic("body must be a MessagePack map"));
-    };
+    let entries = &msgpack::decode_map(bytes).map_err(|error| {
+        invalid_diagnostic(match error {
+            MsgpackError::Trailing => "trailing bytes after body map",
+            MsgpackError::NotMap => "body must be a MessagePack map",
+            _ => "body is not MessagePack",
+        })
+    })?;
     validate_keys(entries)?;
 
     if required(entries, "schema_version")?.as_u64() != Some(DIAGNOSTIC_SCHEMA_VERSION) {
@@ -261,6 +258,7 @@ fn validate_signal(class: DiagnosticEventClass, signal: Option<AgentHealthSignal
     }
 }
 
+// Not Entries::exact_keys: key order is part of this body, and each refusal keeps its own message.
 fn validate_keys(entries: &[(Value, Value)]) -> Result<()> {
     let mut seen = [false; DIAGNOSTIC_BODY_KEYS.len()];
     for (position, (key, _)) in entries.iter().enumerate() {
@@ -289,10 +287,12 @@ fn validate_keys(entries: &[(Value, Value)]) -> Result<()> {
 }
 
 fn required<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(entry_key, value)| (entry_key.as_str() == Some(key)).then_some(value))
-        .ok_or_else(|| invalid_diagnostic("missing required body key"))
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid_diagnostic(match error {
+            MsgpackError::DuplicateKey(_) => "duplicate body key",
+            _ => "missing required body key",
+        })
+    })
 }
 
 fn required_str<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
