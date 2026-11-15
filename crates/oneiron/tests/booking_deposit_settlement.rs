@@ -40,7 +40,10 @@ struct RecordingProvider {
 }
 
 impl DepositSettlementPort for RecordingProvider {
-    fn settle(&mut self, request: &DepositSettleRequest<'_>) -> Result<(), DepositProviderFailure> {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
         if let Some(failure) = self.fail_next.take() {
             return Err(failure);
         }
@@ -49,7 +52,32 @@ impl DepositSettlementPort for RecordingProvider {
             request.movement,
             request.idempotency_key.to_owned(),
         ));
-        Ok(())
+        Ok(match request.movement {
+            DepositSettleMove::Capture { amount_minor }
+            | DepositSettleMove::Refund { amount_minor } => amount_minor,
+            DepositSettleMove::Void => 0,
+        })
+    }
+}
+
+/// A provider whose capture call lets `during_capture` run first: a cancel
+/// landing while the capture is on the wire.
+struct OvertakenProvider<'a> {
+    recorded: RecordingProvider,
+    during_capture: Option<Box<dyn FnMut() + 'a>>,
+}
+
+impl DepositSettlementPort for OvertakenProvider<'_> {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        if matches!(request.movement, DepositSettleMove::Capture { .. })
+            && let Some(mut during) = self.during_capture.take()
+        {
+            during();
+        }
+        self.recorded.settle(request)
     }
 }
 
@@ -718,6 +746,92 @@ fn a_host_cancel_refunds_the_whole_deposit() {
     assert_eq!(pass.refunded, 1);
     assert_eq!(
         state_of(&fixture, "pi_host"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+}
+
+#[test]
+fn a_cancel_that_overtakes_a_running_capture_owes_the_difference_back() {
+    let terms = DepositTerms {
+        amount_minor: 4_000,
+        currency: "usd".to_owned(),
+        refund: DepositRefundRule {
+            full_refund_notice_secs: 2 * 3_600,
+            late_cancel_refund_percent: 25,
+        },
+    };
+    let fixture = Fixture::open(Some(terms));
+
+    // 09:00 start: the late cancel keeps 3000 of the 4000 the capture took.
+    // 12:00 start: the cancel releases it all while the capture runs.
+    let late = paid_booking(
+        &fixture,
+        SessionKey::derive(b"overtaken-late"),
+        "pi_overtaken_late",
+        9,
+    );
+    let early = paid_booking(
+        &fixture,
+        SessionKey::derive(b"overtaken-early"),
+        "pi_overtaken_early",
+        12,
+    );
+    let mut provider = OvertakenProvider {
+        recorded: RecordingProvider::default(),
+        during_capture: Some(Box::new(|| {
+            fixture
+                .cancel(&late.cancel_token, NOW + 60)
+                .expect("cancel");
+        })),
+    };
+    settle_booking_deposit(
+        &fixture.vault,
+        &late.calendar.event_ref,
+        &mut provider,
+        NOW + 61,
+    )
+    .expect("capture");
+    assert_eq!(
+        state_of(&fixture, "pi_overtaken_late"),
+        DepositState::RefundDue {
+            amount_minor: 1_000
+        },
+        "the provider took 4000 while the cancel kept 3000: 1000 is owed back"
+    );
+    provider.during_capture = Some(Box::new(|| {
+        fixture
+            .cancel(&early.cancel_token, NOW + 62)
+            .expect("cancel");
+    }));
+    settle_booking_deposit(
+        &fixture.vault,
+        &early.calendar.event_ref,
+        &mut provider,
+        NOW + 63,
+    )
+    .expect("capture");
+    assert_eq!(
+        state_of(&fixture, "pi_overtaken_early"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the provider took 4000 the cancel released: all of it is owed back"
+    );
+
+    let mut recorded = provider.recorded;
+    let pass = drain(&fixture, &mut recorded, NOW + 70);
+    assert_eq!(pass.refunded, 2);
+    assert_eq!(pass.voided, 0, "no void of a payment that was captured");
+    assert_eq!(
+        state_of(&fixture, "pi_overtaken_late"),
+        DepositState::Refunded {
+            amount_minor: 1_000
+        }
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_overtaken_early"),
         DepositState::Refunded {
             amount_minor: 4_000
         }
