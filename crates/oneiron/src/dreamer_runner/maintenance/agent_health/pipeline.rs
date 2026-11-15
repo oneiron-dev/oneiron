@@ -643,3 +643,48 @@ fn merge(
     card.updated_at = now;
     card
 }
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// TEST-ONLY: lands one `loop` finding on `subject`'s taskless card as
+    /// [`land`] does: its DIAGNOSTIC first, naming `attempt` in its replay
+    /// coordinate, then the card it merges into.
+    pub(crate) fn land_agent_health_finding_for_test(
+        &self,
+        subject: EntityId,
+        attempt: Option<crate::attempt_queue::AttemptId>,
+        now: u64,
+    ) -> Result<()> {
+        let finding = Finding {
+            subject,
+            signal: AgentHealthSignal::Loop,
+            task: None,
+            attempt,
+            generation: None,
+            evidence: vec![attempt.and_then(entity).unwrap_or_else(EntityId::now)],
+            source_rows: None,
+            window: (now, now),
+            actual: 1,
+            dial: 0,
+            measured: 1,
+            exact_dial: None,
+            exact_measured: None,
+            counter: Vec::new(),
+            confession: None,
+            blocked: false,
+            observed_brief: None,
+            silence: None,
+        };
+        let diagnostic = emit(self, &finding, &[])?;
+        let route = Route {
+            recipients: Vec::new(),
+            owner_copy: true,
+        };
+        self.with_write_txn_grouped(|txn| {
+            let key = card_key(finding.subject, finding.signal, finding.task);
+            let card = CARDS.get(&self.store, txn, &key)?;
+            let card = merge(card, &finding, diagnostic, &route, &[], None, now);
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)
+        })
+    }
+}
