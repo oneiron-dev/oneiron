@@ -11,8 +11,8 @@
 //! control API and the router's token only to the router; it waits on a
 //! command past one wait's own deadline; and it terminates the sandbox at
 //! the end. A refused create, a router not reached as the control API is,
-//! and a failed command wait never show a secret and leave no sandbox
-//! behind.
+//! a failed command wait and a failed image build never show a secret and
+//! leave no sandbox behind.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support --test sandbox_vendor_modal`.
@@ -222,6 +222,9 @@ struct Script {
     /// Whether the first command's wait fails, with the router's token in
     /// its message.
     fail_wait: bool,
+    /// Whether the guest image's build fails, with the owner's token and
+    /// the auth token in its exception.
+    fail_build: bool,
     /// The guest frames the file tool reads off.
     transcript: Vec<u8>,
 }
@@ -352,6 +355,15 @@ impl StandIn {
             "AppGetOrCreate" => vec![string_field(1, "ap-1")],
             // Not built yet: the client joins the build.
             "ImageGetOrCreate" => vec![string_field(1, "im-1")],
+            // GenericResult: status 2 (failure), then the exception.
+            "ImageJoinStreaming" if script.fail_build => {
+                let exception =
+                    format!("registry refused {TOKEN_ID}:{TOKEN_SECRET} ({AUTH_TOKEN})");
+                return Answer::Messages(vec![encode(&[
+                    message_field(1, &[(1, Field::Varint(2)), string_field(2, &exception)]),
+                    string_field(3, "entry-1"),
+                ])]);
+            }
             "ImageJoinStreaming" => {
                 return Answer::Messages(vec![
                     encode(&[string_field(3, "entry-1")]),
@@ -568,6 +580,7 @@ fn script() -> Script {
         refuse_create: false,
         router_over_tls: false,
         fail_wait: false,
+        fail_build: false,
         transcript: guest_frames(),
     }
 }
@@ -791,6 +804,26 @@ fn a_refused_create_never_shows_a_secret() {
         "the auth token is scrubbed: {text}"
     );
     assert_eq!(fixture.calls(), &CREATE_CALLS[..6]);
+}
+
+#[test]
+fn a_failed_image_build_never_shows_a_secret() {
+    let fixture = Fixture::new(Script {
+        fail_build: true,
+        ..script()
+    });
+    let Err(error) = fixture.run(&mut Console::default()) else {
+        panic!("a failed image build ran");
+    };
+    let text = error.to_string();
+    assert!(
+        text.contains("modal could not build the guest image: failure: registry refused"),
+        "{text}"
+    );
+    for secret in [TOKEN_ID, TOKEN_SECRET, AUTH_TOKEN] {
+        assert!(!text.contains(secret), "a secret is scrubbed: {text}");
+    }
+    assert_eq!(fixture.calls(), &CREATE_CALLS[..5]);
 }
 
 #[test]
