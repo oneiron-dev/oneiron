@@ -136,8 +136,9 @@ impl FoldState {
 
     /// Whether `key` authorizes no `ReRoot`, no `RotateKey`, no
     /// `EnrollDevice`, no revoke of another owner key or of a key its
-    /// parents do not hold, and no roster-signed machine answer as the
-    /// owner's or removal, from any signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
+    /// parents do not hold (a device or an actor binding), no actor binding
+    /// of another key, and no roster-signed machine answer as the owner's or
+    /// removal, from any signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
     /// or a key only a passkey vouched for, until confirmed (lead ruling
     /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
     /// rule that counts an entry's participants asks it of each.
@@ -158,19 +159,35 @@ fn confirms_passkey_vouch(
     state.passkey_vouch_unconfirmed(key)
         && predecessor != key
         && state.roster.get(key).is_some_and(|device| !device.revoked)
-        && !state.passkey_contexts.contains_key(predecessor)
+        && may_confirm_passkey_vouch(state, predecessor)
+}
+
+/// Whether `predecessor`'s vouch confirms a key: it is no passkey and it is
+/// owner-held (on a hosted vault, outside the host's custody). That it is
+/// itself confirmed, live and consenting is the judge's predecessor check.
+fn may_confirm_passkey_vouch(state: &FoldState, predecessor: &AuthorityKey) -> bool {
+    !state.passkey_contexts.contains_key(predecessor)
         && !(state.hosted && super::machine_profile::in_host_custody(state, predecessor))
 }
 
-/// Marks a counted enrollment's key as only passkey-vouched when its
-/// predecessor is a passkey (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B).
+/// Marks a counted enrollment's key as passkey-vouched when its predecessor
+/// is a passkey (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B), and as
+/// confirmed when its predecessor is a key that may confirm one: a fresh
+/// enrolment by such a key is its confirmation too, so a passkey's vouch for
+/// the same key on a sibling branch limits nothing once the fold merges the
+/// two (both sets merge by union; Astra delta review finding 2).
 pub(super) fn remember_passkey_vouch(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
     enroll: &OwnerKeyEnroll,
 ) {
-    if state.passkey_contexts.contains_key(entry.signer_key()) {
+    let predecessor = entry.signer_key();
+    if state.passkey_contexts.contains_key(predecessor) {
         state.passkey_vouched_keys.insert(enroll.device.key.clone());
+    } else if may_confirm_passkey_vouch(state, predecessor) {
+        state
+            .passkey_vouch_confirmations
+            .insert(enroll.device.key.clone());
     }
 }
 
@@ -182,7 +199,11 @@ pub(super) fn remember_passkey_vouch(
 /// parents do not hold as a non-owner or revoked row (Sol xhigh stack review
 /// F1). A key the parents do not hold at all is barred too: its tombstone
 /// would revoke an owner key enrolled on a sibling branch once the fold
-/// merges the two (Astra stack review finding 1). And a roster-signed
+/// merges the two (Astra stack review finding 1). A `RevokeActor` reads the
+/// same way: its watermark would kill an owner key's binding on a sibling
+/// branch for good (Astra delta review finding 1). A `BindActor` or
+/// `RebindActor` of any key but itself, which would move another owner
+/// key's binding to an actor of its choosing. And a roster-signed
 /// `MachineProfile` that answers a machine as the owner's (`Owned(_)`) or
 /// removes one: the owner's say-so for a machine, of the vouch and revoke
 /// class, judged by role alone so that no sibling branch reopens it
@@ -192,13 +213,21 @@ fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -
         AuthorityOp::ReRoot { .. }
         | AuthorityOp::RotateKey { .. }
         | AuthorityOp::EnrollDevice { .. } => true,
-        AuthorityOp::RevokeDevice { revoked_key } => {
-            revoked_key != key
+        AuthorityOp::RevokeDevice {
+            revoked_key: target,
+        }
+        | AuthorityOp::RevokeActor {
+            authority_key: target,
+            ..
+        } => {
+            target != key
                 && !state
                     .roster
-                    .get(revoked_key)
+                    .get(target)
                     .is_some_and(|device| device.revoked || device.roles & ROLE_OWNER == 0)
         }
+        AuthorityOp::BindActor { authority_key, .. }
+        | AuthorityOp::RebindActor { authority_key, .. } => authority_key != key,
         AuthorityOp::MachineProfile(profile) => {
             matches!(profile.role, MachineRole::Owned(_) | MachineRole::Removed)
         }
