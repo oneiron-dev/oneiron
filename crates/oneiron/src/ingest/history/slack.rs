@@ -17,6 +17,12 @@
 //! it. A message's id is its conversation's (`<workspace>:<conversation
 //! id>:<ts>`), so two workspaces never land as one.
 //!
+//! The export is untrusted input, so an export that does not read one way
+//! only is refused whole: a conversation id listed twice, a folder two
+//! conversations would claim, members of more than one workspace, two files
+//! at one path, and an id that is not a Slack id (ASCII letters and digits),
+//! since each id is one segment of the keys a conversation lands under.
+//!
 //! Every message stays a source speaker's words: `said_by` is `slack:<member
 //! id>`, until the owner's member map says which member they are themselves
 //! ([`SlackWorkspace::map_members`]). The decoder mints no PERSON: a member
@@ -57,6 +63,14 @@ const MAP_PERSON_FIELD: &str = "person";
 /// The field of a member map entry that names the member, for the owner.
 const MAP_NAME_FIELD: &str = "name";
 
+/// What a workspace's key starts with when its name keys it: no Slack id
+/// holds a `.`, so a name never keys as a workspace's own id does.
+const NAME_KEY_PREFIX: &str = "name.";
+
+/// The longest Slack id the decoder takes, the bound the Slack channel
+/// provider keeps for its own ids.
+const MAX_ID_BYTES: usize = 128;
+
 /// Message subtypes that carry a person's own words; every other subtype is
 /// the workspace's bookkeeping (a join, a topic, a rename).
 const KEPT_SUBTYPES: [&str; 4] = [
@@ -87,7 +101,8 @@ pub struct SlackExportFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackExport {
     /// The name the owner knows the workspace by. It keys the workspace
-    /// (with `-` for each `:`) when no member names the workspace's Slack id.
+    /// (after `name.`, with `-` for each `:`) when no member names the
+    /// workspace's Slack id.
     pub workspace: String,
     pub files: Vec<SlackExportFile>,
 }
@@ -107,8 +122,9 @@ pub struct SlackMember {
 pub struct SlackWorkspace {
     /// The name the owner knows the workspace by.
     pub name: String,
-    /// The key of the workspace: its Slack id (`team_id`), or its name when
-    /// no member names one. Every sharing container starts with it.
+    /// The key of the workspace: its Slack id (`team_id`), or `name.` and
+    /// its name when no member names one. Every sharing container starts
+    /// with it.
     pub key: String,
     pub members: Vec<SlackMember>,
     pub conversations: Vec<HistoryConversation>,
@@ -157,6 +173,29 @@ enum ListSharing {
 #[must_use]
 pub fn said_by(id: &str) -> String {
     format!("{SPEAKER_PREFIX}{id}")
+}
+
+/// Whether `id` is a Slack id: ASCII letters and digits, at most
+/// [`MAX_ID_BYTES`], as the Slack channel provider checks its ids. An id is
+/// one segment of the keys a workspace lands under (`<workspace>:<conversation
+/// id>:<ts>`), so it never holds their separator.
+fn is_slack_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_ID_BYTES
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+/// The Slack id `value` holds under `key`, if it holds one.
+fn slack_id<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    str_field(value, key).filter(|id| is_slack_id(id))
+}
+
+fn duplicate(kind: &'static str, id: &str) -> IngestError {
+    IngestError::DuplicateId {
+        source_id: SOURCE_ID,
+        kind,
+        id: id.to_owned(),
+    }
 }
 
 fn bad(path: String) -> IngestError {
@@ -262,15 +301,23 @@ pub fn proposed_map(proposals: &[HistoryMember]) -> SlackMemberMap {
 ///
 /// [`IngestError::UnsupportedSchema`] when the export holds no `users.json`;
 /// [`IngestError::InvalidDocument`] when a list is not JSON;
+/// [`IngestError::DuplicateId`] for two files at one path, a conversation
+/// id listed twice, or a folder two conversations would claim;
 /// [`IngestError::InvalidDocumentField`] when a list or a member entry is
-/// not the layout's. A day file that does not read is counted on its
-/// conversation, never fatal.
+/// not the layout's, an id is not a Slack id, members name more than one
+/// workspace, or a folder no list names holds a `:`. A day file that does
+/// not read is counted on its conversation, never fatal.
 pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
-    let files: HashMap<&str, &str> = export
-        .files
-        .iter()
-        .map(|file| (file.path.as_str(), file.text.as_str()))
-        .collect();
+    let mut files: HashMap<&str, &str> = HashMap::with_capacity(export.files.len());
+    for file in &export.files {
+        // Two files at one path: which one the export means is not known.
+        if files
+            .insert(file.path.as_str(), file.text.as_str())
+            .is_some()
+        {
+            return Err(duplicate("file", &file.path));
+        }
+    }
     let users = files
         .get(USERS_FILE)
         .ok_or_else(|| IngestError::UnsupportedSchema {
@@ -281,13 +328,15 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
     let (members, team) = decode_users(users)?;
     // A name keys the workspace only when no member names its Slack id; a
     // `:` in it would run into the container's own separator.
-    let key = team.unwrap_or_else(|| export.workspace.replace(':', "-"));
+    let key =
+        team.unwrap_or_else(|| format!("{NAME_KEY_PREFIX}{}", export.workspace.replace(':', "-")));
     let names: HashMap<&str, &str> = members
         .iter()
         .map(|member| (member.id.as_str(), member.name.as_str()))
         .collect();
 
     let mut conversations: Vec<HistoryConversation> = Vec::new();
+    let mut listed_ids: BTreeSet<String> = BTreeSet::new();
     let mut folders: HashMap<String, usize> = HashMap::new();
     for (list, sharing) in LISTS {
         let Some(text) = files.get(list) else {
@@ -297,12 +346,21 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
             return Err(bad(list.to_owned()));
         };
         for (at, entry) in entries.iter().enumerate() {
-            let id = str_field(entry, "id").ok_or_else(|| bad(format!("{list}[{at}].id")))?;
-            let listed: Vec<&str> = entry
-                .get("members")
-                .and_then(Value::as_array)
-                .map(|ids| ids.iter().filter_map(Value::as_str).collect())
-                .unwrap_or_default();
+            let id = slack_id(entry, "id").ok_or_else(|| bad(format!("{list}[{at}].id")))?;
+            // One id in two lists, or twice in one: which members share it
+            // is not known.
+            if !listed_ids.insert(id.to_owned()) {
+                return Err(duplicate("conversation", id));
+            }
+            let listed: Vec<&str> = match entry.get("members") {
+                None | Some(Value::Null) => Vec::new(),
+                Some(Value::Array(ids)) => ids
+                    .iter()
+                    .map(|id| id.as_str().filter(|id| is_slack_id(id)))
+                    .collect::<Option<Vec<&str>>>()
+                    .ok_or_else(|| bad(format!("{list}[{at}].members")))?,
+                Some(_) => return Err(bad(format!("{list}[{at}].members"))),
+            };
             let ids: Vec<&str> = match sharing {
                 ListSharing::Workspace => members.iter().map(|member| member.id.as_str()).collect(),
                 ListSharing::Members => listed.clone(),
@@ -325,10 +383,16 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
                 .and_then(Value::as_u64)
                 .map(|seconds| seconds.saturating_mul(1000));
             let index = conversations.len();
-            // A DM's folder is its id; every other conversation's is its name.
-            folders.entry(id.to_owned()).or_insert(index);
-            if let Some(name) = name {
-                folders.insert(name.to_owned(), index);
+            // A DM's folder is its id, every other conversation's its name;
+            // each is found by either. A folder two conversations would
+            // claim is refused: whose days it holds is not known.
+            for folder in std::iter::once(id).chain(name) {
+                if folders
+                    .insert(folder.to_owned(), index)
+                    .is_some_and(|claimed| claimed != index)
+                {
+                    return Err(duplicate("conversation folder", folder));
+                }
             }
             conversations.push(conversation);
         }
@@ -356,7 +420,12 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
             Some(index) => *index,
             None => {
                 // No list names the folder: its conversation keeps no
-                // members, so it reads to the importer alone.
+                // members, so it reads to the importer alone. Its name is
+                // its conversation's id, one segment of the keys it lands
+                // under, so it may not hold their separator.
+                if folder.contains(':') {
+                    return Err(bad(format!("{folder}/ (a folder no list names)")));
+                }
                 let index = conversations.len();
                 let mut unlisted = shared_conversation(&key, folder, &[], &names);
                 unlisted.title = Some(folder.to_owned());
@@ -386,25 +455,31 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
 }
 
 /// The members `users.json` lists, and the workspace's Slack id when a
-/// member names one.
+/// member names one. An export is one workspace: members naming two would
+/// key its conversations by either, and every listed member reads its public
+/// channels, so two are refused.
 fn decode_users(text: &str) -> IngestResult<(Vec<SlackMember>, Option<String>)> {
     let Value::Array(users) = document(USERS_FILE, text)? else {
         return Err(bad(USERS_FILE.to_owned()));
     };
-    let mut team = None;
+    let mut team: Option<&str> = None;
     let mut seen = BTreeSet::new();
     let mut members = Vec::with_capacity(users.len());
     for (at, user) in users.iter().enumerate() {
-        let id = str_field(user, "id").ok_or_else(|| bad(format!("{USERS_FILE}[{at}].id")))?;
+        let id = slack_id(user, "id").ok_or_else(|| bad(format!("{USERS_FILE}[{at}].id")))?;
         if !seen.insert(id.to_owned()) {
-            return Err(IngestError::DuplicateId {
-                source_id: SOURCE_ID,
-                kind: "member",
-                id: id.to_owned(),
-            });
+            return Err(duplicate("member", id));
         }
-        if team.is_none() {
-            team = str_field(user, "team_id").map(str::to_owned);
+        if let Some(named) = str_field(user, "team_id") {
+            if !is_slack_id(named) {
+                return Err(bad(format!("{USERS_FILE}[{at}].team_id")));
+            }
+            if team.is_some_and(|team| team != named) {
+                return Err(bad(format!(
+                    "{USERS_FILE}[{at}].team_id (a second workspace)"
+                )));
+            }
+            team = Some(named);
         }
         let profile = user.get("profile");
         let profile_field = |key: &str| profile.and_then(|profile| str_field(profile, key));
@@ -419,7 +494,7 @@ fn decode_users(text: &str) -> IngestResult<(Vec<SlackMember>, Option<String>)> 
             email: profile_field("email").map(str::to_owned),
         });
     }
-    Ok((members, team))
+    Ok((members, team.map(str::to_owned)))
 }
 
 /// A conversation with no messages yet, shared with the members `ids`.
@@ -452,9 +527,15 @@ fn shared_conversation(
     conversation
 }
 
-/// A message's Slack time (`<seconds>.<microseconds>`), in milliseconds.
+/// A message's Slack time (`<seconds>.<microseconds>`), in milliseconds. It
+/// is the last segment of the message's id, so it holds digits and one `.`
+/// only, and at most six digits after it.
 fn ts_ms(ts: &str) -> Option<u64> {
     let (seconds, micros) = ts.split_once('.').unwrap_or((ts, "0"));
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    if !digits(seconds) || !digits(micros) || micros.len() > 6 {
+        return None;
+    }
     let seconds: u64 = seconds.parse().ok()?;
     let micros: u64 = format!("{micros:0<6}").get(..6)?.parse().ok()?;
     seconds.checked_mul(1000)?.checked_add(micros / 1000)
@@ -502,6 +583,16 @@ fn day_message(id: &str, message: &Value, skipped: &mut HistorySkips) -> Option<
         skipped.unreadable += 1;
         return None;
     };
+    // The speaker keys the words' author and the thread names a message's
+    // id: either outside Slack's form does not read.
+    let speaker = str_field(message, "user").or_else(|| str_field(message, "bot_id"));
+    let thread = str_field(message, "thread_ts");
+    if speaker.is_some_and(|speaker| !is_slack_id(speaker))
+        || thread.is_some_and(|thread| ts_ms(thread).is_none())
+    {
+        skipped.unreadable += 1;
+        return None;
+    }
     let files = message
         .get("files")
         .and_then(Value::as_array)
@@ -518,8 +609,7 @@ fn day_message(id: &str, message: &Value, skipped: &mut HistorySkips) -> Option<
         }
         return None;
     }
-    let speaker = str_field(message, "user").or_else(|| str_field(message, "bot_id"));
-    let parent_id = str_field(message, "thread_ts")
+    let parent_id = thread
         .filter(|thread| *thread != ts)
         .map(|thread| format!("{id}:{thread}"));
     Some(HistoryMessage {
