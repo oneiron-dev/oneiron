@@ -69,8 +69,9 @@ fn offer_count(text: &str) -> usize {
 
 /// A reply that parses solves its own constraint, not the kept one, and
 /// the agent answers it with the solver's offers in its context and
-/// appended to its words. The page's sponsor pays, here the vault owner,
-/// since the fixture page stores none; never the agent.
+/// appended to its words. The page's sponsor pays: here the fixture's
+/// owner, whom the publish door stamps as the page's sponsor; never the
+/// agent.
 #[test]
 fn a_reply_that_parses_solves_its_own_constraint_and_the_sponsor_pays() {
     let page = Rung2Page::new(true);
@@ -98,7 +99,7 @@ fn a_reply_that_parses_solves_its_own_constraint_and_the_sponsor_pays() {
     );
     assert_eq!(
         answer.payer,
-        WriteActor::new(page.fixture.owner_actor(), EdgeActorClass::Human)
+        WriteActor::new(id(0x77), EdgeActorClass::Human)
     );
     assert_ne!(answer.payer.entity_ref(), page.agent);
 }
