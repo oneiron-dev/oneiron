@@ -43,6 +43,7 @@ use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
 };
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
 
 /// One row per child, keyed by its task.
 const JOBS: SideTable<EntityId, ReaderJob, Raw> = SideTable::new(&side_table::CODE_RUN_READER_JOB);
@@ -362,7 +363,7 @@ impl ReaderTxn<'_, '_> {
                 .spend()
                 .settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
         }
-        job.state = state;
+        job.state.transition_to(state)?;
         job.finding = finding;
         job.settled_at_ms = Some(now_ms);
         self.put_job(&job)?;
@@ -830,7 +831,7 @@ impl ExecutorStorage<'_> {
                 }
             }
             tx.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
-            job.state = ReaderJobState::Active;
+            job.state.transition_to(ReaderJobState::Active)?;
             job.generation = job.generation.saturating_add(1);
             // Each claim's witness starts empty (FIX 7735).
             job.delivery_witness = None;
@@ -875,7 +876,7 @@ impl ExecutorStorage<'_> {
                     parent.queued = parent.queued.saturating_add(1);
                     tx.put_parent(parent_run, &parent)?;
                 }
-                job.state = ReaderJobState::Queued;
+                job.state.transition_to(ReaderJobState::Queued)?;
                 job.generation = job.generation.saturating_add(1);
                 tx.put_index(&parked_key(job.task), &[])?;
                 tx.put_job(&job)?;
@@ -928,7 +929,7 @@ impl ExecutorStorage<'_> {
                     parent.queued = parent.queued.saturating_add(1);
                     tx.put_parent(parent_run, &parent)?;
                 }
-                job.state = ReaderJobState::Queued;
+                job.state.transition_to(ReaderJobState::Queued)?;
                 job.generation = job.generation.saturating_add(1);
                 tx.put_index(&queued_key(job.enqueued_at_ms, job.task), &[])?;
                 tx.put_job(&job)?;
@@ -1061,14 +1062,14 @@ impl ExecutorStorage<'_> {
             for (key, value) in &due {
                 let id = id_at(key, 9)?;
                 if value.as_slice() == DUE_JOB {
-                    if let Some(job) = tx.job(id)?.filter(|job| !job.state.is_settled()) {
+                    if let Some(job) = tx.job(id)?.filter(|job| !job.state.is_terminal()) {
                         tx.settle_at_cutoff(job, now_ms)?;
                     }
                 } else if let Some(set) = tx.wait(id)? {
                     for (_, job) in tx.set_jobs(&set)? {
                         if let Some(job) = job.filter(|job| {
                             job.binding.parent_run == set.parent_run
-                                && !job.state.is_settled()
+                                && !job.state.is_terminal()
                                 && job.binding.child_cutoff_unix_ms <= now_ms
                         }) {
                             tx.settle_at_cutoff(job, now_ms)?;

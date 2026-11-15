@@ -16,6 +16,7 @@ use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::side_table::{self, Raw, RawValue, SideKey, SideTable};
+use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
 
 /// Checkout lease act. Key: hex32.
 pub(crate) const LEASE: SideTable<CheckoutId, CheckoutLeaseAct, Raw> =
@@ -271,15 +272,7 @@ pub(in crate::checkout) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Ve
             CHECKOUT_LEASE_BODY_KEYS[6],
             Value::from(a.task_class.as_str()),
         ),
-        (
-            CHECKOUT_LEASE_BODY_KEYS[7],
-            Value::from(match a.state {
-                CheckoutLeaseState::Active => "active",
-                CheckoutLeaseState::Settling => "settling",
-                CheckoutLeaseState::Settled => "settled",
-                CheckoutLeaseState::Retained => "retained",
-            }),
-        ),
+        (CHECKOUT_LEASE_BODY_KEYS[7], Value::from(a.state.word())),
         (CHECKOUT_LEASE_BODY_KEYS[8], Value::from(a.claimed_at)),
         (
             CHECKOUT_LEASE_BODY_KEYS[9],
@@ -320,13 +313,7 @@ pub(in crate::checkout) fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseA
         "effect" => CheckoutTaskClass::Effect,
         _ => return Err(corrupt()),
     };
-    let state = match text(&x[7])?.as_str() {
-        "active" => CheckoutLeaseState::Active,
-        "settling" => CheckoutLeaseState::Settling,
-        "settled" => CheckoutLeaseState::Settled,
-        "retained" => CheckoutLeaseState::Retained,
-        _ => return Err(corrupt()),
-    };
+    let state = CheckoutLeaseState::kind_from_word(text(&x[7])?.as_str()).ok_or_else(corrupt)?;
     let holder = text(&x[4])?;
     if holder.is_empty() {
         return Err(corrupt());

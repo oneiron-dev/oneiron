@@ -5,6 +5,7 @@ use crate::linkedin_connector::{
     LinkedInConnectionObservation, LinkedInConnectionState, LinkedInMcpConnectRequest,
     LinkedInMcpConnectTransport, LinkedInMcpVerifiedConnectSink, LinkedInVerifiedConnectPlan,
 };
+use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
 
 struct ConnectTransport {
     calls: Vec<LinkedInMcpConnectRequest>,
@@ -739,7 +740,7 @@ fn an_aged_out_retry_meets_todays_cap() -> std::result::Result<(), Box<dyn std::
                     .fields
                     .get("intent_state")
                     .map(String::as_str),
-                Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                Some(crate::outbound_intent_ledger::IntentState::Pending.word()),
                 "the held retry is still the Pending row it was"
             );
         }
@@ -1050,7 +1051,7 @@ fn a_ceiling_only_holds_a_send_governance_lets_out()
                 if !matches!(path, CeilingPath::FreshSend) {
                     assert_eq!(
                         full.intent_state.as_deref(),
-                        Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                        Some(crate::outbound_intent_ledger::IntentState::Pending.word()),
                         "{case}: the held retry is still the Pending row it was"
                     );
                 }

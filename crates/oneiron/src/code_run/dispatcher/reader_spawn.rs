@@ -31,6 +31,7 @@ use crate::code_run::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
+use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
 
 /// The refusal a reader child meets at every call but its report,
 /// `self.context` and `self.think`: no verbs, writes or ambient reads. A

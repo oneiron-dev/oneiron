@@ -555,6 +555,16 @@ pub struct SpawnParentBinding {
     pub parent_lease: Option<BorrowedAttemptLease>,
 }
 
+/// A reader job's state without its reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReaderJobStatus {
+    Queued,
+    Active,
+    Done,
+    Partial,
+    Failed,
+}
+
 /// Where a child stands. A settled one (`Done`, `Partial`, `Failed`) never
 /// moves again. `Done` is completed with a committed finding: it proves no
 /// read of any input (FIX 7735).
@@ -568,26 +578,48 @@ pub enum ReaderJobState {
     Failed { reason: String },
 }
 
-impl ReaderJobState {
-    #[must_use]
-    pub const fn is_settled(&self) -> bool {
-        matches!(
-            self,
-            Self::Done | Self::Partial { .. } | Self::Failed { .. }
-        )
-    }
+impl oneiron_contracts::lifecycle::Lifecycle for ReaderJobState {
+    type Kind = ReaderJobStatus;
 
-    /// The state's wire word.
-    #[must_use]
-    pub const fn word(&self) -> &'static str {
+    fn kind(&self) -> Self::Kind {
         match self {
-            Self::Queued => "queued",
-            Self::Active => "active",
-            Self::Done => "done",
-            Self::Partial { .. } => "partial",
-            Self::Failed { .. } => "failed",
+            Self::Queued => ReaderJobStatus::Queued,
+            Self::Active => ReaderJobStatus::Active,
+            Self::Done => ReaderJobStatus::Done,
+            Self::Partial { .. } => ReaderJobStatus::Partial,
+            Self::Failed { .. } => ReaderJobStatus::Failed,
         }
     }
+
+    fn next_kinds(kind: Self::Kind) -> &'static [Self::Kind] {
+        match kind {
+            // A queued job is claimed active or settles from the queue.
+            ReaderJobStatus::Queued => &[
+                ReaderJobStatus::Active,
+                ReaderJobStatus::Done,
+                ReaderJobStatus::Partial,
+                ReaderJobStatus::Failed,
+            ],
+            // An active job is parked queued for its payer, or settles.
+            ReaderJobStatus::Active => &[
+                ReaderJobStatus::Queued,
+                ReaderJobStatus::Done,
+                ReaderJobStatus::Partial,
+                ReaderJobStatus::Failed,
+            ],
+            ReaderJobStatus::Done | ReaderJobStatus::Partial | ReaderJobStatus::Failed => &[],
+        }
+    }
+}
+
+impl oneiron_contracts::lifecycle::LifecycleWords for ReaderJobState {
+    const WORDS: &'static [(Self::Kind, &'static str)] = &[
+        (ReaderJobStatus::Queued, "queued"),
+        (ReaderJobStatus::Active, "active"),
+        (ReaderJobStatus::Done, "done"),
+        (ReaderJobStatus::Partial, "partial"),
+        (ReaderJobStatus::Failed, "failed"),
+    ];
 }
 
 /// One reader child. `generation` counts its claims and fences: a report or

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ReaderJob;
 use crate::EntityId;
+use oneiron_contracts::lifecycle::Lifecycle;
 
 /// The bytes of its primary source that successful reads showed one scoped
 /// child (FIX 7735), as its job row keeps them. It is bound to the claim it
@@ -86,7 +87,7 @@ impl ReaderJob {
     /// prove none here: a finding alone proves no byte of its source.
     pub(crate) fn delivered_source_ranges(&self) -> Vec<(u64, u64)> {
         let Some(witness) = self.delivery_witness.as_ref().filter(|witness| {
-            self.scoped_spec().is_some() && self.state.is_settled() && witness.binds(self)
+            self.scoped_spec().is_some() && self.state.is_terminal() && witness.binds(self)
         }) else {
             return Vec::new();
         };

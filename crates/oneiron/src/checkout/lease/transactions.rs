@@ -6,6 +6,7 @@ use super::codec::{
 };
 use super::types::*;
 use crate::Vault;
+use oneiron_contracts::lifecycle::Lifecycle;
 
 pub(crate) fn claim_in_txn(
     vault: &Vault,
@@ -172,7 +173,7 @@ pub(crate) fn settle_in_txn(
         settled_at: r.now,
     };
     SETTLEMENT.put(&vault.store, t, &key, &receipt)?;
-    a.state = CheckoutLeaseState::Settled;
+    a.state.transition_to(CheckoutLeaseState::Settled)?;
     a.updated_at = r.now;
     store_act_in_txn(vault, t, &a)?;
     Ok((a, receipt, true))

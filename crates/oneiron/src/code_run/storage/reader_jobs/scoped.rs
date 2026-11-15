@@ -18,6 +18,7 @@ use crate::code_run::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EdgeActorClass, EntityId, Result};
+use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
 
 /// A spawn whose key had queued a job other than the one its loan lends:
 /// another kind, another loan, another actor or another route. Nothing is

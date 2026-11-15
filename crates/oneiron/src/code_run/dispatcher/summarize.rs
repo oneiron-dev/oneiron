@@ -16,6 +16,7 @@ use crate::code_run::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result};
+use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
 
 /// What the wait a summary not yet made parks on says, before its task.
 const SUMMARIZE_PROMPT: &str = "summarize:";
@@ -105,7 +106,7 @@ impl HostSelfDispatcher<'_> {
             SpawnAdmission::PastCutoff => return Ok(failed("summarize_past_cutoff")),
             SpawnAdmission::Unmetered => return Ok(failed("summarize_unmetered")),
         };
-        if call.defer || job.state.is_settled() {
+        if call.defer || job.state.is_terminal() {
             return Ok(SelfDispatchOutcome::Summarize(pending(&job)));
         }
         Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {

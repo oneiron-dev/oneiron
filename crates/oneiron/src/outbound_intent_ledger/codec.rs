@@ -13,6 +13,7 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::side_table::{CodecError, RawValue};
+use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
 
 mod nested;
 
@@ -268,7 +269,7 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
             Value::from(KEY_DELIVERY_UNCERTAIN),
             Value::Boolean(record.delivery_uncertain),
         ),
-        (Value::from(KEY_STATE), Value::from(record.state.as_str())),
+        (Value::from(KEY_STATE), Value::from(record.state.word())),
         (Value::from(KEY_CREATED_MS), Value::from(record.created_ms)),
         (Value::from(KEY_UPDATED_MS), Value::from(record.updated_ms)),
         (
@@ -496,9 +497,9 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
             }
             KEY_STATE => {
                 state = Some(
-                    IntentState::parse(value.as_str().ok_or(IntentLedgerError::InvalidRecord(
-                        "outbound intent state must be a string",
-                    ))?)
+                    IntentState::kind_from_word(value.as_str().ok_or(
+                        IntentLedgerError::InvalidRecord("outbound intent state must be a string"),
+                    )?)
                     .ok_or(IntentLedgerError::InvalidRecord(
                         "unknown outbound intent state",
                     ))?,
@@ -645,9 +646,11 @@ pub(super) fn decode_call_accounting(raw: &[u8]) -> IntentLedgerResult<CallAccou
                 .is_some(),
             KEY_STATE => state
                 .replace(
-                    IntentState::parse(value.as_str().ok_or(IntentLedgerError::InvalidRecord(
-                        "outbound call accounting state must be a string",
-                    ))?)
+                    IntentState::kind_from_word(value.as_str().ok_or(
+                        IntentLedgerError::InvalidRecord(
+                            "outbound call accounting state must be a string",
+                        ),
+                    )?)
                     .ok_or(IntentLedgerError::InvalidRecord(
                         "unknown outbound call accounting state",
                     ))?,

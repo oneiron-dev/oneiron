@@ -23,6 +23,7 @@ use crate::secret_record::{SecretCustodyRecord, SecretCustodyStatus};
 use crate::side_table::HexId;
 use crate::store::Store;
 use crate::store::secret_name_index::resolve_secret_ref_in_txn;
+use oneiron_contracts::lifecycle::Lifecycle;
 
 /// What a revoke erases at rest (CALLS CUSTODY_REVOKE_ERASE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,12 +147,12 @@ pub(crate) fn revoke_custody_with_context_in_txn(
     let mut doomed = Vec::new();
     for entry in LEASES.scan(write.store, wtxn)? {
         let (_, lease) = entry;
-        if lease.secret_ref == rec.name && lease.status != SecretLeaseStatus::Revoked {
+        if lease.secret_ref == rec.name && !lease.status.is_terminal() {
             doomed.push(lease);
         }
     }
     for mut lease in doomed {
-        lease.status = SecretLeaseStatus::Revoked;
+        lease.status.transition_to(SecretLeaseStatus::Revoked)?;
         write_secret_lease_in_txn(write.store, wtxn, &lease)?;
         teardown_local_registration_in_txn(write.store, wtxn, &lease.lease_id, at)?;
     }
