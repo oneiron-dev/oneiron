@@ -23,6 +23,16 @@
 //! - F4: the sync receiver took the replay's refusal as a local failure and
 //!   kept retrying the peer's tombstone.
 //!
+//! Astra delta-3 (auditread-8435-pr1-delta3) found three more:
+//!
+//! - N1: the generic sync-state writers plant a cleanup-archive marker
+//!   (`ac:`) or a pending tombstone (`pt:`), and either reads the grant
+//!   deleted;
+//! - N2: the public entity port's delete removes the grant's row;
+//! - N3: the owner's own hold on the grant refused a privacy erase before
+//!   the grant's guard ran, and on a hosted vault that refusal's settlement
+//!   limits the grant's use.
+//!
 //! Each removal is refused, or leaves the grant as it was: the holder still
 //! reads, the grant's history stays listed, and the owner's revoke still
 //! finds it standing. Verbs go through the generated verb dispatch
@@ -38,9 +48,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
-use oneiron::deletion::{TombstoneReason, TombstoneValueV2};
+use oneiron::deletion::{DeleteReason, TombstoneReason, TombstoneValueV2};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
-use oneiron::store::ports::{RetrievalIndex, TombstoneStore};
+use oneiron::store::ports::{EntityStore, RetrievalIndex, TombstoneStore};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::audit_read_removal::{
     delete_past_the_header_read, peer_tombstone_refusal_is_quarantined,
@@ -49,6 +59,7 @@ use oneiron::test_doors::audit_read_removal::{
 use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
+use oneiron_store::window_key::window_label_from_timestamp;
 use serde_json::{Value, json};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -413,4 +424,89 @@ fn a_refused_peer_tombstone_is_quarantined_not_retried() -> TestResult {
         );
     }
     assert_the_grant_stands(&fixture, &granted, "after the quarantined tombstones")
+}
+
+/// Delta-3 N1: the generic sync-state writers carry no owner act. A
+/// cleanup-archive marker or a pending tombstone each reads the grant
+/// deleted, so each writer refuses either row naming the grant, and the
+/// grant stands.
+#[test]
+fn a_generic_sync_state_marker_hides_no_audit_read_grant() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    let vault = &fixture.vault;
+    let hex = granted.grant_ref.to_hex();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let window = window_label_from_timestamp(now);
+    let marker = TombstoneValueV2 {
+        reason: TombstoneReason::ArchivedByCleanup,
+        deleted_at: 1,
+        request_id: [9; 16],
+    }
+    .encode();
+    for key in [format!("ac:{hex}"), format!("pt:{window}:{hex}")] {
+        let put = vault.sync_state_put(&key, &marker);
+        assert!(
+            put.as_ref().is_err_and(names_the_revoke),
+            "sync_state_put refuses {key}: {put:?}"
+        );
+        let put_in =
+            vault.with_write_txn(|txn| vault.sync_state_put_in_write_txn(txn, &key, &marker));
+        assert!(
+            put_in.as_ref().is_err_and(names_the_revoke),
+            "sync_state_put_in_write_txn refuses {key}: {put_in:?}"
+        );
+        let batch = vault.sync_state_put_telemetry_batch(&[(key.as_str(), marker.as_slice())]);
+        assert!(
+            batch.as_ref().is_err_and(names_the_revoke),
+            "sync_state_put_telemetry_batch refuses {key}: {batch:?}"
+        );
+    }
+    assert_the_grant_stands(&fixture, &granted, "after the refused sync-state markers")
+}
+
+/// Delta-3 N2: the public entity port's delete carries no owner act either.
+/// It refuses the grant's row, and the grant stands.
+#[test]
+fn the_public_entity_delete_port_removes_no_audit_read_grant() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    let vault = &fixture.vault;
+    let delete = vault.with_write_txn(|txn| vault.port_entity_delete(txn, &granted.grant_ref));
+    assert!(
+        delete.as_ref().is_err_and(names_the_revoke),
+        "the public entity delete port refuses an audit_read grant: {delete:?}"
+    );
+    assert_the_grant_stands(&fixture, &granted, "after the refused entity port delete")
+}
+
+/// Delta-3 N3: with the owner's own hold on the grant, a privacy erase of
+/// it meets the grant's refusal first, so no refused erase is settled
+/// against the hold (on a hosted vault that settlement limits the grant's
+/// use), and the holder still reads.
+#[test]
+fn a_held_audit_read_grant_refuses_a_privacy_erase_before_its_hold() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    call(
+        &owner(&fixture),
+        "vault.legal_holds.place",
+        json!({ "targets": [{ "record": granted.grant_ref.to_hex() }] }),
+    );
+    let erase = fixture
+        .vault
+        .delete_entity_with_reason(&granted.grant_ref, DeleteReason::GdprDelete);
+    assert!(
+        erase.as_ref().is_err_and(names_the_revoke),
+        "a privacy erase of a held audit_read grant meets the grant's refusal first: {erase:?}"
+    );
+    let as_holder = bound(&fixture, granted.holder, &granted.proof);
+    let page = call(&as_holder, "vault.authority.audit", json!({}));
+    assert!(
+        page["audit_read_acts"].is_array(),
+        "the holder still reads after the refused privacy erase: {page}"
+    );
+    Ok(())
 }
