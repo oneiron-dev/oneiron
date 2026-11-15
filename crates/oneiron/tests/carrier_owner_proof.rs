@@ -47,9 +47,13 @@ const NODE_SEED: u8 = 62;
 const VICTIM_SEED: u8 = 63;
 const LAPTOP_SEED: u8 = 64;
 const PAIRED_SEED: u8 = 65;
+const STRANGER_SEED: u8 = 66;
 
 /// The node the owner's home pick names in test 3.
 const PICKED_NODE: u64 = 7;
+
+/// The node the owner's own laptop picks after a waiting pick.
+const LAPTOPS_PICKED_NODE: u64 = 8;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -422,6 +426,137 @@ impl PairedMachine {
     }
 }
 
+/// A self-host vault whose root registered a hosted node and then the
+/// owner's laptop as the owner's machine (a root-signed roster revision, so
+/// the laptop is mine with no carried act).
+struct LaptopBesideNode {
+    node: HostedNodeAnswer,
+    laptop: SigningKey,
+    laptop_machine: EntityId,
+}
+
+impl LaptopBesideNode {
+    fn new() -> Self {
+        let mut node = HostedNodeAnswer::new();
+        let laptop = signing(LAPTOP_SEED);
+        let laptop_machine = EntityId::from_bytes([0x73; 16]).expect("an id");
+        let vault_id = node.vault_id();
+        let registration = signed(
+            Some(vault_id),
+            2,
+            vec![hash(&node.rows[1])],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                laptop_machine,
+                &laptop,
+                MachineRole::Owned(MachineOwnership::Yours),
+                1,
+                None,
+            )),
+            &node.root,
+            &[],
+        );
+        node.rows.push(registration);
+        Self {
+            node,
+            laptop,
+            laptop_machine,
+        }
+    }
+
+    fn laptop_key(&self) -> [u8; 32] {
+        self.laptop.verifying_key().to_bytes()
+    }
+
+    /// `carrier_key`, the install key of `carrier`, carries the owner's
+    /// answer about the laptop: `role` at revision 2, naming the key of
+    /// `key_holder`, on the laptop's registration.
+    fn answer_for_the_laptop(
+        mut self,
+        carrier: EntityId,
+        carrier_key: &SigningKey,
+        role: MachineRole,
+        key_holder: &SigningKey,
+    ) -> AuthorityFold {
+        let vault_id = self.node.vault_id();
+        let registration = hash(&self.node.rows[2]);
+        let act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::MachineAnswer,
+            self.laptop_machine,
+            ActSurface::ThisInstall,
+            machine_answer_revision([registration]),
+        );
+        let answer = signed(
+            Some(vault_id),
+            1,
+            vec![registration],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                self.laptop_machine,
+                key_holder,
+                role,
+                2,
+                Some((carrier, act)),
+            )),
+            carrier_key,
+            &[],
+        );
+        self.node.rows.push(answer);
+        self.node.fold()
+    }
+
+    /// The hosted node carries the owner's answer about the laptop.
+    fn node_answers_for_the_laptop(
+        self,
+        role: MachineRole,
+        key_holder: &SigningKey,
+    ) -> AuthorityFold {
+        let (machine, node) = (self.node.machine, self.node.node.clone());
+        self.answer_for_the_laptop(machine, &node, role, key_holder)
+    }
+
+    /// The node carries a home pick of [`PICKED_NODE`] with no proof, then
+    /// the laptop carries the owner's pick of [`LAPTOPS_PICKED_NODE`] over
+    /// it, having seen no live pick.
+    fn node_then_laptop_pick(mut self) -> AuthorityFold {
+        let vault_id = self.node.vault_id();
+        let target = home_pick_target(&vault_id).expect("the pick's target");
+        let pick = |machine: EntityId, node_id: u64| {
+            AuthorityOp::HomeNodePick(HomeNodePick {
+                act: OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::HomeNodePick,
+                    target,
+                    ActSurface::ThisInstall,
+                    [0; 32],
+                ),
+                machine,
+                node_id: Some(node_id),
+            })
+        };
+        let nodes_pick = signed(
+            Some(vault_id),
+            1,
+            vec![hash(&self.node.rows[2])],
+            pick(self.node.machine, PICKED_NODE),
+            &self.node.node,
+            &[],
+        );
+        let laptops_pick = signed(
+            Some(vault_id),
+            1,
+            vec![hash(&nodes_pick)],
+            pick(self.laptop_machine, LAPTOPS_PICKED_NODE),
+            &self.laptop,
+            &[],
+        );
+        self.node.rows.push(nodes_pick);
+        self.node.rows.push(laptops_pick);
+        self.node.fold()
+    }
+}
+
 fn owner() -> EntityId {
     EntityId::from_bytes([0x71; 16]).expect("an id")
 }
@@ -634,6 +769,169 @@ fn an_owner_key_cosigned_confirm_over_a_held_pairing_makes_the_machine_mine() {
             .map(|trusted| trusted.profile.revision),
         Some(2),
         "the fold trusts the owner key's confirm, not the held pairing: {:?}",
+        fold.issues
+    );
+}
+
+/// Guard: a cosign by a key the roster does not hold, or a second cosign
+/// beside the owner key's, proves nothing (a forged proof is an invalid
+/// entry, not a held one). Main: the fold refuses any cosign.
+#[test]
+fn a_strangers_cosign_or_a_second_cosign_proves_nothing() {
+    let stranger = signing(STRANGER_SEED);
+    let (fold, machine, node_key) = HostedNodeAnswer::new().answer_yours(&[&stranger]);
+    assert!(
+        !mine(&fold, machine, &node_key),
+        "a stranger's cosign is no owner key's proof"
+    );
+    let answer = HostedNodeAnswer::new();
+    let root = answer.root.clone();
+    let (fold, machine, node_key) = answer.answer_yours(&[&root, &stranger]);
+    assert!(
+        !mine(&fold, machine, &node_key),
+        "a proven answer carries exactly one cosign"
+    );
+}
+
+/// Guard: a revision of a mine machine that keeps it the owner's, carried by
+/// the machine itself under its own key, needs no proof (a class revision
+/// makes nothing mine). Main: it lands.
+#[test]
+fn a_mine_machines_own_class_revision_needs_no_proof() {
+    let beside = LaptopBesideNode::new();
+    let (laptop_machine, laptop_key, laptop) = (
+        beside.laptop_machine,
+        beside.laptop_key(),
+        beside.laptop.clone(),
+    );
+    let fold = beside.answer_for_the_laptop(
+        laptop_machine,
+        &laptop,
+        MachineRole::Owned(MachineOwnership::Yours),
+        &laptop,
+    );
+    assert!(
+        mine(&fold, laptop_machine, &laptop_key),
+        "the laptop stays mine: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.trusted_machine(laptop_machine)
+            .map(|trusted| trusted.profile.revision),
+        Some(2),
+        "the laptop's own class revision stands with no proof: {:?}",
+        fold.issues
+    );
+}
+
+/// Item 1: a not-mine carrier's answer that keeps a mine machine the
+/// owner's under a NEW key makes that key mine, so it needs the proof too.
+/// Unproven, it is held and the laptop keeps its key. Main: the node's answer
+/// re-keys the laptop.
+#[test]
+fn a_hosted_nodes_unproven_rekey_of_a_mine_machine_is_held() {
+    let beside = LaptopBesideNode::new();
+    let (laptop_machine, laptop_key) = (beside.laptop_machine, beside.laptop_key());
+    let stranger = signing(STRANGER_SEED);
+    let fold =
+        beside.node_answers_for_the_laptop(MachineRole::Owned(MachineOwnership::Yours), &stranger);
+    assert_eq!(
+        fold.trusted_machine(laptop_machine)
+            .map(|trusted| trusted.profile.machine_key),
+        Some(laptop_key),
+        "the laptop keeps its own key: {:?}",
+        fold.issues
+    );
+    assert!(
+        mine(&fold, laptop_machine, &laptop_key),
+        "the laptop stays mine: {:?}",
+        fold.issues
+    );
+}
+
+/// Item 2 on the MachineProfile op: a not-mine carrier's unproven demote of a
+/// mine machine waits. Main: the laptop is no longer mine.
+#[test]
+fn a_hosted_nodes_unproven_demote_of_a_mine_machine_waits() {
+    let beside = LaptopBesideNode::new();
+    let (laptop_machine, laptop_key, laptop) = (
+        beside.laptop_machine,
+        beside.laptop_key(),
+        beside.laptop.clone(),
+    );
+    let fold = beside
+        .node_answers_for_the_laptop(MachineRole::Owned(MachineOwnership::WorkSchool), &laptop);
+    assert!(
+        mine(&fold, laptop_machine, &laptop_key),
+        "a not-mine node's demote with no owner key's proof waits for the owner: {:?}",
+        fold.issues
+    );
+}
+
+/// Guard: a proof never lifts a refusal. The root removed the node, so its
+/// later pick is refused even with the owner key's cosign. Main: the fold
+/// refuses any cosign.
+#[test]
+fn an_owner_keys_cosign_never_lifts_a_removed_carriers_refusal() {
+    let mut answer = HostedNodeAnswer::new();
+    let vault_id = answer.vault_id();
+    let removal = signed(
+        Some(vault_id),
+        2,
+        vec![hash(&answer.rows[1])],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            answer.machine,
+            &answer.node,
+            MachineRole::Removed,
+            2,
+            None,
+        )),
+        &answer.root,
+        &[],
+    );
+    let target = home_pick_target(&vault_id).expect("the pick's target");
+    let pick = signed(
+        Some(vault_id),
+        1,
+        vec![hash(&removal)],
+        AuthorityOp::HomeNodePick(HomeNodePick {
+            act: OwnerAct::by_owner(
+                owner(),
+                OwnerActKind::HomeNodePick,
+                target,
+                ActSurface::ThisInstall,
+                [0; 32],
+            ),
+            machine: answer.machine,
+            node_id: Some(PICKED_NODE),
+        }),
+        &answer.node,
+        &[&answer.root],
+    );
+    answer.rows.push(removal);
+    answer.rows.push(pick);
+    let fold = answer.fold();
+    assert_eq!(
+        home_pick_in_force(&fold),
+        None,
+        "a removed carrier's pick lands nowhere, proven or not: {:?}",
+        fold.issues
+    );
+}
+
+/// Item 2, the confirm: the owner's own laptop carries the pick again over a
+/// waiting one (re-carry, no confirm op). The waiting pick never joined the
+/// live choices, so the laptop's pick names the zero revision and lands.
+/// Main: the node's pick landed, so the laptop's pick names a stale
+/// revision and the node's pick stays in force.
+#[test]
+fn an_owner_laptops_pick_lands_over_a_waiting_pick() {
+    let fold = LaptopBesideNode::new().node_then_laptop_pick();
+    assert_eq!(
+        home_pick_in_force(&fold),
+        Some(LAPTOPS_PICKED_NODE),
+        "the owner's own pick lands over the waiting one: {:?}",
         fold.issues
     );
 }
