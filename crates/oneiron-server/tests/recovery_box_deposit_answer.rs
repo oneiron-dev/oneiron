@@ -499,10 +499,9 @@ fn the_box_deposit_never_reaches_a_log_line() {
 
 #[test]
 fn the_cli_writes_the_box_deposit_only_with_the_flag() {
-    // Without the flag: nothing is written anywhere.
+    // Without the flag: the answer names no file and carries no seed.
     {
         let fixture = self_hosted();
-        let temp = tempfile::tempdir().expect("tempdir");
         let issued = fixture.issue();
         let pieces: Vec<&KitPiece> = issued.pieces.iter().take(2).collect();
         let answer = doors::cli_confirm_json(&fixture.vault, &fixture.owner(), &pieces, None)
@@ -516,13 +515,6 @@ fn the_cli_writes_the_box_deposit_only_with_the_flag() {
         assert!(
             !text.contains("seed_hex"),
             "the CLI answer names no seed: {text}"
-        );
-        assert_eq!(
-            std::fs::read_dir(temp.path())
-                .expect("the temp dir")
-                .count(),
-            0,
-            "no file was written"
         );
     }
     // With the flag: the deposit alone is written to the named file.
