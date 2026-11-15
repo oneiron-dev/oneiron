@@ -98,7 +98,8 @@ impl<'v> ScopedRead<'v> {
 
     /// The reader the owner alternative may stand for: this opted-in lane's
     /// own actor, while its key supplies no proof, carries no Scope, is not
-    /// already the owner's and is held to no host action or owner proof.
+    /// already the owner's, is held to no host action or owner proof and
+    /// was not rebuilt under a saved lane's grant basis (Sol F3 on #8065).
     fn owner_reader(&self) -> Option<EntityId> {
         let key = &self.actor_key;
         if !self.own_owner_authority
@@ -107,6 +108,7 @@ impl<'v> ScopedRead<'v> {
             || key.vault_owner_ref().is_some()
             || key.host_action_guard().is_some()
             || key.owner_proof_guard().is_some()
+            || key.owner_authority_withheld()
         {
             return None;
         }

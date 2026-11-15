@@ -51,6 +51,12 @@ pub struct ScopedReadActorKey {
     /// each serving txn reads nothing unless every one still holds there;
     /// see [`Self::bound_by_saved_credential`].
     pub(super) saved_credentials: Vec<super::frozen::SavedCredential>,
+    /// Set only on a key rebuilt under a saved lane's grant basis (FIX
+    /// 14344, Sol F3 on #8065): its reader's own owner authority never
+    /// stands beside it, as it never stood beside the saved key; the basis
+    /// keeps the owner standing that key held. See
+    /// [`Self::within_native_basis`].
+    owner_authority_withheld: bool,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -397,6 +403,7 @@ impl ScopedReadActorKey {
             grant_alternatives: None,
             agent_grant_holder: None,
             saved_credentials: Vec::new(),
+            owner_authority_withheld: false,
             channel: None,
             owner: None,
             owner_exemption: None,
@@ -442,6 +449,7 @@ impl ScopedReadActorKey {
             grant_alternatives: None,
             agent_grant_holder: None,
             saved_credentials: Vec::new(),
+            owner_authority_withheld: false,
             channel: None,
             owner: Some(owner),
             owner_exemption: None,
@@ -477,6 +485,13 @@ impl ScopedReadActorKey {
     /// ([`Self::vault_owner_by_census`]).
     pub(crate) fn owner_by_census(&self) -> bool {
         self.owner_by_census
+    }
+
+    /// Whether this key's reader's own owner authority is withheld: a key
+    /// rebuilt under a saved lane's grant basis
+    /// ([`Self::within_native_basis`]).
+    pub(crate) fn owner_authority_withheld(&self) -> bool {
+        self.owner_authority_withheld
     }
 
     /// This key, held to the host action it was built for (FIX 2222): every
@@ -782,8 +797,9 @@ impl ScopedReadActorKey {
     /// The grant basis this key reads under, as a saved lane keeps it beside
     /// its frozen Scope (FIX 14344): its owner standing (the vault owner's
     /// floor, a narrower credential's owner exemption, or neither; each
-    /// proved again at every read) and its grant gate (none, the
-    /// relationship-only gate, or the access gate).
+    /// proved again at every read), its grant gate (none, the
+    /// relationship-only gate, or the access gate) and the principal that
+    /// gate admitted rows on the grants of.
     pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
         use super::frozen::{NativeGrantGate, NativeOwnerStanding};
         let owner_standing = if self.owner.is_some() {
@@ -803,6 +819,7 @@ impl ScopedReadActorKey {
         super::frozen::NativeReadBasis {
             owner_standing,
             grant_gate,
+            grant_principal: self.principal_ref.filter(|_| self.enforce_access_grants),
         }
     }
 
@@ -819,6 +836,11 @@ impl ScopedReadActorKey {
     /// - Its gate binds unless neither key's did (Sol F7 on #8061), with the
     ///   owner as principal where the key held the floor, and it closes
     ///   unscoped rows where either gate closed them.
+    /// - Under the saved key's gate it reads on the grants of that gate's
+    ///   principal alone, and on none where the two keys' principals differ
+    ///   or the saved gate was bound to none (Sol F5 on #8065).
+    /// - Its reader's own owner authority never stands beside it
+    ///   ([`Self::owner_authority_withheld`], Sol F3 on #8065).
     ///
     /// A key no gate bound held no exemption to keep: its lane, rebuilt over
     /// a key a gate binds, reads only the relationship rows its principal's
@@ -851,6 +873,10 @@ impl ScopedReadActorKey {
         if lost_floor.is_some() || !neither_gated {
             self.principal_ref = self.principal_ref.or(floor_owner);
         }
+        if !saved_ungated && self.principal_ref != basis.grant_principal {
+            self.principal_ref = None;
+        }
+        self.owner_authority_withheld = true;
         if neither_gated {
             self.owner_exemption = exemption_owner;
             return self;

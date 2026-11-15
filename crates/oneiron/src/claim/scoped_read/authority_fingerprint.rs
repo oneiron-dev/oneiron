@@ -362,6 +362,11 @@ impl ScopedReadActorKey {
                 hasher.update(&credential.slip_id());
             }
         }
+        // Last, and only when set: a key whose reader's own owner authority
+        // is withheld (Sol F3 on #8065).
+        if self.owner_authority_withheld() {
+            hasher.update(b"owner_authority_withheld");
+        }
         *hasher.finalize().as_bytes()
     }
 }

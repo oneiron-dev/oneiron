@@ -200,7 +200,8 @@ impl<'a> Reader<'a> {
     /// This reader's own authority in `txn`, resolved at its first ask. A
     /// key held to a Scope (a saved question's narrowed lane, OF-506) has
     /// none beside it, as the read lane's own alternatives leave such a key
-    /// exactly as it is.
+    /// exactly as it is. A key rebuilt under a saved lane's grant basis has
+    /// no owner authority beside it (Sol F3 on #8065).
     fn own_in(&self, txn: &heed::RoTxn<'_>) -> Result<&OwnAuthority> {
         if let Some(own) = self.own.get() {
             return Ok(own);
@@ -208,7 +209,10 @@ impl<'a> Reader<'a> {
         let own = if self.key.authority_scope().is_some() {
             OwnAuthority::Absent
         } else {
-            own_authority_in(self.home, txn, self.actor)?
+            match own_authority_in(self.home, txn, self.actor)? {
+                OwnAuthority::Owner if self.key.owner_authority_withheld() => OwnAuthority::Absent,
+                own => own,
+            }
         };
         Ok(self.own.get_or_init(|| own))
     }
