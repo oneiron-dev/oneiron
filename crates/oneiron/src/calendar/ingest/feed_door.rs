@@ -320,7 +320,8 @@ pub fn review(
 /// One queued property continuation of a feed, run as the owner: the
 /// imported claims it admits settle under the installed feed's consent
 /// (CAL-02), as the feed's polls settle theirs. A continuation of a system
-/// with no installed feed admits as it always has.
+/// with no installed feed, or of another source's admission under the
+/// feed's system (a CalDAV connector's pull), admits as it always has.
 ///
 /// # Errors
 /// The owner no longer holds, or the continuation or a settlement failed.
@@ -343,14 +344,37 @@ pub fn run_installed_continuation(
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         FEEDS.get(&vault.store, &txn, &payload.system)?
     };
-    if let Some(row) = installed {
-        consent::settle_continuation(
-            vault,
-            owner,
-            &row.config,
-            &admitted,
-            vault.now_recorded_at(),
-        )?;
+    let Some(row) = installed else {
+        return Ok(());
+    };
+    if !continues_feed_poll(&row.config, payload)? {
+        return Ok(());
     }
+    consent::settle_continuation(
+        vault,
+        owner,
+        &row.config,
+        &admitted,
+        vault.now_recorded_at(),
+    )?;
     Ok(())
+}
+
+/// Whether `payload` continues one of `config`'s own polls: it reads a
+/// version of the feed's own archive, and its claims cite that archive. A
+/// connector admission under the same system reads its pulled resource and
+/// cites its pull record, so the feed's consent never settles its claims.
+fn continues_feed_poll(
+    config: &IcsFeedPollConfig,
+    payload: &IcsPropertyContinuationPayload,
+) -> MemoryResult<bool> {
+    let archive = super::fetch::ics_feed_archive(config)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    let prefix = format!("{}#v", archive.to_hex());
+    let names_archive = |reference: &str| {
+        reference
+            .strip_prefix(prefix.as_str())
+            .is_some_and(|version| version.parse::<u64>().is_ok())
+    };
+    Ok(names_archive(&payload.blob_ref) && names_archive(&payload.source_version))
 }

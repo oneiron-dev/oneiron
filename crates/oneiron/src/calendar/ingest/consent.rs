@@ -3,7 +3,9 @@
 //! installed feed.
 //!
 //! * The first completed poll's imported claims become the feed's one
-//!   review, and the feed polls no more until the owner decides it.
+//!   review, and the feed polls no more until the owner decides it. The
+//!   claims that poll's property continuations admit from its archived
+//!   version join the same review.
 //! * The owner approves or declines the review whole, with one consent
 //!   receipt over the exact claim set; each claim settles in that same
 //!   transaction.
@@ -218,6 +220,11 @@ pub(super) fn settle_completed_poll(
 /// continuations admitted, as `owner`: they join the feed's open review, land
 /// Approved under its standing consent, or are declined with a declined feed.
 /// A feed with no record (no poll of it completed) leaves them as they are.
+///
+/// A held feed polls no more, so a continuation that runs while its review
+/// is open reads the version the first poll archived: its claims are the
+/// rest of that poll's diff, held Proposed like the rest. Joining them moves
+/// the review, so a decision named on the earlier `review_ref` refuses.
 ///
 /// # Errors
 /// The owner no longer holds, or a settlement refused.

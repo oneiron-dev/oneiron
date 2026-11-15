@@ -195,6 +195,15 @@ impl crate::ingest::IngestSource for IcsFeedSource {
     }
 }
 
+/// The one BLOB_ARTIFACT a feed's polls archive its bodies in, derived from
+/// the feed's identity.
+pub(super) fn ics_feed_archive(config: &IcsFeedPollConfig) -> Result<EntityId, CalendarError> {
+    Ok(EntityId::derive(
+        CALENDAR_ICS_FEED_BLOB,
+        &[ics_feed_poll_dedupe_key(config).as_bytes()],
+    )?)
+}
+
 /// Archives the raw feed body BEFORE any semantic read: one BLOB_ARTIFACT
 /// per feed (deterministic id), one content-hash version per distinct body.
 /// Re-archiving identical bytes is the blob store's own dedupe no-op.
@@ -207,7 +216,7 @@ pub(super) fn archive_raw_feed(
     now: u64,
 ) -> Result<CalendarPassportSource, CalendarError> {
     let feed_ref = ics_feed_poll_dedupe_key(config);
-    let artifact_id = EntityId::derive(CALENDAR_ICS_FEED_BLOB, &[feed_ref.as_bytes()])?;
+    let artifact_id = ics_feed_archive(config)?;
     if vault.get_blob_artifact(&artifact_id)?.is_none() {
         vault.put_blob_artifact(
             &artifact_id,
