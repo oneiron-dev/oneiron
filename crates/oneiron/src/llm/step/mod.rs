@@ -53,6 +53,7 @@ pub(crate) use self::budget_wait::{
     wake_resident_share_traps_in_txn,
 };
 
+pub(crate) use self::compaction_step::is_compaction_step_row;
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
 pub(crate) use self::execute::{ExecutedModelWitness, call_as_step_checked_with_unsaved_usage};

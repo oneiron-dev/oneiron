@@ -2713,7 +2713,7 @@
      "path": "src/artifact_hosting/pointer_rows.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -7575,7 +7575,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 2
      }
     },
@@ -8267,7 +8267,7 @@
      "path": "src/batch/lexical_query_hints.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -16364,7 +16364,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 6,
       "re-export": 1
      }
@@ -28694,6 +28694,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ConversationHome",
+      "HomeClearanceRequest",
+      "HomeClearanceSet",
+      "HomeClearanceView"
+     ],
+     "path": "src/disclosure/home.rs",
+     "purpose": "Conversation-home clearance (DEC-0006 `#home-clearance`): stamped content is read only in conversations…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/disclosure/import_audience.rs",
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
@@ -28711,7 +28730,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -28824,11 +28843,12 @@
      "path": "src/disclosure/vault_agent.rs",
      "purpose": "Who is one of this vault's own agents (the Engine lane's ruling, 2026-10-11): an active `agent` binding in…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DisclosureAssembly",
@@ -28837,8 +28857,8 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 13,
-      "fn": 13,
+      "crate-vis": 14,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -40319,7 +40339,7 @@
      "path": "src/federation/record_scope/note_world.rs",
      "purpose": "A NOTE's world (FIX-LIST 9433): where its live `InWorld` edges place it, read again at every read",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 1
      }
     },
@@ -47410,7 +47430,7 @@
      "path": "src/lens/inspection.rs",
      "purpose": "OF-235: shareable inspection state and its handle link",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "re-export": 1,
       "struct": 3
@@ -53206,7 +53226,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "mod": 41,
       "re-export": 73
      }
@@ -54145,7 +54165,7 @@
      "path": "src/memory/repo_secret_reads.rs",
      "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -55441,7 +55461,7 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 5
      }
     },
@@ -55904,7 +55924,7 @@
      "path": "src/memory/witness/validation.rs",
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -76573,7 +76593,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "EvidenceSpans",
@@ -79462,7 +79482,7 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 28
+      "crate-vis": 32
      }
     },
     {
@@ -99708,6 +99728,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/home_clearance_stamped_content.rs",
+     "purpose": "Stamped content stays in conversations homed in its own vault, unless its owner granted clearance (DEC-0006…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100614,6 +100642,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/masked_forms_and_graph_fs_release_scan.rs",
+     "purpose": "A masked reader is served an asset's image and audio forms, and a graph-fs file, only as every other masked…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101267,6 +101303,14 @@
      "notable": [],
      "path": "tests/repo_anchor_symbol_manifest.rs",
      "purpose": "FIX RUN-DECLARE-ANCHOR-MANIFEST (tests/e2e/code-custody.test.ts CODE-CUSTODY-03): a run's symbol declaration…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/repo_asset_known_pass_single_snapshot.rs",
+     "purpose": "A repo snapshot ASSET read by a masked reader takes its known-value pass (FIX 8966) in the read's own…",
      "surface": {}
     },
     {
@@ -102154,6 +102198,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_learned_time_ceiling.rs",
+     "purpose": "Census L7-21 (ARCH-0002 `#turn-time-built`): a TURN's learned time feeds the consolidation watermark, so the…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -102942,9 +102994,9 @@
      "purpose": "The derivation transaction (untangle slice 6.7, primitive C): an agent lands what it derived as ONE batch…"
     },
     "disclosure": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
@@ -104118,10 +104170,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 265,
+   "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7600,
-   "test_files": 1337
+   "source_files": 7601,
+   "test_files": 1341
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -104550,6 +104602,23 @@
   "oneiron-authority": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Admitted",
+      "Direction",
+      "Permitted"
+     ],
+     "path": "src/authority/act_rule.rs",
+     "purpose": "The authority rule: what an act may do to the row it moves",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -104903,7 +104972,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 39
+      "re-export": 40
      }
     },
     {
@@ -105604,6 +105673,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/act_rule.rs",
+     "purpose": "The authority rule's table (`oneiron_authority::authority::Permitted`): what each reading admits, the lesser…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -105614,7 +105691,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105679,8 +105756,8 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 68,
-   "test_files": 1
+   "source_files": 69,
+   "test_files": 2
   },
   "oneiron-base": {
    "files": [
@@ -111849,7 +111926,7 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex",
      "surface": {
       "const": 3,
-      "fn": 18,
+      "fn": 19,
       "mod": 2,
       "re-export": 1,
       "struct": 4
@@ -112170,7 +112247,7 @@
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
       "mod": 27,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -112586,6 +112663,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_id_prefix.rs",
+     "purpose": "PLAN-UC-04 stage 0: the id rules against the fingerprint door",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -112796,7 +112881,7 @@
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 67,
-   "test_files": 2
+   "test_files": 3
   },
   "oneiron-crypto": {
    "files": [
@@ -117039,6 +117124,116 @@
    "source_files": 13,
    "test_files": 1
   },
+  "oneiron-fingerprint": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LegacyDigest",
+      "LegacyHash",
+      "LegacyPurpose",
+      "TagMode"
+     ],
+     "path": "src/legacy.rs",
+     "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContentHash",
+      "ContentHasher",
+      "Fingerprint",
+      "Fingerprinter",
+      "Purpose"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 20,
+      "mod": 1,
+      "re-export": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/mod.rs",
+     "purpose": "The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area",
+     "surface": {
+      "const": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/testing.rs",
+     "purpose": "Purposes for tests only",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CanonicalBytesError"
+     ],
+     "path": "src/record.rs",
+     "purpose": "The one canonical byte form of a structured value (DESIGN section 1.5)",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_rules.rs",
+     "purpose": "PLAN-UC-04 stage 0: the rules of the fingerprint door, checked against hand-written transcripts",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "legacy": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
+    },
+    "purposes": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area"
+    },
+    "record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The one canonical byte form of a structured value (DESIGN section 1.5)"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
+   "source_files": 5,
+   "test_files": 1
+  },
   "oneiron-gen": {
    "files": [
     {
@@ -117605,6 +117800,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "examples/user_presence_probe.rs",
+     "purpose": "Probe of the presence layer on a real device (row OWNER-CONFIRM-SHEET)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AppleKeychain"
      ],
@@ -117661,7 +117864,7 @@
       "const": 1,
       "enum": 5,
       "fn": 8,
-      "re-export": 8,
+      "re-export": 11,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -117684,17 +117887,47 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "MemoryKeystore"
+      "MacosUserPresence"
      ],
-     "path": "src/memory.rs",
-     "purpose": "Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here",
+     "path": "src/macos_presence.rs",
+     "purpose": "macOS: the device's own unlock sheet, and the window server's word on the screen lock (row…",
      "surface": {
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryKeystore"
+     ],
+     "path": "src/memory.rs",
+     "purpose": "Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBytesName",
+      "SealedBytesStore"
+     ],
+     "path": "src/sealed_bytes.rs",
+     "purpose": "A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ManualPresenceClock",
@@ -117709,14 +117942,15 @@
       "PresenceWindow",
       "ScriptedPresence",
       "SystemPresenceClock",
-      "UserPresence"
+      "UserPresence",
+      "WindowsScreenSession"
      ],
      "path": "src/user_presence.rs",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…",
      "surface": {
-      "const": 1,
-      "enum": 3,
-      "fn": 21,
+      "const": 5,
+      "enum": 4,
+      "fn": 37,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -117736,7 +117970,28 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowsUserPresence"
+     ],
+     "path": "src/windows_presence.rs",
+     "purpose": "Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sealed_bytes.rs",
+     "purpose": "Row OCS-OWNER-PIN, the keystore's home for bytes the caller sealed: each name keeps its own value, a put…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/user_presence.rs",
@@ -117773,17 +118028,31 @@
      "layout": "file",
      "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)"
     },
+    "macos_presence": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "macOS: the device's own unlock sheet, and the window server's word on the screen lock (row…"
+    },
     "memory": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here"
+     "purpose": "Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its…"
+    },
+    "sealed_bytes": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN)"
     },
     "user_presence": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…"
     },
@@ -117793,12 +118062,19 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine…"
+    },
+    "windows_presence": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row…"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 8,
-   "test_files": 1
+   "source_files": 12,
+   "test_files": 2
   },
   "oneiron-lens-wire": {
    "files": [
@@ -140411,7 +140687,7 @@
      "path": "src/api/context_pack/interlocutor.rs",
      "purpose": "Interlocutor-set resolution and third-party party inputs for context-pack requests",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -141645,9 +141921,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/disclosure_doors.rs",
-     "purpose": "Owner registry and reveal-settlement doors, shared by HTTP and MCP",
+     "purpose": "Owner registry, home-clearance and reveal-settlement doors, shared by HTTP and MCP",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -159311,6 +159587,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_conversation_home.rs",
+     "purpose": "Conversation-home clearance on the context-pack route (DEC-0006 #home-clearance)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -160724,7 +161008,7 @@
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1887,
-   "test_files": 266
+   "test_files": 267
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -170126,6 +170410,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/msgpack_store_rows.rs",
+     "purpose": "PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/phonetic_han_codes.rs",
      "purpose": "L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form…",
      "surface": {}
@@ -171744,7 +172036,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 10
+   "test_files": 11
   },
   "oneiron-testkit": {
    "files": [
