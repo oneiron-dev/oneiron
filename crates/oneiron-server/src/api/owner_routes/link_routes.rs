@@ -56,7 +56,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "delete",
                 path: "/link",
-                summary: "Unlink the vault's hosted peer (`oneiron unlink`): its machine is removed, its mesh grants and every slip its holder holds are revoked at once, then the control plane is asked to remove the peer, erasing its live copy and its keys; backups age out on the disaster-recovery schedule of 90 days or less. The local vault is not touched. A removal the control plane did not take, or a machine removal this install could not sign, is asked again by the next unlink.",
+                summary: "Unlink the vault's hosted peer (`oneiron unlink`): its machine is removed, its mesh grants, the slip its redeem minted and every slip its machine holds are revoked at once, then the control plane is asked to remove the peer, erasing its live copy and its keys; backups age out on the disaster-recovery schedule of 90 days or less. The local vault is not touched. A removal the control plane did not take, or a machine removal this install could not sign, is asked again by the next unlink.",
                 row: None,
                 shape: None,
             },

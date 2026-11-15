@@ -28,8 +28,9 @@ side_tables! {
         // carry the target's endpoint URL, which no owner is proven to hold.
         [restore: live] [family: unclassified] [tier: canonical];
     /// The vault's one linked hosted peer (L10-16, `oneiron link`): the hosted-node link the owner
-    /// issued for it and its slip's holder, the control plane that runs it and its id there, the
-    /// machine its redeem enrolled, and an unlink still owed to the control plane. Key: ().
+    /// issued for it, the control plane that runs it and its id there, the machine its redeem
+    /// enrolled and the id of the slip it minted, and an unlink still owed to the control plane.
+    /// Key: ().
     LINKED_PEER: VaultMeta b"link:peer:v1" Named Engine
         // Restore class: the link stands as the live vault holds it, so no image brings back a
         // peer the owner unlinked or drops one he linked.

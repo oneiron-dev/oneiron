@@ -14,16 +14,21 @@
 //! here as an unlink revokes it, and the row dropped. One link act runs at a
 //! time, so a link's request and an unlink never act on each other's row.
 //!
+//! The peer's slip is for the owner's PERSON with no actor class (RULING
+//! LINK-PEER-AUTHORITY = B): its redeem passes the HTTP door, and no owner
+//! route takes it.
+//!
 //! An unlink (RULING L10-16-UNLINK = A) revokes the peer here at once: its
 //! machine is removed, which is terminal, its mesh pairing and grants are
-//! revoked, and so is every slip its holder holds. Then the control plane is
-//! asked to remove the peer, at which it erases the peer's live copy and its
-//! keys; backups age out on the disaster-recovery schedule of 90 days or
-//! less, and the unlink's receipt says so. A removal the control plane did
-//! not take keeps the row, and the next unlink asks again. So does a machine
-//! removal the roster refused (this install carrying no live profile to sign
-//! the owner's act, for one): the peer's slips are revoked all the same, and
-//! the control plane is still asked.
+//! revoked, and so are the slip its redeem minted, by its id, and every slip
+//! its machine holds. The owner's own slips share the peer's holder and stay.
+//! Then the control plane is asked to remove the peer, at which it erases the
+//! peer's live copy and its keys; backups age out on the disaster-recovery
+//! schedule of 90 days or less, and the unlink's receipt says so. A removal
+//! the control plane did not take keeps the row, and the next unlink asks
+//! again. So does a machine removal the roster refused (this install carrying
+//! no live profile to sign the owner's act, for one): the peer's slips are
+//! revoked all the same, and the control plane is still asked.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -45,7 +50,7 @@ pub(crate) const PEER_ERASURE: &str = "The control plane erases the hosted peer'
     its keys when it removes the peer. Backups age out on the disaster-recovery schedule of 90 \
     days or less.";
 
-/// The slip id no slip has (each is random), so a holder's revoke keeps
+/// The slip id no slip has (each is random), so the machine's revoke keeps
 /// none of its slips.
 const KEEP_NO_SLIP: [u8; 32] = [0; 32];
 
@@ -62,10 +67,11 @@ fn link_acts() -> MutexGuard<'static, ()> {
 #[derive(Debug, Serialize)]
 pub(crate) struct LinkedPeerView {
     cloud_origin: String,
-    holder: String,
     linked_at: u64,
     peer_id: Option<String>,
     machine: Option<String>,
+    /// The id of the slip the peer's redeem minted, hex.
+    slip: Option<String>,
     unlinked_at: Option<u64>,
 }
 
@@ -73,10 +79,12 @@ impl From<&LinkedPeer> for LinkedPeerView {
     fn from(peer: &LinkedPeer) -> Self {
         Self {
             cloud_origin: peer.cloud_origin.clone(),
-            holder: peer.holder.to_hex(),
             linked_at: peer.linked_at,
             peer_id: peer.peer_id.clone(),
             machine: peer.machine.map(|machine| machine.to_hex()),
+            slip: peer
+                .slip
+                .map(|slip| slip.iter().map(|byte| format!("{byte:02x}")).collect()),
             unlinked_at: peer.unlinked_at,
         }
     }
@@ -196,7 +204,8 @@ pub(crate) struct UnlinkReceipt {
     machine_removal: MachineRemoval,
     /// Whether the machine's mesh pairing and grants were revoked now.
     mesh_revoked: bool,
-    /// How many live slips of the peer's holder were revoked now.
+    /// How many of the peer's slips were revoked now: the one its redeem
+    /// minted and those its machine holds.
     slips_revoked: usize,
     removal: PeerRemoval,
     erasure: &'static str,
@@ -387,10 +396,12 @@ impl RevokedHere {
     }
 }
 
-/// Revokes the peer here at once. Every slip its holder or its machine
-/// holds goes first, its mesh pairing and grants among them (the machine
-/// holds those), so nothing after this, a refused removal included, leaves
-/// one live. Then its machine is removed and its mesh binding revoked.
+/// Revokes the peer here at once. Its slips go first: the one its redeem
+/// minted, by its id, as its holder is the owner's PERSON, whose other
+/// slips stay, and every slip its machine holds, its mesh pairing and
+/// grants among them, so nothing after this, a refused removal included,
+/// leaves one live. Then its machine is removed and its mesh binding
+/// revoked.
 fn revoke_here(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
@@ -401,9 +412,14 @@ fn revoke_here(
     let issuer = server.host_issuer();
     let mut slips_revoked = 0_usize;
     if let Some(issuer) = issuer {
-        for holder in std::iter::once(peer.holder).chain(peer.machine) {
+        if let Some(slip) = peer.slip
+            && vault.revoke_capability_slip_once(issuer, slip)?
+        {
+            slips_revoked = slips_revoked.saturating_add(1);
+        }
+        if let Some(machine) = peer.machine {
             let revoked =
-                vault.revoke_held_capability_slips(issuer, &holder.to_hex(), KEEP_NO_SLIP)?;
+                vault.revoke_held_capability_slips(issuer, &machine.to_hex(), KEEP_NO_SLIP)?;
             slips_revoked = slips_revoked.saturating_add(revoked.len());
         }
     }
