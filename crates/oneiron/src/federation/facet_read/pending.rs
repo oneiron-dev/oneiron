@@ -236,6 +236,29 @@ pub(crate) fn parked_facet_receipts(vault: &Vault) -> Result<Vec<ParkedFacetRece
         .collect())
 }
 
+/// Writes `count` retired-stamp receipts as a retire pass writes them: each
+/// expired, held under no grant, under a source, facet and lane of its own.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support", feature = "sync"))]
+pub(crate) fn plant_retired_facet_receipts(vault: &Vault, count: u32) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    let mut wtxn = vault.store.env.write_txn()?;
+    for n in 0..count {
+        let key = (
+            HexId(vault.new_entity_id()?),
+            HexId(vault.new_entity_id()?),
+            format!("lane-{n}"),
+        );
+        let receipt = receipt_value(Ended::Expired, now, now, None);
+        RECEIPT.put(&vault.store, &mut wtxn, &key, &receipt)?;
+    }
+    wtxn.commit()?;
+    Ok(())
+}
+
 /// [`receipt_value`] read back: why the stamp retired and the grant it was
 /// held under; `None` for a row that does not decode.
 #[cfg(feature = "sync")]

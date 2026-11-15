@@ -425,7 +425,9 @@ impl AttemptQueue<'_> {
         input: DialLandingReserve,
     ) -> Result<AttemptRecord> {
         let reserve_percent = input.reserve_percent.unwrap_or(LANDING_RESERVE_PERCENT);
-        validate_reserve_percent(reserve_percent)?;
+        let max_reserve_percent =
+            crate::attempt_queue::setting_keys::max_reserve_percent_in_txn(self.store, wtxn)?;
+        validate_reserve_percent(reserve_percent, max_reserve_percent)?;
 
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("dial_landing_reserve", "missing"));

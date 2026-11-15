@@ -891,6 +891,17 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// The owner's `code_run.result_search.max_context` on the vault this
+    /// run's storage is on.
+    pub(crate) fn result_search_max_context(&self) -> Result<usize> {
+        match self {
+            Self::Canonical(vault) => {
+                crate::code_run::setting_keys::result_search_max_context(vault)
+            }
+            Self::Session(binding) => binding.session.result_search_max_context(),
+        }
+    }
+
     /// Wall milliseconds from the owning vault's injected clock.
     pub(crate) fn now_recorded_ms(&self) -> u64 {
         match self {

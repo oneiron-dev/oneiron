@@ -993,6 +993,12 @@ impl OffRecordSession<'_> {
         self.vault.limit_watch()
     }
 
+    /// The owner's `code_run.result_search.max_context` on this session's
+    /// vault.
+    pub(crate) fn result_search_max_context(&self) -> crate::Result<usize> {
+        crate::code_run::setting_keys::result_search_max_context(self.vault)
+    }
+
     /// A share of the result-memory pool for one run in this session.
     pub(crate) fn result_share(&self) -> crate::store::result_memory::ResultShare {
         self.vault.result_share()

@@ -57,9 +57,6 @@ use oneiron::task_verb::sdk::{
 /// 10-17): the newest user text and the settled answer, one claim.
 const EXCHANGE_PREDICATE: &str = "integration.exchange";
 
-/// The most recalled items one call injects.
-const RECALL_LIMIT: usize = 8;
-
 /// What heads the injected block. The rows are the vault's, not the
 /// caller's, and they reach the model as data.
 const MEMORY_PREAMBLE: &str = "Memory recalled from the user's Oneiron vault for the next message. \
@@ -421,11 +418,22 @@ async fn recall(
         .as_ref()
         .and_then(crate::auth::CoreAuth::verified_slip)
         .cloned();
+    // The most recalled items one call injects: the owner's
+    // `proxy.openai.recall_limit` (8 unless set).
+    let limit =
+        oneiron::connector_key::openai_proxy_recall_limit(&server.vault).map_err(|failed| {
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "api_error",
+                "recall_failed",
+                failed.to_string(),
+            )
+        })?;
     let input = RecallRequest {
         query,
         effort: Some(RecallEffort::Call),
         scope: None,
-        limit: Some(RECALL_LIMIT),
+        limit: Some(limit),
         format: Some("md".to_owned()),
         token_budget: None,
         reader_agent_ref: None,

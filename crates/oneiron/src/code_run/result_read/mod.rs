@@ -109,11 +109,14 @@ pub(crate) trait ResultBody {
     }
 }
 
-/// What one read may spend: the bytes of its reply, and the `[limits]`
-/// rows of the vault its body is in.
+/// What one read may spend: the bytes of its reply, the `[limits]` rows of
+/// the vault its body is in, and that vault owner's search context bound.
 struct ReadBounds<'w> {
     reply_bytes: usize,
     watch: &'w LimitWatch,
+    /// Bytes of context a search shows at most on each side of a match
+    /// (`code_run.result_search.max_context`).
+    search_max_context: usize,
 }
 
 impl ReadBounds<'_> {

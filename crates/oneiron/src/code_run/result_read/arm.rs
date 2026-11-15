@@ -116,16 +116,25 @@ impl ResultRead {
     }
 
     /// One facet of the result, as a run's read reads it, from the arm's
-    /// store under the `[limits]` rows `watch` froze for the arm. A
-    /// selection past one reply streams into `spill`.
+    /// store under the `[limits]` rows `watch` and the search context bound
+    /// `search_max_context` froze for the arm. A selection past one reply
+    /// streams into `spill`.
     pub(crate) fn arm_read(
         &self,
         store: &ShadowBodyStore,
         watch: &LimitWatch,
+        search_max_context: usize,
         facet: ResultFacet,
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<Reply> {
-        self.read_of(&self.arm_body(store), watch, facet, input, spill)
+        self.read_of(
+            &self.arm_body(store),
+            watch,
+            search_max_context,
+            facet,
+            input,
+            spill,
+        )
     }
 }

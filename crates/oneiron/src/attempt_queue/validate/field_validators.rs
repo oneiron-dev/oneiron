@@ -1,6 +1,6 @@
 //! Length caps, error literals, and per-field validators plus lease/manifest mutators.
 
-use crate::attempt_queue::cancel::{CancelStanding, MAX_LANDING_RESERVE_PERCENT};
+use crate::attempt_queue::cancel::CancelStanding;
 use crate::attempt_queue::lifecycle::{RunLifecycle, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptRecord, CleanupAttemptLeases};
@@ -125,8 +125,13 @@ pub(in crate::attempt_queue) fn validate_cancel_standing(standing: CancelStandin
     }
 }
 
-pub(in crate::attempt_queue) fn validate_reserve_percent(reserve_percent: u64) -> Result<()> {
-    if reserve_percent == 0 || reserve_percent > MAX_LANDING_RESERVE_PERCENT {
+/// Refuses a landing reserve of 0 or past `max_reserve_percent`, the owner's
+/// `attempt_queue.landing.max_reserve_percent`.
+pub(in crate::attempt_queue) fn validate_reserve_percent(
+    reserve_percent: u64,
+    max_reserve_percent: u64,
+) -> Result<()> {
+    if reserve_percent == 0 || reserve_percent > max_reserve_percent {
         return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_RESERVE_PERCENT_RANGE,
         )));

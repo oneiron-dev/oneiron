@@ -76,6 +76,8 @@ pub mod live_window_import;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
+#[cfg(feature = "sync")]
+pub mod maintenance_facet_receipts;
 pub mod membership;
 pub mod mesh_machine_endpoint_index;
 pub mod meso_extraction_width;
