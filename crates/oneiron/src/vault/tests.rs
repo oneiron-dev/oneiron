@@ -1069,14 +1069,18 @@ fn privacy_pairing_matrix_admits_exactly_the_two_supported_deployments() {
     assert!(hosted.host_readable());
     assert_eq!(hosted.honest_label(), "host-readable");
 
-    // Row 2: hosted + owner-held local key => rejected.
-    let hosted_without_host_key = privacy_config(
+    // Row 2: hosted + owner-held local key => valid, still host-readable: the
+    // hosting process holds the owner's key to decrypt (canon cross-arch-0019,
+    // vault:20: self-held keys run on any placement, hosted included).
+    let hosted_with_owner_key = privacy_config(
         HostingPrivacyPosture::Hosted,
         VaultDataKeyCustody::OwnerHeldLocal,
     );
-    assert_matches!(
-        hosted_without_host_key.validate(),
-        Err(Error::InvalidConfig(_))
+    assert!(hosted_with_owner_key.validate().is_ok());
+    assert!(hosted_with_owner_key.host_readable());
+    assert_eq!(
+        hosted_with_owner_key.honest_label(),
+        "host-readable-owner-supplied-key"
     );
 
     // Row 3: self-host/local + owner-held local key => valid, owner-held.
@@ -1088,15 +1092,15 @@ fn privacy_pairing_matrix_admits_exactly_the_two_supported_deployments() {
     assert!(!self_host.host_readable());
     assert_eq!(self_host.honest_label(), "owner-held-key");
 
-    // Row 4: self-host/local + host-managed KMS reference => rejected.
-    let self_host_with_host_key = privacy_config(
+    // Row 4: self-host/local + KMS reference => valid, not host-readable: no
+    // hosting operator is in the loop.
+    let self_host_with_kms_key = privacy_config(
         HostingPrivacyPosture::SelfHostLocal,
         hosted_custody("kms://example/prod-key-1"),
     );
-    assert_matches!(
-        self_host_with_host_key.validate(),
-        Err(Error::InvalidConfig(_))
-    );
+    assert!(self_host_with_kms_key.validate().is_ok());
+    assert!(!self_host_with_kms_key.host_readable());
+    assert_eq!(self_host_with_kms_key.honest_label(), "owner-kms-key");
 }
 
 #[test]
@@ -1219,8 +1223,10 @@ fn open_existing_also_gates_on_the_privacy_pairing() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     Vault::open(tmp.path(), test_config())?;
 
+    // A blind relay holds no key, so a KMS reference on a relay is refused
+    // before any store opens, on the existing-vault door too.
     let config = config_with_privacy(privacy_config(
-        HostingPrivacyPosture::SelfHostLocal,
+        HostingPrivacyPosture::Relay,
         hosted_custody("kms://example/prod-key-1"),
     ));
     assert!(matches!(
