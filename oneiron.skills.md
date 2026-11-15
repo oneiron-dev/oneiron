@@ -638,6 +638,7 @@ Response fields:
 - `formats`: `json`, `yaml`, `toon`, `markdown`, `plaintext`.
 - `rate_limit`: server-side rate-limit metadata for HTTP and websocket surfaces.
 - `artifact_port`: present when an artifact-only listener serves `/a/`; open artifacts at this server's scheme and host with this port.
+- `artifact_local_host`: present when the serve names its vault (`--artifact-vault-name`) and an artifact listener serves: `<name>.localhost`. On the artifact port the vault's artifacts answer at `http://<name>.localhost:<artifact_port>/<artifact>/` and each app at `http://<app>--<name>.localhost:<artifact_port>/`, the hosted shape on `*.localhost`; `localhost:<artifact_port>/a/<artifact>/` still answers.
 
 Example response:
 

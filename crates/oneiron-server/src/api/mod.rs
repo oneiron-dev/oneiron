@@ -302,9 +302,10 @@ fn artifact_routes() -> Router<Arc<SyncServer>> {
 
 /// The artifact-only listener's router: this vault's `/a/`, and under each
 /// configured artifact domain, this vault at its own subdomain
-/// (`<vault>.<domain>/<artifact>/…`). A managed vault answers on its internal
-/// authority instead (`<vault_id>.artifact.invalid/<artifact>/…`, FIX 6716)
-/// and reads no artifact domain. No API route is reachable on it.
+/// (`<vault>.<domain>/<artifact>/…`). A vault served by name answers on
+/// `*.localhost` in the same shape (APP-HOST = A). A managed vault answers on
+/// its internal authority instead (`<vault_id>.artifact.invalid/<artifact>/…`,
+/// FIX 6716) and reads no artifact domain. No API route is reachable on it.
 pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
     let local = vault_artifact_app(server.clone());
     let hosts = if let Some(vault_id) = server.config.artifact_internal_vault_id.as_deref() {
@@ -312,7 +313,9 @@ pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
     } else {
         let mut hosts = ArtifactHosts::new(&server.config.artifact_domains);
         if let Some(name) = server.config.artifact_vault_name.as_deref() {
-            hosts = hosts.with_vault_app(name, local.clone());
+            hosts = hosts
+                .with_vault_app(name, local.clone())
+                .with_local_domain();
         }
         hosts
     };
@@ -393,6 +396,10 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         runtime: runtime_health_status_for_config(&server.config),
         ai: server.ai.status().health(),
         artifact_port: server.artifact_port(),
+        artifact_local_host: self::artifacts::local_vault_host(
+            &server.config,
+            server.artifact_port(),
+        ),
     })
 }
 
@@ -429,6 +436,16 @@ struct HealthResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = 49152)]
     artifact_port: Option<u16>,
+    /// This vault's host on the artifact port when the serve names its vault
+    /// (`--artifact-vault-name`): `<name>.localhost`, the hosted shape on
+    /// `*.localhost` (APP-HOST = A). Its artifacts answer at
+    /// `http://<name>.localhost:<artifact_port>/<artifact>/` and each app at
+    /// `http://<app>--<name>.localhost:<artifact_port>/`. Absent for a serve
+    /// that names no vault, a managed vault, and where no artifact listener
+    /// serves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "vault.localhost")]
+    artifact_local_host: Option<String>,
 }
 
 // ─── Usage Ledger ────────────────────────────────────────────────────────────

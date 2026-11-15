@@ -14,6 +14,13 @@
 //! here answers exactly as a forbidden artifact does, and so does every
 //! refusal from a known vault: the one artifact 404. Any other host keeps
 //! local `/a/`.
+//!
+//! A plain serve that names its vault (`--artifact-vault-name`) also answers
+//! in the same shape on `*.localhost` (APP-HOST = A, CROSS-ARCH-0024 #runner:
+//! "Local runs use the same shape on `*.localhost`"): `<name>.localhost` and
+//! `<app>--<name>.localhost` on the artifact port, read as under a configured
+//! domain. The bare `localhost` keeps local `/a/`. Access is the listener's,
+//! as on every other host.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -26,11 +33,12 @@ use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use oneiron_vault_contract::artifact_origin::{
     ArtifactHost, ArtifactHostRead, ArtifactInternalHost, ArtifactInternalRead,
-    normalize_artifact_domain, valid_app_label,
+    LOCAL_ARTIFACT_DOMAIN, is_bare_local_host, normalize_artifact_domain, valid_app_label,
 };
 use oneiron_vault_contract::valid_vault_name;
 use tower::ServiceExt;
 
+use crate::config::SyncServerConfig;
 use crate::error::{ApiError, EnvelopedApiError};
 
 /// Marks a request this router rewrote from `/<artifact>/…` (or an app
@@ -116,6 +124,20 @@ impl ArtifactHosts {
         self
     }
 
+    /// Reads [`LOCAL_ARTIFACT_DOMAIN`] as one more artifact domain, once a
+    /// vault is served here by name: `<name>.localhost` and
+    /// `<app>--<name>.localhost`. With no vault served, or on the internal
+    /// authority, it adds nothing, so every `*.localhost` host stays local.
+    pub(crate) fn with_local_domain(mut self) -> Self {
+        if let HostNames::Domains(domains) = &mut self.names
+            && !self.vaults.is_empty()
+            && !domains.iter().any(|domain| domain == LOCAL_ARTIFACT_DOMAIN)
+        {
+            domains.push(LOCAL_ARTIFACT_DOMAIN.to_owned());
+        }
+        self
+    }
+
     /// The listener's router: `local` for every host outside the configured
     /// domains (or the internal authority), and each vault at its host
     /// inside them. With no domain and no internal authority, `local` alone.
@@ -138,6 +160,8 @@ impl ArtifactHosts {
         let (vault, artifact) = match &self.names {
             HostNames::Domains(domains) => match ArtifactHost::read(host, domains) {
                 ArtifactHostRead::Outside => return HostRoute::Local,
+                // `localhost:<port>/a/<artifact>/` is local serving's own.
+                ArtifactHostRead::Unnamed if is_bare_local_host(host) => return HostRoute::Local,
                 ArtifactHostRead::Unnamed => return HostRoute::Unknown,
                 ArtifactHostRead::Named(named) => (named.vault, named.app),
             },
@@ -183,6 +207,22 @@ impl ArtifactHosts {
         }
         response
     }
+}
+
+/// The vault's own host on [`LOCAL_ARTIFACT_DOMAIN`], `<name>.localhost`,
+/// where a plain serve with an artifact listener answers by name; its apps
+/// answer at `<app>--<name>.localhost`. `None` for a managed vault, a serve
+/// that names no vault or names it with no DNS label, and a serve with no
+/// artifact listener.
+pub(crate) fn local_vault_host(
+    config: &SyncServerConfig,
+    artifact_port: Option<u16>,
+) -> Option<String> {
+    if artifact_port.is_none() || config.artifact_internal_vault_id.is_some() {
+        return None;
+    }
+    let name = config.artifact_vault_name.as_deref()?.to_ascii_lowercase();
+    ArtifactHost::vault(name).name(LOCAL_ARTIFACT_DOMAIN)
 }
 
 async fn answer(app: Router, request: Request) -> Response {

@@ -14,6 +14,7 @@ use std::time::Duration;
 use oneiron::artifact_hosting::preview::{
     PreviewEndpoint, PreviewSessionManifest, PreviewStage, PrivatePreview,
 };
+use oneiron_vault_contract::artifact_origin;
 use oneiron_vault_contract::host::{PreviewHostFuture, PreviewPortHost};
 use oneiron_vault_contract::{TokenHex, now_ts};
 use rand_core::{OsRng, RngCore};
@@ -89,10 +90,14 @@ impl PreviewPortHost for LocalPreviewHost {
             OsRng.fill_bytes(&mut origin_id);
             // A distinct .localhost host also separates cookies, which ports
             // alone do not. Browsers resolve this reserved suffix to loopback.
-            let authority = format!(
-                "preview-{}.localhost:{port}",
-                oneiron::artifact_hex(&origin_id)
-            );
+            // The host has the hosted preview's shape, `p-<lease>.localhost`
+            // (APP-HOST = A): the lease's label is this random origin id.
+            let host = artifact_origin::PreviewOrigin {
+                lease: oneiron::artifact_hex(&origin_id),
+            }
+            .name(artifact_origin::LOCAL_ARTIFACT_DOMAIN)
+            .ok_or_else(|| anyhow::anyhow!("preview origin label refused"))?;
+            let authority = format!("{host}:{port}");
             let endpoint = PreviewEndpoint {
                 session_ref: manifest.session_ref,
                 lease_ref: manifest.lease_ref,
