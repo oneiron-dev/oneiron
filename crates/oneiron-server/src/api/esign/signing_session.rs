@@ -311,33 +311,23 @@ fn ceremony_id(link: &[u8; 32]) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(b"oneiron-sign-ceremony\0");
     hasher.update(link);
-    hex(&hasher.finalize()[..16])
+    oneiron_hex::encode(&hasher.finalize()[..16])
 }
 
 /// A ceremony id: 32 lowercase hex characters.
 fn is_ceremony(value: &str) -> bool {
-    value.len() == 32 && is_lower_hex(value)
+    oneiron_hex::is_lower_hex(value, Some(32))
 }
 
 /// An exchange or session id: 64 lowercase hex characters, 256 random bits.
 fn is_token(value: &str) -> bool {
-    value.len() == 64 && is_lower_hex(value)
-}
-
-fn is_lower_hex(value: &str) -> bool {
-    value
-        .bytes()
-        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    oneiron_hex::is_lower_hex(value, Some(64))
 }
 
 fn random_hex() -> String {
     let mut secret = [0u8; 32];
     OsRng.fill_bytes(&mut secret);
-    hex(&secret)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(&secret)
 }
 
 fn digest(value: &[u8]) -> [u8; 32] {
