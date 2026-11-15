@@ -30,8 +30,10 @@ use oneiron::consent::{
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use oneiron_contracts::fingerprint::{LegacyHash, TagMode, purposes};
 
-// Not formatted, so each copy stays line for line equal to main's.
+// Not formatted, so each copy stays line for line equal to main's. main's copied lines
+// keep their `pub`, which this private module cannot reach.
 #[rustfmt::skip]
+#[allow(unreachable_pub)]
 mod base {
     use oneiron::consent::{
         BoundEnvelope, BoundSubject, CatastropheClass, ComposedEffect, EffectDigest, EffectFacts,
