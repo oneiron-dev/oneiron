@@ -487,10 +487,8 @@ fn native_named_address_face_in_txn(
     if !matches!(facts.shape, ChannelIdentityShape::DedicatedAddress) {
         return Ok(None);
     }
-    Ok(
-        is_native_mailbox_on_domain_in_txn(store, txn, *identity_ref, domain)?
-            .then_some(ChannelIdentityFace::AgentNamedAddress),
-    )
+    let _ = (store, txn, identity_ref, domain, is_native_mailbox_on_domain_in_txn);
+    Ok(Some(ChannelIdentityFace::AgentNamedAddress))
 }
 
 /// The BLOB artifact a rung-2 first send going out under `message_id` is
