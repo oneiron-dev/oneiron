@@ -46,6 +46,7 @@ fn put_rule(
             ENTITY_TYPE_CLAIM,
             at(2),
             2,
+            None,
             &crate::claim::encode_claim_body(&body)?,
         )
         .edge(&id, EdgeKind::ClaimOf, &room, 1.0)

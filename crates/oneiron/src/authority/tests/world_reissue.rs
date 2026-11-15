@@ -12,8 +12,6 @@ use super::*;
 use crate::Vault;
 use crate::world_keys::{PolicyRevision, RecoveryRootSeed, Withheld};
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
-
 /// Every authority entry `from` holds that `to` lacks, landed on `to`.
 pub(super) fn sync(from: &Vault, to: &Vault) {
     let held: BTreeSet<_> = stored_entries(to)
@@ -81,12 +79,7 @@ pub(super) fn issue(issuer: &Fresh, carry: &[EntityId]) -> Issued {
     };
     issuer
         .vault
-        .activate_owner_root(
-            &issuer.owner,
-            HERE,
-            prepared,
-            &carry.iter().copied().collect(),
-        )
+        .activate_owner_root(&issuer.owner, prepared, &carry.iter().copied().collect())
         .unwrap();
     issued
 }
@@ -96,19 +89,12 @@ pub(super) fn issue(issuer: &Fresh, carry: &[EntityId]) -> Issued {
 pub(super) fn admit(by: &Fresh, root: &Issued, install: &Fresh) {
     let request = own_request(&install.vault);
     by.vault
-        .anchor_machine(
-            &by.owner,
-            HERE,
-            &root.seed,
-            &request,
-            Some(request.code()),
-            None,
-        )
+        .anchor_machine(&by.owner, &root.seed, &request, Some(request.code()), None)
         .unwrap();
     sync(&by.vault, &install.vault);
     install
         .vault
-        .pin_owner_root(&install.owner, HERE, root.root)
+        .pin_owner_root(&install.owner, root.root)
         .unwrap();
 }
 
@@ -175,11 +161,11 @@ fn a_re_issue_without_carry_never_widens() {
     }
     second_pin
         .vault
-        .pin_owner_root(&second_pin.owner, HERE, second.root)
+        .pin_owner_root(&second_pin.owner, second.root)
         .unwrap();
     third_pin
         .vault
-        .pin_owner_root(&third_pin.owner, HERE, third)
+        .pin_owner_root(&third_pin.owner, third)
         .unwrap();
     for install in [&issuer, &second_pin, &third_pin, &unpinned] {
         assert_eq!(
@@ -253,7 +239,7 @@ fn re_assertion_keeps_a_widening() {
     sync(&issuer.vault, &a.vault);
     assert_eq!(read_on(&a, world), EffectiveRead::MyMachines);
 
-    let report = a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+    let report = a.vault.pin_owner_root(&a.owner, second.root).unwrap();
     assert_eq!(report.narrowed.len(), 1);
     let narrowed = &report.narrowed[0];
     assert_eq!(narrowed.world, world);
@@ -265,7 +251,7 @@ fn re_assertion_keeps_a_widening() {
     a.vault
         .reassert_world_privacy(
             &a.owner,
-            HERE,
+            ActSurface::ThisInstall,
             world,
             settings(ReadLocation::MyMachines),
             revision(&a.vault, world),
@@ -301,7 +287,7 @@ fn the_narrowed_report_lists_every_world_at_scale() {
     let second = issue(&issuer, &[a.machine()]);
     sync(&issuer.vault, &a.vault);
 
-    let report = a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+    let report = a.vault.pin_owner_root(&a.owner, second.root).unwrap();
     let narrowed: BTreeSet<_> = report
         .narrowed
         .iter()
@@ -312,7 +298,7 @@ fn the_narrowed_report_lists_every_world_at_scale() {
         a.vault
             .reassert_world_privacy(
                 &a.owner,
-                HERE,
+                ActSurface::ThisInstall,
                 *world,
                 settings(ReadLocation::MyMachines),
                 revision(&a.vault, *world),
@@ -352,11 +338,14 @@ fn a_compromised_old_roots_late_widening_is_never_promoted() {
         machine: h.machine,
         owner: a.owner.actor(),
         machine_key: h.machine_key,
+        device_class: h.device_class,
         encryption_key: h.encryption_key.clone(),
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: h.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     });
     let fold = a.vault.authority_fold().unwrap();
     let entry = anchor_signed_entry(&fold, &first.seed.anchor(), mark, 2).unwrap();
@@ -380,7 +369,7 @@ fn a_compromised_old_roots_late_widening_is_never_promoted() {
             .count()
     };
     let before = edits(&a.vault);
-    let report = a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+    let report = a.vault.pin_owner_root(&a.owner, second.root).unwrap();
     assert_eq!(edits(&a.vault), before);
     assert_eq!(read_on(&a, world), EffectiveRead::MyMachines);
     let narrowed = report
@@ -413,7 +402,7 @@ fn a_left_out_machine_anchors_itself_back_and_keeps_its_key() {
         let second = issue(&issuer, &[]);
         sync(&issuer.vault, &a.vault);
         if repin_first {
-            let report = a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+            let report = a.vault.pin_owner_root(&a.owner, second.root).unwrap();
             assert_eq!(report.withheld, vec![(key, Withheld::NotMine)]);
             assert!(a.vault.world_key(world).is_err());
             a = a.reopen();
@@ -421,7 +410,7 @@ fn a_left_out_machine_anchors_itself_back_and_keeps_its_key() {
         let own = own_request(&a.vault);
         let anchored = a
             .vault
-            .anchor_machine(&a.owner, HERE, &second.seed, &own, None, None)
+            .anchor_machine(&a.owner, &second.seed, &own, None, None)
             .unwrap();
         assert_eq!(anchored.repin.unwrap().rewrapped, vec![key]);
         assert_eq!(pinned(&a.vault), Some(second.root));
@@ -467,13 +456,13 @@ fn a_left_out_recipient_anchors_itself_back_from_records_another_signed() {
     let other = fresh_install(&host);
     let second = issue(&other, &[]);
     sync(&other.vault, &b.vault);
-    let report = b.vault.pin_owner_root(&b.owner, HERE, second.root).unwrap();
+    let report = b.vault.pin_owner_root(&b.owner, second.root).unwrap();
     assert_eq!(report.withheld, vec![(key, Withheld::NotMine)]);
     let b = b.reopen();
     let own = own_request(&b.vault);
     let anchored = b
         .vault
-        .anchor_machine(&b.owner, HERE, &second.seed, &own, None, None)
+        .anchor_machine(&b.owner, &second.seed, &own, None, None)
         .unwrap();
     assert_eq!(anchored.repin.unwrap().rewrapped, vec![key]);
     let b = b.reopen();
@@ -518,13 +507,13 @@ fn a_recipients_key_survives_an_explicit_re_assertion() {
 
     let second = issue(&issuer, &[a.machine(), b.machine()]);
     sync(&issuer.vault, &a.vault);
-    let report = a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+    let report = a.vault.pin_owner_root(&a.owner, second.root).unwrap();
     assert_eq!(report.withheld, vec![(key, Withheld::NotReadable)]);
     let a = a.reopen();
     a.vault
         .reassert_world_privacy(
             &a.owner,
-            HERE,
+            ActSurface::ThisInstall,
             world,
             settings(ReadLocation::MyMachines),
             revision(&a.vault, world),
@@ -566,7 +555,7 @@ fn a_restore_with_no_earlier_admitter_reports_the_local_settings() {
 
     let restore = b
         .vault
-        .restore_world_keys(&b.owner, HERE, &first.seed, None)
+        .restore_world_keys(&b.owner, &first.seed, None)
         .unwrap();
     let narrowed = restore
         .narrowed

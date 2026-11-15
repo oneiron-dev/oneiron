@@ -7,6 +7,7 @@ mod catalog_views;
 mod charter_ops;
 mod manifest_ops;
 mod pack_routes;
+mod protocol_narrow_ask;
 mod proxy;
 mod qualification;
 mod registration;

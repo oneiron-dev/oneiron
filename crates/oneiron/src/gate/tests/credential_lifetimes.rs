@@ -147,6 +147,7 @@ fn trusted_lifetime_ceiling_meets_across_packs_and_ignores_untrusted_widening() 
                 crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                 crate::TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &row,
             )
             .commit()?;

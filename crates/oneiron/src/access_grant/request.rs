@@ -431,8 +431,6 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-ACCESS-GRANT-REQUEST-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,6 +458,7 @@ mod tests {
                 revoked_at: None,
                 expires_at: None,
                 authority_scope: crate::federation::scope_codec::read_preset(),
+                companion_bounds: None,
             };
             assert_eq!(
                 vault.request_access(id, grant.clone())?.status,
@@ -517,6 +516,7 @@ mod tests {
             revoked_at: None,
             expires_at: None,
             authority_scope: crate::federation::scope_codec::read_preset(),
+            companion_bounds: None,
         };
         vault.request_access(id, grant.clone())?;
         let proof = vault.authenticate_owner(

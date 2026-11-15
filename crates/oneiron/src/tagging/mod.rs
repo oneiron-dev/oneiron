@@ -106,7 +106,5 @@ pub(crate) use vector::ranked_for_turn_in_txn;
 #[cfg(test)]
 mod save_tests;
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-TAGGING-TESTS]: the lib test target's type check fails here (2 errors: E0639 x1, E0609 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

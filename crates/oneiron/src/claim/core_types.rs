@@ -215,8 +215,6 @@ pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: b
     validate_claim_body_and_decode(data, allow_reserved_predicate).map(|_| ())
 }
 
-// FIX [LIBTEST-QUARANTINE-CLAIM-CORE-TYPES-IMPORT-VALIDATION-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod import_validation_tests {
     use super::*;
@@ -250,14 +248,14 @@ mod import_validation_tests {
                     return vault.with_write_txn(|txn| {
                         vault
                             .batch_in()
-                            .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, &data)
+                            .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, None, &data)
                             .apply(txn)
                     });
                 }
                 let _ = transactional;
                 vault
                     .batch()
-                    .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, &data)
+                    .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, None, &data)
                     .commit()
             };
             let mut body = ClaimBody::new(

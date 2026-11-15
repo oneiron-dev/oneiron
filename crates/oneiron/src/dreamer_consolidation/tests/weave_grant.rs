@@ -43,6 +43,7 @@ fn pass(
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut driver = DreamerWakeDriver::new(vault, "wake", WakePassDeadline::new(180_000));
     ready(driver.run_wake_pass(

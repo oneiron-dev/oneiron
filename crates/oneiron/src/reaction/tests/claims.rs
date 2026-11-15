@@ -52,14 +52,15 @@ fn reaction_in_a_thread_inherits_its_room() {
         )
         .unwrap()
         .head;
+    let writer = room.vault.memory(room.alice, EdgeActorClass::Human);
     let trunk = room
         .vault
-        .append_dag_record(&record(head, true))
+        .append_dag_record(&writer, &record(head, true))
         .unwrap()
         .id;
     let reply = room
         .vault
-        .reply_in_thread(trunk, &record(Some(trunk), false))
+        .reply_in_thread(&writer, trunk, &record(Some(trunk), false))
         .unwrap()
         .id;
     let put = room

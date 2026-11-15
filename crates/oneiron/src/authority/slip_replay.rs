@@ -521,7 +521,5 @@ pub(super) fn nonce_admitted_in_txn(
         || vault.spent_nonces.admitted(&spent))
 }
 
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-SLIP-REPLAY-TESTS]: the lib test target's type check fails here (4 errors: E0639 x3, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

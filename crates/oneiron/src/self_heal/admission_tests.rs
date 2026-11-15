@@ -36,6 +36,7 @@ fn local_put(vault: &Vault, id: EntityId, occurred: TimeRange, data: Vec<u8>) ->
                 entity_type: ENTITY_TYPE_DIAGNOSTIC,
                 occurred,
                 learned_at: 1_001,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -83,7 +84,7 @@ fn diagnostic_admission_binds_address_and_indexed_validity() -> Result<()> {
             assert_eq!(
                 vault
                     .batch()
-                    .put_replicated(&id, ENTITY_TYPE_DIAGNOSTIC, wrong, 1_001, &body)
+                    .put_replicated(&id, ENTITY_TYPE_DIAGNOSTIC, wrong, 1_001, None, &body)
                     .commit()
                     .unwrap_err()
                     .kind(),
@@ -105,6 +106,7 @@ fn diagnostic_admission_binds_address_and_indexed_validity() -> Result<()> {
                     ENTITY_TYPE_DIAGNOSTIC,
                     occurred,
                     1_001,
+                    None,
                     &reordered,
                 )
                 .commit()
@@ -128,7 +130,7 @@ fn diagnostic_admission_binds_address_and_indexed_validity() -> Result<()> {
         drop(txn);
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_DIAGNOSTIC, occurred, 1_001, &body)
+            .put_replicated(&id, ENTITY_TYPE_DIAGNOSTIC, occurred, 1_001, None, &body)
             .commit()?;
         assert_eq!(stored_body(&vault, &id)?, body);
     }
@@ -183,7 +185,7 @@ fn diagnostic_local_and_replicated_admission_bind_identity_and_body() -> Result<
         assert_eq!(
             vault
                 .batch()
-                .put_replicated(&alias, ENTITY_TYPE_DIAGNOSTIC, occurred, 1_000, &body)
+                .put_replicated(&alias, ENTITY_TYPE_DIAGNOSTIC, occurred, 1_000, None, &body)
                 .commit()
                 .unwrap_err()
                 .kind(),
@@ -204,6 +206,7 @@ fn diagnostic_local_and_replicated_admission_bind_identity_and_body() -> Result<
                 ENTITY_TYPE_DIAGNOSTIC,
                 occurred,
                 1_000,
+                None,
                 &other_body,
             )
             .commit()?;

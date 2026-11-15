@@ -18,7 +18,6 @@ use oneiron::world_keys::{
 use oneiron_vault_contract::backup_handoff::write_private_file;
 use serde::Serialize;
 
-use super::super::stamp::now_unix_ms;
 #[cfg(unix)]
 use super::super::stamp::{file_stamp, parse_file_stamp};
 use super::kind_counts;
@@ -27,6 +26,7 @@ use super::rehearse::Owned;
 use super::rehearse::{SharedPathWarning, shared_path_warning};
 #[cfg(unix)]
 use super::sync_dir;
+use oneiron_base::unix_millis_now;
 
 /// What a real restore did.
 #[derive(Clone, Debug, Serialize)]
@@ -226,7 +226,7 @@ fn restore_over_with(
             claim_staged_archive(vault_path, &name, &stamp_text, &staging, staging_unlock)
         })
         .collect();
-    let stamp = file_stamp(now_unix_ms());
+    let stamp = file_stamp(unix_millis_now());
     let previous = vault_path.with_file_name(format!("{name}.pre-restore-{stamp}"));
     anyhow::ensure!(
         !previous.exists(),
@@ -874,7 +874,7 @@ pub(crate) fn restore_fresh(
         key,
         &path,
         config,
-        now_unix_ms() / 1_000,
+        unix_millis_now() / 1_000,
         custody,
         finish,
     )

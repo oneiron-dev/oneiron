@@ -29,7 +29,7 @@ fn queued_turns(vault: &Vault, scope: DreamerConsolidationScope) -> BTreeSet<Ent
         .flat_map(|payload| {
             decode_partition_payload(&payload.input)
                 .expect("partition")
-                .1
+                .turn_ids()
         })
         .collect()
 }
@@ -83,8 +83,10 @@ fn assert_drift_is_replanned(session_close: bool) {
         vault
             .set_prefilter_config(length_policy(before))
             .expect("policy");
-        let session = minted(vault.mint_session(1_000).expect("mint"));
-        let wake = meso_wake(&vault);
+        let actor = EntityId::now();
+        let key = vault.local_session_key(actor).expect("session key");
+        let session = minted(vault.mint_session(key, 1_000).expect("mint"));
+        let wake = meso_wake(&vault, session);
         assert_eq!(planned_turn_ids(&wake.plans).contains(&target), was_kept);
         let watermark = read_watermark(&vault, MESO).expect("watermark");
         let dirty = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
@@ -94,7 +96,10 @@ fn assert_drift_is_replanned(session_close: bool) {
         if let Some(text) = replacement {
             replace_body(&vault, &target, rmpv::Value::from(text));
         }
-        assert_eq!(meso_wake(&vault).planned_turn_ids, wake.planned_turn_ids);
+        assert_eq!(
+            meso_wake(&vault, session).planned_turn_ids,
+            wake.planned_turn_ids
+        );
         if session_close {
             vault
                 .end_session_with_wake(&session, SessionClosePredicate::Explicit, 2_000, &wake)
@@ -168,8 +173,10 @@ fn corrupt_planned_turns_abort_public_enqueue_and_fence_session_progress() {
         vault
             .set_prefilter_config(length_policy(0.5))
             .expect("lossy");
-        let session = minted(vault.mint_session(1_000).expect("mint"));
-        let wake = meso_wake(&vault);
+        let actor = EntityId::now();
+        let key = vault.local_session_key(actor).expect("session key");
+        let session = minted(vault.mint_session(key, 1_000).expect("mint"));
+        let wake = meso_wake(&vault, session);
         let watermark = read_watermark(&vault, MESO).expect("watermark");
         let turns = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
         vault
@@ -241,8 +248,10 @@ fn receipt_failure_rolls_back_session_close_attempts_and_watermark() {
     vault
         .set_prefilter_config(length_policy(0.0))
         .expect("rescue");
-    let session = minted(vault.mint_session(1_000).expect("mint"));
-    let wake = meso_wake(&vault);
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
+    let session = minted(vault.mint_session(key, 1_000).expect("mint"));
+    let wake = meso_wake(&vault, session);
     assert!(!wake.plans.is_empty());
     assert!(matches!(
         vault.end_session_with_wake(&session, SessionClosePredicate::Explicit, 2_000, &wake),
@@ -250,7 +259,7 @@ fn receipt_failure_rolls_back_session_close_attempts_and_watermark() {
     ));
     assert_eq!(
         vault
-            .open_session()
+            .open_session(key)
             .expect("open session")
             .map(|open| open.session),
         Some(session)
@@ -281,8 +290,10 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     assert_eq!(before.len(), 3, "two skip receipts and their round");
     let image = dir.path().join("checkpoint");
     vault.snapshot_checkpoint(&image, 110).expect("checkpoint");
+    let key = vault.checkpoint_key().expect("checkpoint key");
     let (restored, _) = Vault::restore_checkpoint(
         &image,
+        &key,
         &copies.path().join("restored"),
         VaultConfig::device(),
         RestoreReason::Restore,
