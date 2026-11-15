@@ -16,8 +16,9 @@ use crate::{EdgeActorClass, EntityId, Vault};
 use super::retrieval::invalid;
 use super::{
     AsrEvent, AsrEventKind, BrainEvent, BrainRequest, ControlEvent, GenerationEpoch, OutputStop,
-    PartialEnricher, PartialRetrieval, PcmFrame, SafeguardRequest, SentenceEnforcement,
-    SentenceWork, SpeculativeRetrievalBridge, StopReason, ToolEvent, UtteranceHandle, backchannel,
+    PartialEnricher, PartialRetrieval, PcmFrame, RetrievalContext, SafeguardRequest,
+    SentenceEnforcement, SentenceWork, SpeculativeRetrievalBridge, StopReason, ToolEvent,
+    UtteranceHandle, backchannel,
 };
 
 #[path = "preparation.rs"]
@@ -363,6 +364,64 @@ impl VoiceCascadeSession {
             }
             AsrEventKind::Closed => Ok(AsrUpdate::Closed(self.end())),
         }
+    }
+
+    /// Opens a generation the host speaks itself, with no person's final
+    /// before it: `line`, said whole, as a call's opening announcement
+    /// (UNBUILT-02 PR 3B). It holds the floor, passes speech, safeguards,
+    /// playout and the heard ledger, and stops on barge-in like any answer;
+    /// it reads no memory and calls no tool. Refused while a generation is
+    /// live.
+    pub fn open_announcement(&mut self, line: String) -> Result<BrainRequest> {
+        if self.ended {
+            return Err(invalid("voice session ended"));
+        }
+        if self.generation.is_some() {
+            return Err(invalid(
+                "finish or interrupt the previous generation before an announcement",
+            ));
+        }
+        let next = self
+            .epoch
+            .checked_add(1)
+            .ok_or_else(|| invalid("generation epoch exhausted"))?;
+        // Read as a final's audience is: after the speakers' entries, with
+        // the output mark taken before the read.
+        self.enter_bound_speakers();
+        let mark = self.vault.container_output_mark();
+        let interlocutors = self.resolve_audience()?;
+        self.observe_audience(Some(&interlocutors))?;
+        self.epoch = next;
+        let request = BrainRequest {
+            generation: GenerationEpoch {
+                session: self.id,
+                value: next,
+            },
+            transcript: line,
+            retrieval: RetrievalContext {
+                result_refs: Vec::new(),
+                promoted: false,
+                run_id: None,
+                partial: false,
+            },
+            session_ref: self.config.session_ref.clone(),
+            tools_enabled: false,
+            interlocutors,
+            audience_revision: self.audience_revision,
+            tool_events: Vec::new(),
+            externally_tainted: false,
+        };
+        self.generation = Some(Generation {
+            budget: None,
+            request: request.clone(),
+            mark,
+            llm_done: false,
+            audio_open: true,
+            sentence: 0,
+            pending_safeguards: BTreeSet::new(),
+            drained: false,
+        });
+        Ok(request)
     }
 
     /// Accepted tool calls/results are stored in exact arrival order in the

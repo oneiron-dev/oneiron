@@ -63,6 +63,10 @@ const INTERRUPTED_MARK: &str = " [interrupted: the person cut in here]";
 /// How an answer that ended without a stop ends its history entry: every
 /// word it said was spoken, and the answer is not whole (FIX 7808).
 const INCOMPLETE_MARK: &str = " [incomplete: the answer ended before it finished]";
+/// How the call's history hears the line the call opened with: as System
+/// context, as a safeguard notice is heard, so no conversation a model is
+/// sent opens with the agent's own message.
+const ANNOUNCED: &str = "Said to the person when the call opened:";
 /// What the call's earlier turns become for a turn assembled for a new
 /// audience (CALLS.md: FIX 1389 history).
 const PRIOR_TURNS_ON_NEW_AUDIENCE: PriorTurns = PriorTurns::Dropped;
@@ -515,6 +519,76 @@ impl ChatBrain {
         self.foreign.push((result, rows));
     }
 
+    /// Speaks the line the host opened `request`'s generation with (its
+    /// `transcript`; UNBUILT-02 PR 3B) as that generation's whole answer,
+    /// with no model call. It is made from the answering agent's definition,
+    /// whose name it says, and enters the call's history as said, so the
+    /// first turn answers after it. A call that keeps its turns keeps it
+    /// first, before it is handed to speech, so it lands ahead of every turn
+    /// the caller's words start.
+    pub(crate) fn announce(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
+        self.abort();
+        let phone_scope = self
+            .bindings
+            .phone
+            .as_ref()
+            .map(|phone| phone.current_scope())
+            .transpose()
+            .map_err(refused)?;
+        if phone_scope.is_some() && phone_scope != self.history_phone_scope {
+            self.history = Arc::new(Mutex::new(Vec::new()));
+            self.foreign.clear();
+            self.said_by.clear();
+        }
+        self.rebuild_history(request.audience_revision, None)?;
+        let generation = request.generation;
+        let said_from = vec![self.bindings.agent];
+        if let Some(phone) = &self.bindings.phone {
+            let scope = phone_scope
+                .clone()
+                .ok_or_else(|| refused("phone context has no captured scope"))?;
+            phone
+                .prepare_generation(
+                    generation,
+                    scope,
+                    said_from.clone(),
+                    request.interlocutors.clone(),
+                )
+                .map_err(refused)?;
+        }
+        self.history_phone_scope = phone_scope;
+        self.said_by.insert(generation, said_from.clone());
+        let sources = Arc::new(Mutex::new(Some(TurnSources {
+            said: said_from.clone(),
+            found: Vec::new(),
+        })));
+        let announcement = Announcement {
+            generation,
+            line: request.transcript.clone(),
+            kept: self
+                .bindings
+                .record
+                .clone()
+                .map(|record| (Arc::clone(&self.bindings.vault), record)),
+            sources: Arc::clone(&sources),
+            said_from: said_from.clone(),
+            out: self.bindings.out.clone(),
+            history: Arc::clone(&self.history),
+        };
+        let handle = tokio::spawn(announcement.run());
+        // Its history entry is written whole before it is spoken, so a
+        // cancel adds no interrupted answer of its own.
+        self.turn = Some(Running {
+            generation,
+            handle,
+            said: Arc::new(Mutex::new(None)),
+            memories: Arc::new(Mutex::new(None)),
+            sources,
+            said_from,
+        });
+        Ok(())
+    }
+
     pub(super) fn producer_pending(&self, generation: GenerationEpoch) -> bool {
         self.turn
             .as_ref()
@@ -863,6 +937,65 @@ impl Drop for ChatBrain {
                 });
             }
             _ => crate::server::blocking(|| record.close(&vault)),
+        }
+    }
+}
+
+/// A call's opening line, handed to speech whole as its generation's answer
+/// (UNBUILT-02 PR 3B).
+struct Announcement {
+    generation: GenerationEpoch,
+    line: String,
+    /// Where a call that keeps its turns keeps the line.
+    kept: Option<(Arc<Vault>, CallRecord)>,
+    /// The rows it was made from, sent with its event.
+    sources: Arc<Mutex<Option<TurnSources>>>,
+    /// The rows what it says is made from, for its history entry.
+    said_from: Vec<EntityId>,
+    out: mpsc::Sender<VoiceBrainOut>,
+    history: Arc<Mutex<Vec<HistoryEntry>>>,
+}
+
+impl Announcement {
+    async fn run(self) {
+        if let Some((vault, record)) = &self.kept {
+            crate::server::blocking(|| record.keep_announcement(vault, &self.line));
+        }
+        if let Ok(mut history) = self.history.lock() {
+            history.push((
+                text_message(
+                    LlmMessageRole::System,
+                    format!("{ANNOUNCED} \"{}\"", self.line),
+                ),
+                self.said_from.clone(),
+            ));
+        }
+        let sources = self
+            .sources
+            .lock()
+            .ok()
+            .and_then(|mut sources| sources.take());
+        let delta = VoiceBrainOut {
+            generation: self.generation,
+            event: BrainEvent::TextDelta(self.line.clone()),
+            externally_tainted: false,
+            memories: None,
+            sources,
+        };
+        if self.out.send(delta).await.is_err() {
+            return;
+        }
+        let done = VoiceBrainOut {
+            generation: self.generation,
+            event: BrainEvent::Done,
+            externally_tainted: false,
+            memories: None,
+            sources: None,
+        };
+        if self.out.send(done).await.is_err() {
+            tracing::debug!(
+                "voice brain: the host stopped listening before the announcement ended"
+            );
         }
     }
 }

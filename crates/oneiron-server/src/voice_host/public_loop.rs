@@ -39,6 +39,8 @@ pub(super) struct PublicLoop {
     pub(super) live: Option<oneiron::conversation::LiveSpeakerCall>,
     /// The session's admission (`public_hold`).
     pub(super) hold: Arc<SessionHold>,
+    /// The line the call opens with before anyone speaks (UNBUILT-02 PR 3B).
+    pub(super) opening: Option<String>,
 }
 
 impl PublicLoop {
@@ -82,6 +84,10 @@ impl PublicLoop {
         commands: &mut mpsc::Receiver<Command>,
         shutdown: &ManagedShutdown,
     ) -> MemoryResult<()> {
+        // The call's opening line goes first, before any input is read.
+        if let Some(line) = self.opening.take() {
+            self.announce(line)?;
+        }
         let mut pending: Option<Pending<'_>> = None;
         let mut pending_final = false;
         let mut microphone: Option<String> = None;
@@ -294,6 +300,35 @@ impl PublicLoop {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+}
+
+impl PublicLoop {
+    /// Opens the call with `line` (UNBUILT-02 PR 3B): a generation the host
+    /// opens with no person's final, spoken like any answer, so the caller's
+    /// words barge in on it as on any answer. One the session refuses is
+    /// logged, and the call goes on without it.
+    fn announce(&mut self, line: String) -> MemoryResult<()> {
+        let request = match self.host.open_announcement(line) {
+            Ok(request) => request,
+            Err(error) => {
+                tracing::warn!(%error, "voice: the call's announcement did not open");
+                return Ok(());
+            }
+        };
+        self.journal
+            .lock()
+            .map_err(|_| unavailable())?
+            .start(request.generation, String::new());
+        if self
+            .host
+            .start_speech(request.generation, &mut self.bridge, &mut self.outputs)
+            && self.outputs.brain.announce(&request).is_err()
+        {
+            self.host
+                .output_failed(request.generation, &mut self.bridge, &mut self.outputs);
         }
         Ok(())
     }

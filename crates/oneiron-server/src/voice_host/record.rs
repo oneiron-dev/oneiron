@@ -30,6 +30,10 @@
 //!   owner's `voice.call_transcripts.keep` off, only the dividers are kept.
 //!   The line agent reads no stranger's words back, so a phone thread stays
 //!   raw: it does not compact (PHONE-CALL-READ-GRANT, recommendation B).
+//! - With the owner's `voice.call_transcripts.announce` on (PR 3B), the agent
+//!   opens a phone call by saying it is transcribed ([`phone_call_opening`]).
+//!   With keep on, that line is the call's first answer, kept after the
+//!   start row and before the caller's first words.
 //! - Stored change: keep. TURN and MESSAGE rows of chat's own shape; the
 //!   speaker and divider marks ride in MESSAGE metadata.
 
@@ -185,6 +189,33 @@ impl CallRecord {
         }
     }
 
+    /// Keeps the line a phone call opened with as the agent's own first
+    /// answer, marked as the call's announcement, when the call keeps its
+    /// turns. An owner's own call opens with none. A row that does not land
+    /// is logged.
+    pub(crate) fn keep_announcement(&self, vault: &Vault, line: &str) {
+        let CallParty::Phone(call) = &self.party else {
+            return;
+        };
+        if !call.keeps_turns {
+            return;
+        }
+        let mut turn = witness_turn(
+            &self.conversation.to_hex(),
+            None,
+            WitnessAuthor::Companion,
+            line.to_owned(),
+            vault.now_recorded_at(),
+        );
+        set_metadata(
+            &mut turn,
+            json!({ "voice": { "call": call.call_ref, "call_announcement": true } }),
+        );
+        if let Err(error) = vault.witness_call_turn(self.writer.entity_ref(), &turn) {
+            tracing::warn!(%error, "voice: the call's announcement was not kept");
+        }
+    }
+
     /// A divider: the writer's own row, marked as the call's start or end
     /// in its metadata, since a System row needs an auto actor ceiling the
     /// line agent may not hold (ONE-1686).
@@ -246,6 +277,35 @@ pub(crate) fn phone_call_record(
             keeps_turns,
         }),
     })
+}
+
+/// The line a phone call answered by the line agent `definition` opens
+/// with, read now: the call's announcement while the owner's
+/// `voice.call_transcripts.announce` is on, naming the agent and the vault's
+/// owner. A choice that does not read speaks it, as the key's strictest
+/// value does. `None` when the owner turned it off.
+pub(crate) fn phone_call_opening(
+    vault: &Vault,
+    definition: &oneiron::agent_def::AgentDefinition,
+) -> Option<String> {
+    let announces = vault.announces_call_transcripts().unwrap_or_else(|error| {
+        tracing::warn!(%error, "voice: the call-announcement choice did not read; the call announces");
+        true
+    });
+    if !announces {
+        return None;
+    }
+    let agent = definition
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&definition.agent_id);
+    let owner = vault.call_owner_display_name().unwrap_or_else(|error| {
+        tracing::warn!(%error, "voice: the owner's name did not read; the announcement names none");
+        None
+    });
+    Some(call_wording::answered_announcement(agent, owner.as_deref()))
 }
 
 /// The record of `person`'s standalone call with `agent`, paid and written

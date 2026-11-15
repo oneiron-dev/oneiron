@@ -461,6 +461,9 @@ pub(super) struct PreparedCall {
     pub(super) brain: ChatBrain,
     pub(super) media: VoiceWireBindings,
     pub(super) live: Option<oneiron::conversation::LiveSpeakerCall>,
+    /// The line the call opens with before anyone speaks: a phone call's
+    /// announcement (UNBUILT-02 PR 3B); `None` opens silent.
+    pub(super) opening: Option<String>,
 }
 
 pub(super) fn prepare_call(
@@ -648,6 +651,7 @@ pub(super) fn prepare_call(
             queue_capacity: settings.queue_capacity,
         },
         live,
+        opening: None,
     })
 }
 
