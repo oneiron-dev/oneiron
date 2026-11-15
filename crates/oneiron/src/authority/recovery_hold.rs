@@ -799,6 +799,10 @@ impl Vault {
                 continue;
             };
             let slot = self.recovery_hold_slot(&vault_id, machine, &successor);
+            // Holds for one successor share its slot, so the first terminal
+            // hold in view order cleans and reports it, and a later terminal
+            // hold for that successor finds it empty here and reports
+            // nothing: a run reports one cleanup per successor.
             let Some(seed) = self.read_recovery_hold_seed(&slot)? else {
                 continue;
             };
@@ -861,6 +865,14 @@ impl Vault {
                         continue;
                     };
                     let root_key = row.signer_key().clone();
+                    // The slot is keyed by the successor alone, so a hold
+                    // another root key signed for the same successor may
+                    // have put its seed here: the slot is that hold's, and
+                    // this one signs only with its own R.
+                    let slot_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+                    if root_key != AuthorityKey::Ed25519(slot_key) {
+                        continue;
+                    }
                     let fold = self.authority_view_readonly_in_txn(&txn)?;
                     let root_live = fold
                         .roster
@@ -1045,9 +1057,12 @@ impl Vault {
     /// (with `passphrase` when the kit takes one): the kit stops the
     /// attempt. A kit cancels only the live holds its live root key R
     /// signed: cancelling every hold skips another root's holds, and a
-    /// named hold another key signed is refused. With no live R from the
-    /// kit, cancelling every hold cancels nothing. One write transaction;
-    /// cancelling nothing is no refusal.
+    /// named hold another key signed is refused. A kit cannot cosign as
+    /// another root key (a co-owner's, or an earlier kit's that is still
+    /// live), so that root's hold stays live until the key is revoked,
+    /// which voids it. With no live R from the kit, cancelling every hold
+    /// cancels nothing. One write transaction; cancelling nothing is no
+    /// refusal.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an agent's act,
