@@ -250,9 +250,7 @@ fn note_no_executor(server: &SyncServer, observation: &mut PlannedSpawnObservati
     {
         return;
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let dispatcher = AgentDispatcher::new(server.vault());
     let mut issues = Vec::new();
     for member in &observation.launched {

@@ -776,11 +776,7 @@ impl SyncClient {
         if self.config.federation_peer.is_some() {
             return Ok(());
         }
-        // Saturate to 0 on pre-epoch wall clock — matches the other
-        // SystemTime uses in this module.
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let now_secs = crate::unix_seconds_now();
         self.vault.with_write_txn_grouped(|wtxn| {
             LAST_SYNC.put(&self.vault.store, wtxn, &(), &now_secs.to_le_bytes())?;
             Ok(())

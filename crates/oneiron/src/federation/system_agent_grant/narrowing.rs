@@ -22,8 +22,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::{SystemAgent, steward_reach_in};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -41,61 +39,10 @@ const SYSTEM_AGENT_NARROWING: SideTable<(EntityId, u64, EntityId), SystemAgentNa
 /// The domain of the confirm token a narrowing hands back.
 const CONFIRM_DOMAIN: &str = "oneiron/system-agent-grant-narrowing/v1";
 
-/// One vault function a system agent's grant keeps running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SystemFunction {
-    /// The Dreamer turns new conversations into memory.
-    Consolidation,
-    /// The Dreamer archives weak, quiet memories so recall stays sharp.
-    RecallUpkeep,
-    /// The Coach checks how the vault's agents are doing.
-    CoachChecks,
-    /// The Coach runs the jobs the engine.controls classes tune.
-    EngineControlsJobs,
-}
-
-impl SystemFunction {
-    /// The Steward verbs this function needs: a narrowing that drops any of
-    /// them breaks it.
-    #[must_use]
-    pub const fn needs(self) -> &'static [&'static str] {
-        match self {
-            Self::Consolidation => &[
-                grant_scope::STEWARD_READ_VERB,
-                grant_scope::STEWARD_DERIVE_VERB,
-            ],
-            // The archive takes back what the Dreamer landed, so it is judged
-            // by the landing verdict: without `derive` it archives nothing.
-            Self::RecallUpkeep => &[
-                grant_scope::STEWARD_READ_VERB,
-                grant_scope::STEWARD_DERIVE_VERB,
-                grant_scope::STEWARD_ARCHIVE_VERB,
-            ],
-            Self::CoachChecks => &[grant_scope::STEWARD_READ_VERB],
-            Self::EngineControlsJobs => &grant_scope::ENGINE_CONTROLS_VERBS,
-        }
-    }
-
-    /// What stops, in one plain sentence, for the warning.
-    #[must_use]
-    pub const fn what_breaks(self) -> &'static str {
-        match self {
-            Self::Consolidation => {
-                "Consolidation stops: new conversations are no longer turned into memory."
-            }
-            Self::RecallUpkeep => {
-                "Recall upkeep stops: weak, quiet memories are no longer archived, so recall gets noisier."
-            }
-            Self::CoachChecks => {
-                "Coach checks stop: the Coach no longer checks how the vault's agents are doing."
-            }
-            Self::EngineControlsJobs => {
-                "Engine-control jobs stop: schedules, budgets and recipes are no longer tuned for you."
-            }
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::system_agent_grant::narrowing::{
+    SystemAgentNarrowing, SystemFunction,
+};
 
 /// The functions the Dreamer's grant serves: what its rows ran.
 pub(super) const DREAMER_FUNCTIONS: [SystemFunction; 2] =
@@ -132,28 +79,6 @@ pub enum SystemAgentGrantNarrowing {
         grant: Option<EntityId>,
         breaks: Vec<SystemFunction>,
     },
-}
-
-/// One narrowing the owner applied, as the record keeps it: that he chose
-/// it, what the grant held before and after, and the breaks he confirmed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SystemAgentNarrowing {
-    /// The owner who applied it.
-    #[serde(with = "crate::serialize::entity_ref")]
-    pub owner: EntityId,
-    /// The grant his signed revoke took back.
-    #[serde(with = "crate::serialize::entity_ref")]
-    pub revoked: EntityId,
-    /// The narrower grant his signed mint gave; `None` when he revoked it whole.
-    #[serde(default, with = "crate::serialize::entity_ref::optional")]
-    pub minted: Option<EntityId>,
-    /// The verbs the grant held before.
-    pub before: BTreeSet<String>,
-    /// The verbs it holds after.
-    pub after: BTreeSet<String>,
-    /// The breaks he confirmed (empty when the narrowing stops none of the
-    /// agent's functions).
-    pub confirmed: Vec<SystemFunction>,
 }
 
 /// The token a confirm must carry: it binds the grant, the verbs kept and
