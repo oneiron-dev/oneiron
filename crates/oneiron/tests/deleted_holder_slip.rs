@@ -7,7 +7,10 @@
 //! stand, and neither does one minted for it after the delete. A live
 //! holder's slip beside a deleted one is the control. A PROJECT write
 //! proof, verified live at its put with no vault door, follows the same
-//! rule (Sol review of #8289, P1 2).
+//! rule (Sol review of #8289, P1 2), and so do a scoped read key kept from
+//! a verified slip, rechecked before each row it admits, and a board fork
+//! resolution signed at its live door (Astra review of #8289, findings 1
+//! and 2).
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test deleted_holder_slip`.
@@ -20,10 +23,14 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal, VerifiedSlip,
 };
+use oneiron::claim::ScopedReadActorKey;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
+use oneiron::test_doors::scoped_read_liveness::scoped_read_proof_live;
+use oneiron::workspace_roster::{
+    ProjectProofVersion, ProjectRecord, ProjectResolution, ProjectRevisionHash, ProjectWriteProof,
+};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:deleted-holder-slip";
@@ -261,9 +268,8 @@ fn signed_by(fixture: &Fixture, project: EntityId, paired: &Paired) -> ProjectRe
     body
 }
 
-#[test]
-fn a_deleted_holders_slip_signs_no_live_project_write() {
-    let fixture = fixture();
+/// A project the owner's door writes under the root project.
+fn owner_project(fixture: &Fixture) -> EntityId {
     let vault = &fixture.vault;
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let root = vault.root_project().expect("the root project");
@@ -272,6 +278,14 @@ fn a_deleted_holders_slip_signs_no_live_project_write() {
     vault
         .put_project(project, &record, 2)
         .expect("an owner-door project");
+    project
+}
+
+#[test]
+fn a_deleted_holders_slip_signs_no_live_project_write() {
+    let fixture = fixture();
+    let vault = &fixture.vault;
+    let project = owner_project(&fixture);
     let gone = named_agent(&fixture, "deleted_holder_slip_project_gone");
     let kept = named_agent(&fixture, "deleted_holder_slip_project_kept");
     let gone_slip = minted_slip(&fixture, gone, 0x71);
@@ -290,4 +304,106 @@ fn a_deleted_holders_slip_signs_no_live_project_write() {
     vault
         .put_project(project, &signed_by(&fixture, project, &kept_slip), 3)
         .expect("a live holder's slip still signs a live project write");
+}
+
+/// The read key a lane builds from `paired`'s slip once its holder proves it.
+fn read_key(fixture: &Fixture, paired: &Paired) -> ScopedReadActorKey {
+    let verified = verify(fixture, paired).expect("the paired agent proves its slip");
+    ScopedReadActorKey::from_verified_slip(&verified).expect("a core:read slip makes a read key")
+}
+
+/// Whether a lane on `key` still finds its credential standing, as it
+/// rechecks it before each row it admits.
+fn reads_live(fixture: &Fixture, key: &ScopedReadActorKey) -> bool {
+    scoped_read_proof_live(&fixture.vault.scoped_read(key.clone())).expect("credential recheck")
+}
+
+#[test]
+fn a_read_key_kept_from_a_deleted_holders_slip_reads_nothing() {
+    let fixture = fixture();
+    let gone = named_agent(&fixture, "deleted_holder_slip_reader_gone");
+    let kept = named_agent(&fixture, "deleted_holder_slip_reader_kept");
+    let gone_key = read_key(
+        &fixture,
+        &pair(&fixture, gone, 0x81).expect("the owner pairs the first agent"),
+    );
+    let kept_key = read_key(
+        &fixture,
+        &pair(&fixture, kept, 0x82).expect("the owner pairs the second agent"),
+    );
+    assert!(
+        reads_live(&fixture, &gone_key),
+        "precondition: the read key stands before its holder's delete"
+    );
+
+    delete_to_shell(&fixture, gone);
+
+    assert!(
+        !reads_live(&fixture, &gone_key),
+        "holder={gone:?}: a read key kept from a deleted holder's slip still reads"
+    );
+    assert!(
+        reads_live(&fixture, &kept_key),
+        "holder={kept:?}: a live holder's read key stopped reading beside a deleted one"
+    );
+}
+
+/// A board fork resolution over `project` signed by `paired`'s holder. The
+/// fork it names is made up: the signer check runs before the fork's.
+fn resolution_by(project: EntityId, paired: &Paired) -> ProjectResolution {
+    let mut resolution = ProjectResolution {
+        anchor: ProjectRevisionHash([0xA1; 32]),
+        prior: Vec::new(),
+        contenders: vec![
+            ProjectRevisionHash([0xB1; 32]),
+            ProjectRevisionHash([0xB2; 32]),
+        ],
+        next: ProjectRevisionHash([0xB1; 32]),
+        slip_wire: paired.slip.to_token().expect("slip token"),
+        holder_signature: Vec::new(),
+        signed_at: paired.slip.claims.issued_at,
+    };
+    let challenge = resolution
+        .challenge(project)
+        .expect("the resolution challenge");
+    let transcript = paired
+        .slip
+        .binding_transcript(&challenge)
+        .expect("the holder's binding transcript");
+    resolution.holder_signature = paired.key.sign(&transcript).to_bytes().to_vec();
+    resolution
+}
+
+#[test]
+fn the_fork_resolution_door_refuses_a_deleted_holders_slip() {
+    let fixture = fixture();
+    let vault = &fixture.vault;
+    let project = owner_project(&fixture);
+    let gone = named_agent(&fixture, "deleted_holder_slip_resolver_gone");
+    let kept = named_agent(&fixture, "deleted_holder_slip_resolver_kept");
+    let gone_slip = minted_slip(&fixture, gone, 0x91);
+    let kept_slip = minted_slip(&fixture, kept, 0x92);
+    let next = vault
+        .project(project)
+        .expect("project read")
+        .expect("the project is stored");
+
+    delete_to_shell(&fixture, gone);
+
+    let refused = vault
+        .resolve_project_fork(project, next.clone(), resolution_by(project, &gone_slip))
+        .expect_err("a deleted holder's resolution landed");
+    assert!(
+        format!("{refused:?}").contains("holder is deleted"),
+        "holder={gone:?}: a deleted holder's resolution reached the fork judgment: {refused}"
+    );
+    // A live holder's resolution passes the signer check; this project has
+    // no board fork, so the fork judgment refuses it.
+    let control = vault
+        .resolve_project_fork(project, next, resolution_by(project, &kept_slip))
+        .expect_err("a resolution of no fork landed");
+    assert!(
+        !format!("{control:?}").contains("holder is deleted"),
+        "holder={kept:?}: a live holder's resolution was refused as deleted: {control}"
+    );
 }
