@@ -121,11 +121,14 @@ pub fn next_outcome_window_close_at(vault: &Vault) -> Result<Option<u64>> {
 }
 
 /// Closes every outcome window that ended before `now`, once each, and
-/// returns how many it closed. Stored facts are projected for those
-/// questions first: a fact written before its answer, with an event time
-/// inside the window, never met the answer at arrival. Each close then
+/// returns how many it closed. It first judges every fact an arrival
+/// deferred under a narrowed saved lane, due window or not
+/// ([`arrival::project_deferred_outcomes`]). Stored facts are then projected
+/// for the due questions: a fact written before its answer, with an event
+/// time inside the window, never met the answer at arrival. Each close then
 /// records an observed fact, the binding's silence label, or unknown.
 pub fn close_due_outcome_windows(vault: &Vault, now: u64) -> Result<usize> {
+    arrival::project_deferred_outcomes(vault)?;
     let due: Vec<OpenWindow> = {
         let txn = vault.store.env.read_txn()?;
         open_windows(vault, &txn)?
