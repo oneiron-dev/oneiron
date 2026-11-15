@@ -212,7 +212,9 @@ impl OfferCooldowns {
 
     /// Rests the offer serving `wire_model` for its health after its provider
     /// was down: for a backoff that doubles with each failure in a row from
-    /// [`HEALTH_REST_SECS`] up to [`HEALTH_REST_MAX_SECS`], with jitter. A
+    /// the host's first health rest ([`HEALTH_REST_SECS`] unless its
+    /// `[models] health_rest_secs` says) up to [`HEALTH_REST_MAX_SECS`], with
+    /// jitter. A
     /// failure while it recovers is one more in a row, and its answers since
     /// count no more. A probation slot that is held stays held until its
     /// request ends. `None` when no vault keeps rests.
@@ -229,7 +231,9 @@ impl OfferCooldowns {
         let mut health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
         let held = health.entry(key.to_owned()).or_default();
         let strikes = held.strikes.saturating_add(1);
-        let backoff = HEALTH_REST_SECS
+        let backoff = self
+            .rest_settings
+            .first_secs
             .saturating_mul(1u64 << (strikes - 1).min(16))
             .min(HEALTH_REST_MAX_SECS);
         let mut digest = blake3::Hasher::new();
@@ -509,6 +513,16 @@ impl OfferCooldowns {
     /// Now, on the clock rests are kept on.
     pub(in crate::models) fn now(&self) -> Option<u64> {
         self.vault.as_ref().map(|vault| vault.now_recorded_at())
+    }
+
+    /// How long, in seconds, one durable step submission waits for its offer
+    /// back from a health rest before the step parks (FIX 11226): the host's
+    /// `[models] step_rest_wait_secs`, under the vault's longest wait.
+    pub(in crate::models) fn step_rest_wait_secs(&self) -> u64 {
+        let longest = self.max_wait_secs();
+        self.rest_settings
+            .step_wait_secs
+            .map_or(longest, |secs| secs.min(longest))
     }
 
     /// The longest a call waits for a cooling chain's first offer back. No
