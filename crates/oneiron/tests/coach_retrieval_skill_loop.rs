@@ -29,8 +29,8 @@ use oneiron::dreamer_runner::maintenance::retrieval_skill_review::{
 use oneiron::inbox::{INBOX_PAGE_DEFAULT, NotificationKind, NotificationRow};
 use oneiron::skill::SkillLifecycle;
 use oneiron::skill_hub::{
-    HubPin, HubRef, HubSyncPolicy, InstalledLibrarySkill, SkillHubKind, SkillHubRecord,
-    SkillHubTrustTier, TUNE_ONEIRON_RETRIEVAL_SUBTREE, default_skill_hub_commit,
+    GitEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy, InstalledLibrarySkill, SkillHubKind,
+    SkillHubRecord, SkillHubTrustTier, TUNE_ONEIRON_RETRIEVAL_SUBTREE, default_skill_hub_commit,
     default_skill_hub_id,
 };
 use oneiron::store::{
@@ -718,4 +718,56 @@ fn a_proposal_citing_a_run_outside_the_brief_is_refused() {
         "the refusal names the run: {reason}"
     );
     assert!(night.owner_notes().is_empty());
+}
+
+#[test]
+fn a_tag_pinned_import_offers_no_hub_commit() {
+    // REVIEW-7702 P1: an import pinned by tag keeps the tag in its receipt,
+    // so the lookup must not hand that tag to the Coach as the commit read.
+    const TAG: &str = "v0.1.0";
+    let (folder, commit) = fixture_hub();
+    git(folder.path(), &["tag", TAG]);
+    let fixture = Fixture::open();
+    fixture.point_default_hub_at(folder.path());
+    let source = HubRef::new(
+        hub(),
+        TUNE_ONEIRON_RETRIEVAL_SUBTREE,
+        HubPin::Tag(TAG.to_owned()),
+    )
+    .expect("hub ref");
+    let adapter = GitEndpointSkillHubAdapter::at_tag(
+        hub(),
+        folder.path().to_str().expect("utf8 folder"),
+        TAG,
+    )
+    .expect("the tag resolves");
+    assert_eq!(adapter.resolved_commit(), commit);
+
+    let id = fixture
+        .vault
+        .import_skill_from_adapter(&fixture.owner, &adapter, &source, at(2), 2)
+        .expect("the owner's import at a tag");
+
+    let record = fixture
+        .vault
+        .get_skill_record(&id)
+        .expect("skill read")
+        .expect("the imported skill");
+    assert_eq!(
+        record.lifecycle_status,
+        SkillLifecycle::Candidate,
+        "the import lands a readable Candidate"
+    );
+    let receipt = fixture
+        .vault
+        .hub_import_receipt(&id, &source)
+        .expect("receipt read")
+        .expect("an import receipt from the default hub");
+    assert_eq!(receipt.pin_type, "tag");
+    assert_eq!(receipt.pin_value.as_deref(), Some(TAG));
+    assert_eq!(
+        fixture.installed(),
+        None,
+        "a tag pin names no commit, so the lookup offers no stamp"
+    );
 }
