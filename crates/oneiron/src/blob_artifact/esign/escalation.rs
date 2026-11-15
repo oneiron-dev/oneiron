@@ -427,7 +427,7 @@ impl Vault {
                     let signed =
                         signed_event(&state.document, recipient, &held.next, evidence.clone());
                     let reviewed = held.reviewed_values.as_ref().is_some_and(|values| {
-                        state.review_stands(recipient)
+                        state.review_stands(recipient, held.evidence.authentication_method)
                             && *values == state.recipient_values(recipient)
                     });
                     let lands = reviewed

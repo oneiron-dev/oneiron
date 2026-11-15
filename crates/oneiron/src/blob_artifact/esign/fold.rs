@@ -48,11 +48,20 @@ impl EsignState {
             .map(|(field, row)| (field.clone(), row.value.clone()))
             .collect()
     }
-    /// Whether the recipient's review still stands: it bound the frozen
-    /// items and the values they hold now (UETA section 10).
-    pub(super) fn review_stands(&self, recipient: &str) -> bool {
+    /// Whether the recipient's review still stands for a Complete made as
+    /// `completer`: it bound the frozen items and the values they hold now
+    /// (UETA section 10), and a person's Complete stands only on a person's
+    /// review, so the signer saw what they sign; an agent's takes either.
+    pub(super) fn review_stands(
+        &self,
+        recipient: &str,
+        completer: EsignAuthenticationMethod,
+    ) -> bool {
         self.reviews.get(recipient).is_some_and(|review| {
-            review.items == self.document.items && review.values == self.recipient_values(recipient)
+            review.items == self.document.items
+                && review.values == self.recipient_values(recipient)
+                && (completer == EsignAuthenticationMethod::Agent
+                    || review.authentication_method != EsignAuthenticationMethod::Agent)
         })
     }
     /// One deterministic terminal target at the first overdue unfinished
@@ -208,6 +217,7 @@ impl EsignState {
                 recipient,
                 items,
                 values,
+                authentication_method,
             } => {
                 self.require_turn(recipient, now)?;
                 if self.recipients[recipient].access != AccessStatus::Verified {
@@ -223,6 +233,7 @@ impl EsignState {
                     EsignReview {
                         items: items.clone(),
                         values: values.clone(),
+                        authentication_method: *authentication_method,
                     },
                 );
             }

@@ -528,6 +528,7 @@ impl Vault {
                             recipient: recipient.id.clone(),
                             items: state.document.items.clone(),
                             values: state.recipient_values(&recipient.id),
+                            authentication_method: caller.authentication_method(),
                         },
                         actor,
                         now,
@@ -550,10 +551,11 @@ impl Vault {
                         ));
                     }
                     // UETA section 10: the signer reviewed the frozen items
-                    // and these values, and has saved nothing since. A held
-                    // sign act lands later only on these values, while this
+                    // and these values, and has saved nothing since; a
+                    // person's Complete needs a person's review. A held sign
+                    // act lands later only on these values, while this
                     // review still stands.
-                    if !state.review_stands(&recipient.id) {
+                    if !state.review_stands(&recipient.id, caller.authentication_method()) {
                         return Ok(SigningOutcome::ReviewRequired {
                             row: UETA_REVIEW_ROW.to_owned(),
                         });

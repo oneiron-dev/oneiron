@@ -5,9 +5,10 @@
 //! Review act binds the frozen items and the signer's own field values;
 //! Complete is refused, citing the e-sign rule pack's UETA section 10 row,
 //! until a Review that still stands exists; a field saved after the Review
-//! voids it; Review then Complete signs. An agent's Complete the signing
-//! dial holds for a role holder's answer (ARCH-0064 D6) lands on that answer
-//! only on the values it was made on, while their review still stands.
+//! voids it; a person's Complete stands only on a person's review; Review
+//! then Complete signs. An agent's Complete the signing dial holds for a role
+//! holder's answer (ARCH-0064 D6) lands on that answer only on the values it
+//! was made on, while their review still stands.
 //!
 //! The Review act and the refusal outcome are named through their wire form
 //! (`{"action":"review"}`, `review_required`), so this file builds on a tree
@@ -30,9 +31,6 @@ type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 /// The e-sign rule pack's UETA section 10 row a refused Complete cites.
 const UETA_REVIEW_ROW: &str = "us.ueta.s10.review_before_complete";
 
-/// The one field the signer fills.
-const FIELD: &str = "field-name";
-
 /// The test clock's start.
 const START: u64 = 1_800_000_000;
 
@@ -43,8 +41,8 @@ fn original_pdf() -> &'static [u8] {
     ))
 }
 
-/// A sent one-signer document with one required text field, and the
-/// signer's capability.
+/// A sent one-signer document with one required text field (`field`), and
+/// the signer's capability.
 struct Sent {
     vault: Vault,
     clock: Arc<ManualClock>,
@@ -52,6 +50,7 @@ struct Sent {
     person: EntityId,
     id: EntityId,
     recipient: String,
+    field: String,
     signing: EsignCapability,
     _dir: tempfile::TempDir,
 }
@@ -94,6 +93,8 @@ fn sent() -> TestResult<Sent> {
         now,
     )?;
     let recipient = EntityId::now().to_hex();
+    // A field id is an entity reference, as a recipient id is.
+    let field = EntityId::now().to_hex();
     let document = EsignDocument {
         schema_version: 1,
         kind: DocumentKind::Document,
@@ -117,7 +118,7 @@ fn sent() -> TestResult<Sent> {
             natural_person: None,
         }],
         fields: vec![EsignField {
-            id: FIELD.into(),
+            id: field.clone(),
             item: 0,
             recipient: recipient.clone(),
             required: true,
@@ -160,6 +161,7 @@ fn sent() -> TestResult<Sent> {
         person,
         id,
         recipient,
+        field,
         signing,
         _dir: dir,
     })
@@ -176,7 +178,7 @@ impl Sent {
         self.act(
             caller,
             &SigningAction::SaveField {
-                field: FIELD.into(),
+                field: self.field.clone(),
                 value: FieldValue::Text(text.into()),
             },
         )
@@ -282,9 +284,10 @@ fn complete_requires_review_before_complete_row() -> TestResult {
     assert_eq!(reviewed[0]["items"][0]["artifact_ref"], sent.id.to_hex());
     assert_eq!(reviewed[0]["items"][0]["original_version"], 1);
     assert_eq!(
-        reviewed[0]["values"][FIELD],
+        reviewed[0]["values"][sent.field.as_str()],
         json!({"kind": "text", "value": "Sam Signer"})
     );
+    assert_eq!(reviewed[0]["authentication_method"], "bearer");
 
     // 3. A field saved after the Review voids it: Complete is refused again.
     assert!(matches!(
@@ -298,14 +301,29 @@ fn complete_requires_review_before_complete_row() -> TestResult {
     );
     assert_eq!(sent.signing_status()?, SigningStatus::Ready);
 
-    // 4. Review then Complete signs, on the values the second Review bound.
+    // 4. An agent's Review does not stand for the person's Complete: the
+    //    signer reviews what they sign.
+    assert!(matches!(sent.review(AGENT)?, SigningOutcome::Page(_)));
+    assert_eq!(
+        serde_json::to_value(sent.complete(BEARER)?)?,
+        review_required(),
+        "a person's Complete needs a person's Review"
+    );
+    assert_eq!(sent.signing_status()?, SigningStatus::Ready);
+
+    // 5. Review then Complete signs, on the values the last Review bound.
     assert!(matches!(sent.review(BEARER)?, SigningOutcome::Page(_)));
     assert_eq!(sent.complete(BEARER)?, SigningOutcome::AwaitingSeal);
     assert_eq!(sent.signing_status()?, SigningStatus::Completed);
     let reviewed = sent.trail("reviewed")?;
-    assert_eq!(reviewed.len(), 2, "two Reviews on the trail: {reviewed:?}");
     assert_eq!(
-        reviewed[1]["values"][FIELD],
+        reviewed.len(),
+        3,
+        "three Reviews on the trail: {reviewed:?}"
+    );
+    assert_eq!(reviewed[1]["authentication_method"], "agent");
+    assert_eq!(
+        reviewed[2]["values"][sent.field.as_str()],
         json!({"kind": "text", "value": "Sam Q. Signer"})
     );
     assert_eq!(sent.trail("signed")?.len(), 1, "one signature");
@@ -366,7 +384,7 @@ fn held_complete_lands_only_on_its_reviewed_values() -> TestResult {
     assert_eq!(sent.trail("signed")?.len(), 1, "one signature");
     let signatures = sent.vault.esign_document(sent.id)?.signatures;
     assert_eq!(
-        signatures[FIELD].value,
+        signatures[&sent.field].value,
         FieldValue::Text("Sam Signer".into()),
         "signed on the reviewed value"
     );

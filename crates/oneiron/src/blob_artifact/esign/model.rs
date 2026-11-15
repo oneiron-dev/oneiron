@@ -39,6 +39,9 @@ pub enum EsignEvent {
         items: Vec<EsignItem>,
         /// The recipient's own field values when they reviewed, by field id.
         values: BTreeMap<String, FieldValue>,
+        /// Who reviewed, as a sign act names it: a person's Complete stands
+        /// only on a person's review (a link bearer or a verified person).
+        authentication_method: EsignAuthenticationMethod,
     },
     Signed {
         recipient: String,
@@ -129,6 +132,7 @@ pub struct EsignState {
 pub(super) struct EsignReview {
     pub(super) items: Vec<EsignItem>,
     pub(super) values: BTreeMap<String, FieldValue>,
+    pub(super) authentication_method: EsignAuthenticationMethod,
 }
 
 /// A draft refuses only what it cannot be: no count or size cap on its items,
