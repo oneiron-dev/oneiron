@@ -54,6 +54,14 @@ pub(super) struct StoredRow {
     /// other row, whose bytes it leaves as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) weight_runs: Option<f64>,
+    /// A carried row's bound this install's own carry wrote (stage 7a-4, RULING
+    /// SETTING-7A-4-COPY Q2 = A): the meet of every row the project read on the lines it left,
+    /// as this install held them at the move. The row's value is the meet of it and of the
+    /// move's copy as the fold counts it here, so the copy never loosens what this install
+    /// carried; the owner's release clears both. Absent on every other row, and on a carried
+    /// row that only a copy wrote, whose bytes it leaves as they were (Stored change: keep).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) local: Option<EncodedValue>,
 }
 
 impl StoredRow {

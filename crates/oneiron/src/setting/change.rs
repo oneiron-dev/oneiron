@@ -165,13 +165,16 @@ fn scrub_rows_in_txn(
         {
             gone.push(key);
         } else if let Ok(stored) = rmp_serde::from_slice::<StoredRow>(&bytes) {
-            let erased = row_key
-                .and_then(|row_key| super::spec_named(&row_key.name).ok())
-                .and_then(|spec| spec.kind.erase_mentions_in(&stored.value, *id));
-            if stored.by == Some(*id) || erased.is_some() {
+            let spec = row_key.and_then(|row_key| super::spec_named(&row_key.name).ok());
+            let erased = spec.and_then(|spec| spec.kind.erase_mentions_in(&stored.value, *id));
+            let erased_local = spec
+                .zip(stored.local.as_ref())
+                .and_then(|(spec, local)| spec.kind.erase_mentions_in(local, *id));
+            if stored.by == Some(*id) || erased.is_some() || erased_local.is_some() {
                 let row = StoredRow {
                     by: stored.by.filter(|by| by != id),
                     value: erased.unwrap_or(stored.value),
+                    local: erased_local.or(stored.local),
                     ..stored
                 };
                 unnamed.push((key, row));

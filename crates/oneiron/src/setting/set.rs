@@ -191,8 +191,9 @@ impl Vault {
     ///
     /// The act is the write (stage 7a-2, [`super::project`]). In a vault with an authority root,
     /// an owner's change of a row that travels (a `sync: vault` key whose value is closed, not
-    /// learned, never a carried row) appends its act in this write, naming the row and carrying
-    /// the value, from its act surface or, with none named, from this install. It is not best
+    /// learned; the clear of a carried row, its release, among them, stage 7a-4) appends its act
+    /// in this write, naming the row and carrying the value, from its act surface or, with none
+    /// named, from this install. It is not best
     /// effort: a change whose act this install cannot append is refused with the append's
     /// reason, and nothing is written. The row is then what the fold gives. A person's, an
     /// agent's and the engine's changes write the row on this install alone (RULING
@@ -482,7 +483,7 @@ fn set_in_txn(
     // The act is the write (stage 7a-2): an owner's change of a row that travels, in a rooted
     // vault, appends its act below; with no surface named, from this install.
     let travelling = matches!(caller, SettingCaller::Owner(_))
-        && travels(change.spec, change.key.mode)
+        && travels(change.spec)
         && rooted_in_txn(vault, txn)?;
     let surface = match request.surface {
         None if travelling => Some(ActSurface::ThisInstall),
@@ -519,6 +520,7 @@ fn set_in_txn(
                 set_at: now,
                 change: recorded.sequence,
                 weight_runs: change.weight_runs,
+                local: None,
             };
             table.put(&vault.store, txn, &key_bytes, &row)?;
             recorded.sequence

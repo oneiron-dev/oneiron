@@ -635,7 +635,7 @@ fn decode_row(value: &Value) -> Result<PolicySettingRow> {
 }
 
 /// A slot as the wire carries it: a row's stored key, canonical.
-fn decode_slot(value: &Value) -> Result<RowKey> {
+pub(super) fn decode_slot(value: &Value) -> Result<RowKey> {
     let bytes = binary(value)?;
     let slot = RowKey::decode(&bytes).ok_or_else(invalid_authority)?;
     if slot.encode() != bytes {

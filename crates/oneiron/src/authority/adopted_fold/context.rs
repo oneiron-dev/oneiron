@@ -93,6 +93,7 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::AgentGrantAct(_)
             | AuthorityOp::MembershipExecution(_)
             | AuthorityOp::PolicySettingSet(_)
+            | AuthorityOp::SettingCopy(_)
             | AuthorityOp::ExportAct(_)
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::OwnerWorkRequest(_)

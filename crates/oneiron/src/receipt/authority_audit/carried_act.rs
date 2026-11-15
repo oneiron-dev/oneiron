@@ -5,9 +5,12 @@
 //! names its agent as holder and its Grant. An export's subject is the owner
 //! whose copy it was and its detail the format. Never a setting's value nor
 //! a byte of the copy: the record keeps only their digests.
+//!
+//! A move's setting copy (stage 7a-4) names its carrier as subject, and its
+//! detail how many carried rows it lists and how many acts they name.
 
 use super::{AuthorityAuditEventKind, OpFields};
-use oneiron_authority::authority::{ActBy, ExportActRecord, PolicySettingSet};
+use oneiron_authority::authority::{ActBy, ExportActRecord, PolicySettingSet, SettingCopy};
 
 /// The class, op name and fields of one setting act.
 pub(super) fn classify_policy_setting(
@@ -41,6 +44,22 @@ pub(super) fn classify_export(
         OpFields {
             detail: Some(record.format.clone()),
             subject_ref: Some(record.act.owner.to_hex()),
+            ..OpFields::default()
+        },
+    )
+}
+
+/// The class, op name and fields of one move's setting copy.
+pub(super) fn classify_setting_copy(
+    copy: &SettingCopy,
+) -> (AuthorityAuditEventKind, &'static str, OpFields) {
+    let names: usize = copy.rows.iter().map(|row| row.names.len()).sum();
+    (
+        AuthorityAuditEventKind::Other,
+        "setting_copy",
+        OpFields {
+            detail: Some(format!("{} carried rows, {names} acts", copy.rows.len())),
+            subject_ref: Some(copy.machine.to_hex()),
             ..OpFields::default()
         },
     )

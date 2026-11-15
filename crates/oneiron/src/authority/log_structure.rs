@@ -399,6 +399,7 @@ impl AuthorityStructure {
             AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
             AuthorityOp::MembershipExecution(record) => install_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => install_key(set.machine),
+            AuthorityOp::SettingCopy(copy) => install_key(copy.machine),
             AuthorityOp::ExportAct(record) => install_key(record.machine),
             // A frontier join: its carrier's install key, as for the act it
             // leads to, a stranger's once its carrier is removed
@@ -483,6 +484,7 @@ impl AuthorityStructure {
             AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
             AuthorityOp::MembershipExecution(record) => machine_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),
+            AuthorityOp::SettingCopy(copy) => machine_key(copy.machine),
             AuthorityOp::ExportAct(record) => machine_key(record.machine),
             AuthorityOp::FrontierJoin(FrontierJoin {
                 family: FrontierJoinFamily::Install(carrier),

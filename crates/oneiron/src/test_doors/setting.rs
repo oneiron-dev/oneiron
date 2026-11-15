@@ -501,6 +501,74 @@ pub fn land_setting_batch_from(
     Ok(fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash))
 }
 
+/// The live acts on `key`'s row (`item`, `mode`, `scope`), a move's copy among them (stage
+/// 7a-4): what a copy of the row names. Empty when no act names the row.
+///
+/// # Errors
+///
+/// A key name of another shape; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_slot_heads(
+    vault: &Vault,
+    (key, item, mode, scope): SlotName<'_>,
+) -> Result<Vec<oneiron_authority::authority::AuthorityEntryHash>> {
+    let target =
+        oneiron_authority::authority::setting_slot_target(&row_key(key, item, mode, scope))?;
+    let txn = vault.store.env.read_txn()?;
+    vault.setting_slot_live_in_txn(&txn, target)
+}
+
+/// One carried row a copy lists, with the acts it names, each by its own row.
+#[cfg(feature = "test-support")]
+pub type CopiedRow<'a> = (
+    SlotName<'a>,
+    Vec<(
+        SlotName<'a>,
+        oneiron_authority::authority::AuthorityEntryHash,
+    )>,
+);
+
+/// A move's copy of each carried row of `rows` (stage 7a-4), as `signer`'s own carry signs it on
+/// `frontier` at `ts`, landed here as a peer's entry lands. A row `frontier` did not read names
+/// `seen` zero. The entry's hash, and whether the fold here counts it (valid, and not held back).
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_copy_from(
+    vault: &Vault,
+    signer: &EnrolledMachine,
+    frontier: &SettingFrontier,
+    rows: &[CopiedRow<'_>],
+    ts: u64,
+) -> Result<(oneiron_authority::authority::AuthorityEntryHash, bool)> {
+    let rows = rows
+        .iter()
+        .map(|((key, item, mode, scope), names)| {
+            let names = names
+                .iter()
+                .map(|((key, item, mode, scope), act)| {
+                    oneiron_authority::authority::SettingCopyName {
+                        slot: row_key(key, *item, *mode, scope.clone()),
+                        act: *act,
+                    }
+                })
+                .collect::<Vec<_>>();
+            (row_key(key, *item, *mode, scope.clone()), names)
+        })
+        .collect::<Vec<_>>();
+    let entry = vault.sign_setting_copy_as((signer.machine, &signer.key), &frontier.0, rows, ts)?;
+    let hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
+    let at = crate::temporal::TimeRange { start: ts, end: ts };
+    vault.put_authority_log_entries(&[(entry, at, ts)])?;
+    let fold = vault.authority_fold()?;
+    Ok((
+        hash,
+        fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash),
+    ))
+}
+
 /// Whether the setting publish pass ran in this vault (stage 7a-3).
 ///
 /// # Errors

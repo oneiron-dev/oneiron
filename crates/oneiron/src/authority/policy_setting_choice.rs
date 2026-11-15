@@ -37,6 +37,17 @@
 //! on that row's frontier, and in all of them or none: a `seen` that is wrong
 //! on any row makes the entry invalid. A refused or held-back batch is so in
 //! every row, since both sets are keyed by the entry's hash.
+//!
+//! A move's carried rows are one copy (stage 7a-4): one `SettingCopy`
+//! entry, signed by the mover's install key alone, lists each carried row
+//! with the acts it copies. Each row lands on its own target's frontier as
+//! the setting acts do, as an engine statement: its carrier must be admitted
+//! and its `seen` right, and no owner is tested, since none decided it. Its
+//! choice is the entry's own hash, so two copies on one row always differ
+//! and the projection meets them. A row must name every live act it
+//! replaces, or the entry is invalid, as for a wrong `seen`: a copy adds
+//! bounds and never drops one. The projection reads what it names
+//! ([`Vault::setting_slot_head_in_txn`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,8 +62,8 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
-    FoldedOwnerChoice, OwnerChoiceOp, OwnerChoiceState, folded_owner_choices, owner_choice_landing,
-    refused_owner_choices,
+    ChoiceAt, FoldedOwnerChoice, OwnerChoiceOp, OwnerChoiceState, choice_landing,
+    folded_owner_choices, owner_choice_landing, refused_owner_choices,
 };
 use super::*;
 
@@ -140,6 +151,62 @@ pub(super) fn apply_policy_setting(
     }
     if let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
         state.agent_carried_acts.insert(hash, agent);
+    }
+    Ok(())
+}
+
+/// The `SettingCopy` transition (stage 7a-4; module doc): each carried row
+/// lands on its target's frontier as an engine statement
+/// ([`choice_landing`] with no owner), its choice the entry's own hash. A row
+/// that leaves out a live act of its target, which it would replace, makes
+/// the entry invalid. Every row is judged against the state before the
+/// entry, and only then do they all land.
+pub(super) fn apply_setting_copy(
+    state: &mut FoldState,
+    entry: &AuthorityLogEntry,
+    copy: &SettingCopy,
+    hash: AuthorityEntryHash,
+    counting: (Option<&PinnedRoot>, InstallCounted<'_>),
+    restriction_only: bool,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let mut landings = Vec::with_capacity(copy.rows.len());
+    for row in &copy.rows {
+        let target = row
+            .target()
+            .map_err(|_| AuthorityFoldIssue::InvalidEntry(hash))?;
+        let named: BTreeSet<AuthorityEntryHash> = row
+            .names
+            .iter()
+            .filter(|name| name.slot == row.slot)
+            .map(|name| name.act)
+            .collect();
+        if state
+            .policy_settings
+            .live_choices(target)
+            .any(|live| !named.contains(&live))
+        {
+            return Err(AuthorityFoldIssue::InvalidEntry(hash));
+        }
+        let at = ChoiceAt {
+            target,
+            seen: row.seen,
+            owner: None,
+            machine: copy.machine,
+            choice: Some(&hash),
+            context: POLICY_SETTING_REVISION_CONTEXT,
+        };
+        landings.push(choice_landing(
+            state,
+            &state.policy_settings,
+            entry,
+            at,
+            hash,
+            counting,
+            restriction_only,
+        )?);
+    }
+    for landing in landings {
+        state.policy_settings.land(landing);
     }
     Ok(())
 }
@@ -277,6 +344,55 @@ impl Vault {
             .map(|carrier| carrier.is_some())
     }
 
+    /// Appends a move's carried rows as one signed `SettingCopy` in the
+    /// mover's write `txn` (stage 7a-4): each carried row with the acts it
+    /// copies, and the `seen` of its own target, read in `txn`. Not best
+    /// effort here: whatever stops it fails the call, and its savepoint is
+    /// rolled back; the carry keeps its rows on this install whatever this
+    /// meets. The entry's hash.
+    ///
+    /// # Errors
+    ///
+    /// The typed refusal of the append ([`super::carried_act`]), or a
+    /// storage error.
+    pub(crate) fn append_setting_copy_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        rows: Vec<(RowKey, Vec<SettingCopyName>)>,
+    ) -> Result<AuthorityEntryHash> {
+        let rows = {
+            let view = self.authority_view_readonly_in_txn(txn)?;
+            rows.into_iter()
+                .map(|(slot, names)| {
+                    Ok(SettingCopyRow {
+                        seen: view.policy_settings.revision(setting_slot_target(&slot)?),
+                        slot,
+                        names,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        self.append_carried_act_in_savepoint(txn, |machine| {
+            AuthorityOp::SettingCopy(SettingCopy { machine, rows })
+        })
+    }
+
+    /// `target`'s live setting acts in `txn`, a copy among them: what a copy
+    /// of its row names (stage 7a-4). Empty when no act names the target.
+    pub(crate) fn setting_slot_live_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<Vec<AuthorityEntryHash>> {
+        Ok(self
+            .authority_view_readonly_in_txn(txn)?
+            .policy_settings
+            .targets
+            .get(&target)
+            .map(|folded| folded.live.keys().copied().collect())
+            .unwrap_or_default())
+    }
+
     /// Every setting target the fold names in `txn`, each with its
     /// revision: what the setting projection compares with the revision it
     /// last projected (stage 7a-2).
@@ -325,42 +441,44 @@ impl Vault {
     }
 
     /// The setting act `hash` names, read back from the log in `txn`, as it
-    /// bears on `target` (a batch's row on it, stage 7a-3).
-    fn setting_slot_head_in_txn(
+    /// bears on `target` (a batch's row on it, stage 7a-3; a copy's row on
+    /// it, stage 7a-4).
+    pub(crate) fn setting_slot_head_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         target: EntityId,
         hash: AuthorityEntryHash,
     ) -> Result<SettingSlotHead> {
+        let mut head = SettingSlotHead {
+            act: hash,
+            set: None,
+            copy: None,
+        };
         let id = authority_log_entity_id_from_hash(&hash)?;
         let Some(raw) = self
             .store
             .port_entity_record(txn, &id)?
             .map(|row| row.encode())
         else {
-            return Ok(SettingSlotHead {
-                act: hash,
-                set: None,
-            });
+            return Ok(head);
         };
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(crate::error::Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
-            return Ok(SettingSlotHead {
-                act: hash,
-                set: None,
-            });
+            return Ok(head);
         }
         let entry = super::readonly_fold::decode_stored_authority_log_body(
             &raw[ENTITY_METADATA_HEADER_LEN..],
         )?;
-        let set = match &entry.op {
-            AuthorityOp::PolicySettingSet(set) if authority_entry_hash(&entry)? == hash => {
-                set.on_target(target)?
-            }
-            _ => None,
-        };
-        Ok(SettingSlotHead { act: hash, set })
+        if authority_entry_hash(&entry)? != hash {
+            return Ok(head);
+        }
+        match &entry.op {
+            AuthorityOp::PolicySettingSet(set) => head.set = set.on_target(target)?,
+            AuthorityOp::SettingCopy(copy) => head.copy = copy.on_target(target)?.cloned(),
+            _ => {}
+        }
+        Ok(head)
     }
 }
 
@@ -461,6 +579,9 @@ pub(crate) struct SettingSlotHead {
     /// `None` where the entry is not stored here (an adopted image covers
     /// it) or is not a setting act.
     pub(crate) set: Option<PolicySettingSet>,
+    /// The copy's row on the target where the entry is a move's setting copy
+    /// (stage 7a-4); `None` otherwise.
+    pub(crate) copy: Option<SettingCopyRow>,
 }
 
 /// Where some rows' acts stood when a test read them (stage 7a-2 tests; several rows 7a-3): the
@@ -470,6 +591,18 @@ pub(crate) struct SettingSlotHead {
 pub(crate) struct SettingFrontier {
     parents: BTreeSet<AuthorityEntryHash>,
     seen: BTreeMap<EntityId, [u8; 32]>,
+}
+
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+impl SettingFrontier {
+    /// The revision `slot`'s target had when the frontier read it; zero for a row it did not.
+    fn seen_of(&self, slot: &RowKey) -> Result<[u8; 32]> {
+        Ok(self
+            .seen
+            .get(&setting_slot_target(slot)?)
+            .copied()
+            .unwrap_or([0; 32]))
+    }
 }
 
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
@@ -501,19 +634,10 @@ impl Vault {
         rows: Vec<(RowKey, Option<Vec<u8>>)>,
         ts: u64,
     ) -> Result<AuthorityLogEntry> {
-        use ed25519_dalek::Signer;
-
-        let fold = self.authority_fold()?;
-        let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
-        let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
         let rows = rows
             .into_iter()
             .map(|(slot, inline)| {
-                let seen = frontier
-                    .seen
-                    .get(&setting_slot_target(&slot)?)
-                    .copied()
-                    .unwrap_or([0; 32]);
+                let seen = frontier.seen_of(&slot)?;
                 slot_row(slot, seen, setting_value_digest(b"null"), inline)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -521,6 +645,47 @@ impl Vault {
             (owner, ActSurface::ThisInstall),
             rows,
         )?(machine));
+        self.sign_on_frontier_as(key, frontier, op, ts)
+    }
+
+    /// A move's copy of each carried row of `rows`, naming its acts, as the machine `machine`'s
+    /// own carry signs it with its install key `key`, on `frontier`, at `ts` (stage 7a-4 tests).
+    /// A row `frontier` did not read names `seen` zero.
+    pub(crate) fn sign_setting_copy_as(
+        &self,
+        (machine, key): (EntityId, &ed25519_dalek::SigningKey),
+        frontier: &SettingFrontier,
+        rows: Vec<(RowKey, Vec<SettingCopyName>)>,
+        ts: u64,
+    ) -> Result<AuthorityLogEntry> {
+        let rows = rows
+            .into_iter()
+            .map(|(slot, names)| {
+                Ok(SettingCopyRow {
+                    seen: frontier.seen_of(&slot)?,
+                    slot,
+                    names,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let op = AuthorityOp::SettingCopy(SettingCopy { machine, rows });
+        self.sign_on_frontier_as(key, frontier, op, ts)
+    }
+
+    /// `op` signed with the install key `key` on `frontier`'s parents at `ts`, at the key's next
+    /// sequence.
+    fn sign_on_frontier_as(
+        &self,
+        key: &ed25519_dalek::SigningKey,
+        frontier: &SettingFrontier,
+        op: AuthorityOp,
+        ts: u64,
+    ) -> Result<AuthorityLogEntry> {
+        use ed25519_dalek::Signer;
+
+        let fold = self.authority_fold()?;
+        let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
+        let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: fold.vault_id,
