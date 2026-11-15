@@ -13,7 +13,7 @@ pub const GPU_QUOTE_VALID_MS: u64 = 10 * 60 * 1000;
 /// How an offer's price is set (CROSS-ARCH-0023 C3). A GPU class takes one
 /// posted price whichever provider serves it, so a GPU offer is
 /// [`PriceShape::AtOneironList`]; the quote refuses the others.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PriceShape {
     AtOneironList,
