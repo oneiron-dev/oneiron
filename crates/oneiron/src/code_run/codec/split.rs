@@ -11,7 +11,7 @@ use super::super::replay::{
     CODE_RUN_REPLAY_HASH_LEN, CodeRunReplayGeneration, CodeRunReplayRecord,
 };
 use super::super::support::{fixed_binary, invalid_code_run_replay, u64_value};
-use super::held::{array_len, key_index, map_len, skip_values, walk};
+use super::held::{array_len, key_index, map_len, read, skip_values, walk};
 
 /// One of the four families whose elements live in item rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +81,7 @@ impl ReplayFamily {
     }
 
     /// The family's slot in the four-family arrays, in [`Self::ALL`] order.
-    const fn slot(self) -> usize {
+    pub(crate) const fn slot(self) -> usize {
         match self {
             Self::BridgeCalls => 0,
             Self::StepCheckpoints => 1,
@@ -283,36 +283,41 @@ impl ReplayHead {
     }
 }
 
+/// The head row: a 4-entry array of the counts, the last state hash, the
+/// pending digest and the shell. The shell sits inline as its own map, not
+/// as bytes, so the side-row wall reads its fields as it read them in the
+/// whole record (an ABI check's field words joined, a credential field by
+/// its key) and masks them in place.
 impl crate::side_table::RawValue for ReplayHead {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let value = Value::Array(vec![
+        let context = "code-run replay head MessagePack encode failed";
+        // 0x94: a fixarray of four entries; the shell's bytes are the fourth.
+        let mut bytes = vec![0x94];
+        for value in [
             Value::Array(self.counts.iter().copied().map(Value::from).collect()),
             Value::Binary(self.last_state_hash.to_vec()),
             Value::Binary(self.pending_digest.to_vec()),
-            Value::Binary(self.shell.clone()),
-        ]);
-        Ok(super::encode_value(
-            &value,
-            "code-run replay head MessagePack encode failed",
-        )?)
+        ] {
+            bytes.extend(super::encode_value(&value, context)?);
+        }
+        bytes.extend_from_slice(&self.shell);
+        Ok(bytes)
     }
 
+    /// A head decodes only when its shell holds a valid record's own fields
+    /// (each decoded and checked as the whole decode checks it, the pending
+    /// step against the head's call count), so the wall refuses a masked copy
+    /// whose ABI check no longer matches its layout hash.
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         let mut cursor = bytes;
-        let value = rmpv::decode::read_value(&mut cursor)
-            .map_err(|_| invalid_code_run_replay("replay head is not valid MessagePack"))?;
-        if !cursor.is_empty() {
-            return Err(
-                invalid_code_run_replay("trailing bytes after code-run replay head").into(),
-            );
+        if array_len(&mut cursor)? != 4 {
+            return Err(invalid_code_run_replay("replay head must be a 4-entry array").into());
         }
-        let Value::Array(items) = &value else {
-            return Err(invalid_code_run_replay("replay head must be a 4-entry array").into());
-        };
-        let [counts, last_state_hash, pending_digest, shell] = items.as_slice() else {
-            return Err(invalid_code_run_replay("replay head must be a 4-entry array").into());
-        };
-        let Value::Array(counts) = counts else {
+        let counts = read(&mut cursor)?;
+        let last_state_hash = read(&mut cursor)?;
+        let pending_digest = read(&mut cursor)?;
+        let shell = cursor;
+        let Value::Array(counts) = &counts else {
             return Err(invalid_code_run_replay("replay head counts must be an array").into());
         };
         let [bridge_calls, step_checkpoints, outputs, bindings] = counts.as_slice() else {
@@ -325,18 +330,15 @@ impl crate::side_table::RawValue for ReplayHead {
             u64_value(bindings)?,
         ];
         let last_state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN] =
-            fixed_binary(last_state_hash, "replay head last state hash")?;
+            fixed_binary(&last_state_hash, "replay head last state hash")?;
         let pending_digest: [u8; CODE_RUN_REPLAY_HASH_LEN] =
-            fixed_binary(pending_digest, "replay head pending digest")?;
-        let Value::Binary(shell) = shell else {
-            return Err(invalid_code_run_replay("replay head shell must be bytes").into());
-        };
-        walk(shell, false)?;
+            fixed_binary(&pending_digest, "replay head pending digest")?;
+        super::validate_code_run_replay_shell(shell, counts[0])?;
         Ok(Self {
             counts,
             last_state_hash,
             pending_digest,
-            shell: shell.clone(),
+            shell: shell.to_vec(),
         })
     }
 }

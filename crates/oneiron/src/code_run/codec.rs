@@ -319,6 +319,33 @@ impl crate::side_table::RawValue for CodeRunReplayRecord {
 
 /// Decodes a deterministic code-run replay record.
 pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
+    let record = decode_code_run_replay_fields(bytes)?;
+    validate_code_run_replay_record(&record)?;
+    Ok(record)
+}
+
+/// Checks a replay head's `shell` as the whole decode checks a record's own
+/// fields: every field decodes and validates as there (an ABI check against
+/// its layout hash, the live run's lease owner), its four families are empty,
+/// and its pending step lies inside the head's `bridge_calls` calls.
+pub(crate) fn validate_code_run_replay_shell(shell: &[u8], bridge_calls: u64) -> Result<()> {
+    let mut record = decode_code_run_replay_fields(shell)?;
+    if !(record.bridge_calls.is_empty()
+        && record.step_checkpoints.is_empty()
+        && record.outputs.is_empty()
+        && record.bindings.is_empty())
+    {
+        return Err(invalid_code_run_replay("replay shell family is not empty"));
+    }
+    if let Some(pending) = record.pending_step.take() {
+        validate_pending_step(&pending, bridge_calls)?;
+    }
+    validate_code_run_replay_record(&record)
+}
+
+/// The record `bytes` hold, each field decoded and checked on its own; the
+/// checks across fields are [`validate_code_run_replay_record`]'s.
+fn decode_code_run_replay_fields(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
     let value = decode_value(bytes)?;
     let fields = pinned_map(
         &value,
@@ -332,7 +359,7 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         ));
     }
 
-    let record = CodeRunReplayRecord {
+    Ok(CodeRunReplayRecord {
         run_id: entity_value(required(fields[1], "missing replay run_id")?)?,
         determinism: match required(fields[2], "missing replay determinism")? {
             Value::Nil => None,
@@ -368,9 +395,7 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         pending_step: decode_pending_step(fields[11])?,
         verb_rows_cache: Default::default(),
         changed_calls: Default::default(),
-    };
-    validate_code_run_replay_record(&record)?;
-    Ok(record)
+    })
 }
 
 fn encode_optional_entity_rows(rows: &Option<Vec<EntityId>>) -> Value {

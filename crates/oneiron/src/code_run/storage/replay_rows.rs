@@ -207,31 +207,27 @@ fn put_raw_head(
 }
 
 /// Deletes `run`'s stored items past `counts`, in [`ReplayFamily::ALL`] order; every full key deleted.
+/// The scan reads the transaction, so the stale keys are collected first and deleted after it.
 fn delete_stale_items(
     dbs: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,
     run: &EntityId,
     counts: [u64; 4],
 ) -> Result<Vec<Vec<u8>>> {
-    let mut deleted = Vec::new();
+    let mut stale = Vec::new();
     for row in ITEMS.iter_raw_from(dbs, wtxn, &ReplayItemKey::run_prefix(run))? {
         let (suffix, _) = row?;
         let Some(key) = ReplayItemKey::decode_key(&suffix) else {
             return Err(Error::CorruptedIndex("code-run replay item key"));
         };
-        let slot = match key.family {
-            ReplayFamily::BridgeCalls => 0,
-            ReplayFamily::StepCheckpoints => 1,
-            ReplayFamily::Outputs => 2,
-            ReplayFamily::Bindings => 3,
-        };
-        if key.index >= counts[slot] {
-            let full = ITEMS.key_bytes(&key);
-            dbs.side_vault_meta().delete(wtxn, &full)?;
-            deleted.push(full);
+        if key.index >= counts[key.family.slot()] {
+            stale.push(ITEMS.key_bytes(&key));
         }
     }
-    Ok(deleted)
+    for full in &stale {
+        dbs.side_vault_meta().delete(wtxn, full)?;
+    }
+    Ok(stale)
 }
 
 /// `run`'s `family` items in index order, checked exactly `0..count`: a gap or an extra row is corrupted.
@@ -812,9 +808,44 @@ pub(crate) fn put(
     Ok(keys)
 }
 
+/// Writes each of `fenced`'s `count` `family` items whose bytes differ from the item `stored`
+/// holds at its index, through the wall; every full key written. An index past the stored count
+/// has no stored item and is written.
+fn put_changed_items(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    head_key: &[u8],
+    stored: &ReplayHead,
+    fenced: &CodeRunReplayRecord,
+    family: ReplayFamily,
+    count: usize,
+) -> Result<Vec<Vec<u8>>> {
+    let run = fenced.run_id;
+    let stored_items = family_items(dbs, wtxn, &run, family, stored.counts[family.slot()])?;
+    let mut keys = Vec::new();
+    for index in 0..count {
+        let bytes = encode_code_run_replay_item(fenced, family, index)
+            .map_err(|error| seam_error(HEADS.decl(), error))?;
+        if stored_items.get(index) == Some(&bytes) {
+            continue;
+        }
+        let key = ReplayItemKey {
+            run,
+            family,
+            index: index as u64,
+        };
+        keys.push(put_admitted_item(dbs, wtxn, head_key, &key, &bytes)?);
+    }
+    Ok(keys)
+}
+
 /// Appends `fenced` onto `stored`, writing only what moved: the head, new items, fence-changed
-/// items and changed calls. A stored prefix item stays as the wall admitted it (OF-067), keeping
-/// any reply rows a delivery added since (FIX 5455); an append's bytes are flat in the run's length.
+/// and changed calls, and each checkpoint, output and binding whose bytes differ from its stored
+/// item. A stored prefix call stays as the wall admitted it (OF-067), keeping any reply rows a
+/// delivery added since (FIX 5455), as `over_held` kept it; every other family is the caller's,
+/// as a whole put writes it, so a guarded write that replaces a stored checkpoint or output
+/// persists it. The bytes an append writes are flat in the run's length; it reads the stored
+/// checkpoint, output and binding items to diff them.
 ///
 /// # Errors
 ///
@@ -844,10 +875,6 @@ pub(crate) fn put_append(
     let mut keys = vec![head_key.clone()];
     let fenced_changed = !std::ptr::eq(fenced, written);
     let stored_calls = usize::try_from(stored.counts[0])
-        .map_err(|_| Error::CorruptedIndex("code-run replay head count"))?;
-    let stored_checkpoints = usize::try_from(stored.counts[1])
-        .map_err(|_| Error::CorruptedIndex("code-run replay head count"))?;
-    let stored_outputs = usize::try_from(stored.counts[2])
         .map_err(|_| Error::CorruptedIndex("code-run replay head count"))?;
     for (index, call) in fenced.bridge_calls.iter().enumerate() {
         if index >= stored_calls {
@@ -897,46 +924,14 @@ pub(crate) fn put_append(
             .map_err(|error| seam_error(HEADS.decl(), error))?;
         keys.push(put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?);
     }
-    for (index, checkpoint) in fenced.step_checkpoints.iter().enumerate() {
-        if index >= stored_checkpoints
-            || (fenced_changed && written.step_checkpoints.get(index) != Some(checkpoint))
-        {
-            let bytes = encode_code_run_replay_item(fenced, ReplayFamily::StepCheckpoints, index)
-                .map_err(|error| seam_error(HEADS.decl(), error))?;
-            let key = ReplayItemKey {
-                run,
-                family: ReplayFamily::StepCheckpoints,
-                index: index as u64,
-            };
-            keys.push(put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?);
-        }
-    }
-    for (index, output) in fenced.outputs.iter().enumerate() {
-        if index >= stored_outputs || (fenced_changed && written.outputs.get(index) != Some(output))
-        {
-            let bytes = encode_code_run_replay_item(fenced, ReplayFamily::Outputs, index)
-                .map_err(|error| seam_error(HEADS.decl(), error))?;
-            let key = ReplayItemKey {
-                run,
-                family: ReplayFamily::Outputs,
-                index: index as u64,
-            };
-            keys.push(put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?);
-        }
-    }
-    let stored_bindings = family_items(dbs, wtxn, &run, ReplayFamily::Bindings, stored.counts[3])?;
-    for (index, _) in fenced.bindings.iter().enumerate() {
-        let bytes = encode_code_run_replay_item(fenced, ReplayFamily::Bindings, index)
-            .map_err(|error| seam_error(HEADS.decl(), error))?;
-        if stored_bindings.get(index) == Some(&bytes) {
-            continue;
-        }
-        let key = ReplayItemKey {
-            run,
-            family: ReplayFamily::Bindings,
-            index: index as u64,
-        };
-        keys.push(put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?);
+    for (family, count) in [
+        (ReplayFamily::StepCheckpoints, fenced.step_checkpoints.len()),
+        (ReplayFamily::Outputs, fenced.outputs.len()),
+        (ReplayFamily::Bindings, fenced.bindings.len()),
+    ] {
+        keys.extend(put_changed_items(
+            dbs, wtxn, &head_key, stored, fenced, family, count,
+        )?);
     }
     let counts = [
         u64::try_from(fenced.bridge_calls.len())
@@ -949,7 +944,7 @@ pub(crate) fn put_append(
             .map_err(|_| Error::ArithmeticOverflow("code-run binding count"))?,
     ];
     // An append never shrinks the calls, checkpoints or outputs (`appends_to`); only the
-    // bindings can, so their stale rows are deleted by key and the append reads no other item.
+    // bindings can, so their stale rows are deleted by key and no other family needs a scan.
     for index in counts[3]..stored.counts[3] {
         let key = ITEMS.key_bytes(&ReplayItemKey {
             run,
