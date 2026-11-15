@@ -1092,3 +1092,497 @@ fn no_write_but_the_phone_keep_births_a_phone_mark() {
         "the stored TURN keeps no phone mark after the refused restamp",
     );
 }
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn reach_summary_canonical(conversation: EntityId) -> oneiron::conversation_dag::ScopeSelector {
+    oneiron::conversation_dag::ScopeSelector {
+        conversation,
+        session: None,
+        path: oneiron::conversation_dag::ScopePath::Canonical,
+        include_forks: false,
+    }
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+struct ReachSummaryNoInner;
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+impl oneiron::DreamerAttemptExecutor for ReachSummaryNoInner {
+    async fn execute(
+        &mut self,
+        _attempt: &oneiron::dreamer_runner::DreamerAdmittedAttempt,
+        _ctx: &mut oneiron::WakeAttemptContext<'_>,
+    ) -> oneiron::Result<oneiron::DreamerAttemptExecution> {
+        panic!("FIXTURE: only the requested scope-summary attempt runs")
+    }
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+struct ReachSummaryBackend {
+    source_text: String,
+    response: std::sync::Mutex<Option<oneiron::LlmResponse>>,
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+impl oneiron::LlmBackend for ReachSummaryBackend {
+    fn generate<'a>(
+        &'a self,
+        request: oneiron::LlmRequest,
+        _lease: &'a oneiron::BudgetLease,
+    ) -> oneiron::LlmGenerateFuture<'a> {
+        assert!(
+            request
+                .messages
+                .iter()
+                .flat_map(|message| &message.content)
+                .any(|part| {
+                    matches!(part, oneiron::ContentPart::Text { text, .. }
+                    if text.contains(self.source_text.as_str()))
+                }),
+            "FIXTURE: the Dreamer's actual input contains the source MESSAGE's words"
+        );
+        let response = self
+            .response
+            .lock()
+            .expect("script")
+            .take()
+            .expect("one call");
+        Box::pin(async move { Ok(response) })
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: oneiron::LlmRequest,
+        _lease: &'a oneiron::BudgetLease,
+    ) -> oneiron::LlmStreamResult<'a> {
+        Err(oneiron::LlmError::Fatal(
+            oneiron::FatalLlmError::InvalidRequest,
+        ))
+    }
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn reach_summary_response(text: &str) -> oneiron::LlmResponse {
+    use oneiron::llm::ReplyAssertions;
+    use oneiron::{ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmUsage};
+
+    oneiron::LlmResponse {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content: vec![ContentPart::Text {
+                text: json!({ "text": text, "keep": "" }).to_string(),
+                signature: None,
+            }],
+        },
+        usage: LlmUsage::zero(),
+        finish_reason: FinishReason::Stop,
+        reply_assertions: ReplyAssertions::default(),
+        token_scores: None,
+    }
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn reach_block_on_ready<F: std::future::Future>(future: F) -> F::Output {
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    let mut future = std::pin::pin!(future);
+    match future.as_mut().poll(&mut context) {
+        std::task::Poll::Ready(output) => output,
+        std::task::Poll::Pending => panic!("FIXTURE: the scripted executor unexpectedly waited"),
+    }
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn reach_allow_egress(_: &oneiron::LlmRequest) -> bool {
+    true
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn reach_compose_summary(
+    vault: &Vault,
+    owner: EntityId,
+    conversation: EntityId,
+    text: &str,
+    now: u64,
+) -> EntityId {
+    use oneiron::dreamer_consolidation::ScopeSummaryExecutor;
+    use oneiron::dreamer_runner::{
+        AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt,
+        DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
+        DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerRunnerStore,
+    };
+    use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+    use oneiron::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
+    use oneiron::{
+        BudgetExhaustionPolicy, BudgetGuard, DreamerAttemptExecution, DreamerAttemptExecutor,
+        ModelId, ModelLocality, WakeAttemptContext, WakePassDeadline, WriteActor,
+    };
+
+    let queued = vault
+        .request_scope_summary(&ScopeSummaryRequest {
+            target: ScopeSummaryTarget::Scope {
+                scope: reach_summary_canonical(conversation),
+                land_on: None,
+                as_record: false,
+            },
+            requester: WriteActor::new(owner, EdgeActorClass::Human),
+        })
+        .expect("declare summary");
+    assert!(!queued.coalesced, "FIXTURE: a fresh summary declaration");
+    let store = DreamerRunnerStore::new(vault);
+    let admitted = match store
+        .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: 1,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+            admission: AdmitDreamerAttempt {
+                lease_owner: "fixture".to_owned(),
+                now,
+                budget_id: "wake".to_owned(),
+                budget_total_units: 10_000,
+                reserve_units: 100,
+                started_milestone: None,
+            },
+        })
+        .expect("admit summary")
+    {
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            admitted,
+        )) => *admitted,
+        other => panic!("FIXTURE: summary was not admitted: {other:?}"),
+    };
+    assert_eq!(
+        admitted.status.attempt.id, queued.attempt,
+        "FIXTURE: the admitted attempt is this summary's declaration"
+    );
+    let backend = ReachSummaryBackend {
+        source_text: text.to_owned(),
+        response: std::sync::Mutex::new(Some(reach_summary_response(text))),
+    };
+    let guard =
+        BudgetGuard::with_reserve_units("wake", 10_000, 100, BudgetExhaustionPolicy::Suspend);
+    let model = ModelId::new("test/model@r1").expect("model");
+    let inference = HostInferenceContext {
+        binding: HostInferenceBinding::Advertised {
+            model: model.clone(),
+            locality: ModelLocality::OwnServer,
+            keyless: false,
+        },
+        extraction_egress: Some(&reach_allow_egress),
+    };
+    let deadline = WakePassDeadline::with_clock(180_000, Arc::new(|| 0u64));
+    let mut executor = ScopeSummaryExecutor::new(
+        ReachSummaryNoInner,
+        &backend,
+        &guard,
+        vault.dreamer_authority().expect("Dreamer authority"),
+        model,
+        inference,
+        Some("Summarize the supplied records."),
+    );
+    let mut context = WakeAttemptContext {
+        vault,
+        deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
+        budget_id: "wake",
+        now_ms: now.saturating_mul(1000),
+        prepared_wake: None,
+        prepared_attempt: None,
+        spend_meter: None,
+    };
+    let outcome =
+        reach_block_on_ready(executor.execute(&admitted, &mut context)).expect("compose summary");
+    assert!(
+        matches!(outcome, DreamerAttemptExecution::Completed { .. }),
+        "FIXTURE: the summary completed, not parked: {outcome:?}"
+    );
+    store
+        .complete(CompleteDreamerAttempt {
+            id: admitted.status.attempt.id,
+            lease_owner: "fixture".to_owned(),
+            attempt_count: admitted.status.attempt.attempt_count,
+            now,
+        })
+        .expect("complete summary attempt");
+    let result = vault
+        .scope_summary_status(queued.attempt)
+        .expect("summary status")
+        .result
+        .expect("the summary landed");
+    EntityId::from_hex(&result.summary).expect("summary id")
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn reach_land_reply(
+    vault: &Vault,
+    owner: EntityId,
+    summary: EntityId,
+    turn: EntityId,
+    text: &str,
+) -> EntityId {
+    use oneiron::WriteActor;
+
+    let reply = vault
+        .land_header(
+            &summary,
+            &turn,
+            WriteActor::new(owner, EdgeActorClass::Human),
+            true,
+        )
+        .expect("land the summary reply")
+        .record
+        .expect("as_record lands a TURN");
+    let body: serde_json::Value = rmp_serde::from_slice(
+        &vault
+            .get(&reply)
+            .expect("reply read")
+            .expect("reply exists"),
+    )
+    .expect("reply body");
+    assert_eq!(
+        body["txt"], text,
+        "FIXTURE: the reply copies the summary's words"
+    );
+    assert_eq!(
+        body["summary"],
+        summary.to_hex(),
+        "FIXTURE: the reply names this summary"
+    );
+    reply
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_summary_of_a_kept_call() {
+    use oneiron::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    };
+    use oneiron::scope_summary::decode_scope_summary_body;
+    use oneiron::sync::schema::create_window_doc;
+    use oneiron::sync::window::reverse_rematerialize;
+    use oneiron::sync::{
+        SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
+        put_selector_test_federation_grant,
+    };
+    use oneiron::{CallPurpose, ModelLocality};
+    use oneiron_authority::federation::scope_codec::read_preset;
+
+    const SHARED_VAULT_ID: u64 = 7;
+
+    let reach = reach_fixture();
+    let vault = &reach.fixture.vault;
+    let owner = reach.fixture.owner;
+
+    // Scripted inference policy, as the precedent test sets it: the Dreamer
+    // executor's model call is admitted at OwnServer locality.
+    let mut defaults = vault.purpose_default_table().expect("inference defaults");
+    defaults.extraction_max_locality = ModelLocality::OwnServer;
+    defaults
+        .purposes
+        .get_mut(&CallPurpose::Extraction)
+        .expect("extraction defaults")
+        .locality = ModelLocality::OwnServer;
+    vault
+        .set_purpose_default_table(&defaults)
+        .expect("scripted inference policy");
+
+    // CONTROL conversation: one ordinary turn as witness_control_message
+    // witnesses it, into a fresh conversation id.
+    let control_conv = EntityId::now();
+    let control_turn = WitnessTurn {
+        conversation_ref: control_conv.to_hex(),
+        turn_ref: None,
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "text".to_owned(),
+            content: CONTROL_WORDS.to_owned(),
+            parts: None,
+            metadata: None,
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: OCCURRED_AT,
+        assertions: Default::default(),
+    };
+    let control_receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&control_turn)
+        .expect("the control turn is witnessed");
+    let control_turn_id = control_receipt.turn_id;
+    let control_msg_id =
+        EntityId::from_hex(&control_receipt.messages[0].id).expect("control message id");
+    assert_eq!(
+        vault
+            .resolve_dag_scope(&reach_summary_canonical(control_conv))
+            .expect("scope")
+            .records,
+        vec![control_turn_id],
+        "FIXTURE: the control conversation resolves to its TURN, not its MESSAGE"
+    );
+
+    let now = vault.now_recorded_at();
+    let s_control = reach_compose_summary(vault, owner, control_conv, CONTROL_WORDS, now);
+    let control_body = decode_scope_summary_body(
+        &vault
+            .get(&s_control)
+            .expect("summary read")
+            .expect("summary exists"),
+    )
+    .expect("a scope-summary body, not an epoch");
+    assert_eq!(control_body.v, 2, "FIXTURE: a composed v2 summary");
+    assert_eq!(
+        control_body.scope,
+        Some(reach_summary_canonical(control_conv)),
+        "FIXTURE: the source scope"
+    );
+    assert_eq!(
+        control_body.covers,
+        vec![control_turn_id],
+        "FIXTURE: the exact TURN cover"
+    );
+    assert_eq!(
+        control_body
+            .messages
+            .iter()
+            .map(|source| source.id)
+            .collect::<Vec<_>>(),
+        vec![control_msg_id],
+        "FIXTURE: the MESSAGE is a word source, not merely a child of a covered TURN"
+    );
+    assert_eq!(
+        control_body.text, CONTROL_WORDS,
+        "FIXTURE: the composed source words"
+    );
+
+    // S_phone over A's phone thread: the v1 test door, not the Dreamer path
+    // (the Dreamer reads no phone row: its TURN read carries no principal
+    // for the thread's ConversationMessages grant). Its covers are the kept
+    // TURNs themselves, which carry phone_thread, so it is a scope SUMMARY
+    // of the kept call all the same.
+    let s_phone = oneiron::test_doors::scope_summary::mint_scope_summary(
+        vault,
+        &reach_summary_canonical(reach.conv_a),
+        A_SECRET,
+    )
+    .expect("the phone summary mints");
+    let phone_body = decode_scope_summary_body(
+        &vault
+            .get(&s_phone)
+            .expect("summary read")
+            .expect("summary exists"),
+    )
+    .expect("a scope-summary body, not an epoch");
+    assert_eq!(
+        phone_body.v, 1,
+        "FIXTURE: the v1 test door mints a v1 summary"
+    );
+    assert_eq!(
+        phone_body.scope,
+        Some(reach_summary_canonical(reach.conv_a)),
+        "FIXTURE: the source scope"
+    );
+    assert_eq!(
+        phone_body.covers.len(),
+        2,
+        "FIXTURE: the phone summary covers both kept TURNs"
+    );
+    assert!(
+        phone_body.covers.contains(&reach.turn_a1) && phone_body.covers.contains(&reach.turn_a2),
+        "FIXTURE: the phone summary covers turn_a1 and turn_a2",
+    );
+    assert!(
+        phone_body.messages.is_empty(),
+        "FIXTURE: the v1 test door leaves messages empty",
+    );
+    assert_eq!(
+        phone_body.text, A_SECRET,
+        "FIXTURE: the minted source words"
+    );
+
+    let r_phone = reach_land_reply(vault, owner, s_phone, reach.turn_a2, A_SECRET);
+
+    let member = EntityId::now();
+    let member_now = vault.now_recorded_at();
+    let at = TimeRange {
+        start: member_now,
+        end: member_now,
+    };
+    vault
+        .put_entity(
+            &member,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            at,
+            member_now,
+            &rmp_serde::to_vec_named(&serde_json::json!({ "name": "member" }))
+                .expect("member PERSON body"),
+        )
+        .expect("FIXTURE: a member PERSON");
+    let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
+    let grant_id = EntityId::now();
+    let mut grant = FederationGrant::new(
+        scope,
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    grant.authority_scope = read_preset();
+    put_selector_test_federation_grant(vault, &grant_id, &grant, member_now)
+        .expect("FIXTURE: the member's federation grant");
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(vault, scope, &selector)
+        .expect("FIXTURE: the member's selector is authorized");
+
+    // The kept rows were learned at OCCURRED_AT; the summaries and the reply
+    // were learned at the vault clock. Pack every window that holds
+    // S_control, S_phone and R_phone.
+    let keys = [
+        WindowKey::from_timestamp(OCCURRED_AT),
+        WindowKey::from_timestamp(now),
+        WindowKey::from_timestamp(member_now),
+        WindowKey::from_timestamp(vault.now_recorded_at()),
+    ];
+    let mut carried = BTreeSet::new();
+    let mut packed = BTreeSet::new();
+    for key in &keys {
+        let source = create_window_doc("selector", key);
+        reverse_rematerialize(vault, &source, key).expect("the window pack");
+        for id in [&s_control, &s_phone, &r_phone] {
+            if source.get_map("entities").get(&id.to_hex()).is_some() {
+                packed.insert(*id);
+            }
+        }
+        let selected = filtered_window_doc(vault, &source, key, scope, &selector)
+            .expect("the member's restricted selector window");
+        selected.get_map("entities").for_each(|key, _| {
+            if let Ok(id) = EntityId::from_hex(key) {
+                carried.insert(id);
+            }
+        });
+    }
+    for (id, label) in [
+        (&s_control, "S_control"),
+        (&s_phone, "S_phone"),
+        (&r_phone, "R_phone"),
+    ] {
+        assert!(
+            packed.contains(id),
+            "FIXTURE: a packed window holds {label}"
+        );
+    }
+    assert!(
+        carried.contains(&s_control),
+        "precondition: the Member restricted window still carries the control SUMMARY S_control",
+    );
+    assert!(
+        !carried.contains(&s_phone),
+        "LEAK: the Member restricted window carries the phone SUMMARY S_phone",
+    );
+    assert!(
+        !carried.contains(&r_phone),
+        "LEAK: the Member restricted window carries the phone reply TURN R_phone",
+    );
+}
