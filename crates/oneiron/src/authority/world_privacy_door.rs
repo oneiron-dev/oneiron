@@ -425,13 +425,18 @@ impl Vault {
                     self.reseal_after_machine_admission()?;
                 } else {
                     drop((fold, txn));
+                    // The test host's root, held as a serving host holds its
+                    // own, proves his answer (row CARRIER-OWNER-PROOF).
+                    self.hold_checkpoint_root_signer(std::sync::Arc::new(issuer.duplicate()?));
                     self.set_machine_role(
                         &owner,
                         ActSurface::ThisInstall,
                         request.machine,
                         yours,
                         None,
-                    )?;
+                    )?
+                    .into_standing()
+                    .ok_or_else(invalid_authority)?;
                 }
                 request.machine
             }

@@ -411,6 +411,7 @@ fn paired_answer() -> Value {
             "pin": checkpoint_pin_schema(),
             "home": paired_home_schema(),
             "re_paired": {"type": "boolean", "description": "True when the link re-paired an already held machine credential only; omitted otherwise."},
+            "answer_held": {"type": "boolean", "description": "True when the link's machine answer is stored and waits for the owner's confirm on an owner device: this home carried it with no owner key, so the machine is not the owner's yet. The token stands. Omitted otherwise."},
             "comm": comm_reach_schema()
         }
     })

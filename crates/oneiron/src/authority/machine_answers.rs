@@ -14,6 +14,53 @@ use crate::{EntityId, TimeRange, Vault};
 use super::slip_vault::{next_entry, require_host};
 use super::*;
 
+/// What an owner's machine answer did once the fold judged it (row
+/// CARRIER-OWNER-PROOF).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MachineAnswerLanding {
+    /// The answer stands: the machine as the fold now holds it.
+    Stands(FoldedMachine),
+    /// The answer needed an owner key's proof and this install holds none. It
+    /// is stored and HELD: it asks the owner on an owner device and stands
+    /// for nothing until he confirms there. `answer` is its log entry;
+    /// `machine` is the machine as it still stands, `None` when no revision
+    /// names it yet.
+    Held {
+        answer: AuthorityEntryHash,
+        machine: Option<FoldedMachine>,
+    },
+}
+
+impl MachineAnswerLanding {
+    /// The machine as the fold holds it after the answer: changed by an
+    /// answer that stands, unchanged by a held one.
+    #[must_use]
+    pub fn machine(&self) -> Option<&FoldedMachine> {
+        match self {
+            Self::Stands(machine) => Some(machine),
+            Self::Held { machine, .. } => machine.as_ref(),
+        }
+    }
+
+    /// The held answer's log entry; `None` for an answer that stands.
+    #[must_use]
+    pub fn held(&self) -> Option<AuthorityEntryHash> {
+        match self {
+            Self::Stands(_) => None,
+            Self::Held { answer, .. } => Some(*answer),
+        }
+    }
+
+    /// The machine an answer that stands gave; `None` for a held answer.
+    #[must_use]
+    pub fn into_standing(self) -> Option<FoldedMachine> {
+        match self {
+            Self::Stands(machine) => Some(machine),
+            Self::Held { .. } => None,
+        }
+    }
+}
+
 /// The owner's say-so one machine answer carries (mesh PR1b): who decided,
 /// as whom, from which surface (audit only), of which kind, and on which
 /// revision of the target the deciding surface showed him; `None` takes the
@@ -175,6 +222,12 @@ impl Vault {
     /// instead (FIX 3835): the class its host now declares, under the fresh
     /// proof its request carries, in the role it stands in.
     ///
+    /// An answer that needs an owner key's proof, carried by an install that
+    /// holds none, lands [`MachineAnswerLanding::Held`] (row
+    /// CARRIER-OWNER-PROOF): it is stored and asks the owner on an owner
+    /// device, the machine stands as before, and no credential is sealed
+    /// again.
+    ///
     /// # Errors
     /// [`Error::ConcurrentWrite`] when `seen` is not the machine's current
     /// revision; [`Error::InvalidConfig`] when this install carries no live
@@ -188,15 +241,17 @@ impl Vault {
         request: &MachineEnrolmentRequest,
         role: MachineRole,
         seen: Option<[u8; 32]>,
-    ) -> Result<FoldedMachine> {
+    ) -> Result<MachineAnswerLanding> {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let answer = AnswerAct::by_owner(actor, surface, role, seen);
-        let folded = self.enroll_machine_in_txn(&mut txn, answer, request, role)?;
+        let landing = self.enroll_machine_in_txn(&mut txn, answer, request, role)?;
         txn.commit()?;
         #[cfg(feature = "sync")]
-        self.reseal_after_machine_admission()?;
-        Ok(folded)
+        if landing.held().is_none() {
+            self.reseal_after_machine_admission()?;
+        }
+        Ok(landing)
     }
 
     /// The owner changes a machine's answer or removes it, from any surface
@@ -205,7 +260,8 @@ impl Vault {
     /// head of the machine he saw, an anchor's mark included (C5); `seen` is
     /// as for [`Self::enroll_machine`]. A role change between linked roles
     /// takes no carrier power away; only a removal does. The credentials are
-    /// sealed again for the roster it changed.
+    /// sealed again for the roster it changed. A held answer changes no
+    /// roster, as for [`Self::enroll_machine`].
     ///
     /// # Errors
     /// As [`Self::enroll_machine`], and [`invalid_authority`] for a machine no
@@ -217,7 +273,7 @@ impl Vault {
         machine: EntityId,
         role: MachineRole,
         seen: Option<[u8; 32]>,
-    ) -> Result<FoldedMachine> {
+    ) -> Result<MachineAnswerLanding> {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -243,11 +299,13 @@ impl Vault {
             ..current.profile.clone()
         };
         let answer = AnswerAct::by_owner(actor, surface, role, seen);
-        let folded = self.append_owner_answer_in_txn(&mut txn, &fold, answer, profile)?;
+        let landing = self.append_owner_answer_in_txn(&mut txn, &fold, answer, profile)?;
         txn.commit()?;
         #[cfg(feature = "sync")]
-        self.reseal_after_machine_admission()?;
-        Ok(folded)
+        if landing.held().is_none() {
+            self.reseal_after_machine_admission()?;
+        }
+        Ok(landing)
     }
 
     /// Enrols in the caller's transaction under the owner's act, carried by
@@ -258,7 +316,7 @@ impl Vault {
         answer: AnswerAct,
         request: &MachineEnrolmentRequest,
         role: MachineRole,
-    ) -> Result<FoldedMachine> {
+    ) -> Result<MachineAnswerLanding> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         // A machine the roster holds never joins again; only its class is
         // revised here (FIX 3835).
@@ -321,14 +379,15 @@ impl Vault {
     /// the heads carries them and the answer supersedes every head of the
     /// target it saw (C5, FIX 4987). It names no stranger anchor's row, which
     /// a replica may not store. The fold is the judge: an answer it refused
-    /// never reports success.
+    /// never reports success, and one it holds for the owner's proof reports
+    /// held.
     pub(super) fn append_owner_answer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
         answer: AnswerAct,
         mut profile: MachineProfile,
-    ) -> Result<FoldedMachine> {
+    ) -> Result<MachineAnswerLanding> {
         let (carrier, key) = self.carrier_in_txn(txn, fold)?;
         let target = fold.machine(profile.machine);
         let current = target.map_or([0; 32], FoldedMachine::answer_revision);
@@ -446,7 +505,10 @@ impl Vault {
             AuthorityOp::MachineProfile(profile.clone()),
             now,
         )?;
-        self.land_machine_profile_in_txn(txn, entry, &profile, now)
+        // A root-signed revision carries no act, so the fold never holds it.
+        self.land_machine_profile_in_txn(txn, entry, &profile, now)?
+            .into_standing()
+            .ok_or_else(invalid_authority)
     }
 
     /// Lands one machine revision and reads the fold back. A removal keeps
@@ -455,28 +517,45 @@ impl Vault {
     /// answers alike); one it never saw raced it and counts only stricter. A
     /// role change takes no carrier power away, so every revision lists
     /// them.
+    ///
+    /// An answer the fold holds for the owner's proof moved no head: it
+    /// reports held, with the machine as it still stands, and the caller
+    /// commits it so an owner device can ask (row CARRIER-OWNER-PROOF).
     fn land_machine_profile_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         entry: AuthorityLogEntry,
         profile: &MachineProfile,
         now: u64,
-    ) -> Result<FoldedMachine> {
+    ) -> Result<MachineAnswerLanding> {
         let at = TimeRange {
             start: now,
             end: now,
         };
+        let answer = authority_entry_hash(&entry)?;
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         // The fold is the judge: a profile it refused never reports success.
         let removal = profile.role == MachineRole::Removed;
-        self.authority_view_readonly_in_txn(txn)?
-            .machine(profile.machine)
-            .filter(|folded| {
-                folded.roster.as_ref().is_some_and(|roster| {
-                    roster.profile == *profile && (roster.is_live() || removal)
-                })
-            })
-            .cloned()
-            .ok_or_else(invalid_authority)
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        let machine = after.machine(profile.machine);
+        if let Some(folded) = machine.filter(|folded| {
+            folded
+                .roster
+                .as_ref()
+                .is_some_and(|roster| roster.profile == *profile && (roster.is_live() || removal))
+        }) {
+            return Ok(MachineAnswerLanding::Stands(folded.clone()));
+        }
+        let held = after
+            .held_machine_answers()
+            .get(&profile.machine)
+            .is_some_and(|held| held.contains_key(&answer));
+        if held {
+            return Ok(MachineAnswerLanding::Held {
+                answer,
+                machine: machine.cloned(),
+            });
+        }
+        Err(invalid_authority())
     }
 }

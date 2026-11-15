@@ -66,7 +66,15 @@ impl PairingPinRef {
 /// checkpoint pin the link kept, for the joining device to check.
 pub struct PairingRedeemed {
     pub slip: CapabilitySlip,
+    /// The machine the link added, as the roster now holds it. `None` for a
+    /// link that adds none, and for a new machine whose answer is held
+    /// (`held_answer`).
     pub machine: Option<FoldedMachine>,
+    /// The link's machine answer is stored and HELD (row
+    /// CARRIER-OWNER-PROOF): the redeeming install carried it with no owner
+    /// key, so the machine is not the owner's until he confirms it on an
+    /// owner device. The slip stands either way. Its log entry.
+    pub held_answer: Option<AuthorityEntryHash>,
     pub pin: Option<AuthorityCheckpointPin>,
     /// The owner who made the link, as the link recorded it.
     pub(crate) link_owner: Option<crate::EntityId>,
