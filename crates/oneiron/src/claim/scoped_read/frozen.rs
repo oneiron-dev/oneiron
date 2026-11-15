@@ -145,7 +145,8 @@ fn earlier_end(first: Option<u64>, second: Option<u64>) -> Option<u64> {
 /// either gate refused (Sol R1/R2 on #8061), and it reads as the actor
 /// class the live key was proved as: a key built from the principal's row
 /// takes that class, and a caller's key of another class reads nothing
-/// (`ScopedReadActorKey::within_saved_actor_class`, Sol F1 on #8134).
+/// (`ScopedReadActorKey::within_saved_actor_class`, Sol F1 on #8134). A
+/// basis that kept no class leaves the key's own (Astra F1/F2 on #8134).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeReadBasis {
@@ -162,7 +163,9 @@ pub(crate) struct NativeReadBasis {
     /// matched (`scoped_read_actor_matches`): a credential's from its proof,
     /// so an agent-class credential on a PERSON keeps `agent` (FIX
     /// SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS). `None` for a key that
-    /// named no class.
+    /// named no class, and for a basis saved before the class was kept: a
+    /// rebuild then reads under its own key's class, as before (Astra F1/F2
+    /// on #8134).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) actor_class: Option<String>,
 }
