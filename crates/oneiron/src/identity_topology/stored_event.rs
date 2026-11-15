@@ -504,3 +504,25 @@ impl StoredIdentityOpEvent {
         })
     }
 }
+
+/// An author-attribution action for the checkpoint-pins door: the carrier
+/// form `author_carrier_actor` reads.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_author_attribution_action(
+    target: EntityId,
+    core_digest: [u8; 32],
+    actor: WriteActor,
+) -> StoredIdentityOpAction {
+    StoredIdentityOpAction::AuthorAttribution {
+        target,
+        core_digest,
+        actor,
+    }
+}
+
+/// An undo action for the checkpoint-pins door: an identity op that
+/// carries no author.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_undo_action(target: EntityId) -> StoredIdentityOpAction {
+    StoredIdentityOpAction::Undo { target }
+}

@@ -36,6 +36,10 @@ mod types;
 mod vector_refill;
 pub(crate) use vector_refill::schedule_vector_refills;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use pending_index::put_pins_pending_index_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use phonetic::put_pins_pending_phonetic_in_txn;
 pub(crate) use storage::capture_entity_document;
 #[cfg(feature = "sync")]
 pub(crate) use storage::entity_has_pending_revision;
@@ -50,6 +54,12 @@ pub(crate) use storage::{
 };
 pub(crate) use storage::{
     capture_native_note_in_txn, finish_native_note_publication_in_txn, indexed_native_note_in_txn,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use storage::{
+    pins_frontier_document_value, pins_revision_doc_bytes, pins_revision_reference,
+    put_pins_entity_revision_doc_in_txn, put_pins_entity_revision_frontier_in_txn,
+    put_pins_entity_revision_state_in_txn,
 };
 pub use types::{
     EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder,

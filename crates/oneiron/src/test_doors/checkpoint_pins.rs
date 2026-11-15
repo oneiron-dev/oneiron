@@ -1,6 +1,6 @@
-//! The fifteen checkpoint getters' pins (UC-10 PR 3 and PR 4): one fixed
-//! seed and one printed table over the getters as they are, run again after
-//! they move onto the shared descriptor. Compiled only under `--cfg
+//! The nineteen checkpoint getters' pins (UC-10 PR 3, PR 4 and PR 5): one
+//! fixed seed and one printed table over the getters as they are, run again
+//! after they move onto the shared descriptor. Compiled only under `--cfg
 //! oneiron_test_support`; never API.
 //!
 //! [`seed`] writes one fixed row per placement branch of each getter into a
@@ -12,8 +12,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RwTxn;
+use oneiron_contracts::affect::Vad;
 use oneiron_docedit::emit::oracle_cases::sha256_hex;
 use oneiron_docedit::live::{OracleReceipt, StepOutcome};
+use oneiron_store::entity_doc::side_keys::HexPair;
 
 use crate::Vault;
 use crate::agent_dispatch::{
@@ -29,6 +31,7 @@ use crate::attempt_queue::AttemptId;
 use crate::blob_artifact::{
     BlobArtifactVersion, BlobVersionProvenance, erase::pins_erased_producer,
 };
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::code_document::{
     CodeDocumentFrontier, CodeFileEdit, CodeOpProvenance, PinsCodeDocumentReceipt,
     put_pins_code_document_frontier_in_txn, put_pins_code_document_head_in_txn,
@@ -42,13 +45,32 @@ use crate::codebase::{
     put_pins_fork_index_row_in_txn, put_pins_project_index_row_in_txn,
     put_pins_repo_index_row_in_txn, put_pins_scope_index_row_in_txn,
 };
-use crate::edge::EdgeActorClass;
+use crate::edge::{EdgeActorClass, EdgeKind, encode_edge_value};
 use crate::embed::{
     EmbeddingDevice, EmbeddingProvenance, put_pins_media_refusal_in_txn,
     put_pins_media_vector_in_txn,
 };
+use crate::entity_doc::{
+    CitationPin, DocActor, EntityDoc, ForkRecord, ForkStatus, PinsCitationPin, PinsEntityDocHead,
+    ProposalBundle, PurgeReceipt, SettleVerb, TextField, TextReceipt,
+    put_pins_citation_floor_in_txn, put_pins_citation_pin_in_txn, put_pins_fork_snapshot_in_txn,
+    put_pins_head_in_txn,
+};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::identity_topology::{
+    StoredIdentityOpAction, StoredIdentityOpEvent, encode_identity_topology_event_body,
+    pins_author_attribution_action, pins_undo_action,
+};
+use crate::model_step_record::DREAMER_STEP_PREDICATE;
+use crate::note::documents::{put_pins_note_proposal_doc_in_txn, set_head};
+use crate::note::{
+    ContextDefault, NoteActor, NoteDocumentView, NoteFork, NoteLandingReceipt,
+    NoteOperationReceipt, NoteOverrides, NotePin, NoteReviewBundle, NoteScalarEditOutcome,
+    NoteSeal, NoteVerdict, pins_note_proposal_snapshot, put_pins_fork_authority_in_txn,
+    put_pins_pin_in_txn, put_pins_receipt_by_request_in_txn, put_pins_request_in_txn,
+    put_pins_title_in_txn,
+};
 use crate::office_body::{
     AnsweringAuthority, BundleVerdict, ForkState, MemberAnswer, MemberVerdict,
     OfficeBodyExportAuthor, OfficeBodyExportRecord, OfficeBodyFork, OfficeBodyKind,
@@ -56,15 +78,23 @@ use crate::office_body::{
     put_pins_author_token_ref_in_txn, put_pins_export_token_ref_in_txn,
     put_pins_live_edit_route_in_txn, put_pins_office_source_in_txn, put_pins_oracle_in_txn,
 };
+use crate::origin::change_index::ORIGIN_CHANGE_PREDICATE;
 use crate::outbound_intent_ledger::{
     BudgetChargeMarker, BudgetClass, INTENT_LEDGER_VALUE_KEYS, IntentLedgerError,
     IntentLedgerRecord, OutboundCallRequest,
 };
+use crate::ports::{DocumentSlot, DocumentUpdateKey, UpdateSeq};
+use crate::provenance::ActorStamp;
 use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
 use crate::recovery::checkpoint::{getter_bytes_for_owner, getter_capture, getter_restore_in_txn};
+use crate::registry::{
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SUSPICIOUS_WAKE,
+    ENTITY_TYPE_WORLD_KEY_PAD,
+};
 use crate::secret_snapshot::SnapshotCustodyReport;
 use crate::side_table::{
-    self, LegacyCompact, LegacyJson, Named, Raw, SideCodec, SideKey, SideTable,
+    self, HexId, LegacyCompact, LegacyJson, Named, Raw, SideCodec, SideKey, SideTable,
 };
 use crate::source_audience::HeldBack;
 use crate::store::GateDecisionId;
@@ -74,12 +104,22 @@ use crate::store::checkpoint_payload::rows::{
 };
 use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::store::embedding::InputKind;
+use crate::store::note_body::{NoteCore, NoteKind, encode_note_core};
 use crate::store::row_birth::RowBirth;
+use crate::temporal::TimeRange;
+use crate::test_fixtures::entity_record;
 use crate::typed_body::{
     BodyActor, TypedBodyFork, TypedBodyHead, TypedForkState, put_pins_erased_receipt_in_txn,
     put_pins_receipt_in_txn,
 };
+use crate::vault::entity_revision::{
+    pins_frontier_document_value, pins_revision_doc_bytes, pins_revision_reference,
+    put_pins_entity_revision_doc_in_txn, put_pins_entity_revision_frontier_in_txn,
+    put_pins_entity_revision_state_in_txn, put_pins_pending_index_in_txn,
+    put_pins_pending_phonetic_in_txn,
+};
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, encode_claim_body};
 use crate::write_envelope::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
@@ -345,6 +385,144 @@ const BLOB_ADMISSIONS: SideTable<EntityId, Vec<u8>, LegacyJson> =
 const BLOB_SERVING: SideTable<(EntityId, u64), Vec<u8>, Named> =
     SideTable::new(&side_table::ARTIFACT_SERVING_BLOB);
 
+/// NOTE heads, as `note/documents` declares them, for the raw dump and the
+/// clear only: the row type stays private to that module, and the seed
+/// writes heads through `set_head`.
+const N_HEAD: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::NOTE_HEAD);
+
+/// NOTE head markers, as `note/documents` declares them, for the raw dump
+/// and the clear only.
+const N_HEAD_DOC: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::NOTE_HEAD_DOC);
+
+/// NOTE overrides, as `note/overrides` declares them.
+const N_OVERRIDE: SideTable<EntityId, NoteOverrides, Named> =
+    SideTable::new(&side_table::NOTE_OVERRIDE);
+
+/// NOTE seals, as `note/lifecycle` declares them.
+const N_SEAL: SideTable<EntityId, NoteSeal, Named> = SideTable::new(&side_table::NOTE_SEAL);
+
+/// NOTE forks, as `note/proposals` declares them.
+const N_FORK: SideTable<EntityId, NoteFork, Named> = SideTable::new(&side_table::NOTE_FORK);
+
+/// NOTE proposal documents, as `note/documents` declares them, for the raw
+/// dump and the clear only: the key type stays private to that module.
+const N_PROPOSAL_DOC: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
+
+/// NOTE landing receipts, as `note/proposals` declares them.
+const N_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
+    SideTable::new(&side_table::NOTE_RECEIPT);
+
+/// NOTE review bundles, as `note/proposals` declares them.
+const N_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
+    SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
+
+/// NOTE operation receipts, as `note/sync_rows` declares them.
+const N_SYNC: SideTable<Vec<u8>, serde_json::Value, LegacyJson> =
+    SideTable::new(&side_table::SYNC_NC_E);
+
+/// NOTE fork authorities, as `note/sync_rows` declares them, for the raw
+/// dump and the clear only: the key type stays private to that module.
+const N_FORK_AUTHORITY: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_FORK_AUTHORITY);
+
+/// NOTE command receipts, as `note/sync_rows` declares them, for the raw
+/// dump and the clear only.
+const N_RECEIPT_BY_REQUEST: SideTable<Vec<u8>, Vec<u8>, LegacyJson> =
+    SideTable::new(&side_table::NOTE_RECEIPT_BY_REQUEST);
+
+/// NOTE citation pins, as `note/pin_index` declares them, for the raw dump
+/// and the clear only: the key types stay private to that module.
+const N_PIN_SOURCE: SideTable<Vec<u8>, Vec<u8>, LegacyJson> =
+    SideTable::new(&side_table::NOTE_PIN_SOURCE);
+const N_PIN_CLAIM: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::NOTE_PIN_CLAIM);
+const N_PIN_CITING: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::NOTE_PIN_CITING);
+const N_PIN_REQUEST_CITING: SideTable<Vec<u8>, Vec<u8>, LegacyJson> =
+    SideTable::new(&side_table::NOTE_PIN_REQUEST_CITING);
+const N_PIN_REQUEST_CLAIM: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_PIN_REQUEST_CLAIM);
+const N_PIN_REQUEST_SOURCE: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_PIN_REQUEST_SOURCE);
+
+/// NOTE title reservations, as `note/title_index` declares them.
+const N_TITLE_RESERVATION: SideTable<String, EntityId, Raw> =
+    SideTable::new(&side_table::NOTE_TITLE_RESERVATION);
+
+/// NOTE title reverses, as `note/title_index` declares them.
+const N_TITLE_BY_NOTE: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_TITLE_BY_NOTE);
+
+/// Entity-document heads, as `entity_doc/storage` declares them, for the
+/// raw dump and the clear only: the row type stays private to that module.
+const ED_HEAD: SideTable<Vec<u8>, Vec<u8>, Named> = SideTable::new(&side_table::ENTITY_DOC_HEAD);
+
+/// Citation floors, as `entity_doc/citation_floor` declares them, for the
+/// raw dump and the clear only.
+const ED_FLOOR: SideTable<Vec<u8>, Vec<u8>, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_CITATION_FLOOR);
+
+/// Document forks, as `entity_doc/forks` declares them.
+const ED_FORK: SideTable<String, ForkRecord, Named> = SideTable::new(&side_table::ENTITY_DOC_FORK);
+
+/// Fork snapshots, as `entity_doc/forks` declares them.
+const ED_FORK_SNAPSHOT: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::ENTITY_DOC_FORK_SNAPSHOT);
+
+/// Citation pins, as `entity_doc/pins` declares them, for the raw dump and
+/// the clear only: the seed writes them through the pins helper.
+const ED_PIN: SideTable<HexPair, CitationPin, Named> = SideTable::new(&side_table::ENTITY_DOC_PIN);
+
+/// Purge receipts, as `entity_doc/pins` declares them.
+const ED_PURGE: SideTable<HexPair, PurgeReceipt, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_PURGE_RECEIPT);
+
+/// Settlement receipts, as `entity_doc/forks` declares them.
+const ED_RECEIPT: SideTable<HexPair, TextReceipt, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_RECEIPT);
+
+/// Proposal bundles, as `entity_doc/forks` declares them.
+const ED_BUNDLE: SideTable<String, ProposalBundle, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_PROPOSAL_BUNDLE);
+
+/// Document snapshots, as the document-row port declares them.
+const ED_SNAPSHOT: SideTable<DocumentSlot, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DOCUMENT_SNAPSHOT);
+
+/// Document updates, as the document-row port declares them.
+const ED_UPDATE: SideTable<DocumentUpdateKey, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DOCUMENT_UPDATE);
+
+/// Revision states, as `entity_revision/storage` declares them, for the raw
+/// dump and the clear only: the row type stays private to that module.
+const ER_STATE: SideTable<Vec<u8>, Vec<u8>, Named> =
+    SideTable::new(&side_table::ENTITY_REVISION_STATE);
+
+/// Revision documents, as `entity_revision/storage` declares them.
+const ER_DOC: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::ENTITY_REVISION_DOC);
+
+/// Retained frontiers, as `entity_revision/storage` declares them.
+const ER_FRONTIER: SideTable<(EntityId, [u8; 16]), Vec<u8>, Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_FRONTIER);
+
+/// Frontier identities, as `entity_revision/storage` declares them.
+const ER_IDENTITY: SideTable<[u8; 16], EntityId, Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_IDENTITY);
+
+/// Vector refill markers, as `entity_revision/vector_refill` declares them.
+const ER_REFILL: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_VECTOR_REFILL);
+
+/// Staged index inputs, as `entity_revision/pending_index` declares them,
+/// for the raw dump and the clear only.
+const ER_PENDING_INDEX: SideTable<Vec<u8>, Vec<u8>, Named> =
+    SideTable::new(&side_table::ENTITY_REVISION_PENDING_INDEX_INPUTS);
+
+/// Staged phonetic codes, as `entity_revision/phonetic` declares them, for
+/// the raw dump and the clear only.
+const ER_PENDING_PHONETIC: SideTable<Vec<u8>, Vec<u8>, Named> =
+    SideTable::new(&side_table::ENTITY_REVISION_PENDING_PHONETIC);
+
 /// One fixed entity id.
 fn id(byte: u8) -> Result<EntityId> {
     EntityId::from_bytes([byte; 16])
@@ -353,6 +531,103 @@ fn id(byte: u8) -> Result<EntityId> {
 /// One fixed attempt id.
 fn attempt(byte: u8) -> Result<AttemptId> {
     AttemptId::from_bytes(&[byte; 16])
+}
+
+/// One fixed entity row: `entity_record` with occurred `1..1`, the pins
+/// learned stamp and row version zero.
+fn entity_row(kind: u8, body: &[u8]) -> Vec<u8> {
+    entity_record(
+        kind,
+        TimeRange { start: 1, end: 1 },
+        1_700_000_000_000,
+        0,
+        body,
+    )
+}
+
+/// One fixed CLAIM body with `predicate`, over `subject`.
+fn claim_body(predicate: &str, subject: EntityId) -> Result<ClaimBody> {
+    ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("pins"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+}
+
+/// One fixed identity-topology event row: `action` with a fixed envelope.
+fn identity_row(action: StoredIdentityOpAction) -> Result<Vec<u8>> {
+    let event = StoredIdentityOpEvent {
+        seq: 1,
+        validated_at_write: false,
+        invalidated: false,
+        at: 1_700_000_000_000,
+        actor: None,
+        source: ClaimSource::UserStated,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action,
+    };
+    let body = encode_identity_topology_event_body(&event)?;
+    Ok(entity_row(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, &body))
+}
+
+/// Deletes every row of the Entities, EdgesOut and EdgesIn databases and
+/// every row of each side table the four getters capture or own, in one
+/// write transaction. A seeded open writes entity and edge rows, and
+/// revision-ledger rows with a wall-clock stamp, that would differ between
+/// the base and head processes; the seed calls this first so only fixed
+/// rows remain.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn clear_four(vault: &Vault) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.entities.clear(&mut txn)?;
+    vault.store.edges_out.clear(&mut txn)?;
+    vault.store.edges_in.clear(&mut txn)?;
+    N_HEAD.delete_from(&vault.store, &mut txn, &[])?;
+    N_HEAD_DOC.delete_from(&vault.store, &mut txn, &[])?;
+    N_OVERRIDE.delete_from(&vault.store, &mut txn, &[])?;
+    N_SEAL.delete_from(&vault.store, &mut txn, &[])?;
+    N_FORK.delete_from(&vault.store, &mut txn, &[])?;
+    N_PROPOSAL_DOC.delete_from(&vault.store, &mut txn, &[])?;
+    N_RECEIPT.delete_from(&vault.store, &mut txn, &[])?;
+    N_BUNDLE.delete_from(&vault.store, &mut txn, &[])?;
+    N_SYNC.delete_from(&vault.store, &mut txn, &[])?;
+    N_FORK_AUTHORITY.delete_from(&vault.store, &mut txn, &[])?;
+    N_RECEIPT_BY_REQUEST.delete_from(&vault.store, &mut txn, &[])?;
+    N_PIN_SOURCE.delete_from(&vault.store, &mut txn, &[])?;
+    N_PIN_CLAIM.delete_from(&vault.store, &mut txn, &[])?;
+    N_PIN_CITING.delete_from(&vault.store, &mut txn, &[])?;
+    N_PIN_REQUEST_CITING.delete_from(&vault.store, &mut txn, &[])?;
+    N_PIN_REQUEST_CLAIM.delete_from(&vault.store, &mut txn, &[])?;
+    N_PIN_REQUEST_SOURCE.delete_from(&vault.store, &mut txn, &[])?;
+    N_TITLE_RESERVATION.delete_from(&vault.store, &mut txn, &[])?;
+    N_TITLE_BY_NOTE.delete_from(&vault.store, &mut txn, &[])?;
+    ED_HEAD.delete_from(&vault.store, &mut txn, &[])?;
+    ED_FLOOR.delete_from(&vault.store, &mut txn, &[])?;
+    ED_FORK.delete_from(&vault.store, &mut txn, &[])?;
+    ED_FORK_SNAPSHOT.delete_from(&vault.store, &mut txn, &[])?;
+    ED_PIN.delete_from(&vault.store, &mut txn, &[])?;
+    ED_PURGE.delete_from(&vault.store, &mut txn, &[])?;
+    ED_RECEIPT.delete_from(&vault.store, &mut txn, &[])?;
+    ED_BUNDLE.delete_from(&vault.store, &mut txn, &[])?;
+    ED_SNAPSHOT.delete_from(&vault.store, &mut txn, &[])?;
+    ED_UPDATE.delete_from(&vault.store, &mut txn, &[])?;
+    ER_STATE.delete_from(&vault.store, &mut txn, &[])?;
+    ER_DOC.delete_from(&vault.store, &mut txn, &[])?;
+    ER_FRONTIER.delete_from(&vault.store, &mut txn, &[])?;
+    ER_IDENTITY.delete_from(&vault.store, &mut txn, &[])?;
+    ER_REFILL.delete_from(&vault.store, &mut txn, &[])?;
+    ER_PENDING_INDEX.delete_from(&vault.store, &mut txn, &[])?;
+    ER_PENDING_PHONETIC.delete_from(&vault.store, &mut txn, &[])?;
+    txn.commit()?;
+    Ok(())
 }
 
 /// One text-source row: the bm25 getter's exact branch.
@@ -1264,12 +1539,599 @@ fn seed_blob_artifact(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Writes one fixed row per placement branch of each of the fifteen getters.
+/// One fixed row per placement branch of `entity_row_placement`: an
+/// ordinary PERSON row, a row of each custody kind, CLAIM rows of each
+/// predicate branch and an undecodable one, NOTE rows of each author
+/// branch, an author carrier and a plain identity op, an unknown kind, a
+/// short row and a bad-key row; an `authored_by` edge in each direction, a
+/// plain edge and an undecodable one.
+fn seed_entities(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let entities = &vault.store.entities;
+    entities.put(
+        txn,
+        id(0xf0)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_PERSON, b"pins-person"),
+    )?;
+    entities.put(
+        txn,
+        id(0xf1)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_SECRET_CUSTODY, b"pins-secret"),
+    )?;
+    entities.put(
+        txn,
+        id(0xf2)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_WORLD_KEY_PAD, b"pins-pad"),
+    )?;
+    entities.put(
+        txn,
+        id(0xf3)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_ASSET, b"pins-asset"),
+    )?;
+    let ordinary = encode_claim_body(&claim_body("pins.pred", id(0xf4)?)?)?;
+    entities.put(
+        txn,
+        id(0xf4)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_CLAIM, &ordinary),
+    )?;
+    let dreamer = encode_claim_body(&claim_body(DREAMER_STEP_PREDICATE, id(0xf5)?)?)?;
+    entities.put(
+        txn,
+        id(0xf5)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_CLAIM, &dreamer),
+    )?;
+    let origin = encode_claim_body(&claim_body(ORIGIN_CHANGE_PREDICATE, id(0xf6)?)?)?;
+    entities.put(
+        txn,
+        id(0xf6)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_CLAIM, &origin),
+    )?;
+    entities.put(
+        txn,
+        id(0xf7)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_CLAIM, b"\xff\xff"),
+    )?;
+    entities.put(
+        txn,
+        id(0xf8)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_NOTE, b""),
+    )?;
+    let no_one = encode_note_core(&NoteCore {
+        kind: NoteKind::OpinionTake,
+        author_ref: NoteActor::Erased,
+        source_revision_ref: [0xf9; 16],
+    })?;
+    entities.put(
+        txn,
+        id(0xf9)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_NOTE, &no_one),
+    )?;
+    let live = encode_note_core(&NoteCore {
+        kind: NoteKind::OpinionTake,
+        author_ref: NoteActor::Actor(id(0xfb)?),
+        source_revision_ref: [0xfa; 16],
+    })?;
+    entities.put(
+        txn,
+        id(0xfa)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_NOTE, &live),
+    )?;
+    entities.put(
+        txn,
+        id(0xfb)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_NOTE, b"not-a-core"),
+    )?;
+    let carrier = identity_row(pins_author_attribution_action(
+        id(0xfc)?,
+        [0xfc; 32],
+        WriteActor::new(id(0xfd)?, EdgeActorClass::Human),
+    ))?;
+    entities.put(txn, id(0xfc)?.as_bytes(), &carrier)?;
+    let op = identity_row(pins_undo_action(id(0xfd)?))?;
+    entities.put(txn, id(0xfd)?.as_bytes(), &op)?;
+    entities.put(
+        txn,
+        id(0xfe)?.as_bytes(),
+        &entity_row(ENTITY_TYPE_SUSPICIOUS_WAKE, b"x"),
+    )?;
+    entities.put(txn, id(0x10)?.as_bytes(), b"short")?;
+    entities.put(txn, b"bad", b"short")?;
+    let authored = id(0xf0)?;
+    let actor = id(0xf1)?;
+    let edge_value = encode_edge_value(
+        EdgeKind::AuthoredBy,
+        0.9,
+        1_700_000_000_000,
+        Vad::NEUTRAL,
+        None,
+    )?;
+    let out_key = Store::encode_edge_key(&authored, EdgeKind::AuthoredBy, &actor);
+    vault.store.edges_out.put(txn, &out_key, &edge_value)?;
+    let in_key = Store::encode_edge_key(&actor, EdgeKind::AuthoredBy, &authored);
+    vault.store.edges_in.put(txn, &in_key, &edge_value)?;
+    let plain_value = encode_edge_value(
+        EdgeKind::ClaimOf,
+        1.0,
+        1_700_000_000_000,
+        Vad::NEUTRAL,
+        None,
+    )?;
+    let plain_key = Store::encode_edge_key(&id(0xf2)?, EdgeKind::ClaimOf, &id(0xf3)?);
+    vault.store.edges_out.put(txn, &plain_key, &plain_value)?;
+    let mut bad_key = Store::encode_edge_key(&id(0xf4)?, EdgeKind::ClaimOf, &id(0xf5)?);
+    bad_key[16] = 250;
+    vault.store.edges_out.put(txn, &bad_key, &plain_value)?;
+    Ok(())
+}
+
+/// A NOTE head with its marker, an override, seals, forks and receipts
+/// with actors and erased, an undecided fork with its proposal document
+/// beside it, an exact and an apart document, one- and two-NOTE bundles
+/// and an empty one, operation rows, every pin table, and title rows.
+fn seed_note(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let at = 1_700_000_000_012;
+    let note = id(0x20)?;
+    let head = id(0x21)?;
+    let actor = id(0x22)?;
+    set_head(&vault.store, txn, note, head, 7)?;
+    N_OVERRIDE.put(
+        vault,
+        txn,
+        &note,
+        &NoteOverrides {
+            context: Some(ContextDefault::VaultReadable),
+            ..Default::default()
+        },
+    )?;
+    N_SEAL.put(
+        vault,
+        txn,
+        &note,
+        &NoteSeal {
+            note,
+            document: head,
+            frontier: vec![0x20; 8],
+            sealed_by: NoteActor::Actor(actor),
+            sealed_at: at,
+        },
+    )?;
+    N_SEAL.put(
+        vault,
+        txn,
+        &id(0x2b)?,
+        &NoteSeal {
+            note: id(0x2b)?,
+            document: head,
+            frontier: vec![0x21; 8],
+            sealed_by: NoteActor::Erased,
+            sealed_at: at,
+        },
+    )?;
+    let fork = |fork: EntityId, decided: bool, by: NoteActor| NoteFork {
+        note,
+        fork,
+        parent: head,
+        frontier: vec![0x22; 8],
+        recovery_merge: None,
+        actor: by,
+        rewrite: false,
+        proposal: None,
+        decided,
+    };
+    N_FORK.put(
+        vault,
+        txn,
+        &id(0x23)?,
+        &fork(id(0x23)?, true, NoteActor::Actor(actor)),
+    )?;
+    N_FORK.put(
+        vault,
+        txn,
+        &id(0x24)?,
+        &fork(id(0x24)?, false, NoteActor::Actor(actor)),
+    )?;
+    N_FORK.put(
+        vault,
+        txn,
+        &id(0x26)?,
+        &NoteFork {
+            note: id(0x25)?,
+            fork: id(0x26)?,
+            parent: head,
+            frontier: vec![0x23; 8],
+            recovery_merge: None,
+            actor: NoteActor::Erased,
+            rewrite: false,
+            proposal: None,
+            decided: true,
+        },
+    )?;
+    N_FORK.put(
+        vault,
+        txn,
+        &id(0x11)?,
+        &NoteFork {
+            note: id(0x2b)?,
+            fork: id(0x24)?,
+            parent: head,
+            frontier: vec![0x24; 8],
+            recovery_merge: None,
+            actor: NoteActor::Actor(actor),
+            rewrite: false,
+            proposal: None,
+            decided: false,
+        },
+    )?;
+    let beside = pins_note_proposal_snapshot(
+        &note,
+        "pins proposal",
+        Some((id(0x24)?, actor)),
+        7,
+        at as i64,
+    )?;
+    put_pins_note_proposal_doc_in_txn(&vault.store, txn, &note, &id(0x24)?, &beside)?;
+    let exact = pins_note_proposal_snapshot(&id(0x25)?, "pins exact", None, 8, at as i64)?;
+    put_pins_note_proposal_doc_in_txn(&vault.store, txn, &id(0x25)?, &id(0x26)?, &exact)?;
+    put_pins_note_proposal_doc_in_txn(&vault.store, txn, &id(0x2b)?, &id(0x24)?, &exact)?;
+    N_RECEIPT.put(
+        vault,
+        txn,
+        &id(0x27)?,
+        &NoteLandingReceipt {
+            id: id(0x27)?,
+            note,
+            fork: id(0x23)?,
+            previous_head: head,
+            head: id(0x23)?,
+            verdict: NoteVerdict::Merge,
+            actor: NoteActor::Actor(actor),
+            at,
+        },
+    )?;
+    N_RECEIPT.put(
+        vault,
+        txn,
+        &id(0x29)?,
+        &NoteLandingReceipt {
+            id: id(0x29)?,
+            note: id(0x2b)?,
+            fork: id(0x23)?,
+            previous_head: head,
+            head: id(0x23)?,
+            verdict: NoteVerdict::Switch,
+            actor: NoteActor::Erased,
+            at,
+        },
+    )?;
+    N_BUNDLE.put(
+        vault,
+        txn,
+        &id(0x28)?,
+        &NoteReviewBundle {
+            id: id(0x28)?,
+            waiting: vec![fork(id(0x29)?, false, NoteActor::Actor(actor))],
+            landed: Vec::new(),
+            explainer: "pins explainer".to_owned(),
+        },
+    )?;
+    N_BUNDLE.put(
+        vault,
+        txn,
+        &id(0x2a)?,
+        &NoteReviewBundle {
+            id: id(0x2a)?,
+            waiting: vec![fork(id(0x29)?, false, NoteActor::Actor(actor))],
+            landed: vec![NoteLandingReceipt {
+                id: id(0x29)?,
+                note: id(0x2b)?,
+                fork: id(0x23)?,
+                previous_head: head,
+                head: id(0x23)?,
+                verdict: NoteVerdict::Merge,
+                actor: NoteActor::Actor(actor),
+                at,
+            }],
+            explainer: "pins shared explainer".to_owned(),
+        },
+    )?;
+    N_BUNDLE.put(
+        vault,
+        txn,
+        &id(0x2c)?,
+        &NoteReviewBundle {
+            id: id(0x2c)?,
+            waiting: Vec::new(),
+            landed: Vec::new(),
+            explainer: String::new(),
+        },
+    )?;
+    let request = id(0x2c)?;
+    let sync_key = format!("{}:{}", note.to_hex(), request.to_hex()).into_bytes();
+    N_SYNC.put(
+        vault,
+        txn,
+        &sync_key,
+        &serde_json::json!({"pins": "receipt"}),
+    )?;
+    N_SYNC.put(
+        vault,
+        txn,
+        &b"pins-unowned".to_vec(),
+        &serde_json::json!({"pins": "unowned"}),
+    )?;
+    put_pins_fork_authority_in_txn(&vault.store, txn, &note, &id(0x23)?, [0x6d; 32])?;
+    let operation = NoteOperationReceipt {
+        request_id: request,
+        command_hash: [0x2d; 32],
+        outcome: NoteScalarEditOutcome::Applied(NoteDocumentView {
+            document: note,
+            frontier: vec![0x2e; 4],
+            markdown: "pins".to_owned(),
+            title: None,
+            pins: Vec::new(),
+            authorship: Vec::new(),
+        }),
+    };
+    put_pins_receipt_by_request_in_txn(
+        &vault.store,
+        txn,
+        &note,
+        &request,
+        NoteActor::Actor(actor),
+        &operation,
+    )?;
+    let pin = NotePin {
+        claim: id(0x2d)?,
+        document: id(0x2e)?,
+        frontier: b"pins-frontier".to_vec(),
+        start_cursor: b"pins-cursor-left".to_vec(),
+        end_cursor: b"pins-cursor-right".to_vec(),
+        quote_hash: [0x71; 32],
+        quote_text: "pins quote".to_owned(),
+    };
+    put_pins_pin_in_txn(&vault.store, txn, &id(0x2f)?, &pin)?;
+    put_pins_request_in_txn(
+        &vault.store,
+        txn,
+        &id(0x2f)?,
+        &request,
+        &id(0x2e)?,
+        &id(0x2d)?,
+    )?;
+    put_pins_title_in_txn(&vault.store, txn, &actor, "Pins Title", &note)?;
+    N_TITLE_RESERVATION.put(vault, txn, &"pins-bad-key".to_owned(), &note)?;
+    N_TITLE_BY_NOTE.put(vault, txn, &HexId(id(0x2b)?), &b"bad".to_vec())?;
+    Ok(())
+}
+
+/// A head with its document slot's snapshot and update, a citation
+/// floor, a settled and a pending fork with their snapshots, a pin, a
+/// purge receipt, a receipt, and a two-member proposal bundle.
+fn seed_entity_doc(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let at = 1_700_000_000_013;
+    let entity = id(0x30)?;
+    let actor = id(0x32)?;
+    let writer = WriteActor::new(actor, EdgeActorClass::Human);
+    let stamp = ActorStamp {
+        token: id(0x33)?,
+        class: EdgeActorClass::Human,
+    };
+    let (snapshot, updates, frontier) = EntityDoc::pins_doc_rows(
+        &entity,
+        "pins entity text",
+        "pins append ",
+        writer,
+        stamp,
+        7,
+        at,
+    )?;
+    let incarnation = id(0x3f)?.to_hex();
+    put_pins_head_in_txn(
+        &vault.store,
+        txn,
+        &entity,
+        &PinsEntityDocHead {
+            incarnation: incarnation.clone(),
+            document: entity.to_hex(),
+            field: TextField::Utf8Body,
+            generation: 2,
+            pending: 1,
+            birth_frontier: None,
+        },
+    )?;
+    ED_SNAPSHOT.put(vault, txn, &DocumentSlot::of(entity), &snapshot)?;
+    ED_UPDATE.put(
+        vault,
+        txn,
+        &DocumentUpdateKey {
+            slot: DocumentSlot::of(entity),
+            seq: UpdateSeq::Generation(2),
+        },
+        &updates,
+    )?;
+    let mut qualified = incarnation.into_bytes();
+    qualified.extend_from_slice(&frontier);
+    put_pins_citation_floor_in_txn(
+        &vault.store,
+        txn,
+        &entity,
+        &id(0x3a)?,
+        vec![qualified],
+        false,
+    )?;
+    let record =
+        |fork: EntityId, proposal: EntityId, on: EntityId, status: ForkStatus| ForkRecord {
+            fork: fork.to_hex(),
+            proposal: proposal.to_hex(),
+            entity: on.to_hex(),
+            parent_document: on.to_hex(),
+            base: frontier.clone(),
+            actor: DocActor::Actor(actor),
+            opened_at: at,
+            rewrite: false,
+            status,
+            read_refs: Vec::new(),
+            keep: None,
+            delta_receipt: None,
+        };
+    ED_FORK.put(
+        vault,
+        txn,
+        &id(0x34)?.to_hex(),
+        &record(id(0x34)?, id(0x35)?, entity, ForkStatus::Merged),
+    )?;
+    put_pins_fork_snapshot_in_txn(&vault.store, txn, &id(0x34)?.to_hex(), &snapshot, &frontier)?;
+    ED_FORK.put(
+        vault,
+        txn,
+        &id(0x36)?.to_hex(),
+        &record(id(0x36)?, id(0x35)?, entity, ForkStatus::Pending),
+    )?;
+    put_pins_fork_snapshot_in_txn(&vault.store, txn, &id(0x36)?.to_hex(), &snapshot, &frontier)?;
+    put_pins_citation_pin_in_txn(
+        &vault.store,
+        txn,
+        &entity,
+        &id(0x37)?,
+        &PinsCitationPin {
+            document: entity.to_hex(),
+            frontier: frontier.clone(),
+            start: b"pins-start".to_vec(),
+            end: b"pins-end".to_vec(),
+            quote: "pins quote".to_owned(),
+            hash: [0x71; 32],
+            actor: DocActor::Actor(actor),
+        },
+    )?;
+    ED_PURGE.put(
+        vault,
+        txn,
+        &HexPair(HexId(entity), HexId(id(0x3d)?)),
+        &PurgeReceipt {
+            receipt: id(0x3d)?.to_hex(),
+            entity: entity.to_hex(),
+            document: entity.to_hex(),
+            actor: DocActor::Actor(actor),
+            requested: frontier.clone(),
+            applied: frontier.clone(),
+            at,
+            live_text_hash: [0x74; 32],
+        },
+    )?;
+    ED_RECEIPT.put(
+        vault,
+        txn,
+        &HexPair(HexId(entity), HexId(id(0x38)?)),
+        &TextReceipt {
+            receipt: id(0x38)?.to_hex(),
+            proposal: id(0x35)?.to_hex(),
+            fork: id(0x34)?.to_hex(),
+            entity: entity.to_hex(),
+            actor: DocActor::Actor(actor),
+            verb: SettleVerb::Merge,
+            at,
+            before: frontier.clone(),
+            after: frontier.clone(),
+            read_refs: Vec::new(),
+        },
+    )?;
+    ED_BUNDLE.put(
+        vault,
+        txn,
+        &id(0x39)?.to_hex(),
+        &ProposalBundle {
+            proposal: id(0x39)?.to_hex(),
+            author: DocActor::Actor(actor),
+            forks: vec![
+                record(id(0x3b)?, id(0x39)?, entity, ForkStatus::Pending),
+                record(id(0x3c)?, id(0x39)?, id(0x31)?, ForkStatus::Merged),
+            ],
+            settled: false,
+            opener_lineage: Vec::new(),
+        },
+    )?;
+    Ok(())
+}
+
+/// A revision state, document, frontier and identity of one entity, its
+/// refill marker and staged index and phonetic rows, an unclassified
+/// document, and a carrier's actor-keyed rows.
+fn seed_entity_revision(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let at = 1_700_000_000_014;
+    let entity = id(0x40)?;
+    let core = encode_note_core(&NoteCore {
+        kind: NoteKind::OpinionTake,
+        author_ref: NoteActor::Erased,
+        source_revision_ref: [0x40; 16],
+    })?;
+    let raw = entity_row(ENTITY_TYPE_NOTE, &core);
+    let (snapshot, frontiers) = pins_revision_doc_bytes(7, &[raw], at as i64)?;
+    let revision = pins_revision_reference(&entity, &frontiers);
+    put_pins_entity_revision_state_in_txn(
+        &vault.store,
+        txn,
+        &entity,
+        revision,
+        revision,
+        at,
+        true,
+    )?;
+    put_pins_entity_revision_doc_in_txn(&vault.store, txn, &entity, &snapshot)?;
+    put_pins_entity_revision_frontier_in_txn(
+        &vault.store,
+        txn,
+        &entity,
+        revision,
+        &pins_frontier_document_value(&frontiers),
+    )?;
+    ER_IDENTITY.put(vault, txn, &revision, &entity)?;
+    ER_REFILL.put(vault, txn, &entity, &())?;
+    put_pins_pending_index_in_txn(
+        &vault.store,
+        txn,
+        &entity,
+        revision,
+        Some(vec![("title".to_owned(), "pins".to_owned())]),
+        Some(vec![0.5]),
+    )?;
+    put_pins_pending_phonetic_in_txn(
+        &vault.store,
+        txn,
+        &entity,
+        revision,
+        vec!["pins".to_owned()],
+    )?;
+    ER_DOC.put(vault, txn, &id(0x41)?, &vec![0xd0; 32])?;
+    let carrier = id(0x42)?;
+    let carried = identity_row(pins_author_attribution_action(
+        carrier,
+        [0x42; 32],
+        WriteActor::new(id(0x43)?, EdgeActorClass::Human),
+    ))?;
+    vault
+        .store
+        .entities
+        .put(txn, carrier.as_bytes(), &carried)?;
+    let held = [0x44; 16];
+    put_pins_entity_revision_state_in_txn(&vault.store, txn, &carrier, held, held, at, false)?;
+    put_pins_entity_revision_frontier_in_txn(
+        &vault.store,
+        txn,
+        &carrier,
+        held,
+        &pins_frontier_document_value(&frontiers),
+    )?;
+    ER_IDENTITY.put(vault, txn, &held, &carrier)?;
+    Ok(())
+}
+
+/// Writes one fixed row per placement branch of each of the nineteen
+/// getters.
 ///
 /// # Errors
 ///
 /// The vault's, or a fixed seed value the codecs refuse.
 pub fn seed(vault: &Vault) -> Result<()> {
+    clear_four(vault)?;
     let bound_attempt = attempt(0xd2)?;
     let body_owner = test_checkpoint_body_owner(bound_attempt)?;
     let mut txn = vault.store.env.write_txn()?;
@@ -1288,6 +2150,10 @@ pub fn seed(vault: &Vault) -> Result<()> {
     seed_code_revision(vault, &mut txn)?;
     seed_office_body(vault, &mut txn)?;
     seed_blob_artifact(vault, &mut txn)?;
+    seed_entities(vault, &mut txn)?;
+    seed_note(vault, &mut txn)?;
+    seed_entity_doc(vault, &mut txn)?;
+    seed_entity_revision(vault, &mut txn)?;
     txn.commit()?;
     Ok(())
 }
@@ -1411,6 +2277,69 @@ fn restore_bare_pins(
         }
     }
     txn.commit()?;
+    Ok(())
+}
+
+/// One of the four getters' restore into `target`, one write transaction
+/// per owner, as lines: one per owner with what it wrote and what it left
+/// out, or its refusal. A restore that refuses is a result to pin, not a
+/// test error: its transaction aborts and the next owner restores.
+fn restore_four_pins(
+    name: &'static str,
+    getter: Getter,
+    target: &Vault,
+    opened: Vec<OpenedOwnerRows>,
+    lines: &mut Vec<String>,
+) -> Result<()> {
+    for owner_rows in opened {
+        let owner = bytes_to_hex_lower(&owner_rows.owner32);
+        let mut txn = target.store.env.write_txn()?;
+        match getter_restore_in_txn(getter, &target.store, &mut txn, owner_rows) {
+            Ok(restored) => {
+                lines.push(format!(
+                    "RESTORED {name} owner={owner} written={written} dropped={dropped:?}",
+                    written = restored.written,
+                    dropped = restored.dropped,
+                ));
+                txn.commit()?;
+            }
+            Err(error) => {
+                lines.push(format!("REFUSED {name} owner={owner} error={error}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One of the four getters' restore into `bare` with no actor parts, one
+/// write transaction per owner, as lines: one per owner with what it wrote
+/// and what it left out, or its refusal.
+fn restore_four_bare_pins(
+    name: &'static str,
+    getter: Getter,
+    captured: &Captured,
+    bare: &Vault,
+    lines: &mut Vec<String>,
+) -> Result<()> {
+    for rows in captured.owners() {
+        let framed = getter_bytes_for_owner(getter, rows)?;
+        let opened = OpenedOwnerRows::open(&framed, Vec::new(), BTreeSet::new())?;
+        let owner = bytes_to_hex_lower(&opened.owner32);
+        let mut txn = bare.store.env.write_txn()?;
+        match getter_restore_in_txn(getter, &bare.store, &mut txn, opened) {
+            Ok(restored) => {
+                lines.push(format!(
+                    "RESTORED-BARE {name} owner={owner} written={written} dropped={dropped:?}",
+                    written = restored.written,
+                    dropped = restored.dropped,
+                ));
+                txn.commit()?;
+            }
+            Err(error) => {
+                lines.push(format!("REFUSED-BARE {name} owner={owner} error={error}"));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1556,15 +2485,134 @@ fn raw_pins_six(target: &Vault, bare: &Vault, lines: &mut Vec<String>) -> Result
     Ok(())
 }
 
-/// Captures, frames and restores each of the fifteen getters through the
+/// The four getters, in pin order, each with the name its lines carry.
+const PINNED_FOUR: [(&str, Getter); 4] = [
+    ("entities", Getter::Entities),
+    ("note", Getter::Note),
+    ("entity_doc", Getter::EntityDoc),
+    ("entity_revision", Getter::EntityRevision),
+];
+
+/// Every raw row of the four getters' tables in `vault` into `into`, by full
+/// stored key.
+fn four_rows_into(
+    vault: &Vault,
+    into: &mut BTreeMap<Vec<u8>, (&'static str, Vec<u8>)>,
+) -> Result<()> {
+    raw_rows_into(vault, "note", N_HEAD, into)?;
+    raw_rows_into(vault, "note", N_HEAD_DOC, into)?;
+    raw_rows_into(vault, "note", N_OVERRIDE, into)?;
+    raw_rows_into(vault, "note", N_SEAL, into)?;
+    raw_rows_into(vault, "note", N_FORK, into)?;
+    raw_rows_into(vault, "note", N_PROPOSAL_DOC, into)?;
+    raw_rows_into(vault, "note", N_RECEIPT, into)?;
+    raw_rows_into(vault, "note", N_BUNDLE, into)?;
+    raw_rows_into(vault, "note", N_SYNC, into)?;
+    raw_rows_into(vault, "note", N_FORK_AUTHORITY, into)?;
+    raw_rows_into(vault, "note", N_RECEIPT_BY_REQUEST, into)?;
+    raw_rows_into(vault, "note", N_PIN_SOURCE, into)?;
+    raw_rows_into(vault, "note", N_PIN_CLAIM, into)?;
+    raw_rows_into(vault, "note", N_PIN_CITING, into)?;
+    raw_rows_into(vault, "note", N_PIN_REQUEST_CITING, into)?;
+    raw_rows_into(vault, "note", N_PIN_REQUEST_CLAIM, into)?;
+    raw_rows_into(vault, "note", N_PIN_REQUEST_SOURCE, into)?;
+    raw_rows_into(vault, "note", N_TITLE_RESERVATION, into)?;
+    raw_rows_into(vault, "note", N_TITLE_BY_NOTE, into)?;
+    raw_rows_into(vault, "entity_doc", ED_HEAD, into)?;
+    raw_rows_into(vault, "entity_doc", ED_FLOOR, into)?;
+    raw_rows_into(vault, "entity_doc", ED_FORK, into)?;
+    raw_rows_into(vault, "entity_doc", ED_FORK_SNAPSHOT, into)?;
+    raw_rows_into(vault, "entity_doc", ED_PIN, into)?;
+    raw_rows_into(vault, "entity_doc", ED_PURGE, into)?;
+    raw_rows_into(vault, "entity_doc", ED_RECEIPT, into)?;
+    raw_rows_into(vault, "entity_doc", ED_BUNDLE, into)?;
+    raw_rows_into(vault, "entity_doc", ED_SNAPSHOT, into)?;
+    raw_rows_into(vault, "entity_doc", ED_UPDATE, into)?;
+    raw_rows_into(vault, "entity_revision", ER_STATE, into)?;
+    raw_rows_into(vault, "entity_revision", ER_DOC, into)?;
+    raw_rows_into(vault, "entity_revision", ER_FRONTIER, into)?;
+    raw_rows_into(vault, "entity_revision", ER_IDENTITY, into)?;
+    raw_rows_into(vault, "entity_revision", ER_REFILL, into)?;
+    raw_rows_into(vault, "entity_revision", ER_PENDING_INDEX, into)?;
+    raw_rows_into(vault, "entity_revision", ER_PENDING_PHONETIC, into)?;
+    Ok(())
+}
+
+/// Every raw row of one raw database in `vault` into `into`, by key.
+fn raw_db_into(
+    vault: &Vault,
+    db: &crate::overlay_db::OverlayDb,
+    into: &mut BTreeMap<Vec<u8>, Vec<u8>>,
+) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    for row in db.iter(&txn)? {
+        let (key, value) = row?;
+        into.insert(key.into_owned(), value.into_owned());
+    }
+    Ok(())
+}
+
+/// Every row of the raw entity and edge databases in `vault`, each in key
+/// order, tagged `tag`: `entities` first, then the database name.
+fn raw_db_pins(vault: &Vault, tag: &'static str, lines: &mut Vec<String>) -> Result<()> {
+    for (db_name, db) in [
+        ("entities", &vault.store.entities),
+        ("edges_out", &vault.store.edges_out),
+        ("edges_in", &vault.store.edges_in),
+    ] {
+        let mut rows: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+        raw_db_into(vault, db, &mut rows)?;
+        for (key, value) in rows {
+            lines.push(format!(
+                "{tag} entities {db} {key} {value}",
+                db = db_name,
+                key = bytes_to_hex_lower(&key),
+                value = bytes_to_hex_lower(&value),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every raw row of the four getters' tables in `target`, then in `bare`,
+/// in key order, each followed by the raw entity and edge rows of that
+/// vault.
+fn raw_pins_four(target: &Vault, bare: &Vault, lines: &mut Vec<String>) -> Result<()> {
+    let mut rows: BTreeMap<Vec<u8>, (&'static str, Vec<u8>)> = BTreeMap::new();
+    four_rows_into(target, &mut rows)?;
+    for (key, (getter, value)) in rows {
+        lines.push(format!(
+            "RAW {getter} {key} {value}",
+            key = bytes_to_hex_lower(&key),
+            value = bytes_to_hex_lower(&value),
+        ));
+    }
+    raw_db_pins(target, "RAW", lines)?;
+    let mut bare_rows: BTreeMap<Vec<u8>, (&'static str, Vec<u8>)> = BTreeMap::new();
+    four_rows_into(bare, &mut bare_rows)?;
+    for (key, (getter, value)) in bare_rows {
+        lines.push(format!(
+            "RAW-BARE {getter} {key} {value}",
+            key = bytes_to_hex_lower(&key),
+            value = bytes_to_hex_lower(&value),
+        ));
+    }
+    raw_db_pins(bare, "RAW-BARE", lines)?;
+    Ok(())
+}
+
+/// Captures, frames and restores each of the nineteen getters through the
 /// checkpoint registry, as a capture and a restore dispatch them: one line
 /// per owner, section row, restore and target row, in getter order. The six
-/// also restore into `bare` with no actor parts.
+/// also restore into `bare` with no actor parts, and the four restore into
+/// both vaults one owner per transaction, pinning refusals as results.
 ///
 /// # Errors
 ///
 /// The vaults', or a row the getters' codecs refuse.
 pub fn pins(source: &Vault, target: &Vault, bare: &Vault) -> Result<Vec<String>> {
+    clear_four(target)?;
+    clear_four(bare)?;
     let mut lines = Vec::new();
     let txn = source.store.env.read_txn()?;
     for (name, getter) in PINNED {
@@ -1600,7 +2648,19 @@ pub fn pins(source: &Vault, target: &Vault, bare: &Vault) -> Result<Vec<String>>
         )?;
         restore_bare_pins(name, getter, &captured, bare, &mut lines)?;
     }
+    for (name, getter) in PINNED_FOUR {
+        let captured = getter_capture(getter, &source.store, &txn)?;
+        let opened = capture_pins(
+            name,
+            &captured,
+            |rows| getter_bytes_for_owner(getter, rows),
+            &mut lines,
+        )?;
+        restore_four_pins(name, getter, target, opened, &mut lines)?;
+        restore_four_bare_pins(name, getter, &captured, bare, &mut lines)?;
+    }
     raw_pins(target, &mut lines)?;
     raw_pins_six(target, bare, &mut lines)?;
+    raw_pins_four(target, bare, &mut lines)?;
     Ok(lines)
 }

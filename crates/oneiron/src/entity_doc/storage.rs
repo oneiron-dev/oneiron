@@ -74,6 +74,51 @@ pub(super) struct Head {
 pub(super) const ENTITY_DOC_HEAD: SideTable<HexId, Head, Named> =
     SideTable::new(&side_table::ENTITY_DOC_HEAD);
 
+/// One head's fixed fields for the checkpoint-pins door: a head with a
+/// fixed incarnation and slot, never a minted one.
+#[cfg(oneiron_test_support)]
+pub(crate) struct PinsEntityDocHead {
+    /// The document's incarnation id, fixed hex.
+    pub incarnation: String,
+    /// The document's slot, fixed hex.
+    pub document: String,
+    /// Where the body text lives.
+    pub field: TextField,
+    /// The head's generation.
+    pub generation: u64,
+    /// The head's pending count.
+    pub pending: u64,
+    /// The birth frontier, when the seed knows it.
+    pub birth_frontier: Option<Vec<u8>>,
+}
+
+/// Puts a document head for the checkpoint-pins door: `entity`'s head
+/// with `head`'s fixed fields.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_head_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    head: &PinsEntityDocHead,
+) -> Result<()> {
+    ENTITY_DOC_HEAD.put(
+        store,
+        txn,
+        &HexId(*entity),
+        &Head {
+            entity: entity.to_hex(),
+            owner_kind: DocumentOwnerKind::Entity,
+            incarnation: head.incarnation.clone(),
+            document: head.document.clone(),
+            field: head.field.clone(),
+            generation: head.generation,
+            pending: head.pending,
+            birth_frontier: head.birth_frontier.clone(),
+            succeeds: None,
+        },
+    )
+}
+
 pub(super) fn require_live(
     store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,

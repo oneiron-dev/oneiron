@@ -87,15 +87,23 @@ pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
 // A NOTE's meta map keeps its editable fields in this same encoding (FIX 7784).
+#[cfg(oneiron_test_support)]
+pub(crate) use citation_floor::put_pins_citation_floor_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use forks::put_pins_fork_snapshot_in_txn;
 pub(crate) use metadata::{decode_metadata_value, encode_value as encode_metadata_value};
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
+#[cfg(oneiron_test_support)]
+pub(crate) use pins::{PinsCitationPin, put_pins_citation_pin_in_txn};
 pub(crate) use pins::{erase_pin_actor_in_txn, erase_purge_actor_in_txn};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
 pub use storage::TextField;
+#[cfg(oneiron_test_support)]
+pub(crate) use storage::{PinsEntityDocHead, put_pins_head_in_txn};
 pub(crate) use storage::{
     body_with_document, document_text_fields, erase_in_txn, guard_record_put, has_record_head,
     pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,

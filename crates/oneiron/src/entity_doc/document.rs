@@ -336,6 +336,47 @@ impl EntityDoc {
             .export(ExportMode::shallow_snapshot(&decode_frontier(frontier)?))
             .map_err(|_| invalid("invalid shallow frontier"))
     }
+
+    /// Builds a document's rows for the checkpoint-pins door: birth
+    /// holding `initial`, then one edit prepending `append`, all under
+    /// `peer` at `at`, so two processes build the same bytes. Answers the
+    /// live snapshot, the edit's update bytes and the live frontier.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn pins_doc_rows(
+        entity: &EntityId,
+        initial: &str,
+        append: &str,
+        actor: WriteActor,
+        stamp: ActorStamp,
+        peer: u64,
+        at: u64,
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(peer)
+            .map_err(|_| invalid("pins document peer"))?;
+        let mut born = Self::open_initialized(
+            doc,
+            *entity,
+            initial,
+            (actor, stamp),
+            at,
+            |_| Ok(()),
+            "pins entity-document birth",
+        )?;
+        let before = born.doc.oplog_vv();
+        born.edit_as(stamp, at, |body| {
+            body.insert(0, append)
+                .map_err(|_| invalid("pins document edit"))?;
+            Ok(())
+        })?;
+        let updates = born
+            .doc
+            .export(ExportMode::updates(&before))
+            .map_err(|_| invalid("pins document updates"))?;
+        let snapshot = born.export_snapshot()?;
+        let frontier = born.frontier();
+        Ok((snapshot, updates, frontier))
+    }
 }
 
 pub(super) fn decode_frontier(bytes: &[u8]) -> Result<Frontiers> {

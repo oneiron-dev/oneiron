@@ -79,6 +79,23 @@ pub(super) fn holder_in_txn(
     TITLE_RESERVATION.get(store, txn, &reservation_key(author, title))
 }
 
+/// Puts a title reservation and its reverse row for the checkpoint-pins
+/// door: `author`'s reservation of `title`, held by `note`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_title_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    author: &EntityId,
+    title: &str,
+    note: &EntityId,
+) -> Result<()> {
+    let key = reservation_key(*author, title);
+    TITLE_RESERVATION.put(store, txn, &key, note)?;
+    let full = TITLE_RESERVATION.key_bytes(&key);
+    TITLE_BY_NOTE.put(store, txn, &HexId(*note), &full)?;
+    Ok(())
+}
+
 impl ValidatedTitleReplacement {
     fn document(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &NoteDocument) -> Result<Self> {
         Ok(Self {

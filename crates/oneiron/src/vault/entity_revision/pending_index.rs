@@ -32,6 +32,34 @@ struct Pending {
     inputs: Inputs,
 }
 
+/// Puts staged index inputs for the checkpoint-pins door: `id`'s inputs
+/// for `revision`, with fixed fields and vector.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_pending_index_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    revision: [u8; 16],
+    fields: Option<Vec<(String, String)>>,
+    vector: Option<Vec<f32>>,
+) -> Result<()> {
+    PENDING.put(
+        store,
+        txn,
+        id,
+        &Pending {
+            revision: RevisionRef(revision),
+            inputs: Inputs {
+                fields,
+                vector,
+                pending_embedding_token: None,
+                provenance: None,
+                locality: None,
+            },
+        },
+    )
+}
+
 pub(crate) fn defer_index_inputs(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

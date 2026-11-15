@@ -406,6 +406,25 @@ pub(crate) fn set_head(
     NOTE_HEAD_DOC.put(store, txn, &(note, head), &())?;
     Ok(())
 }
+
+/// Puts a proposal document's snapshot bytes for the checkpoint-pins door:
+/// the Loro snapshot of `note`'s head `head`, built with a fixed peer and
+/// fixed commit times (see `pins_note_proposal_snapshot`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_note_proposal_doc_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    note: &EntityId,
+    head: &EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    NOTE_PROPOSAL_DOC.put(
+        store,
+        txn,
+        &HexPair(HexId(*note), HexId(*head)),
+        &bytes.to_vec(),
+    )
+}
 #[cfg(any(feature = "sync", test))]
 pub(crate) fn doc_key(note: EntityId, head: EntityId) -> String {
     format!("note_proposal_doc:v1:{}:{}", note.to_hex(), head.to_hex())

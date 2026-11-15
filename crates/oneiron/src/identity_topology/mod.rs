@@ -155,6 +155,8 @@ pub use reassignment_map::{
     ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget,
 };
 pub use stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
+#[cfg(oneiron_test_support)]
+pub(crate) use stored_event::{pins_author_attribution_action, pins_undo_action};
 pub use transition_table::{
     IdentityTopologyRejection, ProposalOutcome, ProposalRuling, ProposalScope, evaluate_transition,
 };
