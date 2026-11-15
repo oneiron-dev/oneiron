@@ -30,7 +30,7 @@ const NOT_COUNTED: &str = "the authority fold did not count the grant act; nothi
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     not(oneiron_test_support),
-    allow(dead_code, reason = "pass 28 R2's writers decide")
+    allow(dead_code, reason = "pass 28 R2c's lapse end decides by rule")
 )]
 pub(crate) enum GrantActBy {
     /// `person`, whom the writer's door authenticated and whose standing it judged, decided at
@@ -74,10 +74,6 @@ impl Vault {
     /// [`crate::error::RecordError::AuthorityRefused`] for an install that cannot carry the
     /// act, more heads than one entry may name, or an act the fold did not count; an invalid
     /// act (a rule's giving).
-    #[cfg_attr(
-        not(oneiron_test_support),
-        allow(dead_code, reason = "pass 28 R2's writers call it")
-    )]
     pub(crate) fn append_grant_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

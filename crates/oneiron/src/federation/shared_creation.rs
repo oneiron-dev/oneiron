@@ -1,7 +1,7 @@
 //! Creation-time membership defaults, materialized once as explicit grant/policy rows.
 use super::{
     FederationGrant, FederationGrantPreset as GrantPreset, FederationGrantRole as Role,
-    FederationGrantScope, encode_federation_grant_body,
+    FederationGrantScope,
 };
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
@@ -129,6 +129,10 @@ impl Vault {
     /// 2026-10-17), so the creator needs a grant of their own to invite anyone.
     /// A founding co-Owner's invitation names the Owner role (OF-150); until
     /// it is accepted the creator is the vault's only Owner.
+    ///
+    /// The creator's grant is their own giving (pass 28 R2), an act this
+    /// install's key signs in this writer: an install with no live install
+    /// key refuses the creation (GRANT-ACT-FAILURE-POLICY = A).
     pub fn initialize_shared_vault(
         &self,
         owner: &AuthenticatedOwner,
@@ -140,6 +144,7 @@ impl Vault {
         if vault_id == 0 {
             return Err(invalid("shared vault id cannot be zero"));
         }
+        self.load_membership_carrier();
         let mut txn = self.store.env.write_txn()?;
         // Only the vault's owner shares it: a native host's proof shows a
         // live person, not whose vault this is.
@@ -203,6 +208,13 @@ impl Vault {
                 self.grant_default_scope_in_txn(&txn, role, vault_id, member)?;
             let id = EntityId::now();
             creation.grant_refs.push(id.to_hex());
+            let data = self.give_grant_in_txn(
+                &mut txn,
+                actor,
+                id,
+                crate::authority::GrantFamily::SharedMember,
+                &grant,
+            )?;
             ops.push(BatchOp::Put {
                 id,
                 entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
@@ -212,7 +224,7 @@ impl Vault {
                 },
                 learned_at: now,
                 row_version: None,
-                data: encode_federation_grant_body(&grant)?,
+                data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,

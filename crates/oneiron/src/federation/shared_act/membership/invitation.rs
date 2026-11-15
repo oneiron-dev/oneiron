@@ -528,7 +528,10 @@ impl Vault {
         // inviter's standing now: an Owner made an Admin while the invitation
         // waited no longer gives either (FABLE-6988-1).
         self.reserved_role_given_by_owner_in_txn(txn, vault_id, inviter, invitation.role)?;
-        let grants = self.set_member_role_in_txn(txn, vault_id, actor, invitation.role, now)?;
+        // The inviter, whose standing was judged again just now, gives the
+        // role (pass 28 R2): the invitee only accepts it.
+        let grants =
+            self.set_member_role_in_txn(txn, vault_id, actor, invitation.role, inviter, now)?;
         invitation.state = SharedInvitationState::Accepted { at: now };
         self.put_invitation_in_txn(txn, &invitation)?;
         Ok(Effect {

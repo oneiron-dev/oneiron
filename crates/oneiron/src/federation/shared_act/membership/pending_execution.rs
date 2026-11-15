@@ -6,9 +6,10 @@
 //! withdrawal and the Owner handover. With none, the same writer keeps one
 //! value-free intent under the receipt's id: the vault, the cause, the
 //! authenticated person who executed the change, the member whose role
-//! moved, the act, the second it was executed at, the exact signed-mint
-//! Grants it withdrew and an Owner act's handover. No credential, proof or
-//! archive is kept.
+//! moved, the act, the second it was executed at, the exact Grants it
+//! withdrew that no host signed a withdrawal of (since pass 28 R2 every
+//! dropped Grant, so each Grant line ends by a counted act) and an Owner
+//! act's handover. No credential, proof or archive is kept.
 //!
 //! This install signs the intent as a carrier-signed membership execution
 //! record ([`crate::authority::MembershipExecution`]) in the change's own
@@ -53,7 +54,7 @@ struct PendingMembershipExecution {
     act: Option<String>,
     /// The second the change was executed at: its receipt's.
     executed_at: u64,
-    /// The signed-mint Grants the change deleted with no signed withdrawal.
+    /// The Grants the change deleted with no host-signed withdrawal.
     /// Ascending, unique.
     withdrawn_grants: Vec<EntityId>,
     /// An Owner act's handover, unsigned.
@@ -67,8 +68,7 @@ pub(in crate::federation::shared_act) struct UnsignedExecution {
     /// The member whose role moved; an Owner act's leaver.
     pub(in crate::federation::shared_act) member: EntityId,
     pub(in crate::federation::shared_act) act: Option<String>,
-    /// The signed-mint Grants it deleted with no signed withdrawal, in any
-    /// order.
+    /// The Grants it deleted with no host-signed withdrawal, in any order.
     pub(in crate::federation::shared_act) withdrawn_grants: Vec<EntityId>,
     /// An Owner act's handover, when no issuer signed it.
     pub(in crate::federation::shared_act) handover: Option<MembershipHandover>,
@@ -272,11 +272,12 @@ impl Vault {
         self.carry_pending_membership_executions_logged();
     }
 
-    /// Loads this install's key for a membership change about to run with no
-    /// supplied issuer, so its writer can sign the change's record. A key
-    /// that does not load leaves the record pending, never refuses the
-    /// change.
-    pub(in crate::federation::shared_act) fn load_membership_carrier(&self) {
+    /// Loads this install's key before a membership writer opens, so the
+    /// writer can sign a role's giving (pass 28 R2) and the change's record.
+    /// A key that does not load leaves the record pending, never refusing an
+    /// end; a giving then refuses in its writer (GRANT-ACT-FAILURE-POLICY =
+    /// A).
+    pub(crate) fn load_membership_carrier(&self) {
         if let Err(error) = self.load_install_signing_if_minted() {
             tracing::debug!(
                 kind = ?error.kind(),

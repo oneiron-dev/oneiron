@@ -165,6 +165,7 @@ impl Vault {
                     &notify,
                     hex_id(&act.starter)?,
                     owner,
+                    actor,
                     now,
                 )?;
                 handover_ids = moved.handover_ids();
@@ -190,6 +191,7 @@ impl Vault {
                     from,
                     plan.from_keeps,
                     Some(to),
+                    actor,
                     slips,
                     &receipt_id,
                     now,
@@ -231,6 +233,7 @@ impl Vault {
                     target,
                     plan.target_keeps,
                     successor,
+                    actor,
                     slips,
                     &receipt_id,
                     now,

@@ -231,6 +231,12 @@ pub(super) fn link_member_actor(
 /// from constants here, so the widening fence lives in exactly one place
 /// ([`MemberOnboardingIntent::validate_grant_bundle`]) and this writer cannot
 /// disagree with it.
+///
+/// The grant is `writer`'s giving (pass 28 R2): the admin whose stored
+/// `AddMember` power this writer judged gives it, by an act this install's
+/// key signs in the same transaction. An install with no live install key
+/// refuses the step (GRANT-ACT-FAILURE-POLICY = A); an exact replay gave it
+/// already and writes nothing.
 pub(super) fn grant_member_bundle(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
@@ -263,7 +269,6 @@ pub(super) fn grant_member_bundle(
             intent.workspace.workspace_vault_id,
             expected.member_ref,
         )?;
-        let data = encode_federation_grant_body(&expected)?;
         if let Some(existing) = read_federation_grant_in_txn(vault, wtxn, &id)? {
             if existing != expected {
                 return Err(invalid(
@@ -272,6 +277,13 @@ pub(super) fn grant_member_bundle(
             }
             return Ok(());
         }
+        let data = vault.give_grant_in_txn(
+            wtxn,
+            writer.entity_ref(),
+            id,
+            crate::authority::GrantFamily::SharedMember,
+            &expected,
+        )?;
         apply_ops(
             &vault.store,
             &vault.config,
