@@ -11,6 +11,16 @@
 //! census: a shared vault's live Owner-role members, and on a personal vault
 //! the live embedded owner, as before.
 //!
+//! [UNROOTED-EMBEDDED-OWNER-SHORTCUTS-SKIP-CENSUS] (Engine RULING 15 Nov
+//! 15:07): three doors still took the embedded owner on its actor id alone,
+//! with no owner check, so the demoted embedded owner kept them: the read-lane
+//! owner key and the write standing every door reads from it
+//! (`Memory::is_vault_owner`), with its revalidation on each read; the
+//! room-role Owner arm, which let it delegate roles in rooms it never
+//! created; and the disclosure VaultOwner party, which adds no term to a
+//! room's meet. Each now reads the same census once the vault holds a
+//! shared-vault creation.
+//!
 //! Every vault here is unrooted (no host root), as in
 //! `tests/admin_is_not_steward.rs`, whose shared-vault steps these follow.
 //!
@@ -18,6 +28,8 @@
 //! --all-features --no-fail-fast --test unrooted_shared_owner_census`.
 
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::conversation::{ConversationBody, ConversationKind, RoomRole};
+use oneiron::disclosure::RoomParty;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::inbox::compilation_target::CompilationTarget;
 use oneiron::memory::ClaimInput;
@@ -277,6 +289,54 @@ impl Fixture {
             .board_world_authority(Some(self.agent), None)
             .expect("the agent's reads resolve")
     }
+
+    /// An ordinary room `creator` opens with the embedded owner and a new
+    /// PERSON as its members. Returns the room and that PERSON.
+    fn room_created_by(&self, creator: EntityId) -> (EntityId, EntityId) {
+        let member = EntityId::now();
+        person(&self.vault, member);
+        let room = EntityId::now();
+        self.vault
+            .create_conversation(
+                room,
+                &ConversationBody {
+                    kind: ConversationKind::Group,
+                    member_ids: vec![self.owner, member],
+                    ..Default::default()
+                },
+                WriteActor::new(creator, EdgeActorClass::Human),
+                self.vault.now_recorded_at(),
+            )
+            .expect("another person opens a room with the embedded owner in it");
+        (room, member)
+    }
+
+    /// The embedded owner makes `member` an Admin of `room`.
+    fn owner_sets_admin(&self, room: EntityId, member: EntityId) -> oneiron::Result<()> {
+        self.vault.set_room_role(
+            room,
+            member,
+            RoomRole::Admin,
+            WriteActor::new(self.owner, EdgeActorClass::Human),
+        )
+    }
+
+    /// How a room's meet classes the embedded owner.
+    fn owner_party(&self) -> RoomParty {
+        let parties = self
+            .vault
+            .room_parties(&[self.owner])
+            .expect("the room parties read");
+        let entries = self
+            .vault
+            .room_party_entries(&[self.owner])
+            .expect("the room party entries read");
+        assert_eq!(
+            parties[0], entries[0].party,
+            "both readers class the embedded owner alike"
+        );
+        parties[0]
+    }
 }
 
 /// The finding: the co-owner makes the embedded owner an Admin while a grant
@@ -383,4 +443,142 @@ fn a_personal_vaults_owner_passes_as_before() {
         refused.message.contains("this vault has no authority root"),
         "an unrooted vault names its missing root: {refused:?}"
     );
+}
+
+/// Door (a), the owner key's mint: the former owner's read lane is no
+/// longer the vault owner's, so the write standing every door reads from
+/// `is_vault_owner` (about 45 sites) and its read key are a member's.
+#[test]
+fn an_owner_the_co_owner_made_an_admin_holds_no_owner_key() {
+    let f = Fixture::new();
+    let co_owner = f.share_with_co_owner();
+    f.co_owner_demotes_the_embedded_owner(co_owner);
+
+    let memory = f.vault.memory(f.owner, EdgeActorClass::Human);
+
+    assert!(
+        !memory.is_vault_owner().expect("the owner check reads"),
+        "a former owner's read lane is no vault owner's"
+    );
+    let key = memory.read_key().expect("the former owner's read key");
+    assert!(
+        !key.reads_as_vault_owner(),
+        "a former owner's read key is no owner key"
+    );
+}
+
+/// Door (a), the owner key's revalidation: an owner key minted while the
+/// embedded owner was an Owner reads nothing once the co-owner made it an
+/// Admin, as a key kept past its owner's revocation does.
+#[test]
+fn an_owner_key_kept_past_the_demotion_reads_nothing() {
+    let f = Fixture::new();
+    let co_owner = f.share_with_co_owner();
+    let key = f
+        .vault
+        .memory(f.owner, EdgeActorClass::Human)
+        .read_key()
+        .expect("the owner's read key");
+    assert!(
+        key.reads_as_vault_owner(),
+        "a live Owner reads with the owner key"
+    );
+    f.co_owner_demotes_the_embedded_owner(co_owner);
+
+    let read = f.vault.scoped_read(key).is_entity_readable(&f.world);
+
+    let refused = read.expect_err("an owner key kept past its holder's demotion reads nothing");
+    assert!(
+        format!("{refused:?}").contains(NOT_A_LIVE_OWNER),
+        "the refusal names the census: {refused:?}"
+    );
+}
+
+/// Door (b), the room-role Owner arm: in a room the co-owner opened, the
+/// former owner is a plain member, so it delegates no role there.
+#[test]
+fn an_owner_the_co_owner_made_an_admin_sets_no_room_role() {
+    let f = Fixture::new();
+    let co_owner = f.share_with_co_owner();
+    let (room, member) = f.room_created_by(co_owner);
+    f.co_owner_demotes_the_embedded_owner(co_owner);
+
+    let set = f.owner_sets_admin(room, member);
+
+    let refused = set.expect_err("a former owner delegates no role in the co-owner's room");
+    assert!(
+        format!("{refused:?}").contains("ConversationDenied"),
+        "the room door refuses it: {refused:?}"
+    );
+}
+
+/// Door (c), the disclosure VaultOwner party: a room's meet classes the
+/// former owner as any other member, never as the vault owner who adds no
+/// term; the co-owner still classes VaultOwner.
+#[test]
+fn an_owner_the_co_owner_made_an_admin_is_no_owner_party() {
+    let f = Fixture::new();
+    let co_owner = f.share_with_co_owner();
+    f.co_owner_demotes_the_embedded_owner(co_owner);
+
+    assert_ne!(
+        f.owner_party(),
+        RoomParty::VaultOwner,
+        "a former owner is no vault owner in a room's meet"
+    );
+    let co_owner_party = f
+        .vault
+        .room_parties(&[co_owner])
+        .expect("the room parties read");
+    assert_eq!(co_owner_party, vec![RoomParty::VaultOwner]);
+}
+
+/// Control: on the same shared vault, the embedded owner who is still an
+/// Owner keeps all three: the owner key, which still reads, the room-role
+/// Owner arm in the co-owner's room, and the VaultOwner party.
+#[test]
+fn an_owner_still_an_owner_keeps_its_shortcuts() {
+    let f = Fixture::new();
+    let co_owner = f.share_with_co_owner();
+    let (room, member) = f.room_created_by(co_owner);
+
+    let memory = f.vault.memory(f.owner, EdgeActorClass::Human);
+    assert!(memory.is_vault_owner().expect("the owner check reads"));
+    let key = memory.read_key().expect("the owner's read key");
+    assert!(
+        key.reads_as_vault_owner(),
+        "a live Owner reads with the owner key"
+    );
+    f.vault
+        .scoped_read(key)
+        .is_entity_readable(&f.world)
+        .expect("a live Owner's key still reads");
+    f.owner_sets_admin(room, member)
+        .expect("a live Owner delegates a role in the co-owner's room");
+    assert_eq!(f.owner_party(), RoomParty::VaultOwner);
+}
+
+/// Control: a personal unrooted vault's embedded owner keeps all three as
+/// before, the room-role arm in a room another person opened included.
+#[test]
+fn a_personal_vaults_owner_keeps_its_shortcuts() {
+    let f = Fixture::new();
+    let other = EntityId::now();
+    person(&f.vault, other);
+    let (room, member) = f.room_created_by(other);
+
+    let memory = f.vault.memory(f.owner, EdgeActorClass::Human);
+    assert!(memory.is_vault_owner().expect("the owner check reads"));
+    let key = memory.read_key().expect("the owner's read key");
+    assert!(
+        key.reads_as_vault_owner(),
+        "the embedded owner reads with the owner key"
+    );
+    f.vault
+        .scoped_read(key)
+        .is_entity_readable(&f.world)
+        .expect("the embedded owner's key reads");
+    f.owner_sets_admin(room, member)
+        .expect("the embedded owner delegates a role in another person's room");
+    assert_eq!(f.owner_party(), RoomParty::VaultOwner);
 }
