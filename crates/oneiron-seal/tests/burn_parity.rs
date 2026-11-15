@@ -9,6 +9,10 @@
 //! engine's, lent as the organ host lends them (item 1's fields, every
 //! current value, every decoded raster).
 //!
+//! Each case prints `PIN burn-p<page>-<rejected|accepted>-<content|pdf>
+//! <sha256>`, so a later move of the drawing code can show the same bytes
+//! before and after it.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-seal --test burn_parity`.
 #![cfg(oneiron_test_support)]
@@ -18,6 +22,7 @@ use std::collections::BTreeMap;
 use oneiron::blob_artifact::esign::render::{SignatureRaster, esign_burn};
 use oneiron::blob_artifact::esign::{EsignField, FieldGeometry, FieldMeta, FieldValue};
 use oneiron_seal::test_doors::{self as organ, LentField, LentRaster, LentValue};
+use sha2::{Digest, Sha256};
 
 /// The page box both ports burn into: not at the origin, so every mark is
 /// offset by the crop.
@@ -210,6 +215,15 @@ fn both_burn_ports_draw_one_field_set_identically() {
                 engine.pdf == organ.pdf,
                 "page {page} (rejected {rejected}): the saved documents differ, {}",
                 first_difference(&engine.pdf, &organ.pdf)
+            );
+            let case = if rejected { "rejected" } else { "accepted" };
+            println!(
+                "PIN burn-p{page}-{case}-content {:x}",
+                Sha256::digest(&engine.content)
+            );
+            println!(
+                "PIN burn-p{page}-{case}-pdf {:x}",
+                Sha256::digest(&engine.pdf)
             );
         }
     }
