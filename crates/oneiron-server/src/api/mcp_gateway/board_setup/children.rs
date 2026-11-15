@@ -19,9 +19,11 @@ pub(super) fn mcp_children_narrowed(actor: &McpCallContext) -> bool {
 /// passes as that TASK's own row would, inside the connector's world/facet
 /// ceiling too; a child on no TASK passes only when the scope its dispatch
 /// froze sits inside that ceiling, on a world the caller's read reaches, for
-/// a credential whose record scope is unrestricted. A child with no such
-/// evidence, or whose evidence does not read, stays off the board, and the
-/// board itself still answers.
+/// a credential whose record scope is unrestricted. Either way, a child on
+/// no TASK stays off the board while where it works is kept on this device
+/// from the caller's destination. A child with no such evidence, or whose
+/// evidence does not read, stays off the board, and the board itself still
+/// answers.
 pub(super) fn mcp_child_admitted(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -33,6 +35,13 @@ pub(super) fn mcp_child_admitted(
         .task_ref
         .as_deref()
         .and_then(|task| oneiron::EntityId::from_hex(task).ok());
+    // A child on no TASK is judged by where it works before it may leave
+    // this device at all, on a broad connector too: its row names only its
+    // attempt and its label, which no entity read places.
+    if task.is_none() && !bare_child_may_leave(&server.vault, &actor.destination(), &child.attempt)
+    {
+        return Ok(false);
+    }
     if !mcp_children_narrowed(actor) {
         return match task {
             Some(task) => {
@@ -54,16 +63,65 @@ pub(super) fn mcp_child_admitted(
     }
 }
 
-/// Main's judgment of a connector board's bare child row, for the red run
-/// of `tests/board_keyframe_child_release.rs` (BOARD-KEYFRAME-CHILD-RELEASE):
-/// the row is always served, by its attempt alone, whatever `destination` is.
-#[cfg(oneiron_test_support)]
-pub(crate) fn bare_child_served_rows_for_test(
-    _vault: &oneiron::Vault,
-    _destination: &oneiron::settings::ReadDestination,
+/// Whether the bare row of the child whose attempt id is `child` may leave
+/// for `destination`: where the child works, read from its own committed
+/// attempt, is not kept on this device from there. This is the judgment a
+/// child's `children:` delta line passes
+/// (`oneiron::context_board::child_release_hold`): a child in a world kept
+/// here, one that names no world while a world is kept, and one that does
+/// not read may not leave off this device.
+fn bare_child_may_leave(
+    vault: &oneiron::Vault,
+    destination: &oneiron::settings::ReadDestination,
+    child: &str,
+) -> bool {
+    matches!(
+        oneiron::context_board::child_release_hold(vault, child, destination),
+        Ok(None)
+    )
+}
+
+/// The rows the bare row of the child whose attempt id is `child` is derived
+/// from, beside its attempt, for a connector board's served rows: the TASK
+/// its try realizes and each world its dispatch froze or its definition
+/// runs in (`oneiron::context_board::child_release_rows`). `None` when the
+/// row may not leave for `destination` (`bare_child_may_leave`), or, off
+/// this device, when where the child works does not read: the row stays off
+/// the board rather than leaving judged by its attempt alone. On this
+/// device a child that does not read keeps the row it had, served by its
+/// attempt.
+pub(in crate::api::mcp_gateway) fn bare_child_served_rows(
+    vault: &oneiron::Vault,
+    destination: &oneiron::settings::ReadDestination,
     child: &str,
 ) -> Option<Vec<oneiron::EntityId>> {
-    Some(oneiron::EntityId::from_hex(child).ok().into_iter().collect())
+    if !bare_child_may_leave(vault, destination, child) {
+        return None;
+    }
+    let mut rows: Vec<oneiron::EntityId> = oneiron::EntityId::from_hex(child)
+        .ok()
+        .into_iter()
+        .collect();
+    match oneiron::context_board::child_release_rows(vault, child) {
+        Ok(Some(release)) => rows.extend(release),
+        Ok(None) | Err(_) => {
+            if destination.is_off_device() {
+                return None;
+            }
+        }
+    }
+    Some(rows)
+}
+
+/// `bare_child_served_rows` for the integration tests' door
+/// (`crate::test_doors::board_keyframe_child_release`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn bare_child_served_rows_for_test(
+    vault: &oneiron::Vault,
+    destination: &oneiron::settings::ReadDestination,
+    child: &str,
+) -> Option<Vec<oneiron::EntityId>> {
+    bare_child_served_rows(vault, destination, child)
 }
 
 /// [`mcp_child_admitted`] on a narrowed connector, by the child's TASK when
