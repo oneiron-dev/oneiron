@@ -5,7 +5,8 @@
 //! line per call: the outcome, then the stored row (its kind, payload bytes,
 //! state, dedupe key, run id, task ref and the rest of its fields), its
 //! private run-tree row, and its authority stamps with the Gate receipt each
-//! names. A refused call renders its error text.
+//! names. A refused call renders its error text. A door that answers only
+//! the attempt id renders the stored row under the word `Id`.
 //!
 //! Attempt and entity ids are random and the queue stamps instants from the
 //! vault clock, so the table names each attempt by its order of first
@@ -18,11 +19,15 @@ use crate::attempt_queue::AttemptId;
 use crate::attempt_queue::AttemptQueue;
 use crate::attempt_queue::AttemptRecord;
 use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::claim::WeaveDigestReader;
 use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttempt,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    EnqueueDreamerSkillOptimizeAttempt, EnqueueDreamerVaultCleanupAttempt,
 };
-use crate::error::Result;
+use crate::dreamer_wake::{WakePolicyTrigger, WakeTrigger};
+use crate::error::{Error, Result};
+use crate::failure_ladder::{FailureClass, FailureScope, HealerCase};
 use crate::store::GateDecisionId;
 use crate::{EntityId, Vault};
 
@@ -147,7 +152,38 @@ impl Table<'_> {
                 return Ok(());
             }
         };
-        let returned = status.attempt;
+        self.render(label, call, word, status.attempt)
+    }
+
+    /// One line for call `call` of fixture `label`, for a door that answers
+    /// only the attempt id: the stored row as `returned`, so
+    /// `returned_eq_stored` reads it twice.
+    fn record_id(&mut self, label: &str, call: u32, outcome: Result<AttemptId>) -> Result<()> {
+        let id = match outcome {
+            Ok(id) => id,
+            Err(error) => {
+                self.lines.push(format!("{label}|{call}|Err|{error}"));
+                return Ok(());
+            }
+        };
+        let Some(returned) = AttemptQueue::new(self.vault).get(id)? else {
+            let id = self.name(id);
+            self.lines
+                .push(format!("{label}|{call}|Id|{id}|stored=none"));
+            return Ok(());
+        };
+        self.render(label, call, "Id", returned)
+    }
+
+    /// The line for one answered call: `returned` is the row the door
+    /// answered, read again from the queue.
+    fn render(
+        &mut self,
+        label: &str,
+        call: u32,
+        word: &str,
+        returned: AttemptRecord,
+    ) -> Result<()> {
         let id = self.name(returned.id);
         let Some(row) = AttemptQueue::new(self.vault).get(returned.id)? else {
             self.lines
@@ -216,6 +252,33 @@ impl Table<'_> {
     }
 }
 
+/// A table with nothing named yet.
+fn table(vault: &Vault) -> Table<'_> {
+    Table {
+        vault,
+        ids: Vec::new(),
+        entities: Vec::new(),
+        lines: Vec::new(),
+    }
+}
+
+/// Runs a caller-owned-transaction door in a write transaction of its own:
+/// commits it when the door answers, rolls it back when the door refuses.
+/// The outer error is storage; the inner one is the door's answer.
+fn in_write_txn<T>(
+    vault: &Vault,
+    door: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+) -> Result<Result<T>> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let outcome = door(&mut wtxn);
+    if outcome.is_ok() {
+        wtxn.commit()?;
+    } else {
+        drop(wtxn);
+    }
+    Ok(outcome)
+}
+
 /// A generic runner job of `attempt_type`.
 fn runner_job(attempt_type: &str, dedupe_key: Option<&str>) -> EnqueueDreamerAttempt {
     EnqueueDreamerAttempt {
@@ -238,12 +301,7 @@ fn runner_job(attempt_type: &str, dedupe_key: Option<&str>) -> EnqueueDreamerAtt
 /// Storage errors from the reads after each call.
 pub fn dreamer_core_rows(vault: &Vault) -> Result<Vec<String>> {
     let store = DreamerRunnerStore::new(vault);
-    let mut table = Table {
-        vault,
-        ids: Vec::new(),
-        entities: Vec::new(),
-        lines: Vec::new(),
-    };
+    let mut table = table(vault);
     for call in 1..=2 {
         let outcome = store.enqueue(runner_job("uc09.pin.runner", Some("uc09-pin-runner")));
         table.record("runner", call, outcome)?;
@@ -287,5 +345,166 @@ pub fn dreamer_core_rows(vault: &Vault) -> Result<Vec<String>> {
     }
     let outcome = store.enqueue(runner_job("", Some("uc09-pin-empty")));
     table.record("runner-empty-type", 1, outcome)?;
+    Ok(table.lines)
+}
+
+/// A vault-cleanup job registered on `trigger`.
+fn vault_cleanup_job(
+    trigger: WakeTrigger,
+    parent_attempt: Option<AttemptId>,
+) -> EnqueueDreamerVaultCleanupAttempt {
+    EnqueueDreamerVaultCleanupAttempt {
+        trigger,
+        input: rmpv::Value::from("uc09-pin-cleanup-input"),
+        parent_attempt,
+        dedupe_key: Some("uc09-pin-cleanup".to_owned()),
+        run_id: Some("uc09-pin-cleanup-run".to_owned()),
+        now: 1_000,
+    }
+}
+
+/// A failure-ladder case on `failing_attempt_id`, its refs fixed hex.
+fn healer_case(failing_attempt_id: AttemptId) -> HealerCase {
+    HealerCase {
+        case_ref: "0123456789abcdef0123456789abcdef".to_owned(),
+        scope: FailureScope {
+            agent_ref: "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b".to_owned(),
+            skill_ref: None,
+        },
+        failure_class: FailureClass::Permanent,
+        failing_attempt_id,
+        task_ref: None,
+        evidence_ref: "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c".to_owned(),
+        blocked_reports: Vec::new(),
+        pre_fail_checkpoint_ref: "5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d".to_owned(),
+        qa_thread_ref: "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e".to_owned(),
+        consecutive_transients: 0,
+    }
+}
+
+/// A Nightly wake-policy trigger with fixed counts and cursors. Built from
+/// its serde form: its snapshot fields are private to the wake policy.
+fn nightly_trigger() -> Result<WakePolicyTrigger> {
+    let through = [0x60_u8; 16];
+    let after = [0x61_u8; 16];
+    serde_json::from_value(serde_json::json!({
+        "recipe": "nightly",
+        "turn_count": 3,
+        "record_count": 5,
+        "nightly_count": 1,
+        "after_nightly": null,
+        "after_turn": after,
+        "after_record": null,
+        "through": through,
+        "observed_at": 1_000,
+        "latest_after_turn": after,
+        "latest_after_record": null,
+        "latest_after_nightly": null,
+        "latest_turn_count": 3,
+        "latest_record_count": 5,
+        "latest_nightly_count": 1,
+    }))
+    .map_err(|error| Error::InvalidConfig(format!("uc09 pin wake trigger: {error}")))
+}
+
+/// UC-09 PR D1's kinds: every kind-scoped door whose job type is its own
+/// lane's kind (SKILL-OPT, coach heal, recipe wake, vault cleanup, NOTE
+/// review, resident dream, weave lens), each called twice, and the refusals
+/// those doors keep (a non-timer vault cleanup; a resident with no agent
+/// definition). SKILL-OPT and vault cleanup go through their own-commit
+/// doors; the generic runner and consolidation own-commit doors are in
+/// [`dreamer_core_rows`]. A first runner job is the parent the child doors
+/// name. The resident is the seeded system agent `sys.scout`, enabled with
+/// dreaming inherited (on).
+///
+/// # Errors
+///
+/// Storage errors from the transactions and the reads after each call.
+pub fn dreamer_kind_rows(vault: &Vault) -> Result<Vec<String>> {
+    let store = DreamerRunnerStore::new(vault);
+    let mut table = table(vault);
+    let outcome = store.enqueue(runner_job("uc09.pin.parent", Some("uc09-pin-parent")));
+    table.record("parent", 1, outcome)?;
+    let parent_id = table
+        .ids
+        .first()
+        .copied()
+        .ok_or_else(|| Error::InvalidConfig("uc09 pin parent did not enqueue".into()))?;
+    let parent = Some(parent_id);
+    for call in 1..=2 {
+        let outcome = store.enqueue_skill_optimize(EnqueueDreamerSkillOptimizeAttempt {
+            input: rmpv::Value::from("uc09-pin-skill-input"),
+            parent_attempt: parent,
+            dedupe_key: Some("uc09-pin-skill".to_owned()),
+            run_id: Some("uc09-pin-skill-run".to_owned()),
+            now: 1_000,
+        });
+        table.record("skill-optimize", call, outcome)?;
+    }
+    for call in 1..=2 {
+        let outcome = store.enqueue_vault_cleanup(vault_cleanup_job(WakeTrigger::Timer, parent));
+        table.record("vault-cleanup", call, outcome)?;
+    }
+    let outcome = store.enqueue_vault_cleanup(vault_cleanup_job(WakeTrigger::Event, parent));
+    table.record("vault-cleanup-event", 1, outcome)?;
+    let case = healer_case(parent_id);
+    for call in 1..=2 {
+        let outcome = in_write_txn(vault, |wtxn| {
+            store.enqueue_coach_heal_in_txn(
+                wtxn,
+                &case,
+                Some("uc09-pin-heal-run".to_owned()),
+                1_000,
+            )
+        })?;
+        table.record_id("coach-heal", call, outcome)?;
+    }
+    let trigger = nightly_trigger()?;
+    for call in 1..=2 {
+        let outcome = in_write_txn(vault, |wtxn| {
+            store.enqueue_recipe_wake_in_txn(wtxn, &trigger, 1_000)
+        })?;
+        table.record("recipe-wake", call, outcome)?;
+    }
+    for call in 1..=2 {
+        let outcome = in_write_txn(vault, |wtxn| {
+            store.enqueue_note_review_in_txn(
+                wtxn,
+                parent,
+                Some("uc09-pin-wake"),
+                Some("uc09-pin-note-run".to_owned()),
+                1_000,
+            )
+        })?;
+        table.record("note-review", call, outcome)?;
+    }
+    let scout = EntityId::from_bytes_unchecked([0xA1; 16]);
+    let stranger = EntityId::from_bytes_unchecked([0x5F; 16]);
+    for (label, resident, calls) in [
+        ("resident-dream", scout, 2),
+        ("resident-dream-unknown", stranger, 1),
+    ] {
+        for call in 1..=calls {
+            let outcome = in_write_txn(vault, |wtxn| {
+                store.enqueue_resident_dream_in_txn(
+                    wtxn,
+                    resident,
+                    parent,
+                    Some("uc09-pin-wake"),
+                    Some("uc09-pin-dream-run".to_owned()),
+                    1_000,
+                )
+            })?;
+            table.record(label, call, outcome)?;
+        }
+    }
+    let reader = WeaveDigestReader::Person(EntityId::from_bytes_unchecked([0x62; 16]));
+    let revision = EntityId::from_bytes_unchecked([0x63; 16]);
+    for call in 1..=2 {
+        let outcome = in_write_txn(vault, |wtxn| {
+            store.enqueue_weave_lens_in_txn(wtxn, reader, 2_000, 2_500, revision, 1_000)
+        })?;
+        table.record("weave-lens", call, outcome)?;
+    }
     Ok(table.lines)
 }
