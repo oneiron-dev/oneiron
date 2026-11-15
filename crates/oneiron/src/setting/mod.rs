@@ -27,6 +27,7 @@
 
 mod catalogue;
 mod change;
+mod page_max;
 mod read;
 mod set;
 pub(crate) mod tables;
@@ -47,6 +48,7 @@ pub(crate) use self::change::{
     erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, settings_after_in_txn,
     settings_head_in_txn,
 };
+pub use self::page_max::PageMax;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};

@@ -104,6 +104,7 @@ mod self_actor;
 mod self_model_read;
 mod self_verbs;
 mod setting;
+pub(crate) mod setting_keys;
 mod share;
 mod shared;
 mod shared_admin;
