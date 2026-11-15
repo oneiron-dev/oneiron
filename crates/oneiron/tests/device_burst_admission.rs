@@ -137,11 +137,12 @@ fn a_device_burst_over_its_baseline_defers_and_a_trickle_is_allowed() -> TestRes
     work.complete(&home.vault)?;
     let landed = home.receipt(&work.batch_ref())?;
     assert_eq!(
-        landed.peer,
-        FederationBurstPeerRef::Machine {
+        landed.peer(),
+        Some(FederationBurstPeerRef::Machine {
             machine: home.machine
-        }
+        })
     );
+    assert_eq!((landed.principal, landed.grant), (None, None));
     assert_eq!(landed.disposition, FederationBurstDisposition::Allow);
     assert_eq!(landed.state, FederationBurstWorkState::Imported);
 
@@ -152,11 +153,12 @@ fn a_device_burst_over_its_baseline_defers_and_a_trickle_is_allowed() -> TestRes
     };
     let held = home.receipt(&batch_ref)?;
     assert_eq!(
-        held.peer,
-        FederationBurstPeerRef::Machine {
+        held.peer(),
+        Some(FederationBurstPeerRef::Machine {
             machine: home.machine
-        }
+        })
     );
+    assert_eq!((held.principal, held.grant), (None, None));
     assert_eq!(
         held.disposition,
         FederationBurstDisposition::Defer {

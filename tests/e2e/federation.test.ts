@@ -1552,11 +1552,9 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     expect(allowDelivery.body.update.length).toBeGreaterThan(0);
     const allowReceipt = await receiver.client.call("vault.federation.burst.ingress", allowDelivery);
     expect(allowReceipt.batch_ref).toMatch(/^[a-f0-9]{64}$/);
-    expect(allowReceipt.peer).toEqual({
-      kind: "federated",
-      principal: pact.receiverGrant.guest_actor,
-      grant: pact.receiverGrant.grant,
-    });
+    expect(allowReceipt.principal).toBe(pact.receiverGrant.guest_actor);
+    expect(allowReceipt.grant).toBe(pact.receiverGrant.grant);
+    expect(allowReceipt.device).toBeUndefined();
     expect(allowReceipt.window_key).toBe(allowWindow);
     expect(allowReceipt.disposition).toEqual({ outcome: "allow" });
     expect(allowReceipt.state).toBe("imported");
@@ -1717,11 +1715,9 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     await receiver.restart();
     const restored = await receiver.client.call("vault.federation.burst.disposition", { peer, batch_ref: deferReceipt.batch_ref });
     expect(restored.batch_ref).toBe(deferReceipt.batch_ref);
-    expect(restored.peer).toEqual({
-      kind: "federated",
-      principal: pact.receiverGrant.guest_actor,
-      grant: pact.receiverGrant.grant,
-    });
+    expect(restored.principal).toBe(pact.receiverGrant.guest_actor);
+    expect(restored.grant).toBe(pact.receiverGrant.grant);
+    expect(restored.device).toBeUndefined();
     expect(restored.window_key).toBe(deferWindow);
     expect(restored.state).toBe("pending");
     expect(restored.disposition.outcome).toBe("defer");

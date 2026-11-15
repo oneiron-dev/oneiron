@@ -125,7 +125,8 @@ pub enum FederationBurstDisposition {
 
 /// Whose batch a receipt names: a federated peer under its grant, or one of
 /// the vault's own devices writing at its home, as its connection proved it
-/// (L7-41).
+/// (L7-41). The in-memory view of a receipt's naming fields
+/// ([`FederationBurstReceipt::peer`]); never stored or sent itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FederationBurstPeerRef {
@@ -143,16 +144,94 @@ pub enum FederationBurstPeerRef {
     Unproven,
 }
 
+/// The own device a receipt names (L7-41), as its connection proved it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FederationBurstDeviceRef {
+    /// By the machine its connection proved.
+    Machine { machine: EntityId },
+    /// By the hex id of the paired app's slip that bound its Write credential.
+    Slip { slip: String },
+    /// Own-device connections that proved neither.
+    Unproven,
+}
+
+impl From<FederationBurstDeviceRef> for FederationBurstPeerRef {
+    fn from(device: FederationBurstDeviceRef) -> Self {
+        match device {
+            FederationBurstDeviceRef::Machine { machine } => Self::Machine { machine },
+            FederationBurstDeviceRef::Slip { slip } => Self::Slip { slip },
+            FederationBurstDeviceRef::Unproven => Self::Unproven,
+        }
+    }
+}
+
+impl FederationBurstPeerRef {
+    /// The principal a federated peer's receipt names; `None` for a device.
+    pub fn principal(&self) -> Option<EntityId> {
+        match self {
+            Self::Federated { principal, .. } => Some(*principal),
+            Self::Machine { .. } | Self::Slip { .. } | Self::Unproven => None,
+        }
+    }
+
+    /// The grant a federated peer's receipt names; `None` for a device.
+    pub fn grant(&self) -> Option<EntityId> {
+        match self {
+            Self::Federated { grant, .. } => Some(*grant),
+            Self::Machine { .. } | Self::Slip { .. } | Self::Unproven => None,
+        }
+    }
+
+    /// The device an own device's receipt names; `None` for a federated peer.
+    pub fn device(&self) -> Option<FederationBurstDeviceRef> {
+        match self {
+            Self::Federated { .. } => None,
+            Self::Machine { machine } => {
+                Some(FederationBurstDeviceRef::Machine { machine: *machine })
+            }
+            Self::Slip { slip } => Some(FederationBurstDeviceRef::Slip { slip: slip.clone() }),
+            Self::Unproven => Some(FederationBurstDeviceRef::Unproven),
+        }
+    }
+}
+
 /// A stable batch identity, its original routed outcome, and its current
 /// completion state. Replay does not erase the original disposition.
+///
+/// The burst ledger stores this row by field name (L7-41 keep path, the
+/// lead's M-1 STORED-CHANGE-RULE): a federated peer's receipt names
+/// `principal` and `grant`, as every receipt stored before own devices did,
+/// and its bytes are unchanged; an own device's receipt names `device`
+/// instead. A field that is `None` is neither stored nor sent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FederationBurstReceipt {
     pub batch_ref: String,
-    pub peer: FederationBurstPeerRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<FederationBurstDeviceRef>,
     pub window_key: String,
     pub disposition: FederationBurstDisposition,
     pub state: FederationBurstWorkState,
     pub baseline: FederationBurstBaselineState,
+}
+
+impl FederationBurstReceipt {
+    /// Whose batch this receipt names: a federated peer when it names a
+    /// principal and a grant, an own device when it names a device. A row
+    /// that names both or neither names no peer.
+    pub fn peer(&self) -> Option<FederationBurstPeerRef> {
+        match (self.principal, self.grant, &self.device) {
+            (Some(principal), Some(grant), None) => {
+                Some(FederationBurstPeerRef::Federated { principal, grant })
+            }
+            (None, None, Some(device)) => Some(device.clone().into()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

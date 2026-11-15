@@ -26,14 +26,18 @@ pub(super) fn load(
 }
 
 /// One stored receipt as the ledger reads it: the row must name the batch
-/// `id` and the peer `named`, else it is corrupt.
+/// `id` and the peer `named`, else it is corrupt. A receipt stored before
+/// own devices had receipts names a federated peer by principal and grant,
+/// as one stored now does, so it reads unchanged (L7-41 keep path).
 pub(crate) fn decode(
     bytes: &[u8],
     named: &FederationBurstPeerRef,
     id: &[u8; 32],
 ) -> Result<FederationBurstReceipt> {
     let row: FederationBurstReceipt = rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
-    if row.batch_ref != blake3::Hash::from(*id).to_hex().to_string() || row.peer != *named {
+    if row.batch_ref != blake3::Hash::from(*id).to_hex().to_string()
+        || row.peer().as_ref() != Some(named)
+    {
         return Err(corrupt());
     }
     Ok(row)
@@ -70,12 +74,15 @@ pub(super) fn record(
             }
         }
     };
+    let named = peer.receipt_peer();
     put(
         &vault.store,
         txn,
         &FederationBurstReceipt {
             batch_ref,
-            peer: peer.receipt_peer(),
+            principal: named.principal(),
+            grant: named.grant(),
+            device: named.device(),
             window_key: work.window.clone(),
             disposition,
             state: FederationBurstWorkState::Pending,
