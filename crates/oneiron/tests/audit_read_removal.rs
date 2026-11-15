@@ -43,6 +43,14 @@
 //!   the grant and held it meets the hold first, and the facade settles that
 //!   refusal: on a hosted vault the settlement limits the grant's use.
 //!
+//! Astra delta-5 (auditread-8435-pr1-delta5) found one more:
+//!
+//! - J2: a delivery-ledger row (`feddelivered:`) planted through the generic
+//!   telemetry writer that writes only absent rows passes a courtesy ask's
+//!   coverage check for the grant, and the owner's restrict-pending-review
+//!   answer then places a cooperative restriction that hides the grant from
+//!   safe reads.
+//!
 //! Each removal is refused, or leaves the grant as it was: the holder still
 //! reads, the grant's history stays listed, and the owner's revoke still
 //! finds it standing. Verbs go through the generated verb dispatch
@@ -64,8 +72,8 @@ use oneiron::store::ports::{EntityStore, RetrievalIndex, TombstoneStore};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::audit_read_removal::{
     delete_past_the_header_read, peer_tombstone_refusal_is_quarantined,
-    publish_purge_past_the_scope_probe, replay_peer_tombstone, settle_a_privacy_erase_refusal,
-    use_limited, withdraw_on_received_shell_cutoff,
+    publish_purge_past_the_scope_probe, replay_peer_tombstone, restrict_as_a_cooperative_answer,
+    settle_a_privacy_erase_refusal, use_limited, withdraw_on_received_shell_cutoff,
 };
 use oneiron::{
     EdgeActorClass, EdgeKind, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
@@ -593,5 +601,30 @@ fn a_settled_privacy_erase_refusal_limits_no_audit_read_grant() -> TestResult {
         &fixture,
         &granted,
         "after the settled privacy erase refusal",
+    )
+}
+
+/// Delta-5 J2: the owner's answer to a courtesy ask restricts only the
+/// copies its coverage check passes, and a delivery-ledger row the generic
+/// writers plant passes that check for the grant. The restriction refuses
+/// the grant, so it still reads, and the grant stands.
+#[test]
+fn a_cooperative_restriction_of_an_audit_read_grant_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    let restrict =
+        restrict_as_a_cooperative_answer(&fixture.vault, &granted.grant_ref, fixture.owner);
+    assert!(
+        restrict.as_ref().is_err_and(names_the_revoke),
+        "a cooperative restriction of an audit_read grant is refused: {restrict:?}"
+    );
+    assert!(
+        fixture.vault.get_raw(&granted.grant_ref)?.is_some(),
+        "the grant still reads after the refused restriction"
+    );
+    assert_the_grant_stands(
+        &fixture,
+        &granted,
+        "after the refused cooperative restriction",
     )
 }

@@ -17,7 +17,8 @@ mod audit_read;
 pub(crate) use audit_read::is_audit_read_delete_refusal;
 pub(crate) use audit_read::{
     AUDIT_READ_DELETE_REFUSAL, AuditReadChange, is_audit_read_grant_row,
-    reject_audit_read_grant_delete_in_txn, stored_audit_read_grant_in_txn,
+    reject_audit_read_grant_delete_in_txn, reject_audit_read_grant_restriction_in_txn,
+    stored_audit_read_grant_in_txn,
 };
 pub use audit_read::{AuditHolder, AuditReader};
 mod codec;
