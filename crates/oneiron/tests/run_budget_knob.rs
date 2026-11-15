@@ -105,8 +105,7 @@ fn with_no_overdraft_knob_a_policy_meter_suspends_at_its_line() {
     assert!(matches!(meter.admit(), Err(BudgetDenied::Exhausted)));
 }
 
-/// A caller's own overdraft (the owner's one-off overdraft of a held run)
-/// stands over a knob that names none.
+/// A caller's own overdraft stands over a knob that names none.
 #[test]
 fn a_callers_own_overdraft_stands_over_the_knob() {
     let (_dir, vault, proof, actor) = open();

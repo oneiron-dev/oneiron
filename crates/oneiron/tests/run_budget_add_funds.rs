@@ -189,8 +189,9 @@ fn the_owners_dollars_raise_a_held_runs_root_cap_for_good() {
         assert_eq!(funds[0].ask, listed[0].seq);
         assert_eq!(
             dispatcher
-                .run_overdraft_units(attempt)
-                .expect("overdraft read"),
+                .run_overdraft(attempt)
+                .expect("overdraft read")
+                .map(|overdraft| overdraft.cap_units),
             None,
             "added dollars are no overdraft"
         );

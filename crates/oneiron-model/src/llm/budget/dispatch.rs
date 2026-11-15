@@ -259,16 +259,27 @@ impl BudgetGuard {
         state.read()
     }
 
-    /// Moves what this meter does at its limit: an owner's answer that
-    /// reaches a meter already running, such as one restored from its
-    /// checkpoint. Spend, reservations, row tallies and fired thresholds
-    /// stay.
-    pub fn revise_exhaustion_policy(
-        &self,
-        on_budget_exhausted: BudgetExhaustionPolicy,
-    ) -> BudgetRead {
+    /// Widens this meter by an overdraft grant (`grant`, the caller's id for
+    /// it, such as the owner's answer to a run-budget ask): its paid cap
+    /// rises by `cap_units` past what it admitted before, or past its spend
+    /// when that is more, so a meter that spent an earlier overdraft, or its
+    /// own `Overdraft` policy, takes the new allowance whole. A grant the
+    /// meter already took changes nothing, so a meter restored from its
+    /// checkpoint under the same grant again is not widened twice. Spend,
+    /// reservations, row tallies, fired thresholds and the ceiling stay.
+    pub fn grant_overdraft(&self, grant: u64, cap_units: u64) -> BudgetRead {
         let mut state = self.lock_state();
-        state.on_budget_exhausted = on_budget_exhausted;
+        if state.overdraft_grant != Some(grant) {
+            let paid_cap = state
+                .on_budget_exhausted
+                .admission_cap(state.limit_units)
+                .max(state.used_units);
+            let cap = paid_cap
+                .saturating_add(cap_units)
+                .saturating_sub(state.limit_units);
+            state.on_budget_exhausted = BudgetExhaustionPolicy::Overdraft { cap };
+            state.overdraft_grant = Some(grant);
+        }
         state.read()
     }
 
