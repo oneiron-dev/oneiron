@@ -1,7 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -16,20 +14,8 @@ use super::storage::{
 };
 use super::support::invalid;
 
-/// A pack version move that touches predicates a query reads.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackDrift {
-    /// Pack the definition was written against.
-    pub from_pack_id: String,
-    /// Version the definition was written against.
-    pub from_version: String,
-    /// Pack now installed.
-    pub to_pack_id: String,
-    /// Version now installed.
-    pub to_version: String,
-    /// Predicates whose meaning or spelling moved.
-    pub affected_predicates: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::saved_query::pack_drift::PackDrift;
 
 pub use crate::skill_hub::pack_catalog::predicate_rewrites::{
     PackMigrationMap, PackPredicateRewrite,
