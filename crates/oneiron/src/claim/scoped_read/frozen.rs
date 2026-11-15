@@ -344,6 +344,11 @@ impl FrozenReadLane {
         if self.home_unnamed {
             key = key.homed_unnamed();
         }
+        // A homed reader reads its room's stamped claims only while it
+        // stands in the room in this snapshot, as when the lane was saved.
+        if let Some(room) = self.room_facets {
+            key = key.standing_in_room_in(vault, txn, room)?;
+        }
         Ok(key)
     }
 

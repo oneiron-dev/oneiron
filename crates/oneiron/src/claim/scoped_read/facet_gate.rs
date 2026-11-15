@@ -12,11 +12,38 @@ impl ScopedRead<'_> {
     /// Read inside `room`'s signed facets, as a turn in it does, while
     /// keeping every other term (FIX 643): the read a named-room assembly
     /// outside a turn makes. The owner's key reads past them, as past every
-    /// facet.
+    /// facet. A reader the conversation home binds
+    /// ([`ScopedReadActorKey::homed_unnamed`]) reads the room's stamped
+    /// claims only if it stands in the room now
+    /// ([`ScopedReadActorKey::standing_in_room_in`]); naming a room whose
+    /// record it can read but that it is not in lifts no home. A store
+    /// failure reading the room finds it standing in none: the home stays.
     #[must_use]
     pub fn within_room_facets(mut self, room: EntityId) -> Self {
-        self.actor_key = self.actor_key.within_room_facets(room);
+        let key = self.actor_key.within_room_facets(room);
+        self.actor_key = if key.is_homed_unnamed() {
+            match self.standing_in_room(key.clone(), room) {
+                Ok(key) => key,
+                Err(error) => {
+                    tracing::warn!(%error, "room standing unread; the conversation home stays");
+                    key
+                }
+            }
+        } else {
+            key
+        };
         self
+    }
+
+    /// `key` marked as standing in `room` in a snapshot of its own
+    /// ([`ScopedReadActorKey::standing_in_room_in`]).
+    fn standing_in_room(
+        &self,
+        key: ScopedReadActorKey,
+        room: EntityId,
+    ) -> Result<ScopedReadActorKey> {
+        let txn = self.vault.store.env.read_txn()?;
+        key.standing_in_room_in(self.vault, &txn, room)
     }
 
     /// Whether a deleted row's shell may be named to this read: a read limited

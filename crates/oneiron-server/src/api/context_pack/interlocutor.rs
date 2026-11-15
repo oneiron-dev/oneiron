@@ -311,10 +311,12 @@ fn own_agent_reader(
 }
 
 /// The home of the conversation an assembly serves (DEC-0006
-/// `#home-clearance`; RULING L5-02-UNNAMED-HOME = A). A room read
-/// (`room`) is homed here, and so is the owner's own credential and one of
-/// the vault's own agents reading on its own. Any other reader (a delegated
-/// caller, a guest, a member's companion) is homed in
+/// `#home-clearance`; RULING L5-02-UNNAMED-HOME = A). The owner's own
+/// credential is homed here, and so is one of the vault's own agents reading
+/// on its own, and a reader that names a room of this vault (`room`) it
+/// stands in ([`oneiron::Vault::stands_in_room`]). Any other reader (a
+/// delegated caller, a guest, a member's companion, a reader that can read a
+/// room's record but is not in the room) is homed in
 /// [`oneiron::ConversationHome::UNNAMED`], which no owner clears: it reads
 /// stamped claims only by naming a room of this vault it is in.
 ///
@@ -333,7 +335,9 @@ pub(crate) fn core_conversation_home(
     named: Option<&str>,
 ) -> Result<oneiron::ConversationHome, ApiError> {
     use oneiron::ConversationHome;
-    let homed_here = room.is_some() || auth.is_owner_grade() || own_agent_credential(vault, auth)?;
+    let homed_here = auth.is_owner_grade()
+        || own_agent_credential(vault, auth)?
+        || caller_stands_in_room(vault, auth, room)?;
     let Some(hex) = named else {
         return Ok(if homed_here {
             ConversationHome::ThisVault
@@ -350,6 +354,9 @@ pub(crate) fn core_conversation_home(
     if own.is_some_and(|own| home == ConversationHome::Vault(own)) {
         return if homed_here {
             Ok(ConversationHome::ThisVault)
+        } else if room.is_some() {
+            // A room of this vault its reader is not in homes it nowhere.
+            Ok(ConversationHome::UNNAMED)
         } else {
             Err(ApiError::bad_request(
                 "a conversation of this vault is named by its conversation_id",
@@ -367,6 +374,28 @@ pub(crate) fn core_conversation_home(
         return Err(ApiError::forbidden_scope("conversation_home"));
     }
     Ok(home)
+}
+
+/// Whether the caller `auth` names stands in `room` now, the room an
+/// assembly names ([`oneiron::Vault::stands_in_room`]); no room, or a caller
+/// with no principal, stands in none.
+fn caller_stands_in_room(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    room: Option<oneiron::EntityId>,
+) -> Result<bool, ApiError> {
+    let Some(room) = room else {
+        return Ok(false);
+    };
+    let Some(caller) = auth
+        .principal_ref()
+        .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+    else {
+        return Ok(false);
+    };
+    vault
+        .stands_in_room(room, caller)
+        .map_err(|error| core_engine_error("conversation home failed", error))
 }
 
 /// Whether `auth` is the credential of one of the vault's own agents,

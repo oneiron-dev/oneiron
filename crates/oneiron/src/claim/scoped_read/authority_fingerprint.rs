@@ -118,6 +118,9 @@ impl ScopedReadActorKey {
         // other key folds nothing more, so its fingerprint is as before.
         if self.is_homed_unnamed() {
             hasher.update(b"home_unnamed");
+            // The room its reader stands in, which it reads stamped claims
+            // inside.
+            fold_id(&mut hasher, self.standing_room);
         }
         Ok(hasher.finalize().into())
     }
@@ -350,6 +353,7 @@ impl ScopedReadActorKey {
         // claim outside a room (RULING SECREAD-HOME-READ-DOORS = B).
         if self.is_homed_unnamed() {
             hasher.update(KEY_FINGERPRINT_HOME_UNNAMED);
+            key_fold_id(&mut hasher, self.standing_room);
         }
         *hasher.finalize().as_bytes()
     }

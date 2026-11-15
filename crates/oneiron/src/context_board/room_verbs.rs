@@ -508,6 +508,37 @@ pub(crate) fn room_reader_in(
     Ok(crate::conversation::room_host_in_txn(vault, txn, room, host)?.is_some())
 }
 
+/// Whether `caller` stands in `room` as `txn` reads it: [`room_reader_in`]
+/// over the room's roster in this snapshot. A row that is no room has no
+/// roster, and no one stands in it.
+pub(crate) fn room_stander_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: EntityId,
+) -> crate::Result<bool> {
+    match room_roster_in(vault, txn, room)? {
+        Some(members) => room_reader_in(vault, txn, room, &members, caller),
+        None => Ok(false),
+    }
+}
+
+impl Vault {
+    /// Whether `caller` stands in `room` now ([`room_stander_in`]): a member,
+    /// a live Ready join for the room, one of a leader chat's two actors, or
+    /// the room's host. Reading the room's record is not standing in it: a
+    /// reader the conversation home binds names a room to read stamped claims
+    /// only while it stands in it (DEC-0006 `#home-clearance`; RULING
+    /// SECREAD-HOME-READ-DOORS = B).
+    ///
+    /// # Errors
+    /// A store failure reading the room.
+    pub fn stands_in_room(&self, room: EntityId, caller: EntityId) -> crate::Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        room_stander_in(self, &txn, room, caller)
+    }
+}
+
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room
 /// (ARCH-0067 §8): `room_scope` over the roster in this snapshot, as its
 /// world ceiling and its clearance, that roster as the audience, and every

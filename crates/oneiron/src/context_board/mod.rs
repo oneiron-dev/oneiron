@@ -51,8 +51,8 @@ pub use room::{
 pub use room_verbs::RoomSectionPage;
 pub(crate) use room_verbs::{
     off_room_reader_clearance_in, public_thread_live_speakers_in, room_ceiling_in,
-    room_clearance_in, room_facets_axis_in, room_reader_in, room_roster_in, thread_ceiling_in,
-    thread_reader_in,
+    room_clearance_in, room_facets_axis_in, room_reader_in, room_roster_in, room_stander_in,
+    thread_ceiling_in, thread_reader_in,
 };
 pub use worlds::{WorldPresence, WorldsSection, world_set_scope};
 mod frame;
