@@ -287,6 +287,14 @@ fn prompt_source_readable(
     let Some(raw) = vault.get_raw_in(txn, &source)? else {
         return Ok(false);
     };
+    // VOICE-PHONE-AGENT-REACH R2 review F2: a phone thread's row, or a row
+    // carrying its words, is no prompt text a selector carries, as the
+    // selector carries neither row.
+    if crate::voice_call::row_phone_marked(&raw)
+        || crate::voice_call::words_from_phone_thread_in(vault, txn, &source, &raw)?
+    {
+        return Ok(false);
+    }
     if !member_reads_labels(vault, txn, member, &source, &raw)? {
         return Ok(false);
     }
@@ -295,7 +303,12 @@ fn prompt_source_readable(
         txn,
         &source,
         Some(raw.as_slice()),
-        |text_source, raw| member_reads_labels(vault, txn, member, text_source, raw),
+        |text_source, raw| {
+            if crate::voice_call::row_phone_marked(raw) {
+                return Ok(false);
+            }
+            member_reads_labels(vault, txn, member, text_source, raw)
+        },
     )
 }
 

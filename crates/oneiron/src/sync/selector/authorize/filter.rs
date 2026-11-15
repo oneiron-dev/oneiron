@@ -182,23 +182,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // phone-thread mark never rides a restricted selector (Engine 02:02:
         // a generic read reaches phone rows only by the owner's reach
         // choice). Judged by the bytes themselves, as `row_obligation` is
-        // above, so a row with no canonical copy here is withheld whole.
-        if let Some(header) = EntityMetadataHeader::parse(blob) {
-            let body = blob.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-            let phone_marked = match header.entity_type {
-                crate::registry::ENTITY_TYPE_CONVERSATION => {
-                    crate::voice_call::phone_thread_agent(body).is_some()
-                }
-                crate::registry::ENTITY_TYPE_TURN
-                | crate::registry::ENTITY_TYPE_MESSAGE
-                | crate::registry::ENTITY_TYPE_SESSION => {
-                    crate::voice_call::phone_thread_stamp(body).is_some()
-                }
-                _ => false,
-            };
-            if phone_marked {
-                return;
-            }
+        // above, so a row with no canonical copy here is withheld whole; a
+        // mark in any shape counts.
+        if crate::voice_call::row_phone_marked(blob) {
+            return;
         }
         match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
             Ok(true) => {}
@@ -249,6 +236,18 @@ pub(in crate::sync::selector) fn filter_window_doc(
         match member_reads_word_sources(vault, &rtxn, member_access.as_ref(), &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
+        // VOICE-PHONE-AGENT-REACH R2 review F2: nor does a row carrying a
+        // phone thread's words (a scope SUMMARY of one, the TURN that copies
+        // it), whoever the member: the selector withholds the thread's rows
+        // themselves from every member above.
+        match crate::voice_call::words_from_phone_thread_in(vault, &rtxn, &id, blob) {
+            Ok(false) => {}
+            Ok(true) => return,
             Err(error) => {
                 scope_error = Some(error);
                 return;

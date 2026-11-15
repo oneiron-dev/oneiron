@@ -173,6 +173,151 @@ pub(crate) fn phone_thread_mark_body(agent: EntityId) -> MemoryResult<Vec<u8>> {
     Ok(out)
 }
 
+/// The proof that the phone keep writes a call's thread: the one capability
+/// under which a write door admits a phone mark ([`PHONE_LINE_AGENT_KEY`] on
+/// the thread's CONVERSATION, [`PHONE_THREAD_KEY`] on its TURN and SESSION;
+/// a MESSAGE's stamp is bound by the witness ceiling). Under the default
+/// reach a row's own stamp admits it to the current caller's call, so a
+/// stamp is authority and no other door writes one (VOICE-PHONE-AGENT-REACH
+/// R2 review F1). Only [`Vault::witness_call_turn`] mints it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PhoneThreadBirth {
+    agent: EntityId,
+    thread: EntityId,
+}
+
+impl PhoneThreadBirth {
+    /// The line agent the thread's CONVERSATION names.
+    pub(crate) const fn agent(&self) -> EntityId {
+        self.agent
+    }
+
+    /// The thread's CONVERSATION id: the value of every row's stamp.
+    pub(crate) const fn thread(&self) -> EntityId {
+        self.thread
+    }
+}
+
+/// Whether the MessagePack body `body` names a phone mark key
+/// ([`PHONE_LINE_AGENT_KEY`] or [`PHONE_THREAD_KEY`]) at its top level, in
+/// any shape: a value that is not a valid stamp still names it.
+pub(crate) fn body_names_phone_mark(body: &[u8]) -> bool {
+    let mut cursor = body;
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
+        return false;
+    };
+    fields
+        .iter()
+        .any(|(key, _)| matches!(key.as_str(), Some(PHONE_LINE_AGENT_KEY | PHONE_THREAD_KEY)))
+}
+
+/// Whether `entity_type` is a kind a phone mark binds: the thread's
+/// CONVERSATION, TURN, MESSAGE and SESSION rows.
+const fn phone_marked_kind(entity_type: u8) -> bool {
+    matches!(
+        entity_type,
+        crate::registry::ENTITY_TYPE_CONVERSATION
+            | crate::registry::ENTITY_TYPE_TURN
+            | crate::registry::ENTITY_TYPE_MESSAGE
+            | crate::registry::ENTITY_TYPE_SESSION
+    )
+}
+
+/// Refuses a write of `entity_type` whose body names a phone mark in any
+/// shape. Every write door runs it but the phone keep's
+/// ([`PhoneThreadBirth`]) and the witness MESSAGE door, whose ceiling binds a
+/// phone keep's MESSAGE stamp to its thread (VOICE-PHONE-AGENT-REACH R2
+/// review F1).
+///
+/// # Errors
+///
+/// The refusal, in the kind of the door's other body refusals.
+pub(crate) fn refuse_written_phone_mark(entity_type: u8, body: &[u8]) -> Result<()> {
+    const REASON: &str = "a phone mark is written by the phone keep alone";
+    if !phone_marked_kind(entity_type) || !body_names_phone_mark(body) {
+        return Ok(());
+    }
+    Err(match entity_type {
+        crate::registry::ENTITY_TYPE_MESSAGE => {
+            crate::error::RecordError::InvalidWitnessMessageBody(REASON).into()
+        }
+        _ => crate::error::RecordError::InvalidConversationBody(REASON).into(),
+    })
+}
+
+/// Whether the entity row `raw` (header and body) is a phone thread's row by
+/// its own bytes: a CONVERSATION, TURN, MESSAGE or SESSION whose body names a
+/// phone mark in any shape. A row with no readable header is none.
+#[cfg(feature = "sync")]
+pub(crate) fn row_phone_marked(raw: &[u8]) -> bool {
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+        return false;
+    };
+    phone_marked_kind(header.entity_type)
+        && body_names_phone_mark(
+            raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .unwrap_or_default(),
+        )
+}
+
+/// The longest chain of carried words [`words_from_phone_thread_in`] follows.
+#[cfg(feature = "sync")]
+const PHONE_WORDS_DEPTH: usize = 4;
+
+/// Whether the words of the row `raw` of `id` came, in whole or in part, from
+/// a phone thread's row (VOICE-PHONE-AGENT-REACH R2 review F2): a source
+/// `scope_summary::word_sources_in` names (a scope SUMMARY's, the TURN that
+/// copies one, a merge header's) is one by its own bytes
+/// ([`row_phone_marked`]) or carries one's words in turn. Fail closed: a
+/// chain deeper than [`PHONE_WORDS_DEPTH`] counts as one. A row with no
+/// readable header, words of its own, or sources that do not resolve here
+/// names none; the gates beside this one judge those.
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(feature = "sync")]
+pub(crate) fn words_from_phone_thread_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    words_from_phone_thread_at(vault, txn, id, raw, 0)
+}
+
+#[cfg(feature = "sync")]
+fn words_from_phone_thread_at(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    depth: usize,
+) -> Result<bool> {
+    if crate::batch::EntityMetadataHeader::parse(raw).is_none() {
+        return Ok(false);
+    }
+    let sources = match crate::scope_summary::word_sources_in(vault, txn, id, raw) {
+        Ok(crate::scope_summary::WordSources::From(sources)) => sources,
+        Ok(_) | Err(crate::error::Error::InvalidClaimBody(_)) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if depth >= PHONE_WORDS_DEPTH {
+        return Ok(true);
+    }
+    for source in &sources {
+        let Some(source_raw) = vault.get_raw_in(txn, source)? else {
+            continue;
+        };
+        if row_phone_marked(&source_raw)
+            || words_from_phone_thread_at(vault, txn, source, &source_raw, depth + 1)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// A phone thread. Parts: the line agent, then the caller's number as kept.
 const VOICE_PHONE_DOMAIN: &[u8] = b"oneiron.conversation.voice_phone.v1";
 /// The thread of a call whose number is withheld. Parts: the line agent,
@@ -341,11 +486,14 @@ impl Vault {
     ) -> MemoryResult<WitnessReceipt> {
         let conversation = EntityId::from_hex(&turn.conversation_ref)?;
         let now = self.now_recorded_at();
-        let mark = phone_thread_mark_body(agent)?;
+        let birth = PhoneThreadBirth {
+            agent,
+            thread: conversation,
+        };
         self.memory(agent, EdgeActorClass::Agent)
             .witness_with_minted_conversation_body_and_txn_effect(
                 turn,
-                mark,
+                birth,
                 crate::store::Callback::Audited,
                 || {},
                 |_| Ok(None),
@@ -373,7 +521,7 @@ impl Vault {
                         agent,
                         conversation,
                         now,
-                        Some(conversation),
+                        Some(&birth),
                     )?;
                     self.issue_connector_witness_read_grant_in_txn(txn, agent, conversation, now)?;
                     Ok(())

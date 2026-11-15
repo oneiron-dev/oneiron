@@ -150,6 +150,12 @@ fn admit_federated_entity_blob_graded(
         header.entity_type,
         &blob[ENTITY_METADATA_HEADER_LEN..],
     )?;
+    // VOICE-PHONE-AGENT-REACH R2 review F1: nor a phone mark, which the
+    // phone keep alone writes.
+    crate::voice_call::refuse_written_phone_mark(
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    )?;
     if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
         validate_federated_pack(&vault.store, txn, blob)?;
         return Ok((id, blob.to_vec()));
