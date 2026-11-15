@@ -21,6 +21,15 @@
 //! projected peak passes the `authority_log_fold_memory_floor` row: it holds
 //! no root and reads as a conflicted one, which every authority gate refuses,
 //! and its typed issue names the floor.
+//!
+//! So the doors keep the owner a reserve under that floor (FIX
+//! [AUTHORITY-LOG-SIGNER-FLOOD], Astra F10): once the stored log's projected
+//! peak passes the floor less an eighth of it, every row but the owner's work
+//! waits, never refused, and the owner's work still lands. One admitted
+//! machine that keeps signing then stops at the reserve, and the owner's
+//! removal of it still folds. A waiting row lands on the next drain once the
+//! owner raises the floor's row or a checkpoint image ends the rows that
+//! filled it; until then a typed check names the reserve.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -64,6 +73,13 @@ thread_local! {
 
 /// The least the memory floor's default reaches, however small the machine.
 const FOLD_MEMORY_FLOOR_MIN_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// The owner's reserve under the memory floor is the floor divided by this:
+/// an eighth, so a log near an 8 GiB floor still has 1 GiB for the owner's
+/// work once every other row waits. One more row past the reserve's start
+/// projects at most 16 KiB plus 640 bytes a stored row, which the reserve
+/// holds whenever the stored log is under the floor.
+const FOLD_MEMORY_OWNER_RESERVE_DIVISOR: u64 = 8;
 
 /// Runs `body` with the signer bound and the row and pair headroom rows
 /// scaled to `rows` per signer on this thread, so a test crosses them in a
@@ -143,6 +159,73 @@ pub(super) fn fold_memory_floor(policy: Option<&AuthorityObservationPolicy>) -> 
                 )
             })
         })
+}
+
+/// The projected peak past which the doors keep the rest of the memory floor
+/// for the owner's work: the floor the fold reads on this install, less its
+/// owner reserve ([`FOLD_MEMORY_OWNER_RESERVE_DIVISOR`]).
+fn owner_reserve_start(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<u64> {
+    let policy = authority_observation_policy_in_txn(store, txn)?;
+    let floor = fold_memory_floor(Some(&policy));
+    Ok(floor - floor / FOLD_MEMORY_OWNER_RESERVE_DIVISOR)
+}
+
+/// An upper bound on the peak a fold of `rows` projects
+/// ([`fold_projected_bytes`]), `rows` being each stored row's store id and
+/// parents. A row's ancestor pairs are bounded parents first: a row on one
+/// parent has that parent's bound and the parent itself, exactly as the fold
+/// counts them; a join has the lesser of the same sum over its parents and
+/// the rows bounded before it plus the log's missing parents, since every
+/// ancestor of it is one or the other. A parent no row is counts once, as the
+/// fold counts a missing parent. A one-signer chain is bounded exactly.
+fn stored_fold_projection(rows: &BTreeMap<crate::EntityId, &[AuthorityEntryHash]>) -> u64 {
+    let stored = |parent: &AuthorityEntryHash| {
+        authority_log_entity_id_from_hash(parent)
+            .ok()
+            .filter(|id| rows.contains_key(id))
+    };
+    let missing = rows
+        .values()
+        .flat_map(|parents| parents.iter())
+        .filter(|parent| stored(parent).is_none())
+        .collect::<BTreeSet<_>>()
+        .len() as u64;
+    let mut bound = BTreeMap::<crate::EntityId, u64>::new();
+    let mut entered = BTreeSet::new();
+    let mut pairs = 0_u64;
+    for start in rows.keys() {
+        let mut stack = vec![(*start, false)];
+        while let Some((id, parents_bounded)) = stack.pop() {
+            let parents = rows[&id];
+            if parents_bounded {
+                let through = |parent: &AuthorityEntryHash| {
+                    stored(parent)
+                        .and_then(|parent| bound.get(&parent).copied())
+                        .map_or(1, |ancestors| ancestors.saturating_add(1))
+                };
+                let ancestors = match parents {
+                    [parent] => through(parent),
+                    _ => parents
+                        .iter()
+                        .map(through)
+                        .fold(0, u64::saturating_add)
+                        .min((bound.len() as u64).saturating_add(missing)),
+                };
+                bound.insert(id, ancestors);
+                pairs = pairs.saturating_add(ancestors);
+            } else if entered.insert(id) {
+                stack.push((id, true));
+                stack.extend(
+                    parents
+                        .iter()
+                        .filter_map(stored)
+                        .filter(|parent| !entered.contains(parent))
+                        .map(|parent| (parent, false)),
+                );
+            }
+        }
+    }
+    fold_projected_bytes(rows.len(), pairs)
 }
 
 /// This machine's physical memory, when the platform says.
@@ -280,6 +363,9 @@ pub(crate) struct AuthorityDoorView {
     /// The stored rows that vouch only as a stranger's: anchors this
     /// install does not take as its own ([`AuthorityStructure::is_stranger`]).
     strangers: usize,
+    /// An upper bound on the peak a fold of every stored row projects
+    /// ([`stored_fold_projection`]), which the owner reserve reads.
+    projected_bytes: u64,
     /// The adopted image's evidence the view read, for the doors' other
     /// readers in the same generation.
     pub(super) evidence: Option<Arc<AdoptedEvidence>>,
@@ -350,6 +436,7 @@ pub(super) fn door_view(
         #[cfg(test)]
         DOOR_VIEW_BUILDS.with(|builds| builds.set(builds.get() + 1));
         let evidence = super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?;
+        let mut ids = Vec::new();
         let mut entries = Vec::new();
         for (id, body) in authority_log_rows_in_txn(store, txn)? {
             // A covered row counts once, from the image.
@@ -359,6 +446,7 @@ pub(super) fn door_view(
             {
                 continue;
             }
+            ids.push(id);
             entries.push(decode_authority_log_entry_body(&body)?);
         }
         // The structure reads the image's carried rows as the stored rows
@@ -380,17 +468,28 @@ pub(super) fn door_view(
                 Some(entry),
             );
         }
+        let mut parents: BTreeMap<_, &[AuthorityEntryHash]> = ids
+            .iter()
+            .copied()
+            .zip(entries.iter().map(|entry| entry.parent_hashes.as_slice()))
+            .collect();
         if let Some(evidence) = &evidence {
             for (hash, row) in evidence.rows() {
                 tally.count(&structure, &row.signer, row.slip_op, evidence.body(hash));
+                parents.insert(
+                    authority_log_entity_id_from_hash(hash)?,
+                    row.parents.as_slice(),
+                );
             }
         }
+        let projected_bytes = stored_fold_projection(&parents);
         Ok(AuthorityDoorView {
             structure,
             rows: tally.rows,
             counted: tally.counted,
             issuer_handoffs: tally.issuer_handoffs,
             strangers: tally.strangers,
+            projected_bytes,
             evidence,
         })
     })
@@ -427,8 +526,10 @@ pub(crate) fn signer_has_standing(
 pub(crate) enum AuthorityDoor {
     Lands,
     /// The row waits: it is a stranger's row past the bound all strangers'
-    /// rows share, or a handoff no slip issuer signed, which the fold never
-    /// applies. A replica retries it on every drain.
+    /// rows share, a handoff no slip issuer signed, which the fold never
+    /// applies, or a row that is not the owner's work once the stored log
+    /// reached the owner's reserve under the memory floor. A replica retries
+    /// it on every drain.
     AtBound,
     /// No key that may vouch for the row signed it. The fold applies no row
     /// without an owner's or admin's consent, and no world edit but its
@@ -446,7 +547,11 @@ pub(crate) enum AuthorityDoor {
 /// other row does. A stranger's row, which an anchor this install does not
 /// take as its own vouches for, lands only while every such stored row
 /// together is under that row, so fresh anchors never add a bound each; the
-/// rest wait (rule 5: never refused). The door reads the stored log's
+/// rest wait (rule 5: never refused). Once the stored log's projected peak
+/// passes the owner's reserve under the memory floor
+/// ([`FOLD_MEMORY_OWNER_RESERVE_DIVISOR`]), every row but the owner's work
+/// waits: the owner's work is a row a slip issuer signs or cosigns, or the
+/// owner's will this install carries. The door reads the stored log's
 /// structure as the fold's bounds do.
 pub(crate) fn authority_door(
     store: &Store,
@@ -463,6 +568,18 @@ pub(crate) fn authority_door(
     let view = door_view(store, txn)?;
     if !view.structure.vouches_for(entry) || verify_entry_signatures(entry).is_err() {
         return Ok(AuthorityDoor::Unowned);
+    }
+    // The owner's reserve (FIX [AUTHORITY-LOG-SIGNER-FLOOD], Astra F10): a
+    // log past the memory floor folds to no root, and then the owner's own
+    // removal of the key that filled it cannot fold. So past the reserve
+    // only the owner's work lands; every other row waits for the owner to
+    // raise the floor or for a checkpoint image to end the rows that filled
+    // it.
+    if view.projected_bytes > owner_reserve_start(store, txn)?
+        && !signed_by(entry, &view.structure.issuers)
+        && !carries_own_will(store, txn, entry)?
+    {
+        return Ok(AuthorityDoor::AtBound);
     }
     // A self-signed root needs nothing but a fresh key, so an anchor this
     // install does not take as its own is a stranger: its rows, and its
@@ -549,18 +666,20 @@ fn carries_own_will(
 /// stored log: evidence for the owner, never a refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityLogCheck {
-    /// [`Self::SIGNER_BOUND`], [`Self::UNPINNED_ROOTS`] or
-    /// [`Self::FOLD_HEADROOM`].
+    /// [`Self::SIGNER_BOUND`], [`Self::UNPINNED_ROOTS`],
+    /// [`Self::FOLD_HEADROOM`] or [`Self::OWNER_RESERVE`].
     pub kind: &'static str,
     /// For a headroom check, what reached its row: [`Self::ROWS`],
     /// [`Self::HANDOFFS`] or [`Self::ANCESTOR_PAIRS`].
     pub scope: Option<&'static str>,
     /// The signer at its bound, for a signer-bound check.
     pub signer: Option<String>,
-    /// The signer's stored rows, the strangers' rows, or the log's counted
-    /// rows, slip-issuer handoffs or counted ancestor pairs.
+    /// The signer's stored rows, the strangers' rows, the log's counted
+    /// rows, slip-issuer handoffs or counted ancestor pairs, or, for the
+    /// owner reserve, the stored log's projected fold peak in bytes.
     pub count: u64,
-    /// The policy row `count` reached.
+    /// The policy row `count` reached, or, for the owner reserve, the
+    /// memory floor less the reserve, in bytes.
     pub threshold: u64,
 }
 
@@ -580,6 +699,12 @@ impl AuthorityLogCheck {
     /// The fold still reads them all; past the
     /// `authority_log_fold_memory_floor` row it refuses the log.
     pub const FOLD_HEADROOM: &'static str = "authority_log_fold_headroom";
+    /// The stored log's projected fold peak passed the
+    /// `authority_log_fold_memory_floor` row less the owner's reserve under
+    /// it: every row but the owner's work waits until the owner raises that
+    /// row or a checkpoint image ends the rows that filled it, and then lands
+    /// on the next drain.
+    pub const OWNER_RESERVE: &'static str = "authority_log_owner_reserve";
     /// The scope of a headroom check on counted rows.
     pub const ROWS: &'static str = "rows";
     /// The scope of a headroom check on slip issuers' handoffs.
@@ -590,8 +715,9 @@ impl AuthorityLogCheck {
 
 impl crate::Vault {
     /// The open checks on the stored authority log: each key no slip issuer
-    /// vouches for that reached its bound, the strangers' shared bound, and
-    /// one per headroom scope that reached its policy row.
+    /// vouches for that reached its bound, the strangers' shared bound, one
+    /// per headroom scope that reached its policy row, and the owner's
+    /// reserve under the memory floor once the log reached it.
     pub fn authority_log_checks(&self) -> crate::error::Result<Vec<AuthorityLogCheck>> {
         let txn = self.store.env.read_txn()?;
         let view = door_view(&self.store, &txn)?;
@@ -615,6 +741,16 @@ impl crate::Vault {
                 signer: None,
                 count: view.strangers as u64,
                 threshold: bound as u64,
+            });
+        }
+        let reserve_start = owner_reserve_start(&self.store, &txn)?;
+        if view.projected_bytes > reserve_start {
+            checks.push(AuthorityLogCheck {
+                kind: AuthorityLogCheck::OWNER_RESERVE,
+                scope: None,
+                signer: None,
+                count: view.projected_bytes,
+                threshold: reserve_start,
             });
         }
         let (rows_at, handoffs_at, pairs_at) = headroom(&self.store, &txn)?;
