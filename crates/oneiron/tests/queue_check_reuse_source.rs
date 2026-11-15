@@ -248,9 +248,14 @@ fn staged_math_batch(fixture: &RepoFixture) -> TestResult<(String, u64)> {
     Ok((staged.batch_ref.clone(), staged.paths[0].mask))
 }
 
-#[test]
-fn a_reused_queue_check_names_its_source_attempt() -> TestResult {
-    let fixture = RepoFixture::enrolled()?;
+/// The staged batch's first fast check, run and passed on the isolated
+/// host; then, once the door unbinds its slot, the owner's diagnosis, which
+/// reuses that receipt instead of running. Returns the source receipt, the
+/// reused receipt (both as `vault.code.checks.get` carries them) and the
+/// diagnosis's finished work.
+fn reuse_a_passing_check(
+    fixture: &RepoFixture,
+) -> TestResult<(serde_json::Value, serde_json::Value, QueueCheckWork)> {
     let vault = &fixture.vault;
     let (batch, mask) = staged_math_batch(&fixture)?;
     let memory = fixture.owner_memory();
@@ -305,6 +310,13 @@ fn a_reused_queue_check_names_its_source_attempt() -> TestResult {
     );
     assert_eq!(host.executes, 1, "the reused check ran nothing");
     let second = check_receipt_json(&memory, &fixture.owner_proof, fixture.repo, &done_second)?;
+    Ok((first, second, done_second))
+}
+
+#[test]
+fn a_reused_queue_check_names_its_source_attempt() -> TestResult {
+    let fixture = RepoFixture::enrolled()?;
+    let (first, second, _) = reuse_a_passing_check(&fixture)?;
 
     assert_eq!(
         second["reused_from"]["attempt_id"], first["attempt_id"],
@@ -331,6 +343,34 @@ fn a_reused_queue_check_names_its_source_attempt() -> TestResult {
     assert!(
         first["reused_from"].is_null(),
         "the first receipt reused nothing"
+    );
+    Ok(())
+}
+
+/// A row stored before the reuse source had a key of its own kept a reused
+/// receipt's own inputs digest as `reused_from` (M-1: a stored row keeps
+/// decoding). It still reads; it names no source and keeps its pass.
+#[test]
+fn a_reused_receipt_stored_before_its_source_key_still_reads() -> TestResult {
+    let fixture = RepoFixture::enrolled()?;
+    let (_, _, done_second) = reuse_a_passing_check(&fixture)?;
+    let reuses =
+        oneiron::test_doors::merge_queue_check::store_reuse_as_before_its_own_key(&fixture.vault)?;
+    assert_eq!(reuses, 1, "the store holds the one reused receipt");
+
+    let memory = fixture.owner_memory();
+    let second = check_receipt_json(&memory, &fixture.owner_proof, fixture.repo, &done_second)
+        .map_err(|error| {
+            format!("the reused receipt stored before its source key reads: {error}")
+        })?;
+    assert!(
+        second["reused_from"].is_null(),
+        "a reused receipt stored before its source key names no source"
+    );
+    assert_eq!(
+        second["tests_passed"],
+        serde_json::Value::Bool(true),
+        "a reused receipt stored before its source key keeps the pass"
     );
     Ok(())
 }
