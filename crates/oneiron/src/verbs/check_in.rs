@@ -38,10 +38,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::check_in::{
-    AskVerdict, CheckInScope, HolderAnswer, HolderReply, NoAgentVerdict, OpenPendingCheckIn,
-    PendingCheckIn, PendingState, ProofKind, VerifiedChain, answer_pending_check_in_in_txn,
-    judge_ask_in_txn, keyed_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
-    pending_check_in_in_txn,
+    AgentHolderVerdict, AskVerdict, CheckInScope, HolderAnswer, HolderReply, NoAgentVerdict,
+    OpenPendingCheckIn, PendingCheckIn, PendingState, ProofKind, VerifiedChain,
+    answer_pending_check_in_in_txn, judge_ask_in_txn, keyed_pending_check_in_in_txn,
+    open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -214,6 +214,21 @@ pub fn check_in_open(
     memory: &Memory<'_>,
     input: CheckInOpenRequest,
 ) -> MemoryResult<CheckInVerdict> {
+    check_in_open_with(memory, input, &NoAgentVerdict)
+}
+
+/// [`check_in_open`], with the agent holders' `verdicts`: the verb gives
+/// none until 2e's host does (every agent holder passes the ask up); the
+/// check-in test door gives the test's.
+///
+/// # Errors
+///
+/// As [`check_in_open`].
+pub(crate) fn check_in_open_with(
+    memory: &Memory<'_>,
+    input: CheckInOpenRequest,
+    verdicts: &dyn AgentHolderVerdict,
+) -> MemoryResult<CheckInVerdict> {
     let effect_digest = digest_of(&input.effect_digest)?;
     let scope = CheckInScope {
         world_ref: input.world_ref,
@@ -251,7 +266,7 @@ pub fn check_in_open(
                 delay_window: None,
             },
             memory.invocation().map(|invocation| invocation.0),
-            &VerifiedChain::new(&NoAgentVerdict),
+            &VerifiedChain::new(verdicts),
             now,
         )?;
         Ok(verdict_view(verdict, Some(handle_view(&row, !opened))))
