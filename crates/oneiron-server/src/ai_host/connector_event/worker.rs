@@ -176,11 +176,12 @@ fn answer(
                     }
                 }
             };
+            let answer = body.as_str();
             let Some(kept) = vault.save_connector_reply_body(
                 &job.event,
                 agent,
                 REPLY_REF,
-                &body,
+                answer,
                 super::super::unix_now(),
             )?
             else {
@@ -418,7 +419,7 @@ fn rung2_reply(
     else {
         return Ok(None);
     };
-    answer_rung2_reply(server, &kept, event_id, text, super::super::unix_now())
+    answer_rung2_reply(server, &kept, event_id, text)
 }
 
 /// The run one agent's reply to one event is metered under.

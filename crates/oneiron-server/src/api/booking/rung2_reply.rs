@@ -28,7 +28,7 @@ use oneiron::write_envelope::thread_claim::validate_thread_ref;
 use oneiron::{EntityId, Vault, WriteActor};
 
 use super::free_text::{anonymous_payer, parse_disposition_on_seat, parse_seat_settings};
-use super::helpers::engine_read_error;
+use super::helpers::{engine_read_error, now_secs};
 use super::rung2::rung2_offers;
 use super::rung2_copy::{
     render_rung2_first_send_text, render_rung2_off_topic_text, render_rung2_past_cap_text,
@@ -101,23 +101,25 @@ pub(crate) fn answer_rung2_reply(
     kept: &Rung2FirstSend,
     event_id: &str,
     reply_text: &str,
-    now: u64,
 ) -> oneiron::Result<Option<Rung2Reply>> {
-    rung2_reply_with(server, kept, event_id, now, |publication| {
-        let settings = parse_seat_settings(server)?;
-        parse_disposition_on_seat(
-            server,
-            &settings,
-            None,
-            publication.sponsor,
-            reply_text.to_owned(),
-            kept.continuation.visitor_tz.clone(),
-            now,
-        )
-    })
-    .map_err(|error| {
-        oneiron::Error::InvalidConfig(format!("booking rung-2 reply: {}", error.message()))
-    })
+    now_secs()
+        .and_then(|now| {
+            rung2_reply_with(server, kept, event_id, now, |publication| {
+                let settings = parse_seat_settings(server)?;
+                parse_disposition_on_seat(
+                    server,
+                    &settings,
+                    None,
+                    publication.sponsor,
+                    reply_text.to_owned(),
+                    kept.continuation.visitor_tz.clone(),
+                    now,
+                )
+            })
+        })
+        .map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("booking rung-2 reply: {}", error.message()))
+        })
 }
 
 /// [`answer_rung2_reply`] with the reply's parse in `parse`, which runs
