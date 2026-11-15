@@ -18,7 +18,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
-use oneiron::ingest::{AgUiCustomMapping, AgUiFileImport, AgUiFileReadInput, AgUiObservationKind};
+use oneiron::ingest::{
+    AgUiCustomMapping, AgUiFileImport, AgUiFileReadInput, AgUiObservationKind, AgUiRepairLinkStatus,
+};
 use oneiron::llm::manifest::{
     MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot, TeacherProbeApproval,
 };
@@ -1968,6 +1970,97 @@ fn a_capture_of_many_unlinked_outcomes_lists_in_linear_time() -> TestResult {
     assert!(
         listed_in < Duration::from_secs(10),
         "listed in {listed_in:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn repair_links_keep_their_statuses() -> TestResult {
+    let fixture = fixture()?;
+    let event =
+        |name: &str, value: Value| json!({ "type": "CUSTOM", "name": name, "value": value });
+    let outcome = |id: &str, repair: &str| {
+        event(
+            "desk.outcome",
+            json!({
+                "id": id,
+                "threadId": "t-1",
+                "runId": "r-1",
+                "repairId": repair,
+                "result": { "response": ANSWER },
+            }),
+        )
+    };
+    let events = [
+        event(
+            "desk.failure",
+            json!({ "id": "f-1", "threadId": "t-1", "runId": "r-1", "task": text_task(clean_state()) }),
+        ),
+        event(
+            "desk.repair",
+            json!({ "id": "p-1", "threadId": "t-1", "runId": "r-1", "failureId": "f-1" }),
+        ),
+        // 2 links; 3 names a repair no row holds.
+        outcome("o-1", "p-1"),
+        outcome("o-2", "p-2"),
+        // 4 names a repair of another run.
+        outcome("o-3", "p-9"),
+        event(
+            "desk.repair",
+            json!({ "id": "p-9", "threadId": "t-1", "runId": "r-2", "failureId": "f-1" }),
+        ),
+        // 6 and 7 hold one id in one run.
+        outcome("o-4", "p-1"),
+        outcome("o-4", "p-1"),
+        // 8 has no observed result.
+        event(
+            "desk.outcome",
+            json!({ "id": "o-5", "threadId": "t-1", "runId": "r-1", "repairId": "p-1" }),
+        ),
+    ];
+    let jsonl = events
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let receipt = fixture.vault.ingest_ag_ui_file(
+        &fixture.proof,
+        &AgUiFileImport {
+            claim_ref: None,
+            project_ref: fixture.project.to_hex(),
+            app_id: "support-desk".to_owned(),
+            custom_mappings: mappings(),
+            jsonl,
+        },
+    )?;
+    let read = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_ag_ui_file(&AgUiFileReadInput {
+            claim_ref: receipt.claim_ref,
+            source_hash: receipt.source_hash,
+        })?;
+    let view = read.source.expect("the owner reads their own capture");
+    let statuses: Vec<(usize, AgUiRepairLinkStatus)> = view
+        .repair_links
+        .iter()
+        .map(|link| (link.outcome_ordinal, link.status.clone()))
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![
+            (2, AgUiRepairLinkStatus::Linked),
+            (3, AgUiRepairLinkStatus::MissingLink),
+            (4, AgUiRepairLinkStatus::NamespaceMismatch),
+            (6, AgUiRepairLinkStatus::AmbiguousLink),
+            (7, AgUiRepairLinkStatus::AmbiguousLink),
+            (8, AgUiRepairLinkStatus::MissingOutcome),
+        ]
+    );
+    let linked = &view.repair_links[0];
+    assert_eq!(
+        (linked.repair_ordinal, linked.failure_ordinal),
+        (Some(1), Some(0))
     );
     Ok(())
 }
