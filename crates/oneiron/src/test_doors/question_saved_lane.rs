@@ -1,11 +1,28 @@
 //! A saved question's two rebuilt readers (FIX 14344, Astra F2 on #8029),
 //! as `questions::saved_reader` builds them for a live PERSON asker: the
 //! asker's own key, narrowed by the version's frozen lane, and the lane
-//! that reads with the asker's own live owner authority (FIX 7461).
+//! that reads with the asker's own live owner authority (FIX 7461). For an
+//! asker of any row type, the reader the question's own reads build
+//! (`saved_question_reader`).
 
 use crate::claim::{FrozenReadLane, ScopedRead, ScopedReadActorKey};
-use crate::llm::decision::questions::question_lane;
+use crate::llm::decision::questions::{question_lane, saved_reader};
 use crate::{EntityId, Error, Result, Vault};
+
+/// The reader a saved question's own reads build (`saved_reader`): the
+/// asker's own live key, its class taken from its row's type
+/// (`graph_ask::asker_reader_in_txn`), narrowed by `read_lane`.
+///
+/// # Errors
+/// As `FrozenReadLane::narrow_in_txn`, and a store failure reading the
+/// asker's row.
+pub fn saved_question_reader(
+    vault: &Vault,
+    asker: EntityId,
+    read_lane: &FrozenReadLane,
+) -> Result<ScopedReadActorKey> {
+    saved_reader(vault, asker, read_lane)
+}
 
 /// The asker's own key, as `graph_ask::asker_reader_in_txn` builds it for a
 /// live PERSON, narrowed by `read_lane` (`saved_reader::saved_reader`).

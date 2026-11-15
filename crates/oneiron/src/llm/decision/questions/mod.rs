@@ -89,6 +89,8 @@ pub use route_calibration::{
     RouteCalibrationGroup, RouteCalibrationMap, RouteCalibrationReport, RouteFit, RouteFitRefusal,
     RouteGroupKey, route_calibration_report,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use saved_reader::saved_reader;
 pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
 pub use standing::{
     StandingAnswer, admit_standing_answer, backfill_standing_answer, prepare_standing_answer,
