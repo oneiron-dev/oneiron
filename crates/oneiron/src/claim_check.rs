@@ -1,10 +1,10 @@
 //! Claim auto-check candidates and normalized verdict values.
 
-use crate::Result;
 use crate::claim::ClaimSource;
 use crate::claim::VerdictBasis;
 use crate::model_binding::{CalibratedVerdict, VerdictBinding, VerdictMode};
 use crate::write_envelope::SourceLineage;
+use crate::{EntityId, Result};
 use oneiron_model::llm::NormalizedBurstInputs;
 use std::time::Instant;
 
@@ -67,6 +67,11 @@ pub struct AutoCheckCandidate<'a> {
     /// These are verdict inputs and never an engine-side clamp.
     pub burst: Option<NormalizedBurstInputs>,
     pub signals: AutoCheckSignals,
+    /// The world the claim lies in: its body's, or the base world for base
+    /// reality. It picks which rungs may read the candidate (DEC-0005 fix 6:
+    /// the world's model order covers every model call on it) and is never
+    /// part of the state a rung reads.
+    pub world: EntityId,
 }
 
 /// [`AutoCheckCandidate`] with every borrow resolved.
@@ -88,6 +93,8 @@ pub struct AutoCheckCandidateOwned {
     /// These are verdict inputs and never an engine-side clamp.
     pub burst: Option<NormalizedBurstInputs>,
     pub signals: AutoCheckSignals,
+    /// The world the claim lies in; see [`AutoCheckCandidate::world`].
+    pub world: EntityId,
 }
 
 impl AutoCheckCandidateOwned {
@@ -103,6 +110,7 @@ impl AutoCheckCandidateOwned {
             sensitivity_band: self.sensitivity_band,
             burst: self.burst,
             signals: self.signals,
+            world: self.world,
         }
     }
 }
@@ -118,6 +126,7 @@ impl From<&AutoCheckCandidate<'_>> for AutoCheckCandidateOwned {
             sensitivity_band: candidate.sensitivity_band,
             burst: candidate.burst,
             signals: candidate.signals,
+            world: candidate.world,
         }
     }
 }

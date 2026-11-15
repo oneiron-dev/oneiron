@@ -19,13 +19,13 @@ serde_bytes = "0.11"
 # Fleet traffic seeds explicit actor read permits through the bounded
 # test-support fixture door; the benchmark is not a shipped engine host.
 oneiron = { path = "../oneiron", features = ["sync", "test-support"] }
-oneiron-llm-openai = { path = "../oneiron-llm-openai" }
+oneiron-llm = { path = "../oneiron-llm", features = ["oneiron-rpc"] }
 oneiron-organ-protocol = { path = "../oneiron-organ-protocol" }
 rustix = { version = "1.1", features = ["net", "process"] }
 # FIX 6559: `infer --transport own-server` drives the shipped own-server
-# backend, and redeems the loopback server's owner pairing link through the
-# SDK (`OneironClient::pair`), which the backend crate does not re-export.
-oneiron-llm-own-server = { path = "../oneiron-llm-own-server" }
+# backend (`oneiron-llm`'s `oneiron-rpc` feature, above), and redeems the
+# loopback server's owner pairing link through the SDK
+# (`OneironClient::pair`), which the backend module does not re-export.
 oneiron-remote = { path = "../oneiron-remote" }
 oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 blake3.workspace = true

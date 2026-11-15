@@ -28,6 +28,11 @@
 //! [`platform_keystore`] picks the platform tier; [`hardware_keystore`] the
 //! hardware one, refused where this platform has none: never a silent downgrade
 //! to software (identity, signature suites).
+//!
+//! The crate also asks whether this device's user is present now
+//! ([`UserPresence`], [`PresenceGate`]): the question an owner's act waits on
+//! before the owner key signs it. It is a gate before a signature. It reads
+//! and changes no slot.
 
 use std::borrow::Cow;
 
@@ -43,6 +48,7 @@ mod file;
 mod linux_tpm;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 mod memory;
+mod user_presence;
 #[cfg(windows)]
 mod windows;
 
@@ -56,6 +62,13 @@ pub use file::LocalFileKeystore;
 pub use linux_tpm::LinuxTpmKeystore;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 pub use memory::MemoryKeystore;
+#[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
+pub use user_presence::{ManualPresenceClock, ScriptedPresence};
+pub use user_presence::{
+    NoPromptPresence, PRESENCE_WINDOW_SECS, PendingPresenceConfirm, PresenceCapability,
+    PresenceClock, PresenceConfirmation, PresenceError, PresenceGate, PresenceInstant,
+    PresenceWindow, SystemPresenceClock, UserPresence, platform_user_presence,
+};
 #[cfg(windows)]
 pub use windows::WindowsDpapiKeystore;
 

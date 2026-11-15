@@ -49,7 +49,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
@@ -400,11 +400,7 @@ fn mint_handle() -> String {
 
 /// A new round's live lease end, as an instant and in unix ms.
 fn round_lease() -> (Instant, u64) {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        });
+    let now_ms = oneiron_base::unix_millis_now();
     let wait_ms = u64::try_from(ELICITATION_LIVE_WAIT.as_millis()).unwrap_or(u64::MAX);
     (
         Instant::now() + ELICITATION_LIVE_WAIT,
