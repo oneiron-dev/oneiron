@@ -144,6 +144,13 @@ pub(super) fn require_org_companion_split_in_txn(
 /// Refuses when the model PERSON of one of `houses` is the companion of one
 /// of `members`, unless that member is the vault's one live owner: the sole
 /// owner's own act is the purpose (Engine RULING L3-19-ON-PURPOSE = A).
+///
+/// A house's PERSON is its actor's anchor, read through the identity
+/// redirects, while a [`COMPANION_PRINCIPAL`] row keeps the companion and
+/// the principal its onboarding named. A merge since then may have folded
+/// that companion into a house's PERSON, or her principal into another
+/// member, so each row is read through the redirects too (review round 2
+/// of #7656).
 fn require_houses_serve_no_member_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -151,27 +158,51 @@ fn require_houses_serve_no_member_in_txn(
     members: &[EntityId],
 ) -> Result<()> {
     let now = vault.store.clock.now_recorded_at();
+    let mut house_persons = Vec::new();
     for house in houses {
         let Some(anchor) =
             crate::subject_model::actor_subject_anchor_in_txn(vault, txn, house, now)?
         else {
             continue;
         };
-        if anchor.subject_kind != crate::write_envelope::subject_record::SubjectKind::Person {
+        if anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Person {
+            house_persons.push(anchor.subject_ref);
+        }
+    }
+    if house_persons.is_empty() {
+        return Ok(());
+    }
+    let mut member_heads = members.to_vec();
+    for member in members {
+        member_heads.extend(vault.resolve_entity_in_txn(txn, member)?);
+    }
+    for (companion, principal) in COMPANION_PRINCIPAL.scan(&vault.store, txn)? {
+        if !names_one_of_in_txn(vault, txn, &companion, &house_persons)?
+            || !names_one_of_in_txn(vault, txn, &principal, &member_heads)?
+        {
             continue;
         }
-        let Some(principal) = COMPANION_PRINCIPAL.get(&vault.store, txn, &anchor.subject_ref)?
-        else {
-            continue;
-        };
-        if !members.contains(&principal)
-            || crate::policy_model::owners_in_txn(vault, txn)?.as_slice() == [principal]
-        {
+        let owners = crate::policy_model::owners_in_txn(vault, txn)?;
+        if owners.len() == 1 && names_one_of_in_txn(vault, txn, &principal, &owners)? {
             continue;
         }
         return Err(invalid(COMPANION_SPLIT_REFUSAL));
     }
     Ok(())
+}
+
+/// Whether `id` is one of `heads`, itself or through the identity redirects.
+fn names_one_of_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    heads: &[EntityId],
+) -> Result<bool> {
+    Ok(heads.contains(id)
+        || vault
+            .resolve_entity_in_txn(txn, id)?
+            .iter()
+            .any(|head| heads.contains(head)))
 }
 
 /// A brought companion, as her member brings her: a model-backed PERSON,

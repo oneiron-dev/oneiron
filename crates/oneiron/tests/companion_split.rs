@@ -17,6 +17,11 @@
 //! run by her companion is refused as well, whether an owner establishes it
 //! or another member's onboarding does, unless she is the sole owner.
 //!
+//! Her companion is read through the identity redirects: once an identity
+//! merge folds her companion's PERSON into a house's model PERSON, a
+//! workspace of her org run by that house is refused (review round 2 of
+//! #7656).
+//!
 //! An onboarding that reserved her slot before its workspace was
 //! established is refused when it establishes it, if her companion runs it
 //! by then (review round 1 of #7656). That case stops an onboarding after
@@ -30,6 +35,10 @@ use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{FederationGrantPreset, FederationGrantRole, InitialSharedMember};
+use oneiron::identity_topology::{
+    IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+    SurvivorshipPlan,
+};
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::subject_model::actor_subject_anchor;
@@ -289,6 +298,42 @@ impl Fixture {
     fn is_published(&self, workspace_ref: &str) -> bool {
         self.vault.workspace_work_companion(workspace_ref).is_ok()
     }
+
+    /// The model PERSON `actor` is anchored to.
+    fn model_person(&self, actor: EntityId) -> Result<EntityId> {
+        Ok(
+            actor_subject_anchor(&self.vault, &actor, self.vault.now_recorded_at())?
+                .expect("a seeded agent is anchored to its model PERSON")
+                .subject_ref,
+        )
+    }
+
+    /// Merges PERSON `source` into PERSON `survivor`. An identity op is
+    /// sealed with this install's machine key, which a host loads from its
+    /// keystore after each open.
+    fn merge(&self, source: EntityId, survivor: EntityId) -> Result<()> {
+        self.vault
+            .install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        self.vault.prepare_install_signing()?;
+        let outcome = self.vault.apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![source],
+                survivor,
+                evidence: IdentityOpEvidence {
+                    refs: Vec::new(),
+                    rationale: "companion split fixture".to_owned(),
+                },
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            self.vault.now_recorded_at(),
+        )?;
+        assert!(
+            matches!(outcome, IdentityOpOutcome::Applied { .. }),
+            "the merge did not apply: {outcome:?}"
+        );
+        Ok(())
+    }
 }
 
 #[test]
@@ -484,6 +529,36 @@ fn the_sole_owner_establishes_a_workspace_of_her_org_run_by_her_companion() -> R
     fx.establish(&fx.preset(WORKSPACE_B, VAULT_ID, fx.agent))
         .expect("the sole owner binds her companion as her company's on purpose");
     assert!(fx.is_published(WORKSPACE_B), "workspace B is established");
+    Ok(())
+}
+
+/// Review round 2 of #7656: she is in workspace A with a work companion,
+/// and that companion's PERSON is then merged into sys.default's model
+/// PERSON. Her companion row still names the merged PERSON, but the house of
+/// a new workspace B of her org is now that same PERSON, so the owner's
+/// establish is refused and B stays unpublished.
+#[test]
+fn an_owner_cannot_establish_a_workspace_run_by_her_merged_companion() -> Result<()> {
+    let fx = fixture()?;
+    let member = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
+    let born = fx.birth("garden.companion.merged")?;
+    let companion = born.person_ref();
+    fx.onboard(
+        "join-a-with-work-companion",
+        fx.preset(WORKSPACE_A, VAULT_ID, fx.other_house),
+        member,
+        born,
+    )
+    .expect("her work companion runs no workspace of her org");
+    fx.merge(companion, fx.model_person(fx.agent)?)?;
+    assert_split(
+        fx.establish(&fx.preset(WORKSPACE_B, VAULT_ID, fx.agent)),
+        "a house her companion was merged into is still her companion",
+    );
+    assert!(
+        !fx.is_published(WORKSPACE_B),
+        "the refused establish publishes no preset"
+    );
     Ok(())
 }
 
