@@ -6,6 +6,7 @@ use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::selection::StrengthSignals;
 use crate::error::{Error, Result};
+use crate::snapshot_read::{EVIDENCE_SPANS_MAX_RANGES, EvidenceRange};
 use crate::write_envelope::{SourceLineage, WriteActor};
 
 /// Who commits a derivation batch, as the engine stamps it: the actor of the
@@ -38,6 +39,16 @@ pub enum ItemRef {
     Local(String),
 }
 
+/// One cited TURN's byte ranges over its text as the committing actor reads it.
+#[derive(Debug, Clone)]
+pub struct DerivedEvidenceSpans {
+    /// The cited TURN, as stored.
+    pub source: EntityId,
+    /// Byte ranges over the TURN's text as the committing actor reads it
+    /// through `vault.evidence.spans`.
+    pub ranges: Vec<EvidenceRange>,
+}
+
 /// A claim an agent derived.
 #[derive(Debug, Clone)]
 pub struct DerivedClaim {
@@ -55,6 +66,10 @@ pub struct DerivedClaim {
     /// The rows it was derived from. The derivation floor (GATE-12) needs at
     /// least one of them to be live evidence.
     pub evidence: Vec<ItemRef>,
+    /// Byte ranges over a cited TURN's text as the committing actor reads it
+    /// through `vault.evidence.spans`, at the version the batch's `sources`
+    /// pins; a TURN with no entry is cited whole.
+    pub spans: Vec<DerivedEvidenceSpans>,
 }
 
 /// Evidence an agent derived (kind 2): rows it reads that support a stored
@@ -67,6 +82,10 @@ pub struct DerivedEvidence {
     pub head: ItemRef,
     /// The supporting rows: TURNs, cited whole, or admissible claims.
     pub sources: Vec<ItemRef>,
+    /// Byte ranges over a cited TURN's text as the committing actor reads it
+    /// through `vault.evidence.spans`, at the version the batch's `sources`
+    /// pins; a TURN with no entry is cited whole.
+    pub spans: Vec<DerivedEvidenceSpans>,
 }
 
 /// A supersession an agent derived: the claim `new` replaces the claim
@@ -319,7 +338,8 @@ impl DerivationBatch {
     /// [`MAX_BATCH_ITEMS`], every local name non-empty and unique, every
     /// local reference naming an earlier item that creates a row
     /// ([`DerivationItem::creates_row`]), at most one `about` item for a
-    /// person, and a version for every stored source cited.
+    /// person, a version for every stored source cited, and well-formed span
+    /// locators on claim and evidence items.
     ///
     /// # Errors
     ///
@@ -376,6 +396,13 @@ impl DerivationBatch {
                     ));
                 }
             }
+            match item {
+                DerivationItem::Claim(claim) => validate_spans(&claim.evidence, &claim.spans)?,
+                DerivationItem::Evidence(evidence) => {
+                    validate_spans(&evidence.sources, &evidence.spans)?;
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -383,4 +410,31 @@ impl DerivationBatch {
 
 fn malformed(why: &'static str) -> Error {
     Error::InvalidClaimBody(why)
+}
+
+/// Checks one claim or evidence item's span locators against the stored rows
+/// it cites: each entry names a cited stored row once, with one to
+/// [`EVIDENCE_SPANS_MAX_RANGES`] ranges, each with `start < end`.
+fn validate_spans(cited: &[ItemRef], spans: &[DerivedEvidenceSpans]) -> Result<()> {
+    let mut seen: BTreeSet<EntityId> = BTreeSet::new();
+    for entry in spans {
+        if !seen.insert(entry.source) {
+            return Err(malformed("each spans entry names its source once"));
+        }
+        if entry.ranges.is_empty() || entry.ranges.len() > EVIDENCE_SPANS_MAX_RANGES {
+            return Err(malformed("each spans entry names one to sixty-four ranges"));
+        }
+        if entry.ranges.iter().any(|range| range.start >= range.end) {
+            return Err(malformed("a spans range needs start < end"));
+        }
+        let cites = cited
+            .iter()
+            .any(|named| matches!(named, ItemRef::Stored(id) if *id == entry.source));
+        if !cites {
+            return Err(malformed(
+                "each spans entry names a stored source the item cites",
+            ));
+        }
+    }
+    Ok(())
 }

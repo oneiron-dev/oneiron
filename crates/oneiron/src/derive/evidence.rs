@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use super::batch::DerivedEvidence;
+use super::batch::{DerivedEvidence, DerivedEvidenceSpans};
 use super::commit::{ItemContext, ItemOutcome, refusal_receipt_in_txn};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
+use crate::dreamer_consolidation::evidence::{RangedSource, VerifiedEvidenceSet};
 use crate::dreamer_promotion::{AssertedEvidence, EvidenceAssertion, assert_evidence_in_txn};
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -24,6 +24,11 @@ pub const EVIDENCE_HEAD_NOT_A_CLAIM: &str = "gate.deny.derive.evidence_head_not_
 /// The refusal of evidence one of whose sources is no TURN or admissible
 /// claim the actor reads.
 pub const EVIDENCE_UNVERIFIED: &str = "gate.deny.derive.evidence_unverified";
+
+/// The refusal of an item whose spans entry does not bind: its source is no
+/// TURN the actor reads, or a range is not one `vault.evidence.spans` would
+/// serve this actor.
+pub const EVIDENCE_SPAN_UNBOUND: &str = "gate.deny.derive.evidence_span_unbound";
 
 /// Stages `item`: the head and every source read by the actor, then the
 /// evidence assertion through the claim gate and its supports, in a
@@ -62,18 +67,9 @@ pub(super) fn stage_in_txn(
     // a derived support never claims more trust than a derivation has, and
     // the provenance writer refuses one that does (a user's TURN read as
     // `UserStated` evidence would be "source trust widened").
-    let evidence = match VerifiedEvidenceSet::verify_whole_in_txn(
-        vault,
-        &read,
-        txn,
-        &cited,
-        ClaimSource::Generated,
-    ) {
+    let evidence = match verified_in_txn(vault, &read, txn, &cited, &item.spans)? {
         Ok(evidence) => evidence,
-        Err(Error::InvalidClaimBody(_)) => {
-            return refuse(vault, txn, context, head, EVIDENCE_UNVERIFIED);
-        }
-        Err(error) => return Err(error),
+        Err(token) => return refuse(vault, txn, context, head, token),
     };
     let envelope = envelope(context, item, evidence.meet())?;
     // The assertion restates the head: the gate judges the head's words as
@@ -132,6 +128,63 @@ pub(super) fn stage_in_txn(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Verifies `cited` for one evidence item: whole when `spans` is empty,
+/// ranged where an entry names the source and whole otherwise. Returns the
+/// refusal token for a source that does not verify, and storage errors
+/// directly. The claim stager shares it for an item with span locators.
+pub(super) fn verified_in_txn(
+    vault: &Vault,
+    read: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    cited: &[EntityId],
+    spans: &[DerivedEvidenceSpans],
+) -> Result<std::result::Result<VerifiedEvidenceSet, &'static str>> {
+    if spans.is_empty() {
+        return Ok(
+            match VerifiedEvidenceSet::verify_whole_in_txn(
+                vault,
+                read,
+                txn,
+                cited,
+                ClaimSource::Generated,
+            ) {
+                Ok(evidence) => Ok(evidence),
+                Err(Error::InvalidClaimBody(_)) => Err(EVIDENCE_UNVERIFIED),
+                Err(error) => return Err(error),
+            },
+        );
+    }
+    let bound = match super::spans::bind_in_txn(vault, read, txn, spans) {
+        Ok(bound) => bound,
+        Err(Error::InvalidClaimBody(_)) => return Ok(Err(EVIDENCE_SPAN_UNBOUND)),
+        Err(error) => return Err(error),
+    };
+    let ranged: Vec<RangedSource> = cited
+        .iter()
+        .map(|source| RangedSource {
+            source: *source,
+            ranges: bound
+                .iter()
+                .find(|entry| entry.source == *source)
+                .map(|entry| entry.ranges.clone())
+                .unwrap_or_default(),
+        })
+        .collect();
+    Ok(
+        match VerifiedEvidenceSet::verify_ranged_in_txn(
+            vault,
+            read,
+            txn,
+            &ranged,
+            ClaimSource::Generated,
+        ) {
+            Ok(evidence) => Ok(evidence),
+            Err(Error::InvalidClaimBody(_)) => Err(EVIDENCE_UNVERIFIED),
+            Err(error) => return Err(error),
+        },
+    )
 }
 
 /// The envelope the engine stamps on an evidence assertion: the committing

@@ -369,6 +369,7 @@ pub fn commit_with_sources(
                 value: claim.value.clone(),
                 confidence: 0.9,
                 evidence: claim.evidence.iter().map(named).collect(),
+                spans: Vec::new(),
             })),
             _ => Err(crate::error::Error::InvalidClaimBody(
                 "this door commits claim items only",
@@ -665,11 +666,13 @@ pub fn commit_in_attempt(
                         value: claim.value.clone(),
                         confidence: 0.9,
                         evidence: claim.evidence.iter().map(named).collect(),
+                        spans: Vec::new(),
                     }),
                     Derived::Evidence(evidence) => DerivationItem::Evidence(DerivedEvidence {
                         local: evidence.local.to_owned(),
                         head: named(&evidence.head),
                         sources: evidence.sources.iter().map(named).collect(),
+                        spans: Vec::new(),
                     }),
                     Derived::Supersede(supersede) => DerivationItem::Supersede(DerivedSupersede {
                         local: supersede.local.to_owned(),

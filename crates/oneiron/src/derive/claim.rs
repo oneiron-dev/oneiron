@@ -14,8 +14,8 @@ use crate::claim::{
     observed_preference_support_in_txn, stated_preference_peers_in_txn, write_coaching,
 };
 use crate::dreamer_consolidation::{
-    ConsolidationEvidenceEnvelope, encode_consolidation_evidence, evidence_source_from_row_in_txn,
-    source_meet,
+    ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
+    encode_consolidation_evidence_with_locators, evidence_source_from_row_in_txn, source_meet,
 };
 use crate::error::{Error, GateError, Result};
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
@@ -34,6 +34,12 @@ use crate::{ClaimCandidate, EntityId, TimeRange, Vault};
 /// and three live, nonimported user TURNs across two live sessions. Otherwise
 /// the source stays the cited rows' meet ([`evidence_meet_in_txn`]): imported
 /// words remain Imported, held for review whatever the Generated permit grants.
+///
+/// An item with span locators stores the verified envelope for every row it
+/// cites, under the same refs and the same source: a TURN with an entry by
+/// its ranges, a TURN without one whole, a claim as an admissible claim. A
+/// row that does not bind refuses the item alone. An item without span
+/// locators stores the refs-only envelope it always stored.
 ///
 /// # Errors
 ///
@@ -62,25 +68,45 @@ pub(super) fn stage_in_txn(
     };
     let value = rmpv::ext::to_value(&claim.value)
         .map_err(|_| Error::InvalidClaimBody("a derived claim's value does not encode"))?;
+    // The lane an ordinary core write is held to (`Memory::core_write_lane`):
+    // every recorded claim the actor's read reaches, so a proposal an
+    // earlier item of this batch landed still reads to the item citing it.
+    let read = super::actor_read(vault, context.stamp.actor)?
+        .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    // Span locators bind every cited row; an item without them cites as
+    // before and binds nothing.
+    let verified = if claim.spans.is_empty() {
+        None
+    } else {
+        match super::evidence::verified_in_txn(vault, &read, txn, &evidence, &claim.spans)? {
+            Ok(verified) => Some(verified),
+            Err(token) => {
+                let reasons = vec![token.to_owned()];
+                let receipt =
+                    refusal_receipt_in_txn(vault, txn, context, Some(EntityId::now()), &reasons)?;
+                return Ok(ItemOutcome::Refused { reasons, receipt });
+            }
+        }
+    };
+    let envelope = ConsolidationEvidenceEnvelope {
+        refs: evidence,
+        chain: Vec::new(),
+        source_meet: source,
+    };
+    let stored = match &verified {
+        None => encode_consolidation_evidence(&envelope),
+        Some(verified) => {
+            encode_consolidation_evidence_with_locators(&envelope, &verified.verified_locators())
+        }
+    };
     let candidate = ClaimCandidate::new(
         claim.predicate.clone(),
         ClaimSubject::Entity(subject),
         value,
         claim.confidence,
     )
-    .with_evidence(encode_consolidation_evidence(
-        &ConsolidationEvidenceEnvelope {
-            refs: evidence,
-            chain: Vec::new(),
-            source_meet: source,
-        },
-    ));
-    // The lane an ordinary core write is held to (`Memory::core_write_lane`):
-    // every recorded claim the actor's read reaches, so a proposal an
-    // earlier item of this batch landed still reads to the item citing it.
-    let read = super::actor_read(vault, context.stamp.actor)?
-        .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
-    stage_candidate_in_txn(
+    .with_evidence(stored);
+    let outcome = stage_candidate_in_txn(
         vault,
         txn,
         context,
@@ -92,7 +118,16 @@ pub(super) fn stage_in_txn(
             beside_stated,
         },
         crate::core_write::CoreWriteLaneRef::Read(&read),
-    )
+    )?;
+    // The landed claim depends on the MESSAGE words its locators name, as a
+    // promoted claim does.
+    if let Some(verified) = &verified
+        && let ItemOutcome::Landed { rows, .. } = &outcome
+        && let Some(id) = rows.first()
+    {
+        verified.record_message_dependencies_in_txn(vault, txn, id)?;
+    }
+    Ok(outcome)
 }
 
 /// One claim an item stages through the shared claim gate.

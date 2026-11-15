@@ -305,11 +305,23 @@ impl BoundBranchRead {
             return EvidenceLocator::turn_range(turn, start, end)
                 .map_err(|error| MemoryError::bad_request(error.to_string()));
         };
-        let shown = keys.masked(stored).unwrap_or_else(|| stored.to_owned());
-        let tables = char_byte_tables(stored, &shown);
-        let (start, end) = map_masked_range(&keys, stored, &tables, span.start, span.end)
+        let (start, end) = stored_range_for_served_range(&keys, stored, span)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         EvidenceLocator::turn_range(turn, start, end)
             .map_err(|error| MemoryError::bad_request(error.to_string()))
     }
+}
+
+/// Maps one served byte range over a TURN's stored text to its stored bytes:
+/// an end inside a handle widens to that handle's edge, through the native
+/// lifted-key masking exactly. The bound extraction read and the derive
+/// stager share this one rule.
+pub(crate) fn stored_range_for_served_range(
+    keys: &LiftedKeys,
+    stored: &str,
+    range: crate::snapshot_read::EvidenceRange,
+) -> crate::error::Result<(usize, usize)> {
+    let shown = keys.masked(stored).unwrap_or_else(|| stored.to_owned());
+    let tables = char_byte_tables(stored, &shown);
+    map_masked_range(keys, stored, &tables, range.start, range.end)
 }

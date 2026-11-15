@@ -20,7 +20,9 @@ mod pins;
 mod prior;
 mod restated;
 mod root;
-pub(crate) use bound_read::{BoundBranchInput, BoundBranchRead, project_bound_branch};
+pub(crate) use bound_read::{
+    BoundBranchInput, BoundBranchRead, project_bound_branch, stored_range_for_served_range,
+};
 pub(crate) use nightly_link_grant::require_nightly_link_write;
 pub use nightly_link_grant::{NightlyLinkGrantRequest, mint_nightly_link_grant};
 pub(super) use pins::{BranchPins, OwnedPins};

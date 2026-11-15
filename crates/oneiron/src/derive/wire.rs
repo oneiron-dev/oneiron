@@ -16,8 +16,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::batch::{
-    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedEvidence, DerivedSameAs,
-    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
+    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedEvidence,
+    DerivedEvidenceSpans as BatchSpans, DerivedSameAs, DerivedSettle, DerivedSettlement,
+    DerivedSupersede, DerivedTopology, ItemRef,
 };
 use super::commit::{DerivationReceipt, ItemOutcome};
 use super::revert::DeriveRevertReceipt;
@@ -29,9 +30,10 @@ use crate::verbs::IdentityProposedOp;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::derive::wire::{
-    DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveEvidenceInput, DeriveItemView,
-    DeriveLeftItemView, DeriveRef, DeriveRevertInput, DeriveRevertView, DeriveSameAsInput,
-    DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput,
+    DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveEvidenceInput,
+    DeriveEvidenceSpans, DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput,
+    DeriveRevertView, DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput,
+    DeriveStrengthSignals, DeriveSupersedeInput,
 };
 
 impl From<DeriveRef> for ItemRef {
@@ -45,6 +47,16 @@ impl From<DeriveRef> for ItemRef {
 
 fn refs(named: Vec<DeriveRef>) -> Vec<ItemRef> {
     named.into_iter().map(ItemRef::from).collect()
+}
+
+fn spans(named: Vec<DeriveEvidenceSpans>) -> Vec<BatchSpans> {
+    named
+        .into_iter()
+        .map(|entry| BatchSpans {
+            source: entry.source,
+            ranges: entry.ranges,
+        })
+        .collect()
 }
 
 /// An identity-topology judgment under the caller's own `topology_seal`
@@ -99,12 +111,14 @@ impl DeriveItemInput {
                     // In range, so the narrowing loses only precision.
                     confidence: claim.confidence as f32,
                     evidence: refs(claim.evidence),
+                    spans: spans(claim.spans),
                 })
             }
             Self::Evidence(evidence) => DerivationItem::Evidence(DerivedEvidence {
                 local: evidence.local,
                 head: evidence.head.into(),
                 sources: refs(evidence.sources),
+                spans: spans(evidence.spans),
             }),
             Self::Supersede(supersede) => DerivationItem::Supersede(DerivedSupersede {
                 local: supersede.local,

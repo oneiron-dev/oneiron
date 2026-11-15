@@ -309,7 +309,8 @@ fn withheld() -> EvidenceSpans {
 /// words; it must read as the whole text masked at once reads, which
 /// `vault.snapshot.page` serves. A range with an end inside a handle is
 /// widened to that handle's edge (C-ANCHOR), so no span names part of one.
-fn masked_turn_spans(
+/// The derive stager shares this served-words rule without a `Memory`.
+pub(crate) fn masked_turn_spans(
     turn: &TurnText,
     keys: &LiftedKeys,
     ranges: &[EvidenceRange],
@@ -356,8 +357,12 @@ fn widened(range: EvidenceRange, handles: &[std::ops::Range<usize>]) -> Evidence
 }
 
 /// The exact spans of `ranges` over `turn`'s projected text; one over the
-/// whole text when `ranges` is empty and the text is not.
-fn turn_spans(turn: &TurnText, ranges: &[EvidenceRange]) -> MemoryResult<Vec<EvidenceSpan>> {
+/// whole text when `ranges` is empty and the text is not. The derive stager
+/// shares this served-words rule without a `Memory`.
+pub(crate) fn turn_spans(
+    turn: &TurnText,
+    ranges: &[EvidenceRange],
+) -> MemoryResult<Vec<EvidenceSpan>> {
     let Some(text) = turn.text() else {
         return if ranges.is_empty() {
             Ok(Vec::new())

@@ -37,7 +37,9 @@ pub use evidence_spans::{
     EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,
     evidence_spans, validate_evidence_spans,
 };
-pub(crate) use evidence_spans::{evidence_spans_bound, evidence_spans_in_txn};
+pub(crate) use evidence_spans::{
+    evidence_spans_bound, evidence_spans_in_txn, masked_turn_spans, turn_spans,
+};
 pub use extraction_inputs::{
     ExtractionInputsPage, ExtractionInputsPageRequest, ExtractionPolicy, ExtractionTurn,
     extraction_inputs_page,
@@ -74,7 +76,9 @@ pub use snapshot::{
     SnapshotPageRequest, SnapshotRow, snapshot_open, snapshot_page, validate_snapshot_open,
 };
 pub use source_version::{SourceVersion, SourceVersionCheck};
-pub(crate) use source_version::{source_version_in_txn, turn_lifted_keys_in_txn};
+pub(crate) use source_version::{
+    source_version_in_txn, turn_lifted_keys_in_txn, turn_lifted_keys_with_masked_in_txn,
+};
 pub use strength_observations::{
     ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource, StrengthObservationsPage,
     StrengthObservationsPageRequest, strength_observations_page,

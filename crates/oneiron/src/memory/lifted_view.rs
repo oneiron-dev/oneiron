@@ -58,7 +58,24 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         bodies: &[Vec<u8>],
     ) -> MemoryResult<Option<LiftedKeys>> {
-        if !self.reads_lifted_keys_masked_in_txn(txn)? {
+        Ok(Self::lifted_keys_of_bodies_with_masked_in_txn(
+            &self.vault.store,
+            txn,
+            self.reads_lifted_keys_masked_in_txn(txn)?,
+            bodies,
+        )?)
+    }
+
+    /// [`Self::lifted_keys_of_bodies_in_txn`] with `masked` already decided:
+    /// the keys the marks name when masked, else `None`. The derive stager
+    /// shares this body without a `Memory`.
+    pub(crate) fn lifted_keys_of_bodies_with_masked_in_txn(
+        store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+        masked: bool,
+        bodies: &[Vec<u8>],
+    ) -> crate::error::Result<Option<LiftedKeys>> {
+        if !masked {
             return Ok(None);
         }
         let values = bodies
@@ -66,7 +83,7 @@ impl Memory<'_> {
             .filter_map(|body| super::support::decode_body_json(body))
             .collect();
         Ok(Some(LiftedKeys::of_json_in_txn(
-            &self.vault.store,
+            store,
             txn,
             &serde_json::Value::Array(values),
         )?))

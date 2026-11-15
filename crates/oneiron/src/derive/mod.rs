@@ -36,6 +36,7 @@ mod record;
 mod revert;
 mod settle;
 mod sources;
+mod spans;
 mod supersede;
 pub(crate) mod tables;
 mod wire;
@@ -50,11 +51,12 @@ pub use artifact::{
 };
 pub use batch::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
-    DerivedClaim, DerivedEvidence, DerivedPersonAbout, DerivedPsychProfile, DerivedSameAs,
-    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
+    DerivedClaim, DerivedEvidence, DerivedEvidenceSpans, DerivedPersonAbout, DerivedPsychProfile,
+    DerivedSameAs, DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
+    MAX_BATCH_ITEMS,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
-pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_UNVERIFIED};
+pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_SPAN_UNBOUND, EVIDENCE_UNVERIFIED};
 pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
 pub use record::{DerivationBatchRecord, ItemRecord};
 pub use revert::{
@@ -68,9 +70,9 @@ pub use supersede::{
 };
 pub use wire::{
     DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveEvidenceInput,
-    DeriveItemInput, DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput,
-    DeriveRevertView, DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput,
-    DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
+    DeriveEvidenceSpans, DeriveItemInput, DeriveItemView, DeriveLeftItemView, DeriveRef,
+    DeriveRevertInput, DeriveRevertView, DeriveSameAsInput, DeriveSettleInput,
+    DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it

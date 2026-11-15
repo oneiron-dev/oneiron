@@ -186,6 +186,15 @@ struct VerifiedCitation {
     projection: Vec<EntityId>,
 }
 
+/// One source a derivation item cites, with the stored ranges it cites.
+#[derive(Debug, Clone)]
+pub(crate) struct RangedSource {
+    /// The cited row.
+    pub(crate) source: EntityId,
+    /// Stored byte ranges over the TURN's stored text; empty binds whole.
+    pub(crate) ranges: Vec<(usize, usize)>,
+}
+
 /// Private constructor; a bare ID or a caller-chosen meet cannot become a
 /// scoped write. All output doors consume this SAME parent-verified value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,62 +355,98 @@ impl VerifiedEvidenceSet {
         sources: &[EntityId],
         inherited_meet: ClaimSource,
     ) -> Result<Self> {
+        let ranged: Vec<RangedSource> = sources
+            .iter()
+            .map(|source| RangedSource {
+                source: *source,
+                ranges: Vec::new(),
+            })
+            .collect();
+        Self::verify_ranged_in_txn(vault, read, txn, &ranged, inherited_meet)
+    }
+
+    /// Binds each of `sources` as `read` reads it in `txn`: a TURN with
+    /// stored ranges by one citation per range, a TURN with none whole, an
+    /// admissible claim by its body. Each range hashes through the same
+    /// evidence-bytes call, with its MESSAGE slices. A source with none is
+    /// bound whole exactly as [`Self::verify_whole_in_txn`] binds it.
+    pub(crate) fn verify_ranged_in_txn(
+        vault: &Vault,
+        read: &crate::claim::ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        sources: &[RangedSource],
+        inherited_meet: ClaimSource,
+    ) -> Result<Self> {
         if sources.is_empty() {
             return Err(invalid_consolidation("empty scoped evidence"));
         }
         let mut rows = Vec::with_capacity(sources.len());
-        for source in sources {
+        for cited in sources {
+            let source = cited.source;
             let (kind, _, body) = read
-                .get_entities_parts_in_txn(txn, &[*source])?
+                .get_entities_parts_in_txn(txn, &[source])?
                 .pop()
                 .flatten()
                 .ok_or_else(|| invalid_consolidation("evidence is not readable"))?;
-            let (locator, trust, text) = if kind == crate::registry::ENTITY_TYPE_CLAIM {
+            if kind == crate::registry::ENTITY_TYPE_CLAIM {
+                if !cited.ranges.is_empty() {
+                    return Err(invalid_consolidation("evidence spans name a claim"));
+                }
                 let claim = crate::claim::decode_claim_body(&body, true)?;
                 if !crate::claim::claim_evidence_admissible(&claim) {
                     return Err(invalid_consolidation("generated claim cannot corroborate"));
                 }
-                (
-                    EvidenceLocator::claim(*source, *source)?,
-                    super::provenance::evidence_source_from_claim(&claim),
+                let locator = EvidenceLocator::claim(source, source)?;
+                let trust = super::provenance::evidence_source_from_claim(&claim);
+                let verified = super::conflict::verify_swarm_evidence_bytes(
+                    locator.reference(),
+                    kind,
+                    &body,
                     None,
-                )
-            } else if kind == crate::registry::ENTITY_TYPE_TURN {
-                let trust = super::resources::native_turn_source(vault, &body)?;
-                let text = super::turn_text::collect_in(read, txn, source, &body, &mut 0)?;
-                let len = text.text().map_or(0, str::len);
-                (
-                    EvidenceLocator::turn_range(*source, 0, len)?,
                     trust,
-                    Some(text),
-                )
-            } else {
+                )?;
+                rows.push(VerifiedCitation {
+                    locator,
+                    hash: verified.content_hash,
+                    version: super::resources::document_version(source, &body),
+                    trust,
+                    messages: Vec::new(),
+                    projection: Vec::new(),
+                });
+                continue;
+            }
+            if kind != crate::registry::ENTITY_TYPE_TURN {
                 return Err(invalid_consolidation(
                     "evidence is neither a TURN nor a claim",
                 ));
+            }
+            let trust = super::resources::native_turn_source(vault, &body)?;
+            let text = super::turn_text::collect_in(read, txn, &source, &body, &mut 0)?;
+            let whole = [(0, text.text().map_or(0, str::len))];
+            let ranges: &[(usize, usize)] = if cited.ranges.is_empty() {
+                &whole
+            } else {
+                &cited.ranges
             };
-            let reference = locator.reference();
-            let verified = super::conflict::verify_swarm_evidence_bytes(
-                reference,
-                kind,
-                &body,
-                text.as_ref().and_then(super::turn_text::TurnText::text),
-                trust,
-            )?;
-            rows.push(VerifiedCitation {
-                locator,
-                hash: verified.content_hash,
-                version: super::resources::document_version(*source, &body),
-                trust,
-                messages: match &text {
-                    Some(text) => text.spans(reference.byte_range)?,
-                    None => Vec::new(),
-                },
-                projection: match &text {
-                    Some(text) => text.projection(),
-                    None => Vec::new(),
-                },
-            });
+            for (start, end) in ranges {
+                let locator = EvidenceLocator::turn_range(source, *start, *end)?;
+                let reference = locator.reference();
+                let verified = super::conflict::verify_swarm_evidence_bytes(
+                    reference,
+                    kind,
+                    &body,
+                    text.text(),
+                    trust,
+                )?;
+                rows.push(VerifiedCitation {
+                    locator,
+                    hash: verified.content_hash,
+                    version: super::resources::document_version(source, &body),
+                    trust,
+                    messages: text.spans(reference.byte_range)?,
+                    projection: text.projection(),
+                });
+            }
         }
         Ok(Self::from_rows(rows, inherited_meet))
     }
