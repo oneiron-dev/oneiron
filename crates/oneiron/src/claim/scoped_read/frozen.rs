@@ -681,46 +681,6 @@ impl FrozenReadLane {
     }
 }
 
-/// `key`, its principal's own live key, rebuilt for a lane that keeps no
-/// grant basis (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS): unchanged
-/// while its actor is a live owner in `txn`
-/// (`ScopedReadActorKey::actor_is_live_owner_in`), and otherwise met with
-/// the access gate on the grants of the key's own principal, with no owner
-/// standing. Such a lane does not say which gate its key read under: it was
-/// saved before the basis was kept, or by an engine path that froze no live
-/// lane (a question created or edited with no lane, an internal one-off
-/// ask, a review's dissent question), so it fails closed. An access grant
-/// on a row's conversation still admits that row.
-///
-/// # Errors
-/// A store failure reading the owner binding or the live-owner census.
-fn rebuild_without_basis_in(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-    key: ScopedReadActorKey,
-) -> Result<ScopedReadActorKey> {
-    if key.actor_is_live_owner_in(vault, txn)? {
-        return Ok(key);
-    }
-    let grant_principal = key.principal_ref;
-    Ok(key.within_native_basis(NativeReadBasis {
-        owner_standing: NativeOwnerStanding::Absent,
-        grant_gate: NativeGrantGate::Access,
-        grant_principal,
-    }))
-}
-
-/// Whether `lane`'s actor is a live owner of its vault, judged in a snapshot
-/// of its own (`ScopedReadActorKey::actor_is_live_owner_in`).
-///
-/// # Errors
-/// A store failure opening the snapshot, reading the owner binding or the
-/// live-owner census.
-fn actor_is_live_owner(lane: &ScopedRead<'_>) -> Result<bool> {
-    let txn = lane.vault.store.env.read_txn()?;
-    lane.actor_key.actor_is_live_owner_in(lane.vault, &txn)
-}
-
 /// Keeps each id `axis` names that `covered` holds (FIX 12285); whether it
 /// cut one. An open or empty axis names no id and stays; one cut to no id
 /// is bottom.
@@ -833,4 +793,44 @@ fn keeps_top_scope(key: &ScopedReadActorKey, proof: &crate::authority::VerifiedS
             || key.owner_exemption.is_some()
             || proof.is_transferred()
             || !matches!(claims.actor_class.as_deref(), None | Some("human")))
+}
+
+/// `key`, its principal's own live key, rebuilt for a lane that keeps no
+/// grant basis (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS): unchanged
+/// while its actor is a live owner in `txn`
+/// (`ScopedReadActorKey::actor_is_live_owner_in`), and otherwise met with
+/// the access gate on the grants of the key's own principal, with no owner
+/// standing. Such a lane does not say which gate its key read under: it was
+/// saved before the basis was kept, or by an engine path that froze no live
+/// lane (a question created or edited with no lane, an internal one-off
+/// ask, a review's dissent question), so it fails closed. An access grant
+/// on a row's conversation still admits that row.
+///
+/// # Errors
+/// A store failure reading the owner binding or the live-owner census.
+fn rebuild_without_basis_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    key: ScopedReadActorKey,
+) -> Result<ScopedReadActorKey> {
+    if key.actor_is_live_owner_in(vault, txn)? {
+        return Ok(key);
+    }
+    let grant_principal = key.principal_ref;
+    Ok(key.within_native_basis(NativeReadBasis {
+        owner_standing: NativeOwnerStanding::Absent,
+        grant_gate: NativeGrantGate::Access,
+        grant_principal,
+    }))
+}
+
+/// Whether `lane`'s actor is a live owner of its vault, judged in a snapshot
+/// of its own (`ScopedReadActorKey::actor_is_live_owner_in`).
+///
+/// # Errors
+/// A store failure opening the snapshot, reading the owner binding or the
+/// live-owner census.
+fn actor_is_live_owner(lane: &ScopedRead<'_>) -> Result<bool> {
+    let txn = lane.vault.store.env.read_txn()?;
+    lane.actor_key.actor_is_live_owner_in(lane.vault, &txn)
 }
