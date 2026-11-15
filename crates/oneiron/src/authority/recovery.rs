@@ -30,36 +30,18 @@ const HOSTED_FOLD_REROOT: &str = "a ReRoot by a key the host does not hold revok
 /// vault, whose root carries no cloud stamp, never does. Rows already stored,
 /// a replica without this engine, and a gap-closing import's rows stay open
 /// under the fold rule (FIX [HOSTED-REROOT-FOLD-RULE]).
-pub(super) fn refuse_re_root_of_a_serving_host(
+pub(crate) fn refuse_re_root_of_a_serving_host(
     fold: &AuthorityFold,
-    signer: &AuthorityKey,
-) -> Result<()> {
-    refuse_re_root_of_a_serving_host_beside(fold, fold, signer)
-}
-
-/// [`refuse_re_root_of_a_serving_host`] at the replicated door, where a
-/// window's rows arrive in no set order. `before`, the fold before the row,
-/// says whether the host serves. The signer's stamp is read from `before`,
-/// else from `with_rows`, the fold with the row and the rows beside it, so a
-/// host's move signed by the root its earlier move in the same window named
-/// still serves.
-pub(crate) fn refuse_re_root_of_a_serving_host_beside(
-    before: &AuthorityFold,
-    with_rows: &AuthorityFold,
     signer: &AuthorityKey,
 ) -> Result<()> {
     let host_stamped = |device: &FoldedDevice| {
         device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial
     };
-    let host_serves = before
+    let host_serves = fold
         .roster
         .values()
         .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0 && host_stamped(device));
-    let signer_row = before
-        .roster
-        .get(signer)
-        .or_else(|| with_rows.roster.get(signer));
-    if host_serves && !signer_row.is_some_and(host_stamped) {
+    if host_serves && !fold.roster.get(signer).is_some_and(host_stamped) {
         return Err(authority_refused(HOSTED_FOLD_REROOT));
     }
     Ok(())

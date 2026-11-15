@@ -1145,6 +1145,12 @@ crate::side_table::side_tables! {
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// Whether the recovery box's kit-only hold may not match the recovery preset: set before a
+    /// switch into 'Nobody but me' asks the box to hold, and by a switch out of it; cleared once
+    /// the box answered. A managed boot resends the hold that matches the preset when it is set.
+    /// Key: ().
+    VAULT_KEY_BOX_HOLD_PENDING: VaultMeta b"vault_key:box_hold_pending:v1" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The BLAKE3 fingerprint of the recipient public key each escrow label was sealed to, kept
     /// after the label retires, so a later add of the same key under another label warns (FIX
     /// 2857). Public facts only. Key: string (label).

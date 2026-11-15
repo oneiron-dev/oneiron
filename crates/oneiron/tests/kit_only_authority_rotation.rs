@@ -29,7 +29,9 @@ use oneiron::recovery::{
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
-use oneiron::world_keys::{NoRecoveryBox, RecoveryBoxHold, RecoveryPreset, RecoveryRootSeed};
+use oneiron::world_keys::{
+    NoRecoveryBox, RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPreset, RecoveryRootSeed,
+};
 use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
 
 /// Decision 5 words, asserted with `contains`.
@@ -760,16 +762,27 @@ fn switching_with_another_kit_while_live_is_refused_as_not_this_vaults() {
 
 /// Records each box hold call. On the first `hold_kit_only(true)` it runs
 /// `race` once: an act that lands between the door's no-write checks and its
-/// write.
+/// write. With `fail_release`, `hold_kit_only(false)` records the call and
+/// answers an `Err`. With `vault` attached, each call also records what
+/// `recovery_box_hold_pending` reads at that point in `seen`.
 #[derive(Default)]
 struct RecordingBoxHold<'a> {
     calls: RefCell<Vec<bool>>,
     race: RefCell<Option<Box<dyn FnOnce() + 'a>>>,
+    fail_release: bool,
+    seen: RefCell<Vec<Option<RecoveryBoxHoldPending>>>,
+    vault: Option<&'a Vault>,
 }
 
 impl RecoveryBoxHold for RecordingBoxHold<'_> {
     fn hold_kit_only(&self, kit_only: bool) -> oneiron::Result<()> {
         self.calls.borrow_mut().push(kit_only);
+        if let Some(vault) = self.vault {
+            let pending = vault
+                .recovery_box_hold_pending()
+                .expect("the marker reads at each hold call");
+            self.seen.borrow_mut().push(pending);
+        }
         let race = if kit_only {
             self.race.borrow_mut().take()
         } else {
@@ -777,6 +790,11 @@ impl RecoveryBoxHold for RecordingBoxHold<'_> {
         };
         if let Some(race) = race {
             race();
+        }
+        if !kit_only && self.fail_release {
+            return Err(oneiron::Error::Io(std::io::Error::other(
+                "the recovery box release failed",
+            )));
         }
         Ok(())
     }
@@ -827,5 +845,256 @@ fn a_switch_refused_in_its_write_after_the_box_hold_releases_the_box_again() {
             .iter()
             .any(|key| key.public_key == fixture.generation_key(0) && key.live),
         "the race's generation 0 stands, not rotated"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .recovery_box_hold_pending()
+            .expect("the marker reads"),
+        None,
+        "an Ok release clears the marker"
+    );
+}
+
+#[test]
+fn entering_kit_only_writes_the_marker_before_the_hold_and_its_commit_clears_it() {
+    let fixture = fixture();
+    let hold = RecordingBoxHold {
+        vault: Some(&fixture.vault),
+        ..Default::default()
+    };
+    let change = fixture
+        .vault
+        .set_recovery_preset_with_kit_as(
+            &fixture.authority(),
+            RecoveryPreset::NobodyButMe,
+            &fixture.kit_refs(),
+            None,
+            |_| Ok(()),
+            &hold,
+        )
+        .expect("the switch with the kit");
+    assert_eq!(change.previous, RecoveryPreset::Standard);
+    assert_eq!(change.preset, RecoveryPreset::NobodyButMe);
+    assert_eq!(*hold.calls.borrow(), vec![true]);
+    let seen = hold.seen.borrow();
+    assert_eq!(seen.len(), 1, "one hold call saw the marker");
+    assert_eq!(
+        seen[0].map(|pending| pending.target_kit_only),
+        Some(true),
+        "the marker is written before the hold"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .recovery_box_hold_pending()
+            .expect("the marker reads"),
+        None,
+        "the commit clears the marker"
+    );
+}
+
+#[test]
+fn a_refused_switch_whose_release_fails_keeps_the_marker() {
+    let fixture = issued_fixture();
+    let hold = RecordingBoxHold {
+        fail_release: true,
+        ..Default::default()
+    };
+    *hold.race.borrow_mut() = Some(Box::new(|| {
+        let refs = fixture.kit_refs();
+        fixture
+            .vault
+            .confirm_world_kit(&fixture.owner(), &refs, None, &BTreeSet::new())
+            .expect("the kit confirms between the checks and the write");
+    }));
+    let refused = fixture
+        .vault
+        .set_recovery_preset_as(
+            &fixture.owner(),
+            RecoveryPreset::NobodyButMe,
+            |_| Ok(()),
+            &hold,
+        )
+        .expect_err("the write refuses once generation 0 is live");
+    assert_eq!(refused.kind(), ErrorKind::AuthorityRefused, "{refused}");
+    assert!(
+        refused.to_string().contains(KIT_ONLY_NEEDS_KIT),
+        "the first error is the answer: {refused}"
+    );
+    assert_eq!(
+        *hold.calls.borrow(),
+        vec![true, false],
+        "held for kit-only, then a failed release"
+    );
+    let marker = fixture
+        .vault
+        .recovery_box_hold_pending()
+        .expect("the marker reads");
+    assert_eq!(
+        marker.map(|pending| pending.target_kit_only),
+        Some(true),
+        "a failed release keeps the marker"
+    );
+}
+
+#[test]
+fn leaving_kit_only_sets_the_marker_and_an_ok_release_clears_it() {
+    let fixture = fixture();
+    fixture.switch_with_kit().expect("entering kit-only");
+    assert_eq!(
+        fixture.vault.recovery_preset().expect("the preset"),
+        RecoveryPreset::NobodyButMe,
+    );
+    let hold = RecordingBoxHold {
+        vault: Some(&fixture.vault),
+        ..Default::default()
+    };
+    let change = fixture
+        .vault
+        .set_recovery_preset_as(
+            &fixture.owner(),
+            RecoveryPreset::Standard,
+            |_| Ok(()),
+            &hold,
+        )
+        .expect("the switch back");
+    assert_eq!(change.previous, RecoveryPreset::NobodyButMe);
+    assert_eq!(change.preset, RecoveryPreset::Standard);
+    assert!(!change.box_release_pending, "an Ok release is not pending");
+    assert_eq!(*hold.calls.borrow(), vec![false]);
+    let seen = hold.seen.borrow();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        seen[0].map(|pending| pending.target_kit_only),
+        Some(false),
+        "leaving sets the marker before the release"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .recovery_box_hold_pending()
+            .expect("the marker reads"),
+        None,
+        "an Ok release clears the marker"
+    );
+}
+
+#[test]
+fn leaving_kit_only_with_a_failed_release_keeps_the_marker() {
+    let fixture = fixture();
+    fixture.switch_with_kit().expect("entering kit-only");
+    let hold = RecordingBoxHold {
+        vault: Some(&fixture.vault),
+        fail_release: true,
+        ..Default::default()
+    };
+    let change = fixture
+        .vault
+        .set_recovery_preset_as(
+            &fixture.owner(),
+            RecoveryPreset::Standard,
+            |_| Ok(()),
+            &hold,
+        )
+        .expect("the switch back is Ok with a failed release");
+    assert!(change.box_release_pending, "a failed release is pending");
+    assert_eq!(*hold.calls.borrow(), vec![false]);
+    let marker = fixture
+        .vault
+        .recovery_box_hold_pending()
+        .expect("the marker reads");
+    assert_eq!(
+        marker.map(|pending| pending.target_kit_only),
+        Some(false),
+        "a failed release keeps the marker"
+    );
+}
+
+#[test]
+fn a_standard_call_while_standard_writes_no_marker() {
+    let fixture = fixture();
+    assert_eq!(
+        fixture.vault.recovery_preset().expect("the preset"),
+        RecoveryPreset::Standard,
+    );
+    let hold = RecordingBoxHold {
+        vault: Some(&fixture.vault),
+        ..Default::default()
+    };
+    let change = fixture
+        .vault
+        .set_recovery_preset_as(
+            &fixture.owner(),
+            RecoveryPreset::Standard,
+            |_| Ok(()),
+            &hold,
+        )
+        .expect("setting Standard while Standard");
+    assert!(!change.box_release_pending);
+    assert_eq!(*hold.calls.borrow(), vec![false]);
+    assert_eq!(*hold.seen.borrow(), vec![None]);
+    assert_eq!(
+        fixture
+            .vault
+            .recovery_box_hold_pending()
+            .expect("the marker reads"),
+        None,
+    );
+}
+
+#[test]
+fn the_marker_clear_compares_the_attempt() {
+    let fixture = fixture();
+    fixture.switch_with_kit().expect("entering kit-only");
+    let hold = RecordingBoxHold {
+        fail_release: true,
+        ..Default::default()
+    };
+    fixture
+        .vault
+        .set_recovery_preset_as(
+            &fixture.owner(),
+            RecoveryPreset::Standard,
+            |_| Ok(()),
+            &hold,
+        )
+        .expect("the switch back with a failed release");
+    let marker = fixture
+        .vault
+        .recovery_box_hold_pending()
+        .expect("the marker reads")
+        .expect("a failed release keeps the marker");
+    assert!(!marker.target_kit_only);
+    let attempt = marker.attempt;
+    assert!(
+        !fixture
+            .vault
+            .clear_recovery_box_hold_pending(attempt ^ 1)
+            .expect("a clear with the wrong attempt"),
+        "the wrong attempt clears nothing"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .recovery_box_hold_pending()
+            .expect("the marker reads")
+            .map(|pending| pending.attempt),
+        Some(attempt),
+        "the marker stays"
+    );
+    assert!(
+        fixture
+            .vault
+            .clear_recovery_box_hold_pending(attempt)
+            .expect("a clear with the attempt"),
+        "the attempt clears"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .recovery_box_hold_pending()
+            .expect("the marker reads"),
+        None,
     );
 }
