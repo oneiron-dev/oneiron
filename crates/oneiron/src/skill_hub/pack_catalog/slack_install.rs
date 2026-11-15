@@ -194,3 +194,14 @@ impl Vault {
         }
     }
 }
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Door for `tests/slack_install_sweep.rs`: every state the table holds, in key order,
+    /// expired or not; no public read shows an expired row. Compiled only under
+    /// `--cfg oneiron_test_support`; never API.
+    pub(crate) fn slack_install_states_for_test(&self) -> Result<Vec<String>> {
+        let txn = self.store.env.read_txn()?;
+        SLACK_PENDING.scan_keys(&self.store, &txn, &[])
+    }
+}
