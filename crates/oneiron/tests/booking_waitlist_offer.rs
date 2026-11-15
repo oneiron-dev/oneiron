@@ -777,6 +777,19 @@ fn a_waitlist_offer_send_to_a_contact_holding_no_offer_is_refused() {
         fixture.send_as_publisher(redirected, NOW + 70).is_err(),
         "yuki's offer never goes to mika"
     );
+    // The same body under a key and a ledger identity of its own: the ledger
+    // holds no attempt to answer with, so only the offer's admission stands
+    // between yuki's offer and mika.
+    let fresh = fixture.forged(
+        page,
+        "mika@example.com",
+        &content_ref,
+        "intent:redirect-mika",
+    );
+    assert!(
+        fixture.send_as_publisher(fresh, NOW + 75).is_err(),
+        "yuki's offer never goes to mika under an intent of its own"
+    );
     let plain = fixture.forged(
         page,
         "mika@example.com",
@@ -818,13 +831,20 @@ fn a_send_to_another_pages_waiter_is_refused() {
         .expect("an offer body ref names its page and its offer");
     let crossed = format!("{OFFER_PREFIX}{}:{kenji_digest}", page.to_hex());
     let kenji_key = kenji_offer.idempotency_key.clone().expect("offer key");
+    let yuki_ref = yuki_offer.content_ref.clone().expect("body ref");
+    let yuki_key = yuki_offer.idempotency_key.clone().expect("offer key");
+    // Each body under an offer's own key, whose ledger identity answers with
+    // the intent it recorded, and under a key and a ledger identity of its
+    // own, which only the offer's admission refuses.
     for intent in [
         fixture.forged(page, "kenji@example.com", &crossed, &kenji_key),
+        fixture.forged(page, "kenji@example.com", &crossed, "intent:crossed-kenji"),
+        fixture.forged(page, "kenji@example.com", &yuki_ref, &yuki_key),
         fixture.forged(
             page,
             "kenji@example.com",
-            &yuki_offer.content_ref.clone().expect("body ref"),
-            &yuki_offer.idempotency_key.clone().expect("offer key"),
+            &yuki_ref,
+            "intent:yuki-offer-to-kenji",
         ),
     ] {
         assert!(
