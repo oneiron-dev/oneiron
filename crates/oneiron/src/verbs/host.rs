@@ -19,6 +19,7 @@ mod hooks_replay;
 mod image_edit;
 mod local_pack_agent;
 mod pack_setup;
+pub(crate) mod setting_keys;
 pub use self::ask_image::*;
 pub use self::hooks_replay::*;
 pub use self::image_edit::*;

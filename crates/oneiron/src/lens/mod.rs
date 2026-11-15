@@ -59,8 +59,7 @@ pub use activation::{
     LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
 };
 pub use proposal::{
-    LENS_LIST_MAX_PAGE, LensListPage, LensListRequest, LensListRow, LensProposalState,
-    LensProposeRequest, LensSlot,
+    LensListPage, LensListRequest, LensListRow, LensProposalState, LensProposeRequest, LensSlot,
 };
 pub use regen::{
     LensRegenDecision, LensRegenEnactment, enact_lens_regeneration_embedded,
@@ -72,8 +71,8 @@ pub use sdk::{LENS_DEFAULT_READ_STEP, LensDefaultRequest, LensDossierSource, Wea
 mod record_ref;
 pub use record_ref::{
     LinkedText, ProseSpan, RECORD_LINKS_TEXT_MAX_BYTES, RECORD_LINKS_TURN_PAGE_MAX,
-    RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordLinks,
-    RecordLinksRequest, RecordRef, RecordRefPreview, ResolveRecordRefRequest,
+    RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RecordLinks, RecordLinksRequest, RecordRef,
+    RecordRefPreview, ResolveRecordRefRequest,
 };
 mod selection;
 pub use selection::{
@@ -81,6 +80,7 @@ pub use selection::{
     LensSelection, LensSelectionRange, LensSelectionResolveRequest, LensSelectionResolved,
 };
 
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

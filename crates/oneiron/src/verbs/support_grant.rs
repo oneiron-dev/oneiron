@@ -15,9 +15,6 @@ use crate::authority::{
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
-/// The longest support grant list one call answers.
-const SUPPORT_GRANT_LIST_MAX: usize = 500;
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::support_grant::{
     SupportGrantList, SupportGrantListRequest, SupportGrantMintAnswer, SupportGrantMintRequest,
@@ -57,16 +54,21 @@ pub fn mint_support_grant_as(
 }
 
 /// `vault.support_grants.list` under the owner's proof: active grants, or
-/// every one with `include_inactive`.
+/// every one with `include_inactive`, at most the owner's
+/// `support_grants.list.page_max` of them (500 by default).
 pub fn list_support_grants_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: SupportGrantListRequest,
 ) -> MemoryResult<SupportGrantList> {
+    let page_max = super::host::setting_keys::page_max(
+        vault,
+        &super::host::setting_keys::SUPPORT_GRANTS_LIST_PAGE_MAX,
+    )?;
     let limit = input
         .limit
-        .map_or(SUPPORT_GRANT_LIST_MAX, |limit| limit as usize)
-        .min(SUPPORT_GRANT_LIST_MAX);
+        .map_or(page_max, |limit| limit as usize)
+        .min(page_max);
     let rows = vault.list_support_grants(
         owner,
         SupportGrantQuery {

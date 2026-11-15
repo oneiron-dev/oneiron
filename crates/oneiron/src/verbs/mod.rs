@@ -56,7 +56,7 @@ mod goal_optimize;
 mod grants;
 mod guest_document;
 mod guest_revoke;
-mod host;
+pub(crate) mod host;
 mod hub;
 mod identity_topology;
 mod inquiry;

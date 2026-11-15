@@ -28,6 +28,9 @@ impl SettingValue for u8 {}
 impl SettingValue for u16 {}
 impl SettingValue for u32 {}
 impl SettingValue for u64 {}
+/// A count that is never zero, such as the most rows one page serves: a zero is refused when
+/// the value is decoded, before it is stored.
+impl SettingValue for std::num::NonZeroU32 {}
 impl SettingValue for i64 {}
 impl SettingValue for String {}
 impl SettingValue for Vec<String> {}

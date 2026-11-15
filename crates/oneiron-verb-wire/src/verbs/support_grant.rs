@@ -104,7 +104,8 @@ pub struct SupportGrantListRequest {
     /// Also list expired, revoked and ended grants.
     #[serde(default)]
     pub include_inactive: bool,
-    /// At most this many, newest first; 500 when omitted, and never more.
+    /// At most this many, newest first; when omitted, and never more, the
+    /// owner's `support_grants.list.page_max` (500 by default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }

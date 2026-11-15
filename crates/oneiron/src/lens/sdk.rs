@@ -17,6 +17,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::setting_keys::{
+    LENSES_DEFAULT_DOSSIER_LINE_BYTES, LENSES_DEFAULT_DOSSIER_LINES, LENSES_DEFAULT_EXCERPT_BYTES,
+    vault_value,
+};
 use super::{
     AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, GeneratedUiSurfaceCapabilities,
     HostedLensRender, LedgerCell, LedgerRowAtom, LensBackingRefToken, LensBackingTarget,
@@ -34,11 +38,6 @@ use crate::{EntityId, Error, Result};
 /// The sources one read step of a default projection takes; a longer list
 /// is read in more steps, never cut.
 pub const LENS_DEFAULT_READ_STEP: usize = 64;
-/// The excerpt of a source body a ledger row or thread entry shows.
-const EXCERPT_BYTES: usize = 1024;
-/// The body lines a dossier section shows, and the bytes of each.
-const DOSSIER_LINES: usize = 32;
-const DOSSIER_LINE_BYTES: usize = 512;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::lens::sdk::{LensDefaultRequest, LensDossierSource};
@@ -70,11 +69,21 @@ impl Memory<'_> {
     /// named sources, read under this caller's own key, as a read-only card
     /// beside the frame that minted its backing refs (OF-181). The folded
     /// receipt names every narrowing those reads applied.
+    ///
+    /// A ledger row and a thread entry show an excerpt of the owner's
+    /// `lenses.default.excerpt_bytes` (1 KiB by default); a dossier section
+    /// shows `lenses.default.dossier_lines` lines (32) of at most
+    /// `lenses.default.dossier_line_bytes` each (512).
     pub fn lenses_default_framed(
         &self,
         input: LensDefaultRequest,
     ) -> MemoryResult<ScopedReadResult<HostedLensRender>> {
         crate::memory::caps::check_as_of(input.as_of)?;
+        let excerpt_bytes = vault_value(self.vault(), &LENSES_DEFAULT_EXCERPT_BYTES)?.get();
+        let dossier_lines = vault_value(self.vault(), &LENSES_DEFAULT_DOSSIER_LINES)?;
+        let dossier_lines = usize::try_from(dossier_lines).unwrap_or(usize::MAX);
+        let dossier_line_bytes =
+            vault_value(self.vault(), &LENSES_DEFAULT_DOSSIER_LINE_BYTES)?.get();
         let title = LensText::new(input.title)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         let ledger_ids = source_ids(&input.ledger.iter().map(String::as_str).collect::<Vec<_>>())?;
@@ -107,7 +116,10 @@ impl Memory<'_> {
                         cell("ref", row.id.to_hex())?,
                         cell(
                             "value",
-                            excerpt(&super::instrument::display_body(&admitted.body)),
+                            excerpt(
+                                &super::instrument::display_body(&admitted.body),
+                                excerpt_bytes,
+                            ),
                         )?,
                     ],
                     status: None,
@@ -130,8 +142,8 @@ impl Memory<'_> {
             let lines = text
                 .lines()
                 .filter(|line| !line.trim().is_empty())
-                .take(DOSSIER_LINES)
-                .map(|line| LensText::new(clip(line, DOSSIER_LINE_BYTES)))
+                .take(dossier_lines)
+                .map(|line| LensText::new(clip(line, dossier_line_bytes)))
                 .collect::<Result<Vec<_>>>()?;
             let value = ScopedReadResult {
                 value: SectionAtom {
@@ -157,7 +169,7 @@ impl Memory<'_> {
                     "thread sources are MESSAGE entities",
                 ));
             }
-            let Some(entry) = thread_entry(&admitted)? else {
+            let Some(entry) = thread_entry(&admitted, excerpt_bytes)? else {
                 continue;
             };
             let value = ScopedReadResult {
@@ -317,8 +329,9 @@ fn cell(label: &str, value: String) -> Result<LedgerCell> {
     })
 }
 
-fn excerpt(text: &str) -> String {
-    clip(text.trim(), EXCERPT_BYTES).to_owned()
+/// `text`, trimmed, cut to at most `bytes`.
+fn excerpt(text: &str, bytes: usize) -> String {
+    clip(text.trim(), bytes).to_owned()
 }
 
 /// `text` cut to at most `bytes`, on a character boundary.
@@ -333,9 +346,10 @@ fn clip(text: &str, bytes: usize) -> &str {
     &text[..end]
 }
 
-/// A MESSAGE row as one read-only thread entry, or `None` when it carries no
-/// text. Its bytes must be the canonical transcript envelope.
-fn thread_entry(admitted: &Admitted) -> Result<Option<ThreadLensEntry>> {
+/// A MESSAGE row as one read-only thread entry, its text cut to
+/// `excerpt_bytes`, or `None` when it carries no text. Its bytes must be the
+/// canonical transcript envelope.
+fn thread_entry(admitted: &Admitted, excerpt_bytes: usize) -> Result<Option<ThreadLensEntry>> {
     use crate::gate::{
         WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
         WITNESS_AUTHOR_USER, WitnessMessageBodyAuthor, validate_canonical_witness_message_body,
@@ -357,7 +371,7 @@ fn thread_entry(admitted: &Admitted) -> Result<Option<ThreadLensEntry>> {
                 .and_then(|(_, value)| value.as_str())
         })
         .unwrap_or_default();
-    let content = excerpt(content);
+    let content = excerpt(content, excerpt_bytes);
     if content.is_empty() {
         return Ok(None);
     }
