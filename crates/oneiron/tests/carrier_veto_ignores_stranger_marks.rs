@@ -17,7 +17,8 @@
 //! roster's chain alone admits and removes a carrier.
 //!
 //! Each test serves a self-host vault that pins no root, so this install
-//! stands under the roster's chain alone.
+//! stands under the roster's chain alone, except the kit test of design 3.4,
+//! whose install pins the owner's kit root.
 
 #![cfg(oneiron_test_support)]
 
@@ -30,11 +31,14 @@ use oneiron::authority::{
     AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
-    OwnerRootRecord, authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
+    OwnerRootRecord, PairingPrincipal, PairingRedeemed, authority_entry_hash, authority_transcript,
+    machine_possession_transcript, machine_profile_proof_transcript,
+    pairing_binding_transcript_pinned,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::Scope;
 use oneiron::store::GateDecisionId;
-use oneiron::world_keys::RecoveryRootSeed;
+use oneiron::world_keys::{KitConfirmation, RecoveryRootSeed};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_authority::authority::{FrontierJoin, FrontierJoinFamily, FrontierJoinScope};
 
@@ -611,6 +615,375 @@ fn a_strangers_mark_of_an_install_the_roster_holds_no_head_of_leaves_its_bootstr
             .and_then(|folded| folded.roster.as_ref())
             .is_some_and(|chain| chain.is_live() && chain.profile.carrier == Some(request.machine)),
         "the owner's enrolment stands, carried by this install"
+    );
+    for row in [root, mark_hash] {
+        assert!(
+            fold.valid_entries.contains(&row),
+            "the stranger's root and mark stay valid"
+        );
+    }
+}
+
+/// The kit's root record, anchor-signed and stored: `publish_stranger_root`
+/// for the owner's own kit seed, naming the vault's owner instead of a
+/// stranger. The stored root a drawn seed's restore needs: the kit seed gate
+/// publishes a drawn root only through its activation, so the restore below
+/// finds this row, marks under it and pins it without publishing.
+fn publish_kit_root(vault: &Vault, owner: EntityId, seed: &RecoveryRootSeed) -> AuthorityEntryHash {
+    let vault_id = vault_id_of(vault);
+    let root = seed.public(&vault_id).expect("the kit root's public half");
+    let anchor = seed.anchor();
+    let parent = vault
+        .authority_fold()
+        .expect("authority fold for a parent")
+        .valid_entries
+        .iter()
+        .next()
+        .copied()
+        .expect("guard: the vault holds a valid row for the root's parent");
+    let record = OwnerRootRecord {
+        owner,
+        root: root.id,
+        recovery_key: MachineEncryptionKey {
+            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+            key: root.recovery_key.to_bytes(),
+        },
+        anchor_key: root.anchor_key,
+    };
+    let entry = signed(
+        vault_id,
+        1,
+        vec![parent],
+        AuthorityOp::OwnerRoot(record),
+        &anchor,
+    );
+    let root_hash = hash(&entry);
+    vault
+        .put_authority_log_entry(&entry, AT, 2)
+        .expect("the kit's root row is stored");
+    assert!(
+        vault
+            .authority_fold()
+            .expect("authority fold")
+            .valid_entries
+            .contains(&root_hash),
+        "guard: the kit's root is in valid_entries"
+    );
+    root_hash
+}
+
+/// The honest case of design 3.4: an install the owner's kit marked before
+/// the roster held a head of it. The kit's root is published, this install
+/// restores from the kit's seed through the public restore door (which pins
+/// the root and marks this install's own request under its anchor), and only
+/// then the first serving start runs: it enrols the install under the host
+/// root, and the install carries the owner's enrolment of another machine.
+/// The owner binds before the first serving start, exactly as
+/// `ServedVault::bound` binds (that order needs no profile: the bind writes
+/// none, and the restore mints no roster head).
+///
+/// Green (a18a1518667c): the serving-profile door enrols the install (the
+/// roster holds no head of it and the pinned chain agrees) at roster
+/// revision 1 under its own keys, and the owner's enrolment of the joining
+/// machine stands, carried by this install.
+/// Red at main 28a0ed385015: the door's `.expect(..)` passes but the
+/// `.roster.expect(..)` fails: the every-chain carrier rule stands the
+/// install on the kit's anchor chain, so the door is a no-op and writes no
+/// roster chain.
+/// Red at 1ec17eefde8e: the door's `.expect(..)` fails with
+/// SERVING_PROFILE_NOT_LIVE: the carrier rule reads the roster alone (which
+/// holds no head), while the gate still refuses an install any chain
+/// profiles instead of enrolling it.
+#[test]
+fn an_owners_kit_mark_of_an_install_the_roster_holds_no_head_of_leaves_its_bootstrap_open() {
+    let (vault, issuer, dir) = unprofiled_self_host();
+    let vault_id = vault_id_of(&vault);
+    let encryption_key = vault
+        .machine_encryption_key(vault_id)
+        .expect("this install's encryption key");
+    let request = vault
+        .machine_enrolment_request(vault_id, encryption_key)
+        .expect("this install's enrolment request");
+    assert!(
+        vault
+            .authority_fold()
+            .expect("authority fold")
+            .machine(request.machine)
+            .is_none(),
+        "guard: no chain profiles this install before the kit's mark"
+    );
+    let served = ServedVault::bound(vault, issuer, dir, request.machine);
+    let seed = RecoveryRootSeed::generate().expect("the kit's seed");
+    let root_id = seed
+        .public(&vault_id)
+        .expect("the kit root's public half")
+        .id;
+    let root_hash = publish_kit_root(&served.vault, served.person, &seed);
+    served
+        .vault
+        .restore_world_keys(
+            &served.owner,
+            &seed,
+            Some(KitConfirmation::Fingerprint(root_id)),
+        )
+        .expect("the kit restore pins the kit's root and marks this install under it");
+
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert_eq!(
+        fold.pinned_root.map(|pin| pin.id),
+        Some(root_id),
+        "guard: this install pins the kit's root"
+    );
+    let held = fold
+        .machine(request.machine)
+        .expect("guard: the kit's mark profiles this install");
+    assert!(
+        held.roster.is_none(),
+        "guard: the roster holds no head of this install"
+    );
+    let anchor_key = seed.anchor().verifying_key().to_bytes();
+    let chain = held
+        .anchored
+        .get(&anchor_key)
+        .expect("guard: the kit's chain holds this install");
+    assert!(
+        chain.is_live(),
+        "guard: the kit's chain holds this install live"
+    );
+    assert_eq!(
+        chain.profile.role,
+        MachineRole::Owned(MachineOwnership::Yours),
+        "guard: the kit's mark answers the install"
+    );
+    assert_eq!(
+        chain.profile.machine_key, request.machine_key,
+        "guard: the kit's mark names this install's machine key"
+    );
+    assert_eq!(
+        chain.profile.encryption_key, request.encryption_key,
+        "guard: the kit's mark names this install's encryption key"
+    );
+
+    let roster = served
+        .vault
+        .ensure_serving_install_profile(&served._issuer, MachineRole::Unanswered)
+        .expect("the serving-profile door enrols an install the roster holds no head of")
+        .roster
+        .expect("the serving-profile door wrote this install a roster chain");
+    assert!(roster.is_live(), "this install's roster chain is live");
+    assert_eq!(
+        roster.profile.revision, 1,
+        "this install stands at revision 1"
+    );
+    assert_eq!(
+        roster.profile.machine_key, request.machine_key,
+        "the roster profiles this install under its own machine key"
+    );
+    let joining = served.joining_machine();
+    served
+        .enrol(&joining)
+        .expect("this install carries the owner's enrolment once the roster profiles it");
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert_eq!(
+        fold.pinned_root.map(|pin| pin.id),
+        Some(root_id),
+        "this install still pins the kit's root"
+    );
+    assert!(
+        fold.machine(joining.machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .is_some_and(|chain| chain.is_live() && chain.profile.carrier == Some(request.machine)),
+        "the owner's enrolment stands, carried by this install"
+    );
+    assert!(
+        fold.valid_entries.contains(&root_hash),
+        "the kit's root stays valid"
+    );
+}
+
+/// The seed of the connection key a redeemed pairing link binds.
+const CONNECTION_SEED: u8 = 73;
+
+/// The owner makes the joining device a machine pairing link that answers
+/// `Yours`, and the device redeems it with its request, its connection key's
+/// binding signature and its machine key's possession proof over this
+/// redemption. OPUS-SPLIT-6's `redeem_machine_link`
+/// (`machine_answer_standing_heads.rs` on `14f62bf4c2e7`), adapted to this
+/// file's `ServedVault`: the issue needs only the host issuer and the
+/// revalidated owner, so it runs on an install the roster never profiled.
+fn redeem_machine_link(
+    served: &ServedVault,
+    request: &MachineEnrolmentRequest,
+) -> oneiron::Result<PairingRedeemed> {
+    let link = served
+        .vault
+        .issue_machine_pairing_link(
+            &served._issuer,
+            &served.owner,
+            ActSurface::ThisInstall,
+            Scope::top(),
+            3600,
+            PairingPrincipal::default(),
+            MachineOwnership::Yours,
+        )
+        .expect("the owner makes the joining device a machine pairing link");
+    let holder = request.machine.to_hex();
+    let connection = signing(CONNECTION_SEED);
+    let binding_key = connection.verifying_key().to_bytes();
+    let binding_transcript =
+        pairing_binding_transcript_pinned(&link.code, &binding_key, &holder, link.pin.as_ref())
+            .expect("the binding transcript of the redemption");
+    let binding = connection.sign(&binding_transcript).to_bytes();
+    let possession_transcript = machine_possession_transcript(
+        &request.vault_id,
+        request.machine,
+        &request.machine_key,
+        &binding_transcript,
+    );
+    let possession = signing(JOINING_SEED)
+        .sign(&possession_transcript)
+        .to_bytes();
+    served.vault.redeem_pairing_link_with_possession(
+        &served._issuer,
+        &link.code,
+        &holder,
+        binding_key,
+        &binding,
+        Some(request),
+        Some(&possession),
+    )
+}
+
+/// The pairing gate of design 3.4: this install serves with a host root but
+/// the roster holds no head of it, while a stranger's root marked it live
+/// and answered under its own keys. A pairing link this install issues is
+/// redeemed for a joining device: the redemption takes the bootstrap arm and
+/// the host root enrols the device.
+///
+/// NOTE: no serving start runs before the redemption: it would enrol the
+/// install and close the gate. The install stays unprofiled on the roster
+/// because `unprofiled_self_host` only roots the vault and returns the host
+/// issuer, binding the owner writes no machine profile, and the stranger's
+/// mark adds only an anchor chain; the link issue needs just the issuer and
+/// the revalidated owner.
+///
+/// Green (a18a1518667c): the redemption enrols the device at roster revision
+/// 1 under its own keys with no owner act and no carrier, and it is not the
+/// credential-only re-pairing.
+/// Red at main 28a0ed385015: the redeem `.expect(..)` fails: the install is
+/// not unprofiled (the mark answers) but the door takes the carried arm (the
+/// every-chain rule admits the install), and the fold refuses the landed
+/// answer at its parents, which never name the unjoined stranger mark.
+/// Red at 1ec17eefde8e: the redeem `.expect(..)` fails: not unprofiled, and
+/// the roster-only carrier rule finds no head of this install, so the door
+/// refuses with no carrier before writing anything.
+#[test]
+fn the_pairing_bootstrap_stays_open_past_a_strangers_answered_mark_of_this_install() {
+    let (vault, issuer, dir) = unprofiled_self_host();
+    let vault_id = vault_id_of(&vault);
+    let encryption_key = vault
+        .machine_encryption_key(vault_id)
+        .expect("this install's encryption key");
+    let request = vault
+        .machine_enrolment_request(vault_id, encryption_key)
+        .expect("this install's enrolment request");
+    assert!(
+        vault
+            .authority_fold()
+            .expect("authority fold")
+            .machine(request.machine)
+            .is_none(),
+        "guard: no chain profiles this install before the stranger's mark"
+    );
+    let served = ServedVault::bound(vault, issuer, dir, request.machine);
+    let (anchor, root) = publish_stranger_root(&served.vault);
+    let mark = signed(
+        vault_id,
+        2,
+        vec![root],
+        AuthorityOp::MachineProfile(MachineProfile {
+            machine: request.machine,
+            owner: stranger_owner(),
+            machine_key: request.machine_key,
+            device_class: request.device_class,
+            encryption_key: request.encryption_key.clone(),
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision: 1,
+            machine_proof: request.machine_proof,
+            seen_world_edits: BTreeSet::new(),
+            carrier: None,
+            act: None,
+        }),
+        &anchor,
+    );
+    let mark_hash = hash(&mark);
+    served
+        .vault
+        .put_authority_log_entry(&mark, AT, 2)
+        .expect("the stranger's mark of this install is stored");
+    let held = served
+        .vault
+        .authority_fold()
+        .expect("authority fold")
+        .machine(request.machine)
+        .cloned()
+        .expect("guard: the install view holds a chain of this install");
+    assert!(
+        held.roster.is_none(),
+        "guard: the roster holds no head of this install"
+    );
+    let chain = held
+        .anchored
+        .get(&anchor.verifying_key().to_bytes())
+        .expect("guard: the stranger's chain holds this install");
+    assert!(
+        chain.is_live(),
+        "guard: the stranger's chain holds this install live"
+    );
+    assert!(
+        chain.profile.role.answered(),
+        "guard: the stranger's mark answers the install"
+    );
+
+    let joining = served.joining_machine();
+    let redeemed = redeem_machine_link(&served, &joining).expect(
+        "the pairing bootstrap arm enrols the joining device past the stranger's answered mark",
+    );
+    assert!(
+        !redeemed.re_paired,
+        "the redemption enrols, it is not the credential-only re-pairing"
+    );
+    let named = redeemed
+        .machine
+        .as_ref()
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("the redemption names the device's roster chain");
+    assert!(named.is_live(), "the device's roster chain is live");
+    assert_eq!(named.profile.revision, 1, "the device stands at revision 1");
+    assert_eq!(
+        named.profile.machine_key, joining.machine_key,
+        "the roster profiles the device under its own machine key"
+    );
+    assert!(
+        named.profile.act.is_none(),
+        "the host root enrolled the device with no owner act"
+    );
+    assert!(
+        named.profile.carrier.is_none(),
+        "no install carried the bootstrap enrolment"
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    let roster = fold
+        .machine(joining.machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("the device has a roster chain after the redemption");
+    assert!(
+        fold.valid_entries.contains(&roster.entry),
+        "the bootstrap enrolment is in valid_entries"
+    );
+    assert!(
+        roster.profile.act.is_none() && roster.profile.carrier.is_none(),
+        "the device's roster head carries no act and no carrier"
     );
     for row in [root, mark_hash] {
         assert!(
