@@ -112796,8 +112796,9 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex",
      "surface": {
       "const": 3,
-      "fn": 19,
+      "fn": 18,
       "mod": 2,
+      "re-export": 1,
       "struct": 4
      }
     },
@@ -118158,6 +118159,33 @@
    "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
    "source_files": 11,
    "test_files": 2
+  },
+  "oneiron-hex": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Hex text for bytes: encode, decode and check in one place",
+     "surface": {
+      "fn": 10
+     }
+    }
+   ],
+   "modules": {
+    "lib": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Hex text for bytes: encode, decode and check in one place"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Hex text for bytes: encode, decode and check in one place",
+   "source_files": 1,
+   "test_files": 0
   },
   "oneiron-image": {
    "files": [
