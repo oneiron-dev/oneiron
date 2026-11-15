@@ -64301,12 +64301,16 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "AssetTextRead",
+      "AssetTextValidity"
+     ],
      "path": "src/ports/safe_read.rs",
      "purpose": "Integrity reads compose ports without opening a transaction",
      "surface": {
       "crate-vis": 9,
-      "fn": 2
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -101742,6 +101746,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/safe_read_asset_validity.rs",
+     "purpose": "[`safe_read_asset_text`] as a diagnostic record: the strict read's text with the `_validity` flag bag, one…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/sandbox_backend_selection.rs",
      "purpose": "Slice 5b.1 (the SandboxBackends inversion): a sandbox run selects its backend through the `SandboxBackends`…",
      "surface": {}
@@ -104202,7 +104214,7 @@
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7603,
-   "test_files": 1342
+   "test_files": 1343
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -117941,6 +117953,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dpapi_names.rs",
+     "purpose": "The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -118065,7 +118087,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WindowsDpapiKeystore"
@@ -118137,6 +118159,13 @@
      "layout": "file",
      "purpose": "A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier)"
     },
+    "dpapi_names": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI…"
+    },
     "file": {
      "files": 1,
      "impl_vault": false,
@@ -118182,7 +118211,7 @@
     "windows": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine…"
     },
@@ -118196,7 +118225,7 @@
    },
    "over_bar": 2,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 13,
+   "source_files": 14,
    "test_files": 3
   },
   "oneiron-lens-wire": {
