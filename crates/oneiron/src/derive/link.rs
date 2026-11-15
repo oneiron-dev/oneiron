@@ -83,6 +83,18 @@ pub(super) fn stage_same_as_in_txn(
     if source == target {
         return refuse(vault, txn, context, source, SAME_AS_NOT_CLAIMS);
     }
+    // The status claim cites both endpoints as its evidence, and a foreign
+    // copy is never a source for a write (L7-02): a link with a foreign-copy
+    // endpoint is refused before its candidate is built.
+    if bodies.iter().any(crate::claim::claim_is_foreign_copy) {
+        return refuse(
+            vault,
+            txn,
+            context,
+            source,
+            crate::claim::SOURCE_FOREIGN_COPY,
+        );
+    }
     // As the Dreamer's nightly SameAs drafts it: under the source's own
     // exposure, its refs the pair, its taint the pair's meet. The refs ride
     // the typed evidence envelope, as a derived claim's do: the derivation

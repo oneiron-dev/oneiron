@@ -122,7 +122,10 @@ struct Fact {
 }
 
 /// The facts about `person` the Dreamer reads, band order: active, surfaced
-/// CLAIMs whose subject is the PERSON, each in one of the four bands.
+/// CLAIMs whose subject is the PERSON, each in one of the four bands. A
+/// foreign copy is never one: a person's `about` lines are a write, and a
+/// foreign copy is never a source for a write (L7-02), so neither the facts
+/// a line is asked from nor the facts its publish checks name one.
 fn person_facts(
     vault: &Vault,
     read: &ScopedRead<'_>,
@@ -141,6 +144,7 @@ fn person_facts(
         };
         if decoded.subject != ClaimSubject::Entity(person)
             || !crate::claim::claim_surfaceable(&decoded)
+            || crate::claim::claim_is_foreign_copy(&decoded)
         {
             continue;
         }

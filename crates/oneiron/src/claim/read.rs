@@ -104,7 +104,12 @@ impl Vault {
 
     /// Whether stored row `id` is a foreign copy as `rtxn` holds it
     /// ([`super::claim_is_foreign_copy`]): a CLAIM in a received foreign
-    /// WORLD. Any other row, or none, is not.
+    /// WORLD. The answer does not depend on whether the row reads now: a
+    /// CLAIM a read no longer serves (withheld, its words withdrawn) is
+    /// judged by its stored body's world, and an erased row by the scope its
+    /// delete kept (`deletion::tombstone_scope`), so a copy erased between a
+    /// prompt and the write it sources is still refused (L7-02). Any other
+    /// row, or an id this vault never held, is not.
     ///
     /// # Errors
     ///
@@ -115,11 +120,28 @@ impl Vault {
         id: &EntityId,
     ) -> Result<bool> {
         match crate::ports::ClaimStore::port_claim_get(self, rtxn, id) {
-            Ok(body) => Ok(body.is_some_and(|body| super::claim_is_foreign_copy(&body))),
+            Ok(Some(body)) => return Ok(super::claim_is_foreign_copy(&body)),
+            Ok(None) => {}
             // Not a CLAIM row.
-            Err(Error::InvalidClaimBody(_)) => Ok(false),
-            Err(error) => Err(error),
+            Err(Error::InvalidClaimBody(_)) => return Ok(false),
+            Err(error) => return Err(error),
         }
+        let stored = self
+            .port_entity_raw(rtxn, id)?
+            .filter(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN)
+            .filter(|raw| {
+                EntityMetadataHeader::parse(raw)
+                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+            })
+            .and_then(|raw| decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok());
+        if let Some(body) = stored {
+            return Ok(super::claim_is_foreign_copy(&body));
+        }
+        crate::deletion::tombstone_scope::deleted_scope_names_foreign_world_in(
+            &self.store,
+            rtxn,
+            id,
+        )
     }
 
     /// Whether any of `ids` is a foreign copy as `rtxn` holds it
