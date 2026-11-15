@@ -347,8 +347,7 @@ fn mcp_page_named_rows(
     server: &SyncServer,
     snapshot: &McpPageSnapshot,
 ) -> Result<std::collections::BTreeSet<oneiron::EntityId>, McpGatewayError> {
-    let payload =
-        serde_json::to_vec(&(&snapshot.output, &snapshot.keyframe)).unwrap_or_default();
+    let payload = serde_json::to_vec(&(&snapshot.output, &snapshot.keyframe)).unwrap_or_default();
     let mut rows = std::collections::BTreeSet::new();
     for row in crate::device_local::named_rows(&payload) {
         if server
@@ -360,8 +359,7 @@ fn mcp_page_named_rows(
             rows.insert(row);
         }
     }
-    if let Some(short_refs) =
-        crate::device_local::short_refs_named(&server.vault, &snapshot.output)
+    if let Some(short_refs) = crate::device_local::short_refs_named(&server.vault, &snapshot.output)
     {
         rows.extend(short_refs);
     }
