@@ -108,3 +108,40 @@ pub fn journal_run_effect(
     wtxn.commit()?;
     Ok(())
 }
+
+/// Appends a later gate decision with `outcome` on the effect binding of the
+/// receipt `receipt` names (its content kind and diff handle), as a pass no
+/// run asks records it: the connector-send executor's gate on a scheduled
+/// send it dispatches. No run's change journal is touched. Its `gate:` ref.
+///
+/// # Errors
+/// A malformed or unknown receipt ref, or the store's.
+#[doc(hidden)]
+pub fn append_binding_decision(vault: &Vault, receipt: &str, outcome: &str) -> Result<String> {
+    let id = crate::EntityId::from_hex(receipt.strip_prefix("gate:").unwrap_or(receipt))?;
+    let id = crate::store::GateDecisionId::from_bytes(*id.as_bytes());
+    let mut wtxn = vault.store.env.write_txn()?;
+    let held = vault
+        .store
+        .gate_decision_in_txn(&wtxn, id)?
+        .ok_or_else(|| crate::Error::InvalidConfig(format!("no gate receipt {receipt}")))?;
+    let record = crate::store::GateDecisionRecord {
+        decision_id: crate::store::GateDecisionId::now(),
+        created_at: vault.store.clock.now_recorded_at(),
+        outcome: outcome.to_owned(),
+        ..held
+    };
+    vault
+        .store
+        .append_gate_decision_in_txn(&mut wtxn, &record)?;
+    wtxn.commit()?;
+    Ok(format!("gate:{}", record.decision_id.to_hex()))
+}
+
+/// The code run a held call the consent sweep minted carries once a caller
+/// asking it from the run `run` adopts it (`None` for a caller in no run).
+#[doc(hidden)]
+#[must_use]
+pub fn sweep_minted_call_adopted_run(run: Option<&str>) -> Option<String> {
+    Vault::sweep_minted_call_adopted_run(run.map(str::to_owned))
+}
