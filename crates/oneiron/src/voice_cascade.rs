@@ -67,6 +67,8 @@ mod cancellation;
 mod heard;
 pub mod hosted_tts;
 pub mod media;
+#[cfg(feature = "sync")]
+pub mod our_voice;
 mod protocol;
 mod retrieval;
 mod safeguard;

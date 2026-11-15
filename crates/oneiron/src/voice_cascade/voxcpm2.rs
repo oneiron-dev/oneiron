@@ -109,7 +109,7 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
-    fn with_current<T>(
+    pub(crate) fn with_current<T>(
         &self,
         vault: &Vault,
         operation: impl FnOnce(&VoiceRegisterClip) -> Result<T>,
@@ -520,7 +520,6 @@ impl Vault {
     }
 }
 
-pub mod http;
 mod pcm;
 use pcm::PCM_WINDOW_BYTES;
 pub use pcm::{PcmSpool, VoxCpm2PcmBody};

@@ -68,6 +68,23 @@ ahead of the WAV; a header without the field keeps the inline transcript.
 Readiness capabilities are not warm identity: each render still matches and
 echoes the request's target against the exact pins `/ready` named.
 
+`GET /v1/voice` is the versioned duplex WebSocket the cascade speaks (L8-47
+PR V1; bearer credential, RFC 6455, stdlib framing, no subprotocol or
+extensions). A missing or wrong bearer gets 401 and no upgrade; a request
+without a valid upgrade gets 400. The server sends `ready` at once (version 1,
+the `/ready` body as its target, capabilities for a full-input voice). The
+client sends `start` with its target plus the transcript and reference byte
+counts, then the two binary frames, and gets `started` (the generation plus
+the render reply header); `text` renders whole inside the same admission as a
+POST and answers one or more `audio` headers plus PCM16LE binaries of at most
+65536 bytes, then `usage` (characters in code points, audio milliseconds); a
+failed render answers `error` with a code and never the text. `flush` is
+ignored, `end` erases the clip and answers `done`, `cancel` erases it and
+answers nothing. Text and transcript frames are bounded by `max_header_bytes`,
+the reference by `max_ref_bytes` (a larger frame gets close 1009); ping is
+answered with pong, close with close. `/ready` and `/render` remain only for
+the server's speech rung until PR V2 moves that rung to the socket.
+
 The CPU-only harness uses an injected fake model to prove request framing,
 ref forwarding, PCM conversion, and target metadata. It is **not** a GPU
 latency/quality or owner-ear verdict. Run: `uv run --with numpy python3 -m unittest

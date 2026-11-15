@@ -12,6 +12,8 @@ it loads that directory unverified under its pinned revision (`VOXCPM_REV`).
 Without either it downloads that revision as before.
 """
 import argparse
+import base64
+import hashlib
 import hmac
 import json
 import os
@@ -57,6 +59,30 @@ FIELDS = ("max_text_bytes", "max_ref_bytes", "max_queued_renders",
 # no text, transcript, reference or metadata is refused by size (Rule 5).
 WIRE_U64 = (1 << 64) - 1
 WIRE_USIZE = (1 << (8 * struct.calcsize("P"))) - 1
+
+# `GET /v1/voice`: one versioned duplex WebSocket (L8-47 PR V1). Text and
+# transcript frames are bounded by max_header_bytes, the reference by
+# max_ref_bytes; audio goes out split into 65536-byte binaries.
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+WS_AUDIO_CHUNK = 65536
+WS_OP_CONT = 0x0
+WS_OP_TEXT = 0x1
+WS_OP_BINARY = 0x2
+WS_OP_CLOSE = 0x8
+WS_OP_PING = 0x9
+WS_OP_PONG = 0xA
+
+
+class _WsEnd(Exception):
+    """The voice session is over: a close was answered, or the peer went away."""
+
+
+def _ws_unmask(payload, mask):
+    """Client payload bytes under their 4-byte mask."""
+    data = bytearray(payload)
+    for index in range(len(data)):
+        data[index] ^= mask[index & 3]
+    return bytes(data)
 
 
 def validate_limits(limits):
@@ -186,8 +212,8 @@ class Worker:
             meta["launch_manifest"] = self.identity.launch_manifest
         return meta
 
-    def render(self, meta, wav, ticket=None):
-        target = meta.get("target")
+    def validate_target(self, target):
+        """The target today's checks accept, answered with its `answer_meta`."""
         if not isinstance(target, dict) or target.get("warm") != self.target():
             raise ValueError("stale or mismatched warm target")
         if not all(isinstance(target.get(k), str) and target[k] for k in
@@ -196,28 +222,48 @@ class Worker:
         effective = validate_limits(target.get("limits"))
         if any(effective[k] > self.limits[k] for k in FIELDS):
             raise ValueError("request widens worker policy")
-        response_meta = self.answer_meta(target)
-        text = meta.get("text")
-        transcript = meta.get("transcript")
+        return self.answer_meta(target)
+
+    def synthesize(self, text, reference, transcript, ticket=None):
+        """PCM16LE bytes for one text: today's text, transcript, WAV and
+        output checks, one `model.generate` under the inference gate. The
+        reference is WAV bytes (written request-scoped, as `/render` does)
+        or the generation's held `reference.wav` path (the socket's clip)."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("invalid text")
         if not isinstance(transcript, str) or not transcript.strip():
             raise ValueError("invalid reference transcript")
-        if not wav.startswith(b"RIFF") or wav[8:12] != b"WAVE":
-            raise ValueError("invalid WAV reference")
-        # The reference is request-scoped, owner-only, and erased after inference.
-        with self.gate.hold(ticket):
-            with tempfile.TemporaryDirectory(dir=self.runtime_dir, prefix="ref-") as directory:
-                reference = Path(directory) / "reference.wav"
-                reference.write_bytes(wav)
-                samples = self.model.generate(text=text, prompt_wav_path=str(reference),
+        if isinstance(reference, (bytes, bytearray)):
+            wav = bytes(reference)
+            if not wav.startswith(b"RIFF") or wav[8:12] != b"WAVE":
+                raise ValueError("invalid WAV reference")
+            # The reference is request-scoped, owner-only, and erased after inference.
+            with self.gate.hold(ticket):
+                with tempfile.TemporaryDirectory(dir=self.runtime_dir, prefix="ref-") as directory:
+                    path = Path(directory) / "reference.wav"
+                    path.write_bytes(wav)
+                    samples = self.model.generate(text=text, prompt_wav_path=str(path),
+                                                  prompt_text=transcript,
+                                                  reference_wav_path=str(path))
+        else:
+            path = Path(reference)
+            with open(path, "rb") as stream:
+                header = stream.read(12)
+            if not header.startswith(b"RIFF") or header[8:12] != b"WAVE":
+                raise ValueError("invalid WAV reference")
+            with self.gate.hold(ticket):
+                samples = self.model.generate(text=text, prompt_wav_path=str(path),
                                               prompt_text=transcript,
-                                              reference_wav_path=str(reference))
+                                              reference_wav_path=str(path))
         import numpy as np
         values = np.asarray(samples)
         if values.ndim != 1 or not np.isfinite(values).all() or not values.size:
             raise ValueError("invalid model output")
-        pcm = (np.clip(values, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+        return (np.clip(values, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+
+    def render(self, meta, wav, ticket=None):
+        response_meta = self.validate_target(meta.get("target"))
+        pcm = self.synthesize(meta.get("text"), wav, meta.get("transcript"), ticket)
         return pack(response_meta, pcm)
 
 
@@ -286,6 +332,9 @@ def handler_for(worker):
                 worker_support.send_bytes(self, 200, "application/json", b"")
                 return
             if not self.authorized():
+                return
+            if self.path == "/v1/voice":
+                self.voice_socket()
                 return
             if self.path == "/stats":
                 worker_support.send_bytes(self, 200, "application/json",
@@ -364,6 +413,426 @@ def handler_for(worker):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def voice_socket(self):
+            upgrade = self.headers.get("Upgrade", "")
+            connection = self.headers.get("Connection", "")
+            version = self.headers.get("Sec-WebSocket-Version", "")
+            key = self.headers.get("Sec-WebSocket-Key", "")
+            if (upgrade.strip().lower() != "websocket"
+                    or "upgrade" not in connection.lower()
+                    or version.strip() != "13"
+                    or not key.strip()):
+                self.send_error(400, "bad websocket upgrade")
+                return
+            accept = base64.b64encode(hashlib.sha1(
+                (key.strip() + WS_GUID).encode()).digest()).decode("ascii")
+            # RFC 6455 4.1: the upgrade answer is HTTP/1.1 (the handler's
+            # default status line says HTTP/1.0, which a client refuses).
+            self.protocol_version = "HTTP/1.1"
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            self.wfile.flush()
+            self.close_connection = True
+            try:
+                self._voice_session()
+            except _WsEnd:
+                pass
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                pass
+            except Exception:
+                try:
+                    self._ws_send_close(1011)
+                except OSError:
+                    pass
+
+        def _voice_session(self):
+            limits = worker.limits
+            ready_target = {**worker.target(), "transcript_frame": True}
+            ready = {"type": "ready", "version": 1, "target": ready_target,
+                     "capabilities": {"input": "full", "streaming": False,
+                                      "alignment": "none", "remote_cancel": "before_start",
+                                      "max_text_bytes": limits["max_text_bytes"]}}
+            self._ws_send(WS_OP_TEXT, json.dumps(ready, separators=(",", ":")).encode())
+            held = None
+            try:
+                while True:
+                    raw = self._ws_read_message("text", limits["max_header_bytes"])
+                    try:
+                        message = json.loads(raw.decode("utf-8"))
+                    except (UnicodeError, ValueError):
+                        try:
+                            self._ws_send_close(1002)
+                        except OSError:
+                            pass
+                        return
+                    if not isinstance(message, dict) or not isinstance(message.get("type"), str):
+                        try:
+                            self._ws_send_close(1002)
+                        except OSError:
+                            pass
+                        return
+                    kind = message["type"]
+                    if kind == "flush":
+                        continue
+                    if kind == "cancel":
+                        generation = message.get("generation")
+                        if (type(generation) is int and held is not None
+                                and held["generation"] == generation):
+                            try:
+                                held["dir"].cleanup()
+                            except OSError:
+                                pass
+                            held = None
+                        continue
+                    generation = message.get("generation")
+                    if type(generation) is not int:
+                        try:
+                            self._ws_send_close(1002)
+                        except OSError:
+                            pass
+                        return
+                    if kind == "start":
+                        target = message.get("target")
+                        announced_transcript = message.get("transcript_bytes")
+                        announced_reference = message.get("reference_bytes")
+                        transcript_bytes = self._ws_read_message("binary", limits["max_header_bytes"])
+                        reference_bytes = self._ws_read_message("binary", limits["max_ref_bytes"])
+                        error = None
+                        answer = None
+                        if (type(announced_transcript) is not int
+                                or type(announced_reference) is not int
+                                or announced_transcript < 0 or announced_reference < 0
+                                or len(transcript_bytes) != announced_transcript
+                                or len(reference_bytes) != announced_reference):
+                            error = "invalid_request"
+                        else:
+                            try:
+                                transcript_text = transcript_bytes.decode("utf-8")
+                            except UnicodeError:
+                                transcript_text = ""
+                            try:
+                                answer = worker.validate_target(target)
+                            except ValueError as failure:
+                                error = ("stale_target" if str(failure) == "stale or mismatched warm target"
+                                         else "invalid_request")
+                            except Exception:
+                                error = "invalid_request"
+                            else:
+                                if not transcript_text.strip():
+                                    error = "invalid_request"
+                                elif (not reference_bytes.startswith(b"RIFF")
+                                      or reference_bytes[8:12] != b"WAVE"):
+                                    error = "invalid_request"
+                        if error is not None:
+                            self._ws_send(WS_OP_TEXT, json.dumps(
+                                {"type": "error", "generation": generation, "code": error},
+                                separators=(",", ":")).encode())
+                            continue
+                        if held is not None:
+                            try:
+                                held["dir"].cleanup()
+                            except OSError:
+                                pass
+                            held = None
+                        try:
+                            directory = tempfile.TemporaryDirectory(dir=worker.runtime_dir, prefix="ref-")
+                        except OSError:
+                            self._ws_send(WS_OP_TEXT, json.dumps(
+                                {"type": "error", "generation": generation, "code": "render_failed"},
+                                separators=(",", ":")).encode())
+                            continue
+                        try:
+                            path = Path(directory.name) / "reference.wav"
+                            path.write_bytes(reference_bytes)
+                        except OSError:
+                            try:
+                                directory.cleanup()
+                            except OSError:
+                                pass
+                            self._ws_send(WS_OP_TEXT, json.dumps(
+                                {"type": "error", "generation": generation, "code": "render_failed"},
+                                separators=(",", ":")).encode())
+                            continue
+                        held = {"generation": generation, "dir": directory, "path": path,
+                                "transcript": transcript_text, "target": target}
+                        started = {"type": "started", "generation": generation, **answer}
+                        self._ws_send(WS_OP_TEXT, json.dumps(started, separators=(",", ":")).encode())
+                        continue
+                    if kind == "text":
+                        text_value = message.get("text")
+                        with worker.activity.admit() as ticket:
+                            worker.admission.acquire()
+                            try:
+                                if held is None or held["generation"] != generation:
+                                    self._ws_send(WS_OP_TEXT, json.dumps(
+                                        {"type": "error", "generation": generation, "code": "not_started"},
+                                        separators=(",", ":")).encode())
+                                    continue
+                                try:
+                                    worker.validate_target(held["target"])
+                                except ValueError as failure:
+                                    code = ("stale_target" if str(failure) == "stale or mismatched warm target"
+                                            else "invalid_request")
+                                    self._ws_send(WS_OP_TEXT, json.dumps(
+                                        {"type": "error", "generation": generation, "code": code},
+                                        separators=(",", ":")).encode())
+                                    continue
+                                except Exception:
+                                    self._ws_send(WS_OP_TEXT, json.dumps(
+                                        {"type": "error", "generation": generation, "code": "invalid_request"},
+                                        separators=(",", ":")).encode())
+                                    continue
+                                try:
+                                    pcm = worker.synthesize(text_value, held["path"], held["transcript"], ticket)
+                                except ValueError as failure:
+                                    detail = str(failure)
+                                    if detail in ("invalid text", "invalid reference transcript",
+                                                  "invalid WAV reference"):
+                                        code = "invalid_request"
+                                    else:
+                                        code = "render_failed"
+                                    self._ws_send(WS_OP_TEXT, json.dumps(
+                                        {"type": "error", "generation": generation, "code": code},
+                                        separators=(",", ":")).encode())
+                                    continue
+                                except (TypeError, UnicodeError, KeyError):
+                                    self._ws_send(WS_OP_TEXT, json.dumps(
+                                        {"type": "error", "generation": generation, "code": "invalid_request"},
+                                        separators=(",", ":")).encode())
+                                    continue
+                                except Exception:
+                                    self._ws_send(WS_OP_TEXT, json.dumps(
+                                        {"type": "error", "generation": generation, "code": "render_failed"},
+                                        separators=(",", ":")).encode())
+                                    continue
+                                characters = len(text_value)
+                                audio_ms = len(pcm) // 2 * 1000 // worker.sample_rate
+                                for offset in range(0, len(pcm), WS_AUDIO_CHUNK):
+                                    chunk = pcm[offset:offset + WS_AUDIO_CHUNK]
+                                    header = {"type": "audio", "generation": generation,
+                                              "chunk_index": offset // WS_AUDIO_CHUNK,
+                                              "bytes": len(chunk)}
+                                    self._ws_send(WS_OP_TEXT, json.dumps(
+                                        header, separators=(",", ":")).encode())
+                                    self._ws_send(WS_OP_BINARY, chunk)
+                                self._ws_send(WS_OP_TEXT, json.dumps(
+                                    {"type": "usage", "generation": generation,
+                                     "characters": characters, "audio_ms": audio_ms},
+                                    separators=(",", ":")).encode())
+                            finally:
+                                worker.admission.release()
+                        continue
+                    if kind == "end":
+                        if held is not None and held["generation"] == generation:
+                            try:
+                                held["dir"].cleanup()
+                            except OSError:
+                                pass
+                            held = None
+                        self._ws_send(WS_OP_TEXT, json.dumps(
+                            {"type": "done", "generation": generation},
+                            separators=(",", ":")).encode())
+                        continue
+                    try:
+                        self._ws_send_close(1002)
+                    except OSError:
+                        pass
+                    return
+            finally:
+                if held is not None:
+                    try:
+                        held["dir"].cleanup()
+                    except OSError:
+                        pass
+
+        def _ws_send(self, opcode, payload):
+            head = bytes([0x80 | opcode])
+            count = len(payload)
+            if count <= 125:
+                head += bytes([count])
+            elif count <= 0xFFFF:
+                head += bytes([126]) + struct.pack("!H", count)
+            else:
+                head += bytes([127]) + struct.pack("!Q", count)
+            self.connection.sendall(head + payload)
+
+        def _ws_send_close(self, code, reason=b""):
+            self._ws_send(WS_OP_CLOSE, struct.pack("!H", code) + reason)
+
+        def _ws_read_exactly(self, count, deadline):
+            parts = []
+            remaining = count
+            while remaining:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError("upload deadline")
+                self.connection.settimeout(left)
+                try:
+                    piece = self.rfile.read1(remaining)
+                except (TimeoutError, socket.timeout):
+                    raise TimeoutError("upload deadline") from None
+                except OSError:
+                    raise _WsEnd from None
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("upload deadline")
+                if not piece:
+                    raise _WsEnd from None
+                parts.append(piece)
+                remaining -= len(piece)
+            return b"".join(parts) if len(parts) != 1 else parts[0]
+
+        def _ws_read_message(self, expect, bound):
+            fragments = []
+            total = 0
+            first_op = None
+            while True:
+                self.connection.settimeout(None)
+                try:
+                    head = self.rfile.read(1)
+                except OSError:
+                    raise _WsEnd from None
+                if not head:
+                    raise _WsEnd from None
+                deadline = time.monotonic() + worker.limits["upload_read_deadline_ms"] / 1000
+                try:
+                    tail = self._ws_read_exactly(1, deadline)
+                except TimeoutError:
+                    try:
+                        self._ws_send_close(1011, b"upload deadline exceeded")
+                    except OSError:
+                        pass
+                    raise _WsEnd from None
+                byte0 = head[0]
+                byte1 = tail[0]
+                finished = byte0 & 0x80
+                reserved = byte0 & 0x70
+                op = byte0 & 0x0F
+                masked = byte1 & 0x80
+                length = byte1 & 0x7F
+                if reserved or not masked or op in (0x3, 0x4, 0x5, 0x6, 0x7,
+                                                    0xB, 0xC, 0xD, 0xE, 0xF):
+                    try:
+                        self._ws_send_close(1002)
+                    except OSError:
+                        pass
+                    raise _WsEnd from None
+                if op >= 0x8:
+                    if not finished or length > 125:
+                        try:
+                            self._ws_send_close(1002)
+                        except OSError:
+                            pass
+                        raise _WsEnd from None
+                    try:
+                        mask = self._ws_read_exactly(4, deadline)
+                        payload = self._ws_read_exactly(length, deadline) if length else b""
+                    except TimeoutError:
+                        try:
+                            self._ws_send_close(1011, b"upload deadline exceeded")
+                        except OSError:
+                            pass
+                        raise _WsEnd from None
+                    payload = _ws_unmask(payload, mask)
+                    if op == WS_OP_PING:
+                        try:
+                            self._ws_send(WS_OP_PONG, payload)
+                        except OSError:
+                            raise _WsEnd from None
+                        continue
+                    if op == WS_OP_PONG:
+                        continue
+                    code = 1000
+                    if len(payload) == 1:
+                        code = 1002
+                    elif len(payload) >= 2:
+                        (seen,) = struct.unpack("!H", payload[:2])
+                        if 1000 <= seen <= 4999 and seen not in (1005, 1006, 1015):
+                            code = seen
+                    try:
+                        self._ws_send_close(code)
+                    except OSError:
+                        pass
+                    raise _WsEnd from None
+                try:
+                    if length == 126:
+                        (length,) = struct.unpack("!H", self._ws_read_exactly(2, deadline))
+                    elif length == 127:
+                        (length,) = struct.unpack("!Q", self._ws_read_exactly(8, deadline))
+                        if length >> 63:
+                            try:
+                                self._ws_send_close(1002)
+                            except OSError:
+                                pass
+                            raise _WsEnd from None
+                    mask = self._ws_read_exactly(4, deadline)
+                except TimeoutError:
+                    try:
+                        self._ws_send_close(1011, b"upload deadline exceeded")
+                    except OSError:
+                        pass
+                    raise _WsEnd from None
+                if first_op is None:
+                    if op == WS_OP_CONT:
+                        try:
+                            self._ws_send_close(1002)
+                        except OSError:
+                            pass
+                        raise _WsEnd from None
+                    ceiling = (worker.limits["max_header_bytes"] if op == WS_OP_TEXT
+                               else worker.limits["max_ref_bytes"])
+                    if length > ceiling:
+                        try:
+                            self._ws_send_close(1009)
+                        except OSError:
+                            pass
+                        raise _WsEnd from None
+                    wanted = WS_OP_TEXT if expect == "text" else WS_OP_BINARY
+                    if op != wanted:
+                        try:
+                            self._ws_send_close(1002)
+                        except OSError:
+                            pass
+                        raise _WsEnd from None
+                    if length > bound:
+                        try:
+                            self._ws_send_close(1009)
+                        except OSError:
+                            pass
+                        raise _WsEnd from None
+                    first_op = op
+                else:
+                    if op != WS_OP_CONT:
+                        try:
+                            self._ws_send_close(1002)
+                        except OSError:
+                            pass
+                        raise _WsEnd from None
+                    if total + length > bound:
+                        try:
+                            self._ws_send_close(1009)
+                        except OSError:
+                            pass
+                        raise _WsEnd from None
+                try:
+                    payload = self._ws_read_exactly(length, deadline) if length else b""
+                except TimeoutError:
+                    try:
+                        self._ws_send_close(1011, b"upload deadline exceeded")
+                    except OSError:
+                        pass
+                    raise _WsEnd from None
+                payload = _ws_unmask(payload, mask)
+                total += length
+                if finished:
+                    if not fragments:
+                        return payload
+                    fragments.append(payload)
+                    return b"".join(fragments)
+                fragments.append(payload)
 
         def log_message(self, format, *args):
             # Do not log URL, auth, text, or reference bytes.
