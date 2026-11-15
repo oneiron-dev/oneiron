@@ -389,6 +389,23 @@ pub fn pull_for_queued_erase_obligation(vault: &Vault) -> Result<()> {
     })
 }
 
+/// A run of `job` about `subject` started at `at` and never finished, as a crash or a kill leaves
+/// it: its start marker, in its own write (stage 5a-2). Nothing when the job is not armed.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn plant_start_marker(
+    vault: &Vault,
+    job: &str,
+    subject: Option<EntityId>,
+    at: u64,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::schedule::plant_start_marker_in_txn(&vault.store, txn, job, subject, at)
+    })
+}
+
 /// The codes of the job kinds whose cadence is a Setting key but which someone other than the
 /// engine may arm; empty, since only the engine arms from a cadence key.
 #[must_use]
