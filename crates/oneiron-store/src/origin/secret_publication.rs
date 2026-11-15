@@ -46,6 +46,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{LazyLock, Mutex, PoisonError};
 
 use heed::RoTxn;
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::git_wire::ids::GitOid;
@@ -71,8 +72,11 @@ pub const SECRET_HISTORY_UNKNOWN_NOTICE: &str = "this history or its secret mark
                                                  private.";
 
 /// Who can read a destination, as the owner states it (C3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("repo.destination.visibility")]
 pub enum RepoDestinationVisibility {
     /// Anyone can read it.
     Public,
@@ -82,21 +86,12 @@ pub enum RepoDestinationVisibility {
     Unknown,
 }
 
-impl RepoDestinationVisibility {
-    /// The wire string.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Public => "public",
-            Self::Private => "private",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
 /// What a destination is to the repository (C3, A2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("repo.destination.role")]
 pub enum RepoDestinationRole {
     /// A mirror or publish destination: each send to it obeys the hold
     /// unless it is private.
@@ -104,17 +99,6 @@ pub enum RepoDestinationRole {
     /// The repository's own original source: an exact return there stays
     /// exact (A2), through the export door only.
     OriginalSource,
-}
-
-impl RepoDestinationRole {
-    /// The wire string.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Mirror => "mirror",
-            Self::OriginalSource => "original_source",
-        }
-    }
 }
 
 /// A destination's audience: who can read it, and what it is (C3).

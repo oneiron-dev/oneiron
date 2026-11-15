@@ -1,5 +1,6 @@
 //! Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_id::AttemptId;
@@ -132,8 +133,10 @@ pub const CLEANUP_PHASE: &str = "cleanup";
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("cleanup.kind")]
 pub enum CleanupKind {
     /// An extraction-minted PERSON row with no live claim about it.
     ClaimlessExtractionPerson,
@@ -148,29 +151,10 @@ pub enum CleanupKind {
 }
 
 impl CleanupKind {
-    /// The pinned on-disk string for this kind.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ClaimlessExtractionPerson => "claimless_extraction_person",
-            Self::EmptySummary => "empty_summary",
-            Self::CompletedTask => "completed_task",
-            Self::CompletedAttempt => "completed_attempt",
-            Self::RetainedNote => "retained_note",
-        }
-    }
-
     /// Parses the pinned on-disk string.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "claimless_extraction_person" => Some(Self::ClaimlessExtractionPerson),
-            "empty_summary" => Some(Self::EmptySummary),
-            "completed_task" => Some(Self::CompletedTask),
-            "completed_attempt" => Some(Self::CompletedAttempt),
-            "retained_note" => Some(Self::RetainedNote),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
@@ -187,9 +171,19 @@ pub struct CleanupCandidate {
 /// [`Self::AutoWithDigest`], the reading of a vault with no stored posture
 /// (see [`VAULT_CLEANUP_POSTURE_KEY`]).
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("cleanup.posture")]
 pub enum CleanupPosture {
     /// Emit a proposal; archive nothing until the owner accepts.
     ProposeFirst,
@@ -199,23 +193,10 @@ pub enum CleanupPosture {
 }
 
 impl CleanupPosture {
-    /// The pinned on-disk string for this posture.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ProposeFirst => "propose_first",
-            Self::AutoWithDigest => "auto_with_digest",
-        }
-    }
-
     /// Parses the pinned on-disk string.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "propose_first" => Some(Self::ProposeFirst),
-            "auto_with_digest" => Some(Self::AutoWithDigest),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
