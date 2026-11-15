@@ -77,7 +77,7 @@ impl SettingValue for CalendarViewAfterSecs {
     }
 }
 
-fn reply_max_recipients() -> ReplyRecipientCeiling {
+fn shipped_reply_ceiling() -> ReplyRecipientCeiling {
     ReplyRecipientCeiling(u32::try_from(MAX_REPLY_RECIPIENTS).unwrap_or(u32::MAX))
 }
 
@@ -99,7 +99,7 @@ crate::setting::setting_keys! {
     /// receive one reply an agent drafts.
     pub(crate) MAIL_REPLY_MAX_RECIPIENTS: ReplyRecipientCeiling =
         "mail_calendar.reply.max_recipients" {
-        kind: Kind::new(reply_max_recipients)
+        kind: Kind::new(shipped_reply_ceiling)
             .strictest(reply_to_one)
             .tighter(lower_is_tighter::<ReplyRecipientCeiling>),
     };
