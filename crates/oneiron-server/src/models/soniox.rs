@@ -39,7 +39,7 @@ use oneiron::voice_cascade::media::{LeasedAsrStream, MediaVoiceRoute, VoiceStrea
 use oneiron::voice_cascade::spilled_audio::{AudioSpool, SpilledAudio};
 use oneiron::voice_cascade::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
 use oneiron::{BudgetLease, FatalLlmError, Vault};
-use oneiron_speech::asr::soniox::{SonioxAsrClient, SonioxUpdate};
+use oneiron_speech::asr::soniox::{FINALIZE, SonioxAsrClient, SonioxUpdate, retriable_error};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -63,11 +63,6 @@ use segment::{Heard, Segment};
 /// A segment that has sent nothing for this long sends a keepalive, so a
 /// silence gap does not end it.
 const KEEPALIVE_AFTER: Duration = Duration::from_secs(5);
-/// Soniox error codes a fresh socket may clear: a request timeout and the
-/// server's own failures. Any other error fails the hearing.
-const RETRIABLE_ERROR_CODES: [u64; 5] = [408, 500, 502, 503, 504];
-/// The control frame that asks Soniox to finalize every word so far.
-const FINALIZE: &str = r#"{"type":"finalize"}"#;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type Opening = Pin<Box<dyn Future<Output = oneiron::Result<Segment>> + Send>>;
@@ -194,18 +189,6 @@ impl MediaBackend for LiveOnly {
 pub(super) fn live_backend(provider: &ProviderConfig) -> anyhow::Result<Arc<dyn MediaBackend>> {
     bearer(provider)?;
     Ok(Arc::new(LiveOnly))
-}
-
-/// A Soniox error a fresh socket may clear, as the hearing's failure.
-fn retriable_error(frame: &serde_json::Value) -> Option<oneiron::Error> {
-    let code = frame.get("error_code")?.as_u64()?;
-    RETRIABLE_ERROR_CODES.contains(&code).then(|| {
-        let message = frame
-            .get("error_message")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unnamed");
-        invalid(&format!("provider error: {code}: {message}"))
-    })
 }
 
 fn socket_error(error: &tokio_tungstenite::tungstenite::Error) -> oneiron::Error {

@@ -6,7 +6,9 @@
 # no `oneiron-image-*` adapter crate stands apart from it, and the Gemini media
 # wire is no longer in `oneiron-llm`. `oneiron-speech` holds the speech wires,
 # so the Soniox ASR and Irodori/MOSS-local TTS wires are no longer in core's
-# voice cascade. The `oneiron-image` organ is not a wire adapter and stays its
+# voice cascade, and the server's speech rungs keep their sends but define no
+# vendor codec of their own (Cartesia, ElevenLabs, VoxCPM2 framing, Soniox
+# error codes). The `oneiron-image` organ is not a wire adapter and stays its
 # own crate.
 #
 # Fails CLOSED: a missing or unreadable manifest fails the check. Reads the
@@ -19,6 +21,7 @@ root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
 python3 - "${root}" <<'PY'
 import pathlib
+import re
 import sys
 
 try:
@@ -68,6 +71,30 @@ FOREIGN_PATHS = (
 for path, reason in FOREIGN_PATHS:
     if (root / path).exists():
         refused.append(f"{path} exists: {reason}")
+
+# A host file keeps the send, the key, the permit and the spool; the codec it
+# speaks is oneiron-speech's, so the host defines none of these items.
+HOST_CODEC_ITEMS = (
+    ("crates/oneiron-server/src/models/hosted_speech.rs",
+     ("fn build", "fn parse", "const PCM_RATE", "const CARTESIA_VERSION", "enum HostedWire",
+      "struct VendorVoice", "fn url_safe", "fn joined_wav", "fn clip_part")),
+    ("crates/oneiron-server/src/models/voxcpm2_speech.rs",
+     ("enum TranscriptPlacement", "struct Transcript", "fn render_header", "fn escaped_len",
+      "fn header_pieces", "fn split_to_fit", "fn joined_wav_header")),
+    ("crates/oneiron-server/src/models/soniox.rs",
+     ("const RETRIABLE_ERROR_CODES", "const FINALIZE", "fn retriable_error")),
+)
+for path, items in HOST_CODEC_ITEMS:
+    host = root / path
+    if not host.is_file():
+        refused.append(f"{path} is missing")
+        continue
+    text = host.read_text(encoding="utf-8")
+    for item in items:
+        kind, name = item.split(" ")
+        pattern = rf"^\s*(?:pub(?:\([^)]*\))?\s+)?{kind}\s+{name}\b"
+        if re.search(pattern, text, re.MULTILINE):
+            refused.append(f"{path} defines `{item}`: the codec belongs to oneiron-speech")
 
 # The image organ is a process boundary, not an adapter: it stays.
 organ = crates / "oneiron-image" / "Cargo.toml"

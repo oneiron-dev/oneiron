@@ -117,7 +117,7 @@ pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::{MeshRoutes, withdraw_discovered};
 pub(crate) use host_budgets::ModelHostBudgets;
-pub use hosted_speech::{HostedCloner, VendorVoice};
+pub use hosted_speech::HostedCloner;
 pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
 pub(crate) use ladder::{AnsweringRung, ModelCallBinding};
 pub use ladder::{CallDeadline, OfferLadder};
@@ -127,6 +127,7 @@ pub(crate) use media::JobSpendLedger;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
+pub use oneiron_speech::design::hosted::VendorVoice;
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
 pub(crate) use receipts::ServerReceipts;
