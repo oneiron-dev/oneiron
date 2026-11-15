@@ -10,8 +10,10 @@
 
 use loro::VersionVector;
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use oneiron::deletion::{LegalHoldEventKind, LegalHoldTarget};
 use oneiron::edge::EdgeActorClass;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use oneiron::store::GateDecisionId;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::{DeleteReason, EntityId, Vault, WriteActor};
@@ -173,4 +175,79 @@ fn an_owner_release_on_a_replica_releases_the_uploaders_chain_version() {
         "the uploader kept the released version's bytes"
     );
     assert!(stores(&a.vault, KEPT), "the other version's bytes stay");
+}
+
+/// BLOB-VERSION-HELD-PURGE (Engine ruling 15 Nov 19:25): the owner of A, the uploader, holds the
+/// artifact. B, a replica, releases a version, so only the claim's tombstone travels, and A's
+/// replay of it is refused as a held claim's would be: the claim and its version still read on A,
+/// and the refusal reaches A's hold log.
+///
+/// Red at #7640's head 1ad04d0f17e1: the replay refuses only a hold on the claim id itself, so it
+/// purges the claim while the held artifact keeps the version, and reading that version answers
+/// `CorruptedIndex`.
+#[test]
+fn a_held_artifact_keeps_the_version_whose_claim_a_replica_releases() {
+    let (mut a, mut b) = vault_pair();
+    let (artifact, claims) = upload(&mut a, T0, &[RELEASED, KEPT]);
+    let released = a
+        .vault
+        .blob_artifact_versions(&artifact)
+        .unwrap()
+        .into_iter()
+        .find(|version| version.claim_id == claims[0])
+        .expect("fixture: the uploader's chain records the first version under its claim")
+        .version;
+    exchange(&a, &b, WINDOW);
+    assert!(
+        b.vault.get_raw(&claims[0]).unwrap().is_some(),
+        "fixture: the replica received the version claim"
+    );
+    let person = a.vault.ensure_embedded_owner_actor().unwrap();
+    let owner = a
+        .vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .unwrap();
+    let hold = a
+        .vault
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(artifact)], None)
+        .unwrap();
+
+    // As in the release test above: B deletes with its window closed, and A catches up through
+    // B's export door.
+    b.close_window(WINDOW);
+    b.vault
+        .delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)
+        .unwrap();
+    b.recover(WINDOW);
+    sync_through_doors(&a, &mut b);
+    a.recover(WINDOW);
+
+    assert!(
+        b.vault.get_raw(&claims[0]).unwrap().is_none(),
+        "fixture: the replica released the version claim"
+    );
+    let log = a.vault.legal_hold_log(&owner).unwrap();
+    assert!(
+        log.iter().any(|event| event.hold_id == hold.hold_id
+            && matches!(event.event, LegalHoldEventKind::DeleteRefused)),
+        "the artifact's hold refused no purge on the uploader: {log:?}"
+    );
+    assert!(
+        a.vault.get_raw(&claims[0]).unwrap().is_some(),
+        "the uploader's replay purged the claim of a version its hold keeps"
+    );
+    let read = a.vault.blob_artifact_version_metadata(&artifact, released);
+    assert!(
+        matches!(read, Ok(Some(_))),
+        "the held version no longer reads on the uploader: {read:?}"
+    );
+    assert_eq!(
+        a.vault.blob_artifact_versions(&artifact).unwrap().len(),
+        2,
+        "the uploader's chain lost a version its hold keeps"
+    );
+    assert!(
+        stores(&a.vault, RELEASED),
+        "the uploader dropped the held version's bytes"
+    );
 }
