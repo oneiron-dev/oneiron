@@ -16,6 +16,7 @@ use super::{
     pattern_launch, pump_caller, run_continuation, scope_funding, task_engine_run_seat,
     task_run_seat, text, unix_now,
 };
+use crate::ai_host::PrefixRefresh;
 use crate::mcp::LiveLeaseRunner;
 use oneiron::engine_executor::SelfBriefPort;
 use oneiron::llm::seat::SeatLearningContext;
@@ -355,6 +356,7 @@ pub(super) fn run_bound(
             server.decision_host(),
             issuer,
             &server.live_runs,
+            server.prefix_refresh.get(),
             &exposures,
             &server.ai,
             planned.as_ref(),
@@ -580,6 +582,7 @@ fn enter_run(
     decisions: &DecisionHost,
     issuer: Option<&oneiron::authority::HostSlipIssuer>,
     live_runs: &super::LiveRuns,
+    prefix_refresh: Option<&Arc<PrefixRefresh>>,
     exposures: &[TaskExposure],
     ai: &crate::ai_host::AiHandle,
     planned: Option<&PlannedModel>,
@@ -653,6 +656,13 @@ fn enter_run(
             spend.cloned(),
         )
         .map_err(text)?;
+    // L2-37 PR-3: hold the run's answering rung slot while it runs, so
+    // the idle pass can refresh the prefix its last call parked. The id
+    // is the entry's: the LiveRuns key, the step calls' run and the
+    // park's `WaitKey.run` are one id for a resident run.
+    if let Some(refresh) = prefix_refresh {
+        live.hold_answering_rungs(refresh.hold(config.run_id));
+    }
     let _serial = live.enter();
     door.bind_meter(line);
     door.bind_lease(lease);

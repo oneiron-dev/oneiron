@@ -369,6 +369,7 @@ impl SyncServer {
             mcp_code_run_continuations: crate::api::McpCodeRunContinuations::default(),
             reader_runner,
             live_runs,
+            prefix_refresh: std::sync::OnceLock::new(),
             secret_destinations: Default::default(),
             seat_helpers: Default::default(),
             model_budgets,

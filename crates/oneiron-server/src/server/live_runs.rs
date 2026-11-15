@@ -49,8 +49,10 @@ use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use tokio::sync::OwnedMutexGuard;
 
 use super::self_brief_custody::{BriefKey, BriefOwner, SelfBriefCustody};
+use crate::ai_host::HeldAnsweringRung;
 use crate::config::models::PlannerSettings;
 use crate::lens_frames::LensFrameStore;
+use crate::models::AnsweringRung;
 
 /// An action on a live-run row named no handle.
 pub(crate) const LIVE_RUN_REQUIRED: &str = "live_run_required";
@@ -190,6 +192,16 @@ pub(crate) struct LiveRunEntry {
     model_seat: Option<ModelSeat>,
     definition: AgentDefinition,
     spend_scope: Option<SpendScopeId>,
+    /// L2-37 PR-3: the run's answering rung slot, held while the run runs:
+    /// its step calls fill it as they answer, beside the compaction
+    /// writer's hold of the same slot (FIX 4933). Dropped when the run
+    /// parks, so a resumed run starts with a fresh slot.
+    answering: Mutex<Option<HeldAnsweringRung>>,
+    /// L2-37 PR-3: the run's latest answering rung, kept for the idle
+    /// pass's Keep refresh: what the hold's latest was when the run parked
+    /// with a cached prefix. Cleared when the run runs again or its idle
+    /// calls end.
+    parked_prefix: Mutex<Option<AnsweringRung>>,
     attached: Mutex<Option<CodeRunLiveRunBinding>>,
     /// Minimal request provenance belongs to one exact credential attachment,
     /// never to a later rebind or a different lease of this run.
@@ -223,6 +235,42 @@ impl LiveRunEntry {
     /// and its close as it leaves.
     pub(crate) fn hold_self_brief(&self, installation: (BriefKey, BriefOwner)) {
         *lock(&self.self_brief) = Some(installation);
+    }
+
+    /// Holds the run's answering rung slot while it runs, clearing the
+    /// parked prefix: the run is running again (L2-37 PR-3).
+    pub(crate) fn hold_answering_rungs(&self, held: HeldAnsweringRung) {
+        *lock(&self.answering) = Some(held);
+        *lock(&self.parked_prefix) = None;
+    }
+
+    /// Drops the run's answering rung hold as it parks, so a resumed run
+    /// starts with a fresh slot; with `keep_prefix`, keeps the hold's
+    /// latest answering rung for the idle pass's Keep refresh (L2-37 PR-3).
+    pub(crate) fn park_answering_rungs(&self, keep_prefix: bool) {
+        let held = lock(&self.answering).take();
+        *lock(&self.parked_prefix) = held
+            .filter(|_| keep_prefix)
+            .as_ref()
+            .and_then(HeldAnsweringRung::latest);
+    }
+
+    /// The run's parked answering rung, for the idle pass's Keep refresh
+    /// (L2-37 PR-3).
+    pub(crate) fn parked_prefix(&self) -> Option<AnsweringRung> {
+        lock(&self.parked_prefix).clone()
+    }
+
+    /// Forgets the run's parked answering rung: its idle calls are over
+    /// (L2-37 PR-3).
+    pub(crate) fn forget_parked_prefix(&self) {
+        *lock(&self.parked_prefix) = None;
+    }
+
+    /// The scope the run's entries spend under, as its first entry of this
+    /// lease registered it.
+    pub(crate) fn spend_scope(&self) -> Option<SpendScopeId> {
+        self.spend_scope.clone()
     }
 
     fn is_lease(&self, actor: WriteActor, leased: &AttemptRecord) -> bool {
@@ -303,6 +351,8 @@ impl LiveRuns {
             model_seat,
             definition,
             spend_scope,
+            answering: Mutex::new(None),
+            parked_prefix: Mutex::new(None),
             attached: Mutex::new(attached),
             repo_request: Mutex::new(None),
             browser: OnceLock::new(),
@@ -525,7 +575,8 @@ impl LiveRuns {
         Ok(ResolvedLiveRun { entry, binding })
     }
 
-    fn get(&self, run: EntityId) -> Option<Arc<LiveRunEntry>> {
+    /// Run `run`'s registered entry, while it is registered.
+    pub(crate) fn get(&self, run: EntityId) -> Option<Arc<LiveRunEntry>> {
         self.map().get(&run).cloned()
     }
 

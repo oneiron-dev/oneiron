@@ -62,8 +62,8 @@ use oneiron::attempt_queue::{
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, CodeRunReplayRecord, CompactionHostBinding, HostPlannerBinding,
-    HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat, TaskExposure, bind_compaction_caller,
-    finalize_step_captures, park_and_bind_wait_trap,
+    HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat, TaskExposure, WaitKey,
+    bind_compaction_caller, finalize_step_captures, park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
 use oneiron::context_board::TurnWake;
@@ -84,7 +84,8 @@ use oneiron::learning::TypeRef;
 use oneiron::llm::SpentKind;
 use oneiron::llm::seat::{ModelSeat, SeatKind, SeatTask};
 use oneiron::llm::{
-    DurableStepContext, open_trap, register_wait, trap_for_durable_wait, trap_park_owner,
+    DurableStepContext, ServedCacheHorizon, open_trap, register_wait, trap_for_durable_wait,
+    trap_park_owner,
 };
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::self_heal::audit::AttemptConfession;
@@ -168,13 +169,32 @@ const FORK_REFUSALS: [&str; 5] = [
     "continuation_storage",
 ];
 
-/// L2-37: each parked run whose cached prompt prefix is about to expire gets
-/// its idle call, Fold or Expire, and the next one due bounds the pass's
-/// sleep. Blocking.
-fn idle_calls(vault: &Vault, now: u64, pass: &mut Pass) {
-    if let Err(error) = oneiron::idle_fold::run_due_idle_calls(vault, now.saturating_mul(1_000)) {
-        pass.faults
-            .insert("idle calls".to_owned(), error.to_string());
+/// L2-37 PR-3: each parked run whose cached prompt prefix is about to
+/// expire gets its idle call, Fold, Expire or one charged Keep refresh, and
+/// the next one due bounds the pass's sleep. Blocking.
+fn idle_calls(server: &SyncServer, now: u64, pass: &mut Pass) {
+    let vault = server.vault();
+    // The Keep refresh of `key`'s parked prefix, or `None` when any piece
+    // is missing: no entry, no parked prefix, or no refresher (code mode
+    // off).
+    let mut refresh = |key: &WaitKey| -> Option<ServedCacheHorizon> {
+        let entry = server.live_runs.get(key.run)?;
+        let kept = entry.parked_prefix()?;
+        let scope = entry.spend_scope();
+        server.prefix_refresh.get()?.refresh(scope.as_ref(), &kept)
+    };
+    match oneiron::idle_fold::run_due_idle_calls(vault, now.saturating_mul(1_000), &mut refresh) {
+        Ok(made) => {
+            for key in &made.ended {
+                if let Some(entry) = server.live_runs.get(key.run) {
+                    entry.forget_parked_prefix();
+                }
+            }
+        }
+        Err(error) => {
+            pass.faults
+                .insert("idle calls".to_owned(), error.to_string());
+        }
     }
     match oneiron::idle_fold::next_idle_call_due_ms(vault) {
         Ok(Some(due_ms)) => {
@@ -466,7 +486,7 @@ impl SyncServer {
             pass.faults
                 .insert("outage parks".to_owned(), error.to_string());
         }
-        idle_calls(vault, now, &mut pass);
+        idle_calls(self, now, &mut pass);
         let agents = match vault.entities_by_type(ENTITY_TYPE_AGENT_DEF) {
             Ok(agents) => agents,
             Err(error) => {
@@ -629,6 +649,12 @@ impl SyncServer {
             Ok(BoundRun::Trapped) => true,
             Err(error) => parks_on_outage(error),
         };
+        // L2-37 PR-3: the run's last answer left a cached prompt prefix,
+        // whose idle call its park records.
+        let cached_prefix = matches!(
+            &ran,
+            Ok(BoundRun::Agent(outcome)) if outcome.cache_horizon.is_some()
+        );
         let completed_run = match &ran {
             Ok(BoundRun::Agent(outcome))
                 if matches!(outcome.status, EngineExecutorStatus::Complete) =>
@@ -638,7 +664,7 @@ impl SyncServer {
             _ => None,
         };
         let run = EntityId::from_bytes(*id.as_bytes()).ok();
-        if let Err(error) = self.live_runs.settle(run, waits, || {
+        let settlement = self.live_runs.settle(run, waits, || {
             settle(
                 vault,
                 self.decision_host(),
@@ -649,8 +675,15 @@ impl SyncServer {
                     .clone()
                     .unwrap_or(HealerSlot::Reserved),
             )
-        }) {
+        });
+        if let Err(error) = &settlement {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
+        }
+        // L2-37 PR-3: a parked run drops its answering rung hold, and keeps
+        // its latest answering rung for the idle pass's Keep refresh only
+        // when it settled with a cached prefix.
+        if waits && let Some(entry) = run.and_then(|run| self.live_runs.get(run)) {
+            entry.park_answering_rungs(cached_prefix && settlement.is_ok());
         }
         // FIX 4747: the run left this host; its next claim takes a fence
         // again.

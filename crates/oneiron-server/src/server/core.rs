@@ -171,6 +171,10 @@ pub struct SyncServer {
     /// The live agent runs a harness may act for over HTTP (OF-181): each
     /// runner's lease proof, its attached credential and its guard.
     pub(crate) live_runs: Arc<super::LiveRuns>,
+    /// L2-37 PR-3: the idle prefix refresher, set once when code mode
+    /// binds: the resident pump's idle pass resends a parked run's last
+    /// request through it. Empty with no model, as code mode is.
+    pub(crate) prefix_refresh: std::sync::OnceLock<Arc<crate::ai_host::PrefixRefresh>>,
     /// The T1 secret destinations each run host registered for its runs
     /// (DOOR-124): the `self.secrets.*` doors deliver into them.
     pub(crate) secret_destinations: crate::runtime::SecretDestinations,
@@ -354,7 +358,8 @@ const _: fn(&SyncServer) = |server| {
         mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
-        mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
+        mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, prefix_refresh,
+        secret_destinations,
         seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
