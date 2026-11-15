@@ -134,6 +134,8 @@ pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in
 pub use resident_for_human::run_free_time_for_human;
 #[cfg(oneiron_test_support)]
 pub(crate) use resources::extraction_routing_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use resources::open_conflict_door;
 pub use resources::{NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant};
 pub use retained_conflict::RetainedAlternative;
 pub(crate) use retained_keep::SettlementApplied;

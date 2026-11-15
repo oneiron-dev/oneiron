@@ -52,6 +52,8 @@ pub(crate) use evidence::stored_range_for_served_range;
 #[cfg(oneiron_test_support)]
 pub(crate) mod extraction_routing_door;
 mod observations;
+#[cfg(oneiron_test_support)]
+pub(crate) mod open_conflict_door;
 
 /// What the bound verdict supplies to rebuild its queued branch's read
 /// projection in its one live transaction.
