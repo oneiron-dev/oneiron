@@ -1117,3 +1117,55 @@ fn two_proving_enrolments_of_one_key_both_stand() {
         fold.issues
     );
 }
+
+/// Test 14 of the row (Sol delta review DELTA-02, 16 Nov 00:2x): of two
+/// enrolments whose keys the other branch enrolled as agent keys first, one
+/// stands. From P, D1 enrols K2 as an agent key and E1 enrols K1 on D1; D2
+/// enrols K1 as an agent key and E2 enrols K2 on D2; M carries a home pick T
+/// on P. Each enrolment's line refuses the other's agent enrolment. With
+/// both lines taken at once, both enrolments fell and T waited with no owner
+/// key to answer; taken a key at a time, the earlier line refuses the later
+/// enrolment's ancestry first, so exactly one enrolment stands, its key is a
+/// live owner key, and T waits.
+#[test]
+fn of_two_enrolments_each_on_the_others_agent_key_one_stands() {
+    let mut vault = OldParents::new();
+    let p = hash(&vault.rows[1]);
+    let (vault_id, machine) = (vault.vault_id(), vault.machine);
+    let k1_signing = signing(OWNER_KEY_SEED);
+    let k2_signing = signing(OWNER_KEY_SEED_2);
+    let (k1, k2) = (key_of(&k1_signing), key_of(&k2_signing));
+    let d1 = vault.root_enrols_agent_key(p, k2.clone());
+    let e1 = vault.enrol_owner_key_on(d1, &k1_signing, machine);
+    let d2 = vault.root_enrols_agent_key(p, k1.clone());
+    let e2 = vault.enrol_owner_key_on(d2, &k2_signing, machine);
+    let t = vault.carry(vec![p], home_pick_op(vault_id, machine, PICKED_NODE));
+    let fold = vault.fold();
+    let standing: Vec<&AuthorityKey> = [(e1, &k1), (e2, &k2)]
+        .into_iter()
+        .filter(|(enrolment, _)| fold.valid_entries.contains(enrolment))
+        .map(|(_, key)| key)
+        .collect();
+    assert_eq!(
+        standing.len(),
+        1,
+        "exactly one enrolment stands: {:?}",
+        fold.issues
+    );
+    assert!(
+        live_owner(&fold, standing[0]),
+        "the standing key is a live owner key: {:?} {:?}",
+        standing[0],
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &t),
+        "pick outside the standing line waits: {:?}",
+        fold.issues
+    );
+    assert!(
+        !in_force_home_pick(&fold),
+        "pick outside the standing line not in force: {:?}",
+        fold.issues
+    );
+}
