@@ -131,6 +131,22 @@ pub(crate) async fn vault_secrets_custody_get(
     .await
 }
 
+/// `vault.secrets.list`: every secret in custody, value-free, one item per
+/// value with the machines that hold it (FIX [SECRETS-OWNER-LIST-READ]).
+pub(crate) async fn vault_secrets_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: oneiron::task_verb::sdk::EmptyRequest,
+) -> Listed<oneiron::task_verb::sdk::SecretListReply> {
+    as_custody_owner(
+        server,
+        auth,
+        "vault.secrets.list",
+        oneiron::task_verb::sdk::list_secrets_as,
+    )
+    .await
+}
+
 /// `vault.secrets.custody.submit`: this install sees only the ciphertext;
 /// the row keeps no call receipt of it.
 pub(crate) async fn vault_secrets_custody_submit(

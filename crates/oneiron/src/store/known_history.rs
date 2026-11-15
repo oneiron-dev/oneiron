@@ -411,6 +411,33 @@ impl Store {
         Ok(Some((master, entries)))
     }
 
+    /// The entries the index holds for `holder`, each with the generation
+    /// it was written for, read in `txn`, a snapshot taken under the custody
+    /// read guard ([`Store::custody_snapshot`]): the read-side twin of
+    /// [`Self::known_entries_for_in_writer`], for a reader that compares two
+    /// holders' current values and never needs the master (FIX
+    /// [SECRETS-OWNER-LIST-READ]). `None` while the index keys no value or
+    /// the holder has no committed history.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under a committed reference, and storage
+    /// faults.
+    pub(crate) fn known_entries_for_in_snapshot(
+        &self,
+        txn: &RoTxn<'_>,
+        holder: &EntityId,
+    ) -> Result<Option<Vec<(u32, KnownEntry)>>> {
+        if INDEX.get(self, txn, &())?.is_none() {
+            return Ok(None);
+        }
+        let Some(refs) = HISTORY.get(self, txn, holder)? else {
+            return Ok(None);
+        };
+        let custody = self.core.key_custody.bind_in_txn(self, txn)?;
+        Ok(Some(read_entries_tagged(custody, holder, refs.tagged())?))
+    }
+
     /// The keyed fingerprint of a run-tree steer intent (FIX 10066): `input`
     /// hashed under a subkey derived from the index's master, read in the
     /// writer `wtxn` as [`Self::known_history_in_writer`] reads it. `None`
