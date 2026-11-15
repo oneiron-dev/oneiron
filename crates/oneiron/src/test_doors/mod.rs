@@ -44,6 +44,7 @@ pub mod derive_verbs;
 pub mod device_succession_fold;
 pub mod disclosure_word_sources;
 pub mod dreamer_attempt_binding;
+pub mod dreamer_partition_window;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
@@ -125,7 +126,9 @@ pub mod turn_programs;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
+pub mod voice_generation_epoch;
 pub mod wake_d1_park_release;
+pub mod wake_envelope_ack;
 pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]
