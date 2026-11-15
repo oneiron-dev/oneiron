@@ -3319,9 +3319,10 @@ works_at = "work.employer"
 The tagger saves the relations it reads between a turn's spans with the
 turn's tags, and `vault.tagging.tags` shows them. A relation is a tag, never
 a claim: the Dreamer's child authors any claim (JointIE, ARCH-0026). Each
-predicate must be one a claim write takes, two or more dotted lowercase
-segments outside the reserved `edge.*`, `skill.*` and `actor.*` namespaces,
-or the server refuses to start.
+predicate must be one a public claim write takes: two or more dotted
+lowercase segments, outside the engine's reserved namespaces (`edge.*`,
+`skill.*`, `actor.*` and the other engine-owned families), or the server
+refuses to start.
 
 When the Dreamer consolidates a slice whose every turn holds a current tag
 set from the configured tagger with relations, it extracts that slice from
