@@ -268,14 +268,6 @@ impl ConnectorCallInvocation {
     }
 }
 
-pub(super) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 /// One held call's principal, connector name and tool, so the owner's
 /// connector consent binds exactly the actor that will resume it. A row a
 /// resume or an expiry already settled holds nothing, so it answers `None`.

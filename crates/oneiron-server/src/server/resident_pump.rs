@@ -92,6 +92,7 @@ use oneiron::task_type::TaskTypeRef;
 use oneiron::{
     DreamerRunnerStore, EntityId, LlmError, ModelId, RetryableLlmError, Vault, WriteActor,
 };
+use oneiron_base::unix_seconds_now;
 use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
@@ -316,7 +317,7 @@ impl SyncServer {
             let server = Arc::clone(&self);
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                server.resident_pass(unix_now())
+                server.resident_pass(unix_seconds_now())
             })
             .await
             .unwrap_or_else(|error| Pass {
@@ -337,7 +338,7 @@ impl SyncServer {
             failing = pass.faults;
             let seen = pass.queued;
             let recheck = pass.held_until.map_or(RECHECK, |due| {
-                RECHECK.min(Duration::from_secs(due.saturating_sub(unix_now())))
+                RECHECK.min(Duration::from_secs(due.saturating_sub(unix_seconds_now())))
             });
             for (id, of) in pass.ready {
                 if !held(&running).insert(id) {
@@ -403,7 +404,8 @@ impl SyncServer {
     ) -> bool {
         let server = Arc::clone(self);
         let Ok(Ok(ready)) =
-            tokio::task::spawn_blocking(move || ready_run_ids(server.vault(), unix_now())).await
+            tokio::task::spawn_blocking(move || ready_run_ids(server.vault(), unix_seconds_now()))
+                .await
         else {
             return false;
         };
@@ -654,7 +656,7 @@ fn claim(
     let dispatcher = AgentDispatcher::new(vault);
     let claimed = match of {
         RunOf::Resident(agent) => dispatcher
-            .claim_resident_run(id, LEASE_OWNER, unix_now())?
+            .claim_resident_run(id, LEASE_OWNER, unix_seconds_now())?
             .map(|(status, resident)| {
                 let briefing = briefing(&dispatcher, &status);
                 let claimed = Claimed {
@@ -669,7 +671,7 @@ fn claim(
                 (claimed, briefing)
             }),
         RunOf::Agent(agent) => dispatcher
-            .claim_agent_run(id, LEASE_OWNER, unix_now())?
+            .claim_agent_run(id, LEASE_OWNER, unix_seconds_now())?
             .map(
                 |AgentRun {
                      status,
@@ -980,10 +982,4 @@ fn held(running: &Mutex<HashSet<AttemptId>>) -> MutexGuard<'_, HashSet<AttemptId
 
 fn text(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
