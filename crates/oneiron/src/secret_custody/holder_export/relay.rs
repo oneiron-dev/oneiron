@@ -527,7 +527,11 @@ pub(crate) fn assess_witness(
 /// `executor`'s, or no live chain of it names this exact key yet. A machine
 /// this install knows under another key alone does not disprove a key
 /// revision it has not folded.
-fn carrier_proof(fold: &AuthorityFold, executor: EntityId, key: &[u8; 32]) -> ProofState {
+pub(crate) fn carrier_proof(
+    fold: &AuthorityFold,
+    executor: EntityId,
+    key: &[u8; 32],
+) -> ProofState {
     let machine = fold.machine(executor);
     if owner_act_signer_admits(machine, &fold.roster, key) {
         return ProofState::Proven;
