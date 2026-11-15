@@ -375,7 +375,18 @@ pub(crate) fn recorded_facade_routes(server: Arc<SyncServer>) -> Router<Arc<Sync
 /// wrong root is refused with that verb as its correction, before the actor,
 /// the body or any effect is touched; there is no redirect and no alias.
 async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
-    unknown_verb(uri.path().trim_start_matches('/'))
+    let verb = uri.path().trim_start_matches('/');
+    // SEEDED FAULT F1 (red proof only): a desktop row mounted behind the
+    // live-run guard, as a browser row is.
+    if verb.starts_with("self.desktop.") {
+        return FacadeApiError::new(
+            StatusCode::BAD_REQUEST,
+            "live_run_required",
+            "this action acts on a live run and names none",
+            ["Attach at POST /v1/core/live-runs/{run}/attach and send its liveRun."],
+        );
+    }
+    unknown_verb(verb)
 }
 
 /// The native producer's dependency rows, kept only while an in-process
