@@ -54,6 +54,7 @@ use serde::{Deserialize, Serialize};
 use crate::claim::{PointRead, ScopedRead};
 use crate::error::ClaimError;
 use crate::ports::{ChangeLogStoreRead, ChangeOp, EntityStoreRead};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::runtime_hooks::{ClaimChangelogPosition, FactPosition, FactSource, SettlementPosition};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -525,11 +526,10 @@ impl Vault {
         reader: &ScopedRead<'_>,
         request: &FeedReadRequest,
     ) -> Result<FeedRead> {
-        let limit = request.limit.unwrap_or(FEED_READ_DEFAULT_LIMIT);
-        if limit == 0 {
-            return Err(invalid("a feed read's limit is at least 1"));
-        }
-        let limit = limit.min(FEED_READ_MAX_LIMIT);
+        let limit =
+            page_limit_zero_refused(request.limit, FEED_READ_DEFAULT_LIMIT, FEED_READ_MAX_LIMIT)
+                .map_err(|ZeroLimitRefused| invalid("a feed read's limit is at least 1"))?
+                .rows;
         let _bodies = reader.prepare_point_read::<Error>()?;
         let txn = self.store.env.read_txn()?;
         let actor = live_reader_actor_in(reader, &txn)?;
