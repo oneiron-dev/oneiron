@@ -383,6 +383,11 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         }
         EngineScan::AccessGrantRows => {
             // Index rows whose grants are gone: read, skipped, never served.
+            // With no companion grant index (a vault older than it) the read
+            // walks every grant (census L3-28E).
+            vault
+                .drop_companion_grant_index_for_test()
+                .expect("drop the companion grant index");
             vault
                 .with_write_txn(|wtxn| {
                     for index in 0..PAST {
