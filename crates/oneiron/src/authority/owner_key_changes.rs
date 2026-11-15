@@ -14,7 +14,10 @@
 //! signer, so the fold refuses both entries and both keys end
 //! (`retired_signers`). The list shows such an entry as
 //! [`OwnerKeyChangeKind::RemovedByEndedKey`], so the owner still reads that
-//! the key ended and which key signed its removal.
+//! the key ended and which key signed its removal. Only a removal that a key
+//! of the owner's signed lists so: a managed host's root may sign a second
+//! revoke of a key that had already ended, and that entry is no act of the
+//! owner's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -64,8 +67,8 @@ impl Vault {
     /// checkpoint image). A key enrolled on two branches lists its smallest
     /// enrolment entry, as [`Self::enrolled_owner_keys`] does; a key that
     /// two counted entries removed lists both removals. A key that ended
-    /// with no counted removal lists each removal of it that the fold
-    /// refused for its signer alone
+    /// with no counted removal lists each removal of it that a key of the
+    /// owner's signed and the fold refused for its signer alone
     /// ([`OwnerKeyChangeKind::RemovedByEndedKey`]). Empty before any
     /// enrolment.
     ///
@@ -76,6 +79,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let hosted = self.is_hosted();
         let enrolled: BTreeMap<[u8; 32], EnrolledOwnerKey> = self
             .enrolled_owner_keys_in_txn(&txn)?
             .into_iter()
@@ -87,12 +91,12 @@ impl Vault {
             let entry = decode_authority_log_entry_body(&body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
-            changes.extend(owner_key_change(&fold, &enrolled, hash, &entry));
+            changes.extend(owner_key_change(&fold, hosted, &enrolled, hash, &entry));
         }
         if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?
         {
             for (hash, entry) in evidence.carried_past(&stored) {
-                changes.extend(owner_key_change(&fold, &enrolled, *hash, entry));
+                changes.extend(owner_key_change(&fold, hosted, &enrolled, *hash, entry));
             }
         }
         // A counted removal of a key is the whole account of its end.
@@ -113,10 +117,12 @@ impl Vault {
 /// The owner key change `entry`, at `hash`, is on `fold`: a counted
 /// enrolment that stands for its key among `enrolled`, a counted
 /// `RevokeDevice` of a key an enrolment names, or a `RevokeDevice` of such a
-/// key that ended it uncounted ([`ended_by_a_refused_removal`]). None for any
-/// other entry.
+/// key that ended it uncounted ([`ended_by_a_refused_removal`]; `hosted` is
+/// as [`AuthorityFold::proves_owner_acts`] takes it). None for any other
+/// entry.
 fn owner_key_change(
     fold: &AuthorityFold,
+    hosted: bool,
     enrolled: &BTreeMap<[u8; 32], EnrolledOwnerKey>,
     hash: AuthorityEntryHash,
     entry: &AuthorityLogEntry,
@@ -133,7 +139,9 @@ fn owner_key_change(
             let key = enrolled.get(revoked)?;
             if counted {
                 (OwnerKeyChangeKind::Removed, key)
-            } else if ended_by_a_refused_removal(fold, hash, key) {
+            } else if ended_by_a_refused_removal(fold, hash, key)
+                && signed_by_a_key_of_the_owners(fold, hosted, entry)
+            {
                 (OwnerKeyChangeKind::RemovedByEndedKey, key)
             } else {
                 return None;
@@ -157,7 +165,8 @@ fn owner_key_change(
 /// for its signer alone (`RetiredSigner`), so the entry counted on its own
 /// branch and only a removal of its signer, on a branch that never saw it,
 /// refused it. A refused entry of any other kind (a bad signature, a signer
-/// the roster never held) is no removal and lists nothing.
+/// the roster never held) is no removal and lists nothing. The caller also
+/// asks who signed it ([`signed_by_a_key_of_the_owners`]).
 fn ended_by_a_refused_removal(
     fold: &AuthorityFold,
     hash: AuthorityEntryHash,
@@ -170,4 +179,25 @@ fn ended_by_a_refused_removal(
         && fold
             .issues
             .contains(&AuthorityFoldIssue::RetiredSigner(hash))
+}
+
+/// Whether a key of the owner's signed `entry`, as its primary signer or as
+/// a cosign: a roster key with `ROLE_OWNER`, live or ended, outside the
+/// host's custody when the vault is `hosted`
+/// ([`AuthorityFold::proves_owner_acts`], without its liveness: the list
+/// reads an entry whose signer has ended since). A managed host's custodial
+/// root and an admin-only key are no key of the owner's.
+fn signed_by_a_key_of_the_owners(
+    fold: &AuthorityFold,
+    hosted: bool,
+    entry: &AuthorityLogEntry,
+) -> bool {
+    std::iter::once(&entry.signer.public_key)
+        .chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
+        .any(|key| {
+            fold.roster
+                .get(key)
+                .is_some_and(|device| device.roles & ROLE_OWNER != 0)
+                && !(hosted && fold.in_host_custody(key))
+        })
 }
