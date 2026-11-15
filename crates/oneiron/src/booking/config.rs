@@ -140,10 +140,6 @@ pub struct EventTypeConfig {
     pub weekly_cap: Option<u16>,
     pub routing: RoutingMode,
     pub hosts: Vec<HostAvailabilityConfig>,
-    /// Extra host-local windows offered only when ordinary availability is
-    /// empty, unless [`Self::flex_with_ordinary`] is set. Interpreted in each
-    /// host's own zone, exactly like working hours.
-    pub flex_windows: Vec<WeeklyWallWindow>,
     /// Offer the flex windows beside ordinary availability (`true`), or only
     /// when ordinary availability is empty (`false`, the shipped choice).
     /// `false` is the tighter: extended hours reach the public only as a
@@ -151,6 +147,10 @@ pub struct EventTypeConfig {
     /// encodes, and hashes, as it always has.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub flex_with_ordinary: bool,
+    /// Extra host-local windows offered only when ordinary availability is
+    /// empty, unless [`Self::flex_with_ordinary`] is set. Interpreted in each
+    /// host's own zone, exactly like working hours.
+    pub flex_windows: Vec<WeeklyWallWindow>,
 }
 
 impl EventTypeConfig {
