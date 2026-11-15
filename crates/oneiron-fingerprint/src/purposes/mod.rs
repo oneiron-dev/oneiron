@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { testing }
+areas! { policy_model, testing }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
