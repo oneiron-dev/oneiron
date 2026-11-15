@@ -17,7 +17,7 @@ use crate::rerank::RerankCandidate;
 use crate::store::{RetrievalScoreComponent, RetrievalSignal};
 use crate::vault::entity_revision::TurnText;
 use crate::vault::{ReadMode, RevisionRef};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The read-only faces the rerank ladder draws on.
 #[derive(Clone, Copy)]
@@ -44,6 +44,70 @@ pub(super) struct RerankApplied {
     /// The run serves those rows at these, so a TURN shows the words its
     /// score is for, not those its messages hold by the time it is read.
     pub(super) words_revisions: HashMap<EntityId, RevisionRef>,
+    /// The rows the reranker scored.
+    pub(super) block: RerankedBlock,
+}
+
+/// The rows the rerank ladder scored, its block (ARCH-0004
+/// #rerank-door-open: later stages respect the reranked group; RULING
+/// RERANK-GROUP-ORDER = A). A ruled precedence may still put a row the
+/// reranker did not score ahead of one it did: critical rows first, base
+/// before non-base, the OF-023 clamp, the named-entity pass. Every other
+/// stage reorders within the block and within the rest, never across it:
+/// the ladder's access factor and serialization's score sort through the
+/// scores (see [`cap_unscored`]), community diversity and the skill re-sort
+/// through [`RerankedBlock::keep_group_places`]. Empty when no rerank ran.
+#[derive(Default)]
+pub(in crate::pipeline) struct RerankedBlock(HashSet<EntityId>);
+
+impl RerankedBlock {
+    /// A TURN the fold puts in place of a reranked MESSAGE stands in the
+    /// block: its place and score are that message's. `cited` maps each
+    /// folded TURN to the messages it took in.
+    pub(super) fn follow_turn_fold(&mut self, cited: &HashMap<EntityId, Vec<EntityId>>) {
+        if self.0.is_empty() {
+            return;
+        }
+        let turns: Vec<EntityId> = cited
+            .iter()
+            .filter(|(_, messages)| messages.iter().any(|message| self.0.contains(message)))
+            .map(|(turn, _)| *turn)
+            .collect();
+        self.0.extend(turns);
+    }
+
+    /// Puts `reordered`, a reorder of rows drawn from `before`, back into
+    /// the places its rows held there by group: the k-th place a reranked
+    /// row held takes the k-th reranked row of `reordered`, and so for the
+    /// rows outside the block. The stage's order stands within each group,
+    /// and each place `before` gave a group (a ruled precedence's crossing
+    /// among them) stands too.
+    pub(in crate::pipeline) fn keep_group_places(
+        &self,
+        before: &[ScoredEntity],
+        reordered: &mut Vec<ScoredEntity>,
+    ) {
+        if self.0.is_empty() || reordered.len() < 2 {
+            return;
+        }
+        let kept: HashSet<EntityId> = reordered.iter().map(|row| row.id).collect();
+        let (inside, outside): (Vec<ScoredEntity>, Vec<ScoredEntity>) =
+            reordered.iter().partition(|row| self.0.contains(&row.id));
+        let (mut inside, mut outside) = (inside.into_iter(), outside.into_iter());
+        let mut placed = Vec::with_capacity(reordered.len());
+        for row in before.iter().filter(|row| kept.contains(&row.id)) {
+            let next = if self.0.contains(&row.id) {
+                inside.next()
+            } else {
+                outside.next()
+            };
+            placed.extend(next);
+        }
+        // Rows `before` did not hold, if any, keep the stage's order after.
+        placed.extend(inside);
+        placed.extend(outside);
+        *reordered = placed;
+    }
 }
 
 /// What a binding reranker's candidate is bound to (see [`RerankCandidate`]).
@@ -107,6 +171,7 @@ impl PipelineBuilder<'_> {
         let mut rerank_merged_components = None;
         let mut reranked_trace_scores = None;
         let mut words_revisions = HashMap::new();
+        let mut block = RerankedBlock::default();
         // Empty block: reranking zero candidates is a semantic no-op —
         // never invoke the host impl, so an otherwise-empty retrieval
         // cannot fail on reranker behavior and no needless work happens
@@ -237,7 +302,9 @@ impl PipelineBuilder<'_> {
                     });
             }
             let (reranked, rest) = scores.split_at_mut(block_len);
-            cap_set_aside(reranked, &mut rest[..tail_len]);
+            let (set_aside, past) = rest.split_at_mut(tail_len);
+            cap_unscored(reranked, set_aside, past);
+            block = RerankedBlock(block_ids.into_iter().collect());
 
             // Rerank components append AFTER the blend components in each
             // entity's vector (pinned merge order; no dedup, no re-sort).
@@ -258,6 +325,7 @@ impl PipelineBuilder<'_> {
             merged_components: rerank_merged_components,
             reranked_trace_scores,
             words_revisions,
+            block,
         })
     }
 
@@ -465,19 +533,38 @@ fn set_aside_unscored(
     )
 }
 
-/// The rows set aside step down from the weakest reranked score, keeping
-/// their order, so a later sort keeps them below every reranked row.
-fn cap_set_aside(reranked: &[ScoredEntity], set_aside: &mut [ScoredEntity]) {
-    let mut cap = reranked
+/// Every row the reranker did not score sorts below every row it did, so a
+/// later score sort keeps the block's boundary (see [`RerankedBlock`]). The
+/// rows set aside step down from the weakest reranked score, keeping their
+/// order. A row past the block keeps its score unless it reaches the
+/// weakest reranked one, which the receiving row's access factor can bring
+/// below it; then it steps down from there too, keeping its order among
+/// those. At a weakest score of zero no step is taken, as no score is below
+/// zero.
+fn cap_unscored(
+    reranked: &[ScoredEntity],
+    set_aside: &mut [ScoredEntity],
+    past: &mut [ScoredEntity],
+) {
+    let floor = reranked
         .iter()
         .map(|scored| scored.score)
         .fold(f32::INFINITY, f32::min);
+    let mut cap = floor;
     for scored in set_aside {
         if cap > 0.0 {
             cap = cap.next_down();
         }
         cap = cap.min(scored.score);
         scored.score = cap;
+    }
+    for scored in past {
+        if scored.score >= floor {
+            if cap > 0.0 {
+                cap = cap.next_down();
+            }
+            scored.score = cap;
+        }
     }
 }
 
