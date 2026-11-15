@@ -28,11 +28,14 @@ const PLACED_REASONS: [&str; 11] = [
     REASON_KNOWN_VALUE,
 ];
 
-/// Whether a read finds the span again of a secret the scan marked a body
-/// with `reason` for (L6-31): one the text rules place, or a known custody
-/// value. A mark for anything else (a generic hit, a body the scan could not
-/// read whole, a structured field) names no span a read can blank, so such
-/// a body stays withheld whole.
+/// Whether a read may find the span again of a secret the scan marked a
+/// body with `reason` for (L6-31): one the text rules place, or a known
+/// custody value. A mark for anything else (a generic hit, a body the scan
+/// could not read whole) names no span a read can blank, so such a body
+/// stays withheld whole. A reason is no proof of a span: a credential
+/// field's value the assignment rule does not place is marked
+/// `sensitive_env` too, so the read scans its blanked view again before it
+/// shows it (`code_run::result_read::redacted`).
 pub(crate) fn span_placed_for(reason: &str) -> bool {
     PLACED_REASONS.contains(&reason)
 }

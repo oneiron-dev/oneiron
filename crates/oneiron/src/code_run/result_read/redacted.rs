@@ -13,11 +13,15 @@
 //! in the whole body, as the write door read it whole when it marked it
 //! (`batch::secret_scan::mask::spool`). A span is found from its own
 //! anchors however far it runs, so a read anywhere inside it is blanked,
-//! even one that holds neither end of a long key block. Each reply is still
-//! checked for an unmarked secret before it leaves (`facets`).
+//! even one that holds neither end of a long key block. A mark's reason
+//! names no span: the structured reading shares `sensitive_env` with the
+//! assignment rule, and a credential field's value may be no assignment the
+//! text rules place. So the scan that marked the body reads the whole body
+//! again with its spans blanked, and a body in which it still finds a secret
+//! has no view: it is withheld whole (REVIEW-7800 round 2). Each reply is
+//! still checked for an unmarked secret before it leaves (`facets`).
 
 use std::ops::Range;
-use std::sync::OnceLock;
 
 use super::ResultBody;
 use super::run_body::LiveCutoff;
@@ -25,6 +29,7 @@ use crate::batch::secret_scan::file_spans;
 use crate::code_run::{CodeRunOutputKind, ExecutorStorage};
 use crate::file_secret_marks::FILLER;
 use crate::secret_custody::KnownSource;
+use crate::store::BodyMeter;
 use crate::{Error, Result};
 
 /// The values custody knows, as `storage`'s output sweeps read them: its
@@ -41,46 +46,31 @@ pub(super) fn known_source(storage: &ExecutorStorage<'_>) -> Result<Option<Known
 pub(super) struct RedactedBody<'b> {
     /// The window the facets read: the whole body, or a range of it.
     shown: &'b dyn ResultBody,
-    /// The whole body `shown` is a window of, read whole for its spans.
+    /// The whole body `shown` is a window of.
     whole: &'b dyn ResultBody,
-    /// The values custody knows, if it knows any.
-    known: Option<KnownSource>,
-    /// The secret spans at their offsets in `whole`, found at the first
-    /// read.
-    spans: OnceLock<Vec<Range<usize>>>,
+    /// The secret spans at their offsets in `whole`.
+    spans: Vec<Range<usize>>,
 }
 
 impl<'b> RedactedBody<'b> {
     /// The view of `shown`, a window of `whole`, blanking the text rules'
-    /// spans and the values `known` holds.
-    pub(super) fn new(
+    /// spans and the values `known` holds, found once in the whole body.
+    /// `None` when the scan that marks a stored body still finds a secret
+    /// in the whole body with those spans blanked: the body is withheld
+    /// whole.
+    pub(super) fn of(
         shown: &'b dyn ResultBody,
         whole: &'b dyn ResultBody,
         known: Option<KnownSource>,
-    ) -> Self {
-        Self {
-            shown,
-            whole,
-            known,
-            spans: OnceLock::new(),
-        }
-    }
-
-    /// The secret spans in the whole body, at their offsets in it: the text
-    /// rules' and each value custody knows now. The first read finds them;
-    /// later reads of the same view reuse them.
-    fn spans(&self) -> Result<&[Range<usize>]> {
-        if let Some(spans) = self.spans.get() {
-            return Ok(spans.as_slice());
-        }
-        let len = usize::try_from(self.whole.len())
+    ) -> Result<Option<Self>> {
+        let len = usize::try_from(whole.len())
             .map_err(|_| Error::ArithmeticOverflow("redacted result read"))?;
-        let bytes = self.whole.read(0, len)?;
+        let mut bytes = whole.read(0, len)?;
         let mut spans: Vec<Range<usize>> = file_spans(&bytes)
             .into_iter()
             .map(|(span, _)| span)
             .collect();
-        if let Some(source) = &self.known {
+        if let Some(source) = &known {
             let found = source.pass(|values| {
                 values.map_or_else(Vec::new, |values| {
                     values
@@ -92,8 +82,42 @@ impl<'b> RedactedBody<'b> {
             })?;
             spans.extend(found);
         }
-        Ok(self.spans.get_or_init(|| spans).as_slice())
+        blank(&mut bytes, 0, &spans);
+        if marked_secret(&bytes).is_some() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            shown,
+            whole,
+            spans,
+        }))
     }
+}
+
+/// Blanks each of `spans` where it meets `bytes`, which start at `start` in
+/// the whole body: each byte reads as [`FILLER`], a newline as a newline.
+fn blank(bytes: &mut [u8], start: usize, spans: &[Range<usize>]) {
+    let end = start.saturating_add(bytes.len());
+    for span in spans {
+        let (from, to) = (span.start.max(start), span.end.min(end));
+        if from >= to {
+            continue;
+        }
+        let blanked = bytes.get_mut(from - start..to - start);
+        for byte in blanked.into_iter().flatten() {
+            if *byte != b'\n' {
+                *byte = FILLER;
+            }
+        }
+    }
+}
+
+/// The first secret the scan that marks a stored body ([`BodyMeter`],
+/// ARCH-0069 S5) finds in `bytes`, if any.
+fn marked_secret(bytes: &[u8]) -> Option<&'static str> {
+    let mut meter = BodyMeter::new();
+    meter.feed(bytes);
+    meter.finish(0).secret
 }
 
 impl ResultBody for RedactedBody<'_> {
@@ -118,19 +142,7 @@ impl ResultBody for RedactedBody<'_> {
             .whole
             .read(at, usize::try_from(take).map_err(overflow)?)?;
         let start = usize::try_from(at).map_err(overflow)?;
-        let end = start.saturating_add(bytes.len());
-        for span in self.spans()? {
-            let (from, to) = (span.start.max(start), span.end.min(end));
-            if from >= to {
-                continue;
-            }
-            let blanked = bytes.get_mut(from - start..to - start);
-            for byte in blanked.into_iter().flatten() {
-                if *byte != b'\n' {
-                    *byte = FILLER;
-                }
-            }
-        }
+        blank(&mut bytes, start, &self.spans);
         Ok(bytes)
     }
 

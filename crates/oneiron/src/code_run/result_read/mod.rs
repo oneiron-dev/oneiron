@@ -13,7 +13,8 @@
 //! stops at its live cutoff (FIX 8233; see `run_body`). A body a lease's
 //! secret tainted, or one the secret scan marked for a span a read places
 //! again, is read through its redacted view, each secret span blanked; one
-//! an erase or a withdrawal took, or one marked for anything else, is
+//! an erase or a withdrawal took, one marked for anything else, and one in
+//! which the scan still finds a secret once its spans are blanked, is
 //! withheld whole (ARCH-0069 `#result-bodies`, L6-31; see `redacted`).
 
 mod arm;
@@ -226,7 +227,9 @@ impl ResultRead {
 
     /// Runs `read` over the body this read shows in `storage`, and whether
     /// that is its redacted view: the stored bytes of a clean or withheld
-    /// occurrence, else each secret span blanked (L6-31).
+    /// occurrence, else each secret span blanked (L6-31). A body that has
+    /// no view, the scan still finding a secret in it with its spans
+    /// blanked, is read as withheld.
     fn with_shown_body<T>(
         &self,
         storage: &ExecutorStorage<'_>,
@@ -237,8 +240,10 @@ impl ResultRead {
             return read(&body, false);
         }
         let whole = RunBody::whole(self, storage);
-        let view = RedactedBody::new(&body, &whole, redacted::known_source(storage)?);
-        read(&view, true)
+        match RedactedBody::of(&body, &whole, redacted::known_source(storage)?)? {
+            Some(view) => read(&view, true),
+            None => read(&body, false),
+        }
     }
 
     /// Whether this is a delegated source named in the caller's own run,
@@ -344,7 +349,10 @@ impl ResultRead {
     /// its taint: `can` while the body is clean or read through its
     /// redacted view, with its ref, size, kind and taint (and `redacted`),
     /// else `tainted` with what a facet would say of it. No preview and no
-    /// byte of the body either way.
+    /// byte of the body either way. It reads no byte, so it speaks for the
+    /// mark: a facet still withholds a body in which the scan finds a
+    /// secret its view leaves, as it withholds a reply the unmarked-secret
+    /// check stops.
     pub(crate) fn preflight(&self) -> Value {
         if self.state.is_tainted() && !self.redacts() {
             let mut verdict = self.withheld();
