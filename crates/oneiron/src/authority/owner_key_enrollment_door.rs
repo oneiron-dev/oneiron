@@ -566,6 +566,41 @@ impl Vault {
     where
         S: FnOnce(&[u8]) -> Vec<u8>,
     {
+        let mut sign = Some(sign);
+        let counted = self.append_signed_rows_for_test(
+            vec![(
+                AuthorityOp::RevokeDevice {
+                    revoked_key: revoked,
+                },
+                signer,
+                Vec::new(),
+            )],
+            |_, transcript| sign.take().map_or_else(Vec::new, |sign| sign(transcript)),
+        )?;
+        Ok(counted.first().copied().unwrap_or(false))
+    }
+
+    /// Signs and stores `rows` in one put, as the signed-row append door
+    /// takes a batch: each row is `(op, signer, cosigners)`, the first at
+    /// this vault's main-log heads and each later one on the row before it,
+    /// each signer at its next sequence. `sign` signs an authority
+    /// transcript as the key it names. True for each row the fold counted.
+    /// The integration tests' door to the limits on a key only a passkey
+    /// vouched for (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B; Sol xhigh
+    /// stack review F1 and F2): a history of rows no door writes.
+    ///
+    /// # Errors
+    ///
+    /// The store's refusal of the rows, or a frontier too wide for one entry.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn append_signed_rows_for_test<S>(
+        &self,
+        rows: Vec<(AuthorityOp, AuthorityKey, Vec<AuthorityKey>)>,
+        mut sign: S,
+    ) -> Result<Vec<bool>>
+    where
+        S: FnMut(&AuthorityKey, &[u8]) -> Vec<u8>,
+    {
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
@@ -573,32 +608,53 @@ impl Vault {
             return Err(authority_refused(TOO_MANY_HEADS));
         }
         let now = self.instant_in_txn(&txn)?.secs();
-        let mut entry = AuthorityLogEntry {
-            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-            vault_id: Some(vault_id),
-            seq: next_sequence(&fold, &signer)?,
-            parent_hashes: fold.append_heads.iter().copied().collect(),
-            op: AuthorityOp::RevokeDevice {
-                revoked_key: revoked,
-            },
-            signer: AuthoritySignature {
-                suite: signer.suite(),
-                public_key: signer,
-                signature: vec![0; 64],
-            },
-            cosigns: Vec::new(),
-            ts: now,
-        };
-        entry.signer.signature = sign(&authority_transcript(&entry)?);
-        let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
             start: now,
             end: now,
         };
-        self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
+        let mut parents: Vec<AuthorityEntryHash> = fold.append_heads.iter().copied().collect();
+        let mut seqs: BTreeMap<AuthorityKey, u64> = BTreeMap::new();
+        let mut stored = Vec::with_capacity(rows.len());
+        let mut hashes = Vec::with_capacity(rows.len());
+        for (op, signer, cosigners) in rows {
+            let seq = match seqs.get(&signer) {
+                Some(prior) => prior.checked_add(1).ok_or_else(invalid_authority)?,
+                None => next_sequence(&fold, &signer)?,
+            };
+            seqs.insert(signer.clone(), seq);
+            let unsigned = |key: AuthorityKey| AuthoritySignature {
+                suite: key.suite(),
+                public_key: key,
+                signature: vec![0; 64],
+            };
+            let mut entry = AuthorityLogEntry {
+                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                parent_hashes: parents.clone(),
+                op,
+                signer: unsigned(signer),
+                cosigns: cosigners.into_iter().map(unsigned).collect(),
+                ts: now,
+            };
+            let transcript = authority_transcript(&entry)?;
+            entry.signer.signature = sign(&entry.signer.public_key, &transcript);
+            for cosign in &mut entry.cosigns {
+                cosign.signature = sign(&cosign.public_key, &transcript);
+            }
+            let hash = authority_entry_hash(&entry)?;
+            parents = vec![hash];
+            hashes.push(hash);
+            stored.push((entry, at, now));
+        }
+        self.put_authority_log_entries_in_txn(&mut txn, &stored)?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
-        let counted =
-            after.valid_entries.contains(&hash) && !after.install.held_back.contains(&hash);
+        let counted = hashes
+            .iter()
+            .map(|hash| {
+                after.valid_entries.contains(hash) && !after.install.held_back.contains(hash)
+            })
+            .collect();
         txn.commit()?;
         Ok(counted)
     }
