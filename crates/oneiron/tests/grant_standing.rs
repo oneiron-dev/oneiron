@@ -24,17 +24,28 @@ use oneiron::verbs::{
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::json;
 
-/// A vault whose owner minted his agent a read Grant: the vault, his proof, the Grant's id
-/// and the mint's act, as 64 lower-case hex.
+/// A vault whose owner minted his agent a Grant: the vault, his proof, the Grant's id, the
+/// mint's act as 64 lower-case hex, and whether the writer found the Grant conferring.
 struct Minted {
     _dir: tempfile::TempDir,
     vault: Vault,
     owner: AuthenticatedOwner,
     grant: EntityId,
     act: String,
+    confers: bool,
 }
 
+/// The owner mints his agent a read Grant.
 fn minted_read_grant() -> Minted {
+    let mut scope = Scope::top();
+    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    let minted = minted_grant(scope, BTreeSet::new());
+    assert!(minted.confers, "precondition: the Grant is live");
+    minted
+}
+
+/// The owner mints his agent a Grant of `scope` and `verb_classes`.
+fn minted_grant(scope: Scope, verb_classes: BTreeSet<String>) -> Minted {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
     let owner_actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -69,8 +80,6 @@ fn minted_read_grant() -> Minted {
         },
     )
     .expect("owner creates the agent");
-    let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
     let minted = mint_agent_grant_as(
         &vault,
         &owner,
@@ -80,17 +89,17 @@ fn minted_read_grant() -> Minted {
             authority_scope: scope,
             expires_at: None,
             repo_bounds: None,
-            verb_classes: BTreeSet::new(),
+            verb_classes,
             wallet_ref: None,
             working_view_bounds: None,
         },
     )
-    .expect("owner mints the agent a read Grant");
-    assert!(minted.grant.confers, "precondition: the Grant is live");
+    .expect("owner mints the agent a Grant");
     Minted {
         _dir: dir,
         grant: minted.grant.grant_ref,
         act: minted.act_ref,
+        confers: minted.grant.confers,
         vault,
         owner,
     }
@@ -139,6 +148,22 @@ fn an_owner_mint_gives_its_grant_and_the_row_stands_on_it() {
         standing.map(hex),
         Some(minted.act),
         "the minted row stands on the owner's mint",
+    );
+}
+
+/// The standing read asks the row's expiry alone, never Access's raw-scope predicate: a
+/// Grant whose verbs come from its classes (no verb named) stands on its mint, as a git
+/// push Grant does (Sol R1 review, finding 2).
+#[test]
+fn a_class_only_grant_stands_on_its_mint() {
+    let mut scope = Scope::top();
+    scope.verbs = ScopeAxis::Bottom;
+    let minted = minted_grant(scope, BTreeSet::from(["grant_standing_class".to_owned()]));
+    let now = minted.vault.now_recorded_at();
+    assert_eq!(
+        standing_grant_act(&minted.vault, minted.grant, now).expect("standing read"),
+        Some(minted.act),
+        "a class-only Grant stands on the owner's mint",
     );
 }
 

@@ -15,7 +15,11 @@ use super::*;
 /// training choice (FIX 4489) or a setting's act (FIX 4624, FIX 5660), nor a
 /// root request or the owner's cancel of
 /// one ([`closes_root_work`], FIX 5584), nor a root request's result
-/// ([`answers_root_work`], FIX 5649). `kind_of` reads the kind of the owner
+/// ([`answers_root_work`], FIX 5649), nor an act that gives or ends a Grant
+/// on its grant line (pass 28 R1): the owner's agent Grant mint or revoke, a
+/// slip grant revoke and a membership execution record. An end lost with an
+/// unrelated row would let the Grant's row stand again, and a giving lost so
+/// would take an honest Grant away. `kind_of` reads the kind of the owner
 /// work request signed as a hash from the request's own row, where the fold
 /// holds one. A fold past an adopted image reads the same class (FIX 5463).
 pub(super) fn refolds(
@@ -36,6 +40,9 @@ pub(super) fn refolds(
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::PolicySettingSet(_)
+                | AuthorityOp::AgentGrantAct(_)
+                | AuthorityOp::SlipGrantRevoke { .. }
+                | AuthorityOp::MembershipExecution(_)
         )
 }
 

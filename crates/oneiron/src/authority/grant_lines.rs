@@ -174,6 +174,9 @@ impl GrantLines {
 /// What the counted acts say of one Grant, as this install counts them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FoldedGrantLine {
+    /// Each live giving and the machine that carried it, counted here or not: what that
+    /// machine's next profile revision lists as seen ([`live_givings_by`]).
+    pub(crate) live: BTreeMap<AuthorityEntryHash, EntityId>,
     /// The one live giving that counts here in full, by its act: `None` when no giving
     /// does, or when two live givings the fold cannot order both stand.
     pub(crate) giving: Option<(AuthorityEntryHash, GrantTerms)>,
@@ -277,16 +280,45 @@ pub(super) fn folded_grant_lines(
     named
         .into_iter()
         .map(|grant| {
-            let giving = lines.givings.get(&grant).and_then(|frontier| {
+            let frontier = lines.givings.get(&grant);
+            let live = frontier.map_or_else(BTreeMap::new, |frontier| {
+                frontier
+                    .live
+                    .iter()
+                    .map(|(hash, giving)| (*hash, giving.machine))
+                    .collect()
+            });
+            let giving = frontier.and_then(|frontier| {
                 let mut live = frontier.live.iter();
                 let (hash, giving) = live.next()?;
                 (live.next().is_none() && counts_here(&standing, hash, giving))
                     .then(|| (*hash, giving.settings.clone()))
             });
             let ended = lines.ends.contains_key(&grant);
-            (grant, FoldedGrantLine { giving, ended })
+            (
+                grant,
+                FoldedGrantLine {
+                    live,
+                    giving,
+                    ended,
+                },
+            )
         })
         .collect()
+}
+
+/// The live givings `machine` carried, for its next profile revision's acknowledged set
+/// ([`super::world_privacy::live_edits_by`]): a removal of that machine that saw a giving
+/// leaves it standing, as it leaves a grant travel choice.
+pub(super) fn live_givings_by(
+    fold: &AuthorityFold,
+    machine: EntityId,
+) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
+    fold.grant_lines
+        .values()
+        .flat_map(|line| line.live.iter())
+        .filter(move |(_, carrier)| **carrier == machine)
+        .map(|(hash, _)| *hash)
 }
 
 /// The grant acts that never count at full strength on this install: each one valid without

@@ -72,7 +72,10 @@ impl Vault {
         let Ok(grant) = decode_federation_grant_body(&body) else {
             return Ok(None);
         };
-        if !grant.is_live_at(now) {
+        // Expiry alone: what a live Grant then confers (a verb, a class, a git push) is
+        // its reader's, so `FederationGrant::is_live_at`, Access's predicate, is not
+        // asked here (it refuses every git push Grant and a class-only scope).
+        if grant.expires_at.is_some_and(|expires_at| now >= expires_at) {
             return Ok(None);
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
