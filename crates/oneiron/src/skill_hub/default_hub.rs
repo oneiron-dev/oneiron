@@ -151,7 +151,7 @@ pub struct InstalledLibrarySkill {
     pub skill_id: String,
     /// The skill's declared version.
     pub version: String,
-    /// The hub commit the import read.
+    /// The hub commit the import read, as its receipt's commit pin names it.
     pub commit: String,
 }
 
@@ -160,7 +160,10 @@ impl Vault {
     /// hub, at its current content, or `None` before any import: nothing
     /// imports a library skill on open. A Candidate or Active row counts; a
     /// deleted, stale, quarantined or superseded one does not. Of several
-    /// imports, the latest receipt wins. Like
+    /// imports, the latest receipt wins. Only a commit pin names the commit
+    /// an import read: a receipt pinned by tag, semver or content hash keeps
+    /// that pin as the caller gave it, so when it is the latest this returns
+    /// `None` rather than stamp a tag as a commit. Like
     /// [`Self::current_hub_import_receipts`], this read grants no authority.
     pub fn installed_default_hub_skill(
         &self,
@@ -168,7 +171,7 @@ impl Vault {
     ) -> Result<Option<InstalledLibrarySkill>> {
         let hub = default_skill_hub_id()?;
         let txn = self.store.env.read_txn()?;
-        let mut latest: Option<(u64, InstalledLibrarySkill)> = None;
+        let mut latest: Option<(u64, Option<InstalledLibrarySkill>)> = None;
         for (entity, receipt) in self.hub_import_receipts_for_ref_in_txn(&txn, &hub, subtree)? {
             if latest.as_ref().is_some_and(|(at, _)| *at > receipt.at)
                 || TombstoneStoreRead::port_deletion_state(&self.store, &txn, &entity)?.deleted
@@ -185,20 +188,25 @@ impl Vault {
                 record.lifecycle_status,
                 SkillLifecycle::Candidate | SkillLifecycle::Active
             );
-            let Some(commit) = receipt.pin_value.filter(|_| current && readable) else {
+            if !(current && readable) {
                 continue;
+            }
+            let commit = if receipt.pin_type == "commit" {
+                receipt.pin_value
+            } else {
+                None
             };
             latest = Some((
                 receipt.at,
-                InstalledLibrarySkill {
+                commit.map(|commit| InstalledLibrarySkill {
                     entity,
                     skill_id: record.skill_id,
                     version: record.version,
                     commit,
-                },
+                }),
             ));
         }
-        Ok(latest.map(|(_, skill)| skill))
+        Ok(latest.and_then(|(_, skill)| skill))
     }
 
     /// Reads the first hub's identity, configured endpoint and skill root pin.
