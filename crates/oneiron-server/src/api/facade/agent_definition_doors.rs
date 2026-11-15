@@ -549,7 +549,7 @@ pub(crate) async fn vault_workspace_members_offboard(
             rows.extend(outcome.access_grants_revoked.iter().copied());
             rows.extend(outcome.identity_ref);
             rows.extend(outcome.rooms_left.iter().map(|leave| leave.room));
-            rows.extend(outcome.made_agents.iter().copied());
+            rows.extend(outcome.made_by.iter().flat_map(|made| made.listed_rows()));
             Some(rows)
         },
     )

@@ -622,9 +622,10 @@ impl Vault {
         self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
     }
 
-    /// Switches the AGENT_DEF at `id` off in the caller's writer, at
-    /// `version`, as [`Self::update_agent_definition`] would write the same
-    /// body with `enabled` false: the immutable-field gate runs, and the id
+    /// Switches the AGENT_DEF at `id` off in the caller's writer, at the
+    /// version `version` derives from the one it stands at, as
+    /// [`Self::update_agent_definition`] would write the same body with
+    /// `enabled` false: the immutable-field gate runs, and the id
     /// pin stays where it is, since switching off widens nothing. A
     /// workspace offboarding revokes its leaver's actors this way (INB-07,
     /// ARCH-0063:152 "revoke the actor, keep the person"); what they made
@@ -638,7 +639,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-        version: String,
+        version: impl FnOnce(&str) -> String,
         at: u64,
     ) -> Result<bool> {
         let existing = self.read_agent_definition_in_txn(txn, id)?;
@@ -647,7 +648,7 @@ impl Vault {
         }
         let mut off = existing.clone();
         off.enabled = false;
-        off.version = version;
+        off.version = version(&existing.version);
         validate_agent_definition_update(&existing, &off)?;
         let data = encode_agent_definition(&off)?;
         self.apply_agent_definition_body(txn, id, TimeRange { start: at, end: at }, at, data)?;

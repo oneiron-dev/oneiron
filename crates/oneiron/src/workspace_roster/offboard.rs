@@ -47,6 +47,7 @@ use serde::{Deserialize, Serialize};
 
 use super::work_companion::require_settings_authority_in_txn;
 use super::*;
+use crate::agent_def::AgentMadeBy;
 use crate::authority::{ActSurface, HostSlipIssuer};
 use crate::channel_identity::ChannelIdentityStep;
 use crate::check_in::{LeaverCheckIns, settle_leaver_check_ins_in_txn};
@@ -171,9 +172,12 @@ pub struct MemberOffboardingOutcome {
     /// Open check-ins whose current rung pins the leaver, left to the
     /// ladder: the leaver may no longer answer, and the ask climbs.
     pub check_ins_waiting_on_leaver: Vec<EntityId>,
-    /// The agents the switched-off actors made, still running: the owner
-    /// pauses them with `vault.agents.pause_tree` if they should stop.
-    pub made_agents: Vec<EntityId>,
+    /// What the switched-off actors made, still running, as
+    /// `vault.agents.made_by` lists it (the agents they saved, branches,
+    /// watchers, hooks and scheduled sends): one answer per actor that made
+    /// anything. The owner pauses it with `vault.agents.pause_tree` if it
+    /// should stop.
+    pub made_by: Vec<AgentMadeBy>,
     /// The recorded time the offboarding committed.
     pub completed_at: u64,
     /// This answer is a replay of an offboarding that already completed:
@@ -200,7 +204,7 @@ impl MemberOffboardingOutcome {
             member_asks_declined: Vec::new(),
             check_ins_let_go: Vec::new(),
             check_ins_waiting_on_leaver: Vec::new(),
-            made_agents: Vec::new(),
+            made_by: Vec::new(),
             completed_at,
             replayed,
         }
@@ -263,6 +267,7 @@ impl Vault {
                 return replay(&intent, &digest, &done);
             }
             refuse_self_offboard(offboarder, &intent)?;
+            roster_member_in_txn(self, &rtxn, &intent)?;
             (
                 self.member_role_in_txn(&rtxn, vault_id, intent.person_ref)?
                     .is_some(),
@@ -293,11 +298,13 @@ impl Vault {
             )
         };
         let (seat_receipt, settled) = if seat_stands {
-            // The workspace power is judged again in the removal's writer
-            // before its check-in, so a caller who lost it since the read
-            // above commits nothing, not even a pending check-in.
+            // The workspace power and the roster row are judged again in the
+            // removal's writer before its check-in, so a caller who lost the
+            // power since the read above, or a seat with no roster row here,
+            // commits nothing, not even a pending check-in.
             let guard = |txn: &heed::RoTxn<'_>| {
-                require_settings_authority_in_txn(self, txn, vault_id, owner, OFFBOARD_REFUSAL)
+                require_settings_authority_in_txn(self, txn, vault_id, owner, OFFBOARD_REFUSAL)?;
+                roster_member_in_txn(self, txn, &intent).map(|_| ())
             };
             let (receipt, settled) = self.remove_shared_member_then(
                 owner,
@@ -371,13 +378,7 @@ impl Vault {
                 "the offboarding completed in another writer; retry for its answer",
             ));
         }
-        let key = RosterMemberKey {
-            workspace_ref: intent.workspace_ref.clone(),
-            person_ref: intent.person_ref,
-        };
-        let row = MEMBER
-            .get(&self.store, txn, &key)?
-            .ok_or_else(|| invalid("person_ref is not on this workspace's roster"))?;
+        let (key, row) = roster_member_in_txn(self, txn, intent)?;
         let mut outcome = MemberOffboardingOutcome::new(intent, now, false);
 
         // The actors: the member's, and a work companion born here.
@@ -391,9 +392,9 @@ impl Vault {
         {
             actors.push(companion_actor);
         }
-        let version = offboard_version(digest);
         for actor in &actors {
-            if self.switch_off_agent_definition_in_txn(txn, actor, version.clone(), now)? {
+            let version = |current: &str| offboard_version(digest, &intent.offboarding_id, current);
+            if self.switch_off_agent_definition_in_txn(txn, actor, version, now)? {
                 outcome.actors_switched_off.push(*actor);
             }
         }
@@ -405,9 +406,9 @@ impl Vault {
         )?;
         for actor in &actors {
             let made = self.agent_made_by_in_txn(txn, actor, &mut count)?;
-            outcome
-                .made_agents
-                .extend(made.agents.iter().map(|agent| agent.agent_def_ref));
+            if made.count > 0 {
+                outcome.made_by.push(made);
+            }
         }
         outcome.access_grants_revoked =
             revoke_leaver_access_grants_in_txn(self, txn, &actors, born_grant, now)?;
@@ -610,12 +611,35 @@ fn refuse_self_offboard(offboarder: EntityId, intent: &MemberOffboardingIntent) 
     Ok(())
 }
 
-/// The version an offboarding writes on the definitions it switches off:
-/// derived from the offboarding, so one offboarding writes one version.
-fn offboard_version(digest: &[u8; 32]) -> String {
+/// The version an offboarding writes on a definition it switches off:
+/// derived from the offboarding (its workspace and member `digest`, and its
+/// id) and the version `current` the definition stands at, so it is never
+/// the version it replaces, and no two offboardings write the same one.
+/// The id holds no NUL ([`MemberOffboardingIntent::validate`]).
+fn offboard_version(digest: &[u8; 32], offboarding_id: &str, current: &str) -> String {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron.workspace-offboarding.version.v1");
     hasher.update(digest);
+    hasher.update(offboarding_id.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(current.as_bytes());
     format!("offboard-{}", hasher.finalize().to_hex())
+}
+
+/// The leaver's roster row, keyed as the roster files it: an offboarding
+/// names a member of this workspace's roster.
+fn roster_member_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    intent: &MemberOffboardingIntent,
+) -> Result<(RosterMemberKey, RosterMemberRow)> {
+    let key = RosterMemberKey {
+        workspace_ref: intent.workspace_ref.clone(),
+        person_ref: intent.person_ref,
+    };
+    let row = MEMBER
+        .get(&vault.store, txn, &key)?
+        .ok_or_else(|| invalid("person_ref is not on this workspace's roster"))?;
+    Ok((key, row))
 }
 
 /// Whether custody record `name` is held here and still active.

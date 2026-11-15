@@ -426,6 +426,10 @@ fn the_owner_offboards_a_member_the_seat_and_actors_end_and_the_people_stay() ->
         );
     }
     assert_eq!(outcome.rooms_left.len(), 2);
+    assert!(
+        outcome.made_by.is_empty(),
+        "actors that made nothing list nothing that keeps running"
+    );
     Ok(())
 }
 
