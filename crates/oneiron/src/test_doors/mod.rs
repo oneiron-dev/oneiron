@@ -75,6 +75,7 @@ pub mod live_window_import;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
+pub mod mail_search_off_record;
 pub mod membership;
 pub mod mesh_machine_endpoint_index;
 pub mod meso_extraction_width;
