@@ -268,6 +268,12 @@ name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The sieve doors (queue, spans, policies, lease, evidence, settlements, budgets) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_sieve_doors"
+path = "tests/vault_sieve_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The signing session (ARCH-0064a [SGN-03]) over it_esign_public's fixture.
 [[test]]
 name = "esign_signing_session"
@@ -323,12 +329,6 @@ required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 name = "broker_followup_job_binding"
 path = "tests/broker_followup_job_binding.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
-
-# The sieve doors (queue, spans, policies, lease, evidence, settlements, budgets) root on a `MemoryKeystore`.
-[[test]]
-name = "vault_sieve_doors"
-path = "tests/vault_sieve_doors.rs"
-required-features = ["oneiron/test-support"]
 
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
