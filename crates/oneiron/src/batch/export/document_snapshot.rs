@@ -301,14 +301,6 @@ impl Vault {
             (None, ExportCut::Archive) => ExportScope::WholeVault,
             (None, ExportCut::Okf) => ExportScope::Okf,
         };
-        // A whole vault that offloaded covered authority history names the
-        // rows it lacks rather than archive the vault without them (census
-        // L5-22 PR 3).
-        if scope == ExportScope::WholeVault
-            && let Some(refusal) = crate::authority::offloaded_history_refusal_in_txn(self, &rtxn)?
-        {
-            return Err(refusal.into());
-        }
         let adapters = crate::ingest::INGEST_SOURCE_REGISTRY
             .source_configs()
             .map(|config| ExportAdapterDescriptor {
