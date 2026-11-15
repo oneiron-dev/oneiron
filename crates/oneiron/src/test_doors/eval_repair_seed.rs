@@ -43,8 +43,8 @@ pub fn commit_proposal(
 ///
 /// # Errors
 ///
-/// As the gate's write: no seed, a seed that changed since `stored`, or
-/// storage errors.
+/// As the gate's write: no seed, a seed that changed since `stored`, a
+/// capture deleted since, or storage errors.
 pub fn commit_settlement(
     vault: &Vault,
     stored: &EvalRepairSeed,

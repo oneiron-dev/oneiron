@@ -198,7 +198,8 @@ fn grade(task: &EvalRepairTask, answer: &EvalRepairLegAnswer) -> bool {
 }
 
 /// Whether every row in `rows` is still stored and not deleted in `txn`: a
-/// seed is never recorded for a capture erased after its task compiled.
+/// seed is never recorded, nor settled, for a capture deleted or erased
+/// after its task compiled.
 fn sources_live_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, rows: &[EntityId]) -> Result<bool> {
     for id in rows {
         if vault.store.port_entity_record(txn, id)?.is_none()
@@ -284,8 +285,9 @@ fn commit_proposal(
 /// (with `stored`'s adjudicated label applied) before it. The seed must
 /// still be exactly `stored`: an erase and a new proposal between the read
 /// and this write leave another row, which is never settled with this
-/// verdict. A seed whose family a cohort holds by now is refused as
-/// `FamilyHeld`.
+/// verdict. The capture must still be live: a delete since the read keeps
+/// the seed but leaves it unsettled. A seed whose family a cohort holds by
+/// now is refused as `FamilyHeld`.
 fn commit_settlement(
     vault: &Vault,
     stored: &EvalRepairSeed,
@@ -319,6 +321,13 @@ fn commit_settlement(
             EvalRepairSeedState::Pending | EvalRepairSeedState::AwaitingLabel
         ) {
             return Ok(seed);
+        }
+        // A delete keeps the seed until the erase scrubs it, but a deleted
+        // capture's seed never takes a case.
+        if !sources_live_in_txn(vault, txn, &seed.source_rows)? {
+            return Err(invalid(
+                "the capture was deleted before its repair seed was settled",
+            ));
         }
         let verdict = match verdict {
             Ok(()) if family_held_in_txn(vault, txn, &seed.source.seat, &seed.family)? => {
@@ -445,8 +454,8 @@ impl Memory<'_> {
     ///
     /// A seed that awaits its adjudicated label (it stays as it is), no seed
     /// for `source`, unbounded or equal leg receipts, a capture that no
-    /// longer compiles, a seed that changed while it was graded, or storage
-    /// errors.
+    /// longer compiles, a seed that changed while it was graded, a capture
+    /// deleted while it was graded, or storage errors.
     pub fn settle_eval_repair_seed(
         &self,
         source: &EvalRepairTaskSource,
