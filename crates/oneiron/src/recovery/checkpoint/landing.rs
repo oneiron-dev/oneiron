@@ -62,7 +62,7 @@ impl Vault {
         checkpoint_id: String,
         mut bodies: artifact::SealedBodies<'_>,
         destination: &Path,
-        config: VaultConfig,
+        mut config: VaultConfig,
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
@@ -204,6 +204,15 @@ impl Vault {
                     .flat_map(super::removal_files::LiveArchives::landing_lens),
             );
         room.admit()?;
+        // A copy beside a sealed vault goes under the key its restored rows
+        // name, so its own mirror opens it after a close; refused before
+        // anything is made when the live seal holds no such key.
+        config.page_seal = config
+            .page_seal
+            .take()
+            .map(|seal| Self::restored_copy_page_seal(seal, &image.databases["vault_meta"]))
+            .transpose()
+            .map_err(Rejected::landing)?;
         let mut made = MadeDestination::make(destination, home)?;
         // A sealed copy's open writes its page-seal mirror beside it, outside
         // the directory: a refusal removes that too.

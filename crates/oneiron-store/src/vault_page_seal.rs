@@ -140,6 +140,33 @@ impl VaultPageSeal {
         Ok(seal)
     }
 
+    /// This seal's incarnation under the key of its chain whose commitment is
+    /// `commitment`: the page key derives from that key, and the keys after
+    /// it in the chain stay its earlier ones. `None` when the seal holds no
+    /// such key. Only for a seal no vault was created under yet: a restore
+    /// beside a sealed vault takes it so that the copy's pages go under the
+    /// key its restored state names, which its own mirror's chain reaches.
+    #[must_use]
+    pub fn under_chain_key(&self, commitment: &[u8; 32]) -> Option<Self> {
+        let chain: Vec<&Arc<VaultDataKey>> = std::iter::once(&self.data_key)
+            .chain(&self.earlier)
+            .collect();
+        let position = chain
+            .iter()
+            .position(|key| key.commitment(&self.vault_id) == *commitment)?;
+        let mut seal = Self::derive_shared(
+            self.vault_id,
+            self.incarnation,
+            Arc::clone(chain[position]),
+            self.origin.clone(),
+        );
+        seal.earlier = chain[position + 1..]
+            .iter()
+            .map(|key| Arc::clone(*key))
+            .collect();
+        Some(seal)
+    }
+
     /// The vault this seal belongs to. A new vault takes it as its own id.
     #[must_use]
     pub fn vault_id(&self) -> [u8; 32] {

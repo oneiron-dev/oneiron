@@ -393,6 +393,19 @@ impl Vault {
         walk_links(&vault_id, held, &links)
     }
 
+    /// The data-key commitment a checkpoint image's `vault_meta` rows name:
+    /// the key a vault restored from it holds. `None` for an image of a vault
+    /// with no data key yet.
+    pub(crate) fn vault_key_commitment_in_rows(
+        rows: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<Option<[u8; 32]>> {
+        let key = STATE.key_bytes(&());
+        rows.iter()
+            .find(|(row_key, _)| *row_key == key)
+            .map(|(_, value)| STATE.decode_value(value).map(|state| state.commitment))
+            .transpose()
+    }
+
     /// Holds the data key a sealed vault opened with (OF-570 maximum tier).
     /// A vault with a data key holds the chain key its commitment names: the
     /// newest one, or an earlier one when the act that minted the newest never
