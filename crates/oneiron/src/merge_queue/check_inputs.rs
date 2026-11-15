@@ -115,7 +115,11 @@ pub struct QueueCheckReceipt<Exhaust = Vec<u8>> {
     pub hold: Option<QueueCheckHold>,
     pub need: Option<QueueCheckNeed>,
     /// The earlier receipt this one reuses, when it ran nothing: the
-    /// attempt and generation that ran the check.
+    /// attempt and generation that ran the check. Stored as `reuse_source`:
+    /// a row written before the source had a key of its own kept the reused
+    /// receipt's own inputs digest as `reused_from`, which a decode ignores,
+    /// so that row still reads (it names no source).
+    #[serde(rename = "reuse_source", default)]
     pub reused_from: Option<QueueCheckReuseSource>,
     pub tests_passed: Option<bool>,
     pub verdict_ref: Option<String>,
