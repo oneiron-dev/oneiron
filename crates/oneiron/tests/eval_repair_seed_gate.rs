@@ -1476,3 +1476,147 @@ fn coach_reproposes_a_candidate_failed_seed() -> TestResult {
     assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(again));
     Ok(())
 }
+
+#[test]
+fn an_answer_a_precondition_or_a_tool_shows_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    // A leg is shown each precondition's pointer: an observed answer there
+    // is no task.
+    let pointer = "/orders/0/city";
+    let mut observed = text_task(clean_state());
+    observed["preconditions"] = json!([{ "pointer": pointer, "equals": "Lyon" }]);
+    let source = capture(&fixture, observed.clone(), json!({ "response": pointer }))?;
+    let refusal = propose(&fixture, &source).expect_err("the precondition holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    // Nor is an adjudicated answer there a check.
+    let mut adjudicated = observed;
+    adjudicated["grader"] = json!({ "kind": "adjudicated_response" });
+    let source = capture(&fixture, adjudicated, json!({ "status": "resolved" }))?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, pointer),
+    )
+    .expect_err("the precondition holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    // A leg is shown each declared tool's name: an end state that is one
+    // is no task.
+    let mut tool = tool_task();
+    tool["world"] = json!({ "json_state_tools": { "tools": [
+        { "name": "set_city", "effect": { "kind": "set", "pointer": "" } },
+    ] } });
+    tool["initial_state"] = json!("Paris");
+    let source = capture(&fixture, tool, json!({ "state": "set_city" }))?;
+    let refusal = propose(&fixture, &source).expect_err("the tool's name is the end state");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn seed_label_refuses_an_answer_in_its_task_pointer() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    // The seed keeps the source's task pointer as text.
+    let answer = "value/task";
+    assert!(source.task_pointer.contains(answer));
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, answer),
+    )
+    .expect_err("the task pointer holds the answer");
+    assert!(refusal.contains("task pointer"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn an_end_state_a_whole_shown_value_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    let declaration = json!({ "name": "set_root", "effect": { "kind": "set", "pointer": "" } });
+    let precondition = json!({ "pointer": "/city", "equals": "Paris" });
+    let mut tool = tool_task();
+    tool["world"] = json!({ "json_state_tools": { "tools": [declaration.clone()] } });
+    tool["initial_state"] = json!({ "city": "Paris" });
+    tool["preconditions"] = json!([precondition.clone()]);
+    tool["tools"] = json!(["set_root"]);
+    // A leg is shown each whole declared tool, each whole precondition and
+    // the offered tools' list: an end state that is one of them, which a
+    // leg can copy into a call, is no task.
+    for end in [declaration, precondition, json!(["set_root"])] {
+        let source = capture(&fixture, tool.clone(), json!({ "state": end }))?;
+        let refusal = propose(&fixture, &source).expect_err("the leg's input holds the end state");
+        assert!(refusal.contains("leaked"), "{refusal}");
+        assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    }
+    // An end state the input does not hold is a task.
+    let source = capture(&fixture, tool, json!({ "state": { "city": "Lyon" } }))?;
+    propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    Ok(())
+}
+
+#[test]
+fn an_answer_that_is_the_json_of_a_shown_value_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    // A leg is shown its input as JSON: the JSON text of a value in it is an
+    // answer it can copy.
+    let answer = clean_state()["orders"][0].to_string();
+    let source = capture(
+        &fixture,
+        text_task(clean_state()),
+        json!({ "response": answer }),
+    )?;
+    let refusal = propose(&fixture, &source).expect_err("the workspace's JSON holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    // Nor is such an adjudicated answer a check.
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, &answer),
+    )
+    .expect_err("the workspace's JSON holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn seed_label_refuses_an_answer_that_is_a_seed_identifier() -> TestResult {
+    let fixture = fixture()?;
+    let mut source = adjudicated_capture(&fixture, clean_state())?;
+    source.seat = EvalSeat::Named("ORCHID".to_owned());
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    // The seed keeps its source and its arms' pins: an answer that is one of
+    // them, whole, would sit in the seed as text.
+    let pins = request(&source);
+    for answer in [
+        "ORCHID".to_owned(),
+        source.claim_ref.clone(),
+        source.source_hash.clone(),
+        source.outcome_ordinal.to_string(),
+        pins.old.model.clone(),
+        pins.old.revision.clone(),
+        pins.candidate.skill_digest.clone().unwrap_or_default(),
+    ] {
+        let refusal = label_seed(
+            &fixture,
+            &source,
+            &audit(EvalLabelKind::AdjudicatedAudit, &answer),
+        )
+        .expect_err("the answer is one of the seed's identifiers");
+        assert!(refusal.contains("identifiers"), "{answer}: {refusal}");
+        assert_eq!(
+            fixture.vault.eval_repair_seed(&source)?,
+            Some(proposed.clone())
+        );
+    }
+    Ok(())
+}
