@@ -7,7 +7,6 @@
 
 use std::collections::BTreeMap;
 
-use super::support::verify_deletion_authority_in_txn;
 use super::{
     DeleteReceipt, DeleteRequestState, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
@@ -160,7 +159,7 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::Error::from)?;
-            verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            self.verify_own_deletion_authority_in(&txn)?;
             if let Some(starter) = options.veto_starter {
                 self.require_own_proof_in_txn(&txn, starter)?;
             }
@@ -321,7 +320,7 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::Error::from)?;
-            verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            self.verify_own_deletion_authority_in(&txn)?;
             self.require_own_proof_in_txn(&txn, owner)?;
             let act = self
                 .vault
@@ -380,7 +379,7 @@ impl Memory<'_> {
     ) -> MemoryResult<DeleteReceipt> {
         self.vault.prepare_install_signing()?;
         let erased = self.vault.try_with_write_txn_grouped(|txn| {
-            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+            self.verify_own_deletion_authority_in(txn)?;
             self.require_own_proof_in_txn(txn, owner)?;
             self.require_live_owner_in_txn(txn)?;
             let act = self

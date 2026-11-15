@@ -122,7 +122,8 @@ pub(crate) enum DeleteRefusal {
     /// credential of its own; a root bound to no PERSON is no one here.
     Unbound,
     /// The person holds no membership role in this vault that deletes (a
-    /// personal vault has none), or no such record is stored.
+    /// personal vault has none), or no such record is stored. A Human
+    /// credential handed on to another key holds none either.
     NoStanding,
     /// A Member, Steward or Admin role deletes only an item it owns, and
     /// this caller does not own this one.
@@ -214,6 +215,14 @@ pub(crate) fn require_delete_authority_in_txn(
     caller: DeleteCaller<'_>,
     target: &DeleteTarget,
 ) -> Result<std::result::Result<DeleteAuthority, DeleteRefusal>> {
+    // A Human credential handed on to another key is its key holder's act:
+    // it takes no person's role, the Owner's included (HANDED-ON-SLIP-PERSON;
+    // canon `#credential-read-key-built`: it "never takes the owner's floor").
+    if caller.class == EdgeActorClass::Human
+        && caller.credential.is_some_and(VerifiedSlip::is_transferred)
+    {
+        return Ok(Err(DeleteRefusal::NoStanding));
+    }
     if caller.class == EdgeActorClass::Human {
         let bound = match vault
             .write_actor_bound_in_txn(txn, &WriteActor::new(caller.actor, caller.class))

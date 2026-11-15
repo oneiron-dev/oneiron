@@ -227,10 +227,19 @@ impl Memory<'_> {
     /// the run attempt its host origin's envelope binds (FIX 11920), so a
     /// delegated run's writes through every door meet its live delegation
     /// chain at the Gate. It equals the bound actor by identity; with no
-    /// origin, or an origin with no attempt, it is that actor alone.
+    /// origin, or an origin with no attempt, it is that actor alone. A
+    /// handle whose presented credential was handed on to another key
+    /// marks it so ([`crate::WriteActor::with_handed_on_credential`]): every
+    /// person gate that judges the write actor refuses it the person's acts
+    /// ([`Self::acts_as_own_person`]).
     #[must_use]
     pub(crate) fn write_actor(&self) -> crate::WriteActor {
         let actor = crate::WriteActor::new(self.actor, self.actor_class);
+        let actor = if self.presents_handed_on_credential() {
+            actor.with_handed_on_credential()
+        } else {
+            actor
+        };
         match self
             .host_origin
             .as_ref()

@@ -1,7 +1,6 @@
 //! Owner-bound historical erasure timing from the immutable redaction receipt,
 //! its factual sweep row and its overall final row (FIX 5844).
 
-use super::support::verify_deletion_authority_in_txn;
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::EntityId;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -44,7 +43,7 @@ impl Memory<'_> {
                 &["Present the owner's own verified, unattenuated credential."],
             ));
         }
-        verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        self.verify_own_deletion_authority_in(&txn)?;
         let receipt_id = input
             .receipt_ref
             .strip_prefix("redaction:")

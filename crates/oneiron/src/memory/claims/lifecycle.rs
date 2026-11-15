@@ -51,7 +51,7 @@ fn carried_proposal_admitted(
 impl Memory<'_> {
     pub(in crate::memory) fn evaluate_deletion_gate(&self) -> MemoryResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        verify_deletion_authority_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
+        self.verify_own_deletion_authority_in(&rtxn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
         Ok(DeletionGateContext::new(
             self.actor,
@@ -332,7 +332,9 @@ impl Memory<'_> {
             // owner binding; retracting SOMEONE ELSE'S is, so it gets the
             // authority-log teeth.
             if !owns_claim && self.actor_class != EdgeActorClass::System {
-                if self.actor_class != EdgeActorClass::Human {
+                // A credential handed on to another key is its holder's
+                // act, never the owner's (HANDED-ON-SLIP-PERSON).
+                if !self.acts_as_own_person() {
                     return Err(MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
                         format!(
@@ -343,6 +345,7 @@ impl Memory<'_> {
                         &[
                             "Only the writing actor or a human-class owner actor may retract.",
                             "Bind the owner actor key for cross-actor retraction.",
+                            "A credential handed on to another key retracts only its own claims.",
                         ],
                     ));
                 }

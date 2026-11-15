@@ -67,12 +67,7 @@ impl Memory<'_> {
             authority: record.clone(),
         };
         self.with_verified_actor_write_txn(|txn| {
-            super::support::verify_deletion_authority_in_txn(
-                self.vault,
-                &*txn,
-                self.actor,
-                self.actor_class,
-            )?;
+            self.verify_own_deletion_authority_in(&*txn)?;
             emergency::append_instruction_in_txn(self.vault, txn, &request).map_err(booking_error)
         })?;
         emergency::verify_logged_owner_instruction(self.vault, &request).map_err(booking_error)?;
@@ -91,12 +86,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        super::support::verify_deletion_authority_in_txn(
-            self.vault,
-            &txn,
-            self.actor,
-            self.actor_class,
-        )
+        self.verify_own_deletion_authority_in(&txn)
     }
 
     pub fn plan_emergency_reschedule(

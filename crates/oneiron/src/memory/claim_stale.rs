@@ -79,7 +79,9 @@ impl Memory<'_> {
                     &body,
                     "memory.claim.demote",
                 )?;
-            } else if self.actor_class == EdgeActorClass::Human {
+            } else if self.acts_as_own_person() {
+                // A credential handed on to another key is its holder's
+                // act, never the owner's (HANDED-ON-SLIP-PERSON).
                 verify_owner_actor_binding_in_txn(self.vault, wtxn, self.actor)?;
             } else {
                 return Err(MemoryError::new(
@@ -92,6 +94,7 @@ impl Memory<'_> {
                     &[
                         "Only the writing actor or a human-class owner actor may demote.",
                         "Bind the owner actor key for cross-actor demotion.",
+                        "A credential handed on to another key demotes only its own claims.",
                     ],
                 ));
             }
