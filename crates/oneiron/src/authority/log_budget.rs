@@ -638,16 +638,45 @@ pub(crate) fn signer_has_standing(
     Ok(door_view(store, txn)?.structure.stands(signer))
 }
 
-/// The row a store door last held at the owner's reserve, and the fold peak
-/// the log with it projects (Astra owner-reserve r2 F4). The door judges the
-/// log with the arriving row in it, so a held row leaves the stored log under
-/// the reserve's start; the reserve's typed check reads this hold until the
-/// row is stored. Kept per handle and never persisted: a replica's next drain,
-/// and the owner's next import, hold the row again.
+/// The largest wait at the owner's reserve this handle saw, and the fold
+/// peak the log with it projects (Astra owner-reserve r2 F4). The door judges
+/// the log with the arriving row in it, so a held row leaves the stored log
+/// under the reserve's start; so does carried owner work that rolled back
+/// (r3 F3). The reserve's typed check reads this hold while it stands
+/// ([`Self::stands`]). A smaller wait never takes the place of a larger one
+/// that stands (r3 F2), so the check names the reserve while its largest
+/// wait does not fit, and a wait no peer sends again keeps it named until
+/// the handle closes. Kept per handle and never persisted: a replica's next
+/// drain, and the owner's next import, hold the row again.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OwnerReserveHold {
+    /// The held row, or the request whose carried work rolled back.
     entry: AuthorityEntryHash,
+    /// Whether `entry` is a request whose carried work rolled back.
+    work: bool,
     projected: u64,
+}
+
+impl OwnerReserveHold {
+    /// Whether the hold still names a wait under `projection`, the stored
+    /// log's: a held row until it is stored, carried work until it lands
+    /// ([`carried_work_past_owner_reserve_in_txn`]) or its request leaves
+    /// this install's work ([`end_owner_reserve_work_hold`]).
+    fn stands(&self, projection: &FoldProjection) -> bool {
+        self.work || !projection.bound.contains_key(&self.entry)
+    }
+}
+
+/// Records `hold` on `store`'s handle unless a larger hold stands under
+/// `projection` (Astra owner-reserve r3 F2).
+fn hold_at_owner_reserve(store: &Store, projection: &FoldProjection, hold: OwnerReserveHold) {
+    if let Ok(mut held) = store.authority_owner_reserve_hold.lock() {
+        let larger_stands =
+            held.is_some_and(|held| held.projected > hold.projected && held.stands(projection));
+        if !larger_stands {
+            *held = Some(hold);
+        }
+    }
 }
 
 /// What a store door does with an AUTHORITY_LOG row.
@@ -709,12 +738,15 @@ pub(crate) fn authority_door(
     if with_entry > owner_reserve_start(store, txn)?
         && !owner_work(store, txn, &view.structure, entry)?
     {
-        if let Ok(mut hold) = store.authority_owner_reserve_hold.lock() {
-            *hold = Some(OwnerReserveHold {
+        hold_at_owner_reserve(
+            store,
+            &view.projection,
+            OwnerReserveHold {
                 entry: hash,
+                work: false,
                 projected: with_entry,
-            });
-        }
+            },
+        );
         return Ok(AuthorityDoor::AtBound);
     }
     // A self-signed root needs nothing but a fresh key, so an anchor this
@@ -822,6 +854,43 @@ pub(crate) fn past_owner_reserve_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> crate::error::Result<bool> {
     Ok(door_view(store, txn)?.projection.bytes() > owner_reserve_start(store, txn)?)
+}
+
+/// [`past_owner_reserve_in_txn`] after the carried work for `request`
+/// staged its rows in `txn`. Past the reserve the work rolls back, so this
+/// records it as a hold the reserve's typed check names (Astra owner-reserve
+/// r3 F3); under it the work lands, and so ends that hold.
+pub(crate) fn carried_work_past_owner_reserve_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    request: &AuthorityEntryHash,
+) -> crate::error::Result<bool> {
+    let view = door_view(store, txn)?;
+    let projected = view.projection.bytes();
+    if projected <= owner_reserve_start(store, txn)? {
+        end_owner_reserve_work_hold(store, request);
+        return Ok(false);
+    }
+    hold_at_owner_reserve(
+        store,
+        &view.projection,
+        OwnerReserveHold {
+            entry: *request,
+            work: true,
+            projected,
+        },
+    );
+    Ok(true)
+}
+
+/// Ends the hold of `request`'s carried work, once it landed or the request
+/// left this install's work.
+pub(crate) fn end_owner_reserve_work_hold(store: &Store, request: &AuthorityEntryHash) {
+    if let Ok(mut held) = store.authority_owner_reserve_hold.lock()
+        && held.is_some_and(|held| held.work && held.entry == *request)
+    {
+        *held = None;
+    }
 }
 
 /// Whether `entry` is the owner's will this install carries (FIX 7930): signed
@@ -970,7 +1039,7 @@ impl crate::Vault {
             .lock()
             .ok()
             .and_then(|hold| *hold)
-            .filter(|hold| !view.projection.bound.contains_key(&hold.entry))
+            .filter(|hold| hold.stands(&view.projection))
             .map_or(0, |hold| hold.projected);
         let projected_bytes = view.projection.bytes().max(held);
         if projected_bytes > reserve_start {

@@ -476,7 +476,8 @@ pub(crate) use import_order::authority_stage_order;
 pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, OwnerReserveHold, asks_the_owners_work_in_txn,
-    authority_door, authority_signer_label, past_owner_reserve_in_txn, signer_has_standing,
+    authority_door, authority_signer_label, carried_work_past_owner_reserve_in_txn,
+    end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};

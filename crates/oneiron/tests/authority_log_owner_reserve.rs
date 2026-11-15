@@ -32,7 +32,8 @@
 //! stored log is under it, and so does a join on parents no row is: the door
 //! counts every parent it names (Astra owner-reserve r2 F1). The typed check
 //! names the reserve once a row waits there, though the stored log is under
-//! it (r2 F4). And a result this install signs counts as the owner's work
+//! it (r2 F4), and while the largest row waiting there does not fit: a
+//! smaller one never takes its place (r3 F2). And a result this install signs counts as the owner's work
 //! only when the request it answers is the owner's work (Astra owner-reserve
 //! F2): a request another machine carries past the reserve has its result
 //! wait, so carried requests never spend the owner's reserve.
@@ -46,7 +47,10 @@
 //! refusal past the reserve. The second, fourth and seventh are red at
 //! 537e65f4 (with its missing `Debug` derive added so it builds), the
 //! reserve before the r2 fixes: no check names the reserve once a row waits,
-//! and the withheld join lands and the fold passes its floor.
+//! and the withheld join lands and the fold passes its floor. The eighth is
+//! red at bd74f522, the reserve before the r3 fixes: the smaller join's hold
+//! took the larger's place, and once the smaller landed no check named the
+//! reserve.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve`.
 
@@ -672,6 +676,66 @@ fn a_withheld_join_on_parents_no_row_is_waits_at_the_door() {
     assert!(
         checks.iter().any(|check| check.kind == OWNER_RESERVE_CHECK),
         "the owner's typed check names the reserve the join waits at: {checks:?}"
+    );
+}
+
+/// The absent parents of the larger of two joins that wait at the reserve:
+/// past the reserve's start under twice the floor (640 B per ancestor pair).
+const LARGER_JOIN_PARENTS: u64 = 20_000;
+
+/// The absent parents of the smaller one: past the reserve's start under the
+/// floor, and under it at twice the floor.
+const SMALLER_JOIN_PARENTS: u64 = 7_000;
+
+/// Astra owner-reserve r3 F2. Two joins on absent parents wait at the
+/// reserve, the larger first. The owner raises the floor so that the smaller
+/// fits and the larger does not; the smaller lands, and the owner's typed
+/// check still names the reserve the larger waits at.
+#[test]
+fn a_smaller_held_row_never_hides_a_larger_one_from_the_check() {
+    let (rooted, flooder) = floored_vault_with_flooder();
+    let join = |seq: u64, parents: u64, fill: u8| {
+        let absent = (0..parents)
+            .map(|index| {
+                let mut hash = [fill; 32];
+                hash[..8].copy_from_slice(&index.to_le_bytes());
+                hash
+            })
+            .collect();
+        flooder_row(
+            &rooted,
+            &flooder,
+            seq,
+            absent,
+            AuthorityOp::FrontierJoin(FrontierJoin {
+                family: FrontierJoinFamily::Install(flooder.machine),
+                scope: FrontierJoinScope::Main,
+            }),
+        )
+    };
+    let larger = join(1, LARGER_JOIN_PARENTS, 0xAC);
+    let smaller = join(2, SMALLER_JOIN_PARENTS, 0xAD);
+    for (name, row) in [("larger", &larger), ("smaller", &smaller)] {
+        let arrival = rooted.vault.put_authority_log_entry(row, AT, 1);
+        assert!(
+            matches!(&arrival, Err(error) if error.kind() == ErrorKind::AuthorityLogFull),
+            "the {name} join waits at the reserve: {arrival:?}"
+        );
+    }
+    set_floor(&rooted.vault, 2 * FLOOR_BYTES);
+    rooted
+        .vault
+        .put_authority_log_entry(&smaller, AT, 1)
+        .expect("the smaller join lands under the raised floor");
+    let checks = rooted.vault.authority_log_checks().expect("the checks");
+    assert!(
+        checks.iter().any(|check| check.kind == OWNER_RESERVE_CHECK),
+        "the owner's typed check names the reserve the larger join waits at: {checks:?}"
+    );
+    let arrival = rooted.vault.put_authority_log_entry(&larger, AT, 1);
+    assert!(
+        matches!(&arrival, Err(error) if error.kind() == ErrorKind::AuthorityLogFull),
+        "the larger join still waits under the raised floor: {arrival:?}"
     );
 }
 

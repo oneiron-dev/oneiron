@@ -215,6 +215,7 @@ impl Vault {
             .pending_owner_work_for(machine)
             .find_map(|(pending, request)| (pending == hash).then_some(request))
         else {
+            crate::authority::end_owner_reserve_work_hold(&self.store, &hash);
             return Ok(Ran::Gone);
         };
         // A request that is not the owner's work at this door, such as one
@@ -222,13 +223,16 @@ impl Vault {
         // wraps and joins land there as this install's own will, with or
         // without a result (Astra owner-reserve r2 F2). Past the reserve it
         // waits before any work, and work that would take the log past it
-        // rolls back whole, so the request stays pending.
+        // rolls back whole, so the request stays pending; the reserve's typed
+        // check then names that work (r3 F3).
         let carried = !crate::authority::asks_the_owners_work_in_txn(&self.store, txn, &hash)?;
         if carried && crate::authority::past_owner_reserve_in_txn(&self.store, txn)? {
             return Ok(Ran::Pending);
         }
         let ran = self.owner_work_step_in_txn(txn, &fold, hash, request, machine, secret)?;
-        if carried && crate::authority::past_owner_reserve_in_txn(&self.store, txn)? {
+        if carried
+            && crate::authority::carried_work_past_owner_reserve_in_txn(&self.store, txn, &hash)?
+        {
             let signer =
                 crate::identity::read_machine_verifying_key_in_store_txn(&self.store, txn)?
                     .map_or_else(
