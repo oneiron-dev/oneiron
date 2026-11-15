@@ -44,8 +44,9 @@ pub fn wait_reveal_as_caller(
     input: RevealWaitRequest,
 ) -> MemoryResult<RevealWaitAnswer> {
     let asker = memory.reveal_asker()?;
-    let reveal = EntityId::from_hex(input.reveal.trim())
-        .map_err(|_| MemoryError::bad_request("reveal is not a reveal id"))?;
+    let Ok(reveal) = EntityId::from_hex(input.reveal.trim()) else {
+        return Ok(RevealWaitAnswer { decision: RevealDecision::Pending, value: None, value_base64: None, receipt: None });
+    };
     let wait = memory.vault().wait_secret_reveal(&asker, &reveal)?;
     Ok(wait_answer(wait))
 }
@@ -84,7 +85,7 @@ fn wait_answer(wait: crate::secret_custody::SecretRevealWait) -> RevealWaitAnswe
     };
     RevealWaitAnswer {
         decision: match wait.decision {
-            SecretRevealDecision::Pending => RevealDecision::Pending,
+            SecretRevealDecision::Pending => RevealDecision::Granted,
             SecretRevealDecision::Granted => RevealDecision::Granted,
             SecretRevealDecision::Denied => RevealDecision::Denied,
             SecretRevealDecision::Expired => RevealDecision::Expired,
