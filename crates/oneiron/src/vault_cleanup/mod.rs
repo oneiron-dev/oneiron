@@ -252,3 +252,21 @@ pub(crate) fn receipt_row_decode_for_test(
 ) -> crate::Result<Vec<(rmpv::Value, rmpv::Value)>> {
     codec_receipts::decode_row(raw, "vault cleanup test row")
 }
+
+/// Whether `raw` decodes as a cleanup proposal, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_decodes_for_test(raw: &[u8]) -> bool {
+    codec_receipts::decode_proposal(EntityId::from_bytes_unchecked([1; 16]), raw).is_ok()
+}
+
+/// How many ids `raw` names as a cleanup proposal, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_named_id_count_for_test(raw: &[u8]) -> usize {
+    erase::named_ids(entity_rows::Listing::Proposal, raw).len()
+}
+
+/// The proposal schema version, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_schema_version_for_test() -> u64 {
+    PROPOSAL_SCHEMA_VERSION
+}
