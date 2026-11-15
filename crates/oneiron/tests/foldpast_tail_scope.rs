@@ -377,6 +377,41 @@ fn non_agent_enrollment_past_an_adopted_image_folds_as_rejected() {
     assert_eq!(adopting_fold.slips, home_fold.slips, "slips match");
 }
 
+/// The image `vault` writes now as `issuer`'s host root.
+fn written_image(vault: &Vault, issuer: &HostSlipIssuer) -> AuthorityCheckpointV2 {
+    let head = vault
+        .write_authority_checkpoint_v2(issuer)
+        .expect("write image");
+    vault
+        .authority_checkpoint_v2(&head)
+        .expect("read image")
+        .expect("image some")
+}
+
+#[test]
+fn successor_image_past_a_rejected_owner_enrollment_keeps_the_whole_history_issuers() {
+    let fixture = fixture();
+    let device = fresh_device(0x55, ROLE_OWNER);
+    let key = device.key.clone();
+    sign_and_share(&fixture, AuthorityOp::EnrollDevice { device });
+    // Home's image over its whole history, and the image the adopting vault
+    // builds past its adopted one, over the same rows.
+    let home_issuers = oneiron::test_doors::foldpast::image_slip_issuers(&written_image(
+        &fixture.home,
+        &fixture.issuer,
+    ));
+    assert!(
+        home_issuers.contains(&key),
+        "home's consent structure admits the enrolled owner key its fold rejects"
+    );
+    let successor = written_image(&fixture.adopting, &fixture.issuer);
+    assert_eq!(
+        oneiron::test_doors::foldpast::image_slip_issuers(&successor),
+        home_issuers,
+        "the successor image keeps home's slip issuers"
+    );
+}
+
 #[test]
 fn rejected_row_beside_a_serial_withdrawal_still_needs_history() {
     let fixture = fixture();
@@ -622,12 +657,19 @@ fn slip_burn_below_a_rejected_tail_row_still_needs_history() {
     };
     let rejected = sign_on_home(&fixture, AuthorityOp::FederationConfirm(reused));
     let rejected_hash = authority_entry_hash(&rejected).expect("rejected hash");
-    let burn = sign_on_home(
-        &fixture,
+    // A rejected row is no head, so the burn names it as its parent by hand,
+    // one sequence past it.
+    let burn = oneiron::test_doors::foldpast::sign_host_op_at(
+        &fixture.home,
+        &fixture.issuer,
         AuthorityOp::SlipConsume {
             slip_id: BURNED_SLIP,
         },
-    );
+        rejected.seq + 1,
+        vec![rejected_hash],
+    )
+    .expect("sign the burn on the rejected confirm");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&burn)).expect("store burn on home");
     assert!(
         burn.parent_hashes.contains(&rejected_hash),
         "the burn stands on the rejected confirm"
