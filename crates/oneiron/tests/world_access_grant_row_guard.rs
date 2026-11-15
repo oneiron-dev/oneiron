@@ -280,11 +280,13 @@ fn an_agents_row_at_a_fresh_id_lands() {
     assert_eq!(reads.allowed_claim_ids, vec![grant]);
 }
 
-/// Control: the agent's second default through the claim door replaces its
-/// first. The door closes the first default in its own writer, never by a
-/// put over its id, so the guard leaves it as it was.
+/// Control: the agent's second default through the claim door waits beside
+/// its first. A replacement of a stored head is a proposal for the owner's
+/// consent (`memory::claims::commit::write::landing`), written at a fresh id;
+/// the door never puts over the first default's id, so the guard refuses
+/// neither write, and the first default stays the agent's default.
 #[test]
-fn an_agents_second_default_replaces_its_first() {
+fn an_agents_second_default_waits_beside_its_first() {
     let f = Fixture::new();
     f.grant(&WorldAuthoritySet::new(true, [f.world]).unwrap());
 
@@ -292,20 +294,24 @@ fn an_agents_second_default_replaces_its_first() {
         .agent_writes_its_default(json_base_only(true))
         .expect("the agent's first default lands");
     let first_id = f.agent_reads().default_claim_id;
+    assert!(first_id.is_some(), "the agent's first default counts");
     let second = f
         .agent_writes_its_default(json_base_only(false))
         .expect("the agent's second default lands");
 
-    assert_eq!((first.as_str(), second.as_str()), ("auto", "auto"));
+    assert_eq!(
+        (first.as_str(), second.as_str()),
+        ("auto", "proposed"),
+        "the second default waits for the owner's consent"
+    );
     let reads = f.agent_reads();
     assert_eq!(
-        reads.default_subset,
-        WorldAuthoritySet::new(false, []).unwrap(),
-        "the agent's newest default is its default"
+        reads.default_claim_id, first_id,
+        "the first default stays the agent's default"
     );
-    assert!(
-        reads.default_claim_id.is_some() && reads.default_claim_id != first_id,
-        "the second default is a row of its own: {:?} after {first_id:?}",
-        reads.default_claim_id
+    assert_eq!(
+        reads.default_subset,
+        WorldAuthoritySet::new(true, []).unwrap(),
+        "the agent's default is still its first"
     );
 }
