@@ -5,6 +5,7 @@
 mod cursor;
 mod erase;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -17,7 +18,7 @@ use crate::{EntityId, Error, Result, Vault};
 use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
 use super::grant::HookGrant;
 use super::lineage::LineageLink;
-use super::source::{FactEntry, FactKind, FactSource};
+use super::source::{FactEntry, FactKind, FactPosition, FactSource};
 
 pub(crate) use cursor::sync_binding_cursor_in_txn;
 pub(super) use cursor::{
@@ -88,30 +89,73 @@ struct HookDerivationEnvelope {
     params_hash: String,
 }
 
+/// The params digest of `binding`: hex of the binding's selector JSON, then
+/// its id. The run key's envelope carries it and a run's memo stores it as
+/// its derivation's selector hash, so it keeps its bytes (K, PLAN-UC-04
+/// stage 6.3).
+fn selector_params_hash(binding_id: EntityId, binding: &PackHookBinding) -> Result<String> {
+    let selector = serde_json::to_vec(&binding.selector)
+        .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
+    Ok(hex_lower(
+        &LegacyDigest::new(purposes::runtime_hooks::RUN_PARAMS)
+            .raw(&selector)
+            .raw(binding_id.as_bytes())
+            .finish(),
+    ))
+}
+
 /// The run key for `binding` on `fact`.
 pub(super) fn run_key(
     binding_id: EntityId,
     binding: &PackHookBinding,
     fact: &FactEntry,
 ) -> Result<RunKey> {
-    let selector = serde_json::to_vec(&binding.selector)
-        .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
-    let mut params = blake3::Hasher::new();
-    params.update(&selector);
-    params.update(binding_id.as_bytes());
+    run_key_for(binding_id, binding, &fact.input_hash, fact.position)
+}
+
+/// The run key for `binding` on the fact at `position` whose input hash is
+/// `input_hash`. It keys the run's memo, intent, receipt and index rows, so
+/// it keeps its bytes (K, PLAN-UC-04 stage 6.3).
+fn run_key_for(
+    binding_id: EntityId,
+    binding: &PackHookBinding,
+    input_hash: &[u8; 32],
+    position: FactPosition,
+) -> Result<RunKey> {
     let envelope = HookDerivationEnvelope {
-        content_hash: hex_lower(&fact.input_hash),
+        content_hash: hex_lower(input_hash),
         model_id: HOOK_MODEL_ID.to_owned(),
         version: format!("{}+{}", binding.hook_version, binding.body_hash),
-        params_hash: params.finalize().to_hex().to_string(),
+        params_hash: selector_params_hash(binding_id, binding)?,
     };
     let envelope = serde_json::to_vec(&envelope)
         .map_err(|_| Error::InvariantViolation("hook envelope encode"))?;
-    let mut key = blake3::Hasher::new_derive_key("oneiron.hook-run-key.v1");
-    key.update(&envelope);
-    key.update(&[fact.position.source().tag()]);
-    key.update(&fact.position.bytes());
-    Ok(*key.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::runtime_hooks::RUN_KEY)
+        .raw(&envelope)
+        .raw(&[position.source().tag()])
+        .raw(&position.bytes())
+        .finish())
+}
+
+/// The run key for `binding` on the fact at `position` whose input hash is
+/// `input_hash`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn run_key_for_test(
+    binding_id: EntityId,
+    binding: &PackHookBinding,
+    input_hash: [u8; 32],
+    position: FactPosition,
+) -> Result<RunKey> {
+    run_key_for(binding_id, binding, &input_hash, position)
+}
+
+/// The params digest of `binding`, as a run's memo stores it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn selector_params_hash_for_test(
+    binding_id: EntityId,
+    binding: &PackHookBinding,
+) -> Result<String> {
+    selector_params_hash(binding_id, binding)
 }
 
 /// One read a run made, pinned by what it answered.
@@ -236,11 +280,7 @@ impl HookRunDerivation {
         verdict_evidence: &[EntityId],
         runtime_identity: Option<String>,
     ) -> Result<Self> {
-        let selector = serde_json::to_vec(&binding.selector)
-            .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
-        let mut params = blake3::Hasher::new();
-        params.update(&selector);
-        params.update(binding_id.as_bytes());
+        let selector_hash = selector_params_hash(binding_id, binding)?;
         let mut dependencies = vec![HookDependency {
             id: entry.entity,
             revision: entry.revision,
@@ -289,7 +329,7 @@ impl HookRunDerivation {
             event_revision: entry.revision,
             event_body_hash: entry.body_hash,
             hook_version: binding.hook_version.clone(),
-            selector_hash: params.finalize().to_hex().to_string(),
+            selector_hash,
             grant_hash: grant.digest(),
             verdict_evidence: verdict_evidence.to_vec(),
             runtime_identity,
