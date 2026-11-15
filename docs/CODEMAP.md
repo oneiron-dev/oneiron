@@ -68,7 +68,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 28 | 12 | 3 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 40 | 0 | 2 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 61 | 3 | 1 |
-| [oneiron-verb-wire](codemap/oneiron-verb-wire.md) | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… | 969 | 0 | 0 |
+| [oneiron-verb-wire](codemap/oneiron-verb-wire.md) | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… | 969 | 1 | 0 |
 | [oneiron-vm-outbox](codemap/oneiron-vm-outbox.md) | `oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine… | 1 | 0 | 0 |
 | [oneiron-wake-contract](codemap/oneiron-wake-contract.md) | The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports… | 40 | 0 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 14 | 1 | 0 |

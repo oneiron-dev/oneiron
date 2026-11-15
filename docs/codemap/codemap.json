@@ -188681,6 +188681,14 @@
      "surface": {
       "enum": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/wire_list_limit_rules.rs",
+     "purpose": "UC-13 PR 4c: the limit rules of two wire requests, pinned at limit 0, 1, the default, the maximum and the…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -189493,7 +189501,7 @@
    "over_bar": 0,
    "purpose": "The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response…",
    "source_files": 969,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-vm-outbox": {
    "files": [
