@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::task::Poll;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use super::{JournaledResumeStep, LiveWait, ShedCause, SlimState};
 use crate::Vault;
@@ -67,11 +67,7 @@ impl Vault {
                 && let Poll::Ready(waited_secs) = wait.as_mut().poll(cx)
             {
                 trigger = None;
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0, |elapsed| {
-                        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-                    });
+                let now_ms = crate::unix_millis_now();
                 if let Err(error) =
                     self.shed_rebuildable_heap(ShedCause::LongOutboundWait, waited_secs, now_ms)
                 {

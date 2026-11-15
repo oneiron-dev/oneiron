@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 
 use loro::LoroDoc;
 
+use super::authorize::member_reads_labels;
 use super::codec::SyncSelector;
 use super::document_admission::{DocumentGrant, admit_selected_in_txn, authorize_at_in_txn};
 use crate::Vault;
@@ -146,6 +147,19 @@ pub(super) fn carry_born_with(
             }
             prompt.push_str(marker);
         }
+        // No grant admits a credential (SCOPED-EXPORT-RULE = A, ARCH-0027
+        // :382): a field whose text the release check reads one in, raw or
+        // through the typed rule, stays home whole, as a denied prompt
+        // source's text does; the row and its other fields still travel.
+        // The Prompt field joins its sources' texts with a blank line, and
+        // the typed rule reads each source's text alone, so each part of a
+        // field between blank lines is judged too.
+        text.retain(|_, value| {
+            crate::serialize::release_keeps_text(value)
+                && value
+                    .split("\n\n")
+                    .all(crate::serialize::release_keeps_text)
+        });
         if !text.is_empty() {
             map_insert_bytes(&map, &id.to_hex(), &encode(&text)?)?;
         }
@@ -203,6 +217,14 @@ fn readable_births(
         None
     };
     let admission = admission.as_ref();
+    // FIX SELECTOR-BORN-WITH-PROMPT-LABEL (OPUS-LEAKS): a prompt source's
+    // words reach only a member who reads that source at the relationship
+    // gate, as the window filter judges the source row itself. An Owner's
+    // member reads every source.
+    let member = admission
+        .map(|admission| super::authorize::member_label_access(vault, &txn, &admission.grant))
+        .transpose()?
+        .flatten();
     let mut readable = Vec::with_capacity(births.len());
     for birth in births {
         let Some(birth) = birth else {
@@ -214,7 +236,14 @@ fn readable_births(
         if prompted {
             for input in std::mem::take(&mut made_by.inputs) {
                 if input.role != MadeByInputRole::Prompt
-                    || prompt_source_readable(vault, &txn, input.row, selector, admission)?
+                    || prompt_source_readable(
+                        vault,
+                        &txn,
+                        input.row,
+                        selector,
+                        admission,
+                        member.as_ref(),
+                    )?
                 {
                     made_by.inputs.push(input);
                     continue;
@@ -229,15 +258,18 @@ fn readable_births(
     Ok(readable)
 }
 
-/// Whether the export `admission` resolved reads prompt source `source`. No
-/// admission (its grant denied here), a source not live here, or the
-/// admission's denial answers no; any other error is the export's.
+/// Whether the export `admission` resolved reads prompt source `source`,
+/// and its `member` (`None`: an Owner's) reads the source, and every source
+/// of a text source, at the relationship gate. No admission (its grant
+/// denied here), a source not live here, the admission's denial or the
+/// gate's answers no; any other error is the export's.
 fn prompt_source_readable(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     source: EntityId,
     selector: &SyncSelector,
     admission: Option<&DocumentGrant>,
+    member: Option<&crate::access_grant::AccessContext<'_>>,
 ) -> Result<bool> {
     let Some(admission) = admission else {
         return Ok(false);
@@ -246,12 +278,25 @@ fn prompt_source_readable(
         return Ok(false);
     }
     match admit_selected_in_txn(vault, txn, source, selector, admission) {
-        Ok(()) => Ok(true),
+        Ok(()) => {}
         Err(Error::Sync(SyncError::SyncProtocolError {
             context: SyncProtocolValidation::DocumentAdmissionDenied,
-        })) => Ok(false),
-        Err(error) => Err(error),
+        })) => return Ok(false),
+        Err(error) => return Err(error),
     }
+    let Some(raw) = vault.get_raw_in(txn, &source)? else {
+        return Ok(false);
+    };
+    if !member_reads_labels(vault, txn, member, &source, &raw)? {
+        return Ok(false);
+    }
+    super::text_egress::text_backed(
+        vault,
+        txn,
+        &source,
+        Some(raw.as_slice()),
+        |text_source, raw| member_reads_labels(vault, txn, member, text_source, raw),
+    )
 }
 
 /// The text `remote` carries for each row `admitted` holds. A row
