@@ -41,5 +41,6 @@ pub(crate) use self::verify_chain_gates::{
 };
 pub(crate) use self::verify_dss_core::EmbeddedCert;
 pub(crate) use self::verify_revocation::{
-    crl_complete_scope, evidence_fresh, gen_time_beyond_skew, issued_by, ocsp_entry_valid,
+    EvidenceRejection, crl_complete_scope, evidence_fresh, gen_time_beyond_skew, issued_by,
+    ocsp_entry_valid,
 };
