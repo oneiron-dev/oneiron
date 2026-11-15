@@ -30,7 +30,7 @@ mod audit_read_support;
 use audit_read_support::*;
 use oneiron::EntityId;
 use oneiron::attempt_queue::{ManifestEntry, ManifestKind};
-use oneiron::memory::MEMORY_CODE_FORBIDDEN;
+use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
 use oneiron::note::{NoteProgramEdit, TakeTarget};
 use oneiron::receipt::ContextReceiptFields;
 #[cfg(feature = "sync")]
@@ -273,9 +273,9 @@ fn the_bypassed_effect_receipts_read_for_a_live_audit_read_holder_only() -> Test
         "vault.consent.bypassed_effect_receipts",
         input.clone(),
     );
-    assert_ne!(
-        past.code, MEMORY_CODE_FORBIDDEN,
-        "after the grant the missing grant reads past the gate, not forbidden: {past:?}"
+    assert_eq!(
+        past.code, MEMORY_CODE_BAD_REQUEST,
+        "after the grant the missing grant reads past the gate, to its not-found refusal: {past:?}"
     );
     assert_forbidden(
         &refused(
@@ -394,9 +394,9 @@ fn the_shared_receipt_reads_for_a_live_audit_read_holder_only() -> TestResult {
 
     grant(&fixture, holder, None);
     let past = refused(&as_holder, "vault.shared.receipt", input.clone());
-    assert_ne!(
-        past.code, MEMORY_CODE_FORBIDDEN,
-        "after the grant the missing id reads past the gate, not forbidden: {past:?}"
+    assert_eq!(
+        past.code, MEMORY_CODE_BAD_REQUEST,
+        "after the grant the missing id reads past the gate, to its invalid-act refusal: {past:?}"
     );
     assert_forbidden(
         &refused(&as_stranger, "vault.shared.receipt", input.clone()),
