@@ -134,9 +134,10 @@ impl FoldState {
         self.passkey_vouched_keys.contains(key) && !self.passkey_vouch_confirmations.contains(key)
     }
 
-    /// Whether `key` signs no `ReRoot` and no revoke of another owner key:
-    /// a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B), or a key
-    /// only a passkey vouched for, until confirmed (lead ruling
+    /// Whether `key` authorizes no `ReRoot`, no `RotateKey`, no
+    /// `EnrollDevice` and no revoke of another owner key, from any signature
+    /// position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
+    /// or a key only a passkey vouched for, until confirmed (lead ruling
     /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
     /// rule that counts an entry's participants asks it of each.
     pub(super) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
@@ -172,26 +173,44 @@ pub(super) fn remember_passkey_vouch(
     }
 }
 
-/// Whether `entry`'s signer may sign its op under the passkey limits
-/// ([`FoldState::passkey_limited`]): a passkey, and a key only a passkey
-/// vouched for until confirmed, sign no `ReRoot` and no `RevokeDevice` of
-/// another live owner key. Every other signer and op passes.
-pub(super) fn passkey_limits_admit(state: &FoldState, entry: &AuthorityLogEntry) -> bool {
-    let signer = entry.signer_key();
-    if !state.passkey_limited(signer) {
-        return true;
-    }
-    match &entry.op {
-        AuthorityOp::ReRoot { .. } => false,
+/// Whether a passkey-limited `key` ([`FoldState::passkey_limited`]) may not
+/// authorize `op`: a `ReRoot`; a `RotateKey`, the re-root of one key, which
+/// would hand the key's standing to a successor no limit reaches; an
+/// `EnrollDevice`, a vouch for a further key outside the `OwnerKeyEnroll`
+/// judge that marks it; and a `RevokeDevice` of another live owner key (Sol
+/// xhigh stack review F1). Every other op passes.
+fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -> bool {
+    match op {
+        AuthorityOp::ReRoot { .. }
+        | AuthorityOp::RotateKey { .. }
+        | AuthorityOp::EnrollDevice { .. } => true,
         AuthorityOp::RevokeDevice { revoked_key } => {
-            revoked_key == signer
-                || !state
+            revoked_key != key
+                && state
                     .roster
                     .get(revoked_key)
                     .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
         }
-        _ => true,
+        _ => false,
     }
+}
+
+/// The participants of an entry with `op` (its signer and every cosign)
+/// whose consent the passkey limits do not count: each passkey-limited key
+/// the op bars ([`passkey_limits_bar`]). The generic rule refuses the entry
+/// when its signer is one, and otherwise asks the consent of the rest, so a
+/// limited key lends no consent from a cosign either (Sol xhigh stack review
+/// F2).
+pub(super) fn passkey_barred_participants(
+    state: &FoldState,
+    op: &AuthorityOp,
+    participants: &BTreeSet<AuthorityKey>,
+) -> BTreeSet<AuthorityKey> {
+    participants
+        .iter()
+        .filter(|key| state.passkey_limited(key) && passkey_limits_bar(state, op, key))
+        .cloned()
+        .collect()
 }
 
 /// Whether `key` is fresh in `state`: no roster row names it, live or
