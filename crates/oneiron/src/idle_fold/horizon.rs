@@ -160,7 +160,8 @@ pub fn run_due_idle_calls(vault: &Vault, now_ms: u64) -> Result<usize> {
         let (mut due, mut undecodable) = (Vec::new(), Vec::new());
         for (key, call) in due_rows(vault, &txn)? {
             match call {
-                Some(call) if call.due_ms <= now_ms => due.push((key, call)),
+                // RED SEAM: no idle pass.
+                Some(call) if call.due_ms <= now_ms && now_ms == 0 => due.push((key, call)),
                 Some(_) => {}
                 None => undecodable.push(key),
             }
