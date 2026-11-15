@@ -1718,8 +1718,10 @@ fn quarantine_retry_after_rejection_replays_without_reappending() {
         )
         .expect("page entity");
 
+    let before = vault.now_recorded_at();
     let receipt = quarantine_borderline_submission(&vault, &facts, "quarantine-test", 1)
         .expect("initial quarantine");
+    let after = vault.now_recorded_at();
     let claim_ref = EntityId::from_bytes(receipt.claim_id).expect("claim id");
     let initial_claim = vault
         .get_claim(&claim_ref)
@@ -1745,7 +1747,9 @@ fn quarantine_retry_after_rejection_replays_without_reappending() {
         .into_iter()
         .find(|decision| decision.decision_id == initial_pending.decision_id)
         .expect("decision present");
-    assert_eq!(initial_decision.created_at, 1);
+    // The ledger row reads the recording clock in its write (UC-03 PR 4-1); the tray row keeps
+    // the guard's second.
+    assert!((before..=after).contains(&initial_decision.created_at));
     let initial_metadata = {
         let rtxn = vault.store.env.read_txn().expect("metadata read txn");
         let raw = vault

@@ -13,7 +13,6 @@ use crate::skill::{SkillGovernanceTier, SkillLifecycle};
 use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EntityId, TimeRange, Vault};
-use oneiron_contracts::RecordedSeconds;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeaveRecipePin {
@@ -162,7 +161,6 @@ impl Vault {
                     .to_vec(),
                 PolicyBasis::frontier(policy.read_frontier_hash()?),
             );
-            decision.decided_at = Some(RecordedSeconds::from_secs(now));
             self.store.record_gate_receipt_in_txn(txn, decision)?;
             // Hash the full scoped binding so a second evidence slice
             // cannot collide or silently

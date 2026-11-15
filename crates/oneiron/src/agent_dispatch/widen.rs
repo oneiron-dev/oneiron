@@ -15,7 +15,6 @@ use crate::error::Result;
 use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EdgeActorClass, WriteActor};
-use oneiron_contracts::RecordedSeconds;
 
 use self::board_authority::BoardActor;
 use super::attenuation::source_content_fingerprint;
@@ -211,7 +210,6 @@ impl AgentDispatcher<'_> {
             proposal.consent.effect_digest.as_bytes().to_vec(),
             PolicyBasis::NOT_READ,
         );
-        receipt.decided_at = Some(RecordedSeconds::from_secs(input.now));
         self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
         Ok(Some(AgentDispatchOutcome::ProposedWiden(Box::new(
             proposal,
@@ -365,7 +363,6 @@ impl AgentDispatcher<'_> {
                     &act,
                     proposal,
                     GateReceiptOutcome::Approved,
-                    now,
                 )?;
             }
         }
@@ -492,7 +489,6 @@ impl AgentDispatcher<'_> {
                     &act,
                     proposal,
                     GateReceiptOutcome::Rejected,
-                    at,
                 )?;
             }
         }

@@ -16,7 +16,6 @@ use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
-use oneiron_contracts::RecordedSeconds;
 
 /// The gate decision ledger's content kind for a batch revert's receipt.
 pub const DERIVE_REVERT_CONTENT_KIND: &str = "vault.derive.revert";
@@ -187,14 +186,7 @@ impl Vault {
                 }
             }
         }
-        let receipt = revert_receipt(
-            self,
-            txn,
-            reverter,
-            batch,
-            !reverted.is_empty(),
-            now_ms / 1_000,
-        )?;
+        let receipt = revert_receipt(self, txn, reverter, batch, !reverted.is_empty())?;
         Ok(DeriveRevertReceipt {
             batch,
             reverted,
@@ -329,7 +321,6 @@ fn revert_receipt(
     reverter: WriteActor,
     batch: EntityId,
     any: bool,
-    now: u64,
 ) -> Result<[u8; 16]> {
     let frontier = crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
     let mut receipt = GateReceipt::new(
@@ -344,7 +335,6 @@ fn revert_receipt(
         batch.as_bytes().to_vec(),
         PolicyBasis::frontier(frontier),
     );
-    receipt.decided_at = Some(RecordedSeconds::from_secs(now));
     let record = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     Ok(record.decision_id.as_bytes())
 }

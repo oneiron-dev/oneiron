@@ -346,7 +346,6 @@ impl Vault {
         );
         receipt.receipt_reasons = receipt_reasons;
         receipt.about = Some(*new);
-        receipt.decided_at = Some(RecordedSeconds::from_secs(now));
         self.store.record_gate_receipt_in_txn(txn, receipt)?;
         Ok(())
     }

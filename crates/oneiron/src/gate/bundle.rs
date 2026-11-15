@@ -600,7 +600,6 @@ impl Vault {
             );
             receipt.context =
                 decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids);
-            receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(now));
             let record = self.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
             decision_context::append(self, wtxn, &record, &member_claim_ids)?;
 
@@ -612,7 +611,7 @@ impl Vault {
                     dreamer_run_id: dreamer_run_id.to_owned(),
                     action,
                     member_claim_ids,
-                    created_at: now,
+                    created_at: record.created_at,
                 },
                 recorded_decisions,
             ))

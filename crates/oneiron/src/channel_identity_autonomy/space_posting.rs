@@ -8,7 +8,6 @@ use crate::error::Result;
 use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EntityId, Vault};
-use oneiron_contracts::RecordedSeconds;
 use rmpv::Value;
 
 const POSTING_ENVELOPE: &str = "channel_identity.space_posting_envelope";
@@ -160,8 +159,6 @@ impl Vault {
                 setting.as_bytes().to_vec(),
                 PolicyBasis::NOT_READ,
             );
-            // The row keeps the setting's own second.
-            receipt.decided_at = Some(RecordedSeconds::from_secs(at));
             // Minted first: the head row names the decision.
             let record = self.store.mint_gate_receipt_in_txn(txn, receipt)?;
             let decision_id = record.decision_id;

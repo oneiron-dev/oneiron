@@ -209,7 +209,6 @@ impl Vault {
                 verb,
                 verb_class,
                 bundle_basis,
-                now,
             )?;
             Ok((bundle_record, item_records, vad_claim_ids))
         })?;
@@ -724,7 +723,6 @@ fn append_bundle_decision_in_txn(
     verb: InboxBulkVerb,
     verb_class: Option<&str>,
     basis: &[GateDecisionRecord],
-    now: u64,
 ) -> Result<GateDecisionRecord> {
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.inbox.bundle.v0");
@@ -759,7 +757,6 @@ fn append_bundle_decision_in_txn(
     // FIX 7499, 7500: every member's read context and loop links; the
     // claim refs below bind each member's claim.
     receipt.context = crate::store::GateDecisionContext::answering_all(basis);
-    receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(now));
     let record = vault.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
     let claim_refs = basis
         .iter()

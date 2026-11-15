@@ -337,8 +337,9 @@ fn a_dreamer_facet_admission_row_keeps_its_fields() -> TestResult {
 
 /// Family 1g: the booking guard parks a borderline submission for the owner's review. The
 /// fixture is `tests/claim_facet_birth.rs`'s: a vault with the engine machines and a host-bound
-/// owner, and the booking page stored as an EVENT. The row takes the parked claim's id and the
-/// guard's time, so this pin also holds `decision_id` and `created_at`.
+/// owner, and the booking page stored as an EVENT. The row takes the parked claim's id, so this
+/// pin also holds `decision_id`. Since UC-03 PR 4-1 its `created_at` is the recording clock in
+/// its write, not the guard's (server wall-clock) second, which the pending tray row keeps.
 #[test]
 fn a_booking_quarantine_row_keeps_its_fields() -> TestResult {
     const SUBMITTED_AT: u64 = 1;
@@ -373,8 +374,10 @@ fn a_booking_quarantine_row_keeps_its_fields() -> TestResult {
         email: None,
     };
 
+    let before = vault.now_recorded_at();
     let receipt = quarantine_borderline_submission(&vault, &facts, "borderline", SUBMITTED_AT)
         .expect("a borderline submission is quarantined");
+    let after = vault.now_recorded_at();
 
     let decision = GateDecisionId::from_bytes(receipt.decision_id);
     assert_eq!(
@@ -384,9 +387,10 @@ fn a_booking_quarantine_row_keeps_its_fields() -> TestResult {
     );
     let row = row(&vault, decision);
     assert_eq!(row.decision_id, decision);
-    assert_eq!(
-        row.created_at, SUBMITTED_AT,
-        "the row keeps the guard's time"
+    assert!(
+        (before..=after).contains(&row.created_at),
+        "the row reads the recording clock ({before}..={after}), not the guard's second: {}",
+        row.created_at
     );
     let pending = vault
         .pending_gate_consents(16)?
@@ -394,6 +398,10 @@ fn a_booking_quarantine_row_keeps_its_fields() -> TestResult {
         .find(|pending| pending.claim_id == receipt.claim_id)
         .expect("the guard parked the claim");
     assert_eq!(pending.decision_id, decision);
+    assert_eq!(
+        pending.created_at, SUBMITTED_AT,
+        "the tray row keeps the guard's time"
+    );
     assert_eq!(
         pending.diff_handle.len(),
         32,
