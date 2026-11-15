@@ -17,7 +17,8 @@
 //! Two departures from the example, both of transport only: the member
 //! pushes through the direct door under a `git_push` Grant rather than a run
 //! lease door (no live run is needed), and the queue's checker pass runs
-//! through `oneiron_server::test_doors::merge_queue_checker_pass`, because
+//! through `oneiron_server::test_doors::live_merge_queue_checker_pass`,
+//! because
 //! `build_app` starts no lifecycle; the pass is the served drain with the
 //! server's own host executor and the repo's `checker.py` helper.
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
@@ -40,7 +41,7 @@ use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_pro
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::config::{CheckerBackend, MergeQueueCheckerConfig, SyncServerConfig};
-use oneiron_server::test_doors::merge_queue_checker_pass::run_merge_queue_checker_pass;
+use oneiron_server::test_doors::live_merge_queue_checker_pass::run_merge_queue_checker_pass;
 use oneiron_server::{ENGINE_THREAD_STACK_BYTES, build_app, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
