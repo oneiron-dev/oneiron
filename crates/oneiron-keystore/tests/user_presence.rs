@@ -4,10 +4,16 @@
 //! together share one prompt, a screen lock refuses the answer of a prompt
 //! that was up when it came, and a clock reading from before a confirm never
 //! ends the window that confirm opened.
+//!
+//! A device that must be asked for its screen lock (macOS): no act is
+//! confirmed while its screen reads locked, a locked reading ends the
+//! window, the watch ends the window when no act comes, and the watch stops
+//! with its gate. Each LocalAuthentication error code keeps its own refusal.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron_keystore::{
     ManualPresenceClock, NoPromptPresence, PRESENCE_WINDOW_SECS, PresenceCapability, PresenceClock,
@@ -366,4 +372,169 @@ fn a_clock_reading_from_before_a_confirm_does_not_end_the_window_it_opened() {
     );
     assert_eq!(gate.confirm(REASON), Ok(PresenceConfirmation::WithinWindow));
     assert_eq!(presence.prompts(), 1, "the second act asked again");
+}
+
+#[test]
+fn a_locked_screen_refuses_an_act_inside_an_open_window_and_ends_the_window() {
+    let clock = clock();
+    let (gate, presence) = scripted_gate(vec![Ok(()), Ok(())], &clock);
+    assert_eq!(gate.confirm(REASON), Ok(PresenceConfirmation::Prompted));
+
+    presence.set_screen_locked(true);
+    assert_eq!(
+        gate.confirm(REASON),
+        Err(PresenceError::ScreenLocked),
+        "an act on a locked device was confirmed inside the window"
+    );
+    assert_eq!(presence.prompts(), 1, "a locked device showed a prompt");
+
+    // The locked reading ended the window: after the unlock the next act
+    // asks for itself.
+    presence.set_screen_locked(false);
+    assert!(!gate.window_is_open(), "the window outlasted the lock");
+    assert_eq!(gate.confirm(REASON), Ok(PresenceConfirmation::Prompted));
+    assert_eq!(presence.prompts(), 2);
+}
+
+/// A device whose screen locks while its prompt is up: the answer comes
+/// back as a yes, with the screen still locked.
+struct LocksWhilePrompting {
+    locked: AtomicBool,
+}
+
+impl UserPresence for LocksWhilePrompting {
+    fn capability(&self) -> PresenceCapability {
+        PresenceCapability::DevicePrompt
+    }
+
+    fn confirm(&self, _reason: &str) -> Result<(), PresenceError> {
+        self.locked.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn screen_is_locked(&self) -> bool {
+        self.locked.load(Ordering::SeqCst)
+    }
+}
+
+#[test]
+fn an_answer_that_comes_with_the_screen_locked_is_refused_and_opens_no_window() {
+    let presence = Arc::new(LocksWhilePrompting {
+        locked: AtomicBool::new(false),
+    });
+    let gate = PresenceGate::new(presence.clone(), PresenceWindow::new(clock()));
+
+    assert_eq!(
+        gate.confirm(REASON),
+        Err(PresenceError::ScreenLocked),
+        "an answer taken on a locked screen confirmed the act"
+    );
+    presence.locked.store(false, Ordering::SeqCst);
+    assert!(
+        !gate.window_is_open(),
+        "an answer taken on a locked screen opened the window"
+    );
+}
+
+/// How often the tests' watch reads the screen lock.
+const WATCH_EVERY: Duration = Duration::from_millis(5);
+/// How long a test waits for the watch before it fails.
+const WATCH_WAIT: Duration = Duration::from_secs(20);
+
+/// Waits until the watch has read the screen lock `more` times more.
+fn wait_for_screen_lock_reads(presence: &ScriptedPresence, more: usize) {
+    let target = presence.screen_lock_reads() + more;
+    let deadline = Instant::now() + WATCH_WAIT;
+    while presence.screen_lock_reads() < target {
+        assert!(
+            Instant::now() < deadline,
+            "the screen-lock watch stopped reading"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn the_screen_lock_watch_ends_the_window_when_no_act_comes() {
+    let clock = clock();
+    let (gate, presence) = scripted_gate(vec![Ok(()), Ok(())], &clock);
+    gate.watch_screen_lock(WATCH_EVERY)
+        .expect("the watch starts");
+    assert_eq!(gate.confirm(REASON), Ok(PresenceConfirmation::Prompted));
+
+    // The screen locks and unlocks with no act in between. Each change waits
+    // for two more reads: the first of them may have begun before it, and
+    // the second begins only when the first has ended the window or left it.
+    presence.set_screen_locked(true);
+    wait_for_screen_lock_reads(&presence, 2);
+    presence.set_screen_locked(false);
+    wait_for_screen_lock_reads(&presence, 2);
+
+    assert_eq!(
+        gate.confirm(REASON),
+        Ok(PresenceConfirmation::Prompted),
+        "the window outlasted a lock that no act met"
+    );
+    assert_eq!(presence.prompts(), 2);
+}
+
+#[test]
+fn the_screen_lock_watch_stops_when_its_gate_is_dropped() {
+    let clock = clock();
+    let (gate, presence) = scripted_gate(vec![], &clock);
+    gate.watch_screen_lock(WATCH_EVERY)
+        .expect("the watch starts");
+    wait_for_screen_lock_reads(&presence, 1);
+
+    // The gate and the watch each hold the prompt; the test holds it too.
+    drop(gate);
+    let deadline = Instant::now() + WATCH_WAIT;
+    while Arc::strong_count(&presence) > 1 {
+        assert!(Instant::now() < deadline, "the watch outlived its gate");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn each_local_authentication_code_keeps_its_own_refusal() {
+    let refusal = PresenceError::from_local_authentication_code;
+    // authenticationFailed, userCancel, userFallback.
+    for code in [-1, -2, -3] {
+        assert_eq!(refusal(code), PresenceError::Declined, "code {code}");
+    }
+    // systemCancel, appCancel.
+    for code in [-4, -9] {
+        assert_eq!(refusal(code), PresenceError::NoAnswer, "code {code}");
+    }
+    // passcodeNotSet, notInteractive: the confirm belongs on another device.
+    for code in [-5, -1004] {
+        assert!(
+            matches!(refusal(code), PresenceError::NoPrompt(_)),
+            "code {code}: {:?}",
+            refusal(code)
+        );
+    }
+    assert_ne!(refusal(-5), refusal(-1004), "each says why it cannot ask");
+    // Every other code is a fault by its number, the biometry ones too:
+    // never a confirm, and never read as the user's own no.
+    for code in [
+        0,
+        1,
+        -6,
+        -7,
+        -8,
+        -10,
+        -11,
+        -12,
+        -13,
+        -14,
+        i64::MIN,
+        i64::MAX,
+    ] {
+        assert_eq!(
+            refusal(code),
+            PresenceError::Platform("local authentication", code),
+            "code {code}"
+        );
+    }
 }
