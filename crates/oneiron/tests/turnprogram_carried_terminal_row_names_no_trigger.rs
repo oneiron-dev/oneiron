@@ -180,15 +180,8 @@ fn a_carried_decision_never_consumes_an_occurrence_wake() {
 fn an_occurrence_decision_rides_no_window() {
     let machine = Machine::open("machine");
     let (actor, slip, instrument) = agent_slip(&machine);
-    let registration = doors::plant_timer_arming(
-        &machine.vault,
-        actor,
-        &slip,
-        &instrument,
-        T0 - 60,
-        T0,
-    )
-    .unwrap();
+    let registration =
+        doors::plant_timer_arming(&machine.vault, actor, &slip, &instrument, T0 - 60, T0).unwrap();
     assert_eq!(machine.vault.release_timer_program_wakes(T0).unwrap(), 1);
     let (occurrence, _, _) =
         doors::admitted_row_bytes(&machine.vault, actor, registration).unwrap();
