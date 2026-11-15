@@ -236,6 +236,32 @@ fn bound_spans_read_ordinary_words_without_opening_general_spans() -> Extraction
     Ok(())
 }
 
+/// Bound spans read under native's gate only the TURNs the attempt queues.
+#[test]
+fn bound_spans_withhold_an_ordinary_turn_outside_the_attempt() -> ExtractionVerdictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_verdict_vault(&dir)?);
+    stand_steward_grant(&vault, dreamer(&vault)?, &STEWARD_VERBS)?;
+    let witnessed = witness_extraction_turns(&vault, &["owen likes tea", "yuki likes coffee"])?;
+    let (_, admitted) =
+        enqueue_admitted_extraction_attempt(&vault, &witnessed.turns[..1], QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let queued = binding.invoke(
+        "vault.evidence.spans",
+        json!({"source": witnessed.turns[0].to_hex()}),
+        None,
+    )?;
+    assert_eq!(queued["value"]["status"], json!("current"));
+    let outside = binding.invoke(
+        "vault.evidence.spans",
+        json!({"source": witnessed.turns[1].to_hex()}),
+        None,
+    )?;
+    assert_eq!(outside["value"]["status"], json!("withheld"));
+    assert!(outside["value"]["version"].is_null());
+    Ok(())
+}
+
 /// Step validation rereads the ordinary TURN before rendering its lent transcript.
 #[test]
 fn bound_step_reads_an_owner_pinned_ordinary_turn()
