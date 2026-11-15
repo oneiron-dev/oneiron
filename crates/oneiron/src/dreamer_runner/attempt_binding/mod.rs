@@ -19,10 +19,12 @@ mod extraction_execution;
 mod extraction_step_inputs;
 mod extraction_steps;
 mod invocation;
+mod merged_value_steps;
 
 pub use decisions::DreamerDecisionLender;
 pub use extraction_execution::ExtractionDecisionLoan;
 pub use extraction_steps::{ExtractionStepLoan, ExtractionStepRequest};
+pub use merged_value_steps::{MergedValueResolution, MergedValueStepLoan, MergedValueStepRequest};
 
 use std::fmt;
 use std::sync::Arc;
