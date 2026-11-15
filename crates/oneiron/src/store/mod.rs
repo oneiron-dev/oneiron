@@ -68,7 +68,9 @@
 //!    index, stamps the current manifest and writes
 //!    `vault_meta["text_index_rebuild:v1"]` in one transaction; the
 //!    housekeeping sweep `TextIndexRebuild` indexes every document again from
-//!    its stored source text, and text reads fail closed until it ends (FIX
+//!    its stored source text, newest content change first. Until it ends,
+//!    text reads answer from the documents indexed again so far and mark
+//!    `Bm25Stale`, and the org compliance search refuses (FIX
 //!    ANALYZER-BUMP-AUTO-REINDEX). A pre-ONE-317 or corrupt stamp (a missing
 //!    hash) → [`IncompatibleAnalyzer`]. The
 //!    [`VaultConfig::skip_text_index_manifest_check`] escape hatch sits HERE

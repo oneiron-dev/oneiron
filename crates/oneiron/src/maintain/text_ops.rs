@@ -59,9 +59,6 @@ pub(super) fn clear_text_index(vault: &Vault, reindex: bool) -> Result<ClearText
     vault
         .text_index_trusted
         .store(true, std::sync::atomic::Ordering::Release);
-    vault
-        .text_index_rebuilding
-        .store(false, std::sync::atomic::Ordering::Release);
 
     Ok(ClearTextIndexCounts {
         postings,

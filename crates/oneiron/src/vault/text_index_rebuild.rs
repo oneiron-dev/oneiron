@@ -38,10 +38,11 @@
 //! text arm `RetrievalDegradation::Bm25Stale`, and
 //! [`Vault::text_index_status`] and the doctor report carry the progress. The
 //! org compliance search alone stays closed until the pass ends
-//! ([`Vault::ensure_text_index_complete`]).
+//! ([`Vault::ensure_text_index_complete`]). Each read looks for the marker in
+//! its own read transaction, so a rebuild another process's open started, or
+//! another process's pass ended, reaches every open handle at its next read.
 
 use std::ops::Bound;
-use std::sync::atomic::Ordering;
 
 use super::Vault;
 use super::doctor_manifest::TextIndexRebuildProgress;
@@ -63,6 +64,11 @@ const TEXT_INDEX_REBUILD_ORDER: SideTable<(u64, EntityId), (), Raw> =
 /// The text each document was indexed with. Key: id16.
 const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
     SideTable::new(&side_table::INDEX_SOURCE_TEXT);
+
+/// Stored source text one page of the pass indexes at most, past its first
+/// document: a page of documents at the per-document text ceiling would put
+/// gigabytes of postings in one write transaction.
+const PAGE_SOURCE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Version 2 orders the pass by [`TEXT_INDEX_REBUILD_ORDER`].
 const MARKER_VERSION: u8 = 2;
@@ -184,7 +190,12 @@ pub(crate) fn clear_text_index_rows_in_txn(
 
 /// Lists every document with stored source text in
 /// [`TEXT_INDEX_REBUILD_ORDER`] under its last content change, after
-/// dropping any list left before; returns how many it listed.
+/// dropping any list left before; returns how many it listed. One revision
+/// read and one 24-byte key per document, in the open's transaction: a
+/// 200,000-document vault writes some 5 MiB of list pages (an estimate),
+/// far below the transaction's dirty-page bound, and far less than the
+/// owner's full rebuild (`maintain` `clear_text_index` with reindex), which
+/// writes every posting in one transaction.
 fn list_text_index_rebuild_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
     clear_text_index_rebuild_list_in_txn(store, wtxn)?;
     let ids = INDEX_SOURCE_TEXT.scan_keys(store, &*wtxn, &[])?;
@@ -246,12 +257,6 @@ pub(crate) struct TextIndexRebuildRun {
 }
 
 impl Vault {
-    /// Whether a text-index rebuild stands on this handle: text reads then
-    /// answer from the documents indexed again so far.
-    pub(crate) fn text_index_rebuild_in_progress(&self) -> bool {
-        self.text_index_rebuilding.load(Ordering::Acquire)
-    }
-
     /// A read whose answer is a record of every match, the org compliance
     /// search (ruling ANALYZER-REINDEX-COMPLIANCE-SEARCH = A, 16 Nov 07:19),
     /// refuses while the text index is not trusted
@@ -281,8 +286,9 @@ impl Vault {
 
     /// Runs the rebuild pass, `page` listed documents per write transaction,
     /// newest content change first, until it ends or `stop` says so after a
-    /// page. Each run does at least one page while a rebuild stands. Sets
-    /// this handle's rebuild flag from the marker it reads.
+    /// page. A page is `page` documents, or fewer once their stored source
+    /// text reaches [`PAGE_SOURCE_BYTES`]. Each run does at least one page
+    /// while a rebuild stands.
     pub(crate) fn run_text_index_rebuild(
         &self,
         page: usize,
@@ -294,11 +300,9 @@ impl Vault {
             let mut wtxn = self.store.env.write_txn()?;
             let Some(mut marker) = read_text_index_rebuild(&self.store, &wtxn)? else {
                 drop(wtxn);
-                self.text_index_rebuilding.store(false, Ordering::Release);
                 run.complete = true;
                 return Ok(run);
             };
-            self.text_index_rebuilding.store(true, Ordering::Release);
             if marker.unlisted {
                 marker = TextIndexRebuildMarker {
                     done: 0,
@@ -306,16 +310,33 @@ impl Vault {
                     unlisted: false,
                 };
             }
-            let listed = TEXT_INDEX_REBUILD_ORDER
-                .iter_rev_range(&self.store, &wtxn, Bound::Unbounded, Bound::Unbounded)?
-                .take(page)
-                .map(|row| row.map(|(key, ())| key))
-                .collect::<Result<Vec<_>>>()?;
-            let last_page = listed.len() < page;
-            for key in &listed {
-                TEXT_INDEX_REBUILD_ORDER.delete(&self.store, &mut wtxn, key)?;
-                let (_, id) = key;
-                let fields = match INDEX_SOURCE_TEXT.get(&self.store, &wtxn, id)? {
+            let mut listed = Vec::new();
+            let mut page_bytes = 0_usize;
+            let mut last_page = true;
+            for row in TEXT_INDEX_REBUILD_ORDER.iter_rev_range(
+                &self.store,
+                &wtxn,
+                Bound::Unbounded,
+                Bound::Unbounded,
+            )? {
+                if listed.len() >= page || page_bytes >= PAGE_SOURCE_BYTES {
+                    last_page = false;
+                    break;
+                }
+                let (key, ()) = row?;
+                let fields = INDEX_SOURCE_TEXT.get(&self.store, &wtxn, &key.1)?;
+                page_bytes = fields
+                    .iter()
+                    .flatten()
+                    .fold(page_bytes, |bytes, (_, text)| {
+                        bytes.saturating_add(text.len())
+                    });
+                listed.push((key, fields));
+            }
+            for (key, fields) in listed {
+                TEXT_INDEX_REBUILD_ORDER.delete(&self.store, &mut wtxn, &key)?;
+                let (_, id) = &key;
+                let fields = match fields {
                     Some(fields) if self.store.port_entity_present(&wtxn, id)? => fields,
                     _ => {
                         run.skipped = run.skipped.saturating_add(1);
@@ -346,7 +367,6 @@ impl Vault {
             }
             wtxn.commit()?;
             if last_page {
-                self.text_index_rebuilding.store(false, Ordering::Release);
                 run.complete = true;
                 return Ok(run);
             }

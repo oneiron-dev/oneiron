@@ -466,7 +466,7 @@ fn run_direct_channel(
             let narrowed =
                 request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
             acc.merge_revisioned(narrowed, hits.revisions);
-            acc.complete_text(scoped.vault());
+            acc.complete_text(scoped.vault())?;
             acc.record_query(query.clone());
         }
         SearchProbe::Vector { embedding, .. } => {
@@ -542,7 +542,7 @@ fn run_subquery_channels(
         let narrowed =
             request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
         acc.merge_revisioned(narrowed, hits.revisions);
-        acc.complete_text(scoped.vault());
+        acc.complete_text(scoped.vault())?;
         acc.record_query(subquery);
     }
     Ok(())
@@ -646,7 +646,7 @@ fn run_deep_rounds(
             let narrowed =
                 request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
             acc.merge_revisioned(narrowed, hits.revisions);
-            acc.complete_text(scoped.vault());
+            acc.complete_text(scoped.vault())?;
             acc.record_query(subquery);
         }
     }

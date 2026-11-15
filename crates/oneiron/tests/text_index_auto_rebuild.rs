@@ -21,6 +21,7 @@ use oneiron::test_doors::text_index_rebuild as door;
 use oneiron::write_envelope::WriteActor;
 use oneiron::{EntityId, Vault, VaultConfig};
 use std::path::Path;
+use std::process::Command;
 
 /// One NOTE per word: words no seeded text holds, so a search for one finds
 /// its NOTE alone.
@@ -238,6 +239,121 @@ fn a_policy_flag_change_rebuilds_the_text_index_with_no_manual_step() {
     assert_eq!(shown_rebuild(&vault), none, "nothing is shown once it ends");
 }
 
+/// The test [`open_in_second_process`] runs in a second process.
+const SECOND_PROCESS_TEST: &str = "second_process_opens_the_vault";
+/// The vault directory the second process opens.
+const SECOND_PROCESS_VAULT_DIR: &str = "ONEIRON_TEST_SECOND_PROCESS_VAULT_DIR";
+/// Set when the second process runs the housekeeping pass after its open.
+const SECOND_PROCESS_RUNS_PASS: &str = "ONEIRON_TEST_SECOND_PROCESS_RUNS_PASS";
+
+/// Opens the vault at `path` in a second process, which runs the
+/// housekeeping pass too with `run_pass`, while this process keeps its own
+/// handle open. One process holds one store per directory, so a second
+/// handle on a live vault is another process's.
+fn open_in_second_process(path: &Path, run_pass: bool) {
+    let mut command = Command::new(std::env::current_exe().expect("the test binary"));
+    command
+        .args([
+            SECOND_PROCESS_TEST,
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(SECOND_PROCESS_VAULT_DIR, path);
+    if run_pass {
+        command.env(SECOND_PROCESS_RUNS_PASS, "1");
+    } else {
+        command.env_remove(SECOND_PROCESS_RUNS_PASS);
+    }
+    let output = command.output().expect("start the second process");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "the second process ran its open: {}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The second process [`open_in_second_process`] starts. With no vault
+/// named, in a normal run, it returns at once.
+#[test]
+fn second_process_opens_the_vault() {
+    let Some(dir) = std::env::var_os(SECOND_PROCESS_VAULT_DIR) else {
+        return;
+    };
+    let vault = open(Path::new(&dir));
+    if std::env::var_os(SECOND_PROCESS_RUNS_PASS).is_some() {
+        vault
+            .housekeeping(HousekeepingBudget::unbounded())
+            .expect("housekeeping pass");
+        assert_eq!(
+            door::text_index_rebuild_progress(&vault).expect("marker read"),
+            None,
+            "the second process's pass ended the rebuild"
+        );
+    } else {
+        assert!(
+            door::text_index_rebuild_progress(&vault)
+                .expect("marker read")
+                .is_some(),
+            "the second process's open started a rebuild"
+        );
+    }
+}
+
+/// A rebuild another process's open starts reaches a handle this process
+/// opened before it, at that handle's next text read: the read names its
+/// text arm stale.
+#[test]
+fn a_rebuild_another_process_starts_holds_for_an_open_handle() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let vault = open(dir.path());
+    let notes = write_notes(&vault, &WORDS);
+    assert_each_found_once(&vault, &WORDS, &notes);
+    without_myanmar_zawgyi(&vault);
+
+    open_in_second_process(dir.path(), false);
+
+    assert!(
+        partial_hits(&vault, WORDS[0]).is_empty(),
+        "the open handle answers from the cleared index and says so"
+    );
+    assert!(
+        recall_marks_text_stale(&vault, WORDS[0]),
+        "recall on the open handle names its text arm stale"
+    );
+}
+
+/// A rebuild another process's pass ends no longer holds for a handle this
+/// process opened while it stood: its next text read finds every document
+/// and is whole.
+#[test]
+fn a_rebuild_another_process_ends_releases_an_open_handle() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let notes = populated_then_restamped(dir.path(), without_myanmar_zawgyi);
+    open_in_second_process(dir.path(), false);
+    let vault = open(dir.path());
+    assert!(
+        partial_hits(&vault, WORDS[0]).is_empty(),
+        "a handle opened while the rebuild stands answers partly and says so"
+    );
+
+    open_in_second_process(dir.path(), true);
+
+    assert_each_found_once(&vault, &WORDS, &notes);
+    assert!(
+        vault
+            .search_text_with_telemetry(WORDS[0], 10)
+            .expect("text read")
+            .retrieval_quality
+            .degradation
+            .is_empty(),
+        "a text read after the other process's pass is whole"
+    );
+    assert!(!recall_marks_text_stale(&vault, WORDS[0]));
+}
+
 #[test]
 fn a_field_schema_change_rebuilds_the_text_index_too() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -248,6 +364,16 @@ fn a_field_schema_change_rebuilds_the_text_index_too() {
 
     let vault = Vault::open(dir.path(), VaultConfig::default())
         .expect("a vault whose BM25F field schema changed opens with no manual step");
+    let (done, total) = door::text_index_rebuild_progress(&vault)
+        .expect("marker read")
+        .expect("the open started a rebuild");
+    assert_eq!(done, 0, "nothing is indexed again before the pass");
+    assert!(total >= WORDS.len() as u64, "every NOTE waits: {total}");
+    assert_eq!(
+        door::text_index_row_counts(&vault).expect("row counts"),
+        [0; 5],
+        "the open cleared every row built under the old field schema"
+    );
     vault
         .housekeeping(HousekeepingBudget::unbounded())
         .expect("housekeeping pass");
@@ -321,10 +447,15 @@ fn the_rebuild_indexes_the_most_recently_written_documents_first() {
     let dir = tempfile::tempdir().expect("temp dir");
     let notes = {
         let vault = open(dir.path());
+        // The order key is the wall-clock millisecond of a document's last
+        // write: every row the open and the owner's creation wrote is older
+        // than the NOTEs, to the millisecond, and the NOTEs than the edit.
+        vault.ensure_embedded_owner_actor().expect("owner actor");
+        std::thread::sleep(std::time::Duration::from_millis(50));
         let notes = write_notes(&vault, &WORDS);
         // The oldest NOTE, written again after the others, is now the most
         // recently written: the order is by last write, not by birth.
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(50));
         append_and_publish(&vault, notes[0], " revisited");
         without_myanmar_zawgyi(&vault);
         notes
