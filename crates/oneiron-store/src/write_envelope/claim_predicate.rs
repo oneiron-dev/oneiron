@@ -219,20 +219,57 @@ pub const EXPRESSION_KEIGO_ADAPTIVE: &str = "adaptive";
 pub const MAX_EXPRESSION_LANGUAGE_TAG_BYTES: usize = 35;
 pub const MAX_EXPRESSION_STYLE_TOKEN_BYTES: usize = 64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+// The wire spellings below (UC-02 B1a) are the verbs' `vault.expression_preferences.*`: the vocabulary's own
+// constants, in snake case.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ExpressionPreferenceKind {
     Language,
     Register,
     Keigo,
     Style,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ExpressionRegister {
     Casual,
     Neutral,
     Formal,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ExpressionKeigo {
     None,
     Teineigo,
@@ -240,14 +277,21 @@ pub enum ExpressionKeigo {
     Kenjogo,
     Adaptive,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// On the wire, `{"kind": "register", "value": "formal"}`.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ExpressionPreferenceValue {
     Language(String),
     Register(ExpressionRegister),
     Keigo(ExpressionKeigo),
     Style(String),
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ExpressionPreferenceOrigin {
     ExplicitUser,
     Inferred,

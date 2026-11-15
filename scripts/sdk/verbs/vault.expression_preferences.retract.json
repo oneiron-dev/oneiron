@@ -1,0 +1,17 @@
+{
+  "name": "vault.expression_preferences.retract",
+  "description": "Retracts one expression preference and restores the predecessor it superseded, which the generic claim retraction cannot do.",
+  "refs": [
+    "/claim_ref"
+  ],
+  "input": "ClaimRefRequest",
+  "output": "()",
+  "call": "memory.retract_expression_preference(&input.claim_ref)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -44,7 +44,13 @@ use crate::temporal::TimeRange;
 /// There is deliberately no actor field: the writing actor is the bound one,
 /// so there is no payload key an untrusted caller could use to write as
 /// somebody else.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// It is the input of `vault.expression_preferences.set` (UC-02 B1a), so
+/// every door writes a preference through this one shape.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
 pub struct ExpressionPreferenceInput {
     /// Subject entity ref (short-id ref or 32-hex).
     pub subject_ref: String,
@@ -55,6 +61,26 @@ pub struct ExpressionPreferenceInput {
     pub origin: ExpressionPreferenceOrigin,
     /// When the preference takes effect (Unix seconds).
     pub valid_from: u64,
+    /// When the person said it (Unix seconds); `None` ⇒ now, on the vault's
+    /// recording clock, read in the write. Never later than `valid_from`
+    /// allows: this family does not schedule.
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
+}
+
+/// `vault.expression_preferences.get` input: the preferences in force for
+/// one subject at one time.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ExpressionPreferencesRequest {
+    /// Subject entity ref (short-id ref or 32-hex).
+    pub subject_ref: String,
+    /// The time to read at (Unix seconds); `None` ⇒ now, on the vault's
+    /// recording clock.
+    #[serde(default)]
+    pub at: Option<u64>,
 }
 
 /// Receipt for one typed expression-preference write.
@@ -65,7 +91,9 @@ pub struct ExpressionPreferenceInput {
 /// supersessions, which is precisely the chain damage the typed door exists to
 /// prevent. A receipt that under-reports what it closed would be worse than no
 /// receipt, because it reads as complete.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ExpressionPreferenceReceipt {
     /// Short-id ref of the written preference claim.
     pub claim_short_id: String,
@@ -91,7 +119,9 @@ pub struct ExpressionPreferenceReceipt {
 /// this surface promises refs out, and a caller that has to hex-format an id
 /// to feed it back to another verb is holding the wrong currency. The VALUES
 /// are the engine's own — those are the vocabulary, not a wire detail.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ExpressionPreferenceView {
     pub language: Option<String>,
     pub register: Option<ExpressionRegister>,
@@ -126,7 +156,6 @@ impl Memory<'_> {
     pub fn set_expression_preference(
         &self,
         input: &ExpressionPreferenceInput,
-        occurred_at: u64,
     ) -> MemoryResult<ExpressionPreferenceReceipt> {
         // Claim doors verify the class here and let the claim write
         // transaction revalidate the binding, rather than opening a second
@@ -136,6 +165,11 @@ impl Memory<'_> {
         let subject = self.resolve_ref(&input.subject_ref)?;
         let actor = self.write_actor();
         let claim_id = self.vault.store.clock.entity_id()?;
+        // An omitted time is the recording clock's, read here in the write,
+        // as a claim's is (UC-02-OCCURRED-AT-CLOCK = A; U2-A1).
+        let occurred_at = input
+            .occurred_at
+            .unwrap_or_else(|| self.vault.store.clock.now_recorded_at());
         let written = self.vault.set_expression_preference(
             &actor,
             claim_id,
@@ -221,10 +255,11 @@ impl Memory<'_> {
     pub fn expression_preferences(
         &self,
         subject_ref: &str,
-        at: u64,
+        at: Option<u64>,
     ) -> MemoryResult<ExpressionPreferenceView> {
         self.verified_actor_class()?;
         let subject = self.resolve_ref(subject_ref)?;
+        let at = at.unwrap_or_else(|| self.vault.store.clock.now_recorded_at());
         // ONE snapshot for everything this view asserts — the subject's
         // existence, the values, and the refs that label them. A short ref
         // carries the claim's content hash, so resolving refs after the read's

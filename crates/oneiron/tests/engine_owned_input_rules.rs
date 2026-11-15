@@ -1,0 +1,308 @@
+//! UC-02 B1a: the engine owns the input rules the bindings used to own.
+//!
+//! Each verb is called by name through the generic invoke
+//! (`oneiron::task_verb::sdk::invoke`), as every door calls it: JSON in, JSON
+//! out. So a rule proven here holds over napi, Python, Swift, HTTP and MCP
+//! alike, with one refusal.
+//!
+//! - An omitted `is_visible` reads as `true` (napi, uniffi and Python filled
+//!   it; HTTP refused the message).
+//! - A message whose `metadata` is not a JSON object is refused (napi alone
+//!   refused it; the other doors stored it).
+//! - The outbound schedule context's offset and timezone rules, which napi
+//!   also checked by hand, are already the engine's
+//!   (`OutboundScheduleContext::validate`, run in the schedule's admission):
+//!   nothing moves, and this guard keeps them.
+//! - The three expression-preference rows, the doors only napi's
+//!   `ActorScopedVault` had, run through the generic invoke; an omitted
+//!   `occurred_at` on the write is the vault's recording clock.
+//!
+//! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test engine_owned_input_rules`
+#![cfg(feature = "test-support")]
+
+use oneiron::memory::{
+    MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, OutboundScheduleContext, WitnessMessage,
+};
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::task_verb::sdk::invoke;
+use oneiron::test_support::{
+    bind_host_owner, provision_engine_machines, put_policy_manifest_bytes, test_host_issuer,
+};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use rmpv::Value as Msgpack;
+use serde_json::{Value, json};
+
+fn fresh_vault() -> (tempfile::TempDir, Vault) {
+    let directory = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open(directory.path(), VaultConfig::device()).expect("fresh vault");
+    provision_engine_machines(&vault);
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    bind_host_owner(&vault, &test_host_issuer(), owner).expect("owner host binding");
+    (directory, vault)
+}
+
+fn owner_memory(vault: &Vault) -> Memory<'_> {
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    vault.memory(owner, EdgeActorClass::Human)
+}
+
+/// One user message, as JSON, with the given extra members.
+fn message(extra: &Value) -> Value {
+    let mut message = json!({
+        "id": EntityId::now().to_hex(),
+        "author": "user",
+        "message_type": "dialogue",
+        "content": "hello",
+        "metadata": null,
+        "order": 0
+    });
+    for (key, value) in extra.as_object().expect("extra members") {
+        message[key] = value.clone();
+    }
+    message
+}
+
+/// A witness input for one fresh turn holding `message`.
+fn witness(vault: &Vault, message: Value) -> Value {
+    json!({
+        "conversation_ref": EntityId::now().to_hex(),
+        "turn_ref": EntityId::now().to_hex(),
+        "messages": [message],
+        "occurred_at": vault.now_recorded_at()
+    })
+}
+
+fn refused(result: Result<Value, MemoryError>, what: &str) -> MemoryError {
+    match result {
+        Ok(output) => panic!("{what}: accepted, answered {output}"),
+        Err(error) => error,
+    }
+}
+
+/// (b) An omitted `is_visible` is `true`: in the engine DTO's serde, and so
+/// through the generic invoke.
+#[test]
+fn an_omitted_is_visible_reads_as_visible() {
+    let decoded: WitnessMessage =
+        serde_json::from_value(message(&json!({}))).expect("a message without is_visible");
+    assert!(decoded.is_visible);
+    let hidden: WitnessMessage =
+        serde_json::from_value(message(&json!({"is_visible": false}))).expect("a hidden message");
+    assert!(!hidden.is_visible, "a stated false stays false");
+
+    let (_directory, vault) = fresh_vault();
+    let memory = owner_memory(&vault);
+    let receipt = invoke(
+        &memory,
+        "vault.witness",
+        witness(&vault, message(&json!({}))),
+    )
+    .expect("a message without is_visible is witnessed");
+    assert!(receipt.is_object(), "{receipt}");
+}
+
+/// (c) A message's metadata is a JSON object or absent: an array or a scalar
+/// is refused by the engine, naming the message; an object is witnessed.
+#[test]
+fn a_message_whose_metadata_is_not_an_object_is_refused() {
+    let (_directory, vault) = fresh_vault();
+    let memory = owner_memory(&vault);
+    for (metadata, kind) in [(json!([1, 2]), "an array"), (json!("note"), "a string")] {
+        let error = refused(
+            invoke(
+                &memory,
+                "vault.witness",
+                witness(&vault, message(&json!({ "metadata": metadata }))),
+            ),
+            kind,
+        );
+        assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST, "{kind}: {error:?}");
+        assert!(
+            error.message.contains("metadata must be a JSON object")
+                && error.message.contains("order 0")
+                && error.message.contains(kind),
+            "{kind}: {error:?}"
+        );
+    }
+    invoke(
+        &memory,
+        "vault.witness",
+        witness(&vault, message(&json!({"metadata": {"source": "test"}}))),
+    )
+    .expect("object metadata is witnessed");
+}
+
+/// (d) The schedule context's three rules that napi checked by hand are the
+/// engine's own, run in the schedule's admission: an offset outside
+/// -840..=840, a timezone label without an offset, and a blank label.
+#[test]
+fn the_schedule_context_rules_are_the_engines() {
+    let refused = |context: OutboundScheduleContext, what: &str| {
+        let error = context.validate().expect_err(what);
+        assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST, "{what}: {error:?}");
+    };
+    refused(
+        OutboundScheduleContext {
+            utc_offset_minutes: Some(900),
+            ..OutboundScheduleContext::default()
+        },
+        "offset 900",
+    );
+    refused(
+        OutboundScheduleContext {
+            iana_timezone: Some("Asia/Tokyo".to_owned()),
+            ..OutboundScheduleContext::default()
+        },
+        "a label without an offset",
+    );
+    refused(
+        OutboundScheduleContext {
+            utc_offset_minutes: Some(540),
+            iana_timezone: Some("  ".to_owned()),
+            ..OutboundScheduleContext::default()
+        },
+        "a blank label",
+    );
+    OutboundScheduleContext {
+        utc_offset_minutes: Some(540),
+        iana_timezone: Some("Asia/Tokyo".to_owned()),
+        ..OutboundScheduleContext::default()
+    }
+    .validate()
+    .expect("a current offset with its label");
+}
+
+/// The auto-band manifest the expression-preference family needs: a human
+/// (and the lifecycle's first-party puts) write `companion.expression.*` at
+/// `auto`, as the engine's own family tests install it.
+fn install_expression_policy(vault: &Vault) {
+    let axes = || {
+        Msgpack::Map(vec![
+            (Msgpack::from("criticality"), Msgpack::from("normal")),
+            (Msgpack::from("sensitivity"), Msgpack::from("normal")),
+        ])
+    };
+    let ceiling = |class: &str| {
+        Msgpack::Map(vec![
+            (Msgpack::from("actor_class"), Msgpack::from(class)),
+            (Msgpack::from("ceiling"), Msgpack::from("auto")),
+        ])
+    };
+    let manifest = Msgpack::Map(vec![
+        (
+            Msgpack::from("schema_version"),
+            Msgpack::from(oneiron_store::policy_record::POLICY_SCHEMA_VERSION),
+        ),
+        (
+            Msgpack::from("pack_id"),
+            Msgpack::from("uc02-b1a-expression-preference"),
+        ),
+        (Msgpack::from("pack_version"), Msgpack::from("v1")),
+        (
+            Msgpack::from("min_engine_version"),
+            Msgpack::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (Msgpack::from("defaults"), axes()),
+        (
+            Msgpack::from("rules"),
+            Msgpack::Array(vec![Msgpack::Map(vec![
+                (
+                    Msgpack::from("prefix"),
+                    Msgpack::from("companion.expression."),
+                ),
+                (Msgpack::from("axes"), axes()),
+            ])]),
+        ),
+        (
+            Msgpack::from("actor_ceilings"),
+            Msgpack::Array(vec![ceiling("human"), ceiling("first_party")]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest).expect("encode manifest");
+    put_policy_manifest_bytes(vault, EntityId::now(), &data).expect("install the manifest");
+}
+
+/// (e) The three expression-preference rows run through the generic invoke:
+/// set (its omitted `occurred_at` is the recording clock), get, retract.
+#[test]
+fn the_expression_preference_rows_run_through_the_generic_invoke() {
+    let (_directory, vault) = fresh_vault();
+    install_expression_policy(&vault);
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .expect("the preference's subject");
+    let memory = owner_memory(&vault);
+    let now = vault.now_recorded_at();
+    let set = |valid_from: u64, occurred_at: Option<u64>| {
+        let mut input = json!({
+            "subject_ref": subject.to_hex(),
+            "value": {"kind": "language", "value": "en-US"},
+            "origin": "explicit_user",
+            "valid_from": valid_from
+        });
+        if let Some(at) = occurred_at {
+            input["occurred_at"] = json!(at);
+        }
+        invoke(&memory, "vault.expression_preferences.set", input)
+    };
+
+    // The omitted time is now, on the recording clock: a valid_from an hour
+    // ahead of it is refused (this family does not schedule), and one a
+    // minute behind it is written.
+    let ahead = refused(set(now + 3_600, None), "a valid_from an hour ahead");
+    assert!(
+        ahead
+            .message
+            .contains("valid_from cannot be later than learned_at"),
+        "{ahead:?}"
+    );
+    // A stated time is used as given, never replaced by the clock.
+    let stated = refused(
+        set(now - 60, Some(now - 7_200)),
+        "a valid_from after the stated occurred_at",
+    );
+    assert!(
+        stated
+            .message
+            .contains("valid_from cannot be later than learned_at"),
+        "{stated:?}"
+    );
+    let receipt = set(now - 60, None).expect("a preference with occurred_at omitted");
+    let claim_ref = receipt["claim_short_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a claim ref in {receipt}"))
+        .to_owned();
+    assert!(receipt["superseded_short_ids"].is_array(), "{receipt}");
+
+    let view = invoke(
+        &memory,
+        "vault.expression_preferences.get",
+        json!({ "subject_ref": subject.to_hex() }),
+    )
+    .expect("the preferences in force");
+    assert_eq!(view["language"], json!("en-US"), "{view}");
+    assert_eq!(view["winning_refs"]["language"], json!(claim_ref), "{view}");
+
+    let retracted = invoke(
+        &memory,
+        "vault.expression_preferences.retract",
+        json!({ "claim_ref": claim_ref }),
+    )
+    .expect("the retraction");
+    assert_eq!(retracted, Value::Null);
+    let after = invoke(
+        &memory,
+        "vault.expression_preferences.get",
+        json!({ "subject_ref": subject.to_hex(), "at": vault.now_recorded_at() }),
+    )
+    .expect("the preferences after the retraction");
+    assert_eq!(after["language"], Value::Null, "{after}");
+}

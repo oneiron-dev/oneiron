@@ -267,6 +267,7 @@ pub use export_transfer_read::{
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
+    ExpressionPreferencesRequest,
 };
 pub(crate) use key_value::address_parses as key_value_address_parses;
 pub use key_value::{
