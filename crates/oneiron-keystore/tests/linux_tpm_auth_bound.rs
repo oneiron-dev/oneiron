@@ -648,7 +648,10 @@ fn the_chip_opens_the_device_pin_key_for_its_auth_value_and_counts_a_wrong_one()
     assert_eq!(store.holds_auth_bound(), Ok(true));
     store.delete_auth_bound().expect("the secret is removed");
     assert_eq!(store.open_auth_bound(&AUTH), Ok(None));
-    assert_eq!(chip.commands_since(mark), [0u32; 0]);
+    assert!(
+        chip.commands_since(mark).is_empty(),
+        "a question that needs no chip asked it"
+    );
 
     let mark = chip.command_count();
     an_auth_value_out_of_bounds_is_refused(store);
@@ -870,7 +873,10 @@ fn the_tpm_tier_keeps_caller_sealed_bytes_beside_its_slots_and_asks_the_chip_not
         home.get_sealed(&seed),
         Ok(Some(b"owner seed, sealed by the engine".to_vec()))
     );
-    assert_eq!(chip.commands_since(mark), [0u32; 0]);
+    assert!(
+        chip.commands_since(mark).is_empty(),
+        "the sealed-bytes home asked the chip"
+    );
 
     // The sealed bytes, the chip's device PIN key and a slot of the same
     // names are three files, and none reads another.

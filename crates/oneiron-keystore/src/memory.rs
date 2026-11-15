@@ -27,11 +27,17 @@ pub struct MemoryKeystore {
 /// The auth-bound secret of a keystore made by
 /// [`MemoryKeystore::with_counted_auth_bound`], counted as a TPM counts.
 struct CountedAuthBound {
-    /// The auth value as the hardware keeps it, and the secret under it.
-    held: Option<(Zeroizing<Vec<u8>>, Zeroizing<[u8; 32]>)>,
+    held: Option<HeldAuthBound>,
     wrong_tries: u32,
     max_wrong_tries: u32,
     wait_secs: u64,
+}
+
+/// A secret and the auth value it rests under.
+struct HeldAuthBound {
+    /// The auth value as the hardware keeps it: without trailing zeros.
+    auth: Zeroizing<Vec<u8>>,
+    secret: Zeroizing<[u8; 32]>,
 }
 
 impl MemoryKeystore {
@@ -138,8 +144,10 @@ impl AuthBoundSecretStore for MemoryKeystore {
 
     fn put_auth_bound(&self, auth: &[u8], secret: &[u8; 32]) -> Result<()> {
         check_auth_value(auth)?;
-        let kept = Zeroizing::new(without_trailing_zeros(auth).to_vec());
-        self.counted()?.held = Some((kept, Zeroizing::new(*secret)));
+        self.counted()?.held = Some(HeldAuthBound {
+            auth: Zeroizing::new(without_trailing_zeros(auth).to_vec()),
+            secret: Zeroizing::new(*secret),
+        });
         Ok(())
     }
 
@@ -149,7 +157,7 @@ impl AuthBoundSecretStore for MemoryKeystore {
     ) -> std::result::Result<Option<Zeroizing<[u8; 32]>>, AuthBoundError> {
         check_auth_value(auth)?;
         let mut counted = self.counted()?;
-        let Some((kept, secret)) = &counted.held else {
+        let Some(held) = &counted.held else {
             return Ok(None);
         };
         if counted.wrong_tries >= counted.max_wrong_tries {
@@ -157,8 +165,8 @@ impl AuthBoundSecretStore for MemoryKeystore {
                 wait_secs: counted.wait_secs,
             });
         }
-        if kept.as_slice() == without_trailing_zeros(auth) {
-            return Ok(Some(Zeroizing::new(**secret)));
+        if held.auth.as_slice() == without_trailing_zeros(auth) {
+            return Ok(Some(Zeroizing::new(*held.secret)));
         }
         counted.wrong_tries += 1;
         Err(AuthBoundError::WrongAuth)
