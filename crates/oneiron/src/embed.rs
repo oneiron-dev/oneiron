@@ -21,6 +21,9 @@ mod repo_projection;
 #[cfg(feature = "sync")]
 mod routing;
 mod session_media;
+/// The owner's "Wait for the night box" key; the build script names its row in the setting
+/// catalogue (`crate::embed::setting_keys::POD_HOURS_WAIT`).
+pub(crate) mod setting_keys;
 mod space;
 mod space_card;
 mod space_move;
@@ -625,12 +628,21 @@ impl PendingEmbeddingReconciler {
         let rung_endpoint = self.remote_rung.as_ref().map(RemoteRung::endpoint);
         // The pods' hours are read once, before the writer: a job the wait
         // names is held before its payload is read.
-        let wait = PodHoursWait::default();
         let outside_pod_hours = self
             .pod_hours
             .as_ref()
             .is_some_and(|clock| clock.outside_pod_hours());
         self.vault.with_write_txn_grouped(|wtxn| {
+            // The owner's wait is read in the writer too, and only while the
+            // pods are outside their hours: every change committed before
+            // this pass is one it reads (NIGHT-BACKFILL-HOLD).
+            let wait = if outside_pod_hours {
+                setting_keys::POD_HOURS_WAIT
+                    .read_in_txn(&self.vault, wtxn, &[], None)?
+                    .value
+            } else {
+                PodHoursWait::Nothing
+            };
             let flagged_primary =
                 crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
             let flagged_remote = rung_endpoint
@@ -650,7 +662,7 @@ impl PendingEmbeddingReconciler {
                 if batch.work.len() >= self.batch_size {
                     break;
                 }
-                if outside_pod_hours && wait.holds(job.priority) {
+                if wait.holds(job.priority) {
                     batch.held_for_pod_hours += 1;
                     continue;
                 }
