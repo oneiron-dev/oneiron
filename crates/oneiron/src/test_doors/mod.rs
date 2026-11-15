@@ -45,6 +45,7 @@ pub mod disclosure_word_sources;
 pub mod dreamer_attempt_binding;
 pub mod dreamer_partition_window;
 pub mod dreamer_stage_line;
+pub mod epoch_lineage_pointer;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
