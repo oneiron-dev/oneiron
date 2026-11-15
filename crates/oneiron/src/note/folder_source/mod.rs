@@ -267,11 +267,17 @@ pub struct FolderRescanReport {
     /// Why the first of them was refused, or the first folder that would
     /// not open.
     pub first_error: Option<String>,
+    /// The paths of the files the write door refused. A source that reads
+    /// a file only when it changes (Drive) keeps them owed, so its next
+    /// step reads them again (REVIEW-7973 P1).
+    #[serde(skip)]
+    pub(crate) failed_paths: Vec<String>,
 }
 
 impl FolderRescanReport {
-    fn fail(&mut self, error: impl std::fmt::Display) {
+    fn fail(&mut self, path: &str, error: impl std::fmt::Display) {
         self.failed += 1;
+        self.failed_paths.push(path.to_owned());
         self.first_error.get_or_insert_with(|| error.to_string());
     }
 }

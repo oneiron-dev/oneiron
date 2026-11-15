@@ -603,7 +603,8 @@ impl Vault {
     /// newest first, then one rescan of the ledger with what was read. A
     /// call out of quota ends the reads cleanly: what was read lands, and
     /// the source rests until its window opens. A file whose text could not
-    /// be read stays owed and is said in the report.
+    /// be read, or whose landing the rescan refused, stays owed and is said
+    /// in the report.
     ///
     /// # Errors
     /// A folder that is not an attached Drive source, an owner proof that
@@ -706,6 +707,10 @@ impl Vault {
             facts: HashMap::new(),
             whole: true,
         };
+        let mut read_files: HashMap<String, DriveFileMeta> = read
+            .iter()
+            .map(|(file, _)| (file.id.clone(), file.clone()))
+            .collect();
         let mut taken_titles = HashSet::new();
         for (file, text) in read {
             rescan.facts.insert(file.id.clone(), file.facts());
@@ -774,6 +779,15 @@ impl Vault {
             .cloned()
             .collect();
         report.rescan = self.rescan_folder_source(owner, rescan)?;
+        // A file the rescan refused stays owed: the feed's token moves past
+        // its change, so only the owed list reads it again (REVIEW-7973 P1).
+        kept.extend(
+            report
+                .rescan
+                .failed_paths
+                .iter()
+                .filter_map(|path| read_files.remove(path)),
+        );
         report.rescan.failed += failed.len();
         if let Some(error) = failed.into_iter().next() {
             report.rescan.first_error.get_or_insert(error);
