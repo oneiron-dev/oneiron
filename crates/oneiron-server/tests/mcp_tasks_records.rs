@@ -23,11 +23,17 @@
 //!   cancel asks `ai.video.cancel` with `if_running`, which refuses a job
 //!   that ended, by name, and keeps it (so a job that finishes after the
 //!   task's last read keeps its clip too).
+//! - A task-mode start dedupes on its record's own key only when the call
+//!   carries one, as a plain `tools/call` does: a Timer `host.wake` sent
+//!   twice with no invocation key starts two night steps and answers two
+//!   tasks, and an `ai.video` sent twice under one `idempotency_key` starts
+//!   one provider job, which both answers' tasks read.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test mcp_tasks_records`.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -679,6 +685,71 @@ fn a_finished_video_job_ends_completed_and_no_task_cancel_deletes_its_clip() -> 
             "no cancel reached the provider: {:?}",
             provider.seen()
         );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_start_dedupes_on_its_records_key_only_when_the_call_carries_one() -> TestResult {
+    on_engine_stack(|| async {
+        // A Timer wake sent twice with no invocation key: two night steps,
+        // two tasks.
+        {
+            let fixture = Fixture::new()?;
+            let wake = json!({ "wake_kind": "timer", "queue_head": [] });
+            let first = task_id(&fixture.call("host.wake", wake.clone(), true).await?)?;
+            let again = task_id(&fixture.call("host.wake", wake, true).await?)?;
+            assert_ne!(first, again, "a keyless repeat answers a new task");
+            let invocations: BTreeSet<String> = AttemptQueue::new(&fixture.vault)
+                .list()?
+                .into_iter()
+                .filter_map(|record| {
+                    record
+                        .dedupe_key?
+                        .split_once("host.wake:")
+                        .map(|(_, rest)| rest.chars().take_while(char::is_ascii_hexdigit).collect())
+                })
+                .collect();
+            assert_eq!(
+                invocations.len(),
+                2,
+                "each keyless wake started its own night step: {invocations:?}"
+            );
+            for id in [&first, &again] {
+                let working = fixture.tasks("get", id).await?;
+                assert_eq!(working["result"]["status"], "working", "{working}");
+            }
+        }
+
+        // A render sent twice under one idempotency key: one job at the
+        // provider, which both answers' tasks read.
+        let provider = FakeVideoProvider::start().await?;
+        let fixture = Fixture::with_video_provider(&provider.base_url).await?;
+        let render = json!({
+            "prompt": "A harbour at dawn",
+            "params": { "seconds": 4, "size": "1280x720" },
+            "idempotency_key": "harbour-at-dawn",
+        });
+        let first = task_id(&fixture.call("ai.video", render.clone(), true).await?)?;
+        let again = task_id(&fixture.call("ai.video", render, true).await?)?;
+        let submits = provider
+            .seen()
+            .iter()
+            .filter(|(method, path)| method == "POST" && path == "/v1/videos")
+            .count();
+        assert_eq!(
+            submits,
+            1,
+            "the keyed repeat sent no second job: {:?}",
+            provider.seen()
+        );
+        for id in [&first, &again] {
+            let rendering = fixture.tasks("get", id).await?;
+            assert_eq!(
+                rendering["result"]["statusMessage"], "rendering, 10%",
+                "each task reads the one job: {rendering}"
+            );
+        }
         Ok(())
     })
 }

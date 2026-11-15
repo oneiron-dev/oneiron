@@ -48,9 +48,16 @@
 //! video task's cancel stops only a job that still runs (`if_running`), so
 //! a cancel never deletes a finished clip, even one that finished after the
 //! task's last read: that cancel answers the task's end instead.
-//! A start sent again without `_meta["oneiron/invocation"]` (for
-//! `ai.video`, nor its `idempotency_key`) is a new call, as the verb's own
-//! rules make it: it starts new work and answers a new task.
+//!
+//! A task-mode start is an ordinary `tools/call`, and task mode adds no
+//! retry risk of its own (ruling MCPTASKS-KEYLESS-START-RETRY = A): a start
+//! dedupes on the record's own key when the call carries one. A repeat under
+//! that key (`intent_key`, which `vault.workflows.dispatch` requires;
+//! `ai.video`'s `idempotency_key`; `host.wake`'s
+//! `_meta["oneiron/invocation"]`, while its wake is pending) starts nothing:
+//! its verb answers the first call's record, and the task is a second handle
+//! over that record. A start sent again without its key is a new call, as a
+//! plain `tools/call` is: it starts new work and answers a new task.
 //!
 //! Not built here: `subscriptions/listen` (change notices are optional, and
 //! this endpoint answers one request per POST with no server stream).
