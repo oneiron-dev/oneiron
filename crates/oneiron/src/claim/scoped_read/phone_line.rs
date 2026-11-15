@@ -200,6 +200,7 @@ impl ScopedRead<'_> {
                 crate::registry::ENTITY_TYPE_CONVERSATION
                     | crate::registry::ENTITY_TYPE_TURN
                     | crate::registry::ENTITY_TYPE_MESSAGE
+                    | crate::registry::ENTITY_TYPE_SESSION
             )
         {
             let threads = self.phone_threads_of_row_in(txn, id)?;
@@ -305,9 +306,10 @@ impl ScopedRead<'_> {
     }
 
     /// Whether the row `id` of `entity_type` sits in the current caller's
-    /// thread: true only for a conversation, turn or message whose marked
-    /// threads are non-empty and every one equals the current thread of every
-    /// ceiling. A withheld or unreadable caller reads as no thread.
+    /// thread: true only for a conversation, turn, message or thread session
+    /// whose marked threads are non-empty and every one equals the current
+    /// thread of every ceiling. A withheld or unreadable caller reads as no
+    /// thread.
     fn in_current_caller_thread_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -319,6 +321,7 @@ impl ScopedRead<'_> {
             crate::registry::ENTITY_TYPE_CONVERSATION
                 | crate::registry::ENTITY_TYPE_TURN
                 | crate::registry::ENTITY_TYPE_MESSAGE
+                | crate::registry::ENTITY_TYPE_SESSION
         ) {
             return Ok(false);
         }

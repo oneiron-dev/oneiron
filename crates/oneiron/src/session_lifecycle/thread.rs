@@ -36,18 +36,21 @@ impl Vault {
     /// id derives from the thread alone, so another host of this vault mints
     /// the same SESSION; when its entity arrived here without this store's
     /// own lifecycle record, the entity stands and only the record is
-    /// written.
+    /// written. A phone keep passes its thread in `phone_thread` and the
+    /// minted SESSION carries that stamp; connector threads pass `None` and
+    /// stay unstamped (VOICE-PHONE-AGENT-REACH R1 fix).
     ///
     /// # Errors
     ///
-    /// Storage errors, and a derived id that names a row other than a live
-    /// SESSION.
+    /// Storage errors, a stamp that does not encode, and a derived id that
+    /// names a row other than a live SESSION.
     pub(crate) fn thread_session_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         conversation: EntityId,
         actor: EntityId,
         now: u64,
+        phone_thread: Option<EntityId>,
     ) -> Result<EntityId> {
         let id = thread_session_id(conversation)?;
         if RECORDS.get(&self.store, wtxn, &id)?.is_some() {
@@ -87,6 +90,10 @@ impl Vault {
         };
         if !entity_stands {
             let body = session_entity_body(key)?;
+            let body = match phone_thread {
+                Some(thread) => crate::voice_call::stamp_phone_thread(&body, thread)?,
+                None => body,
+            };
             self.batch_in()
                 .put(
                     &id,

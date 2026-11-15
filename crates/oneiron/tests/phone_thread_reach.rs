@@ -30,7 +30,7 @@ use oneiron::memory::{
 use oneiron::phone_line::{
     PhoneLineArrival, PhoneLineArrivalReceipt, PhoneLineConfig, PhoneLineState,
 };
-use oneiron::registry::ENTITY_TYPE_CONVERSATION;
+use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -66,7 +66,6 @@ struct Fixture {
     agent: EntityId,
     identity: EntityId,
     bridge: EntityId,
-    bridge_proof: VerifiedSlip,
     bridge_key: ScopedReadActorKey,
 }
 
@@ -144,7 +143,6 @@ fn fixture() -> Fixture {
         agent,
         identity: registered.identity_ref,
         bridge: registered.actor_ref,
-        bridge_proof,
         bridge_key,
     }
 }
@@ -1175,5 +1173,277 @@ fn the_line_config_no_longer_takes_share_scope() {
     assert!(
         serde_json::from_value::<PhoneLineState>(json).is_ok(),
         "a state naming share_scope still decodes",
+    );
+}
+
+/// The `phone_thread` value a TURN/MESSAGE/SESSION body carries, if any.
+/// Decoded here because `voice_call::phone_thread_stamp` is crate-private.
+fn phone_thread_of(body: &[u8]) -> Option<String> {
+    let mut cursor = body;
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
+        return None;
+    };
+    if !cursor.is_empty() {
+        return None;
+    }
+    let mut found = None;
+    for (key, value) in &fields {
+        if key.as_str() != Some("phone_thread") {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = value.as_str().map(|text| text.to_owned());
+    }
+    found
+}
+
+#[test]
+fn a_kept_turn_and_message_carry_their_threads_stamp() {
+    let reach = reach_fixture(custom_base());
+    let want = reach.conv_a.to_hex();
+    for (id, label) in [
+        (&reach.turn_a1, "turn_a1"),
+        (&reach.turn_a2, "turn_a2"),
+        (&reach.msg_a_caller, "msg_a_caller"),
+        (&reach.msg_a_answer, "msg_a_answer"),
+    ] {
+        let body = reach
+            .fixture
+            .vault
+            .get(id)
+            .unwrap_or_else(|_| panic!("A's {label} raw row reads as the owner"))
+            .unwrap_or_else(|| panic!("A's {label} raw row is present"));
+        let got = phone_thread_of(&body);
+        assert_eq!(
+            got.as_deref(),
+            Some(want.as_str()),
+            "A's {label} must carry phone_thread=conv_a; seen {got:?}",
+        );
+    }
+}
+
+#[test]
+fn an_empty_put_of_a_phone_thread_is_refused() {
+    let reach = reach_fixture(custom_base());
+    let at = TimeRange {
+        start: OCCURRED_AT,
+        end: OCCURRED_AT,
+    };
+    let conv_put = reach.fixture.vault.put_entity(
+        &reach.conv_a,
+        ENTITY_TYPE_CONVERSATION,
+        at,
+        OCCURRED_AT,
+        b"",
+    );
+    assert!(
+        conv_put.is_err(),
+        "an empty put of A's CONVERSATION conv_a must be refused",
+    );
+    // A MESSAGE raw put never stages (the witness door owns MESSAGE rows),
+    // so this is refused at the builder door before the phone guard; still
+    // refused.
+    let msg_put = reach.fixture.vault.put_entity(
+        &reach.msg_a_caller,
+        ENTITY_TYPE_MESSAGE,
+        at,
+        OCCURRED_AT,
+        b"",
+    );
+    assert!(
+        msg_put.is_err(),
+        "an empty put of A's MESSAGE msg_a_caller must be refused",
+    );
+}
+
+#[test]
+fn deleting_a_phone_thread_alone_leaves_its_words_gated() {
+    use oneiron::memory::SafeDeleteReason;
+    let reach = reach_fixture(custom_base());
+    reach
+        .fixture
+        .vault
+        .memory(reach.fixture.owner, EdgeActorClass::Human)
+        .safe_delete(&reach.conv_a.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner deletes A's CONVERSATION conv_a alone");
+    let generic = reach.fixture.vault.scoped_read(reach.g_key.clone());
+    for id in [&reach.msg_a_caller, &reach.msg_a_answer] {
+        assert!(
+            !generic
+                .is_entity_readable(id)
+                .unwrap_or_else(|_| panic!("G reads A's MESSAGE {id:?} after the delete")),
+            "after deleting A's CONVERSATION conv_a alone, G must still not read A's MESSAGE {id:?}",
+        );
+    }
+    let b_call = reach.fixture.vault.scoped_read(reach.b_call_key.clone());
+    for id in [&reach.msg_a_caller, &reach.msg_a_answer] {
+        assert!(
+            !b_call
+                .is_entity_readable(id)
+                .unwrap_or_else(|_| panic!("B's call reads A's MESSAGE {id:?} after the delete")),
+            "after deleting A's CONVERSATION conv_a alone, B's call must still not read A's MESSAGE {id:?}",
+        );
+    }
+}
+
+#[test]
+fn a_generic_read_does_not_read_a_phone_threads_session() {
+    let reach = reach_fixture(custom_base());
+    let session_a = oneiron::test_doors::connector_thread_session::thread_session(reach.conv_a)
+        .expect("A's thread SESSION session_a id derives");
+    let owner = reach.fixture.vault.scoped_read(reach.owner_key.clone());
+    assert!(
+        owner
+            .is_entity_readable(&session_a)
+            .expect("the owner reads A's thread SESSION session_a"),
+        "the owner must read A's thread SESSION session_a",
+    );
+    let generic = reach.fixture.vault.scoped_read(reach.g_key.clone());
+    assert!(
+        !generic
+            .is_entity_readable(&session_a)
+            .expect("G reads A's thread SESSION session_a"),
+        "G must not read A's thread SESSION session_a",
+    );
+    let b_call = reach.fixture.vault.scoped_read(reach.b_call_key.clone());
+    assert!(
+        !b_call
+            .is_entity_readable(&session_a)
+            .expect("B's call reads A's thread SESSION session_a"),
+        "B's call must not read A's thread SESSION session_a",
+    );
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_kept_call() {
+    use oneiron::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    };
+    use oneiron::sync::schema::create_window_doc;
+    use oneiron::sync::window::reverse_rematerialize;
+    use oneiron::sync::{
+        SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
+        put_selector_test_federation_grant,
+    };
+    use oneiron_authority::federation::scope_codec::read_preset;
+
+    const SHARED_VAULT_ID: u64 = 7;
+
+    let reach = reach_fixture(custom_base());
+    let member = EntityId::now();
+    let now = reach.fixture.vault.now_recorded_at();
+    let at = TimeRange {
+        start: now,
+        end: now,
+    };
+    reach
+        .fixture
+        .vault
+        .put_entity(
+            &member,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            at,
+            now,
+            &rmp_serde::to_vec_named(&serde_json::json!({ "name": "member" }))
+                .expect("member PERSON body"),
+        )
+        .expect("FIXTURE: a member PERSON");
+    let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
+    let grant_id = EntityId::now();
+    let mut grant = FederationGrant::new(
+        scope,
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    grant.authority_scope = read_preset();
+    put_selector_test_federation_grant(&reach.fixture.vault, &grant_id, &grant, now)
+        .expect("FIXTURE: the member's federation grant");
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&reach.fixture.vault, scope, &selector)
+        .expect("FIXTURE: the member's selector is authorized");
+    // The kept rows were learned at OCCURRED_AT; pack that window.
+    let key = WindowKey::from_timestamp(OCCURRED_AT);
+    let source = create_window_doc("selector", &key);
+    reverse_rematerialize(&reach.fixture.vault, &source, &key).expect("the window pack");
+    for (id, label) in [
+        (&reach.conv_a, "conv_a"),
+        (&reach.turn_a1, "turn_a1"),
+        (&reach.msg_a_caller, "msg_a_caller"),
+        (&reach.control_msg, "control_msg"),
+    ] {
+        assert!(
+            source.get_map("entities").get(&id.to_hex()).is_some(),
+            "FIXTURE: the packed window holds A's {label}",
+        );
+    }
+    let selected = filtered_window_doc(&reach.fixture.vault, &source, &key, scope, &selector)
+        .expect("the member's restricted selector window");
+    let mut carried = BTreeSet::new();
+    selected.get_map("entities").for_each(|key, _| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            carried.insert(id);
+        }
+    });
+    assert!(
+        carried.contains(&reach.control_msg),
+        "precondition: the Member restricted window still carries the control MESSAGE control_msg",
+    );
+    for (id, label) in [
+        (&reach.conv_a, "conv_a"),
+        (&reach.turn_a1, "turn_a1"),
+        (&reach.turn_a2, "turn_a2"),
+        (&reach.msg_a_caller, "msg_a_caller"),
+        (&reach.msg_a_answer, "msg_a_answer"),
+    ] {
+        assert!(
+            !carried.contains(id),
+            "LEAK: the Member restricted window carries A's {label}",
+        );
+    }
+}
+
+#[test]
+fn an_off_record_session_cannot_strip_a_phone_stamp() {
+    use oneiron::RawEntityPut;
+    use oneiron::off_record::OffRecordBackendClass;
+    let reach = reach_fixture(custom_base());
+    let room = reach
+        .fixture
+        .vault
+        .off_record_session_vault()
+        .enter("phone-f2-room", OffRecordBackendClass::Local)
+        .expect("FIXTURE: an off-record room");
+    let body = reach
+        .fixture
+        .vault
+        .conversation_body(reach.conv_a)
+        .expect("A's thread CONVERSATION conv_a body reads");
+    let mut stripped = body.clone();
+    stripped.extra.remove("phone_line_agent");
+    let bytes = stripped.to_bytes().expect("the stripped body encodes");
+    let now = reach.fixture.vault.now_recorded_at();
+    let at = TimeRange {
+        start: now,
+        end: now,
+    };
+    let put = reach
+        .fixture
+        .vault
+        .memory(reach.fixture.owner, EdgeActorClass::Human)
+        .in_off_record_session(room.session_ref())
+        .raw_put_entity(RawEntityPut {
+            id: reach.conv_a,
+            entity_type: ENTITY_TYPE_CONVERSATION,
+            occurred: at,
+            learned_at: now,
+            data: &bytes,
+        });
+    assert!(
+        put.is_err(),
+        "an off-record session restage of A's CONVERSATION conv_a without its mark must be refused",
     );
 }

@@ -61,6 +61,103 @@ pub(crate) fn phone_thread_agent(body: &[u8]) -> Option<EntityId> {
     found
 }
 
+/// The TURN/MESSAGE/SESSION body key naming a phone row's thread: the thread's
+/// CONVERSATION id as a 32-char lower hex string. Only the phone keep path
+/// stamps it, when the base witness landing mints the TURN and every MESSAGE,
+/// and when the thread SESSION is minted; it is a birth fact after that
+/// (VOICE-PHONE-AGENT-REACH R1 fix). The CONVERSATION itself keeps
+/// [`PHONE_LINE_AGENT_KEY`] unchanged.
+/// The literal must match `oneiron-store`'s MESSAGE codec (`PHONE_THREAD_KEY`
+/// there); both encoders append the key last with the same map-header rewrite.
+pub(crate) const PHONE_THREAD_KEY: &str = "phone_thread";
+
+/// The thread a phone TURN, MESSAGE or SESSION body names, if any: `None`
+/// for a non-map body, a missing key, or a value that is not one canonical
+/// 32-hex string (a duplicate key, a non-string value, invalid or
+/// non-canonical hex, trailing bytes).
+pub(crate) fn phone_thread_stamp(body: &[u8]) -> Option<EntityId> {
+    let mut cursor = body;
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
+        return None;
+    };
+    if !cursor.is_empty() {
+        return None;
+    }
+    let mut found = None;
+    for (key, value) in &fields {
+        if key.as_str() != Some(PHONE_THREAD_KEY) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        let Some(text) = value.as_str() else {
+            return None;
+        };
+        let id = EntityId::from_hex(text).ok()?;
+        if id.to_hex() != text {
+            return None;
+        }
+        found = Some(id);
+    }
+    found
+}
+
+/// `body`, a MessagePack map that does not carry [`PHONE_THREAD_KEY`], with
+/// the key appended last as `thread`'s 32-char lower hex. The map's own
+/// entries keep their exact bytes; only its length header is rewritten (the
+/// same algorithm as `encode_source_audience_required`).
+///
+/// # Errors
+///
+/// [`crate::error::Error::InvariantViolation`] when `body` is not exactly one
+/// MessagePack map, or already carries the key in any shape.
+pub(crate) fn stamp_phone_thread(body: &[u8], thread: EntityId) -> Result<Vec<u8>> {
+    let refused = || {
+        crate::error::Error::InvariantViolation("a phone-thread stamp goes on one unstamped map")
+    };
+    let mut cursor = body;
+    let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return Err(refused());
+    };
+    if !cursor.is_empty() {
+        return Err(refused());
+    }
+    for (key, _) in &entries {
+        if key.as_str() == Some(PHONE_THREAD_KEY) {
+            return Err(refused());
+        }
+    }
+    let header = match body.first() {
+        Some(0x80..=0x8f) => 1,
+        Some(0xde) => 3,
+        Some(0xdf) => 5,
+        _ => return Err(refused()),
+    };
+    let len = u32::try_from(entries.len())
+        .ok()
+        .and_then(|len| len.checked_add(1))
+        .ok_or_else(refused)?;
+    let mut out = Vec::with_capacity(body.len() + PHONE_THREAD_KEY.len() + 40);
+    match len {
+        0..=15 => out.push(0x80 | u8::try_from(len).map_err(|_| refused())?),
+        16..=0xffff => {
+            out.push(0xde);
+            out.extend_from_slice(&u16::try_from(len).map_err(|_| refused())?.to_be_bytes());
+        }
+        _ => {
+            out.push(0xdf);
+            out.extend_from_slice(&len.to_be_bytes());
+        }
+    }
+    out.extend_from_slice(body.get(header..).ok_or_else(refused)?);
+    rmpv::encode::write_value(&mut out, &rmpv::Value::from(PHONE_THREAD_KEY))
+        .map_err(|_| refused())?;
+    rmpv::encode::write_value(&mut out, &rmpv::Value::from(thread.to_hex()))
+        .map_err(|_| refused())?;
+    Ok(out)
+}
+
 /// The body a phone thread's CONVERSATION is minted with: the line agent's
 /// mark alone.
 pub(crate) fn phone_thread_mark_body(agent: EntityId) -> MemoryResult<Vec<u8>> {
@@ -224,10 +321,12 @@ impl Vault {
     /// (PHONE-CALL-SESSION = A, as UNBUILT-02-SITTING = A rules for mail and
     /// LINE threads). That SESSION is no actor's sitting, so no sitting's
     /// close learns from a stranger's words. The landing mints the call's
-    /// thread with the line agent's mark ([`PHONE_LINE_AGENT_KEY`]), and the
-    /// line agent holds a witness-read grant over it from this first kept
-    /// turn (owner ruling 16 Nov 00:44 replaces PHONE-CALL-READ-GRANT = B
-    /// for this).
+    /// thread with the line agent's mark ([`PHONE_LINE_AGENT_KEY`]), stamps
+    /// the TURN it mints and every MESSAGE it puts with the thread
+    /// ([`PHONE_THREAD_KEY`]), and mints the thread SESSION carrying that
+    /// stamp too; the line agent holds a witness-read grant over the thread
+    /// from this first kept turn (owner ruling 16 Nov 00:44 replaces
+    /// PHONE-CALL-READ-GRANT = B for this).
     ///
     /// # Errors
     ///
@@ -274,6 +373,7 @@ impl Vault {
                         agent,
                         conversation,
                         now,
+                        Some(conversation),
                     )?;
                     self.issue_connector_witness_read_grant_in_txn(txn, agent, conversation, now)?;
                     Ok(())

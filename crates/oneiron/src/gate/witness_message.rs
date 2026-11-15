@@ -53,7 +53,8 @@ pub(crate) use crate::store::witness_message_body::{
     WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
 };
 use crate::store::witness_message_body::{
-    source_bound_witness_message_envelope_denial, witness_message_envelope_denial,
+    phone_bound_witness_message_envelope_denial, source_bound_witness_message_envelope_denial,
+    witness_message_envelope_denial,
 };
 
 /// One authorized MESSAGE write.
@@ -215,6 +216,50 @@ pub(crate) fn check_source_bound_witness_message_ceiling<'a>(
     let plain = envelope.encode_body()?;
     check_witness_message_ceiling(store, txn, actor, envelope, &plain, policy)?;
     if let Some(reason_code) = source_bound_witness_message_envelope_denial(envelope, stamped) {
+        let decision = GateDecision::deny(reason_code);
+        store.diagnostics.gate.record_decision(&decision);
+        enforce_gate_decision(decision)?;
+    }
+    Ok(WitnessMessageAuthorization {
+        body: stamped,
+        binding: witness_message_binding(actor, stamped),
+    })
+}
+
+/// [`check_witness_message_ceiling`] for a PHONE-BOUND MESSAGE
+/// (VOICE-PHONE-AGENT-REACH R1 fix): the row a phone keep writes, whose stored
+/// bytes `stamped` carry the thread stamp [`PHONE_THREAD_KEY`] as their last
+/// key.
+///
+/// The existing ceiling runs whole over the envelope's PLAIN encoding, so
+/// every axis, author and policy check is the one every MESSAGE meets; then
+/// `stamped` must be exactly the envelope's phone-bound encoding for `thread`.
+/// The authorization it answers covers `stamped` and binds those bytes, so the
+/// put writes the stamp and nothing else. Only the phone keep path reaches
+/// this door; every other door binds the plain encoding and so refuses a
+/// stamped body.
+///
+/// [`PHONE_THREAD_KEY`]: crate::voice_call::PHONE_THREAD_KEY
+///
+/// # Errors
+///
+/// As [`check_witness_message_ceiling`], and
+/// [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected)
+/// when `stamped` is not the envelope's phone-bound encoding for `thread`.
+pub(crate) fn check_phone_bound_witness_message_ceiling<'a>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    envelope: &WitnessMessageEnvelope<'_>,
+    stamped: &'a [u8],
+    policy: &PolicyManifestResolution,
+    thread: &EntityId,
+) -> Result<WitnessMessageAuthorization<'a>> {
+    let plain = envelope.encode_body()?;
+    check_witness_message_ceiling(store, txn, actor, envelope, &plain, policy)?;
+    if let Some(reason_code) =
+        phone_bound_witness_message_envelope_denial(envelope, stamped, &thread.to_hex())
+    {
         let decision = GateDecision::deny(reason_code);
         store.diagnostics.gate.record_decision(&decision);
         enforce_gate_decision(decision)?;

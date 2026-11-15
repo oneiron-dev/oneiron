@@ -2,19 +2,17 @@
 //! rows read to a non-owner only under a live grant naming its conversation.
 
 use super::*;
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 impl ScopedRead<'_> {
     /// The marked phone-thread CONVERSATIONs the row `id` sits in, on this
-    /// read's content: the row itself for a CONVERSATION, its `ChildOf`
-    /// targets for a TURN, its TURNs' conversations for a MESSAGE (found as
-    /// `conversation_message_granted_in` finds them, but an edge that does
-    /// not read is an error here, so the gate fails closed). Every other
-    /// kind: none.
-    /// A conversation whose row does not read or whose body has no
-    /// `phone_line_agent` mark is not a phone thread.
+    /// read's content, judged by the row's OWN stamp alone (R1 fix, no edge
+    /// walk): the row itself for a CONVERSATION whose body carries
+    /// `phone_line_agent`, its own `phone_thread` stamp for a TURN, MESSAGE
+    /// or SESSION. Every other kind, and a row with no stamp of its own, is
+    /// not a phone row. A CONVERSATION deleted or emptied alone leaves every
+    /// TURN/MESSAGE still stamped and still gated.
     pub(super) fn phone_threads_of_row_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -23,46 +21,25 @@ impl ScopedRead<'_> {
         let Some(row) = self.entity_record_in(txn, id)? else {
             return Ok(Vec::new());
         };
-        let conversations = match row.entity_type {
-            crate::registry::ENTITY_TYPE_CONVERSATION => vec![*id],
-            crate::registry::ENTITY_TYPE_TURN => self.edge_targets_checked_in(
-                txn,
-                id,
-                EdgeKind::ChildOf,
-                crate::registry::ENTITY_TYPE_CONVERSATION,
-            )?,
-            crate::registry::ENTITY_TYPE_MESSAGE => {
-                let mut conversations = Vec::new();
-                for turn in self.edge_targets_checked_in(
-                    txn,
-                    id,
-                    EdgeKind::PartOf,
-                    crate::registry::ENTITY_TYPE_TURN,
-                )? {
-                    conversations.extend(self.edge_targets_checked_in(
-                        txn,
-                        &turn,
-                        EdgeKind::ChildOf,
-                        crate::registry::ENTITY_TYPE_CONVERSATION,
-                    )?);
+        match row.entity_type {
+            crate::registry::ENTITY_TYPE_CONVERSATION => {
+                if crate::voice_call::phone_thread_agent(&row.body).is_some() {
+                    Ok(vec![*id])
+                } else {
+                    Ok(Vec::new())
                 }
-                conversations
             }
-            _ => return Ok(Vec::new()),
-        };
-        let mut marked = Vec::new();
-        for conversation in conversations {
-            let Some(row) = self.entity_record_in(txn, &conversation)? else {
-                continue;
-            };
-            if row.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
-                continue;
+            crate::registry::ENTITY_TYPE_TURN
+            | crate::registry::ENTITY_TYPE_MESSAGE
+            | crate::registry::ENTITY_TYPE_SESSION => {
+                if let Some(thread) = crate::voice_call::phone_thread_stamp(&row.body) {
+                    Ok(vec![thread])
+                } else {
+                    Ok(Vec::new())
+                }
             }
-            if crate::voice_call::phone_thread_agent(&row.body).is_some() {
-                marked.push(conversation);
-            }
+            _ => Ok(Vec::new()),
         }
-        Ok(marked)
     }
 
     /// Whether the phone-thread gate admits the revision `raw` of `id` in
@@ -71,7 +48,8 @@ impl ScopedRead<'_> {
     /// marked conversation the row sits in, whose authority admits the row's
     /// record Scope. This conjunct only ever removes rows. Fail closed: an
     /// error in the grant read refuses the row. Only the three transcript
-    /// kinds pay the walk, and only on a non-owner read.
+    /// kinds and the thread SESSION pay the stamp read, and only on a
+    /// non-owner read.
     pub(super) fn phone_threads_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -89,6 +67,7 @@ impl ScopedRead<'_> {
             crate::registry::ENTITY_TYPE_CONVERSATION
                 | crate::registry::ENTITY_TYPE_TURN
                 | crate::registry::ENTITY_TYPE_MESSAGE
+                | crate::registry::ENTITY_TYPE_SESSION
         ) {
             return Ok(true);
         }

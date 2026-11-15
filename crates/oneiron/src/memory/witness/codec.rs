@@ -220,34 +220,47 @@ pub(crate) fn guard_import_stamp(
     Ok(())
 }
 
-/// A phone thread's line agent is a birth fact (VOICE-PHONE-AGENT-REACH R1):
-/// when a stored CONVERSATION row has a non-empty body, an incoming
-/// non-empty body must state the same `phone_line_agent` (absent stays
-/// absent, present stays the identical value). A bodiless erase shell passes,
-/// and a fresh row passes from any door (a forged mark on a new conversation
-/// only narrows who reads it). Every put door runs this beside
-/// [`guard_import_stamp`], replay included.
+/// A phone row's thread binding is a birth fact (VOICE-PHONE-AGENT-REACH R1,
+/// generalized by the R1 fix): when a stored row's body carries
+/// `phone_line_agent` (its CONVERSATION) or `phone_thread` (its TURN, MESSAGE
+/// or SESSION), an incoming body must carry the identical value. An EMPTY
+/// incoming body over a stamped stored body is REFUSED (the R1 empty-body
+/// exception is gone); erase and withdraw truncate rows via
+/// `port_entity_scrub`, never through this put door, so legitimate erasure
+/// still lands. A fresh row, or a stored row with an empty or unstamped body,
+/// still passes from any door (a forged stamp on a new row only narrows who
+/// reads it). Every put door runs this beside [`guard_import_stamp`], replay
+/// included; the session overlay arm judges the row its view holds now (its
+/// overlay row if any, else base).
 pub(crate) fn guard_phone_thread_mark(
-    store: &crate::store::Store,
+    dbs: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: crate::EntityId,
     body: &[u8],
 ) -> crate::Result<()> {
     use crate::ports::EntityStoreRead;
-    if body.is_empty() {
-        return Ok(());
-    }
-    let Some(previous) = store.port_entity_record(txn, &id)? else {
+    let Some(previous) = dbs.port_entity_record(txn, &id)? else {
         return Ok(());
     };
     if previous.body.is_empty() {
         return Ok(());
     }
-    let before = crate::voice_call::phone_thread_agent(&previous.body);
-    let after = crate::voice_call::phone_thread_agent(body);
-    if before != after {
+    let before_agent = crate::voice_call::phone_thread_agent(&previous.body);
+    let before_thread = crate::voice_call::phone_thread_stamp(&previous.body);
+    if before_agent.is_none() && before_thread.is_none() {
+        return Ok(());
+    }
+    let after_agent = crate::voice_call::phone_thread_agent(body);
+    let after_thread = crate::voice_call::phone_thread_stamp(body);
+    if before_agent != after_agent {
         return Err(crate::error::RecordError::InvalidConversationBody(
             "a phone thread's line agent is a birth fact",
+        )
+        .into());
+    }
+    if before_thread != after_thread {
+        return Err(crate::error::RecordError::InvalidConversationBody(
+            "a phone row's thread is a birth fact",
         )
         .into());
     }

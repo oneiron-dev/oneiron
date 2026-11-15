@@ -30,12 +30,14 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
         WitnessTarget::Base {
             route,
             mint_conversation_body,
+            phone_keep,
         } => Landing::Base {
             route,
             continuation: None,
             imported: None,
             held: None,
             mint_conversation_body,
+            phone_keep,
         },
         WitnessTarget::Held { held } => Landing::Base {
             route: None,
@@ -43,6 +45,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
             imported: None,
             held: Some(held),
             mint_conversation_body: None,
+            phone_keep: false,
         },
         WitnessTarget::Imported { stamp } => {
             if turn
@@ -74,6 +77,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
                 imported: Some(stamp),
                 held: None,
                 mint_conversation_body: None,
+                phone_keep: false,
             }
         }
         WitnessTarget::Session {
@@ -118,6 +122,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
                     imported: None,
                     held: None,
                     mint_conversation_body: None,
+                    phone_keep: false,
                 }
             } else {
                 room_speech = rostered.map(|room| (session, room));

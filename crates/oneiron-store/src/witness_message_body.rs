@@ -36,12 +36,19 @@ const BODY_KEY_ORDER: &str = "order";
 /// same side channel one level up.
 const TURN_KEY_SPEAKER: &str = "speaker";
 
+/// The TURN/MESSAGE/SESSION body key naming a phone row's thread: the thread's
+/// CONVERSATION id as a 32-char lower hex string (VOICE-PHONE-AGENT-REACH R1
+/// fix). Must match `oneiron::voice_call::PHONE_THREAD_KEY`; both encoders
+/// append the key last with the same map-header rewrite.
+pub const PHONE_THREAD_KEY: &str = "phone_thread";
+
 /// Envelope-axis names metadata may not restate, at ANY depth. Metadata is
 /// opaque passenger data; a key that shadows an axis the door authorizes is a
 /// second, ungated copy of that axis riding inside the first. The engine's
 /// source-audience obligation is one of them: only the top-level key of a
-/// source-bound row carries it (fix list row 16256).
-const RESERVED_METADATA_KEYS: [&str; 8] = [
+/// source-bound row carries it (fix list row 16256). A phone row's thread is
+/// another: only the top-level key of a phone-bound row carries it.
+const RESERVED_METADATA_KEYS: [&str; 9] = [
     BODY_KEY_AUTHOR,
     BODY_KEY_TYPE,
     BODY_KEY_CONTENT,
@@ -50,6 +57,7 @@ const RESERVED_METADATA_KEYS: [&str; 8] = [
     BODY_KEY_ORDER,
     TURN_KEY_SPEAKER,
     SOURCE_AUDIENCE_REQUIRED_KEY,
+    PHONE_THREAD_KEY,
 ];
 
 /// Metadata nesting bound, the root map at depth 0: the decoder's own floor
@@ -148,6 +156,70 @@ impl WitnessMessageEnvelope<'_> {
     pub fn encode_source_bound_body(&self) -> Result<Vec<u8>> {
         encode_source_audience_required(&self.encode_body()?)
     }
+
+    /// The canonical body of a PHONE-BOUND MESSAGE (VOICE-PHONE-AGENT-REACH R1
+    /// fix): [`Self::encode_body`] with the phone-thread stamp appended last.
+    /// Only the phone keep path stages these bytes; every other door binds
+    /// [`Self::encode_body`] and so refuses them.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::encode_body`], and [`Error::InvariantViolation`] when the
+    /// plain body already carries [`PHONE_THREAD_KEY`].
+    pub fn encode_phone_bound_body(&self, thread_hex: &str) -> Result<Vec<u8>> {
+        encode_phone_thread_stamp(&self.encode_body()?, thread_hex)
+    }
+}
+
+/// `body`, a MessagePack map that does not carry [`PHONE_THREAD_KEY`], with
+/// the key appended last as `thread_hex`. The map's own entries keep their
+/// exact bytes; only its length header is rewritten (the same algorithm as
+/// `encode_source_audience_required`).
+///
+/// # Errors
+///
+/// [`Error::InvariantViolation`] when `body` is not exactly one MessagePack
+/// map, or already carries the key in any shape.
+pub fn encode_phone_thread_stamp(body: &[u8], thread_hex: &str) -> Result<Vec<u8>> {
+    let refused = || Error::InvariantViolation("a phone-thread stamp goes on one unstamped map");
+    let mut cursor = body;
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return Err(refused());
+    };
+    if !cursor.is_empty() {
+        return Err(refused());
+    }
+    for (key, _) in &entries {
+        if key.as_str() == Some(PHONE_THREAD_KEY) {
+            return Err(refused());
+        }
+    }
+    let header = match body.first() {
+        Some(0x80..=0x8f) => 1,
+        Some(0xde) => 3,
+        Some(0xdf) => 5,
+        _ => return Err(refused()),
+    };
+    let len = u32::try_from(entries.len())
+        .ok()
+        .and_then(|len| len.checked_add(1))
+        .ok_or_else(refused)?;
+    let mut out = Vec::with_capacity(body.len() + PHONE_THREAD_KEY.len() + 40);
+    match len {
+        0..=15 => out.push(0x80 | u8::try_from(len).map_err(|_| refused())?),
+        16..=0xffff => {
+            out.push(0xde);
+            out.extend_from_slice(&u16::try_from(len).map_err(|_| refused())?.to_be_bytes());
+        }
+        _ => {
+            out.push(0xdf);
+            out.extend_from_slice(&len.to_be_bytes());
+        }
+    }
+    out.extend_from_slice(body.get(header..).ok_or_else(refused)?);
+    rmpv::encode::write_value(&mut out, &Value::from(PHONE_THREAD_KEY)).map_err(|_| refused())?;
+    rmpv::encode::write_value(&mut out, &Value::from(thread_hex)).map_err(|_| refused())?;
+    Ok(out)
 }
 
 /// Envelope shape, vocabulary and coherence. Unknown or malformed values fail
@@ -214,6 +286,30 @@ pub fn source_bound_witness_message_envelope_denial(
     }
 }
 
+/// [`witness_message_envelope_denial`] for a PHONE-BOUND MESSAGE
+/// (VOICE-PHONE-AGENT-REACH R1 fix): every axis check over the envelope's
+/// plain encoding, then the bind of `body` to
+/// [`WitnessMessageEnvelope::encode_phone_bound_body`] for `thread_hex`, so
+/// the one extra key is the thread stamp, last, and nothing else.
+#[must_use]
+pub fn phone_bound_witness_message_envelope_denial(
+    envelope: &WitnessMessageEnvelope<'_>,
+    body: &[u8],
+    thread_hex: &str,
+) -> Option<GateReasonCode> {
+    let malformed = Some(GateReasonCode::DenyWitnessMessageMalformedEnvelope);
+    let Ok(plain) = envelope.encode_body() else {
+        return malformed;
+    };
+    if let Some(reason_code) = witness_message_envelope_denial(envelope, &plain) {
+        return Some(reason_code);
+    }
+    match envelope.encode_phone_bound_body(thread_hex) {
+        Ok(stamped) if stamped == body => None,
+        _ => malformed,
+    }
+}
+
 /// The canonical-envelope verdict for one MESSAGE body, at the storage
 /// materialization chokepoint (ONE-1686).
 ///
@@ -253,6 +349,12 @@ pub enum WitnessMessageBodyAuthor {
 /// Accepting it here is format, not authority: every door that writes
 /// MESSAGE rows binds its own encoding, and only the source landing's
 /// carries it.
+///
+/// A phone-bound row (VOICE-PHONE-AGENT-REACH R1 fix) carries one more key,
+/// [`PHONE_THREAD_KEY`], LAST and only as its thread's canonical 32-hex id;
+/// its bytes must re-encode as
+/// [`WitnessMessageEnvelope::encode_phone_bound_body`]. Same format-only
+/// acceptance: only the phone keep path stages it.
 pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMessageBodyAuthor> {
     let malformed = || {
         Error::Record(RecordError::InvalidWitnessMessageBody(
@@ -274,6 +376,7 @@ pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMes
     let mut is_visible: Option<bool> = None;
     let mut order: Option<u32> = None;
     let mut source_bound = false;
+    let mut phone_thread: Option<&str> = None;
     for (position, (key, value)) in entries.iter().enumerate() {
         let Some(key) = key.as_str() else {
             return Err(malformed());
@@ -326,6 +429,24 @@ pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMes
                 source_bound = true;
                 false
             }
+            // The phone-thread stamp is the last key, once, as its thread's
+            // canonical 32-hex id (VOICE-PHONE-AGENT-REACH R1 fix). Like the
+            // obligation it must be last, so a row never carries both.
+            PHONE_THREAD_KEY => {
+                if position + 1 != entries.len() {
+                    return Err(malformed());
+                }
+                let Some(hex) = value.as_str() else {
+                    return Err(malformed());
+                };
+                let id = oneiron_contracts::entity_id::EntityId::from_hex(hex)
+                    .map_err(|_| malformed())?;
+                if id.to_hex() != hex || phone_thread.is_some() {
+                    return Err(malformed());
+                }
+                phone_thread = Some(hex);
+                false
+            }
             _ => return Err(malformed()),
         };
         if duplicated {
@@ -347,11 +468,13 @@ pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMes
         order,
     };
     // The SAME floor the ceiling door runs, including the canonical-bytes bind
-    // (`encode_body() == body`, or its source-bound twin), which is what makes
-    // key ORDER and the absence of any extra byte part of the answer rather
-    // than of the parse.
+    // (`encode_body() == body`, or its source-bound or phone-bound twin),
+    // which is what makes key ORDER and the absence of any extra byte part of
+    // the answer rather than of the parse.
     let denial = if source_bound {
         source_bound_witness_message_envelope_denial(&envelope, body)
+    } else if let Some(thread_hex) = phone_thread {
+        phone_bound_witness_message_envelope_denial(&envelope, body, thread_hex)
     } else {
         witness_message_envelope_denial(&envelope, body)
     };
