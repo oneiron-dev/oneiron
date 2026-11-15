@@ -270,6 +270,8 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     crate::edit_distance::reservoir::rebuild_reservoir_index(vault)?;
     // Restored ACCESS_GRANT rows bypassed the body stage's companion index writer.
     vault.backfill_companion_grant_index(true)?;
+    // Restored CLAIM rows bypassed the body stage's hint index writer.
+    vault.backfill_lexical_query_hint_index(true)?;
     vault.rebuild_ramp_stats_from_receipts()?;
     crate::human_task::HumanTaskFollowupDriver::new(vault).rebuild_cursors(checkpoint_time)?;
     Ok(())

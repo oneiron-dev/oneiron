@@ -63,6 +63,12 @@ impl EntityStoreMaintenance for Store {
             id,
             Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
         )?;
+        crate::batch::reindex_lexical_query_hint(
+            self,
+            txn,
+            id,
+            Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
+        )?;
         if scrubbed == stored {
             return Ok(false);
         }

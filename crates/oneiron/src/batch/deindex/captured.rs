@@ -79,6 +79,7 @@ impl CapturedEntityDeindex {
         crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
         crate::access_grant::reindex_companion_grant(store, wtxn, id, None)?;
+        crate::batch::reindex_lexical_query_hint(store, wtxn, id, None)?;
         crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
         crate::ports::reindex_named_entities(store, wtxn, id, None)?;
         crate::authority::reindex_mesh_machine_endpoint(store, wtxn, id, None)?;

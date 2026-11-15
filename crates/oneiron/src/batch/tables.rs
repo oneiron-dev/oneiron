@@ -283,4 +283,12 @@ crate::side_table::side_tables! {
     /// An open typed-body fork's Loro snapshot. Key: id16 (entity) + id16 (fork).
     TYPED_BODY_FORK_DOC: VaultMeta b"typed_body:fork_doc:v1:" Raw
         [restore: content] [family: owner TypedBody] [tier: canonical];
+    /// The lexical query hint CLAIMs by target (FIX-LIST row 24676): one
+    /// empty row per stored hint CLAIM, so a claim write reads only its own
+    /// hints instead of every CLAIM row. Key: id16 (target) + id16 (hint).
+    LEXICAL_QUERY_HINT_INDEX: VaultMeta b"lexical-hint:index:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Completeness flag of the index above (u64 version). Key: ().
+    LEXICAL_QUERY_HINT_INDEX_STATE: VaultMeta b"lexical-hint:index-state:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
 }

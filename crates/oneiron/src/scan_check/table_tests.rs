@@ -245,6 +245,11 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
             ))
         }
         EngineScan::LexicalHintRows => {
+            // With no hint index (a vault older than it) the read walks
+            // every CLAIM row.
+            vault
+                .drop_lexical_query_hint_index_for_test()
+                .expect("drop the hint index");
             // Derived hint CLAIM ids of a stored CLAIM whose bodies are gone:
             // read, never served.
             let target = id(0x64, PAST);

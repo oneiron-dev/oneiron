@@ -534,11 +534,13 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
 }
 
 /// Every hint CLAIM of `target`, attached or still waiting for it. Only a
-/// CLAIM is a hint target, so any other row has none. For a CLAIM the whole
-/// CLAIM type stream is read; a row with the derive stamp is kept when its
-/// body is a lexical query hint for `target` stored under its own derived
-/// id. Past the scan's threshold row it raises one check and reads on, so no
-/// hint of `target` is left behind.
+/// CLAIM is a hint target, so any other row has none. For a CLAIM the
+/// lookup reads the target's rows of the derived hint index; when the index
+/// cannot answer (a vault older than its backfill, or any doubt about a
+/// hit) the whole CLAIM type stream is read instead, and a row with the
+/// derive stamp is kept when its body is a lexical query hint for `target`
+/// stored under its own derived id. Past the scan's threshold row it raises
+/// one check and reads on, so no hint of `target` is left behind.
 pub(crate) fn lexical_query_hint_claim_ids_for_target(
     store: &Store,
     wtxn: &RoTxn<'_>,
@@ -549,6 +551,12 @@ pub(crate) fn lexical_query_hint_claim_ids_for_target(
         return Ok(hint_ids);
     }
     let mut rows = ScanCount::start(store, wtxn, EngineScan::LexicalHintRows, &[])?;
+    if let Some(indexed) =
+        indexed_lexical_query_hint_claim_ids_for_target(store, wtxn, target, &mut rows)?
+    {
+        rows.defer(store);
+        return Ok(indexed);
+    }
     for candidate in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         store,
         wtxn,
