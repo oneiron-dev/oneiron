@@ -25,7 +25,7 @@ mod engine_stack;
 
 use std::io::Write as _;
 use std::net::SocketAddr;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
@@ -46,6 +46,15 @@ const INDICATOR: &str = "https://vault.example";
 const RESOURCE: &str = "https://vault.example/mcp";
 /// How long the test waits for the binary at each step.
 const STEP_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long the test holds the refresh lock before it lets a logout go on.
+const LOCK_HOLD: Duration = Duration::from_secs(3);
+/// The sign-in timeout of the login the loopback traffic is sent to.
+const SHORT_SIGN_IN_TIMEOUT_SECS: &str = "10";
+/// How long that login may take in all: its sign-in timeout and a margin.
+const SHORT_SIGN_IN_BOUND: Duration = Duration::from_secs(30);
+/// Loopback connections that send nothing, each held open: before the
+/// fix, the loopback read each one for 5 s in turn, 60 s in all.
+const IDLE_CONNECTIONS: usize = 12;
 
 /// The served vault and its owner's proof.
 struct Served {
@@ -168,7 +177,12 @@ impl Scratch {
     /// Runs `oneiron hosted login --origin` with no credential and plays the
     /// browser and the owner, as the module docs say; the login is recorded.
     async fn sign_in(&self, served: &Served) -> SignedIn {
-        let (authorize, output) = self.login(served, &[]).await;
+        self.sign_in_at(served, &served.origin).await
+    }
+
+    /// As [`Self::sign_in`], with `--origin` spelt as `origin`.
+    async fn sign_in_at(&self, served: &Served, origin: &str) -> SignedIn {
+        let (authorize, output) = self.login_at(served, origin, &[]).await;
         assert!(
             output.status.success(),
             "hosted login exits 0: {}",
@@ -184,13 +198,23 @@ impl Scratch {
     /// arguments, plays the browser and the owner up to the browser's return,
     /// and answers the authorize URL and the command's output.
     async fn login(&self, served: &Served, extra: &[&str]) -> (reqwest::Url, Output) {
+        self.login_at(served, &served.origin, extra).await
+    }
+
+    /// As [`Self::login`], with `--origin` spelt as `origin`.
+    async fn login_at(
+        &self,
+        served: &Served,
+        origin: &str,
+        extra: &[&str],
+    ) -> (reqwest::Url, Output) {
         let _ = std::fs::remove_file(self.path("opened.txt"));
         let child = self
             .command(&[
                 "hosted",
                 "login",
                 "--origin",
-                &served.origin,
+                origin,
                 "--sign-in-timeout-secs",
                 "120",
                 "--timeout-secs",
@@ -334,6 +358,38 @@ fn last_json_line(output: &Output) -> Value {
 
 fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).expect("read")).expect("JSON")
+}
+
+/// The vault's answer to a refresh with the refresh token of the sign-in
+/// `held`: its HTTP status, and its body (null when it is not JSON).
+async fn refresh_at_vault(served: &Served, held: &Value) -> (u16, Value) {
+    let answer = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("client")
+        .post(format!("{}/oauth/token", served.origin))
+        .form(&[
+            ("grant_type", "refresh_token"),
+            (
+                "refresh_token",
+                held["refresh_token"].as_str().expect("refresh"),
+            ),
+            ("client_id", held["client_id"].as_str().expect("client")),
+            ("resource", RESOURCE),
+        ])
+        .send()
+        .await
+        .expect("call the token endpoint");
+    let status = answer.status().as_u16();
+    let body = answer.bytes().await.expect("the token answer");
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+/// The refresh lock file beside the sign-in in `file`.
+fn lock_file(file: &Path) -> PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
 }
 
 /// Sends `oneiron mcp --auth-mode oauth` one `initialize` and answers its
@@ -628,5 +684,272 @@ fn a_second_oauth_login_replaces_the_recorded_sign_in_only_once_admitted() {
             .await
             .expect("try the replaced refresh token");
         assert_eq!(old_refresh.status(), 400, "the replaced sign-in is revoked");
+    });
+}
+
+/// REVIEW-7877 round 2, P1 hosted_command.rs:230. The same origin spelt
+/// another way (`HTTP://` for `http://`) is the same origin: a login there
+/// records the one spelling and keeps the one sign-in file, so the sign-in
+/// it replaces is revoked, not left live in a second file logout never
+/// visits.
+#[test]
+fn a_login_at_another_spelling_of_the_origin_replaces_the_same_sign_in() {
+    run_on_engine_stack("hosted-native-sign-in-spelling", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let first = scratch.sign_in(&served).await;
+        let file = first.sign_in_file();
+        let held = read_json(&file);
+        let respelt = served.origin.replacen("http://", "HTTP://", 1);
+        assert_ne!(respelt, served.origin, "FIXTURE: another spelling");
+
+        let second = scratch.sign_in_at(&served, &respelt).await;
+        assert_eq!(
+            second.vault()["origin"],
+            served.origin.as_str(),
+            "the origin is recorded in its one spelling"
+        );
+        assert_eq!(
+            second.sign_in_file(),
+            file,
+            "one sign-in file per origin, however it is spelt"
+        );
+        let (status, _) = refresh_at_vault(&served, &held).await;
+        assert_eq!(
+            status, 400,
+            "the sign-in the second login replaced is revoked"
+        );
+    });
+}
+
+/// REVIEW-7877 round 2, P1 hosted_command.rs:230. A vault's record whose
+/// OAuth sign-in sits in another file (as an earlier spelling of the origin
+/// left it) is replaced by the next login there, and that sign-in goes with
+/// it: revoked at the vault and its file removed, since nothing names it
+/// any more.
+#[test]
+fn a_login_that_replaces_a_record_signs_out_the_sign_in_it_named_elsewhere() {
+    run_on_engine_stack("hosted-native-sign-in-displaced", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let first = scratch.sign_in(&served).await;
+        let file = first.sign_in_file();
+        let held = read_json(&file);
+        let elsewhere = file.with_file_name("hosted-oauth-earlier.json");
+        std::fs::rename(&file, &elsewhere).expect("move the sign-in to another file");
+        let selection_file = scratch.path("config").join("oneiron").join("hosted.json");
+        let mut selection = read_json(&selection_file);
+        selection["vaults"][0]["credential_file"] = Value::from(elsewhere.display().to_string());
+        std::fs::write(
+            &selection_file,
+            serde_json::to_vec(&selection).expect("JSON"),
+        )
+        .expect("name the other file in the record");
+
+        let second = scratch.sign_in(&served).await;
+        assert_eq!(
+            second.sign_in_file(),
+            file,
+            "the new sign-in takes the origin's file"
+        );
+        assert!(
+            !elsewhere.exists(),
+            "the sign-in the replaced record named is removed"
+        );
+        let (status, _) = refresh_at_vault(&served, &held).await;
+        assert_eq!(status, 400, "and revoked at the vault");
+    });
+}
+
+/// REVIEW-7877 round 2, P1 hosted_sign_in.rs:155. `hosted logout` signs out
+/// under the sign-in's refresh lock: while a refresh holds it, logout waits
+/// and leaves the file; then it revokes the pair that refresh wrote. The
+/// lock file stays, the same file, so a refresh still waiting on it shuts
+/// out a later sign-in's refresh as before.
+#[test]
+fn logout_signs_out_under_the_refresh_lock_and_keeps_it() {
+    run_on_engine_stack("hosted-native-sign-in-logout-lock", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let signed_in = scratch.sign_in(&served).await;
+        let file = signed_in.sign_in_file();
+        let lock_path = lock_file(&file);
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .expect("open the refresh lock");
+        lock.lock()
+            .expect("hold the refresh lock, as a refresh in flight does");
+        let lock_inode = std::fs::metadata(&lock_path).expect("the lock file").ino();
+
+        let mut logout = scratch
+            .command(&["hosted", "logout"])
+            .spawn()
+            .expect("start hosted logout");
+        tokio::time::sleep(LOCK_HOLD).await;
+        assert!(
+            logout.try_wait().expect("poll hosted logout").is_none(),
+            "logout waits while a refresh holds the sign-in's lock"
+        );
+        assert!(file.exists(), "and leaves the sign-in file meanwhile");
+
+        // The refresh in flight writes its next pair, then lets the lock go.
+        let mut held = read_json(&file);
+        let (status, next) = refresh_at_vault(&served, &held).await;
+        assert_eq!(status, 200, "FIXTURE: the refresh in flight: {next}");
+        held["access_token"] = next["access_token"].clone();
+        held["refresh_token"] = next["refresh_token"].clone();
+        std::fs::write(&file, serde_json::to_vec(&held).expect("JSON"))
+            .expect("write the refreshed pair");
+        drop(lock);
+
+        let output = tokio::time::timeout(
+            STEP_TIMEOUT,
+            tokio::task::spawn_blocking(move || logout.wait_with_output()),
+        )
+        .await
+        .expect("hosted logout ends once the lock is free")
+        .expect("join")
+        .expect("hosted logout output");
+        assert!(
+            output.status.success(),
+            "logout exits 0: {}",
+            stderr(&output)
+        );
+        assert_eq!(last_json_line(&output)["state"], "not_logged_in");
+        assert!(!file.exists(), "logout removes the sign-in file");
+        assert_eq!(
+            std::fs::metadata(&lock_path)
+                .expect("the refresh lock file stays")
+                .ino(),
+            lock_inode,
+            "the same lock file"
+        );
+        let (status, _) = refresh_at_vault(&served, &held).await;
+        assert_eq!(
+            status, 400,
+            "logout revoked the pair the refresh in flight wrote"
+        );
+    });
+}
+
+/// REVIEW-7877 round 2, P1 hosted_sign_in.rs:303. Connections to the
+/// loopback that never bring the browser's return keep it busy, and the
+/// sign-in still ends at its timeout: `hosted login` exits non-zero, says
+/// the browser did not come back in time, and records nothing.
+#[test]
+fn loopback_traffic_does_not_hold_hosted_login_past_its_sign_in_timeout() {
+    run_on_engine_stack("hosted-native-sign-in-timeout", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let child = scratch
+            .command(&[
+                "hosted",
+                "login",
+                "--origin",
+                &served.origin,
+                "--sign-in-timeout-secs",
+                SHORT_SIGN_IN_TIMEOUT_SECS,
+                "--timeout-secs",
+                "60",
+            ])
+            .spawn()
+            .expect("start hosted login");
+        let login = tokio::task::spawn_blocking(move || child.wait_with_output());
+        let authorize = scratch.opened_url().await;
+        let redirect = authorize
+            .query_pairs()
+            .find(|(key, _)| key == "redirect_uri")
+            .map(|(_, value)| value.into_owned())
+            .expect("the authorize URL names its redirect");
+        let port = reqwest::Url::parse(&redirect)
+            .expect("the redirect parses")
+            .port()
+            .expect("the loopback's port");
+        // Each sends nothing and stays open: the loopback waits on it.
+        let idle: Vec<std::net::TcpStream> = (0..IDLE_CONNECTIONS)
+            .filter_map(|_| std::net::TcpStream::connect(("127.0.0.1", port)).ok())
+            .collect();
+        assert!(!idle.is_empty(), "FIXTURE: the loopback takes connections");
+
+        let output = tokio::time::timeout(SHORT_SIGN_IN_BOUND, login)
+            .await
+            .expect("hosted login ends at its sign-in timeout, whatever comes to the loopback")
+            .expect("join")
+            .expect("hosted login output");
+        drop(idle);
+        assert!(
+            !output.status.success(),
+            "a sign-in the browser never came back from fails"
+        );
+        assert!(
+            stderr(&output).contains("did not come back from the sign-in in time"),
+            "{}",
+            stderr(&output)
+        );
+        let status = scratch
+            .command(&["hosted", "status"])
+            .output()
+            .expect("hosted status");
+        assert_eq!(
+            last_json_line(&status)["state"],
+            "not_logged_in",
+            "nothing was recorded"
+        );
+    });
+}
+
+/// Blind review of #7877, F1. When an origin answers for another vault than
+/// the one recorded there (recreated or repointed), the next OAuth login takes
+/// the origin's sign-in file, and the record of the vault that named it goes:
+/// no record sends the new vault's tokens under the old id, and no logout of
+/// the old id revokes the new sign-in.
+#[test]
+fn an_oauth_login_drops_the_record_whose_sign_in_file_it_takes() {
+    run_on_engine_stack("hosted-native-sign-in-repointed", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let first = scratch.sign_in(&served).await;
+        let file = first.sign_in_file();
+        let earlier_vault = "ab".repeat(32);
+        assert_ne!(
+            earlier_vault,
+            served.vault_id(),
+            "FIXTURE: another vault id"
+        );
+        let selection_file = scratch.path("config").join("oneiron").join("hosted.json");
+        let mut selection = read_json(&selection_file);
+        selection["vaults"][0]["vault_id"] = Value::from(earlier_vault.as_str());
+        selection["selected"] = Value::from(earlier_vault.as_str());
+        std::fs::write(
+            &selection_file,
+            serde_json::to_vec(&selection).expect("JSON"),
+        )
+        .expect("record the origin's file for the earlier vault");
+
+        let second = scratch.sign_in(&served).await;
+        assert_eq!(
+            second.vault()["vault_id"],
+            served.vault_id().as_str(),
+            "only the vault the origin answers for stays recorded"
+        );
+        assert_eq!(second.sign_in_file(), file, "one sign-in file per origin");
+        let logout = scratch
+            .command(&["hosted", "logout", "--vault-id", &earlier_vault])
+            .output()
+            .expect("hosted logout");
+        assert!(
+            !logout.status.success(),
+            "the earlier vault is no longer recorded: {}",
+            stderr(&logout)
+        );
+        let answer = initialize_over_oauth(&scratch, &served, &file);
+        assert_eq!(
+            answer["result"]["vault_id"],
+            served.vault_id().as_str(),
+            "the new sign-in still reaches the vault: {answer}"
+        );
     });
 }
