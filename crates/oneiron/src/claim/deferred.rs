@@ -448,7 +448,16 @@ impl Vault {
                     claim_id: *id,
                 }));
             }
-            if proposal.critical || attributed(&prior) || attributed(&body) {
+            // An Auto grant is no person's: a replacement that would close a
+            // claim restricting someone's access waits for the owner, as a
+            // critical one does (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE;
+            // the owner, 15 Nov 18:3x: "Dreamer having to ask the owner is
+            // ok"; Astra review on #8189, F4).
+            if proposal.critical
+                || attributed(&prior)
+                || attributed(&body)
+                || crate::federation::claim_removal_widens_in(self, txn, &prior)?
+            {
                 return Err(Error::Gate(crate::error::GateError::GateWriteRejected {
                     outcome: "pending",
                     reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str()],

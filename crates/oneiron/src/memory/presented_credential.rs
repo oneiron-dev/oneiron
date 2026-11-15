@@ -14,6 +14,19 @@ impl Memory<'_> {
         self.read_proof.as_ref()
     }
 
+    /// Whether this handle acts as a person in its own right: its class is
+    /// Human, and it carries no presented credential whose mint was handed
+    /// to another key ([`VerifiedSlip::is_transferred`]). A person's slip
+    /// handed on to an agent's key is that agent's act, whatever class the
+    /// mint names (Astra review on #8189, F1). The doors that let only a
+    /// person close a restriction ask this (canon #widen-world-floor).
+    pub(crate) fn acts_as_own_person(&self) -> bool {
+        self.actor_class == crate::EdgeActorClass::Human
+            && !self
+                .presented_credential()
+                .is_some_and(VerifiedSlip::is_transferred)
+    }
+
     /// The ask guest's grant a host bound to this handle
     /// ([`Memory::with_task_grant`]), as task verbs prove its actor by it.
     #[must_use]

@@ -606,9 +606,11 @@ impl Memory<'_> {
                 // no bypass grant covers it"; the lead's RULING
                 // WORLD-ACCESS-GRANT-DELETE = A: "deleting a restriction IS a
                 // widening"). A person who holds a covering Grant settles it
-                // as the owner's delegated act (DEC-0006 row 10).
+                // as the owner's delegated act (DEC-0006 row 10); a person's
+                // slip handed on to an agent's key is no person's
+                // (`acts_as_own_person`).
                 if authorized.grant_ref.is_some()
-                    && actor.actor_class() != EdgeActorClass::Human
+                    && !self.acts_as_own_person()
                     && reviewed.settle_lifts_restriction_in(self.vault, &*wtxn, &id, action)?
                 {
                     return Err(restriction_close_needs_a_person(actor));

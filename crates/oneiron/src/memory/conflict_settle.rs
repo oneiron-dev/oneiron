@@ -294,7 +294,9 @@ impl Memory<'_> {
         let keep_as = approval
             .as_ref()
             .map_or(KeepAs::Auto(held), KeepAs::Approved);
-        let person = self.actor_class == EdgeActorClass::Human;
+        // A person's slip handed on to an agent's key is no person's: it
+        // never closes user-stated truth or a restriction here.
+        let person = self.acts_as_own_person();
         let mut provenance = vec![
             (Value::from("surface"), Value::from(KIND)),
             (
