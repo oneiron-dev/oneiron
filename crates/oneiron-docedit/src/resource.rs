@@ -62,7 +62,7 @@ pub struct CapacityHit {
     pub limit: u64,
 }
 
-/// Which ceiling a package passed. A Register: its name in a refusal is its `as_str`.
+/// Which ceiling a package passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, Register)]
 #[serde(rename_all = "snake_case")]
 #[register("dimension")]
