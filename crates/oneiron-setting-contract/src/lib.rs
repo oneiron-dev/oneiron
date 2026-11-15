@@ -115,6 +115,9 @@ pub enum Setter {
     Subject,
     /// An actor whose request the holders approved, through this check-in.
     Approved { check_in: EntityId },
+    /// The engine itself, on a path of its own: it applies the owner's answer to this ask, or,
+    /// with no ask, makes its own path's change (the change's reason names the path).
+    Engine { ask: Option<EntityId> },
 }
 
 /// The value in force for one key, and the row that decided it.
@@ -139,4 +142,28 @@ pub enum SettingSource {
     /// The deciding row at this scope does not decode: the key's strictest value, never the
     /// default (DEC-0005, four substrate rules, rule 4).
     Unreadable(SettingScope),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EntityId, Setter};
+
+    #[test]
+    fn every_setter_round_trips_as_a_stored_row_writes_it() {
+        let id = EntityId::from_bytes_unchecked([7; 16]);
+        for setter in [
+            Setter::Owner,
+            Setter::Holder { grant: id },
+            Setter::Subject,
+            Setter::Approved { check_in: id },
+            Setter::Engine { ask: Some(id) },
+            Setter::Engine { ask: None },
+        ] {
+            let row = rmp_serde::to_vec_named(&setter).expect("a setter encodes");
+            assert_eq!(
+                rmp_serde::from_slice::<Setter>(&row).expect("a setter decodes"),
+                setter
+            );
+        }
+    }
 }

@@ -36,6 +36,8 @@ pub use oneiron_setting_contract::{
     SettingSource, SettingSync, SettingValue, higher_is_tighter, lower_is_tighter,
 };
 
+#[cfg(feature = "sync")]
+pub(crate) use self::catalogue::leave_keeps_row;
 pub use self::catalogue::{catalogue, spec_named};
 pub use self::change::SettingChange;
 pub(crate) use self::change::{
@@ -47,7 +49,8 @@ pub(crate) use self::change::{
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};
 pub(crate) use self::read::{SettingListFilter, SettingReader, reader_reads_key_in_txn};
-pub use self::set::{SetSetting, SetSettingOutcome, SettingCaller};
+pub(crate) use self::set::run_after_commit;
+pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
 use crate::Vault;
 use crate::check_in::ActClass;
 use crate::error::{Error, Result};
@@ -77,6 +80,10 @@ pub struct ItemDomain {
 /// wait on the key.
 pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<()>;
 
+/// The one hook a key may run once the write that changed it has committed: wake a host that
+/// reads the key (a reader woken inside the write would see the last commit's value).
+pub type OnCommitted = fn(&Vault);
+
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]
 pub struct SettingSpec {
@@ -98,6 +105,9 @@ pub struct SettingSpec {
     pub restore: Restore,
     pub sync: SettingSync,
     pub on_change: Option<OnChange>,
+    /// Run after the commit of each write that applied a change to the key (not on an equal
+    /// value, not on a change that waits on a check-in).
+    pub after_commit: Option<OnCommitted>,
 }
 
 impl SettingSpec {
@@ -116,6 +126,7 @@ impl SettingSpec {
         restore: Restore::Live,
         sync: SettingSync::Vault,
         on_change: None,
+        after_commit: None,
     };
 
     /// Whether a row may sit at `kind`.
