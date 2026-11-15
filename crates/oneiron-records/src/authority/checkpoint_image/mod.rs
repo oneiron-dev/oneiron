@@ -54,8 +54,9 @@ use serde::Serialize;
 /// 36: each covered row's sequence floor comes from the covered rows, not from the order
 /// they arrived in, and a row that only takes away is never floored (FIX
 /// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
-/// row that grants counts in full and the image records its fork as a `SequenceFork` issue,
-/// while a world key record keeps its refusal (Engine RULING SEQ-FLOOR-SHAPE-S = B).
+/// row that grants counts in full, a world key record included, and the image records its fork
+/// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
+/// = A).
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 36;
 
 /// The domain every encoded image starts with.

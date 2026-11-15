@@ -91,7 +91,12 @@ pub(super) fn fold_entry_state(
     // counts in full and the fold records the fork
     // (`AuthorityFoldIssue::SequenceFork`, `forks_its_sequence`): refusing it
     // would refuse every later row on it, its signer's revocation included
-    // (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37). Equal-sequence
+    // (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37). A world key record
+    // counts so too: refusing it would refuse every later record of its world
+    // that names it, so one row a removed machine's key signs on an old parent
+    // could take the world's key from every install (Astra
+    // anchorsec-seq-floor-s T5; Engine RULING SEQ-FLOOR-S-WORLD-KEY-FLOOR = A,
+    // 16 Nov 03:39). No row is refused for its floor. Equal-sequence
     // siblings have separate hashes and fold under their own ancestry, not a
     // fork alarm. A row that only takes away is never floored
     // (`only_takes_away`). A restriction lands restriction only (Astra
@@ -100,21 +105,10 @@ pub(super) fn fold_entry_state(
     // them. A machine removal so stays terminal on every replica and in the
     // log, where a later edit finds it among its parents (Sol P2 round 3,
     // F3), but acknowledges nothing here (Astra #1430b). So does every row the
-    // fold with no vouch holds back or only the vouch admits
-    // (`install_fold::NoVouch`). A world key record keeps its refusal below
-    // its floor unless a handoff or a removal vouches for it: a refused one
-    // takes only its own world's later records, never a main-log row
-    // (`world_privacy::side_branch_violations`). No floor touches a roster row
-    // (`changes_roster`); its signer's own order binds it below.
+    // fold with no vouch holds back (`install_fold::NoVouch`). No floor
+    // touches a roster row (`changes_roster`); its signer's own order binds
+    // it below.
     let past_floor = below_its_floor(entry, hash, context);
-    if past_floor
-        && matches!(entry.op, AuthorityOp::WorldKeyWraps(_))
-        && !context
-            .floor_vouched
-            .is_some_and(|vouched| vouched.contains(&hash))
-    {
-        return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
-    }
     let restriction_only = lands_restriction_only(&entry.op)
         && (past_floor
             || context

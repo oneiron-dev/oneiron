@@ -31,8 +31,10 @@ pub(super) struct FoldContext<'a> {
     /// reads the result. None: no floor applies.
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     /// Rows a handoff or a removal vouches for (a handoff's line, a removal's
-    /// own branch): a world key record among them keeps no floor; one past
-    /// its floor still lands restriction only.
+    /// own branch). No row is refused for its floor (Engine RULING
+    /// SEQ-FLOOR-S-WORLD-KEY-FLOOR = A), so the vouch decides no verdict; a
+    /// restriction past its floor still lands restriction only. Its removal
+    /// is FIX [SEQ-FLOOR-S-VOUCH-REMOVAL].
     pub(super) floor_vouched: Option<&'a BTreeSet<AuthorityEntryHash>>,
     /// Revisions and world edits held to restriction only (`install_fold::NoVouch`).
     pub(super) install_held: Option<&'a BTreeSet<AuthorityEntryHash>>,
