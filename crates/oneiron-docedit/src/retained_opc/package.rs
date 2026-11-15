@@ -471,6 +471,7 @@ impl Package {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn edited_export_copies_other_zip_records_and_payloads_verbatim() {
