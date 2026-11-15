@@ -25,25 +25,20 @@ fn bad(message: String) -> Error {
 }
 
 /// Holds the bound branch, scope, listing and verified rows for native assembly.
-struct BoundRoutingInputs {
-    branch: consolidation::branch::QueuedBranch,
-    scope: oneiron_model::llm::Scope,
-    known: consolidation::neighbourhood::Neighbourhood,
-    claims: Vec<EntityId>,
-    extracted: Vec<consolidation::evidence::ExtractedCandidate>,
+pub(super) struct BoundRoutingInputs {
+    pub(super) branch: consolidation::branch::QueuedBranch,
+    pub(super) scope: oneiron_model::llm::Scope,
+    pub(super) known: consolidation::neighbourhood::Neighbourhood,
+    pub(super) claims: Vec<EntityId>,
+    pub(super) extracted: Vec<consolidation::evidence::ExtractedCandidate>,
 }
 
-/// Returns native routing for `operands` on the bound attempt at `now_ms` as JSON.
-///
-/// Output holds the original operands, the clock, pack-order claims, native
-/// ready and held claims, judge sets with prior heads, every correction
-/// including held ones, and outside-set write choices only.
-pub(crate) fn routing_choices_json(
-    vault: &Vault,
+/// Decodes a door call: the attempt as 32 lowercase hex digits and each
+/// operand as the bound verdict's candidate operand.
+pub(super) fn door_request(
     attempt_hex: &str,
-    now_ms: u64,
     operands_json: &[Value],
-) -> Result<Value> {
+) -> Result<(AttemptId, Vec<CandidateOperand>)> {
     let attempt_entity =
         EntityId::from_hex(attempt_hex).map_err(|error| bad(format!("bad attempt: {error:?}")))?;
     if attempt_entity.to_hex() != attempt_hex {
@@ -57,6 +52,21 @@ pub(crate) fn routing_choices_json(
             .map_err(|error| bad(format!("bad operand: {error}")))?;
         operands.push(decoded);
     }
+    Ok((attempt_id, operands))
+}
+
+/// Returns native routing for `operands` on the bound attempt at `now_ms` as JSON.
+///
+/// Output holds the original operands, the clock, pack-order claims, native
+/// ready and held claims, judge sets with prior heads, every correction
+/// including held ones, and outside-set write choices only.
+pub(crate) fn routing_choices_json(
+    vault: &Vault,
+    attempt_hex: &str,
+    now_ms: u64,
+    operands_json: &[Value],
+) -> Result<Value> {
+    let (attempt_id, operands) = door_request(attempt_hex, operands_json)?;
     let actor = vault.dreamer_actor_for_attempt(attempt_id)?;
     let inputs = bound_inputs(vault, &actor, attempt_id, &operands, now_ms)?;
     let resources = BranchResources::open_branch(
@@ -184,7 +194,7 @@ fn write_choices(
 /// spans map to stored bytes exactly; the verified locators then back native
 /// rows without any served-coordinate shortcut. The scope and listing are the
 /// bound projection's own, so branch opening admits the same priors.
-fn bound_inputs(
+pub(super) fn bound_inputs(
     vault: &Vault,
     actor: &crate::write_envelope::WriteActor,
     attempt_id: AttemptId,
