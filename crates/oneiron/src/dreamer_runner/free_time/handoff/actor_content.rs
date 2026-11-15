@@ -29,15 +29,10 @@ use crate::authority::ActSurface;
 use crate::sync::home_handoff::{ActorContent, Partitioned};
 use crate::{EntityId, Result, Vault};
 
-/// Which of the five free-time sections a row stands in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum FreeTimeSlot {
-    Policy,
-    Clock,
-    Cycle,
-    Item,
-    Receipt,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::dreamer_runner::free_time::handoff::actor_content::{
+    FreeTimeAdoptRow, FreeTimeSlot,
+};
 
 /// One row of one section, by its place among the section's facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,17 +110,6 @@ impl ActorContent for FreeTimeActorPartition {
 /// A family's rows as a move carries them: its facts, and each actor's
 /// partition.
 pub(crate) type FreeTimePartitioned<F> = Partitioned<F, FreeTimeActorPartition>;
-
-/// One carried row as adoption finds it.
-pub(crate) enum FreeTimeAdoptRow<Live, F> {
-    /// Its subject's content opened here: the row as its old home kept it,
-    /// less any attribution whose actor's content did not.
-    Live(Live),
-    /// Its subject's content did not open here, or its subject is erased
-    /// here: non-executable history that lands nothing and conflicts with
-    /// nothing.
-    Scrubbed(F),
-}
 
 /// The pieces one section's partition gathers, by actor.
 pub(super) struct Pieces {
@@ -277,6 +261,9 @@ struct PolicySettings {
     pinned_split: Option<FreeTimeSplit>,
     cap_shown_at_ms: u64,
     set_at: u64,
+    /// The boundary a holder's schedule move holds the next cycle to
+    /// (FABLE-6918-1), so the new home opens no cycle before it either.
+    holder_not_before: Option<u64>,
     surface: Option<SurfaceKind>,
     prior: [u8; 32],
 }
@@ -291,6 +278,7 @@ pub(super) fn scrubbed_policy(record: &FreeTimePolicyRecord) -> PolicyFacts {
             pinned_split: policy.pinned_split,
             cap_shown_at_ms: policy.cap_shown_at_ms,
             set_at: policy.set_at,
+            holder_not_before: policy.holder_not_before,
             surface: policy
                 .surface
                 .as_ref()
@@ -369,6 +357,7 @@ pub(super) fn rejoin_policy(
         set_by_agent: acting.map(|(acting, _)| acting),
         set_grant: acting.and_then(|(_, grant)| grant),
         set_at: settings.set_at,
+        holder_not_before: settings.holder_not_before,
         surface: surface_of(settings.surface, machine),
         prior: settings.prior,
     });

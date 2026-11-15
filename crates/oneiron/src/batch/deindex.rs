@@ -384,17 +384,20 @@ pub(crate) fn drop_seeded_actor_row(
     crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
     delete_short_id_rows_for_id(store, wtxn, id)?;
     store.scope_stamps.retire_stamp(store, wtxn, *id)?;
+    crate::access_grant::reindex_companion_grant(store, wtxn, id, None)?;
     crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
+    crate::authority::reindex_mesh_machine_endpoint(store, wtxn, id, None)?;
     store.port_remove_entity_row(wtxn, id)?;
     Ok(())
 }
 #[cfg(test)]
 pub(crate) fn deindex_entity_for_test(
-    store: &Store,
+    vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let _ = deindex_entity_without_lexical_query_hint_cascade(store, wtxn, id)?;
+    let write = crate::secret_custody::CustodyWrite::of(vault);
+    let _ = deindex_entity_without_lexical_query_hint_cascade(&write, wtxn, id)?;
     Ok(())
 }

@@ -28,9 +28,7 @@ mod anchor;
 mod rubric;
 
 pub use self::anchor::judge_label_anchor;
-pub(crate) use self::anchor::{
-    judge_label_anchor_sourced, skill_label_anchor, skill_label_anchor_sourced,
-};
+pub(crate) use self::anchor::skill_label_anchor;
 
 use self::rubric::repin_before_pick_in_txn;
 
@@ -39,7 +37,7 @@ pub use self::rubric::{
     JudgeLabelRegrade, judge_rubric, record_judge_label_regrade,
 };
 pub(crate) use self::rubric::{
-    judge_head_in_txn, judge_rubric_in_txn, judge_rubric_sourced_in_txn, recheck_judge_labels,
+    judge_head_in_txn, judge_rubric_sourced_in_txn, recheck_judge_labels,
 };
 
 /// Proposed calibration asks, keyed by the ask id (the digest of its immutable question).
@@ -90,55 +88,8 @@ fn invalid() -> Error {
     Error::InvalidConfig("invalid judge calibration ask or pick".into())
 }
 
-/// The evidence for raising a calibration question. Both kinds have two
-/// explicit alternatives, so an uncertainty does not silently supply a label.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum JudgeAskReason {
-    RevisionDisagreement,
-    Uncertainty,
-    /// Whether a pick a rubric edit left waiting still fits the new rubric.
-    /// Only [`record_judge_label_regrade`] answers it; it never mints a label.
-    RubricRecheck,
-    /// The case of a pick its person re-graded as no longer fitting, asked
-    /// again under the new rubric: an ordinary A/B ask.
-    RubricRegrade,
-}
-
-/// One question for the responsible human. `id` binds its complete immutable
-/// question; `delivered_at` is only a delivery marker, never an answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct JudgeAsk {
-    pub id: [u8; 32],
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub skill: EntityId,
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub responsible: EntityId,
-    pub campaign: String,
-    pub evidence: String,
-    pub reason: JudgeAskReason,
-    pub option_a: String,
-    pub option_b: String,
-    pub delivered_at: Option<u64>,
-    /// The label a re-grade or a re-ask is about, and the rubric it is asked
-    /// under; part of the ask's identity.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub regrade: Option<JudgeRegrade>,
-}
-
-/// What a [`JudgeAskReason::RubricRecheck`] or
-/// [`JudgeAskReason::RubricRegrade`] ask is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct JudgeRegrade {
-    /// The label's ask id.
-    pub label: [u8; 32],
-    /// The rubric's text digest.
-    pub rubric: [u8; 32],
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::labels::{JudgeAsk, JudgeAskReason, JudgeRegrade};
 
 /// One human pick is one immutable calibration label. No score, model output,
 /// or digest delivery can mint this row. A rubric edit marks it for a
@@ -161,32 +112,8 @@ pub struct JudgeLabel {
     pub recheck: Option<JudgeLabelRecheck>,
 }
 
-/// A label's re-check after an edit of the judge's rubric. Each `rubric` is
-/// the rubric text's digest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JudgeLabelRecheck {
-    /// Stamped by the edit: still in the anchor, with its freshness, until
-    /// the Coach's next pass checks it.
-    Pending { rubric: [u8; 32] },
-    /// The Coach found it conflicting with the rubric, or could not tell: out
-    /// of the anchor until its person answers `ask`, the re-grade ask (`None`
-    /// when that ask could not be put to them).
-    Waiting {
-        rubric: [u8; 32],
-        ask: Option<[u8; 32]>,
-    },
-    /// Its person answered `ask` that it still fits: back in the anchor, its
-    /// pick time unchanged.
-    Kept { rubric: [u8; 32], ask: [u8; 32] },
-    /// Its person answered `ask` that it does not: out of the anchor for
-    /// good; `fresh` asks the case again.
-    Replaced {
-        rubric: [u8; 32],
-        ask: [u8; 32],
-        fresh: [u8; 32],
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_optimize::labels::JudgeLabelRecheck;
 
 impl JudgeLabel {
     /// Whether the pick is in its skill's anchor: every label but one a

@@ -84,7 +84,9 @@ fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
     use oneiron::{FatalLlmError, RetryableLlmError};
     let (status, code) = match &error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
-        LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::UNAUTHORIZED, "auth"),
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+            (StatusCode::UNAUTHORIZED, "auth")
+        }
         // The model's answer failed a read check: an upstream fault, never a p = 0.
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => (StatusCode::BAD_GATEWAY, "label_read"),
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
@@ -543,7 +545,7 @@ mod tests;
 pub(crate) struct MeshLlm(pub(crate) Arc<SyncServer>);
 
 #[cfg(feature = "mesh")]
-impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
+impl oneiron_llm::oneiron_rpc::LlmMeshHandler for MeshLlm {
     fn serves(&self, model: &oneiron::ModelId) -> bool {
         self.0.llm.is_some() && self.0.ai.model_locality(model).is_some()
     }
@@ -590,7 +592,7 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
             .ai
             .chat_catalog()
             .into_iter()
-            .filter(|entry| oneiron_llm_own_server::advertises(entry.locality))
+            .filter(|entry| oneiron_llm::oneiron_rpc::advertises(entry.locality))
             .collect()
     }
 }

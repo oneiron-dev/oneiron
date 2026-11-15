@@ -311,7 +311,7 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+        decode_stored_authority_log_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
     /// The status of the AUTHORITY_LOG entry `hash` names, read in one
@@ -337,7 +337,7 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let entry = decode_stored_authority_log_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             // The id is the hash's first 16 bytes; a stored entry with
             // another full hash is a different entry.
             if authority_entry_hash(&entry)? == *hash {
@@ -402,7 +402,7 @@ impl Vault {
                     return Err(Error::CorruptedIndex("type index row kind mismatch"));
                 }
                 let authority_entry =
-                    decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+                    decode_stored_authority_log_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
                 let hash = authority_entry_hash(&authority_entry)?;
                 let sidecar_key = authority_first_seen_sidecar_key(&hash);
                 if !AUTHORITY_FIRST_SEEN.contains(&self.store, wtxn, &sidecar_key)? {
@@ -560,8 +560,9 @@ impl Vault {
     }
 
     /// This vault's authority generation: it moves on every commit to the
-    /// authority log, a grant's revoke among them, and on a legacy token
-    /// revoke's marker. A scope or world setting held elsewhere leaves it.
+    /// authority log, a grant's revoke among them, on every AccessGrant
+    /// write (create, narrow, revoke), and on a legacy token revoke's
+    /// marker. A scope or world setting held elsewhere leaves it.
     /// A kept inference snapshot restores only at the generation its read
     /// was admitted at (V2-R3). It only reads.
     ///

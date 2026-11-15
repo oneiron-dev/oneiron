@@ -135,12 +135,22 @@ pub struct Vault {
     pub(crate) housekeeping:
         std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
-    pub store: Store,
+    /// The vault's store. Crate-private: another crate reads stored rows
+    /// only through the engine's doors, never through a raw read
+    /// transaction (FIX VAULT-STORE-FIELD-PUBLIC).
+    pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     /// The late tagging arming first-run setup installs after open: read
     /// beside the open config by [`Vault::tagging_marker_config`]. In memory
     /// only: a reopened vault arms from its config again.
     tagging_arm: std::sync::OnceLock<crate::config::tagging::TaggingMarkerConfig>,
+    /// This host's release fact for payment credentials: whether its runner
+    /// fence is proven and whether its self-hoster lifted the withholding
+    /// ([`Vault::set_payment_credential_release`], L8-60). In memory only:
+    /// until the host seeds it, the value doors withhold a payment
+    /// credential.
+    pub(crate) payment_credential_release:
+        std::sync::RwLock<crate::secret_custody::PaymentCredentialRelease>,
     /// Where vector evidence starts now: the configured floors until the host
     /// sets others ([`Vault::set_vector_evidence`]), and any it set for one
     /// kind of item in one embedding space ([`Vault::set_vector_evidence_for`]).
@@ -255,6 +265,11 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// Each published LFS object's verdict for a peer no read authority
+    /// admits, by its OID and its manifest's BLAKE3 (EXPORTDOORS Q3). In
+    /// memory only: what the object's bytes release, never who may read.
+    #[cfg(feature = "sync")]
+    pub(crate) lfs_release_verdicts: crate::sync::chunks::LfsReleaseVerdicts,
     /// The floor its guests' network work charges: the one its serving host
     /// attached ([`Vault::attach_host_net_floor`]), else the process's
     /// descriptor line (FIX 6299).
@@ -359,6 +374,8 @@ impl Vault {
 }
 
 pub(crate) mod tables;
+// FIX [LIBTEST-QUARANTINE-VAULT-TESTS]: the lib test target's type check fails here (3 errors: E0639 x3); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

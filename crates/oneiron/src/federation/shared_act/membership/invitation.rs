@@ -30,23 +30,8 @@ const INVITATION_KEY_PREFIX: &[u8] = b"shared-vault:invitation-key:v1:";
 /// How long an invitation stays open on the store clock.
 pub const SHARED_INVITATION_TTL_SECS: u64 = 14 * 24 * 60 * 60;
 
-/// Where an invitation stands. Only `Pending` before `expires_at` admits.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedInvitationState {
-    Pending,
-    Accepted {
-        at: u64,
-    },
-    Declined {
-        at: u64,
-    },
-    /// An `add_member` holder (`by`) took it back.
-    Withdrawn {
-        by: String,
-        at: u64,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::shared_act::membership::invitation::SharedInvitationState;
 
 /// One invitation of one person into this shared vault at one role.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -539,10 +524,10 @@ impl Vault {
             &WriteActor::new(inviter, EdgeActorClass::Human),
             &SharedVaultWrite::Admin(OrgAdminPower::AddMember),
         )?;
-        // Steward is the owner's to give, judged on the inviter's standing
-        // now: an Owner made an Admin while the invitation waited no longer
-        // gives it (FABLE-6988-1).
-        self.steward_given_by_owner_in_txn(txn, vault_id, inviter, invitation.role)?;
+        // Steward and Deputy are the owner's to give, judged on the
+        // inviter's standing now: an Owner made an Admin while the invitation
+        // waited no longer gives either (FABLE-6988-1).
+        self.reserved_role_given_by_owner_in_txn(txn, vault_id, inviter, invitation.role)?;
         let grants = self.set_member_role_in_txn(txn, vault_id, actor, invitation.role, now)?;
         invitation.state = SharedInvitationState::Accepted { at: now };
         self.put_invitation_in_txn(txn, &invitation)?;

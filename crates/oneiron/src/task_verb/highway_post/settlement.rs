@@ -173,6 +173,12 @@ pub(super) fn settle_post(
     // The creator the proposal witnessed, never its approver: approval may
     // outlive the worker's lease, so the route rechecks the stored creator.
     let origin = proposal_origin_in(vault, wtxn, claim_id).map_err(settle_refusal)?;
+    // Plan mode: a plan the post pins is judged again in this writer, so a
+    // verdict or an edit that landed while the post was parked decides a yes
+    // that is not the owner's.
+    memory
+        .require_settled_plan_admission_in(wtxn, Some(post.assignee), Some(&post.brief), approver)
+        .map_err(settle_refusal)?;
     memory
         .land_settled_post_in_txn(
             wtxn,
@@ -211,6 +217,11 @@ pub(super) fn settle_brief(
         )));
     }
     let memory = vault.memory(proposer, class);
+    // Plan mode first, as at the revise door: an unapproved plan pin is a
+    // plan refusal.
+    memory
+        .require_settled_plan_admission_in(wtxn, body.assignee, Some(&revision.brief), approver)
+        .map_err(settle_refusal)?;
     revision
         .brief
         .validate_in(vault, wtxn, body.assignee)

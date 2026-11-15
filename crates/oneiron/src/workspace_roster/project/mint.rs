@@ -15,42 +15,19 @@ use crate::registry::{
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionId;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
-use serde::{Deserialize, Serialize};
 
 /// Durable owner tap of one project card: the tap digest and the mint receipt. Key: blake3
 /// hash32 of the card id.
 const TAPS: SideTable<[u8; 32], ([u8; 32], ProjectMintReceipt), Named> =
     SideTable::new(&side_table::PROJECT_MINT_TAP);
 
-/// The goal is data for the leader, not instructions in its prompt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalRecord {
-    pub project_id: String,
-    pub goal: String,
-    pub why: String,
-    pub axes: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::mint::{
+    ProjectBudgetShare, ProjectGoalRecord,
+};
 
-/// The share is expressed against the root project's budget, never a grant
-/// to spend more than the parent has.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectBudgetShare {
-    pub project_id: String,
-    pub parent_id: String,
-    pub share_bps: u16,
-}
-
-/// A durable tap result; `grant_decision_id` identifies the Gate receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectMintReceipt {
-    pub project_id: String,
-    pub card_id: String,
-    pub grant_decision_id: GateDecisionId,
-    pub grant_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::mint::ProjectMintReceipt;
 
 /// An exact tap replay re-proves its mint against the recorded Grant
 /// decision, so the retention sweep keeps each durable tap's decision.

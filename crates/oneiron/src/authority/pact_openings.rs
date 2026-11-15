@@ -17,47 +17,115 @@
 //! archived) leaves the pact as the fold left it. A key that does not read
 //! is logged and leaves the pact as it is (rubric 1, as an agent act's
 //! unread Grant in [`super::carried_act`]).
+//!
+//! A cached fold keeps its last answer ([`OpeningAnswer`], FIX 23233) with
+//! the rows of each pact's opening it was read under, and a warm hit whose
+//! snapshot reads the same rows takes it without opening custody's entries.
+//! A row is the opening's item, whether its retirement is staged, and its
+//! entry's state (live, retired or missing), read without opening the
+//! entry. With the authority generation, which starts a new cached fold,
+//! the rows tell every change custody makes to a committed opening. A key
+//! enters custody only in the writer that logs its Connect or re-pact, and
+//! the writer that ends its pact (a disconnect or a guest revoke,
+//! [`crate::store::grant_scope_custody::retire_scope_keys`]) stages its
+//! retirement: both move the generation. A retirement staged by any other
+//! path and finished between two reads leaves the item and the intent as
+//! they were, but not the entry's state. An erasable key has one
+//! generation and custody never replaces a live entry's bytes, so a live
+//! entry under the same rows holds the same key. An archived vault or one
+//! with no custody reads no row. An answer that met an unread row or key
+//! is not kept, so the next read tries again, and each unread one is logged
+//! once per cached fold.
 
 use std::collections::BTreeSet;
 
 use oneiron_authority::federation::encode_federation_pact_scope;
 
 use crate::store::Store;
-use crate::store::grant_scope_custody::scope_key_in_txn;
+use crate::store::grant_scope_custody::{ScopeOpeningRow, scope_key_of, scope_opening_row_in_txn};
 
+use super::readonly_fold::UnreadLogged;
 use super::*;
+
+/// The pacts a read held inactive for a scope commitment mismatch, with the
+/// opening rows of each non-terminal pact it read them under (FIX 23233).
+#[derive(Clone)]
+pub(super) struct OpeningAnswer {
+    rows: Vec<([u8; 32], Option<ScopeOpeningRow>)>,
+    mismatched: BTreeSet<[u8; 32]>,
+}
 
 /// Each non-terminal pact of `fold` whose folded scope does not match its
 /// signed commitment under the live opening this install holds for the
-/// epoch that keyed it.
+/// epoch that keyed it. `kept` is the last answer for `fold`: taken when
+/// `txn` reads the same opening rows, else replaced by this read's unless a
+/// row or key did not read. Each unread one is logged once in `logged`.
 pub(super) fn scope_commitment_mismatches(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
+    kept: &mut Option<OpeningAnswer>,
+    logged: &mut UnreadLogged,
 ) -> BTreeSet<[u8; 32]> {
-    fold.federation_pacts
+    let mut unread = false;
+    let rows: Vec<([u8; 32], Option<ScopeOpeningRow>)> = fold
+        .federation_pacts
         .iter()
         .filter(|(_, pact)| !pact.status.is_terminal())
         .filter_map(|(pact_id, pact)| {
-            let key = match scope_key_in_txn(store, txn, &pact.grant_ref, pact_id, pact.scope_epoch)
-            {
-                Ok(Some(key)) => key,
-                Ok(None) => return None,
+            match scope_opening_row_in_txn(store, txn, &pact.grant_ref, pact_id, pact.scope_epoch) {
+                Ok(row) => Some((*pact_id, row)),
                 Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        pact = %crate::entity_id::bytes_to_hex_lower(pact_id),
-                        "a pact's scope opening did not read; the pact stands as folded"
-                    );
-                    return None;
+                    unread = true;
+                    log_unread_opening(logged, pact_id, &error);
+                    None
                 }
-            };
-            let matches = encode_federation_pact_scope(&pact.pact_scope).is_ok_and(|canonical| {
-                federation_scope_digest(&key, &pact.pact_nonce, &canonical) == pact.scope_digest
-            });
-            (!matches).then_some(*pact_id)
+            }
         })
-        .collect()
+        .collect();
+    if !unread && let Some(answer) = kept.as_ref().filter(|answer| answer.rows == rows) {
+        return answer.mismatched.clone();
+    }
+    let mut mismatched = BTreeSet::new();
+    for (pact_id, row) in &rows {
+        let (Some(row), Some(pact)) = (row, fold.federation_pacts.get(pact_id)) else {
+            continue;
+        };
+        let key = match scope_key_of(store, row) {
+            Ok(Some(key)) => key,
+            Ok(None) => continue,
+            Err(error) => {
+                unread = true;
+                log_unread_opening(logged, pact_id, &error);
+                continue;
+            }
+        };
+        let matches = encode_federation_pact_scope(&pact.pact_scope).is_ok_and(|canonical| {
+            federation_scope_digest(&key, &pact.pact_nonce, &canonical) == pact.scope_digest
+        });
+        if !matches {
+            mismatched.insert(*pact_id);
+        }
+    }
+    if !unread {
+        *kept = Some(OpeningAnswer {
+            rows,
+            mismatched: mismatched.clone(),
+        });
+    }
+    mismatched
+}
+
+/// Logs pact `pact_id`'s opening that did not read, the first time `logged`
+/// meets it.
+fn log_unread_opening(logged: &mut UnreadLogged, pact_id: &[u8; 32], error: &crate::error::Error) {
+    if logged.first_opening(*pact_id) {
+        tracing::warn!(
+            %error,
+            pact = %crate::entity_id::bytes_to_hex_lower(pact_id),
+            "a pact's scope opening did not read; the pact stands as folded"
+        );
+    }
 }
 
 /// `fold` with each pact of `mismatched` held inactive on this install:

@@ -4,7 +4,8 @@
 //! It runs as its own process (`oneiron-image-organ`) and speaks the open
 //! organ protocol; the engine never links it. The body is non-destructive:
 //! the source by content hash, then crop and resize steps and editable
-//! overlays. Only `image.export` makes pixels.
+//! overlays. Only `image.export` makes pixels, and `image.render`, which
+//! opens, edits and exports in one call.
 //!
 //! The first promise is a single frame, eight bits a channel, in sRGB.
 //! Sixteen-bit, animated and non-sRGB sources are refused before any pixel
@@ -25,5 +26,6 @@ pub use decode::{Header, Profile, read_header};
 pub use ops::overlay_locator;
 #[cfg(unix)]
 pub use organ::{
-    ImageOrgan, VERB_ANNOTATE, VERB_CROP, VERB_EXPORT, VERB_INSPECT, VERB_OPEN, VERB_RESIZE,
+    ImageOrgan, VERB_ANNOTATE, VERB_CROP, VERB_EXPORT, VERB_INSPECT, VERB_OPEN, VERB_RENDER,
+    VERB_RESIZE,
 };

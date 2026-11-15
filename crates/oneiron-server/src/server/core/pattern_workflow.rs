@@ -616,9 +616,7 @@ fn unanswered(error: LlmError) -> Error {
 /// not: spent credit, a server error, a cut stream, an offer kept on the
 /// device with none resting.
 fn offer_back_in(error: &RetryableLlmError) -> Option<u64> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let soonest = |retry_after: Option<u64>, resets_at: &[u64]| {
         retry_after.or_else(|| resets_at.iter().find(|at| **at > now).map(|at| at - now))
     };
@@ -631,6 +629,7 @@ fn offer_back_in(error: &RetryableLlmError) -> Option<u64> {
             kind: SpentKind::Window,
             retry_after,
             resets_at,
+            ..
         } => Some(soonest(*retry_after, resets_at).unwrap_or(0)),
         RetryableLlmError::KeptOnDevice {
             retry_after,

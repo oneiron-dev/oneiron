@@ -83,6 +83,8 @@ pub(crate) use step::{
     wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
     wake_resident_share_traps_in_txn,
 };
+// SEAT-PARK-MODEL-STEP-PATH: when a spent seat's refusal says it resets.
+pub(crate) use step::stated_reset_at;
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
@@ -167,7 +169,7 @@ pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
-    AutoCheckSignals, BoundedAutoChecker,
+    AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
 };
 pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
@@ -214,6 +216,7 @@ use std::collections::BTreeMap;
 /// Typed question and outcome contracts.
 pub mod decision;
 pub(crate) mod tables;
+pub(crate) use budget::RsiSigning;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,

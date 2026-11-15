@@ -473,9 +473,7 @@ mod tests {
             .expect("drop only the anchor entity row");
 
         vault
-            .with_write_txn(|wtxn| {
-                crate::batch::deindex_entity_for_test(&vault.store, wtxn, &symbol)
-            })
+            .with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault, wtxn, &symbol))
             .expect("index-only deindex");
 
         let rtxn = vault.store.env.read_txn().expect("read txn");

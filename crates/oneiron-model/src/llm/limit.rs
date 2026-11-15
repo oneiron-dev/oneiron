@@ -95,6 +95,7 @@ pub fn limit_refusal(
             kind,
             retry_after,
             resets_at,
+            seat: None,
         },
         None => RetryableLlmError::RateLimited {
             retry_after,

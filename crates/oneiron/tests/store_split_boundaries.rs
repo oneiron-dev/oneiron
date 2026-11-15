@@ -3,6 +3,8 @@
 //! Each is either engine-only again (moved back into core, crate-private) or
 //! stays `pub` in the store with the boundary held elsewhere; the fixtures in
 //! `tests/store_split_compilefail/` pin both kinds from outside the engine.
+//! The vault's own store handle, which core split slice 0 (#6862) made `pub`,
+//! is crate-private again too (FIX VAULT-STORE-FIELD-PUBLIC).
 
 use std::marker::PhantomData;
 
