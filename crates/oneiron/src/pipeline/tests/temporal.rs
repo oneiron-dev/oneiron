@@ -61,7 +61,10 @@ fn scoped_temporal_widening_stops_at_its_bound() -> Result<()> {
     );
     let few = 2;
     let many = TEMPORAL_WIDENING_FLOOR / TEMPORAL_WIDENING_MULTIPLE + 1;
-    let (near, far) = (temporal_widening_bound(few), temporal_widening_bound(many));
+    let (near, far) = (
+        temporal_widening_bound(few, &super::super::params::RetrievalParams::shipped()),
+        temporal_widening_bound(many, &super::super::params::RetrievalParams::shipped()),
+    );
     assert_eq!((near, far), (4_000, 4_008));
 
     let (_dir, vault) = open_test_vault();
@@ -146,6 +149,7 @@ fn a_widened_temporal_scan_keeps_the_requests_sigma() -> Result<()> {
             &vault.store.read(),
             &rtxn,
             &config(widened),
+            &super::super::params::RetrievalParams::shipped(),
             now,
             &mut EntityMetadataCache::default(),
             None,
@@ -212,7 +216,7 @@ fn a_grown_temporal_window_keeps_the_rows_its_own_sigma_picks() -> Result<()> {
     };
     // Two rows short of the bound sit at the anchor, outside the scope, so
     // the first window cannot fill the widened rows and grows.
-    let near = temporal_widening_bound(1) - 2;
+    let near = temporal_widening_bound(1, &super::super::params::RetrievalParams::shipped()) - 2;
     let mut batch = vault.batch();
     for n in 1..=near {
         batch = batch.put(&row(n), 2, at(0), anchor, b"payload");
@@ -254,7 +258,7 @@ fn a_row_the_reader_may_not_read_takes_no_place_in_the_bound() -> Result<()> {
         bytes[12..].copy_from_slice(&u32::try_from(rank).expect("rank").to_be_bytes());
         EntityId::from_bytes(bytes).expect("row id")
     };
-    let bound = temporal_widening_bound(1);
+    let bound = temporal_widening_bound(1, &super::super::params::RetrievalParams::shipped());
     // The row ranked `rank` sits 10 * `rank` seconds before the anchor on
     // both axes; the scope, type 1, holds only the last.
     let mut batch = vault.batch();
@@ -334,7 +338,7 @@ fn a_row_the_reader_may_not_read_does_not_stop_the_window() -> Result<()> {
         EntityId::from_bytes(bytes).expect("row id")
     };
     let mut batch = vault.batch();
-    for n in 1..temporal_widening_bound(1) {
+    for n in 1..temporal_widening_bound(1, &super::super::params::RetrievalParams::shipped()) {
         let at = TimeRange {
             start: anchor,
             end: anchor,
@@ -375,7 +379,7 @@ fn a_row_the_reader_may_not_read_does_not_stop_the_window() -> Result<()> {
 fn a_reader_of_every_row_gets_what_the_plain_temporal_channel_returns() -> Result<()> {
     use super::super::temporal_bound::temporal_widening_bound;
 
-    let bound = temporal_widening_bound(1);
+    let bound = temporal_widening_bound(1, &super::super::params::RetrievalParams::shipped());
     let now = crate::unix_seconds_now();
     let anchor = now - 30 * 86_400;
     let reads = |_: &crate::store::StoreRead<'_>,
@@ -424,6 +428,7 @@ fn a_reader_of_every_row_gets_what_the_plain_temporal_channel_returns() -> Resul
                 &vault.store.read(),
                 &rtxn,
                 &config,
+                &super::super::params::RetrievalParams::shipped(),
                 now,
                 &mut super::super::types::EntityMetadataCache::default(),
                 None,
@@ -447,7 +452,7 @@ fn a_reader_of_every_row_gets_what_the_plain_temporal_channel_returns() -> Resul
 fn a_damaged_key_past_a_full_window_fails_no_reader() -> Result<()> {
     use super::super::temporal_bound::temporal_widening_bound;
 
-    let bound = temporal_widening_bound(1);
+    let bound = temporal_widening_bound(1, &super::super::params::RetrievalParams::shipped());
     let now = crate::unix_seconds_now();
     let anchor = now - 30 * 86_400;
     let (_dir, vault) = open_test_vault();
@@ -487,6 +492,7 @@ fn a_damaged_key_past_a_full_window_fails_no_reader() -> Result<()> {
             &vault.store.read(),
             &rtxn,
             &config,
+            &super::super::params::RetrievalParams::shipped(),
             now,
             &mut super::super::types::EntityMetadataCache::default(),
             None,
@@ -509,7 +515,10 @@ fn reader_temporal_config(anchor: u64, limit: usize) -> super::super::types::Tem
         anchor_mode: TemporalAnchorMode::Auto,
         adaptive: true,
         limit,
-        widened: Some(super::super::temporal_bound::temporal_widening_bound(limit)),
+        widened: Some(super::super::temporal_bound::temporal_widening_bound(
+            limit,
+            &super::super::params::RetrievalParams::shipped(),
+        )),
         query_occurred_range: None,
         effort_anchor: false,
     }
@@ -531,6 +540,7 @@ fn reader_temporal_rows(
         &vault.store.read(),
         &rtxn,
         config,
+        &super::super::params::RetrievalParams::shipped(),
         now,
         &mut super::super::types::EntityMetadataCache::default(),
         None,
@@ -579,7 +589,7 @@ fn a_bounded_temporal_channel_trims_its_spanners_in_amortized_time() -> Result<(
     }
     batch.commit()?;
 
-    let widened = temporal_widening_bound(1);
+    let widened = temporal_widening_bound(1, &super::super::params::RetrievalParams::shipped());
     let config = TemporalSearchConfig {
         anchor_start: anchor,
         anchor_end: anchor,
@@ -599,6 +609,7 @@ fn a_bounded_temporal_channel_trims_its_spanners_in_amortized_time() -> Result<(
         &vault.store.read(),
         &rtxn,
         &config,
+        &super::super::params::RetrievalParams::shipped(),
         anchor,
         &mut EntityMetadataCache::default(),
         None,
@@ -669,6 +680,7 @@ fn temporal_channel_stops_at_a_spent_stage() -> Result<()> {
             &vault.store.read(),
             &rtxn,
             &config,
+            &super::super::params::RetrievalParams::shipped(),
             anchor,
             &mut super::super::types::EntityMetadataCache::default(),
             deadline,
@@ -753,6 +765,7 @@ fn temporal_scans_read_past_their_threshold_rows_and_check_once() -> Result<()> 
             &vault.store.read(),
             &rtxn,
             &config,
+            &super::super::params::RetrievalParams::shipped(),
             anchor,
             &mut EntityMetadataCache::default(),
             None,

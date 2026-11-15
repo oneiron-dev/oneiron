@@ -10,36 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use oneiron_authority::share_travel::BornWith;
 
-/// `vault.shares.revoke`'s answer: the share, its status after the revoke,
-/// and the instant it stopped. A share already revoked answers its first
-/// revocation unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ShareRevokeReceipt {
-    /// The share's id, as 32 hex.
-    pub share_ref: String,
-    /// The grant's stored status: `revoked`.
-    pub status: String,
-    /// When the share stopped, Unix seconds on the vault's clock.
-    pub revoked_at: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_records::receipt::share_doors::ShareRevokeReceipt;
 
-/// One pinned citation of a shared brief, as the viewer may see it. A
-/// citation the share or the viewer's own read withholds is `redacted`, and
-/// then says nothing of its lifecycle, confidence or quote.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedBriefCitation {
-    /// The cited CLAIM, as 32 hex.
-    pub claim_ref: String,
-    pub stale: bool,
-    pub drifted: bool,
-    pub redacted: bool,
-    pub confidence: Option<f32>,
-    /// `active`, `superseded` or `retracted`; none when redacted.
-    pub lifecycle: Option<String>,
-    pub quote: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::receipt::share_doors::SharedBriefCitation;
 
 /// `vault.shares.view`'s value: the shared brief rendered fresh for its
 /// recipient. The read receipt beside it folds every read the render made,

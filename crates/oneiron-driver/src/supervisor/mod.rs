@@ -39,6 +39,7 @@ mod arbiter;
 mod attachment;
 mod budget_ids;
 mod config;
+mod dreamer_jobs;
 mod factory;
 mod inference;
 mod inference_admission;
@@ -58,6 +59,7 @@ pub use self::attachment::{
     AttachedPassFuture, LinkedShutdown, PassAttachment, PassAttachmentSource, WakePassFuture,
 };
 pub use self::config::{NowSeconds, RestartBackoffConfig, WakeSupervisorConfig};
+pub use self::dreamer_jobs::DreamerJobsExecutor;
 pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
 };

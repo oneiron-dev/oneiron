@@ -116,7 +116,7 @@ credential.
 | `handle.vault.export(format=None)` | the whole vault as one re-importable archive: a ZIP (JSONL per record kind, files by BLAKE3, manifest), base64 in `archive` |
 | `handle.cancel(task_ref)` | `TaskCancelReceipt` |
 | `handle.describe(task_ref=None)` | `TaskDescription`: one task card, or the whole TASKS section |
-| `handle.can(request)` | `TaskAskPreflight` for `{"ask"}`; for `{"effect"}`, `CanEffectAnswer`: a dated allow, deny, would-ask or named hold |
+| `handle.can(request)` | `TaskAskPreflight` for `{"ask"}`; for `{"effect"}`, `CanEffectAnswer`: a dated allow, deny, would-ask or named hold; for `{"verb"}`, `CanVerbAnswer`: one verb's gate for an actor (auto, person, refused or unchecked) |
 | `handle.peek(request)` | `list[TaskAskPersonEvidence]` |
 | `handle.ask(spec)` / `handle.wait(handle)` | an ask's receipt / its wait outcome |
 | `handle.vault.kv.get` / `put` / `delete` / `search` / `namespaces(request)` | exact, actor-owned keyed memory |

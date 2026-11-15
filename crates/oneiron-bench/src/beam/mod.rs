@@ -54,6 +54,8 @@ type BeamResult<T> = Result<T, BeamError>;
 pub(crate) enum BeamError {
     #[error("BEAM comparability refusal: {reason}")]
     Comparability { reason: String },
+    #[error("BEAM reader picks make no vault.agents.optional_memory.set argument: {reason}")]
+    PickArgument { reason: String },
     #[error("unsupported BEAM schema version {actual}; expected {expected}")]
     UnsupportedSchemaVersion { expected: u32, actual: u32 },
     #[error("invalid BEAM fixture `{fixture_id}`: {reason}")]
@@ -151,6 +153,8 @@ mod tests_jsonl_contract;
 mod tests_judge_cost;
 #[cfg(test)]
 mod tests_ppr_vad;
+#[cfg(test)]
+mod tests_replicate_pass;
 #[cfg(test)]
 mod tests_smoke_manifest;
 mod tiers;

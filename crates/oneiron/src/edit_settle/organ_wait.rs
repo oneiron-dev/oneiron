@@ -6,15 +6,17 @@
 //!
 //! The engine keeps the call's bytes and never reads them; the organ host
 //! encodes and decodes them. A ref that waits here cannot also wait as a
-//! proposal or settle until the call has run.
+//! proposal or settle until the call has run (FIX 22386, `ref_state`): only
+//! the held call's own landing takes the ref, and a release frees it.
 
 use serde::{Deserialize, Serialize};
 
-use super::codec::{RECORD, settlement_key_parts};
-use super::pending::{PENDING, validate_pending_ref};
-use super::receipts::already_settled;
-use super::{MadeByReader, SettleConsent};
+use super::codec::settlement_key_parts;
+use super::pending::{OutputBase, validate_pending_ref};
+use super::ref_state::{RefMove, move_ref_in_txn};
+use super::{MadeByReader, NativeOutput, PendingProposalView, SettleConsent};
 use crate::Vault;
+use crate::blob_artifact::BlobContent;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -23,7 +25,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 
 /// Key: id16 + hash32 (blake3 of the run ref), as the proposal landing.
-const WAITS: SideTable<(EntityId, [u8; 32]), WaitRow, Named> =
+pub(super) const WAITS: SideTable<(EntityId, [u8; 32]), WaitRow, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_ORGAN_WAIT);
 
 /// The most bytes one held call may keep, its lent inputs included.
@@ -33,7 +35,7 @@ const TEXT_MAX_BYTES: usize = 2048;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WaitRow {
+pub(super) struct WaitRow {
     run_ref: String,
     organ: String,
     verb: String,
@@ -92,6 +94,33 @@ pub struct OrganWaitView {
 }
 
 impl WaitRow {
+    /// Whether this row holds exactly `wait`, still waiting: a call that ran
+    /// and failed is no longer the call a redrive lands.
+    pub(super) fn is_call(&self, wait: &OrganWait) -> bool {
+        self.failed.is_none()
+            && self.run_ref == wait.run_ref
+            && self.organ == wait.organ
+            && self.verb == wait.verb
+            && self.call == wait.call
+            && self.trigger == wait.trigger
+            && self.submitter == wait.submitter
+            && self.held_by == wait.held_by.entity_ref()
+            && self.held_by_class == wait.held_by.actor_class() as u8
+            && self.held_at == wait.held_at
+    }
+
+    /// The refusal of any other move under the ref this row holds: it names
+    /// the call and how its hold ends, so it is never a dead end.
+    pub(super) fn holds_ref(&self) -> Error {
+        Error::Artifact(ArtifactError::EditRefHeldByOrganCall {
+            run_ref: self.run_ref.clone(),
+            organ: self.organ.clone(),
+            verb: self.verb.clone(),
+            held_by: self.held_by,
+            failed: self.failed.is_some(),
+        })
+    }
+
     fn view(&self, artifact_id: EntityId) -> OrganWaitView {
         OrganWaitView {
             artifact_id,
@@ -153,9 +182,76 @@ impl Vault {
         })
     }
 
+    /// Lands one export file of the held call `wait` at its redrive (FIX
+    /// 22386): the one landing a ref its call holds takes. The file waits
+    /// for Keep as a proposal made by the actor who asked, its made_by
+    /// admitted through the submitter's read ([`Self::organ_landing_reader`]).
+    /// A file under the held ref itself ends the hold in the writer that
+    /// keeps it. A call that made several files names them `<run_ref>/<n>`,
+    /// each its own ref, and its hold ends when the redrive releases it.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::propose_native_output_with_reads`]'s errors; a file named for
+    /// another ref than the call's own; a ref another call holds, or this
+    /// call after it failed.
+    pub fn propose_held_organ_output(
+        &self,
+        wait: &OrganWait,
+        output: &NativeOutput,
+        retained_at: u64,
+        read_rows: &[EntityId],
+    ) -> Result<PendingProposalView> {
+        self.propose_held_organ_output_made_against(wait, output, retained_at, None, read_rows)
+    }
+
+    /// [`Self::propose_held_organ_output`] of a file made from
+    /// `made_against`, the version (and its content hash) of the held
+    /// artifact the call read: the proposal is pinned to that version, so a
+    /// head that moved while the call was held keeps the file as a fork of
+    /// the version it was made from (review of #7368). `None` pins it to the
+    /// head.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::propose_held_organ_output`]'s errors.
+    pub fn propose_held_organ_output_made_against(
+        &self,
+        wait: &OrganWait,
+        output: &NativeOutput,
+        retained_at: u64,
+        made_against: Option<(u64, [u8; 32])>,
+        read_rows: &[EntityId],
+    ) -> Result<PendingProposalView> {
+        let own = output.run_ref == wait.run_ref
+            || output
+                .run_ref
+                .strip_prefix(wait.run_ref.as_str())
+                .and_then(|rest| rest.strip_prefix('/'))
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        if !own {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "a held organ call lands only its own files: its ref, or its ref and /<n>",
+            )));
+        }
+        self.propose_output(
+            &wait.artifact_id,
+            output,
+            BlobContent::Bytes(&output.bytes),
+            Some(self.organ_landing_reader(wait.submitter)?),
+            (wait.held_by, retained_at),
+            None,
+            made_against.map_or(OutputBase::Head, OutputBase::MadeAgainst),
+            false,
+            read_rows,
+            None,
+            Some(wait),
+        )
+    }
+
     /// Holds one organ call until a node can run it, saying why it waits.
     /// A ref already settled, already waiting as a proposal, or already
-    /// held is refused.
+    /// held is refused; a held one names the call that holds it.
     pub fn hold_organ_wait(&self, wait: &OrganWait, reason: &str) -> Result<OrganWaitView> {
         validate_pending_ref(&wait.run_ref)?;
         if wait.call.len() > ORGAN_WAIT_CALL_MAX_BYTES {
@@ -187,16 +283,7 @@ impl Vault {
         };
         let key = settlement_key_parts(&wait.artifact_id, &wait.run_ref);
         self.with_write_txn_grouped(|wtxn| {
-            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                return Err(already_settled(&existing));
-            }
-            if PENDING.contains(&self.store, wtxn, &key)?
-                || WAITS.contains(&self.store, wtxn, &key)?
-            {
-                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                    "a proposal or a held organ call already waits under this ref",
-                )));
-            }
+            move_ref_in_txn(&self.store, wtxn, &key, RefMove::HoldOrgan)?;
             self.get_blob_artifact_in_txn(wtxn, &wait.artifact_id)?
                 .ok_or(Error::EntityNotFound)?;
             if super::artifact_retention_deleted_in_txn(&self.store, wtxn, &wait.artifact_id)? {
@@ -269,17 +356,7 @@ impl Vault {
         let Some(row) = WAITS.get(&self.store, &txn, &key)? else {
             return Ok(false);
         };
-        if row.failed.is_some()
-            || row.run_ref != wait.run_ref
-            || row.organ != wait.organ
-            || row.verb != wait.verb
-            || row.call != wait.call
-            || row.trigger != wait.trigger
-            || row.submitter != wait.submitter
-            || row.held_by != wait.held_by.entity_ref()
-            || row.held_by_class != wait.held_by.actor_class() as u8
-            || row.held_at != wait.held_at
-        {
+        if !row.is_call(wait) {
             return Ok(false);
         }
         if self

@@ -7,6 +7,13 @@
 //! the same ask, never a second one. Any other park failure still ends the
 //! leaf.
 //!
+//! [WORKFLOW-PARK-RESUMED-CALL-RETRY] (the Engine's ruling of 13 Nov 20:19):
+//! a call resumed from its own park (its first pre-hook's ask answered
+//! proceed) that parks again on a second pre-hook's ask leaves the first
+//! park's wait in its committed checkpoint. When that second park's save
+//! fails on a store fault, the ladder requeues the same leaf with that wait
+//! kept, and the retry resumes the same call.
+//!
 //! Reaches the pump's claim, the host's park fault and the failure ladder
 //! through `oneiron_server::test_doors::workflow_park`, and the hook's ask
 //! (`ask::open`, the owner's answer, `ask::retry`) through
@@ -25,7 +32,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::verb_hook_ask::{HookAsk, SavedAsk};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_server::test_doors::workflow_park::{ParkFault, StepTry, claim_step, fail_park};
+use oneiron_server::test_doors::workflow_park::{
+    ParkFault, StepTry, claim_step, fail_park, park_step, resume_step,
+};
 
 type TestError = Box<dyn std::error::Error>;
 type TestResult = Result<(), TestError>;
@@ -186,6 +195,74 @@ fn an_ask_answered_proceed_during_the_backoff_lets_the_retried_call_run_with_no_
          run on that answer, with no park and no second ask"
     );
     Ok(())
+}
+
+#[test]
+fn a_resumed_calls_second_park_whose_save_fails_on_storage_retries_the_same_leaf_on_its_wait()
+-> TestResult {
+    let fixture = Fixture::new("park-resumed")?;
+    let hook = fixture.hook()?;
+    let (first, asked) = fixture.first_try_asked(&hook)?;
+    park_step(&fixture.vault, &first, asked, 21)?;
+    hook.answer_proceed(&fixture.vault, asked)?;
+    resume_step(&fixture.vault, fixture.root, 22)?;
+    let resumed = claim_step(&fixture.vault, fixture.root, 23, ANSWERED_USES)?
+        .ok_or("the step's call resumes once its ask is answered")?;
+    assert_eq!(
+        (resumed.leaf, resumed.resumes, resumed.use_ordinal),
+        (first.leaf, Some(first.next_use), ANSWERED_USES + 1),
+        "the resumed try holds the first park's wait: its call's invocation and ordinal"
+    );
+
+    // The resumed call's second pre-hook asks; that park's save fails on the
+    // store, with the first park's wait still in the committed checkpoint.
+    let settled = fail_park(
+        &fixture.vault,
+        fixture.root,
+        &resumed,
+        ParkFault::Storage,
+        24,
+    )?;
+    let (found, retry) = retried_after(&fixture, &hook, 25, first.next_use)?;
+
+    assert_eq!(
+        (settled.retried, settled.reason),
+        (true, Some("workflow_step_park_save_failed")),
+        "a resumed call's park whose save failed on the store is retried, not ended"
+    );
+    let retry = retry.ok_or("the step was tried again")?;
+    assert_eq!(
+        retry.leaf, first.leaf,
+        "the ladder requeues the same leaf, not a fresh row"
+    );
+    assert_eq!(
+        (retry.resumes, retry.use_ordinal),
+        (Some(first.next_use), ANSWERED_USES + 1),
+        "the retry keeps the resumed call's wait: the same invocation and use ordinal"
+    );
+    assert_eq!(retry.failures, 1, "the ladder counts the failed park once");
+    assert_eq!(
+        found,
+        SavedAsk::Resume { ask: asked },
+        "the retried call resumes on the first ask's proceed answer, with no fresh ask"
+    );
+    Ok(())
+}
+
+/// The step's next try at `now` and what its call under `invocation` finds
+/// before the hook's chain runs; `Stopped` when no try ran.
+fn retried_after(
+    fixture: &Fixture,
+    hook: &HookAsk,
+    now: u64,
+    invocation: oneiron::runtime_hooks::InvocationId,
+) -> Result<(SavedAsk, Option<StepTry>), TestError> {
+    let retry = claim_step(&fixture.vault, fixture.root, now, ANSWERED_USES)?;
+    let found = match &retry {
+        Some(retry) => hook.retry(&fixture.vault, &retry.actor, invocation)?,
+        None => SavedAsk::Stopped("no try of the step ran again: its leaf ended".to_owned()),
+    };
+    Ok((found, retry))
 }
 
 #[test]
