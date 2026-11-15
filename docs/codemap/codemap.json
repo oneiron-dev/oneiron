@@ -18255,7 +18255,7 @@
      "path": "src/code_run/consent_wait/settle.rs",
      "purpose": "The answer and the settlement (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -28612,7 +28612,7 @@
      "path": "src/deletion/timeline.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 6,
       "fn": 4,
       "struct": 3
@@ -61909,7 +61909,7 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 11,
       "fn": 1,
       "re-export": 1
      }
@@ -68715,7 +68715,7 @@
      "path": "src/repo_mutation/support.rs",
      "purpose": "Path, digest, time and actor-name helpers for repository mutations",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 6
      }
     },
     {
@@ -85186,7 +85186,7 @@
      "path": "src/sync/queue/codec.rs",
      "purpose": "Key/value encode/decode plus metadata codecs",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
     },
     {
@@ -93006,9 +93006,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/vault_cleanup/rollout.rs",
-     "purpose": "Release gate for automatic cleanup",
+     "purpose": "The integrity-teeth badge an automatic cleanup run records on its digest",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -99752,6 +99752,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/cleanup_auto_posture.rs",
+     "purpose": "L1-30 (FIX [SAFETYISM-CLEANUP-AUTO-ARM-409]; Engine ruling L1-30-AUTO-POSTURE, Fri 13 Nov 22:39 = A): a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/coach_binding_fence.rs",
      "purpose": "A read key that names the Coach is held to its Steward grant and its live MACHINE binding whichever…",
      "surface": {}
@@ -105012,7 +105020,7 @@
    "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7596,
-   "test_files": 1326
+   "test_files": 1327
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -128993,9 +129001,9 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 24,
+      "fn": 23,
       "mod": 1,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 3
      }
     },
@@ -150082,7 +150090,7 @@
      "path": "src/owner/cleanup.rs",
      "purpose": "Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -159769,7 +159777,7 @@
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
       "const": 24,
-      "fn": 6
+      "fn": 5
      }
     },
     {
@@ -162324,6 +162332,7 @@
       "CleanupDecision",
       "CleanupDigest",
       "CleanupImpactPreview",
+      "CleanupIntegrityTeeth",
       "CleanupKind",
       "CleanupPosture",
       "CleanupProposal",
@@ -162332,10 +162341,10 @@
      "path": "src/vault_cleanup/cleanup_types.rs",
      "purpose": "Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs",
      "surface": {
-      "const": 32,
+      "const": 37,
       "enum": 3,
       "fn": 8,
-      "struct": 7
+      "struct": 8
      }
     },
     {
