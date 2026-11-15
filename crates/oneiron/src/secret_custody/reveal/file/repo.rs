@@ -32,6 +32,7 @@
     reason = "FIX 7608 2b-ii-A: inert until 2b-ii-B wires the repo readers that take a why"
 )]
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::{KeyRead, ReadGroup, SEALED_FILE_CLASS, admitted_keys_in_txn, class_groups};
@@ -60,8 +61,11 @@ pub(crate) use crate::secret_record::RepoFileKeys;
 
 /// The reach of the owner's grant on a repo file read: the scope the
 /// owner's standing answer to one repo file reveal picks (FIX 9236).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("repo.file.reveal.scope")]
 pub enum RepoFileRevealScope {
     /// This file, until revoked.
     File,
@@ -76,16 +80,6 @@ pub enum RepoFileRevealScope {
 impl RepoFileRevealScope {
     /// Every scope, the narrowest first: the order a read's bound is tried.
     pub(crate) const ALL: [Self; 4] = [Self::FileTask, Self::File, Self::RepoTask, Self::Repo];
-
-    /// The pinned scope word.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::File => "file",
-            Self::FileTask => "file_task",
-            Self::Repo => "repo",
-            Self::RepoTask => "repo_task",
-        }
-    }
 
     const fn names_file(self) -> bool {
         matches!(self, Self::File | Self::FileTask)
