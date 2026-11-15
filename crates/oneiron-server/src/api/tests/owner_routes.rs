@@ -46,8 +46,13 @@ pub(super) fn refused_recipes(server: &SyncServer) -> Vec<String> {
         test_bearer(&format!(
             "jti=owner-narrow;principal_ref={owner};actor_class=human;scope=core:read,core:write"
         )),
-        // The host root is not a human owner.
-        owner_bearer(),
+        // The owner's slip narrowed to one facet: live, but not his full slip.
+        // (A bare top-scope holder-"host" slip verifies as the host root on a
+        // rooted self-hosted vault and acts as the owner by FIX 2222 design,
+        // so it cannot probe refusal here.)
+        test_bearer(&format!(
+            "jti=owner-facet;principal_ref={owner};actor_class=human;facets={owner}"
+        )),
     ]
 }
 

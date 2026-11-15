@@ -36,6 +36,17 @@ fn search_response_rechecks_projected_claim_body() {
     let world = oneiron::claim::base_world_id();
     let facet = oneiron::claim::substrate_facet_id(subject).unwrap();
     let project = oneiron::claim::default_project_id();
+    // A CLAIM is born only under a stored FACET (FIX 7757): store the one
+    // the body's scopeFacetId names, the subject's substrate facet.
+    vault
+        .put_entity(
+            &facet,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"retrieval shaping test facet",
+        )
+        .expect("store substrate facet");
     let body = rmp_serde::to_vec_named(&ClaimSeed {
         pred: "profile.projected",
         val: "hidden after update",
