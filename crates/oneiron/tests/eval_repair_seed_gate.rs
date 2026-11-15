@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::consent::AuthenticatedOwner;
@@ -32,8 +33,9 @@ use oneiron::skill_optimize::{
     CutDecision, EvalArmPin, EvalAuthoringInventory, EvalAuthoringPlan, EvalAuthoringReport,
     EvalCohortSetup, EvalLabel, EvalLabelKind, EvalRepairLegAnswer, EvalRepairSeed,
     EvalRepairSeedLegs, EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedStanding,
-    EvalRepairSeedState, EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose,
-    RepairSeedDecision, eval_authoring_inventory, eval_authoring_skill_id, setup_eval_cohorts,
+    EvalRepairSeedState, EvalRepairSeedSummary, EvalRepairTaskSource, EvalRepairToolCall, EvalSeat,
+    FamilyPurpose, RepairSeedDecision, eval_authoring_inventory, eval_authoring_skill_id,
+    setup_eval_cohorts,
 };
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -1729,6 +1731,243 @@ fn the_repair_listing_is_bounded() -> TestResult {
     assert_eq!(
         inventory.repairs.last().map(|repair| repair.id.as_str()),
         Some("r64")
+    );
+    Ok(())
+}
+
+/// `text_task(clean_state())` with every object's keys in another order: the
+/// same contract in other bytes.
+fn reordered_text_task() -> Value {
+    json!({
+        "grader": { "pointer": "/response", "kind": "observed_response_equals" },
+        "allowed_actions": ["respond"],
+        "tools": [],
+        "input": { "history": [{ "text": "Where does my parcel go?", "role": "user" }] },
+        "intent": "Answer the customer with the delivery plan.",
+        "preconditions": [],
+        "initial_state": { "orders": [{ "status": "packed", "city": "Lyon", "id": "A-1" }] },
+        "world": "text_response",
+    })
+}
+
+#[test]
+fn a_seeded_contract_takes_no_seed_from_another_source_or_seat() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let seed = propose(&fixture, &source)?;
+    // The same contract imported again, its keys in another order: another
+    // claim, so another source key. And the first source on another seat.
+    let again = capture(
+        &fixture,
+        reordered_text_task(),
+        json!({ "response": ANSWER }),
+    )?;
+    assert_ne!(again.claim_ref, source.claim_ref);
+    let other_seat = EvalRepairTaskSource {
+        seat: EvalSeat::Decision,
+        ..source.clone()
+    };
+    for alias in [&again, &other_seat] {
+        let refused = propose(&fixture, alias).expect_err("a seeded contract takes no second seed");
+        assert!(refused.contains("contract already has a seed"), "{refused}");
+        assert_eq!(fixture.vault.eval_repair_seed(alias)?, None);
+    }
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(seed));
+
+    // Another contract takes its own seed.
+    let other = capture(
+        &fixture,
+        text_task(json!({ "orders": [] })),
+        json!({ "response": ANSWER }),
+    )?;
+    assert_eq!(
+        propose(&fixture, &other)?.state,
+        EvalRepairSeedState::Pending
+    );
+
+    // An erase takes the seed with its capture, and the contract with it.
+    let claim = EntityId::from_hex(&source.claim_ref)?;
+    oneiron::test_doors::inquiry::erase_actor_in_tables_in_order(
+        &fixture.vault,
+        &claim,
+        &["SKILL_OPTIMIZE_EVAL_REPAIR_SEED"],
+    )?;
+    assert_eq!(
+        propose(&fixture, &again)?.state,
+        EvalRepairSeedState::Pending
+    );
+    Ok(())
+}
+
+/// A plan that decides nothing but one repair seed: `repair` on the
+/// companion seat with the `skills` pair.
+fn seed_plan_for(
+    inventory: &EvalAuthoringInventory,
+    repair: &str,
+    skills: &str,
+) -> EvalAuthoringPlan {
+    EvalAuthoringPlan {
+        repair_seeds: vec![RepairSeedDecision {
+            repair: repair.to_owned(),
+            seat: EvalSeat::Companion,
+            skills: skills.to_owned(),
+        }],
+        ..seed_plan(inventory, skills)
+    }
+}
+
+/// The inventory's row for `source`'s capture.
+fn repair_row<'a>(
+    inventory: &'a EvalAuthoringInventory,
+    source: &EvalRepairTaskSource,
+) -> &'a oneiron::skill_optimize::EvalRepairCandidate {
+    inventory
+        .repairs
+        .iter()
+        .find(|repair| repair.claim_ref == source.claim_ref)
+        .expect("the capture's row")
+}
+
+#[test]
+fn coach_alias_of_a_seeded_contract_shows_its_standing_and_takes_no_seed() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let again = capture(
+        &fixture,
+        reordered_text_task(),
+        json!({ "response": ANSWER }),
+    )?;
+    let manifest = manifest()?;
+    pin_manifest(&fixture.vault, &manifest)?;
+    let model = manifest
+        .binding(ModelRole::GenerativeReasoner)?
+        .model
+        .clone();
+    fixture
+        .vault
+        .put_model_registry_row(&registry_row(&model)?)?;
+    let (parent, _) = put_skill(&fixture, "fixture.old", "1", "the old skill", None)?;
+    let (_, first_hex) = put_skill(
+        &fixture,
+        "fixture.old",
+        "2",
+        "the first candidate",
+        Some(parent),
+    )?;
+    let (_, second_hex) = put_skill(
+        &fixture,
+        "fixture.old",
+        "3",
+        "the second candidate",
+        Some(parent),
+    )?;
+
+    let now = fixture.vault.now_recorded_at();
+    let nightly = coach_attempt(&fixture, now)?;
+    let skill = eval_authoring_skill_id()?;
+    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
+    let pair_id = |candidate: &str| {
+        inventory
+            .skill_pairs
+            .iter()
+            .find(|pair| pair.candidate == candidate)
+            .expect("the pair")
+            .id
+            .clone()
+    };
+    let (first, second) = (pair_id(&first_hex), pair_id(&second_hex));
+    let report = fixture.vault.run_coach_eval_authoring(
+        &nightly,
+        seed_plan_for(&inventory, &repair_row(&inventory, &source).id, &first),
+        &inventory,
+        (skill, SKILL_REVISION.to_owned()),
+        now,
+    )?;
+    assert_eq!(report.repair_seeds_proposed, 1, "{report:?}");
+    let settled = settle(
+        &fixture,
+        &source,
+        &response("wrong answer"),
+        &response("another wrong answer"),
+    )?;
+
+    // The alias's row shows the refused seed of its contract, and a second
+    // pair on it makes no seed: the sealed task's result picks no candidate.
+    let now = fixture.vault.now_recorded_at();
+    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
+    let alias = repair_row(&inventory, &again);
+    assert_eq!(
+        alias.seeds,
+        vec![EvalRepairSeedSummary {
+            seat: EvalSeat::Companion,
+            standing: EvalRepairSeedStanding::Refused {
+                reason: EvalRepairSeedRefusal::CandidateFailed,
+            },
+        }]
+    );
+    let report = fixture.vault.run_coach_eval_authoring(
+        &nightly,
+        seed_plan_for(&inventory, &alias.id, &second),
+        &inventory,
+        (skill, SKILL_REVISION.to_owned()),
+        now,
+    )?;
+    assert_eq!(report.repair_seeds_proposed, 0, "{report:?}");
+    assert_eq!(report.repair_seeds_reused, 0, "{report:?}");
+    assert!(
+        report.skipped.iter().any(
+            |skip| skip.item == alias.id && skip.reason.contains("contract already has a seed")
+        ),
+        "{report:?}"
+    );
+    assert_eq!(fixture.vault.eval_repair_seed(&again)?, None);
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(settled));
+    Ok(())
+}
+
+#[test]
+fn a_capture_of_many_unlinked_outcomes_lists_in_linear_time() -> TestResult {
+    let fixture = fixture()?;
+    // 30,000 outcomes, each with its own id and a repair id no row holds.
+    // Resolving each link by a scan of every row was some 2.7e9 compares
+    // for a listing of no row.
+    const OUTCOMES: usize = 30_000;
+    let jsonl = (0..OUTCOMES)
+        .map(|outcome| {
+            json!({
+                "type": "CUSTOM",
+                "name": "desk.outcome",
+                "value": {
+                    "id": format!("o-{outcome}"),
+                    "threadId": "t-1",
+                    "runId": "r-1",
+                    "repairId": format!("p-{outcome}"),
+                    "result": { "response": ANSWER },
+                },
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let receipt = fixture.vault.ingest_ag_ui_file(
+        &fixture.proof,
+        &AgUiFileImport {
+            claim_ref: None,
+            project_ref: fixture.project.to_hex(),
+            app_id: "support-desk".to_owned(),
+            custom_mappings: mappings(),
+            jsonl,
+        },
+    )?;
+    assert_eq!(receipt.event_count, OUTCOMES);
+
+    let started = Instant::now();
+    let inventory = eval_authoring_inventory(&fixture.vault, fixture.vault.now_recorded_at())?;
+    let listed_in = started.elapsed();
+    assert!(inventory.repairs.is_empty(), "{:?}", inventory.repairs);
+    assert!(
+        listed_in < Duration::from_secs(10),
+        "listed in {listed_in:?}"
     );
     Ok(())
 }
