@@ -10,7 +10,9 @@ use crate::memory::Memory;
 /// a narrowed credential stays narrowed, after a restart too. An opener with
 /// no bound proof reads as its actor, as before.
 pub(super) fn terminal_memory<'v>(vault: &'v Vault, seed: &Seed) -> Result<Memory<'v>> {
-    let memory = vault.memory(seed.actor, seed.class()?);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let mut memory = vault.memory(seed.actor, seed.class()?);
+    memory.handed_on_credential = seed.handed_on_credential;
     Ok(match &seed.read_proof {
         Some(proof) => memory.with_read_proof(&proof.restore()),
         None => memory,

@@ -220,10 +220,11 @@ impl Memory<'_> {
         }) {
             return Err(refusal());
         }
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         self.vault()
             .verify_write_actor_generation_in_txn(
                 txn,
-                crate::WriteActor::new(actor, self.actor_class()),
+                self.bound_write_actor(),
                 standing.generation,
             )
             .map_err(MemoryError::from)?;

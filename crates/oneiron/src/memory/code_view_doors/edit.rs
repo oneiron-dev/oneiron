@@ -26,7 +26,6 @@ use crate::error::{Error, Result};
 use crate::federation::WorkingViewEditBounds;
 use crate::memory::MemoryResult;
 use crate::memory::repo_doors::refusal_error;
-use crate::write_envelope::WriteActor;
 
 /// The refusal of an edit of a file the view holds as a masked copy
 /// (CODECUSTODY-VIEW-BUILD-Q3 = A): its copy is the placeholder, its fork's
@@ -147,7 +146,8 @@ impl Memory<'_> {
         }
         let unforked = self.unforked_base(&set, &receipt, &input, listed)?;
         let operation = EntityId::now();
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let actor = self.bound_write_actor();
         // One writer of fork copies from the row to the copy (fork.rs).
         let _copies = view_fork_copies_lock()?;
         let edited = self.vault.with_write_txn_grouped(

@@ -83,7 +83,8 @@ fn settle_in_savepoint(
             })?,
         ),
     };
-    let memory = vault.memory(actor.entity_ref(), actor.actor_class());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let memory = vault.memory_for_writer(actor);
     let mut savepoint = vault
         .store
         .env

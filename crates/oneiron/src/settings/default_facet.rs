@@ -135,12 +135,10 @@ pub fn default_facet_as_holder(vault: &Vault, reader: WriteActor) -> MemoryResul
 ///
 /// As [`default_facet_as_holder`], and storage errors.
 pub fn read_default_facet(memory: &Memory<'_>) -> MemoryResult<DefaultFacet> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     match memory.embedded_owner(READ_VERB) {
         Ok(owner) => Ok(memory.vault().default_facet_as_owner(&owner)?),
-        Err(_) => default_facet_as_holder(
-            memory.vault(),
-            WriteActor::new(memory.actor(), memory.actor_class()),
-        ),
+        Err(_) => default_facet_as_holder(memory.vault(), memory.bound_write_actor()),
     }
 }
 

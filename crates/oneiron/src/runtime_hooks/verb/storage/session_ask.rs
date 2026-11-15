@@ -110,7 +110,7 @@ impl SessionHookKeep {
             if !key.live(vault) {
                 return Some(Err(MemoryError::bad_request("unknown ask handle")));
             }
-            let actor_kind = if writer.actor_class() == crate::EdgeActorClass::Human {
+            let actor_kind = if writer.acts_as_own_person() {
                 crate::registry::ENTITY_TYPE_PERSON
             } else {
                 crate::registry::ENTITY_TYPE_AGENT_DEF

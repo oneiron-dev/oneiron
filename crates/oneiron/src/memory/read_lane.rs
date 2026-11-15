@@ -151,7 +151,8 @@ impl Memory<'_> {
             match (&self.host_action, &self.read_proof) {
                 (None, Some(proof)) => {
                     verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
-                    let owner = self.is_vault_owner_in_txn(&txn)?;
+                    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                    let owner = self.reads_as_vault_owner_in_txn(&txn)?;
                     let key = self
                         .vault
                         .credential_read_key_in_txn(&txn, proof, self.actor, owner)?;
@@ -329,7 +330,8 @@ impl Memory<'_> {
             action.guard().holds_in(self.vault, txn)?;
             return Ok(action.read_key());
         }
-        let owner = self.is_vault_owner_in_txn(txn)?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let owner = self.reads_as_vault_owner_in_txn(txn)?;
         if let Some(proof) = &self.read_proof {
             // The one key every proof-backed door builds (credential_key.rs).
             return self
@@ -466,6 +468,22 @@ impl Memory<'_> {
     /// Whether the bound actor is the vault owner: the local embedded owner,
     /// or a human whose owner binding verifies.
     pub(crate) fn is_vault_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.carries_handed_on_credential() {
+            return Ok(false);
+        }
+        super::credential_key::actor_is_vault_owner_in_txn(
+            self.vault,
+            txn,
+            self.actor,
+            self.actor_class,
+        )
+    }
+
+    /// The owner floor this handle READS under: a handle that carries a handed-on credential
+    /// but bound no proof still reads its actor's own scope, while every owner act asks
+    /// [`Self::is_vault_owner_in_txn`] (HANDED-ON-SLIP-PERSON; reads in scope still land).
+    pub(crate) fn reads_as_vault_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {
         // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if self.presents_handed_on_credential() {
             return Ok(false);

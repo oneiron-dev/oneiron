@@ -207,6 +207,8 @@ impl Memory<'_> {
                 .read_proof
                 .as_ref()
                 .map(crate::authority::StoredReadProof::of),
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            handed_on_credential: self.handed_on_credential,
         };
         let handle = MessageStreamHandle {
             message: id,

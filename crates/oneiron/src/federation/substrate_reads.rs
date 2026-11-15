@@ -142,7 +142,8 @@ pub(crate) fn admit_substrate_read(
     if memory.embedded_owner(verb).is_ok() {
         return Ok(());
     }
-    let holder = WriteActor::new(memory.actor(), memory.actor_class());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let holder = memory.bound_write_actor();
     admit_substrate_read_by(memory.vault(), holder, verb, read)
 }
 

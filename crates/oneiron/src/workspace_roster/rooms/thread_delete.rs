@@ -74,10 +74,11 @@ impl Memory<'_> {
                 inside || vault_owner_or_admin_in(vault, &txn, actor)?,
             )
         };
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let outcome = match vault.delete_room_record(
             carrier,
             root,
-            crate::WriteActor::new(actor, self.actor_class()),
+            self.bound_write_actor(),
             DeleteReason::PolicyDelete,
         ) {
             Ok(outcome) => outcome,

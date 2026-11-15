@@ -642,6 +642,7 @@ impl Memory<'_> {
 /// A brief is made from the claims and NOTEs its pins cite, read as their
 /// quoted text. An agent's brief that cites nothing has no birth to name.
 fn brief_birth(actor: WriteActor, pins: &[NotePin], at: u64) -> Option<RowBirth> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let cited: Vec<EntityId> = pins
         .iter()
         .flat_map(|pin| [pin.claim, pin.document])
@@ -649,7 +650,7 @@ fn brief_birth(actor: WriteActor, pins: &[NotePin], at: u64) -> Option<RowBirth>
     let quotes: Vec<&[u8]> = pins.iter().map(|pin| pin.quote_text.as_bytes()).collect();
     RowBirth::written(
         actor,
-        MadeByClass::of_writer(actor.actor_class()),
+        MadeByClass::of_write_actor(actor),
         "note.author_brief",
         &cited,
         &quotes,

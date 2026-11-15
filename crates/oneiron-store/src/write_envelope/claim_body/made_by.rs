@@ -2,6 +2,7 @@
 use super::ClaimBody;
 use oneiron_base::edge::EdgeActorClass;
 use oneiron_contracts::claim::ClaimSource;
+use oneiron_contracts::write_envelope::WriteActor;
 use serde::{Deserialize, Serialize};
 
 /// How a row was made. This is not a scope key or a relevance multiplier.
@@ -20,6 +21,18 @@ impl MadeByClass {
         match class {
             EdgeActorClass::Human => Self::Stated,
             EdgeActorClass::Agent | EdgeActorClass::System => Self::Concluded,
+        }
+    }
+
+    /// The class of a row a writer wrote itself: Stated when the writer acts as its own
+    /// person ([`WriteActor::acts_as_own_person`]), else Concluded.
+    #[must_use]
+    pub const fn of_write_actor(actor: WriteActor) -> Self {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if actor.acts_as_own_person() {
+            Self::Stated
+        } else {
+            Self::Concluded
         }
     }
 

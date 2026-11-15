@@ -217,13 +217,10 @@ pub fn read_learning_embedded(
     memory: &crate::memory::Memory<'_>,
     input: &LearningReadRequest,
 ) -> crate::memory::MemoryResult<LearningCellView> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     match memory.embedded_owner("vault.learning.read") {
         Ok(owner) => Ok(read_learning_as_owner(memory.vault(), &owner, input)?),
-        Err(_) => read_learning_as_reader(
-            memory.vault(),
-            WriteActor::new(memory.actor(), memory.actor_class()),
-            input,
-        ),
+        Err(_) => read_learning_as_reader(memory.vault(), memory.bound_write_actor(), input),
     }
 }
 

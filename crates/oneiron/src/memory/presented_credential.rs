@@ -22,10 +22,15 @@ impl Memory<'_> {
             .is_some_and(VerifiedSlip::is_transferred)
     }
 
+    /// Whether this handle carries a handed-on credential: its field or its proof.
+    pub(crate) fn carries_handed_on_credential(&self) -> bool {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.handed_on_credential || self.presents_handed_on_credential()
+    }
+
     /// Whether this handle acts as a person in its own right: its class is
-    /// Human, and it carries no presented credential whose mint was handed
-    /// to another key ([`Self::presents_handed_on_credential`]). A person's
-    /// slip handed on to an agent's key is that agent's act, whatever class
+    /// Human, and it carries no handed-on credential ([`Self::carries_handed_on_credential`]).
+    /// A person's slip handed on to an agent's key is that agent's act, whatever class
     /// the mint names (Astra review on #8189, F1; canon
     /// `#credential-read-key-built`: a narrower credential "never takes the
     /// owner's floor"). Every person gate asks this, never the class alone:
@@ -37,7 +42,8 @@ impl Memory<'_> {
     /// UserStated). [`Self::write_actor`] carries the same mark to the
     /// checks that judge a write actor.
     pub(crate) fn acts_as_own_person(&self) -> bool {
-        self.actor_class == crate::EdgeActorClass::Human && !self.presents_handed_on_credential()
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.actor_class == crate::EdgeActorClass::Human && !self.carries_handed_on_credential()
     }
 
     /// The owner's deletion authority for this handle's own act

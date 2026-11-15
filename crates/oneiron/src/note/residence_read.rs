@@ -28,9 +28,8 @@ pub(crate) fn opened_note_view(
             {
                 return Ok(None);
             }
-            let memory = vault
-                .memory(actor.entity_ref(), actor.actor_class())
-                .for_destination(destination);
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let memory = vault.memory_for_writer(actor).for_destination(destination);
             let memory = match proof {
                 Some(proof) => memory.with_read_proof(proof),
                 None => memory,

@@ -63,9 +63,10 @@ impl RoomRowAttachments {
         at: u64,
         markdown: String,
     ) -> Self {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         Self {
             actor,
-            class: MadeByClass::of_writer(actor.actor_class()),
+            class: MadeByClass::of_write_actor(actor),
             door,
             at,
             sources: Vec::new(),

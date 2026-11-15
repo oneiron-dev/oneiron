@@ -90,11 +90,12 @@ impl Memory<'_> {
         sources: &[(crate::EntityId, f32)],
         learned_at: u64,
     ) -> Option<RowBirth> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if type_byte == ENTITY_TYPE_ASSET_TEXT {
             let inputs: Vec<_> = sources.iter().map(|(source, _)| *source).collect();
             RowBirth::written(
                 self.write_actor(),
-                MadeByClass::of_writer(self.actor_class),
+                MadeByClass::of_write_actor(self.bound_write_actor()),
                 "structural.asset_text",
                 &inputs,
                 &[],

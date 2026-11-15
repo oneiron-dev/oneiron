@@ -50,7 +50,7 @@ use crate::memory::{
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::run_tree::{RunAsk, RunBranchSignal, RunTreeStatus};
 use crate::store::model_step_submission::StepBudgetRefusal;
-use crate::{EntityId, Vault, WriteActor};
+use crate::{EntityId, Vault};
 
 /// What a door that names no TASK should name instead.
 const TASK_FIX: &str =
@@ -420,7 +420,8 @@ pub fn read_branches_as_reader(
 ) -> MemoryResult<RunBranchesView> {
     const VERB: &str = "vault.runs.branches.get";
     let vault = memory.vault();
-    let caller = WriteActor::new(memory.actor(), memory.actor_class());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let caller = memory.bound_write_actor();
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     memory.prove_read_authority_in_txn(&txn)?;
     let steward = crate::snapshot_read::is_steward_in_txn(vault, &txn, caller)?;

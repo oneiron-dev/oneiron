@@ -399,7 +399,8 @@ impl Memory<'_> {
             let actor = self.diary_reader_in_txn(txn, reader)?;
             let reason = DiaryReadGate::new(actor, reason)?.reason;
             let reader = actor.entity_ref();
-            let human = actor.actor_class() == EdgeActorClass::Human;
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let human = actor.acts_as_own_person();
             // The agent itself reads as no ruled reader and is not logged.
             let ruled = if reader == agent {
                 None

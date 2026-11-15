@@ -305,11 +305,9 @@ pub fn create_companion_proposal(
         }
         // A fresh local write, so the companion's own observed frontier: one
         // regranted after a revocation still creates.
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         vault
-            .observed_write_actor_in_txn(
-                wtxn,
-                crate::WriteActor::new(companion_ref, companion.actor_class()),
-            )
+            .observed_write_actor_in_txn(wtxn, companion.bound_write_actor())
             .map_err(|_| refused("the creating companion holds no live authority in this vault"))?;
         surface(PROPOSAL.put(&vault.store, wtxn, &id.0, &row))
     })?;

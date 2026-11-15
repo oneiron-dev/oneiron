@@ -1,6 +1,5 @@
 //! Native owner build/verify execution; result admission stays in the engine.
 use super::*;
-use crate::WriteActor;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::build_cache::{ActionResult, ArtifactVersionRef, BuildCacheResult};
 use crate::store::checkout_task::CheckoutTaskClass;
@@ -121,7 +120,8 @@ impl Memory<'_> {
         let build_id = EntityId::now();
         let stored = self.with_actor_content_write_txn(|content| {
             owner.revalidate_in_txn(self.vault, content.read())?;
-            let writer = WriteActor::new(self.actor, self.actor_class);
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let writer = self.bound_write_actor();
             let at = self.vault.store.clock.now_recorded_at();
             let occurred = TimeRange { start: at, end: at };
             let provenance = BlobVersionProvenance::AgentRun {

@@ -12,6 +12,11 @@
 //! passes on both. The booking/calendar lock-in and the D1/D2 read guard
 //! pass on both trees: no PR 2 change touches them.
 //!
+//! Commit 3's handle mark (Q'): a room NOTE birth is never the person's (H91).
+//! Commit 3's handle mark (Q'): a code run on a handed-on slip never asks itself (H2).
+//! Commit 3's handle mark (Q'): a base NOTE birth is never the person's (H86).
+//! Commit 3's handle mark (Q'): a code run on a handed-on slip still reads its vault (D5).
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test handed_on_person_sweep`.
 #![cfg(oneiron_test_support)]
@@ -1040,5 +1045,186 @@ fn a_handed_on_owner_slip_still_reads_inside_its_scope() {
         f.stored(agents).lifecycle,
         ClaimLifecycleStatus::Active,
         "the agent's row stands behind the view"
+    );
+}
+
+/// Red (room NOTE birth, H91): a handed-on owner's room NOTE is never the person's.
+#[test]
+fn a_handed_on_owner_slip_never_stamps_a_rooms_note_as_the_person() {
+    let f = Fixture::new();
+    let session = f
+        .vault
+        .off_record_session_vault()
+        .enter(
+            "sweep-room-note-handed",
+            oneiron::off_record::OffRecordBackendClass::Local,
+        )
+        .expect("enter session");
+    let slip = f.owner_slip(true);
+
+    let receipt = f
+        .owner_memory(&slip)
+        .create_note_in_session(&session, NOTE, "a room note with enough text", &[])
+        .expect("the room NOTE stages");
+    let row = EntityId::from_hex(&receipt.id_hex).expect("row id");
+
+    let birth = oneiron::test_doors::off_record_shell::room_row_birth(&session, &row)
+        .expect("room birth read")
+        .expect("the room NOTE has a birth");
+
+    assert_eq!(
+        birth.made_by.process.class,
+        oneiron::write_envelope::provenance::made_by::MadeByClass::Concluded,
+        "a handed-on owner's room NOTE is never the person's: {birth:?}"
+    );
+}
+
+/// Guard (room NOTE birth, H91): the owner's own slip still stamps it as the person.
+#[test]
+fn the_owners_own_slip_still_stamps_a_rooms_note_as_the_person() {
+    let f = Fixture::new();
+    let session = f
+        .vault
+        .off_record_session_vault()
+        .enter(
+            "sweep-room-note-own",
+            oneiron::off_record::OffRecordBackendClass::Local,
+        )
+        .expect("enter session");
+    let slip = f.owner_slip(false);
+
+    let receipt = f
+        .owner_memory(&slip)
+        .create_note_in_session(&session, NOTE, "a room note with enough text", &[])
+        .expect("the room NOTE stages");
+    let row = EntityId::from_hex(&receipt.id_hex).expect("row id");
+
+    let birth = oneiron::test_doors::off_record_shell::room_row_birth(&session, &row)
+        .expect("room birth read")
+        .expect("the room NOTE has a birth");
+
+    assert_eq!(
+        birth.made_by.process.class,
+        oneiron::write_envelope::provenance::made_by::MadeByClass::Stated,
+        "the owner's own room NOTE stays the person's: {birth:?}"
+    );
+}
+
+/// Red (code-run dispatcher consult ask, H2): a code run on a handed-on slip never asks itself.
+#[test]
+fn a_code_run_on_a_handed_on_owner_slip_never_asks_itself() {
+    let f = Fixture::new();
+    let claim = f.raw_note();
+    let mut question = TaskAskQuestion::new(ConsultPayloadRef::Claim(claim));
+    let option = TaskAskOptionId::new("upheld").expect("option id");
+    question
+        .options
+        .insert(option, TaskAskOption::new("upheld"));
+    let spec = TaskAskSpec::shorthand(None, question, None, TaskAskDefault::AskMe);
+    let actor = WriteActor::new(f.owner, EdgeActorClass::Human).with_handed_on_credential();
+
+    let outcome = oneiron::test_doors::code_run_dispatch::dispatch_self_call_for_test(
+        &f.vault,
+        actor,
+        oneiron::code_run::SelfCall::TasksAsk(Box::new(spec)),
+    )
+    .expect("dispatch runs");
+
+    assert!(
+        matches!(outcome, oneiron::code_run::SelfDispatchOutcome::Failed(_)),
+        "a handed-on opener asks no self-ask: {outcome:?}"
+    );
+}
+
+/// Guard (code-run dispatcher consult ask, H2): the owner's own slip still asks itself.
+#[test]
+fn a_code_run_on_the_owners_own_slip_still_asks_itself() {
+    let f = Fixture::new();
+    let claim = f.raw_note();
+    let mut question = TaskAskQuestion::new(ConsultPayloadRef::Claim(claim));
+    let option = TaskAskOptionId::new("upheld").expect("option id");
+    question
+        .options
+        .insert(option, TaskAskOption::new("upheld"));
+    let spec = TaskAskSpec::shorthand(None, question, None, TaskAskDefault::AskMe);
+    let actor = WriteActor::new(f.owner, EdgeActorClass::Human);
+
+    let outcome = oneiron::test_doors::code_run_dispatch::dispatch_self_call_for_test(
+        &f.vault,
+        actor,
+        oneiron::code_run::SelfCall::TasksAsk(Box::new(spec)),
+    )
+    .expect("dispatch runs");
+
+    assert!(
+        matches!(outcome, oneiron::code_run::SelfDispatchOutcome::TaskAsk(_)),
+        "the owner's own opener still asks itself: {outcome:?}"
+    );
+}
+
+/// Red (base NOTE birth, H86): a handed-on owner's NOTE birth is never the person's.
+#[test]
+fn a_handed_on_owner_slip_never_stamps_a_note_birth_as_the_person() {
+    let f = Fixture::new();
+    let slip = f.owner_slip(true);
+
+    let receipt = f
+        .owner_memory(&slip)
+        .create_note(NOTE, "a base note with enough text for any minimum")
+        .expect("the NOTE creates");
+    let note = EntityId::from_hex(&receipt.id_hex).expect("note id");
+
+    let birth = f.vault.row_birth(&note).expect("birth read");
+
+    assert!(
+        birth.is_none(),
+        "a handed-on owner's base NOTE has no Stated birth: {birth:?}"
+    );
+}
+
+/// Guard (base NOTE birth, H86): the owner's own slip still stamps it as the person.
+#[test]
+fn the_owners_own_slip_still_stamps_a_note_birth_as_the_person() {
+    let f = Fixture::new();
+    let slip = f.owner_slip(false);
+
+    let receipt = f
+        .owner_memory(&slip)
+        .create_note(NOTE, "a base note with enough text for any minimum")
+        .expect("the NOTE creates");
+    let note = EntityId::from_hex(&receipt.id_hex).expect("note id");
+
+    let birth = f
+        .vault
+        .row_birth(&note)
+        .expect("birth read")
+        .expect("the owner's NOTE has a birth");
+
+    assert_eq!(
+        birth.made_by.process.class,
+        oneiron::write_envelope::provenance::made_by::MadeByClass::Stated,
+        "the owner's own base NOTE stays the person's: {birth:?}"
+    );
+}
+
+/// Guard (D5, Q' reads still land): a code run on a handed-on slip still reads its vault.
+#[test]
+fn a_code_run_on_a_handed_on_owner_slip_still_reads_its_vault() {
+    let f = Fixture::new();
+    let actor = WriteActor::new(f.owner, EdgeActorClass::Human).with_handed_on_credential();
+
+    let outcome = oneiron::test_doors::code_run_dispatch::dispatch_self_call_for_test(
+        &f.vault,
+        actor,
+        oneiron::code_run::SelfCall::InferenceDefaultsRead,
+    )
+    .expect("a handed-on opener still reads");
+
+    assert!(
+        matches!(
+            outcome,
+            oneiron::code_run::SelfDispatchOutcome::InferenceDefaults(_)
+        ),
+        "the read lands: {outcome:?}"
     );
 }

@@ -74,6 +74,14 @@ impl WriteActor {
         self
     }
 
+    /// Whether this actor writes under a credential handed on to another key
+    /// ([`Self::with_handed_on_credential`]).
+    #[must_use]
+    pub const fn carries_handed_on_credential(self) -> bool {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.handed_on_credential
+    }
+
     /// Whether this actor acts as a person in its own right: its class is
     /// Human, and no credential handed on to another key makes the write
     /// ([`Self::with_handed_on_credential`]).

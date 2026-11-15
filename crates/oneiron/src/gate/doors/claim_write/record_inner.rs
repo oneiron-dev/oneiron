@@ -234,10 +234,11 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // gates the Put without its author's (`ClaimMaterialization::
         // gate_envelope`), and the approving door forwards the proof for that
         // one Approved Put alone (`ops_put`).
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let owner_write = owner_authored.filter(|write| match envelope {
             Some(envelope) => {
                 envelope.actor().entity_ref() == write.actor()
-                    && envelope.actor().actor_class() == crate::edge::EdgeActorClass::Human
+                    && envelope.actor().acts_as_own_person()
             }
             None => body.approval == ClaimApprovalStatus::Approved,
         });

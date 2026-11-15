@@ -1,7 +1,7 @@
 //! Required record-position Scope stamps and the versioned CLAIM wire upgrade.
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeKind;
 use crate::ports::EdgeStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
 use crate::store::Store;
@@ -181,7 +181,8 @@ impl crate::Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        if actor.actor_class() != EdgeActorClass::Human
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person()
             || crate::memory::verify_owner_actor_binding_in_txn(self, wtxn, actor.entity_ref())
                 .is_err()
         {

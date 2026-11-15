@@ -703,7 +703,8 @@ fn unlinked_prose_in_txn(
     markdown: &str,
 ) -> crate::error::Result<Option<crate::receipt::ReferenceRefusalFacts>> {
     let links = crate::gate::record_references::parse_record_links(markdown);
-    if writer.actor_class() == crate::EdgeActorClass::Human || links.is_empty() {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if writer.acts_as_own_person() || links.is_empty() {
         return Ok(None);
     }
     let unlinked = crate::receipt::ReferenceRefusalFacts {

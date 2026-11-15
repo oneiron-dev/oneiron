@@ -84,7 +84,8 @@ impl Vault {
                         &id,
                         RowBirth::written(
                             actor,
-                            MadeByClass::of_writer(actor.actor_class()),
+                            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                            MadeByClass::of_write_actor(actor),
                             "note.create",
                             &[],
                             &[],
@@ -151,7 +152,8 @@ impl Vault {
                     &id,
                     RowBirth::written(
                         actor,
-                        MadeByClass::of_writer(actor.actor_class()),
+                        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                        MadeByClass::of_write_actor(actor),
                         "note.create",
                         &[],
                         &[],
@@ -214,7 +216,7 @@ impl Vault {
                         let markdown = super::documents::live_doc(self, txn, origin)?.text();
                         let birth = RowBirth::written(
                             actor,
-                            MadeByClass::of_writer(actor.actor_class()),
+                            MadeByClass::of_write_actor(actor),
                             "note.fork_to_facet",
                             &[origin],
                             &[markdown.as_bytes()],
@@ -269,7 +271,7 @@ impl Vault {
                                     &fork,
                                     RowBirth::written(
                                         actor,
-                                        MadeByClass::of_writer(actor.actor_class()),
+                                        MadeByClass::of_write_actor(actor),
                                         "note.fork_to_facet",
                                         &[origin],
                                         &[bytes],
@@ -504,8 +506,9 @@ impl Vault {
                 request_id: self.store.clock.entity_id()?,
                 change: super::NoteChange::Edit { base, edits },
             };
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             let receipt = self
-                .memory(actor.entity_ref(), actor.actor_class())
+                .memory_for_writer(actor)
                 .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
             return Ok(match receipt.outcome {
                 super::NoteScalarEditOutcome::Applied(_) => {
@@ -694,9 +697,10 @@ fn create_from_text_in_txn(
     let id = vault.store.clock.entity_id()?;
     let at = mutation_recorded_at;
     // The copy is made from the text it read and the row it cites.
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let birth = RowBirth::written(
         actor,
-        MadeByClass::of_writer(actor.actor_class()),
+        MadeByClass::of_write_actor(actor),
         "note.create_from_entity",
         &[source, citation],
         &[text.as_bytes()],

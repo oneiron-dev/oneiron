@@ -712,10 +712,11 @@ pub(super) fn land(
         }
         NoteVerdict::Switch | NoteVerdict::Reject => None,
     };
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let native_receipt = if verdict == NoteVerdict::Merge && fork.recovery_merge.is_none() {
         Some(
             vault
-                .memory(actor.entity_ref(), actor.actor_class())
+                .memory_for_writer(actor)
                 .apply_native_note_fork_in_txn(txn, fork.fork)
                 .map_err(|_| invalid("canonical NOTE proposal admission failed"))?,
         )
@@ -736,7 +737,7 @@ pub(super) fn land(
             },
         };
         let receipt = vault
-            .memory(actor.entity_ref(), actor.actor_class())
+            .memory_for_writer(actor)
             .apply_note_operation_in_txn(txn, fork.note, &operation, None)
             .map_err(|_| invalid("canonical NOTE proposal admission failed"))?;
         if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {

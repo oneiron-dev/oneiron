@@ -445,10 +445,8 @@ impl OffRecordSession<'_> {
         input: &serde_json::Value,
         reader: Option<&SessionReadContext<'_>>,
     ) -> Option<MemoryResult<SessionWriteStage<'_>>> {
-        let memory = self
-            .vault
-            .memory(actor.entity_ref(), actor.actor_class())
-            .with_host_origin(origin);
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let memory = self.vault.memory_for_writer(actor).with_host_origin(origin);
         let decode =
             |what: &str| MemoryError::bad_request(format!("{} input is not {what}", verb.as_str()));
         Some(match verb.as_str() {

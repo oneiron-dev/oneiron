@@ -150,9 +150,10 @@ pub(super) fn append_message_in_txn(
     if let Some(quote) = &quote {
         quote::pin_in_txn(vault, txn, quote, input.actor)?;
     }
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let birth = RowBirth::written(
         input.actor,
-        MadeByClass::of_writer(input.actor.actor_class()),
+        MadeByClass::of_write_actor(input.actor),
         "conversations.records.append",
         &[],
         &[],

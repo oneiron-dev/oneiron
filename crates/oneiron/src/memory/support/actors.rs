@@ -285,7 +285,7 @@ impl Memory<'_> {
 
     pub(crate) fn verify_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
         // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
-        if self.presents_handed_on_credential() {
+        if self.carries_handed_on_credential() {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "a credential handed on to another key is not the vault owner: it acts as its \

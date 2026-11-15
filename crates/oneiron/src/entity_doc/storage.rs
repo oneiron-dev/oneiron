@@ -533,7 +533,8 @@ pub(super) fn stamp_document_birth(
     at: u64,
     door: &str,
 ) -> Result<()> {
-    let class = MadeByClass::of_writer(actor.actor_class());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let class = MadeByClass::of_write_actor(actor);
     match RowBirth::written(actor, class, door, &[], &[], at) {
         Some(birth) => {
             crate::store::birth_record::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)

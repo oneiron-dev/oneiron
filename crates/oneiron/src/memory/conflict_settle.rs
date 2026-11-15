@@ -493,11 +493,12 @@ impl Memory<'_> {
         };
         conflict.staged_keep_in_txn(self.vault, txn, staged)?;
         let owner_answer = reviewer.owner_answer_in_txn(self.vault, txn)?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let approved = self.vault.settle_proposed_claim_in_txn(
             txn,
             staged,
             GateConsentBundleAction::Approve,
-            WriteActor::new(self.actor, self.actor_class),
+            self.bound_write_actor(),
             owner_answer,
             now,
         )?;
@@ -531,7 +532,8 @@ impl Memory<'_> {
     ) -> MemoryResult<ConflictRevertReceipt> {
         self.with_verified_actor_write_txn(|txn| {
             self.conflict_review_owner(txn, owner)?;
-            let actor = WriteActor::new(self.actor, self.actor_class);
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let actor = self.bound_write_actor();
             let reverted = revert_settlement_in_txn(self.vault, txn, resolved, actor, now)?;
             // FIX 11002: a HoldBoth/Dismiss revert restores nothing, so its
             // bundle would bind only resolved+marker and erases of the
