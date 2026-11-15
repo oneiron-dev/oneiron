@@ -206,7 +206,9 @@ impl Memory<'_> {
         if validated.kind == TaskKind::Standard
             && let Some(assignee) = validated.assignee
         {
-            put_assignment_fact_in_txn(self.vault(), wtxn, task_ref, self.actor(), assignee, now)?;
+            // The owner assigns, as its Owner fact above names it: the fold
+            // counts an assignment only from the task's owner.
+            put_assignment_fact_in_txn(self.vault(), wtxn, task_ref, owner, assignee, now)?;
         }
         Ok(())
     }

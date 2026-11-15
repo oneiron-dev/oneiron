@@ -27,6 +27,13 @@
 //! carrier ([`fact_proof`]). A row that proves nothing is skipped, never an
 //! error, so a sender that proves nothing cannot cancel a task, make itself its
 //! owner, or fail its read.
+//!
+//! A proved fact counts only when its actor may make it
+//! ([`TaskAuthorityFacts::admits`], Fable pass 28 DESIGN 2.2). The mint door
+//! asks the same function before it writes, so the writing device and every
+//! other device count the same facts. The fold reads Owner facts first, then
+//! the facts whose rule reads the owner, then those whose rule reads the
+//! assignee or the consult's parties, so no arrival order changes the answer.
 
 use crate::ports::EdgeStoreRead;
 
@@ -279,6 +286,24 @@ pub(crate) struct ConsultStanding {
     pub(crate) generation: Option<BindingGeneration>,
 }
 
+impl TaskAuthorityFactKind {
+    /// The pass of [`TaskAuthorityFacts::fold`] that reads this kind: Owner
+    /// first; then the kinds whose rule reads the owner; then the kinds whose
+    /// rule reads the assignee or the consult's parties, which the pass before
+    /// sets.
+    const fn fold_pass(self) -> u8 {
+        match self {
+            Self::Owner => 0,
+            Self::Cancelled
+            | Self::Acked
+            | Self::HumanAssigned
+            | Self::ConsultAssignee
+            | Self::Assigned => 1,
+            Self::ConsentRequired | Self::Accepted => 2,
+        }
+    }
+}
+
 impl TaskAuthorityFacts {
     /// The public lens: authority exists only on proof of an owner.
     fn into_state(self) -> Option<TaskAuthorityState> {
@@ -287,6 +312,81 @@ impl TaskAuthorityFacts {
             cancelled: self.cancelled,
             acked: self.acked,
         })
+    }
+
+    /// Folds `facts` pass by pass ([`TaskAuthorityFactKind::fold_pass`]),
+    /// each counted only when [`Self::admits`] it, so every arrival order of
+    /// one set folds the same answer.
+    fn fold(facts: &[TaskAuthorityFact]) -> Result<Self> {
+        let mut folded = Self::default();
+        for pass in 0..=2 {
+            for fact in facts.iter().filter(|fact| fact.kind.fold_pass() == pass) {
+                if folded.admits(fact) {
+                    folded.absorb(fact)?;
+                }
+            }
+        }
+        Ok(folded)
+    }
+
+    /// Whether `fact`'s actor may make it, judged against the facts folded
+    /// before its pass (Fable pass 28, DESIGN 2.2). The mint door asks the
+    /// same before it writes ([`put_task_authority_fact_in_txn`]); each
+    /// door's own check stands in front and is never looser. A fact it
+    /// refuses is not counted, and is not an error.
+    pub(crate) fn admits(&self, fact: &TaskAuthorityFact) -> bool {
+        let actor = fact.actor_ref;
+        match fact.kind {
+            // Its one rule is absorb's: two owners give nobody standing.
+            TaskAuthorityFactKind::Owner => true,
+            TaskAuthorityFactKind::HumanAssigned
+            | TaskAuthorityFactKind::Assigned
+            | TaskAuthorityFactKind::ConsultAssignee
+            | TaskAuthorityFactKind::Acked => self.owner_admits(actor),
+            // A cancel only takes away, and its doors prove standing the
+            // facts do not hold: a connector send's actor, an approved cancel
+            // proposal, the vault owner's force.
+            TaskAuthorityFactKind::Cancelled => true,
+            TaskAuthorityFactKind::ConsentRequired => self.consent_required_admits(actor),
+            TaskAuthorityFactKind::Accepted => self.accepted_admits(actor),
+        }
+    }
+
+    /// The owner's own act. With no proved owner the fact counts: every
+    /// reader of the owner's kinds asks for the owner itself (standing, the
+    /// human assigner, the consult's parties), so such a fact gives nothing
+    /// until an owner is proved; and a task its door wrote with no Owner fact
+    /// (a connector send, acked by its own actor) still reads acked.
+    fn owner_admits(&self, actor: EntityId) -> bool {
+        self.owner_ref.is_none_or(|owner| owner == actor)
+    }
+
+    /// The owner, or a party of the consult as its ConsultAssignee fact
+    /// names them.
+    fn consent_required_admits(&self, actor: EntityId) -> bool {
+        self.owner_admits(actor)
+            || match &self.consult_parties {
+                ConsultParties::Minted(parties) => {
+                    parties.asker == actor || parties.assignee == Some(actor)
+                }
+                ConsultParties::Unminted | ConsultParties::Forked => false,
+            }
+    }
+
+    /// A taker with standing: the assignee; the owner, who may reclaim or
+    /// take over its own task; or anyone on a task the facts address to
+    /// nobody, which a runner takes under its lease, and no fact records the
+    /// lease.
+    fn accepted_admits(&self, actor: EntityId) -> bool {
+        self.owner_admits(actor) || self.assignee().is_none_or(|assignee| assignee == actor)
+    }
+
+    /// The actor the facts address the task to: the Assigned fact's
+    /// assignee, else the human-assignment witness's agent.
+    fn assignee(&self) -> Option<EntityId> {
+        self.assigned
+            .map(|(_, assignee)| assignee)
+            .or(self.human_assigner.map(|(_, assigned)| assigned))
     }
 
     /// Folds one decoded fact in. Duplicate Owner facts naming the SAME owner
@@ -404,8 +504,40 @@ impl TaskAuthorityFacts {
 /// failure anywhere leaves none of them.
 ///
 /// This door earns the bypass by BUILDING the body it writes: nothing
-/// a caller supplied reaches storage unvalidated.
+/// a caller supplied reaches storage unvalidated. It refuses a fact whose
+/// actor may not make it ([`TaskAuthorityFacts::admits`]), which the fold
+/// would not count on any device.
 pub(crate) fn put_task_authority_fact_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    fact: TaskAuthorityFact,
+) -> Result<EntityId> {
+    if !vault
+        .task_authority_facts_in(&*wtxn, fact.task_ref)?
+        .admits(&fact)
+    {
+        return Err(Error::InvariantViolation(
+            "task authority fact names an actor that may not make it",
+        ));
+    }
+    write_task_authority_fact_in_txn(vault, wtxn, fact)
+}
+
+/// [`write_task_authority_fact_in_txn`] for the test door that stands in for a
+/// member machine whose door lacks the actor check.
+#[cfg(oneiron_test_support)]
+pub(crate) fn write_unjudged_task_authority_fact_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    fact: TaskAuthorityFact,
+) -> Result<EntityId> {
+    write_task_authority_fact_in_txn(vault, wtxn, fact)
+}
+
+/// Writes `fact` on a new row, signed by this install's carrier when one is
+/// loaded: [`put_task_authority_fact_in_txn`] past its check, and the root's
+/// twin of a fact a door already wrote.
+fn write_task_authority_fact_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     fact: TaskAuthorityFact,
@@ -931,7 +1063,9 @@ impl Vault {
                 if carried.carrier.is_some() {
                     continue;
                 }
-                put_task_authority_fact_in_txn(self, wtxn, carried.fact)?;
+                // The same fact on a new row: it counts exactly when the
+                // unsigned row did, so it asks no door's rule again.
+                write_task_authority_fact_in_txn(self, wtxn, carried.fact)?;
                 fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
                 adopted += 1;
             }
@@ -962,22 +1096,15 @@ impl Vault {
 
     /// The separate, engine-authored human-assignment witness. Owner alone
     /// is not evidence that the human authored the assignment: tasks.create
-    /// permits a caller to nominate another `owner_ref`.
+    /// permits a caller to nominate another `owner_ref`. With an owner
+    /// proved, the fold counts only a witness whose assigner is that owner.
     pub(crate) fn task_human_assigner_in(
         &self,
         txn: &heed::RoTxn<'_>,
         task_ref: EntityId,
     ) -> Result<Option<(EntityId, EntityId)>> {
         let facts = self.task_authority_facts_in(txn, task_ref)?;
-        match (facts.owner_ref, facts.human_assigner) {
-            (Some(owner), Some((assigner, assigned))) if owner == assigner => {
-                Ok(Some((owner, assigned)))
-            }
-            (Some(_), Some(_)) => Err(Error::InvariantViolation(
-                "task human assigner is not owner",
-            )),
-            _ => Ok(None),
-        }
+        Ok(facts.owner_ref.and(facts.human_assigner))
     }
 
     /// What `task_ref`'s facts prove about who may act on it, or `None`
@@ -992,13 +1119,9 @@ impl Vault {
         let Some(owner) = facts.owner_ref else {
             return Ok(None);
         };
-        let witnessed = match facts.human_assigner {
-            Some((assigner, assigned)) if assigner == owner => Some(assigned),
-            _ => None,
-        };
         Ok(Some(TaskStanding {
             owner,
-            assignee: facts.assigned.map(|(_, assignee)| assignee).or(witnessed),
+            assignee: facts.assignee(),
             taker: facts.accepted,
             cancelled: facts.cancelled,
         }))
@@ -1012,6 +1135,8 @@ impl Vault {
     /// STRICTLY: malformed, or naming a different subject than the edge it was
     /// reached through, it fails the read closed. Any other row counts only
     /// when it proves itself ([`proved_fact`]), and is skipped otherwise.
+    /// Either way a fact counts only when its actor may make it
+    /// ([`TaskAuthorityFacts::fold`]).
     pub(crate) fn task_authority_facts_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -1022,7 +1147,7 @@ impl Vault {
         if SUPPRESSED.contains(&self.store, rtxn, &task_ref)? {
             return Err(fact_suppressed());
         }
-        let mut facts = TaskAuthorityFacts::default();
+        let mut proved = Vec::new();
         let mut proof = None;
         // Rule 5: every inbound edge is read and every fact absorbed, however
         // many; past its threshold row the fold asks, and never refuses.
@@ -1078,10 +1203,10 @@ impl Vault {
                     None => continue,
                 }
             };
-            facts.absorb(&fact)?;
+            proved.push(fact);
         }
         scanned.finish(self);
-        Ok(facts)
+        TaskAuthorityFacts::fold(&proved)
     }
 }
 
