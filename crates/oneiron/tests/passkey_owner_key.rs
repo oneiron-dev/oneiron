@@ -648,13 +648,32 @@ fn answers_fresh_machine(
     signer: &ed25519_dalek::SigningKey,
     role: MachineRole,
 ) -> bool {
+    answers_machine(
+        hosted,
+        signer,
+        oneiron::EntityId::now(),
+        &machine_install(),
+        role,
+        1,
+    )
+}
+
+/// `signer`'s roster-signed profile of `machine` in `role` at `revision`,
+/// naming `install`'s key with `install`'s own proof, stored for the fold
+/// to judge; true when it counted.
+fn answers_machine(
+    hosted: &HostedVault,
+    signer: &ed25519_dalek::SigningKey,
+    machine: oneiron::EntityId,
+    install: &ed25519_dalek::SigningKey,
+    role: MachineRole,
+    revision: u64,
+) -> bool {
     let vault_id = hosted
         .vault
         .authority_vault_id()
         .expect("the vault id read")
         .expect("a rooted vault");
-    let machine = oneiron::EntityId::now();
-    let install = machine_install();
     let machine_key = install.verifying_key().to_bytes();
     let encryption_key = || MachineEncryptionKey {
         suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
@@ -680,7 +699,7 @@ fn answers_fresh_machine(
         device_class: MachineDeviceClass::Computer,
         encryption_key: encryption_key(),
         role,
-        revision: 1,
+        revision,
         machine_proof,
         seen_world_edits: BTreeSet::new(),
         carrier: None,
@@ -705,8 +724,8 @@ fn answers_fresh_machine(
 /// answer for a machine, so a key only the passkey vouched for answers no
 /// machine as the owner's (a node the page's operator runs would then merge
 /// as his) and removes none (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B:
-/// the vouch and revoke class). Judged by role, not by the machine's
-/// presence, so no sibling branch reopens it.
+/// the vouch and revoke class). Judged by the op alone, not by the
+/// machine's presence, so no sibling branch reopens it.
 #[test]
 fn a_key_only_a_passkey_vouched_for_answers_no_machine_as_the_owners() {
     let hosted = HostedVault::open();
@@ -723,6 +742,49 @@ fn a_key_only_a_passkey_vouched_for_answers_no_machine_as_the_owners() {
         !answers_fresh_machine(&hosted, &host_held(), MachineRole::Removed),
         "the limited key removes no machine"
     );
+}
+
+/// Blind review #8451 F1: a roster-signed profile in any role names the
+/// machine's key, so a key only the passkey vouched for that answered an
+/// owned machine `Unanswered`, `HostedNode` or `ExecutionNode` with a key
+/// the host holds would give the machine a second key claim, which
+/// poisons it for good (claims merge by union): the removal the limits
+/// stop, in another role. A limited key signs no roster-signed machine
+/// profile in any role, judged by the op alone.
+#[test]
+fn a_key_only_a_passkey_vouched_for_rekeys_no_owned_machine() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    let machine = oneiron::EntityId::now();
+    assert!(
+        answers_machine(
+            &hosted,
+            &owner_device(),
+            machine,
+            &machine_install(),
+            MachineRole::Owned(MachineOwnership::Yours),
+            1
+        ),
+        "guard: the owner's device key answers the machine as the owner's"
+    );
+    let host_install = ed25519_dalek::SigningKey::from_bytes(&[0x4D; 32]);
+    for (role, revision) in [
+        (MachineRole::Unanswered, 2),
+        (MachineRole::HostedNode, 3),
+        (MachineRole::ExecutionNode, u64::MAX),
+    ] {
+        assert!(
+            !answers_machine(
+                &hosted,
+                &host_held(),
+                machine,
+                &host_install,
+                role,
+                revision
+            ),
+            "the limited key rekeys no owned machine ({role:?} at revision {revision})"
+        );
+    }
 }
 
 /// Once a device key confirms it, the passkey-vouched key answers a
