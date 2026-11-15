@@ -2,24 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use super::{BornWithField, ExportTarget, ExportTravel, travelled_value};
 use crate::federation::FederationGrantScope;
 use crate::{EntityId, Vault};
 
-/// Advisory metadata beside the signed export. The digest names the final
-/// released update, and row keys are its transport keys after projection.
-/// This is an export preparation, not recipient authority or delivery proof.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GuestWindowTravelNote {
-    pub content_hash: String,
-    pub travelled: BTreeMap<String, Vec<BornWithField>>,
-    /// The receipt write failed. Its one retry is held only in this open
-    /// vault's memory; neither this flag nor that queue is a durable ledger.
-    pub receipt_owed: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::share_travel::guest_window::GuestWindowTravelNote;
 
 pub(super) fn receipt_fields(
     grant_ref: &str,

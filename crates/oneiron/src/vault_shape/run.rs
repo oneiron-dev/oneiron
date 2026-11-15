@@ -23,8 +23,6 @@ use crate::store::attempt_inputs::AttemptInterventionKind;
 use crate::store::attempt_inputs::ClaimAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::store::attempt_result::AttemptResultRef;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
 /// The kind of an apply's root row.
 pub const SHAPE_APPLY_ATTEMPT_KIND: &str = "vault_shape.apply";
@@ -38,16 +36,8 @@ const SHAPE_RUN_PREFIX: &str = "vault_shape:";
 /// An intervention note's bound in the queue.
 const SHAPE_RUN_NOTE_MAX_BYTES: usize = 2048;
 
-/// An apply's run tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ShapeApplyRun {
-    /// The run id every row carries; it names the apply's journal.
-    pub run_id: String,
-    /// The root row, hex: the apply's inbox group key.
-    pub root: String,
-    /// Each item's row, hex, in `seq` order.
-    pub items: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::run::ShapeApplyRun;
 
 /// The run id of the apply landing the plan at `frontier`; its root row
 /// completes with it as its receipt reference.

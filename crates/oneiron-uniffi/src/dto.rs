@@ -69,12 +69,16 @@ pub struct Paired {
 /// Closed authorship vocabulary for a witnessed message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum WitnessAuthor {
-    /// The owner of the memory directory.
+    /// The conversation's first-party human: the owner of the memory
+    /// directory, or for mail the mailbox person whose sent mail it is.
     User,
     /// The companion persona.
     Companion,
     /// System/tooling rows; these get no authorship edge.
     System,
+    /// Imported speech from somebody else (received mail); it gets no
+    /// authorship edge to its writer.
+    Counterparty,
 }
 
 /// One message inside a witnessed turn.
@@ -944,7 +948,8 @@ pub struct RetrievalMeta {
 pub struct TemporalHint {
     /// The phrase, lowercased with punctuation dropped.
     pub phrase: String,
-    /// `used` narrowed the window; `unresolved` and `future` were skipped.
+    /// `used` re-anchored the temporal search (a phrase never filters);
+    /// `unresolved` and `future` were skipped.
     pub status: String,
     /// Inclusive Unix-second start, when the phrase resolved.
     pub start: Option<u64>,
