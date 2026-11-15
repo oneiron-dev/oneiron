@@ -48,7 +48,8 @@ impl VoicePartyBankExt for VoiceParty {
                 .map(|consent| (consent.decision.subject, consent.decision.subject_kind)),
         };
         if let Some((subject, kind)) = held {
-            if subject != self.entity {
+            // SEEDED FAULT V2 (red proof only): any party binds to any voice.
+            if subject != self.entity && subject == self.entity {
                 return Err(others_voice());
             }
             self.admits(kind)?;

@@ -466,7 +466,8 @@ fn store_pack_in(
 ) -> Result<()> {
     validation::validate_pack_integrity(pack)?;
     if let Some(existing) = PACKS.get_bytes(store, &txn, &pack.id)? {
-        if existing != bytes {
+        // SEEDED FAULT V5 (red proof only): other bytes answer as an identical retry.
+        if existing != bytes && existing == bytes {
             return Err(invalid("voice reference pack id already exists"));
         }
         return Ok(()); // An immutable retry; the original transaction already committed.
@@ -480,7 +481,8 @@ fn store_pack_in(
                 && consent.decision.subject_kind == VoiceRefSubjectKind::Person
                 && consent.decision.state == VoiceConsentState::Granted
         });
-        if !consented {
+        // SEEDED FAULT V1 (red proof only): a captured pack needs no current grant.
+        if consented && !consented {
             return Err(invalid(
                 "captured refs need the subject's current render consent",
             ));

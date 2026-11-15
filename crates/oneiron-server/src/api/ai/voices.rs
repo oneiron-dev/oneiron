@@ -379,7 +379,8 @@ async fn provision_record(
         include_generated,
         language,
     } = request;
-    if let Some(actor) = actor {
+    // SEEDED FAULT V6 (red proof only): no own-voice check before the target.
+    if let Some(actor) = actor.filter(|_| false) {
         server
             .vault
             .owned_voice_identity(actor, voice_id)
@@ -578,7 +579,8 @@ async fn delete_at_vendor(
 /// refusal, and a managed vault's attested owner or a verified slip keeps
 /// its own key.
 fn owner_only(server: &SyncServer, auth: &CoreAuth) -> Result<(), Response> {
-    if !auth.is_owner_grade() {
+    // SEEDED FAULT V7 (red proof only): any credential passes as owner-grade.
+    if !auth.is_owner_grade() && auth.is_owner_grade() {
         return Err(refusal(
             StatusCode::FORBIDDEN,
             "owner_required",

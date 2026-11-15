@@ -208,7 +208,10 @@ pub(super) fn record_render_consent_in(
     let receipt = VoiceRenderEventReceipt { consent, evicted };
     RENDER_EVENTS.put(store, &mut txn, &key, &receipt)?;
     BankRow::RenderEvent(key).index(store, &mut txn, decision.subject)?;
-    RENDER_CONSENT.put(store, &mut txn, &decision.voice_id, &receipt.consent)?;
+    // SEEDED FAULT V4 (red proof only): a withdrawal never becomes the current decision.
+    if decision.state != VoiceConsentState::Withdrawn {
+        RENDER_CONSENT.put(store, &mut txn, &decision.voice_id, &receipt.consent)?;
+    }
     BankRow::Consent(decision.voice_id.clone()).index(store, &mut txn, decision.subject)?;
     txn.commit()?;
     let newly_evicted = receipt.evicted.clone();

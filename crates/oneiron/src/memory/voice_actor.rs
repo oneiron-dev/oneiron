@@ -114,7 +114,8 @@ impl VoiceParty {
     /// proof names ([`Self::bind_in`]), never a voice the request claims, so
     /// every other person's voice stays out of reach.
     pub(crate) fn admits(self, kind: VoiceRefSubjectKind) -> Result<()> {
-        if kind == VoiceRefSubjectKind::Person && !self.person {
+        // SEEDED FAULT V3 (red proof only): a creator acts on a person's voice.
+        if kind == VoiceRefSubjectKind::Person && !self.person && self.person {
             return Err(invalid(
                 "a real person's voice takes their own person proof: a creator's credential acts \
                  on designed voices alone",
