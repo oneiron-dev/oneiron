@@ -217,14 +217,5 @@ pub(crate) fn land_archived_dreamer_sieve_policy_row_in_txn(
     install_archived_row(&POLICY, vault, txn, permit, &key, row)
 }
 
-/// The sieve's three per-pass work budgets, the part of its policy a holder
-/// of `engine.controls` may lower.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SievePassBudgets {
-    /// Turns one pass reads.
-    pub max_turns_per_pass: u32,
-    /// Timeline rows one pass's forward scan steps over.
-    pub max_scan_per_pass: u32,
-    /// Bytes of turn text one pass reads.
-    pub max_text_bytes_per_pass: u32,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_wake::sieve::policy::SievePassBudgets;

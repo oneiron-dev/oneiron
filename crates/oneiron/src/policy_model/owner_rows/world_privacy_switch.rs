@@ -388,7 +388,7 @@ impl Vault {
 
 /// 32 bytes as lowercase hex.
 pub(super) fn hex32(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 /// Lands one archived `OWNER_POLICY_WORLD_PRIVACY_RECEIPT` envelope in `txn`: canonical
