@@ -29,7 +29,7 @@ use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::error::{Error, GateError, Result};
+use crate::error::{Error, GateError, RecordError, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::vault::LiveEntityRow;
@@ -166,9 +166,9 @@ impl Vault {
     ///
     /// # Errors
     /// `owner` no longer proves the vault's owner; `EntityNotFound` when
-    /// `holder` names no live PERSON or AGENT_DEF, or the row at its grant id
-    /// is no audit_read grant; an invalid grant when `expires_at` is not
-    /// after the vault's clock; or the vault write fails.
+    /// `holder` names no live PERSON or AGENT_DEF; `AccessGrantAlreadyExists`
+    /// when another row holds its grant id; an invalid grant when
+    /// `expires_at` is not after the vault's clock; or the vault write fails.
     pub(crate) fn grant_audit_read(
         &self,
         owner: &AuthenticatedOwner,
@@ -239,8 +239,8 @@ impl Vault {
     ///
     /// # Errors
     /// `owner` no longer proves the vault's owner; `EntityNotFound` when
-    /// `holder` was never granted the power, or the row at its grant id is
-    /// no audit_read grant; or the vault write fails.
+    /// `holder` was never granted the power; `AccessGrantAlreadyExists` when
+    /// another row holds its grant id; or the vault write fails.
     pub(crate) fn revoke_audit_read(
         &self,
         owner: &AuthenticatedOwner,
@@ -284,9 +284,11 @@ impl Vault {
     /// no row is there.
     ///
     /// # Errors
-    /// `EntityNotFound` for a deleted row or a grant that is no audit_read
-    /// grant at its holder's id; an erased grant; another kind of row; or a
-    /// read that fails.
+    /// `AccessGrantAlreadyExists` when another row holds the id: a deleted
+    /// row, or a grant that is no audit_read grant at its holder's id. Any
+    /// caller that chooses its own id can place one there, so the owner's
+    /// verbs name that case apart from a holder never granted. Also an
+    /// erased grant; another kind of row; or a read that fails.
     fn audit_read_grant_at_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -305,13 +307,13 @@ impl Vault {
                     Err(error) => return Err(error),
                 };
                 if audit_read_holder(id, &grant).is_none() {
-                    return Err(Error::EntityNotFound);
+                    return Err(id_held_by_another_row());
                 }
                 Ok(Some(grant))
             }
             LiveEntityRow::Live { entity_type, .. } => Err(Error::InvalidEntityType(entity_type)),
             LiveEntityRow::Absent => Ok(None),
-            LiveEntityRow::DeletedShell => Err(Error::EntityNotFound),
+            LiveEntityRow::DeletedShell => Err(id_held_by_another_row()),
         }
     }
 
@@ -409,6 +411,12 @@ impl Vault {
         let grant = decode_live_access_grant_body(&body).ok().flatten()?;
         audit_read_holder(id, &grant).map(|_| grant)
     }
+}
+
+/// What the owner's verbs answer when another row holds a holder's
+/// audit_read grant id.
+fn id_held_by_another_row() -> Error {
+    Error::Record(RecordError::AccessGrantAlreadyExists)
 }
 
 /// The id of `holder`'s audit_read grant.
