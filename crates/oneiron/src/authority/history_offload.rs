@@ -348,7 +348,6 @@ impl Vault {
                 evict_covered_row_in_txn(&self.store, txn, id, hash, header)?;
             }
             super::store_order::resequence_in_txn(&self.store, txn)?;
-            super::advance_authority_cache_generation(&self.store, txn)?;
             let mut stored = OFFLOAD
                 .get(&self.store, txn, image)?
                 .unwrap_or(StoredOffload {
@@ -365,13 +364,6 @@ impl Vault {
             OFFLOAD.put(&self.store, txn, image, &stored)?;
             Ok(Some(history_offload(*image, stored)))
         })?;
-        if offload.is_some() {
-            // A continuation cached before the offload names rows it dropped:
-            // the next fold starts whole, as after the store-order backfill.
-            if let Ok(mut cache) = self.store.authority_fold_cache.lock() {
-                *cache = None;
-            }
-        }
         Ok(offload)
     }
 
