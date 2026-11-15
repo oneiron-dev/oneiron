@@ -33,6 +33,14 @@
 //! ([`UserPresence`], [`PresenceGate`]): the question an owner's act waits on
 //! before the owner key signs it. It is a gate before a signature. It reads
 //! and changes no slot.
+//!
+//! A device with no unlock prompt confirms with a device PIN instead (row
+//! OCS-OWNER-PIN). The gate takes the PIN the host collected
+//! ([`PresenceGate::confirm_with_secret`]) and counts wrong ones. What the
+//! PIN guards, the engine seals; the file tier keeps those sealed bytes
+//! beside its slots ([`SealedBytesStore`], through
+//! [`DeviceKeystore::sealed_bytes`]). This crate sees neither a key nor a
+//! way to check a PIN.
 
 use std::borrow::Cow;
 
@@ -50,6 +58,7 @@ mod linux_tpm;
 mod macos_presence;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 mod memory;
+mod sealed_bytes;
 mod user_presence;
 #[cfg(windows)]
 mod windows;
@@ -68,14 +77,16 @@ pub use linux_tpm::LinuxTpmKeystore;
 pub use macos_presence::MacosUserPresence;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 pub use memory::MemoryKeystore;
+pub use sealed_bytes::{SEALED_BYTES_MAX, SealedBytesName, SealedBytesStore};
+pub use user_presence::{
+    DEVICE_PIN_WAIT_SECS, DEVICE_PIN_WRONG_TRIES, NoPromptPresence, PRESENCE_PROMPT_SECS,
+    PRESENCE_WINDOW_SECS, PendingPresenceConfirm, PresenceCapability, PresenceClock,
+    PresenceConfirmation, PresenceError, PresenceGate, PresenceInstant, PresenceWindow,
+    SCREEN_LOCK_POLL_MS, SystemPresenceClock, UserPresence, WindowsScreenSession,
+    platform_user_presence,
+};
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 pub use user_presence::{ManualPresenceClock, ScriptedPresence};
-pub use user_presence::{
-    NoPromptPresence, PRESENCE_PROMPT_SECS, PRESENCE_WINDOW_SECS, PendingPresenceConfirm,
-    PresenceCapability, PresenceClock, PresenceConfirmation, PresenceError, PresenceGate,
-    PresenceInstant, PresenceWindow, SCREEN_LOCK_POLL_MS, SystemPresenceClock, UserPresence,
-    WindowsScreenSession, platform_user_presence,
-};
 // `self::`: the `windows` crate is a dependency on this platform, so the
 // bare name would be ambiguous here.
 #[cfg(windows)]
@@ -352,6 +363,12 @@ pub trait DeviceKeystore: Send + Sync + 'static {
             KeystoreLocality::ThisDeviceOnly => KeystoreAssurance::Software,
             KeystoreLocality::ProcessOnly => KeystoreAssurance::Process,
         }
+    }
+    /// This keystore's home for bytes the caller sealed, where the tier has
+    /// one: the file tier, and the process-memory tier of tests. `None`
+    /// elsewhere, never a weaker home.
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        None
     }
 }
 
