@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_identity::ChannelIdentityFulfillment;
@@ -366,8 +367,10 @@ impl LineOfficialAccountInbound {
 }
 
 /// The kind of LINE chat a shared message came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+// Each name is the `source.type` LINE names the kind by, and the address segment.
+#[register("line.chat.kind")]
 pub enum LineChatKind {
     /// A LINE group (`source.groupId`, `C…`).
     Group,
@@ -376,23 +379,10 @@ pub enum LineChatKind {
 }
 
 impl LineChatKind {
-    /// The `source.type` LINE names this kind by, and the address segment.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Group => "group",
-            Self::Room => "room",
-        }
-    }
-
     /// Parses a LINE `source.type`; `None` for a 1:1 `user` or anything else.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "group" => Some(Self::Group),
-            "room" => Some(Self::Room),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     /// The `source` field that names a chat of this kind.

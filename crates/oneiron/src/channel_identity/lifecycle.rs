@@ -16,6 +16,8 @@
 //! the pinned body key set, receipts and `channel_identity.state` predicates
 //! are byte-for-byte unchanged.
 
+use oneiron_contracts::register::Register;
+
 use super::binding::ChannelIdentityFulfillment;
 use super::codec::invalid_identity;
 use super::custody::DelegatedCustodyProof;
@@ -55,9 +57,11 @@ impl QuarantineWindow {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
+#[register("channel.identity.state")]
 pub enum ChannelIdentityState {
     Requested,
     PendingFulfillment,
@@ -70,30 +74,8 @@ pub enum ChannelIdentityState {
 
 impl ChannelIdentityState {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Requested => "requested",
-            Self::PendingFulfillment => "pending_fulfillment",
-            Self::Active => "active",
-            Self::Rotating => "rotating",
-            Self::Released => "released",
-            Self::Quarantine => "quarantine",
-            Self::Tombstone => "tombstone",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "requested" => Some(Self::Requested),
-            "pending_fulfillment" => Some(Self::PendingFulfillment),
-            "active" => Some(Self::Active),
-            "rotating" => Some(Self::Rotating),
-            "released" => Some(Self::Released),
-            "quarantine" => Some(Self::Quarantine),
-            "tombstone" => Some(Self::Tombstone),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
