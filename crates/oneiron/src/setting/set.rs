@@ -137,11 +137,9 @@ impl Vault {
     /// key's hook. Once the write commits, an applied change runs the key's `after_commit`.
     ///
     /// - The owner sets every key, a pin included.
-    /// - An agent whose live owner Grant lists the key's own line (`settings.set:<key>`,
-    ///   vault-wide) sets any value row of that key as the owner does, with no ask and no bound;
-    ///   its row counts as the owner's. Never a pin.
-    /// - An agent sets a value row of a key of class `c` while it holds a live `engine.controls`
-    ///   grant for `c`, and a value row about itself on a key set by its subject. It never
+    /// - An agent sets a value row of a key whose own line (`settings.set:<key>`) its live owner
+    ///   Grant lists, vault-wide; of a key of class `c` while it holds a live `engine.controls`
+    ///   grant for `c`; and about itself on a key set by its subject. It never
     ///   replaces a row the owner set. On a key that names its tighter direction, a holder's value
     ///   stays inside the owner's nearest row at that scope or wider, or inside the catalogue
     ///   default where the owner set none, and a subject's is no looser than the value in force.
@@ -410,16 +408,17 @@ fn agent_power_in_txn(
     if change.key.mode == SettingMode::Pin {
         return Ok(None);
     }
-    if let Some(grant) = key_line_grant_in_txn(vault, txn, agent, &set_line(spec.name))? {
-        // The key's own Grant line hands the owner's act on its value rows over: no bound.
-        return Ok(Some(Setter::KeyGrant { grant }));
-    }
-    let setter = match spec.set_by {
-        SetBy::Class(class) => vault
-            .engine_controls_grant_in(txn, agent, class)?
-            .map(|grant| Setter::Holder { grant }),
-        SetBy::Subject if names_subject(&change.key.scope, agent) => Some(Setter::Subject),
-        SetBy::Owner | SetBy::Subject => None,
+    // The key's own Grant line makes the agent a holder of that one key (AUTH-1 = A: its
+    // widening still asks the user).
+    let setter = match key_line_grant_in_txn(vault, txn, agent, &set_line(spec.name))? {
+        Some(grant) => Some(Setter::KeyGrant { grant }),
+        None => match spec.set_by {
+            SetBy::Class(class) => vault
+                .engine_controls_grant_in(txn, agent, class)?
+                .map(|grant| Setter::Holder { grant }),
+            SetBy::Subject if names_subject(&change.key.scope, agent) => Some(Setter::Subject),
+            SetBy::Owner | SetBy::Subject => None,
+        },
     };
     let Some(setter) = setter else {
         return Ok(None);

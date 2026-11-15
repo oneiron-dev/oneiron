@@ -15,9 +15,9 @@
 //!   decided it.
 //! - Set: [`Vault::set_setting`], one door whose power is checked live in its write: the owner
 //!   sets every key; an agent whose live owner Grant lists the key's own line
-//!   (`settings.set:<key>`) sets its value rows as the owner does; a live holder of the key's
-//!   `engine.controls` class sets a key of that class; a subject tightens its own row; anyone
-//!   else's change waits on a check-in.
+//!   (`settings.set:<key>`), or a live holder of the key's `engine.controls` class, sets the
+//!   key's value rows inside the owner's; a subject tightens its own row; anyone else's change,
+//!   and an agent's widening, waits on a check-in.
 //! - Change stream: every change is one `SETTING_CHANGE` row, written in the commit that makes it,
 //!   and the feeds' `settings` source.
 //! - Verbs: `vault.settings.get`, `vault.settings.list`, `vault.settings.set`.
@@ -59,8 +59,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::EngineControlClass;
 
-/// The Grant line that hands one key's value rows over to an agent: the owner's act on that key
-/// (DESIGN 1.2 step 3). A Grant lists it as a verb, matched exactly.
+/// The Grant line that makes an agent a holder of one key (DESIGN 1.2 step 3): it sets the key's
+/// value rows inside the owner's, and its widening asks the user (AUTH-1 = A). A Grant lists it
+/// as a verb, matched exactly.
 #[must_use]
 pub fn set_line(key: &str) -> String {
     format!("settings.set:{key}")

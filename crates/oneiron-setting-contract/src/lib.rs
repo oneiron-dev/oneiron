@@ -97,8 +97,8 @@ pub enum SettingSync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadBy {
-    /// The owner, a holder of the power to set the key, and a subject for its own rows. The
-    /// default.
+    /// The owner, a holder of the key's `engine.controls` class, an agent whose Grant lists the
+    /// key's read line (`settings.get:<key>`), and a subject for its own rows. The default.
     Holders,
     /// Any reader of the vault.
     Members,
@@ -117,8 +117,9 @@ pub enum Setter {
     /// A live holder of the key's class, through this grant.
     Holder { grant: EntityId },
     /// An agent through its live owner Grant that lists the key's own line
-    /// (`settings.set:<key>`): the owner's act on that one key, handed over (DESIGN 1.2 step 3).
-    /// Its value row counts as the owner's; it never pins.
+    /// (`settings.set:<key>`, DESIGN 1.2 step 3), as a holder: its value stays inside the
+    /// owner's row, or the catalogue default where the owner set none; a widening asks the user
+    /// (AUTH-1 = A). It never pins.
     KeyGrant { grant: EntityId },
     /// The agent or person the row's scope names, on its own row.
     Subject,

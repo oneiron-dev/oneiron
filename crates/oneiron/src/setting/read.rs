@@ -46,15 +46,11 @@ pub(super) struct StoredRow {
 }
 
 impl StoredRow {
-    /// Whether the row is the owner's: set by the owner, by an agent through the key's own
-    /// Grant line (the owner's act on that key, handed over), or by the engine, which writes the
+    /// Whether the row is the owner's: set by the owner, or by the engine, which writes the
     /// owner's answer or its own path's choice. A holder or a subject asks before it replaces
-    /// any of them, and a holder's value stays inside them.
+    /// either, and a holder's value stays inside either.
     pub(super) const fn by_owner(&self) -> bool {
-        matches!(
-            self.setter,
-            Setter::Owner | Setter::KeyGrant { .. } | Setter::Engine { .. }
-        )
+        matches!(self.setter, Setter::Owner | Setter::Engine { .. })
     }
 }
 
