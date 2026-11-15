@@ -4,8 +4,10 @@
 //! nearest hard cap's generation; and of the caps the open roots hold, for
 //! the owner's confirm sheet before he lets an agent pay.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::attempt_queue::AttemptId;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 
 use super::super::AgentDispatcher;
@@ -150,32 +152,84 @@ impl AgentDispatcher<'_> {
         Ok(current)
     }
 
-    /// The hard caps the open root scopes hold in `txn`, by unit name in name order: the largest
-    /// root cap of that unit and how many open roots name it. Every root opens hard, one per
-    /// launch; an unmetered attempt has no scope. Empty: no root is open.
+    /// The hard caps the open roots in reach hold in `txn`, by unit name in name order: the
+    /// largest root cap of that unit and how many open roots name it. `None`: every open root.
+    /// `Some(agent)`: only the roots over that agent's open attempts, each attempt scope walked up
+    /// its parents (RESTRICTION-WAVE-11-CAP-SCOPE = B). Every root opens hard, one per launch;
+    /// an unmetered attempt has no scope. Empty: no open root in reach.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and a scope row that does not read.
     pub(crate) fn open_root_caps_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
+        agent: Option<EntityId>,
     ) -> Result<BTreeMap<String, (u64, usize)>> {
+        let scopes = SCOPE
+            .iter_from(&self.vault.store, txn, &[])?
+            .map(|row| row.map(|(_, scope)| (scope.scope.clone(), scope)))
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        let mut roots = BTreeSet::new();
+        for scope in scopes.values() {
+            let in_reach = match agent {
+                None => scope.parent.is_none(),
+                Some(agent) => {
+                    scope.state == SpendState::Open
+                        && self.is_attempt_scope_of_in_txn(txn, &scope.scope, agent)?
+                }
+            };
+            if in_reach && let Some(root) = root_of(&scopes, scope) {
+                roots.insert(root);
+            }
+        }
         let mut caps = BTreeMap::<String, (u64, usize)>::new();
-        for row in SCOPE.iter_from(&self.vault.store, txn, &[])? {
-            let (_, scope) = row?;
-            if scope.parent.is_some() || !scope.hard || scope.state != SpendState::Open {
+        for root in roots.iter().filter_map(|id| scopes.get(*id)) {
+            if !root.hard || root.state != SpendState::Open {
                 continue;
             }
-            let (largest, roots) = caps.entry(scope.unit.as_str().to_owned()).or_default();
-            *largest = (*largest).max(scope.cap_units);
-            *roots += 1;
+            let (largest, count) = caps.entry(root.unit.as_str().to_owned()).or_default();
+            *largest = (*largest).max(root.cap_units);
+            *count += 1;
         }
         Ok(caps)
     }
 
+    /// Whether `scope` is the spend scope of an attempt `agent` is the actor of.
+    fn is_attempt_scope_of_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        scope: &SpendScopeId,
+        agent: EntityId,
+    ) -> Result<bool> {
+        let Ok(entity) = EntityId::from_hex(scope.as_str()) else {
+            return Ok(false);
+        };
+        let Ok(attempt) = AttemptId::from_bytes(entity.as_bytes()) else {
+            return Ok(false);
+        };
+        crate::snapshot_read::is_attempt_actor_in_txn(
+            self.vault,
+            txn,
+            crate::WriteActor::new(agent, crate::EdgeActorClass::Agent),
+            attempt,
+        )
+    }
+
     /// The confirm sheet's line on the spend cap in force, for a payment loosening
-    /// (RESTRICTION-WAVE-11-CAP-NOTE): each unit's open root cap ("spend cap in force: 5000
-    /// tokens"; with several roots, the largest and their count), or `NO_CAP_LINE` when no root
-    /// is open.
-    pub(crate) fn spend_cap_in_force_line_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<String> {
-        let caps = self.open_root_caps_in_txn(txn)?;
+    /// (RESTRICTION-WAVE-11-CAP-NOTE): each unit's open root cap in reach ("spend cap in force:
+    /// 5000 tokens"; with several roots, the largest and their count), or `NO_CAP_LINE` when no
+    /// open root is in reach. `agent` as [`Self::open_root_caps_in_txn`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open_root_caps_in_txn`].
+    pub(crate) fn spend_cap_in_force_line_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: Option<EntityId>,
+    ) -> Result<String> {
+        let caps = self.open_root_caps_in_txn(txn, agent)?;
         if caps.is_empty() {
             return Ok(NO_CAP_LINE.to_owned());
         }
@@ -204,4 +258,19 @@ fn closed_boundary_refusal(boundaries: &[SpendScope], units: u64) -> Option<Spen
             available_units: boundary.boundary_available(),
             asked_units: units,
         })
+}
+
+/// The root `scope`'s parents lead to; `None` when a parent row is missing or the walk loops.
+fn root_of<'a>(
+    scopes: &'a BTreeMap<SpendScopeId, SpendScope>,
+    scope: &'a SpendScope,
+) -> Option<&'a SpendScopeId> {
+    let mut current = scope;
+    for _ in 0..=scopes.len() {
+        match &current.parent {
+            None => return Some(&current.scope),
+            Some(parent) => current = scopes.get(parent)?,
+        }
+    }
+    None
 }
