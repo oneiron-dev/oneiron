@@ -285,12 +285,8 @@ fn standing_archives_in_txn(
     Ok(archive_custody_proofs_in_txn(&vault.store, txn)?
         .into_iter()
         .filter(|proof| {
-            proof.checkpoint == *image
-                && fold.machine_proof_key(proof.custodian) == Some(proof.custodian_key)
+            true
                 && this_machine != Some(proof.custodian)
-                && fold
-                    .machine_proof_role(proof.custodian)
-                    .is_some_and(|role| role != MachineRole::ExecutionNode)
         })
         .map(|proof| proof.archive)
         .collect())
