@@ -465,3 +465,24 @@ pub(super) fn send_with_run(
     }
     posted
 }
+
+/// Sends `texts` through the paid door of a third-party remote rung on
+/// `background`, its rows written to `receipts`, `post` standing in for the
+/// request. For `test_doors::embedding_line`.
+#[cfg(oneiron_test_support)]
+pub(super) fn send_on_line(
+    background: &Arc<BackgroundLine>,
+    receipts: Arc<dyn RunReceiptSink>,
+    texts: &[&str],
+    post: &mut dyn FnMut() -> oneiron::Result<Vec<Vec<f32>>>,
+) -> oneiron::Result<Vec<Vec<f32>>> {
+    let section = EndpointEmbedderConfig {
+        endpoint: Some("https://embeddings.example.test/v1".to_owned()),
+        model_key: Some("embedding-model".to_owned()),
+        api_key_env: Some("EMBEDDING_API_KEY".to_owned()),
+        ..EndpointEmbedderConfig::default()
+    };
+    AdmittedRequests::unmetered(&section, EmbedderLocality::ThirdParty, receipts)?
+        .on_background(background)
+        .send(texts, post)
+}

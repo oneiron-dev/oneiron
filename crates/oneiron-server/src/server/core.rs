@@ -241,6 +241,8 @@ pub struct SyncServer {
     pub(crate) gpu_pool: std::sync::OnceLock<crate::runtime::GpuPool>,
     /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
     pub(crate) llm: Option<crate::models::RawInference>,
+    /// RED SCRATCH: the host's line, stored and never used.
+    pub(crate) embedding_line: Option<oneiron::BudgetGuard>,
     /// The house model's decision read the owner probes at
     /// `/v1/llm/decision_read`, and the meter its reads are admitted on;
     /// `None` turns the route off.
@@ -358,8 +360,8 @@ const _: fn(&SyncServer) = |server| {
         seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
-        trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
-        decision_reads, decisions, hook_runtime,
+        trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, embedding_line,
+        decision_read, decision_reads, decisions, hook_runtime,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,
@@ -503,6 +505,14 @@ impl SyncServer {
         budget: oneiron::BudgetGuard,
     ) -> Self {
         self.llm = Some(crate::models::RawInference::injected(backend, budget));
+        self
+    }
+
+    /// RED SCRATCH: stores the host's line and pushes it nowhere, as #7653's
+    /// head pays every request from the vault's background line.
+    #[must_use]
+    pub fn with_embedding_line(mut self, line: oneiron::BudgetGuard) -> Self {
+        self.embedding_line = Some(line);
         self
     }
 

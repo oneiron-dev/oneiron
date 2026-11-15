@@ -306,6 +306,19 @@ impl EmbedderSlot {
         self.background.bind(vault)
     }
 
+    /// Sends `texts` through the paid door of a third-party remote rung on
+    /// the slot's line, `post` standing in for the request. For
+    /// `test_doors::embedding_line`.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn send_as_remote_rung(
+        &self,
+        receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+        texts: &[&str],
+        post: &mut dyn FnMut() -> oneiron::Result<Vec<Vec<f32>>>,
+    ) -> oneiron::Result<Vec<Vec<f32>>> {
+        admitted::send_on_line(&self.background, receipts, texts, post)
+    }
+
     pub(crate) fn provider(&self) -> EmbedderProvider {
         self.config.provider
     }
