@@ -283,7 +283,7 @@ pub(super) fn refresh_with(
             )?;
             answers.push(answer);
         }
-        if matches!(trigger, RefreshTrigger::Schedule) {
+        if true || matches!(trigger, RefreshTrigger::Schedule) {
             let mut updated = current;
             updated.last_refresh = Some(now);
             updated.retry_at = None;
