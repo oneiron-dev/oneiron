@@ -6,8 +6,10 @@
 //! (`vault.seal.receipt_as`, `.pending_as`, `.audit_as`). Each takes the
 //! agent's own live Grant listing the verb, and each answer holds only what
 //! the agent's read lane admits: a trace whose producers recorded no complete
-//! read set stays the owner's (FIX 10093). With the key off (the default) the
-//! agent is refused, and the owner's own doors answer as before.
+//! read set stays the owner's (FIX 10093), and so does one with a row the
+//! lane withholds (here a Grant whose kind bands leave out the row's type).
+//! With the key off (the default) the agent is refused, and the owner's own
+//! doors answer as before.
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test agent_delegated_owner_reads`.
 #![cfg(oneiron_test_support)]
 
@@ -30,8 +32,8 @@ use oneiron::failure_ladder::{
 };
 use oneiron::federation::{Scope, ScopeId};
 use oneiron::learning::TypeRef;
-use oneiron::memory::{Memory, MemoryError};
-use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError};
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use oneiron::self_heal::audit::doors::{
     SealAttemptRequest, SealPendingRequest, confess_as_owner, pending_sourced_as_owner,
     receipt_as_owner,
@@ -118,9 +120,23 @@ fn agent_memory(fixture: &Fixture, agent: EntityId) -> Memory<'_> {
 /// `name`'s agent definition with an owner Grant of base reach, listing the
 /// full-access tier's verbs and `extra`.
 fn granted_agent(fixture: &Fixture, name: &str, extra: &[&str]) -> EntityId {
+    granted_agent_in_bands(fixture, name, extra, None)
+}
+
+/// [`granted_agent`], whose Grant reaches only the row kinds `bands` when
+/// they are given: every row of another kind is withheld from its lane.
+fn granted_agent_in_bands(
+    fixture: &Fixture,
+    name: &str,
+    extra: &[&str],
+    bands: Option<&[u8]>,
+) -> EntityId {
     let agent = define_agent(&fixture.vault, name).expect("agent");
     let mut authority_scope = Scope::top();
     authority_scope.worlds = [ScopeId(base_world_id())].into_iter().collect();
+    if let Some(bands) = bands {
+        authority_scope.bands = bands.iter().copied().collect();
+    }
     authority_scope.verbs = AgentTier::FullAccess
         .grant_verbs()
         .iter()
@@ -391,6 +407,38 @@ fn a_failure_whose_read_set_is_unknown_stays_the_owners() {
     assert_eq!(owner_attempt, attempt_hex(attempt), "the owner drills");
 }
 
+/// The failed agent's definition is the failure's subject: a reviewer whose
+/// Grant reaches every row kind of this trace but agent definitions drills
+/// nothing (not found), while a reviewer of full reach drills the same
+/// failure (Muse Wonder blind review of #8766, F1, 16 Nov).
+#[test]
+fn a_failure_whose_agent_definition_the_lane_withholds_stays_the_owners() {
+    let fixture = rooted_vault();
+    let attempt = failed_custom_run(&fixture, true);
+    let full = granted_agent(&fixture, "delegated-drill-reviewer", &[DRILL_AS]);
+    let narrow = granted_agent_in_bands(
+        &fixture,
+        "no-definitions-drill-reviewer",
+        &[DRILL_AS],
+        Some([ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN, ENTITY_TYPE_TASK].as_slice()),
+    );
+    owner_turns_on(&fixture, DRILL_KEY, None);
+
+    assert_drill_answers(&fixture, full, attempt);
+    let refused = invoke(
+        &agent_memory(&fixture, narrow),
+        DRILL_AS,
+        drill_request(attempt),
+    )
+    .expect_err("a reviewer whose lane withholds the failed agent's definition drills nothing");
+    assert_eq!(
+        refused.code, MEMORY_CODE_NOT_FOUND,
+        "a withheld trace reads as no member: {refused:?}"
+    );
+    let (owner_attempt, _, _) = owner_drill(&fixture, attempt);
+    assert_eq!(owner_attempt, attempt_hex(attempt), "the owner drills");
+}
+
 /// A sealed try of `worker`'s: a TASK the owner addressed to it, accepted on
 /// a leased and stamped run, reported DONE with a durable result, confessed
 /// with one uncertain objective (so a directed recheck waits). With
@@ -588,4 +636,53 @@ fn a_seal_whose_read_set_is_unknown_stays_the_owners() {
         "the agent's refused audit drew nothing"
     );
     owner_pending(&fixture, attempt);
+}
+
+/// A reviewer whose Grant reaches claims alone cannot read the rows the seal
+/// was derived from (the worker's definition, its TASK, the result TURN): it
+/// reads no receipt, no pending check, and its audit draws nothing, while
+/// the worker of full reach reads the same seal (Muse Wonder blind review of
+/// #8766, 16 Nov: a withheld row in front of each door).
+#[test]
+fn a_seal_whose_rows_the_lane_withholds_stays_the_owners() {
+    let fixture = rooted_vault();
+    let worker = granted_agent(&fixture, "delegated-seal-reader", SEAL_VERBS);
+    let narrow = granted_agent_in_bands(
+        &fixture,
+        "claims-only-seal-reader",
+        SEAL_VERBS,
+        Some([ENTITY_TYPE_CLAIM].as_slice()),
+    );
+    let (attempt, rows) = sealed_try(&fixture, worker, true);
+    owner_turns_on(&fixture, SEAL_KEY, None);
+    let before = owner_receipt(&fixture, attempt);
+    let request = json!({ "attempt": attempt });
+
+    let read = invoke(&agent_memory(&fixture, worker), RECEIPT_AS, request.clone())
+        .unwrap_or_else(|error| panic!("the full-reach worker reads the receipt: {error:?}"));
+    assert_eq!(read, before, "{}", lane_view(&fixture, worker, &rows));
+
+    let me = agent_memory(&fixture, narrow);
+    let receipt = invoke(&me, RECEIPT_AS, request.clone())
+        .unwrap_or_else(|error| panic!("a withheld seal reads as none: {error:?}"));
+    assert_eq!(
+        receipt,
+        Value::Null,
+        "a withheld seal reads as none; {}",
+        lane_view(&fixture, narrow, &rows)
+    );
+    let pending = invoke(&me, PENDING_AS, request.clone())
+        .unwrap_or_else(|error| panic!("a withheld seal's checks are left out: {error:?}"));
+    assert_eq!(pending, json!([]), "a withheld seal's checks are left out");
+    let refused =
+        invoke(&me, AUDIT_AS, request).expect_err("a withheld seal is not drawn for the agent");
+    assert_eq!(
+        refused.code, MEMORY_CODE_NOT_FOUND,
+        "a withheld seal reads as no seal: {refused:?}"
+    );
+    assert_eq!(
+        owner_receipt(&fixture, attempt),
+        before,
+        "the refused audit drew nothing"
+    );
 }
