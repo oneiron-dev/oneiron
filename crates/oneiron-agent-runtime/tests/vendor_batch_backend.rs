@@ -15,8 +15,8 @@ use std::io::{Cursor, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use oneiron::code_sandbox::{
-    SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable, SandboxProposalKind,
-    SandboxProposalWrite, SandboxVendor,
+    SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable, SandboxProposalBody,
+    SandboxProposalKind, SandboxProposalWrite, SandboxVendor,
 };
 use oneiron::engine_executor::{JsCodeModeStream, StepCancellation};
 use oneiron::{ErrorKind, Result};
@@ -85,14 +85,17 @@ impl VendorSandboxClient for ScriptedVendor {
         &self,
         sandbox: &VendorSandboxId,
         path: &str,
-        body: &mut dyn Read,
-        len: u64,
+        body: &SandboxProposalBody,
         _bound: VendorCallBound<'_>,
     ) -> Result<()> {
         assert_eq!(sandbox.as_str(), "sandbox-1");
         let mut bytes = Vec::new();
-        body.read_to_end(&mut bytes)?;
-        assert_eq!(bytes.len() as u64, len, "the upload is the whole opening");
+        body.reader().read_to_end(&mut bytes)?;
+        assert_eq!(
+            bytes.len() as u64,
+            body.len(),
+            "the upload is the whole opening"
+        );
         self.calls
             .lock()
             .unwrap()
