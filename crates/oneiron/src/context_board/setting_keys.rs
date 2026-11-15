@@ -116,9 +116,11 @@ pub fn fold_attention_rows(vault: &Vault) -> usize {
 /// reads 0. A store that cannot open a read shows the default, since the board's other reads
 /// report that failure themselves.
 pub(crate) fn read_count(vault: &Vault, key: &Setting<u32>) -> u32 {
+    // RED SEAM (wave 18): every key reads its default, so each cap stays fixed as on main.
     let read = || -> Result<u32> {
         let txn = vault.store.env.read_txn()?;
         Ok(key.read_in_txn(vault, &txn, &[], None)?.value)
     };
-    read().unwrap_or_else(|_| key.kind.default_typed())
+    let _ = read;
+    key.kind.default_typed()
 }
