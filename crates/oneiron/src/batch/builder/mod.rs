@@ -274,38 +274,56 @@ fn relabel_handed_on_skill_births_in_ops(
 ) -> crate::error::Result<()> {
     // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     for op in ops {
-        let BatchOp::Put {
-            id,
-            entity_type,
-            data,
-            allow_maintenance,
-            allow_reserved_predicate,
-            hub_sync_imported,
-            ..
-        } = op
-        else {
-            continue;
-        };
-        if *entity_type != crate::registry::ENTITY_TYPE_SKILL
-            || (*allow_maintenance && *allow_reserved_predicate)
-            || *hub_sync_imported
-        {
-            continue;
-        }
-        let Ok(mut record) = crate::write_envelope::skill_record::decode_skill_record(data) else {
-            continue;
-        };
-        if record.lifecycle_status != crate::write_envelope::skill_record::SkillLifecycle::Candidate
-        {
-            continue;
-        }
-        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some() {
-            continue;
-        }
-        record.source = crate::claim::ClaimSource::Generated;
-        record.generated = true;
-        record.human_authored = false;
-        *data = crate::write_envelope::skill_record::encode_skill_record(&record)?;
+        relabel_handed_on_skill_birth(store, txn, op)?;
     }
+    Ok(())
+}
+
+/// Relabels `op` when it is a put that births a fresh Candidate SKILL (no row
+/// under its id in `txn`, not a maintenance or hub-synced put): a handed-on
+/// Human credential's SKILL is Generated, never the person's own. Every other
+/// op stays as it is. The batch path and an off-record session's raw put share
+/// it.
+///
+/// # Errors
+///
+/// A storage read that fails, or a relabelled record that does not encode.
+pub(crate) fn relabel_handed_on_skill_birth(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    op: &mut BatchOp,
+) -> crate::error::Result<()> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let BatchOp::Put {
+        id,
+        entity_type,
+        data,
+        allow_maintenance,
+        allow_reserved_predicate,
+        hub_sync_imported,
+        ..
+    } = op
+    else {
+        return Ok(());
+    };
+    if *entity_type != crate::registry::ENTITY_TYPE_SKILL
+        || (*allow_maintenance && *allow_reserved_predicate)
+        || *hub_sync_imported
+    {
+        return Ok(());
+    }
+    let Ok(mut record) = crate::write_envelope::skill_record::decode_skill_record(data) else {
+        return Ok(());
+    };
+    if record.lifecycle_status != crate::write_envelope::skill_record::SkillLifecycle::Candidate {
+        return Ok(());
+    }
+    if crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some() {
+        return Ok(());
+    }
+    record.source = crate::claim::ClaimSource::Generated;
+    record.generated = true;
+    record.human_authored = false;
+    *data = crate::write_envelope::skill_record::encode_skill_record(&record)?;
     Ok(())
 }

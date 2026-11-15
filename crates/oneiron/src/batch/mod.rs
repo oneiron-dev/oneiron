@@ -80,6 +80,7 @@ pub(crate) use self::base_apply::{
     setup_birth_stamp_target,
 };
 pub(crate) use self::builder::BatchOp;
+pub(crate) use self::builder::relabel_handed_on_skill_birth;
 pub(crate) use self::claim_materialization::{
     ClaimMaterialization, SuccessionWriter, apply_owner_bound_claim_puts,
     apply_owner_bound_claim_puts_with_transitions, authenticated_claim_author_in_txn,

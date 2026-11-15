@@ -119,6 +119,7 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
     ) -> Result<Vec<u8>> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         // No count bounds the edit: every operation lands as one (FIX 9845).
         if edits.is_empty() {
             return Err(invalid("metadata edit requires an operation"));
@@ -162,7 +163,7 @@ impl Vault {
                     }
                 }
             }
-            super::document::stamp(&doc.doc, stamp, at, "metadata")?;
+            super::document::stamp(&doc.doc, stamp, actor, at, "metadata")?;
             storage::persist(self, txn, entity, &mut head, &doc, Some(&before))?;
             Ok(doc.frontier())
         })?;

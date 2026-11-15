@@ -275,10 +275,12 @@ impl EntityDoc {
     pub fn edit_as(
         &mut self,
         stamp: ActorStamp,
+        actor: WriteActor,
         at: u64,
         edit: impl FnOnce(&LoroText) -> Result<()>,
     ) -> Result<()> {
-        self.edit_with(stamp, at, &[], edit)
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.edit_with(stamp, actor, at, &[], edit)
     }
 
     /// [`Self::edit_as`], its receipt naming `sources`, the rows its writer
@@ -286,12 +288,14 @@ impl EntityDoc {
     pub(super) fn edit_with(
         &mut self,
         stamp: ActorStamp,
+        actor: WriteActor,
         at: u64,
         sources: &[EntityId],
         edit: impl FnOnce(&LoroText) -> Result<()>,
     ) -> Result<()> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let result = edit(&self.doc.get_text(BODY));
-        stamp_with(&self.doc, stamp, at, "edit", sources)?;
+        stamp_with(&self.doc, stamp, actor, at, "edit", sources)?;
         result
     }
 
@@ -382,21 +386,30 @@ enum BirthCommit<'a> {
 
 /// Commits `doc`'s pending operations under the engine stamp naming the
 /// writer's token `stamp` (FIX 10930), through the operation `verb`.
-pub(super) fn stamp(doc: &LoroDoc, stamp: ActorStamp, at: u64, verb: &str) -> Result<()> {
-    stamp_with(doc, stamp, at, verb, &[])
+pub(super) fn stamp(
+    doc: &LoroDoc,
+    stamp: ActorStamp,
+    actor: WriteActor,
+    at: u64,
+    verb: &str,
+) -> Result<()> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    stamp_with(doc, stamp, actor, at, verb, &[])
 }
 
 /// [`stamp`], its receipt naming `sources`, the rows its writer read for it.
 pub(super) fn stamp_with(
     doc: &LoroDoc,
     stamp: ActorStamp,
+    actor: WriteActor,
     at: u64,
     verb: &str,
     sources: &[EntityId],
 ) -> Result<()> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let stamped = stamp_head(doc, stamp, verb);
     // The commit carries its made_by receipt (FIX 7790).
-    let message = super::commit_receipts::receipted(&stamped, stamp, at, verb, sources)?;
+    let message = super::commit_receipts::receipted(&stamped, stamp, actor, at, verb, sources)?;
     commit_at(doc, &message, at)
 }
 
@@ -419,7 +432,7 @@ fn stamp_birth(
             && (made_by.process.class != MadeByClass::Stated || actor.acts_as_own_person())
     };
     let Some(made_by) = born.filter(names_this_birth) else {
-        return stamp_with(doc, stamp, at, "birth", &[]);
+        return stamp_with(doc, stamp, actor, at, "birth", &[]);
     };
     let mut made_by = made_by.clone();
     made_by.process.actor = stamp.token;

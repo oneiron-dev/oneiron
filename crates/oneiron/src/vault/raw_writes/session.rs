@@ -275,7 +275,18 @@ impl Memory<'_> {
                     }
                 }
             }
-            for entry in entries {
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let handed_on_human =
+                self.actor_class() == crate::EdgeActorClass::Human && !self.acts_as_own_person();
+            for mut entry in entries {
+                // The batch path's relabel, on the overlay's own copy (Astra F6 on #8562).
+                if handed_on_human {
+                    crate::batch::relabel_handed_on_skill_birth(
+                        &self.vault().store,
+                        wtxn,
+                        &mut entry.op,
+                    )?;
+                }
                 apply(wtxn, entry)?;
             }
             if let CoreWriteLane::Read(reader) = &lane

@@ -29,7 +29,12 @@ impl Memory<'_> {
         &self,
         input: &CoreBatchWriteInput,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
-        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let announcement = if self.acts_as_own_person() {
+            AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
+        } else {
+            AnnouncementAuthority::Writer
+        };
         let lane = self.core_write_lane()?;
         self.vault().write_core_batch_in_lane_as(
             input,
@@ -101,7 +106,12 @@ impl Memory<'_> {
         input: &ConversationTurnCreateInput,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let announcement = if self.acts_as_own_person() {
+            AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
+        } else {
+            AnnouncementAuthority::Writer
+        };
         self.vault()
             .write_core_conversation_turn(input, &lane, announcement)
     }
@@ -119,7 +129,12 @@ impl Memory<'_> {
         &self,
         input: &DagRecordAppendInput,
     ) -> MemoryResult<DagRecordAppendReceipt> {
-        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let announcement = if self.acts_as_own_person() {
+            AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
+        } else {
+            AnnouncementAuthority::Writer
+        };
         self.conversations_records_append_at(input, announcement)
     }
 

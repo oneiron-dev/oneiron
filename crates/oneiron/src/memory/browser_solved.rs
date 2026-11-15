@@ -43,11 +43,12 @@ impl Memory<'_> {
         )?))
     }
 
-    /// `scope`, marked when this handle presents a credential handed on to
+    /// `scope`, marked when this handle carries a credential handed on to
     /// another key, so the run's admission judges the key's holder, never
     /// the person it names (HANDED-ON-SLIP-PERSON).
     fn mark_scope_handed_on(&self, scope: SolvedRunScope) -> SolvedRunScope {
-        if self.presents_handed_on_credential() {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.carries_handed_on_credential() {
             scope.with_handed_on_credential()
         } else {
             scope

@@ -471,6 +471,7 @@ pub(super) fn open_proposal_in_txn(
     sources: &[EntityId],
     delta_receipt: Option<&str>,
 ) -> Result<(ProposalBundle, Vec<LandedProse>)> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     // No count bounds a proposal or its operations (FIX 9844): the whole
     // ordered set lands or retains in this one transaction.
     if requests.is_empty() {
@@ -510,7 +511,7 @@ pub(super) fn open_proposal_in_txn(
         if let Some(text) = &req.rewrite {
             let text = admitted_text_in_txn(vault, txn, req.entity, text, &lifted, &mut plan)?;
             let base = fork.text();
-            fork.edit_with(stamp, at, sources, |body| {
+            fork.edit_with(stamp, req.actor, at, sources, |body| {
                 body.delete(0, body.len_unicode())
                     .map_err(|_| invalid("fork rewrite delete"))?;
                 body.insert(0, &text.stored)

@@ -73,9 +73,11 @@ impl Memory<'_> {
     /// The embedded owner, when this handle binds that owner as a human in
     /// the process that holds the vault's writer lease.
     fn embedded_owner_actor(&self, verb: &str) -> MemoryResult<crate::EntityId> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let owner = crate::vault::embedded_owner_actor_id()?;
         if self.actor != owner
             || self.actor_class != EdgeActorClass::Human
+            || self.carries_handed_on_credential()
             || !self
                 .vault
                 .writer_lease()

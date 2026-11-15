@@ -16,6 +16,9 @@
 //! Commit 3's handle mark (Q'): a code run on a handed-on slip never asks itself (H2).
 //! Commit 3's handle mark (Q'): a base NOTE birth is never the person's (H86).
 //! Commit 3's handle mark (Q'): a code run on a handed-on slip still reads its vault (D5).
+//! Commit 5 (Astra on #8562): a marked handle with no proof takes no owner run control (F1),
+//! mints no embedded owner or native person proof (F2), keeps no platform announcement (F3),
+//! stamps no Stated text receipt (F4) and captures a marked solved-run scope (F5).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test handed_on_person_sweep`.
@@ -1226,5 +1229,381 @@ fn a_code_run_on_a_handed_on_owner_slip_still_reads_its_vault() {
             oneiron::code_run::SelfDispatchOutcome::InferenceDefaults(_)
         ),
         "the read lands: {outcome:?}"
+    );
+}
+
+/// Red (F2 embedded owner): the handed-on handle mints no owner proof.
+#[test]
+fn a_handed_on_owner_slip_never_mints_the_embedded_owner_proof() {
+    let f = Fixture::new();
+    let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
+        &f.vault, f.owner, true,
+    )
+    .expect("marked no-proof handle");
+
+    let refused = memory
+        .embedded_owner("vault.packs.remove")
+        .expect_err("a handed-on owner slip mints no embedded owner proof");
+
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused.message.contains("is the vault owner's"),
+        "the refusal names its reason: {}",
+        refused.message
+    );
+}
+
+/// Guard (F2 embedded owner): the owner's own slip still mints it.
+#[test]
+fn the_owners_own_slip_still_mints_the_embedded_owner_proof() {
+    let f = Fixture::new();
+    let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
+        &f.vault, f.owner, false,
+    )
+    .expect("unmarked no-proof handle");
+
+    memory
+        .embedded_owner("vault.packs.remove")
+        .expect("the owner's own slip mints the proof");
+}
+
+/// Red (F5 browser scope): the handed-on handle marks its solved-run scope.
+#[test]
+fn a_handed_on_owner_slip_never_captures_an_unmarked_solved_run_scope() {
+    let f = Fixture::new();
+    let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
+        &f.vault, f.owner, true,
+    )
+    .expect("marked no-proof handle");
+
+    let scope = memory.solved_run_scope().expect("solved-run scope builds");
+    let json = serde_json::to_value(&scope).expect("scope serializes");
+
+    assert_eq!(
+        json.get("handed_on_credential").and_then(|v| v.as_bool()),
+        Some(true),
+        "a handed-on scope is marked: {json}"
+    );
+}
+
+/// Guard (F5 browser scope): the owner's own slip still captures unmarked.
+#[test]
+fn the_owners_own_slip_still_captures_an_unmarked_solved_run_scope() {
+    let f = Fixture::new();
+    let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
+        &f.vault, f.owner, false,
+    )
+    .expect("unmarked no-proof handle");
+
+    let scope = memory.solved_run_scope().expect("solved-run scope builds");
+    let json = serde_json::to_value(&scope).expect("scope serializes");
+
+    assert_ne!(
+        json.get("handed_on_credential").and_then(|v| v.as_bool()),
+        Some(true),
+        "the owner's own scope stays unmarked: {json}"
+    );
+}
+
+/// Red (F1 run control): the handed-on handle takes no owner override on a branch with no TASK.
+#[test]
+fn a_handed_on_owner_slip_never_pauses_a_branch_without_a_task_as_owner() {
+    let f = Fixture::new();
+    let queue = oneiron::attempt_queue::AttemptQueue::new(&f.vault);
+    let outcome = queue
+        .enqueue(oneiron::attempt_queue::EnqueueAttempt {
+            kind: "sweep-f1".to_owned(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now: f.vault.now_recorded_at(),
+        })
+        .expect("enqueue branch");
+    let branch = match outcome {
+        oneiron::attempt_queue::EnqueueOutcome::Enqueued(record)
+        | oneiron::attempt_queue::EnqueueOutcome::Existing(record) => record.id,
+    };
+    let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
+        &f.vault, f.owner, true,
+    )
+    .expect("marked no-proof handle");
+
+    let refused = memory
+        .control_run(
+            branch,
+            oneiron::task_verb::run_control::RunControl::Pause,
+            None,
+        )
+        .expect_err("a handed-on owner slip takes no owner override");
+
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused
+            .message
+            .contains("only the vault owner pauses or resumes"),
+        "the refusal names its reason: {}",
+        refused.message
+    );
+}
+
+/// Guard (F1 run control): the owner's own slip still pauses it.
+#[test]
+fn the_owners_own_slip_still_pauses_a_branch_without_a_task_as_owner() {
+    let f = Fixture::new();
+    let queue = oneiron::attempt_queue::AttemptQueue::new(&f.vault);
+    let outcome = queue
+        .enqueue(oneiron::attempt_queue::EnqueueAttempt {
+            kind: "sweep-f1-guard".to_owned(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now: f.vault.now_recorded_at(),
+        })
+        .expect("enqueue branch");
+    let branch = match outcome {
+        oneiron::attempt_queue::EnqueueOutcome::Enqueued(record)
+        | oneiron::attempt_queue::EnqueueOutcome::Existing(record) => record.id,
+    };
+    let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
+        &f.vault, f.owner, false,
+    )
+    .expect("unmarked no-proof handle");
+
+    memory
+        .control_run(
+            branch,
+            oneiron::task_verb::run_control::RunControl::Pause,
+            None,
+        )
+        .expect("the owner's own slip pauses the branch");
+}
+
+/// Red (F4 entity-doc): a handed-on edit proposes no Stated receipt.
+#[test]
+fn a_handed_on_owner_slip_never_proposes_a_stated_entity_text_receipt() {
+    let f = Fixture::new();
+    let entity = EntityId::now();
+    f.vault
+        .put_entity(
+            &entity,
+            oneiron::registry::ENTITY_TYPE_ASSET,
+            at(),
+            LEARNED_AT,
+            b"seed text",
+        )
+        .expect("seed entity");
+    f.vault
+        .migrate_entity_text(
+            &entity,
+            &oneiron::entity_doc::TextField::Utf8Body,
+            WriteActor::new(f.owner, EdgeActorClass::Human),
+            &oneiron::entity_doc::DocAuthorization::Owner(&f.owner_proof(f.owner)),
+        )
+        .expect("migrate text");
+    let base = f
+        .vault
+        .entity_text_frontier(&entity)
+        .expect("base frontier");
+    let actor = WriteActor::new(f.owner, EdgeActorClass::Human).with_handed_on_credential();
+
+    let outcome = f
+        .vault
+        .update_entity_text(
+            &oneiron::entity_doc::TextUpdateRequest {
+                entity,
+                proposal: EntityId::now(),
+                base,
+                text: "seed text plus a handed edit".to_owned(),
+                actor,
+                timeout_ms: 5000,
+                at: f.vault.now_recorded_at(),
+            },
+            &oneiron::entity_doc::DocAuthorization::ProposeOnly,
+        )
+        .expect("propose update");
+    let oneiron::entity_doc::TextUpdateOutcome::ProposedFork { fork, .. } = outcome else {
+        panic!("a ProposeOnly update retains a fork: {outcome:?}");
+    };
+
+    let provenance = f
+        .vault
+        .entity_text_provenance(&fork)
+        .expect("fork provenance read")
+        .expect("the fork has provenance");
+
+    assert_eq!(
+        provenance.class,
+        oneiron::write_envelope::provenance::made_by::MadeByClass::Concluded,
+        "a handed-on edit never proposes Stated: {provenance:?}"
+    );
+}
+
+/// Guard (F4 entity-doc): the owner's own edit still proposes Stated.
+#[test]
+fn the_owners_own_slip_still_proposes_a_stated_entity_text_receipt() {
+    let f = Fixture::new();
+    let entity = EntityId::now();
+    f.vault
+        .put_entity(
+            &entity,
+            oneiron::registry::ENTITY_TYPE_ASSET,
+            at(),
+            LEARNED_AT,
+            b"seed text",
+        )
+        .expect("seed entity");
+    f.vault
+        .migrate_entity_text(
+            &entity,
+            &oneiron::entity_doc::TextField::Utf8Body,
+            WriteActor::new(f.owner, EdgeActorClass::Human),
+            &oneiron::entity_doc::DocAuthorization::Owner(&f.owner_proof(f.owner)),
+        )
+        .expect("migrate text");
+    let base = f
+        .vault
+        .entity_text_frontier(&entity)
+        .expect("base frontier");
+    let actor = WriteActor::new(f.owner, EdgeActorClass::Human);
+
+    let outcome = f
+        .vault
+        .update_entity_text(
+            &oneiron::entity_doc::TextUpdateRequest {
+                entity,
+                proposal: EntityId::now(),
+                base,
+                text: "seed text plus the owner's edit".to_owned(),
+                actor,
+                timeout_ms: 5000,
+                at: f.vault.now_recorded_at(),
+            },
+            &oneiron::entity_doc::DocAuthorization::ProposeOnly,
+        )
+        .expect("propose update");
+    let oneiron::entity_doc::TextUpdateOutcome::ProposedFork { fork, .. } = outcome else {
+        panic!("a ProposeOnly update retains a fork: {outcome:?}");
+    };
+
+    let provenance = f
+        .vault
+        .entity_text_provenance(&fork)
+        .expect("fork provenance read")
+        .expect("the fork has provenance");
+
+    assert_eq!(
+        provenance.class,
+        oneiron::write_envelope::provenance::made_by::MadeByClass::Stated,
+        "the owner's own edit still proposes Stated: {provenance:?}"
+    );
+}
+
+/// Red (F3 announcement): the handed-on handle's TURN loses its platform styling.
+#[test]
+fn a_handed_on_owner_slip_never_keeps_a_turns_platform_announcement() {
+    let f = Fixture::new();
+    let room = f.plain_room();
+    let slip = f.owner_slip(true);
+
+    let receipt = f
+        .owner_memory(&slip)
+        .conversations_turns_create(&oneiron::core_write::ConversationTurnCreateInput {
+            conversation: room.to_hex(),
+            id: None,
+            occurred_start: None,
+            occurred_end: None,
+            learned_at: None,
+            body: json!({
+                "message_type": "platform_announcement",
+                "text": "hello from a handed key",
+            }),
+            text: None,
+        })
+        .expect("the TURN lands");
+
+    assert!(
+        receipt.body.get("message_type").is_none(),
+        "a handed-on TURN keeps no platform selector: {}",
+        receipt.body
+    );
+}
+
+/// Guard (F3 announcement): the owner's own TURN still keeps it.
+#[test]
+fn the_owners_own_slip_still_keeps_a_turns_platform_announcement() {
+    let f = Fixture::new();
+    let room = f.plain_room();
+    let slip = f.owner_slip(false);
+
+    let receipt = f
+        .owner_memory(&slip)
+        .conversations_turns_create(&oneiron::core_write::ConversationTurnCreateInput {
+            conversation: room.to_hex(),
+            id: None,
+            occurred_start: None,
+            occurred_end: None,
+            learned_at: None,
+            body: json!({
+                "message_type": "platform_announcement",
+                "text": "hello from the owner",
+            }),
+            text: None,
+        })
+        .expect("the TURN lands");
+
+    assert_eq!(
+        receipt.body.get("message_type").and_then(|v| v.as_str()),
+        Some("platform_announcement"),
+        "the owner's own TURN keeps its selector: {}",
+        receipt.body
+    );
+}
+
+/// A check-in answer for `memory` on a handle no check-in names: the person
+/// gate answers first, so a refusal that names the person act is the gate's.
+fn check_in_answer_on_no_such_handle(memory: &oneiron::memory::Memory<'_>) -> String {
+    oneiron::verbs::check_in_answer(
+        memory,
+        oneiron::verbs::CheckInAnswerRequest {
+            handle: EntityId::now().to_hex(),
+            answer: oneiron::verbs::CheckInAnswerWord::Approve,
+            effect_digest: "0".repeat(64),
+        },
+    )
+    .expect_err("no check-in has this handle")
+    .message
+}
+
+/// Red (F2 native person proof): the handed-on handle answers no check-in as the person.
+#[test]
+fn a_handed_on_owner_slip_never_answers_a_check_in_as_the_person() {
+    let f = Fixture::new();
+    let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
+        &f.vault, f.owner, true,
+    )
+    .expect("marked no-proof handle");
+
+    let refused = check_in_answer_on_no_such_handle(&memory);
+
+    assert!(
+        refused.contains("is a live person's own act"),
+        "the person gate refuses a handed-on handle: {refused}"
+    );
+}
+
+/// Guard (F2 native person proof): the owner's own handle passes the person gate.
+#[test]
+fn the_owners_own_slip_still_answers_a_check_in_as_the_person() {
+    let f = Fixture::new();
+    let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
+        &f.vault, f.owner, false,
+    )
+    .expect("unmarked no-proof handle");
+
+    let refused = check_in_answer_on_no_such_handle(&memory);
+
+    assert!(
+        !refused.contains("is a live person's own act"),
+        "the owner's own handle passes the person gate to the missing check-in: {refused}"
     );
 }

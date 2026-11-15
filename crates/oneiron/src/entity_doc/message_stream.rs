@@ -186,6 +186,7 @@ pub(crate) fn append_message_stream_in_txn(
     actor: WriteActor,
     at: u64,
 ) -> Result<()> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     authorize_message_continuation_in_txn(vault, txn, entity, actor)?;
     if delta.is_empty() {
         return Ok(());
@@ -211,7 +212,7 @@ pub(crate) fn append_message_stream_in_txn(
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
     // The continuation's commit names the actor's stamp token (FIX 10930).
     let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
-    doc.edit_as(stamp, at, |body| {
+    doc.edit_as(stamp, actor, at, |body| {
         body.insert(body.len_unicode(), delta)
             .map_err(|_| invalid("message continuation insert"))
     })?;
