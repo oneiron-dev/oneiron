@@ -4,7 +4,7 @@
   "input": "SkillOptimizeTradeoffResolveRequest",
   "output": "crate::task_verb::sdk::SkillOptimizeResultView",
   "call": "crate::task_verb::sdk::skill_optimize_tradeoff_resolve_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks.resolve\")?, &input)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "lists": true,
   "scope": "Write",

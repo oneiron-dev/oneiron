@@ -4,7 +4,7 @@
   "input": "crate::llm::catalog_doors::ModelTrialArmRef",
   "output": "crate::llm::catalog_doors::ModelTrialView",
   "call": "memory.vault().resend_model_trial_arm_as_owner(&memory.embedded_owner(\"vault.models.trials.resend_arm\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "lists": true,
   "scope": "Write",

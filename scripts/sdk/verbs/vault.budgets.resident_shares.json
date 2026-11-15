@@ -4,7 +4,7 @@
   "input": "crate::llm::run_admission::resident_doors::ResidentSharesRequest",
   "output": "crate::llm::run_admission::resident_doors::ResidentSharesView",
   "call": "crate::llm::run_admission::resident_doors::resident_shares_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.resident_shares\")?, &input).map_err(crate::memory::MemoryError::from)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "lists": true,
   "scope": "Read",

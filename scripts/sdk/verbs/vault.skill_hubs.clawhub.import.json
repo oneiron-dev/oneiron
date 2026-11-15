@@ -4,7 +4,7 @@
   "input": "crate::skill_hub::ClawHubImportRequest",
   "output": "crate::skill_hub::ClawHubImportReply",
   "call": "crate::task_verb::sdk::skill_hub_clawhub_import_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.clawhub.import\")?, &input)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "lists": true,
   "scope": "Write",

@@ -4,7 +4,7 @@
   "input": "ClawHubSearchRequest",
   "output": "crate::skill_hub::ClawHubSearchReply",
   "call": "crate::task_verb::sdk::skill_hub_clawhub_search_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.clawhub.search\")?, &input)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "lists": true,
   "scope": "Read",

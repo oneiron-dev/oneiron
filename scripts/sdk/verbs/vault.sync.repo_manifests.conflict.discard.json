@@ -4,7 +4,7 @@
   "input": "crate::task_verb::sdk::RepoManifestConflictDiscardRequest",
   "output": "crate::task_verb::sdk::RepoManifestConflictDiscardView",
   "call": "crate::task_verb::sdk::repo_manifest_conflict_discard_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.repo_manifests.conflict.discard\")?, input)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "lists": true,
   "rust_feature": "sync",

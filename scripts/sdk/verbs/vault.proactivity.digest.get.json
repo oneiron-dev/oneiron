@@ -4,7 +4,7 @@
   "input": "crate::dreamer_runner::maintenance::digest::DigestReadRequest",
   "output": "Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.proactivity.digest.get\", &input)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "lists": true,
   "scope": "Read",

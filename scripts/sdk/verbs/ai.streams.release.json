@@ -4,7 +4,7 @@
   "input": "crate::llm::model_stream::ModelStreamRelease",
   "output": "crate::llm::model_stream::ModelStreamReleased",
   "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.release\", &input)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "openapi": true,
   "scope": "Write",

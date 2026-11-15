@@ -4,7 +4,7 @@
   "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRequest",
   "output": "crate::task_verb::sdk::ConnectorWitnessReadGranted",
   "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, crate::authority::ActSurface::ThisInstall, input)?",
-  "proof": "in_door",
+  "proof": "owner",
   "door": "hand",
   "lists": true,
   "host_door_surface": true,
