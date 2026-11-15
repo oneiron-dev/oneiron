@@ -51,6 +51,11 @@ pub enum HousekeepingSweep {
     /// 1186b): a read notes the body, this sweep streams it once and
     /// publishes the derived sidecar.
     BodyLineIndexRebuild,
+    /// Indexes every document's text again after an analyzer or BM25F
+    /// field-schema change cleared the text index at open (FIX
+    /// ANALYZER-BUMP-AUTO-REINDEX), one page per transaction from the
+    /// rebuild's cursor.
+    TextIndexRebuild,
     /// Moves anchored comments with their artifact's live DOCX or XLSX body
     /// (FIX 2460), off every edit's and export's answer: stamps a body anchor
     /// on a thread on a version the body holds, lands it on the newest export
@@ -132,7 +137,7 @@ pub const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -148,6 +153,7 @@ impl HousekeepingSweep {
         Self::ClaimVadDebt,
         Self::FoundKeyNotices,
         Self::BodyLineIndexRebuild,
+        Self::TextIndexRebuild,
         Self::AnnotationBodyAnchors,
         Self::DrafterCorpusSweep,
         Self::ModelPackRetirement,
@@ -178,6 +184,7 @@ impl HousekeepingSweep {
             Self::ClaimVadDebt => "claim_vad_debt",
             Self::FoundKeyNotices => "found_key_notices",
             Self::BodyLineIndexRebuild => "body_line_index_rebuild",
+            Self::TextIndexRebuild => "text_index_rebuild",
             Self::AnnotationBodyAnchors => "annotation_body_anchors",
             Self::DrafterCorpusSweep => "drafter_corpus_sweep",
             Self::ModelPackRetirement => "model_pack_retirement",
@@ -206,7 +213,10 @@ impl HousekeepingSweep {
     /// every fifteen minutes, behind the payment worker each write wakes
     /// (FIX 11702). The found-key drain looks for due notices every
     /// fifteen minutes. The line-index rebuild drain looks for queued bodies
-    /// every fifteen minutes. Comments follow their live body every minute
+    /// every fifteen minutes. The text-index rebuild runs at open, so a
+    /// rebuild a stopped process left goes on at once, and every fifteen
+    /// minutes; a run the deadline stops is due again on the next pass.
+    /// Comments follow their live body every minute
     /// and at open, so a stopped process leaves none behind. The drafter
     /// corpus sweep runs at open and daily, beside the night's own sweeps
     /// around its export, so a version superseded, rejected or erased
@@ -243,7 +253,7 @@ impl HousekeepingSweep {
             },
             Self::HardEraseSweep | Self::PprCacheEviction => engine(DAY),
             Self::SharedActMaturity => engine(HOUR),
-            Self::ClaimVadDebt => Runner::Engine {
+            Self::ClaimVadDebt | Self::TextIndexRebuild => Runner::Engine {
                 every: 15 * MINUTE,
                 at_open: true,
             },

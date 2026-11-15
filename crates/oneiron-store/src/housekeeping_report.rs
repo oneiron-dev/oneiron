@@ -150,6 +150,12 @@ pub enum SweepWork {
         /// Bodies dropped as already fixed, inline, or gone.
         dropped: u64,
     },
+    TextIndexRebuild {
+        /// Documents indexed again from their stored source text.
+        reindexed: u64,
+        /// Source rows whose entity is gone, left as they are.
+        skipped: u64,
+    },
     AnnotationBodyAnchors {
         /// Comment heads stamped, moved, landed on an export or detached.
         moved: u64,
@@ -244,6 +250,7 @@ impl SweepWork {
                 failed,
                 dropped,
             } => rebuilt == 0 && failed == 0 && dropped == 0,
+            Self::TextIndexRebuild { reindexed, skipped } => reindexed == 0 && skipped == 0,
             Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
             Self::DrafterCorpora { removed } => removed == 0,
             Self::ModelPackRetirement { notices, migrated } => notices == 0 && !migrated,

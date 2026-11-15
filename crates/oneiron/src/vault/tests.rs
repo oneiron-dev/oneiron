@@ -492,10 +492,11 @@ fn reopen_same_manifest_preserves_text_index() -> Result<()> {
 ///   populated vault. Expects `IncompatibleAnalyzer`.
 /// - `field_schema_hash_mismatch`:
 ///   `put(TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &[0xEE; 32])` simulates
-///   `Bm25Config` field schema flip. Expects `Bm25FieldSchemaChanged`.
+///   `Bm25Config` field schema flip. Expects the open to succeed with a
+///   text-index rebuild standing (FIX ANALYZER-BUMP-AUTO-REINDEX).
 /// - `analyzer_manifest_hash_mismatch`:
 ///   `put(TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 32])` simulates a
-///   dict mode flip. Expects `IncompatibleAnalyzer`.
+///   dict mode flip. Expects the same rebuild.
 /// - `truncated_stored_hash`:
 ///   `put(TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 16])` — half-length
 ///   payload should fail closed, not be silently rehashed. Expects
@@ -508,8 +509,9 @@ fn handshake_rejects_corrupted_manifest() -> Result<()> {
     }
     enum Expect {
         IncompatibleAnalyzer,
-        Bm25FieldSchemaChanged,
         CorruptedIndex,
+        /// The open succeeds, clears the index and leaves a rebuild.
+        Rebuild,
     }
 
     let cases: Vec<(&str, u8, Corrupt, Expect)> = vec![
@@ -523,13 +525,13 @@ fn handshake_rejects_corrupted_manifest() -> Result<()> {
             "field_schema_hash_mismatch",
             31,
             Corrupt::Put(TEXT_BM25_FIELD_SCHEMA_HASH_KEY, vec![0xEE; 32]),
-            Expect::Bm25FieldSchemaChanged,
+            Expect::Rebuild,
         ),
         (
             "analyzer_manifest_hash_mismatch",
             41,
             Corrupt::Put(TEXT_ANALYZER_MANIFEST_HASH_KEY, vec![0xCC; 32]),
-            Expect::IncompatibleAnalyzer,
+            Expect::Rebuild,
         ),
         (
             "truncated_stored_hash",
@@ -566,20 +568,27 @@ fn handshake_rejects_corrupted_manifest() -> Result<()> {
             wtxn.commit()?;
         }
 
-        let err = match Vault::open(tmp.path(), test_config()) {
-            Ok(_) => panic!("case {case_name}: expected Vault::open to fail"),
-            Err(e) => e,
-        };
-        let ok = match expect {
-            Expect::IncompatibleAnalyzer => {
+        let ok = match (expect, Vault::open(tmp.path(), test_config())) {
+            (Expect::Rebuild, Ok(vault)) => {
+                let marker = {
+                    let rtxn = vault.store.env.read_txn()?;
+                    crate::vault::text_index_rebuild::read_text_index_rebuild(&vault.store, &rtxn)?
+                };
+                marker.is_some()
+                    && vault
+                        .text_index_rebuilding
+                        .load(std::sync::atomic::Ordering::Acquire)
+            }
+            (Expect::Rebuild, Err(err)) => {
+                panic!("case {case_name}: expected a rebuild, got {err:?}")
+            }
+            (_, Ok(_)) => panic!("case {case_name}: expected Vault::open to fail"),
+            (Expect::IncompatibleAnalyzer, Err(err)) => {
                 matches!(err, Error::Store(StoreError::IncompatibleAnalyzer { .. }))
             }
-            Expect::Bm25FieldSchemaChanged => {
-                matches!(err, Error::Store(StoreError::Bm25FieldSchemaChanged))
-            }
-            Expect::CorruptedIndex => matches!(err, Error::CorruptedIndex(_)),
+            (Expect::CorruptedIndex, Err(err)) => matches!(err, Error::CorruptedIndex(_)),
         };
-        assert!(ok, "case {case_name}: unexpected error {err:?}");
+        assert!(ok, "case {case_name}: unexpected outcome");
     }
     Ok(())
 }

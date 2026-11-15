@@ -46,18 +46,20 @@ fn emoji_doc_round_trips_through_text_search() -> Result<()> {
 }
 
 /// ONE-1118 AC4: a populated text index stamped by the previous analyzer
-/// version must fail closed at `Vault::open` with `IncompatibleAnalyzer` —
-/// never silently reopen and score v3 queries against postings written by
-/// the emoji-dropping v2 tokenizer. The stored manifest is rewritten to be
-/// byte-identical to the current one except `analyzer_version: "v2"`, with
-/// a matching (self-consistent) hash, so ONLY the version bump trips the
-/// handshake.
+/// version must never be scored against: v3 queries never meet postings
+/// written by the emoji-dropping v2 tokenizer. Since FIX
+/// ANALYZER-BUMP-AUTO-REINDEX the open clears that index instead of failing
+/// closed, text reads fail closed until the rebuild pass ends, and the pass
+/// indexes the document again under the current analyzer. The stored
+/// manifest is rewritten to be byte-identical to the current one except
+/// `analyzer_version: "v2"`, with a matching (self-consistent) hash, so ONLY
+/// the version bump trips the handshake.
 #[test]
-fn populated_v2_analyzer_manifest_fails_closed_on_open() -> Result<()> {
+fn populated_v2_analyzer_manifest_is_rebuilt_on_open() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let path = temp.path();
 
-    {
+    let id = {
         let vault = Vault::open(path, test_config())?;
         let id = EntityId::now();
         vault
@@ -91,13 +93,28 @@ fn populated_v2_analyzer_manifest_fails_closed_on_open() -> Result<()> {
             &hash,
         )?;
         wtxn.commit()?;
-    }
+        id
+    };
 
-    let err = match Vault::open(path, test_config()) {
-        Ok(_) => panic!("v2-stamped populated index must fail closed on open"),
+    let vault = Vault::open(path, test_config())?;
+    assert_eq!(
+        vault.text_index_status()?.total_docs,
+        0,
+        "the open cleared every v2-indexed document"
+    );
+    let err = match vault.search_text("handshake", 10) {
+        Ok(_) => panic!("a text read must fail closed while the rebuild stands"),
         Err(err) => err,
     };
-    assert_eq!(err.kind(), ErrorKind::IncompatibleAnalyzer);
+    assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
+
+    let run = vault.run_text_index_rebuild(256, || false)?;
+    assert!(run.complete, "one run ends a small rebuild");
+    let hits = vault.search_text("handshake", 10)?;
+    assert!(
+        hits.iter().any(|hit| hit.id == id),
+        "the rebuilt index finds the document under the current analyzer"
+    );
     Ok(())
 }
 

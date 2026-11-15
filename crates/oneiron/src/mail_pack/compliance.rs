@@ -262,7 +262,7 @@ impl Memory<'_> {
                     "org compliance search is off, or the caller is not the vault's Owner or an Admin",
                 ));
             }
-            vault.ensure_text_index_trusted()?;
+            vault.ensure_text_index_searchable()?;
             let sources = super::inbox::sources_by_audience_in(vault, &txn)?;
             let config = crate::config::Bm25RankProfile::default()
                 .to_bm25_config()

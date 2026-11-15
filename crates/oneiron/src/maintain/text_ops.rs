@@ -1,10 +1,12 @@
 //! Text-index clear, PPR cleanup, and postings compaction.
 
 use crate::error::Result;
-use crate::ports::{EntityStoreRead, IndexRows, RetrievalIndexInventory};
+use crate::ports::EntityStoreRead;
 use crate::ppr;
 use crate::side_table::{self, Named, SideTable};
-use crate::vault::write_text_index_manifest;
+use crate::vault::text_index_rebuild::{
+    ClearedTextIndexRows, clear_text_index_rows_in_txn, end_text_index_rebuild_in_txn,
+};
 use crate::{EntityId, Vault};
 
 /// The text each document was indexed with, kept beside the index so it can
@@ -23,36 +25,20 @@ pub(super) struct ClearTextIndexCounts {
 
 /// Drops the text index and rewrites its manifest. With `reindex`, the same
 /// transaction indexes every live document again from the text it was
-/// indexed with, so the index is never seen half built.
+/// indexed with, so the index is never seen half built. Either way it ends a
+/// background rebuild an analyzer change started at open: the owner's repair
+/// supersedes it.
 pub(super) fn clear_text_index(vault: &Vault, reindex: bool) -> Result<ClearTextIndexCounts> {
     let mut wtxn = vault.store.env.write_txn()?;
 
-    let postings = vault
-        .store
-        .port_index_row_count(&wtxn, IndexRows::TextPostings)?;
-    vault.store.text_postings.clear(&mut wtxn)?;
-
-    let meta = vault
-        .store
-        .port_index_row_count(&wtxn, IndexRows::TextMeta)?;
-    vault.store.text_meta.clear(&mut wtxn)?;
-
-    let forward = vault
-        .store
-        .port_index_row_count(&wtxn, IndexRows::TextForward)?;
-    vault.store.text_forward.clear(&mut wtxn)?;
-
-    let doc_field_lengths = vault
-        .store
-        .port_index_row_count(&wtxn, IndexRows::TextDocFieldLengths)?;
-    vault.store.text_doc_field_lengths.clear(&mut wtxn)?;
-
-    let field_stats = vault
-        .store
-        .port_index_row_count(&wtxn, IndexRows::TextBm25FieldStats)?;
-    vault.store.text_bm25_field_stats.clear(&mut wtxn)?;
-
-    write_text_index_manifest(&vault.store, &mut wtxn, &vault.analyzer)?;
+    let ClearedTextIndexRows {
+        postings,
+        meta,
+        forward,
+        doc_field_lengths,
+        field_stats,
+    } = clear_text_index_rows_in_txn(&vault.store, &mut wtxn, &vault.analyzer)?;
+    end_text_index_rebuild_in_txn(&vault.store, &mut wtxn)?;
 
     let mut reindexed = 0;
     if reindex {
@@ -73,6 +59,9 @@ pub(super) fn clear_text_index(vault: &Vault, reindex: bool) -> Result<ClearText
     vault
         .text_index_trusted
         .store(true, std::sync::atomic::Ordering::Release);
+    vault
+        .text_index_rebuilding
+        .store(false, std::sync::atomic::Ordering::Release);
 
     Ok(ClearTextIndexCounts {
         postings,

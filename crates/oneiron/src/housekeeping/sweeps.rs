@@ -51,6 +51,11 @@ const PACED_VERB_EXPIRE_PER_PASS: usize = 256;
 /// the page stays small and the run stops between bodies at the deadline.
 const BODY_LINE_INDEX_REBUILD_PAGE: usize = 8;
 
+/// Documents one text-index rebuild transaction indexes again: the run stops
+/// between pages at the deadline, and a foreground write waits at most one
+/// page for the write lock.
+const TEXT_INDEX_REBUILD_PAGE: usize = 256;
+
 /// What one sweep run did.
 pub(super) struct Run {
     pub(super) work: SweepWork,
@@ -162,6 +167,19 @@ pub(super) fn run(
         }
         HousekeepingSweep::FoundKeyNotices => return found_key_notices(vault, deadline),
         HousekeepingSweep::BodyLineIndexRebuild => return body_line_index_rebuild(vault, deadline),
+        HousekeepingSweep::TextIndexRebuild => {
+            let run =
+                vault.run_text_index_rebuild(TEXT_INDEX_REBUILD_PAGE, || deadline.passed())?;
+            return Ok(Run {
+                work: SweepWork::TextIndexRebuild {
+                    reindexed: run.reindexed,
+                    skipped: run.skipped,
+                },
+                complete: run.complete,
+                cursor: None,
+                covered_until: None,
+            });
+        }
         HousekeepingSweep::AnnotationBodyAnchors => {
             let (moved, failed, cursor) =
                 vault.sweep_annotation_body_anchors(cursor, || deadline.passed())?;

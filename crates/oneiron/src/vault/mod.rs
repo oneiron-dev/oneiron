@@ -32,6 +32,7 @@ mod retrieval_trace_key;
 mod runtime_handle;
 mod search_retrieval;
 mod tagging_arm;
+pub(crate) mod text_index_rebuild;
 mod transactions;
 mod vector_evidence;
 
@@ -195,6 +196,13 @@ pub struct Vault {
     /// rewrites the manifest. Reopening cleanly also restores trust via
     /// the regular handshake path.
     pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
+    /// `true` while the text-index rebuild an analyzer change started stands
+    /// (`vault_meta["text_index_rebuild:v1"]`, see `text_index_rebuild`):
+    /// text writes go on, text reads fail closed with
+    /// `Error::CorruptedIndex` until the housekeeping pass ends it. Set at
+    /// open from the marker, and by each run of the pass from the marker it
+    /// reads.
+    pub(crate) text_index_rebuilding: std::sync::atomic::AtomicBool,
     /// The owed claim VAD count at which the write door's last drain tried
     /// debts and settled none, `0` when none stalled (FIX 11923): while the
     /// count stands, writes skip that drain.

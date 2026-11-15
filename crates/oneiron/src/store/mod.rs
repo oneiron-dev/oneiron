@@ -64,9 +64,13 @@
 //!    `vault_meta["text_analyzer_manifest"]` /
 //!    `vault_meta["text_analyzer_manifest_hash"]`, and
 //!    `vault_meta["text_bm25_field_schema_hash"]`. On a populated text index:
-//!    a per-language analyzer mode flip (or a pre-ONE-317 / corrupt manifest)
-//!    → [`IncompatibleAnalyzer`]; a diverged BM25F field schema →
-//!    [`Bm25FieldSchemaChanged`]. The
+//!    a changed analyzer manifest hash or BM25F field-schema hash clears the
+//!    index, stamps the current manifest and writes
+//!    `vault_meta["text_index_rebuild:v1"]` in one transaction; the
+//!    housekeeping sweep `TextIndexRebuild` indexes every document again from
+//!    its stored source text, and text reads fail closed until it ends (FIX
+//!    ANALYZER-BUMP-AUTO-REINDEX). A pre-ONE-317 or corrupt stamp (a missing
+//!    hash) → [`IncompatibleAnalyzer`]. The
 //!    [`VaultConfig::skip_text_index_manifest_check`] escape hatch sits HERE
 //!    and only here: it bypasses this analyzer gate so
 //!    `MaintenanceBuilder::clear_text_index` can run; on a populated index it

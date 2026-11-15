@@ -322,7 +322,7 @@ impl Vault {
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
-        self.ensure_text_index_trusted()?;
+        self.ensure_text_index_searchable()?;
         self.measure_limit(
             crate::limit_ask::EngineLimit::RecallQueryBytes,
             query.len() as u64,
