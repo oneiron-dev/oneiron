@@ -196,6 +196,7 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        after.refuse_waiting_choice(&entry_hash)?;
         if !after.checkpoint_policy.live.contains_key(&entry_hash)
             || after.install.held_back.contains(&entry_hash)
         {
