@@ -15,7 +15,12 @@
 //! binding (Astra review round 2, F3) that reached the install past the
 //! floor lands there too. A restriction it names keeps its floor: a machine
 //! mark that reached an install past the floor stays held there, though a
-//! handoff names it (Astra review F2). A row that its own ancestry already
+//! handoff names it (Astra review F2); a tip the install received before
+//! the floor moved still vouches for one in flight below it, as before; when
+//! a roster row's vouch clears the refused row that held such a tip back,
+//! the tip vouches too (Astra review round 3, F2), and the install folds as
+//! one that received every row in order. A
+//! row that its own ancestry already
 //! shows its signer past is still refused on every install (the control). A
 //! parent of another signer that this install's floor refuses still holds a
 //! roster row back (root FIX-LIST [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
@@ -24,13 +29,13 @@ use std::collections::BTreeSet;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFold,
-    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
-    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ROLE_ADMIN, ROLE_AGENT,
-    ROLE_OWNER, authority_entry_hash, authority_transcript, genesis_vault_id,
-    machine_profile_proof_transcript,
+    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityConfirmAction,
+    AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey,
+    AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, AuthorityVaultId,
+    DeviceAuthority, GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
+    MachineProfile, MachineRole, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER, authority_entry_hash,
+    authority_transcript, genesis_vault_id, machine_profile_proof_transcript,
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
@@ -573,5 +578,125 @@ fn a_row_below_its_signers_sequence_in_its_own_ancestry_stays_refused() {
         )),
         "the refusal names the backward row as non-monotonic; issues {:?}",
         install.fold.issues
+    );
+}
+
+/// A roster row's vouch lets a later tip vouch in turn (Astra review round
+/// 3, F2): the owner binds an actor (sequence 1), enrols agent W beside it
+/// (2), marks machine M "yours" on the binding (3), confirms on the mark (4)
+/// and enrols agent U on the confirmation (5); beside them all it enrols
+/// agent X (6). Install J receives W's enrolment, then the confirmation
+/// before its missing ancestors, then X's enrolment, so the binding, the
+/// mark and U's enrolment reach it past the owner's floor. U's enrolment
+/// vouches for the binding below it; the confirmation, which J received
+/// while the owner's mark was 2, then vouches for the mark between. J must
+/// hold the rows, the agents and the machine that install I, which received
+/// every row in order, holds.
+#[test]
+fn a_mark_below_a_vouched_binding_folds_as_on_the_in_order_install() {
+    let owner = SigningKey::from_bytes(&[221; 32]);
+    let beside_agent = SigningKey::from_bytes(&[222; 32]);
+    let upper_agent = SigningKey::from_bytes(&[223; 32]);
+    let later_agent = SigningKey::from_bytes(&[224; 32]);
+    let machine_key = SigningKey::from_bytes(&[225; 32]);
+    let machine = EntityId::now();
+    let (genesis, vault_id) = genesis(&owner, 226);
+    let binding = signed(
+        Some(vault_id),
+        1,
+        Some(&genesis),
+        AuthorityOp::BindActor {
+            authority_key: key_of(&owner),
+            actor_ref: EntityId::now(),
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        &owner,
+    );
+    let enrol_beside = enrolment(vault_id, &genesis, &owner, 2, &beside_agent);
+    let mark = signed(
+        Some(vault_id),
+        3,
+        Some(&binding),
+        yours_mark(vault_id, machine, &machine_key),
+        &owner,
+    );
+    let confirmation = signed(
+        Some(vault_id),
+        4,
+        Some(&mark),
+        AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+            kind: AuthorityConfirmKind::Accept,
+            confirm_id: [51; 32],
+            peer_vault_id: [77; 32],
+            epoch: 1,
+            nonce: [68; 16],
+        }),
+        &owner,
+    );
+    let enrol_upper = enrolment(vault_id, &confirmation, &owner, 5, &upper_agent);
+    let enrol_later = enrolment(vault_id, &genesis, &owner, 6, &later_agent);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &binding,
+        &enrol_beside,
+        &mark,
+        &confirmation,
+        &enrol_upper,
+        &enrol_later,
+    ]);
+    let late = install_receiving(&[
+        &genesis,
+        &enrol_beside,
+        &confirmation,
+        &enrol_later,
+        &binding,
+        &mark,
+        &enrol_upper,
+    ]);
+
+    let all = [
+        &genesis,
+        &binding,
+        &enrol_beside,
+        &mark,
+        &confirmation,
+        &enrol_upper,
+        &enrol_later,
+    ]
+    .into_iter()
+    .map(hash_of)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all seven rows; puts {:?}, issues {:?}",
+        in_order.puts,
+        in_order.fold.issues
+    );
+    for (name, install) in [("I (in order)", &in_order), ("J (late)", &late)] {
+        assert!(
+            is_live(&install.fold, &key_of(&upper_agent))
+                && is_live(&install.fold, &key_of(&beside_agent))
+                && is_live(&install.fold, &key_of(&later_agent)),
+            "install {name} holds the three agents; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            install.fold.trusted_machine(machine).is_some(),
+            "install {name} counts the machine as the owner's, as install I does; puts {:?}, \
+             issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    assert_eq!(
+        applied(&late.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        late.puts,
+        late.fold.issues
     );
 }
