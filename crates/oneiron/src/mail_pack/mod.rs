@@ -75,6 +75,7 @@ mod rest;
 #[cfg(oneiron_test_support)]
 pub(crate) use rest::GrantIssuer;
 mod search;
+pub(crate) mod setting_keys;
 mod share;
 mod smtp_client;
 #[doc(hidden)]
@@ -120,6 +121,8 @@ pub(crate) use mbox_import::mbox_landed_headers;
 pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
 pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR};
+#[cfg(oneiron_test_support)]
+pub(crate) use microsoft365_calendar::{graph_calendar_cursor_covers, graph_calendar_opening};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
@@ -129,6 +132,8 @@ pub use reply::{
 };
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
+#[cfg(oneiron_test_support)]
+pub(crate) use reply_recipients::reply_recipient_count;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};

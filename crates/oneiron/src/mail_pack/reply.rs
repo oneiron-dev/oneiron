@@ -609,11 +609,12 @@ impl Memory<'_> {
                 input.request_key.as_bytes(),
             ],
         )?;
-        let (source, row, messages, prior) = {
+        let (source, row, messages, prior, max_recipients) = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             let (source, row, messages) = thread_in(vault, &txn, actor, conversation)?;
             let prior = DRAFTS.get(&vault.store, &txn, &id)?;
-            (source, row, messages, prior)
+            let max_recipients = super::setting_keys::reply_max_recipients_in_txn(vault, &txn)?;
+            (source, row, messages, prior, max_recipients)
         };
         let route = reply_route(&row)?;
         // The mailbox's own person approves it, so they are asked.
@@ -637,7 +638,8 @@ impl Memory<'_> {
                 .into_iter()
                 .chain(row.own_addresses.iter().cloned())
                 .collect();
-        let recipients = reply_recipients(&parent, &own, input.reply_all, &input.cc)?;
+        let recipients =
+            reply_recipients(&parent, &own, input.reply_all, &input.cc, max_recipients)?;
         // The HTML as it would send, so a redraft of the same words is the
         // same revision (fix list row 17645).
         let html = input

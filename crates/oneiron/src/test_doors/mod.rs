@@ -64,6 +64,7 @@ pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod mail_counterparty;
 pub mod mail_landing;
+pub mod mail_pack_setting_keys;
 pub mod membership;
 pub mod meso_extraction_width;
 pub mod microsoft_token;
