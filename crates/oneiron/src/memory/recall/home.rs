@@ -15,16 +15,8 @@ use super::MemoryItem;
 use super::MemoryPack;
 use crate::Vault;
 
-/// Who answered a recall's [`RecallResidence`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RecallResidenceSource {
-    /// The home answered the query.
-    Home,
-    /// The home was not asked, was out of reach or refused: the pack holds
-    /// this device's own items alone.
-    LocalOnly,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::recall::home::{RecallResidenceHit, RecallResidenceSource};
 
 /// What an opened device's recall says of the windows it does not hold
 /// (FIX 2905). The pack's items are this device's own and stay as ranked;
@@ -53,19 +45,6 @@ pub struct RecallResidence {
     #[serde(skip)]
     #[schemars(skip)]
     selection: Option<crate::memory::resolved_recall_scope::ResolvedRecallSelection>,
-}
-
-/// One reference the home holds that the local pack does not.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RecallResidenceHit {
-    /// The entity's full id, 32 lowercase hex.
-    pub id: String,
-    /// The home's own score: it orders the home's hits, and is never
-    /// compared with a local item's.
-    pub score: f32,
-    /// The month window (`YYYY-MM`) that holds the hit; opening it opens
-    /// the hit.
-    pub window: String,
 }
 
 impl RecallResidence {

@@ -31,9 +31,12 @@ use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
+// What the owner's code exchanges share ([MICROSOFT365-OAUTH-EXCHANGE]).
+mod code_exchange;
 mod gmail_exchange;
 pub(crate) mod hook_proposals;
 mod line_chats;
+mod microsoft365_exchange;
 mod native_mail_identities;
 pub(crate) mod schema;
 mod setup_routes;

@@ -74,8 +74,8 @@ pub(crate) use wake::{
 #[cfg(feature = "sync")]
 pub(crate) use walk::derived_travel_in;
 pub(crate) use walk::{
-    LineagePass, ReplicationScope, lineage_held_in, read_audience_in, readable_with_read_in,
-    withheld_by_lineage_in, withheld_from_replication_in,
+    LineagePass, ReplicationScope, read_audience_in, readable_with_read_in,
+    withheld_from_replication_in,
 };
 
 /// Each row a source landing is about to stamp with the source-audience
@@ -113,27 +113,8 @@ const DERIVED: SideTable<EntityId, BTreeSet<EntityId>, Named> =
 const EVENTS: SideTable<(EntityId, u64), SourceAudienceEvent, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_EVENT);
 
-/// Who reads under one policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum SourceAudienceKind {
-    /// One source's readers: a personal mailbox's owner, a group address's
-    /// members, a calendar's owner. `open` stands the source open to the
-    /// whole vault, restricting nothing (a calendar shared in detail).
-    Source {
-        readers: BTreeSet<EntityId>,
-        open: bool,
-    },
-    /// One thread of a source: the source's readers now, and the people the
-    /// thread was shared with.
-    Thread {
-        source: EntityId,
-        /// The BLAKE3 of the source's own thread key: where the thread index
-        /// files it, here and on every replica that merges it (fix list row
-        /// 17204).
-        thread: [u8; 32],
-        shared_with: BTreeSet<EntityId>,
-    },
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::source_audience::{HeldBack, SourceAudienceKind};
 
 /// One stored policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,21 +127,8 @@ pub(crate) struct SourceAudiencePolicy {
     pub(crate) revision: u64,
 }
 
-/// What one change to a policy's readers did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceAudienceOp {
-    /// A source's readers were set (connect, or a group's members edited).
-    ReaderAdded,
-    ReaderRemoved,
-    /// A thread was shared with a person by an explicit act.
-    Shared,
-    /// A thread's share with a person was withdrawn.
-    Unshared,
-    /// A source was stood open to the vault, or closed again.
-    Opened,
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::source_audience::{SourceAudienceEventView, SourceAudienceOp};
 
 /// One change to a policy's readers, kept as its receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,20 +140,6 @@ pub(crate) struct SourceAudienceEvent {
     /// Who made the change; `None` once that actor was erased.
     pub(crate) by: Option<EntityId>,
     pub(crate) at: u64,
-}
-
-/// Why a row reads to no one here meanwhile (FIX 12559 follow-up). Either
-/// way it never leaves this vault while held, and no read of it, or of a
-/// row whose words came from it, passes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum HeldBack {
-    /// Its carried binding names a policy that has not arrived; it lifts
-    /// once the binding lands.
-    Pending,
-    /// The vault it came from withheld it after it travelled (its words
-    /// joined a row bound otherwise); it lifts once its carrier comes back
-    /// with no marker.
-    Withheld,
 }
 
 /// Why the row `id` reads to no one here, when it is held back.
@@ -773,22 +727,6 @@ pub(crate) fn threads_shared_with_in(
         }
     }
     Ok(shared)
-}
-
-/// One change to a policy's readers, as its receipt list shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SourceAudienceEventView {
-    pub revision: u64,
-    pub op: SourceAudienceOp,
-    /// The person the change names, 32-hex; absent for an open or a close,
-    /// or once that person was erased.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub person_ref: Option<String>,
-    /// Who made the change, 32-hex; absent once that actor was erased.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub by_ref: Option<String>,
-    pub at: u64,
 }
 
 /// Every change to `policy`'s readers, oldest first.

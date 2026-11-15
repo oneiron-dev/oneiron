@@ -107,9 +107,11 @@ pub(super) struct AblationUnavailable {
 mod context;
 mod offline;
 mod paired;
+mod pick_argument;
 mod provenance;
 use context::{bounded_context, chat_history, measured_pack, pack_cut};
 use offline::{OfflineStages, elapsed_cost, offline_provider_cost, offline_totals};
+pub(super) use pick_argument::PicksFor;
 
 #[derive(Debug, Serialize)]
 pub(super) struct MeasuredReport {

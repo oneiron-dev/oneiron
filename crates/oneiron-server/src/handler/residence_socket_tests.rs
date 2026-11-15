@@ -1015,13 +1015,91 @@ async fn assert_socket_refused(socket: &mut Socket, frame: Vec<u8>, what: &str) 
     assert!(closed.is_ok(), "{what} must close the v11 socket");
 }
 
-const RESIDENCE_SUB_TAGS: [u8; 5] = [
+const RESIDENCE_SUB_TAGS: [u8; 7] = [
     window_sub_tags::RESIDENCE_UPDATE,
     window_sub_tags::RESIDENCE_ACK,
     window_sub_tags::PROMOTION_REQUEST,
+    window_sub_tags::FOLLOW_REQUEST,
     window_sub_tags::PROMOTION_GRANTED,
+    window_sub_tags::FOLLOW_REFUSED,
     window_sub_tags::PROMOTED_INVALIDATE,
 ];
+
+/// FOLLOWED-WINDOW-REFUSAL-CLOSES-SOCKET: a device follows a world whose
+/// window the home does not grant to it (here its selector names another
+/// member, so the home's grant check refuses it). The home answers the
+/// follow with `FOLLOW_REFUSED` and the socket stays open; before, the home
+/// closed it (4002, "invalid payload") and the device reconnected into the
+/// same refusal on every connect.
+#[tokio::test]
+async fn a_refused_follow_keeps_the_device_socket() {
+    let mut fixture = WorldResidence::start(true).await;
+    fixture.config.residence_selector = Some(SyncSelector::new(
+        EntityId::now(),
+        EntityId::now(),
+        SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    ));
+    let (mut client, _events) =
+        SyncClient::new(fixture.manager.clone(), fixture.config.clone()).unwrap();
+    // The root lists the followed world's window, so the device asks the
+    // home for it as the root lands.
+    let mut socket = fixture
+        .device_socket(&mut client, "residence-world-refused-follow")
+        .await;
+    let mut refused = false;
+    let quiet = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Binary(frame))) => {
+                    if frame.first() == Some(&transport::TAG_WINDOW_SYNC) {
+                        let (key, tag, _) = transport::decode_window_sync(&frame[1..]).unwrap();
+                        assert_ne!(
+                            tag,
+                            window_sub_tags::PROMOTION_GRANTED,
+                            "the home granted {key} to a selector it does not grant"
+                        );
+                        refused |= key == fixture.window.as_str()
+                            && tag == window_sub_tags::FOLLOW_REFUSED;
+                    }
+                    for reply in client.handle_server_message(&frame).unwrap() {
+                        socket.send(Message::Binary(reply.into())).await.unwrap();
+                    }
+                }
+                Some(Ok(Message::Close(frame))) => return format!("closed: {frame:?}"),
+                Some(Ok(_)) => {}
+                Some(Err(error)) => return format!("failed: {error}"),
+                None => return "ended".to_owned(),
+            }
+        }
+    })
+    .await;
+    assert!(
+        quiet.is_err(),
+        "the home ended the device socket over a refused follow: {quiet:?}"
+    );
+    assert!(refused, "the home answers the refused follow");
+    // The socket still answers.
+    socket
+        .send(Message::Ping(b"alive".to_vec().into()))
+        .await
+        .unwrap();
+    let pong = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Pong(payload))) => return payload.to_vec(),
+                Some(Ok(Message::Close(frame))) => panic!("closed after the follow: {frame:?}"),
+                Some(Ok(_)) => {}
+                other => panic!("the socket ended after the follow: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the home answers a ping on the device socket");
+    assert_eq!(pong, b"alive");
+    fixture.server_task.abort();
+}
 
 #[tokio::test]
 async fn v12_residence_round_trips_world_month_key() {
