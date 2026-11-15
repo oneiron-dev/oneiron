@@ -1022,7 +1022,7 @@ impl ScopedRead<'_> {
         // saved is withheld alone, never the period (OF-499 A2).
         self.recheck_saved_loop_decisions_in_txn(txn, reader_key, opener, &mut report.value);
         self.serve_saved_copy_in(txn, &mut report.value)?;
-        self.charge_served(report.value.source_rows());
+        self.charge_served(report.value.served_rows());
         Ok(Some(StoredWeaveDigest {
             reader: reader_key,
             scheduled_for,

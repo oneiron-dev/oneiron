@@ -221,18 +221,26 @@ impl Vault {
 }
 
 /// Writes each waiting record a reader was never served, and grows that reader's count by
-/// them. Returns each grown reader's new count.
+/// them. Returns each grown reader's new count. `waiting` is a copy taken before the writer;
+/// an entry no longer waiting once the writer is held is skipped. Another write kept it, or
+/// an erasure of its reader or record forgot it inside its own write
+/// ([`erase_read_exposure_reader_in_txn`], [`erase_read_exposure_records_in_txn`]), so a
+/// stale copy never writes back a row an erasure removed.
 fn keep_waiting_in(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     waiting: &Waiting,
 ) -> Result<Vec<u64>> {
+    let still = store.pending_read_exposure.waiting();
     let mut grown = Vec::new();
     for (reader, served) in waiting {
+        let Some(still_served) = still.get(reader) else {
+            continue;
+        };
         let mut fresh = Fresh::default();
         for (record, at) in served {
             let key = (*record, *reader);
-            if EXPOSED_RECORD.contains(store, wtxn, &key)? {
+            if !still_served.contains_key(record) || EXPOSED_RECORD.contains(store, wtxn, &key)? {
                 continue;
             }
             EXPOSED_RECORD.put(store, wtxn, &key, &())?;

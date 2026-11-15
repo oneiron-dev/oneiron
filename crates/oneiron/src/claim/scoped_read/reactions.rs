@@ -193,7 +193,9 @@ impl ScopedRead<'_> {
     /// The one walk behind [`Self::attach_reactions_quoting`] and
     /// [`Self::attach_reactions_listing_producers`]. For each MESSAGE or TURN
     /// result, `walked` gets the record, the reaction claims its lines count,
-    /// the reactors they name, and whether the lines were attached.
+    /// the reactors they name, and whether the lines were attached. The
+    /// claims of each attached line count toward the reader's read exposure
+    /// (L8-65).
     fn attach_reactions_walk(
         &self,
         pack: &mut ContextPack,
@@ -230,6 +232,9 @@ impl ScopedRead<'_> {
                 }
                 _ => false,
             };
+            if attached {
+                self.charge_served(counted.iter().copied());
+            }
             walked(entity.id, counted, named, attached);
         }
         Ok(admission.receipt)

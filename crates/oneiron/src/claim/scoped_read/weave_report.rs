@@ -129,32 +129,55 @@ impl WeaveReport {
     pub fn source_rows(&self) -> Vec<EntityId> {
         let mut rows = Vec::new();
         for item in self.sections.iter().flat_map(|section| &section.items) {
-            match item {
-                WeaveItem::Claim { id, .. } => rows.push(*id),
-                WeaveItem::Project { id, goal } => {
-                    rows.push(*id);
-                    rows.extend(
-                        goal.as_deref()
-                            .and_then(|goal| EntityId::from_hex(goal).ok()),
-                    );
-                }
-                WeaveItem::Budget {
-                    project,
-                    budget_ref,
-                } => rows.extend([*project, *budget_ref]),
-                WeaveItem::Link { source, target, .. } => rows.extend([*source, *target]),
-                WeaveItem::DreamProgress { resident, .. } => rows.push(*resident),
-                WeaveItem::AgentHealth { card, .. } => rows.extend(card_rows(card)),
-                WeaveItem::SieveAudit { audit, .. } => {
-                    rows.extend(sieve_score::sieve_audit_rows(audit));
-                }
-                // The rows a loop decision's admission stood on, as evidence.
-                WeaveItem::LoopDecision { evidence_refs, .. } => {
-                    rows.extend(evidence_refs.iter().copied());
-                }
+            item_source_rows(item, &mut rows);
+        }
+        rows
+    }
+
+    /// The rows whose content or metadata this report hands its reader, which count toward
+    /// the reader's read exposure (L8-65): [`Self::source_rows`] without the rows an item names
+    /// only by id. A link's endpoints are a bare edge, and a loop decision's evidence refs are
+    /// ids, so neither counts.
+    #[must_use]
+    pub(crate) fn served_rows(&self) -> Vec<EntityId> {
+        let mut rows = Vec::new();
+        for item in self.sections.iter().flat_map(|section| &section.items) {
+            if !matches!(
+                item,
+                WeaveItem::Link { .. } | WeaveItem::LoopDecision { .. }
+            ) {
+                item_source_rows(item, &mut rows);
             }
         }
         rows
+    }
+}
+
+/// The rows one item is read from, onto `rows` ([`WeaveReport::source_rows`]).
+fn item_source_rows(item: &WeaveItem, rows: &mut Vec<EntityId>) {
+    match item {
+        WeaveItem::Claim { id, .. } => rows.push(*id),
+        WeaveItem::Project { id, goal } => {
+            rows.push(*id);
+            rows.extend(
+                goal.as_deref()
+                    .and_then(|goal| EntityId::from_hex(goal).ok()),
+            );
+        }
+        WeaveItem::Budget {
+            project,
+            budget_ref,
+        } => rows.extend([*project, *budget_ref]),
+        WeaveItem::Link { source, target, .. } => rows.extend([*source, *target]),
+        WeaveItem::DreamProgress { resident, .. } => rows.push(*resident),
+        WeaveItem::AgentHealth { card, .. } => rows.extend(card_rows(card)),
+        WeaveItem::SieveAudit { audit, .. } => {
+            rows.extend(sieve_score::sieve_audit_rows(audit));
+        }
+        // The rows a loop decision's admission stood on, as evidence.
+        WeaveItem::LoopDecision { evidence_refs, .. } => {
+            rows.extend(evidence_refs.iter().copied());
+        }
     }
 }
 
@@ -202,7 +225,7 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         self.redact_sieve_decisions_in(&txn, &policy, &filter, &mut report.value);
         self.project_card_moves_in(&txn, &policy, &filter, &mut report.value);
-        self.charge_served(report.value.source_rows());
+        self.charge_served(report.value.served_rows());
         Ok(report)
     }
 
