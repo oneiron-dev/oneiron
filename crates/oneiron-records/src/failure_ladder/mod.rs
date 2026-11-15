@@ -1,0 +1,20 @@
+pub use crate::failure_ladder::blocked_reports::BlockedReportRef;
+pub use crate::failure_ladder::classify::DetectorTier;
+pub use crate::failure_ladder::classify::FailureClass;
+pub use crate::failure_ladder::classify::TypedFailureEvidence;
+pub use crate::failure_ladder::classify::TypedFailureVerdict;
+pub use crate::failure_ladder::custom_review::AgentKind;
+pub use crate::failure_ladder::custom_review::FailureSignalClass;
+pub use crate::failure_ladder::custom_review::TierOneFailureCount;
+pub use crate::failure_ladder::lineage::HealerCase;
+pub use crate::failure_ladder::lineage::HealerRepairRoute;
+pub use crate::failure_ladder::lineage::RetryLineagePathology;
+pub use crate::failure_ladder::scope::FailureEscalationMode;
+pub use crate::failure_ladder::scope::FailureScope;
+
+pub mod blocked_reports;
+pub mod classify;
+pub mod custom_review;
+pub mod healer_dispatch;
+pub mod lineage;
+pub mod scope;
