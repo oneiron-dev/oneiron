@@ -2,11 +2,13 @@
 //! ordinary reviewed write to a file the pinned snapshot withholds stays
 //! refused, since a review reads the replaced file from its snapshot, and
 //! the snapshot does not hold a withheld file's bytes. The refusal names the
-//! route, `gate.secret_scan.remediation_route`: the owner's
-//! `vault.code.secrets.propose` remediation (SECRETS-IN-REPOS = A) is the one
-//! reviewed write that changes or removes such a file, and it is admitted for
-//! the same file. A write whose own bytes hold a secret is refused without
-//! the route: no remediation makes those bytes reviewable.
+//! route, `gate.secret_scan.remediation_route`, for a live dotenv file: the
+//! owner's `vault.code.secrets.propose` remediation (SECRETS-IN-REPOS = A) is
+//! the one reviewed write that removes such a file, and it is admitted for
+//! the same file. A withheld file of another name is refused without the
+//! route (FIX-2229-ROUTE-SCOPE = A): the remediation plans it only by receive
+//! marks, which the refusal cannot read. A write whose own bytes hold a secret
+//! is refused without the route: no remediation makes those bytes reviewable.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test code_withheld_write_remediation_route`.
@@ -49,17 +51,21 @@ fn git(dir: &Path, args: &[&str]) -> TestResult<String> {
     Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
-/// A Git repository on `refs/heads/main` whose one commit holds a README
-/// and a live `.env` with one non-empty value, and that commit's 40-hex id.
-/// The release scan reads `API_TOKEN=local-value-1` as a secret, so every
-/// snapshot of that commit withholds `.env`.
-fn repo_with_live_dotenv() -> TestResult<(tempfile::TempDir, String)> {
+/// A Git repository on `refs/heads/main` whose one commit holds a README,
+/// a live `.env` with one non-empty value and each of `extra`, and that
+/// commit's 40-hex id. The release scan reads `API_TOKEN=local-value-1` as a
+/// secret, so every snapshot of that commit withholds `.env`.
+fn repo_with_live_dotenv(extra: &[(&str, &str)]) -> TestResult<(tempfile::TempDir, String)> {
     let dir = tempfile::tempdir()?;
     git(dir.path(), &["init", "--quiet"])?;
     git(dir.path(), &["symbolic-ref", "HEAD", "refs/heads/main"])?;
     std::fs::write(dir.path().join("README.md"), "base\n")?;
     std::fs::write(dir.path().join(".env"), "API_TOKEN=local-value-1\n")?;
     git(dir.path(), &["add", "--", "README.md", ".env"])?;
+    for (path, content) in extra {
+        std::fs::write(dir.path().join(path), content)?;
+        git(dir.path(), &["add", "--", path])?;
+    }
     git(
         dir.path(),
         &[
@@ -80,7 +86,7 @@ fn repo_with_live_dotenv() -> TestResult<(tempfile::TempDir, String)> {
 }
 
 /// The owner's vault with that repository ingested at its one commit: the
-/// vault, the owner and his proof, the CODE_ARTIFACT, the commit, and the
+/// vault, the owner and their proof, the CODE_ARTIFACT, the commit, and the
 /// two directories, dropped after the vault.
 struct Fixture {
     vault: Vault,
@@ -93,13 +99,13 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new(project_id: &str) -> TestResult<Self> {
+    fn new(project_id: &str, extra: &[(&str, &str)]) -> TestResult<Self> {
         let vault_dir = tempfile::tempdir()?;
         let vault = Vault::open(vault_dir.path(), VaultConfig::device())?;
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         oneiron::test_support::provision_engine_machines(&vault);
         let (owner, proof) = embedded_owner(&vault)?;
-        let (repo_dir, head) = repo_with_live_dotenv()?;
+        let (repo_dir, head) = repo_with_live_dotenv(extra)?;
         let snapshot = vault
             .memory(owner, EdgeActorClass::Human)
             .code_snapshot_ingest_as(
@@ -164,7 +170,7 @@ fn reason_codes(refused: &MemoryError) -> Vec<String> {
 
 #[test]
 fn an_owner_write_to_a_withheld_file_names_the_remediation_route() -> TestResult {
-    let fixture = Fixture::new("withheld-write-remediation-route")?;
+    let fixture = Fixture::new("withheld-write-remediation-route", &[])?;
 
     // Clean bytes, which the policy would keep: only the file they replace
     // is withheld.
@@ -234,7 +240,7 @@ fn an_owner_write_to_a_withheld_file_names_the_remediation_route() -> TestResult
 
 #[test]
 fn a_write_whose_bytes_hold_a_secret_names_no_remediation_route() -> TestResult {
-    let fixture = Fixture::new("secret-write-no-route")?;
+    let fixture = Fixture::new("secret-write-no-route", &[])?;
 
     // README.md is a kept file; the new bytes are what custody withholds.
     let refused = fixture.submit("README.md", b"API_TOKEN=another-value-2\n")?;
@@ -250,6 +256,27 @@ fn a_write_whose_bytes_hold_a_secret_names_no_remediation_route() -> TestResult 
             .iter()
             .any(|code| code == REMEDIATION_ROUTE || code == WITHHELD_PATH),
         "a secret in the written bytes is no withheld base: {refused:?}"
+    );
+    Ok(())
+}
+
+/// The route is named only where it acts: a withheld file that is no live
+/// dotenv file is planned by the remediation only through receive marks on
+/// its bytes, which a fresh ingest gives none, so the remediation would
+/// answer Clean and leave it. The refusal names no route there.
+#[test]
+fn an_owner_write_to_a_withheld_file_the_route_cannot_change_names_no_route() -> TestResult {
+    let fixture = Fixture::new(
+        "withheld-write-no-route",
+        &[("credentials.txt", "API_TOKEN=local-value-1\n")],
+    )?;
+
+    let refused = fixture.submit("credentials.txt", b"# The key moved to the vault.\n")?;
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    assert_eq!(
+        reason_codes(&refused),
+        ["gate.secret_scan.detected", WITHHELD_PATH],
+        "a withheld file the route cannot change is refused without it: {refused:?}"
     );
     Ok(())
 }
