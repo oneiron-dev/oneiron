@@ -212,7 +212,8 @@ pub(crate) fn archive_signer(
     else {
         return Ok(ArchiveSigner::OtherMachine);
     };
-    let head_attested_by_host = verifier.hosted && verifier.adopted_checkpoint;
+    // RED SEAM (L2-23 r3 proof): 039d1480 had no adoption guard.
+    let head_attested_by_host = verifier.hosted && verifier.adopted_checkpoint && false;
     Ok(
         if owner_signed
             && !head_attested_by_host
