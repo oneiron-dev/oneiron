@@ -1,17 +1,18 @@
 //! The owner question a narrowing protocol revision raises. A catalog key
 //! whose negotiated protocol revision changed, and whose next slate only
 //! narrows, carries the owner's stamp forward (ARCH-0072 #drift: "A revision
-//! that only narrows carries forward"), so no tap is owed. The key still
-//! halts to Pending, and the owner is still asked directly, never left with
-//! a silent state (ARCH-0054 #drift, owner-ratified 2026-07-29). So the
-//! revision queues one informational ask on the decision-ask queue, in the
-//! revision's own write. The ask names the connector, both revisions and
-//! the rows that narrowed or dropped. A Pending key routes nothing, and only
-//! the owner's own qualify or attest admits it again, so the ask names those
-//! two doors as the acts that work when it is read. The owner's switch
-//! refuses a Pending key, so the ask names it as the one act that switches
-//! the connector off once it is admitted again. An answer on the queue
-//! applies nothing.
+//! that only narrows carries forward"), so no tap is owed. A revision that
+//! keeps its slate keeps the stamp that slate holds, so no tap is owed
+//! either. The key still halts to Pending, and the owner is still asked
+//! directly, never left with a silent state (ARCH-0054 #drift,
+//! owner-ratified 2026-07-29). So each revision queues one informational ask
+//! on the decision-ask queue, in the revision's own write. The ask names the
+//! connector, both revisions and the rows that narrowed or dropped, or says
+//! that none changed. A Pending key routes nothing, and only the owner's own
+//! qualify or attest admits it again, so the ask names those two doors as
+//! the acts that work when it is read. The owner's switch refuses a Pending
+//! key, so the ask names it as the one act that switches the connector off
+//! once it is admitted again. An answer on the queue applies nothing.
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -42,8 +43,8 @@ const MAX_ASK_TEXT_BYTES: usize = 16_000;
 
 /// The owner's question about catalog key `id`, whose protocol revision
 /// moves from `record`'s to `revision` and whose next slate `next`
-/// (`next_ref`) carried `prior`'s stamp. Put by the owner who stamped
-/// `prior`; one question per key and next slate.
+/// (`next_ref`) carried `prior`'s stamp, or is `prior`. Put by the owner who
+/// stamped `prior`; one question per key, next slate and revision.
 pub(super) fn protocol_narrow_ask(
     id: &EntityId,
     record: &ConnectorKeyRecord,
@@ -55,7 +56,7 @@ pub(super) fn protocol_narrow_ask(
         .ok_or(Error::InvariantViolation("a carried stamp names its owner"))?;
     let principal =
         EntityId::from_hex(owner).map_err(|_| Error::CorruptedIndex("connector slate owner"))?;
-    let reference = ask_reference(id, next_ref)?;
+    let reference = ask_reference(id, next_ref, revision)?;
     Ok(HumanDecisionRequest {
         question: DecisionQuestion {
             id: reference,
@@ -80,11 +81,13 @@ pub(super) fn protocol_narrow_ask(
     })
 }
 
-/// The question's id and correlation: one per key and next slate.
-fn ask_reference(id: &EntityId, next_ref: EntityId) -> Result<EntityId> {
+/// The question's id and correlation: one per key, next slate and protocol
+/// revision, so a later revision onto the same slate asks again.
+fn ask_reference(id: &EntityId, next_ref: EntityId, revision: &str) -> Result<EntityId> {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron.connector-key.protocol-narrow-ask.v1");
     hasher.update(id.as_bytes());
     hasher.update(next_ref.as_bytes());
+    hasher.update(revision.as_bytes());
     let mut bytes = [0_u8; 16];
     bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
     Ok(EntityId::from_bytes(bytes)?)
@@ -118,7 +121,8 @@ fn changed_tools(
     (narrowed, dropped)
 }
 
-/// The wording of the question: the one place it lives.
+/// The wording of the question: the one place it lives. A next slate with
+/// no narrowed or dropped tool changed nothing the stamp covers.
 fn ask_text(
     record: &ConnectorKeyRecord,
     revision: &str,
@@ -138,16 +142,24 @@ fn ask_text(
             tools.join(", ")
         }
     };
+    let change = if narrowed.is_empty() && dropped.is_empty() {
+        "Its tools and settings did not change, so your stamp still holds and no row asks you \
+         again."
+            .to_owned()
+    } else {
+        format!(
+            "Every change only narrowed what it may do, so your stamp carried forward and no \
+             row asks you again. Narrowed: {narrowed}. Dropped: {dropped}.",
+            narrowed = listed(&narrowed),
+            dropped = listed(&dropped),
+        )
+    };
     let mut text = format!(
-        "Connector {name} changed its protocol revision from {from} to {revision}. Every \
-         change only narrowed what it may do, so your stamp carried forward and no row asks \
-         you again. Narrowed: {narrowed}. Dropped: {dropped}. It routes nothing until you \
-         admit it again, with no new tap: qualify it at {CONNECTOR_QUALIFY_DOOR}, or attest \
-         it at {CONNECTOR_ATTEST_DOOR}. To keep it off, leave it unadmitted. Once it is \
-         admitted, {CONNECTOR_SWITCH_OFF_DOOR} with enabled false switches it off in one \
-         act. An answer here applies nothing.",
-        narrowed = listed(&narrowed),
-        dropped = listed(&dropped),
+        "Connector {name} changed its protocol revision from {from} to {revision}. {change} It \
+         routes nothing until you admit it again, with no new tap: qualify it at \
+         {CONNECTOR_QUALIFY_DOOR}, or attest it at {CONNECTOR_ATTEST_DOOR}. To keep it off, \
+         leave it unadmitted. Once it is admitted, {CONNECTOR_SWITCH_OFF_DOOR} with enabled \
+         false switches it off in one act. An answer here applies nothing."
     );
     if text.len() > MAX_ASK_TEXT_BYTES {
         let mut end = MAX_ASK_TEXT_BYTES;

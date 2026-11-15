@@ -34,9 +34,10 @@ impl Vault {
     /// A revision change halts the old route immediately: the key goes
     /// Pending, and a fresh full suite must pass before it can reactivate.
     /// Its per-grant keys are held until then. A next slate that only
-    /// narrows carries the owner's stamp forward (ARCH-0072 #drift), and the
-    /// owner is told once on the decision-ask queue (ARCH-0054 #drift); one
-    /// that widens needs a new owner stamp as well.
+    /// narrows carries the owner's stamp forward (ARCH-0072 #drift), and a
+    /// kept slate keeps the stamp it holds; either way the owner is told once
+    /// per revision on the decision-ask queue (ARCH-0054 #drift). One that
+    /// widens needs a new owner stamp as well.
     pub fn revise_connector_protocol(
         &self,
         id: &EntityId,
@@ -141,14 +142,22 @@ impl Vault {
                 self.stage_connector_slate_in_txn(&mut wtxn, id, record, next_slate_ref, at)?;
             wtxn.commit()?;
             return Ok(staged);
-        } else if !same_revision && !expanded && next_slate_ref != old_slate_id {
+        } else if !same_revision && !expanded {
             // A protocol revision that only narrows carries the owner's
-            // stamp forward (ARCH-0072 #drift): the key still halts and
-            // re-qualifies below, and only a widened row needs a tap. The
-            // owner is asked once, in this write (ARCH-0054 #drift).
+            // stamp forward (ARCH-0072 #drift), and one that keeps its slate
+            // keeps the stamp it holds: the key still halts and re-qualifies
+            // below, and only a widened row needs a tap. The owner is asked
+            // once per revision, in this write (ARCH-0054 #drift).
             let mut next = next_slate;
-            if next.carry_owner_stamp(&old_slate, &policy.connector_class_carry()) {
+            let stamped = if next_slate_ref == old_slate_id {
+                old_slate.owner_actor().is_some() && old_slate.stamp_holds()
+            } else if next.carry_owner_stamp(&old_slate, &policy.connector_class_carry()) {
                 put_slate_in_txn(&self.store, &mut wtxn, next_slate_ref, &next)?;
+                true
+            } else {
+                false
+            };
+            if stamped {
                 narrow_ask = Some(protocol_narrow_ask(
                     id,
                     &record,
