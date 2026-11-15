@@ -191,26 +191,6 @@ fn unpark_local_stamp(
 
 /// Both endpoints may acquire a PROJECT/CLAIM type later in this same batch.
 /// Collect them so the final graph check sees that type change.
-/// The source of `op` when it writes or deletes an edge that carries a world to its source
-/// (`settings::carried_worlds_in`): an InWorld membership of a NOTE or ASSET, or a DerivedFrom
-/// derivation of a caption or summary. A weight or VAD rewrite moves no row between worlds.
-pub(super) fn world_carrying_edge_source(op: &BatchOp) -> Option<EntityId> {
-    match op {
-        BatchOp::Edge { src, kind, .. }
-        | BatchOp::PublicEdgeWithCreatedAt { src, kind, .. }
-        | BatchOp::EdgeWithCreatedAt { src, kind, .. }
-        | BatchOp::DeleteEdge { src, kind, .. }
-            if matches!(
-                kind,
-                crate::edge::EdgeKind::InWorld | crate::edge::EdgeKind::DerivedFrom
-            ) =>
-        {
-            Some(*src)
-        }
-        _ => None,
-    }
-}
-
 pub(super) fn edge_op_endpoints(op: &BatchOp) -> [EntityId; 2] {
     match op {
         BatchOp::Edge { src, tgt, .. }
