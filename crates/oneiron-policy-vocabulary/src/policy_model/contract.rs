@@ -11,6 +11,7 @@
 //! Parsing is strict on purpose. Notes the engine cannot read are no notes:
 //! the verdict stands and the audit fields stay empty.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
@@ -22,9 +23,19 @@ use oneiron_model::llm::ResponseFormat;
 /// `non_exhaustive` on purpose: a new preset is how this list grows, and a
 /// downstream exhaustive match would turn that into a breaking change.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("policy.output.contract")]
 #[non_exhaustive]
 pub enum PolicyOutputContract {
     /// Exactly `0` or `1`, nothing else. Carries no category, so a violation
@@ -39,25 +50,11 @@ pub enum PolicyOutputContract {
 }
 
 impl PolicyOutputContract {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Binary => "binary",
-            Self::CategoryJson => "category_json",
-            Self::RationaleJson => "rationale_json",
-        }
-    }
-
     /// Parses the wire spelling; `None` for anything else, so a manifest
     /// naming an unknown contract fails closed.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "binary" => Some(Self::Binary),
-            "category_json" => Some(Self::CategoryJson),
-            "rationale_json" => Some(Self::RationaleJson),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     /// The response format the request declares. `Binary` is plain text: a
