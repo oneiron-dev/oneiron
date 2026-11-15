@@ -38,7 +38,7 @@ use super::git::{
 };
 use super::oplog::same_repository;
 use super::queue::{PreparedCommitFile, PreparedConflictResolution};
-use super::support::{now_secs, utf8_trimmed};
+use super::support::utf8_trimmed;
 use super::trailer::commit_message_with_provenance_trailer;
 use super::types::{RepoConflictClaim, RepoConflictResolutionClaim};
 use super::worktree::apply_prepared_commit_file;
@@ -219,7 +219,7 @@ pub(super) fn record_repo_conflict_checked(
         claim_id,
         branch_subject,
         &body,
-        now_secs(),
+        crate::unix_seconds_now(),
         owner,
         proposals,
     )
@@ -369,7 +369,7 @@ pub(super) fn finish_repo_conflict_resolution(
         vault,
         prepared.resolution_claim_id,
         prepared.open_conflict_claim_id,
-        now_secs(),
+        crate::unix_seconds_now(),
     )?;
     Ok(prepared.resolution_claim_id)
 }
@@ -424,7 +424,7 @@ fn put_repo_conflict_resolution_claim(
     branch_subject: EntityId,
     value: RepoConflictResolutionValue,
 ) -> Result<()> {
-    let learned_at = now_secs();
+    let learned_at = crate::unix_seconds_now();
     let body = ClaimBody::new(
         PREDICATE_CONFLICT_RESOLVED,
         ClaimSubject::Entity(branch_subject),
@@ -747,7 +747,7 @@ impl Vault {
             claim_id,
             branch_subject,
             &body,
-            now_secs(),
+            crate::unix_seconds_now(),
             None,
             &[],
         )
