@@ -12,6 +12,7 @@ use super::super::{
     BudgetGuard, FallbackRegistry, LlmBackend, LlmRequest, LlmUsage, ResponseFormat,
 };
 use super::public::ModelStepReceipt;
+use super::retry::TransportRetries;
 use super::step_claim::{decode_step_claim_value, load_step_response_in_txn};
 #[cfg(oneiron_test_support)]
 use super::step_index::{STEP_INDEX_FORWARD, StepIndexKey};
@@ -51,7 +52,7 @@ pub(crate) async fn call_as_step_with_unsaved_usage(
         request,
         &FallbackRegistry::standard(),
         None,
-        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        &TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
         Some(&mut unsaved_usage),
     )
     .await;

@@ -37,9 +37,8 @@ use crate::{TimeRange, Vault};
 const PIECE_NOT_FOLDED: &str =
     "a custody request's permit piece did not fold here; nothing was written";
 
-/// The key a kept piece is found under: its signer, its commitment and its
-/// place.
-pub(super) type PermitPieceKey = ([u8; 32], CustodyPermitPieces, u32);
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::owner_work::permit_pieces::PermitPieceKey;
 
 /// The signer of a piece of the owner's kit push: an Ed25519 key whose
 /// sequence moves on, as the kit request's own (`kit_custody`); the request

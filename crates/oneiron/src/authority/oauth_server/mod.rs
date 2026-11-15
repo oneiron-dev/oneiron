@@ -63,14 +63,12 @@ pub const OAUTH_REQUEST_TTL_SECS: u64 = 600;
 /// How long an authorization code may be redeemed after the page collects it (CALLS, FIX 4902:
 /// an engine call).
 pub const OAUTH_CODE_TTL_SECS: u64 = 600;
-/// How long an access token stands (CALLS, FIX 4902: an engine call).
-pub const OAUTH_ACCESS_TTL_SECS: u64 = 3_600;
+#[doc(hidden)]
+pub use oneiron_records::authority::oauth_server::{OAUTH_ACCESS_TTL_SECS, OAUTH_CIMD_TTL_SECS};
+
 /// How long a refresh token may be spent; each refresh mints the next one with a fresh lifetime
 /// (CALLS, FIX 4902: an engine call).
 pub const OAUTH_REFRESH_TTL_SECS: u64 = 30 * 86_400;
-/// How long a fetched client ID metadata document stands before the next authorize fetches it
-/// again (CALLS, FIX 4902: an engine call).
-pub const OAUTH_CIMD_TTL_SECS: u64 = 3_600;
 /// The most authorization requests that may wait on the owner at once, so no stranger fills his
 /// inbox; one past it is refused `temporarily_unavailable` (CALLS, FIX 4902: an engine call).
 pub const OAUTH_PENDING_REQUESTS_MAX: usize = 16;
