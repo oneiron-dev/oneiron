@@ -30,6 +30,11 @@
 //! spent, and a send whose count does not keep is not made. A resume that
 //! finds every declared attempt sent sends no more: the last one went out
 //! and a stop lost its reply, an `io_after_send` cut.
+//!
+//! A schema correction counts its own sends the same way, kept with its
+//! place in the step ([`CorrectionPoint`]) where the plan keeps corrections
+//! (STEP-CORRECTION-HEALTH-PARK): its rest past the wait parks the step, and
+//! the resume continues that correction with the sends it made.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -42,6 +47,7 @@ use super::super::{
     LlmBackend, LlmError, LlmRequest, LlmResponse, LlmResult, RetryableLlmError, SpentKind,
 };
 use super::types::DREAMER_STEP_RETRY_BACKOFF_MS;
+use crate::store::model_step_submission::CorrectionPoint;
 
 /// The wait before retry `retry` (from zero): the schedule's own interval,
 /// then its last one for every retry past it.
@@ -62,15 +68,22 @@ const HEALTH_REST_POLL_MS: u64 = 250;
 /// answers whether they kept.
 pub(super) type KeepSends<'a> = &'a (dyn Fn(usize) -> bool + Send + Sync);
 
+/// Keeps a schema correction's point where the step's next pass reads it
+/// (STEP-CORRECTION-HEALTH-PARK), and answers whether it kept.
+pub(super) type KeepCorrection<'a> = &'a (dyn Fn(&CorrectionPoint) -> bool + Send + Sync);
+
 /// One durable call's transport retries: the retries its schedule makes
 /// after the first send (FIX 9930), how long it waits in all, unsent, for its
 /// offer back from a health rest, and the sends it has made, which a step
-/// keeps for its resume (FIX 11226).
+/// keeps for its resume (FIX 11226). A step that keeps its corrections also
+/// names the one an earlier pass parked in.
 pub(super) struct TransportRetries<'a> {
     pub(super) max: usize,
     pub(super) rest_wait: Duration,
     sends: AtomicUsize,
     keep: Option<KeepSends<'a>>,
+    resume_at: Option<CorrectionPoint>,
+    keep_correction: Option<KeepCorrection<'a>>,
 }
 
 impl<'a> TransportRetries<'a> {
@@ -88,6 +101,8 @@ impl<'a> TransportRetries<'a> {
             rest_wait,
             sends: AtomicUsize::new(sends),
             keep: None,
+            resume_at: None,
+            keep_correction: None,
         }
     }
 
@@ -107,10 +122,42 @@ impl<'a> TransportRetries<'a> {
         self.sends.load(Ordering::Acquire)
     }
 
+    /// The same plan whose step keeps each correction's point with `keep`,
+    /// resuming at `resume_at`, the one an earlier pass parked in.
+    pub(super) fn correcting(
+        self,
+        resume_at: Option<CorrectionPoint>,
+        keep: KeepCorrection<'a>,
+    ) -> Self {
+        Self {
+            resume_at,
+            keep_correction: Some(keep),
+            ..self
+        }
+    }
+
+    /// The correction an earlier pass parked in, which this pass continues.
+    pub(super) fn resume_point(&self) -> Option<&CorrectionPoint> {
+        self.resume_at.as_ref()
+    }
+
+    /// Whether the step keeps its corrections' points, so one parked on its
+    /// offer's health resumes where it stood.
+    pub(super) fn keeps_corrections(&self) -> bool {
+        self.keep_correction.is_some()
+    }
+
+    /// Keeps `point` where the step keeps its corrections: whether it kept.
+    /// A step that keeps none keeps nothing, and that is no failure.
+    pub(super) fn keep_correction(&self, point: &CorrectionPoint) -> bool {
+        self.keep_correction.is_none_or(|keep| keep(point))
+    }
+
     /// The same plan for another call of the step, a correction: its own
-    /// count, from none, kept nowhere.
-    pub(super) fn for_another_call(&self) -> Self {
-        Self::resumed(self.max, self.rest_wait, 0)
+    /// count, from the `sends` it made in an earlier pass, kept only where
+    /// its caller keeps it.
+    pub(super) fn for_another_call<'b>(&self, sends: usize) -> TransportRetries<'b> {
+        TransportRetries::resumed(self.max, self.rest_wait, sends)
     }
 
     /// Counts `sends` sends made, kept where the plan keeps them. Whether
