@@ -58,7 +58,8 @@ fn parent_bound(named: usize) -> Error {
 /// ROOT_WORK_EXECUTOR); a bundle publication the lowest install that holds
 /// every key the bundle seals (CALLS BUNDLE_PUBLISH_EXECUTOR); a custody
 /// change its explicit holder, and a revoke `recorder` (CALLS
-/// CUSTODY_EXECUTOR).
+/// CUSTODY_EXECUTOR); a sealed-file ruling `recorder`, which executes it as
+/// it records it.
 pub(crate) fn owner_work_executor(
     fold: &AuthorityFold,
     work: &OwnerWorkBody,
@@ -75,6 +76,7 @@ pub(crate) fn owner_work_executor(
             custody_work_executor(fold, *change, *holder, recorder)
         }
         OwnerWorkBody::ExportSecret(work) => export_secret_executor(fold, work),
+        OwnerWorkBody::FileRuling(_) => Ok(recorder),
     }
 }
 

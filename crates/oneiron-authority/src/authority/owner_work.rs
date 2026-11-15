@@ -38,7 +38,12 @@
 //! request ([`OwnerWorkBody::ExportSecret`], FIX 4624(b)) asks the install
 //! that holds one custody secret an owner export could not open to seal it to
 //! the recipient machine the owner chose (`export`): it carries the export's
-//! own act, and its result names the sealed copy's digest. Each kind is one
+//! own act, and its result names the sealed copy's digest. A sealed-file
+//! ruling ([`OwnerWorkBody::FileRuling`], Engine RULING
+//! PLAN-SEALED-FILE-RULING-CARRY) carries the owner's "not a secret" on a
+//! file the write door sealed whole to every install of his vault: one keyed
+//! digest of the file, never its bytes or its plain hash; its carrier
+//! executes it (`file_ruling`). Each kind is one
 //! [`OwnerWorkBody`] variant with its [`OwnerWorkKind`], the [`OwnerActKind`]
 //! its act carries and the wire map it states under `work`; the request and
 //! result envelopes stay as they are.
@@ -53,6 +58,7 @@
 mod cancel;
 mod custody;
 mod export;
+mod file_ruling;
 mod import_mark;
 mod permit_piece;
 mod result;
@@ -72,6 +78,7 @@ pub use self::custody::{
     custody_recipients_encoded_len,
 };
 pub use self::export::ExportSecretWork;
+pub use self::file_ruling::{FILE_RULING_SEEN, FileRulingWork};
 pub use self::import_mark::{
     EXPORT_SUPPLEMENT_IMPORTED_CONTEXT, ExportSupplementImported,
     OP_KIND_EXPORT_SUPPLEMENT_IMPORTED,
@@ -132,6 +139,10 @@ pub enum OwnerWorkKind {
     /// One custody secret an owner export could not open, sealed by its
     /// holder to the recipient the owner chose (FIX 4624(b)).
     ExportSecret,
+    /// The owner's ruling that a file the write door sealed whole holds no
+    /// secret, for every install to keep those bytes as written (Engine
+    /// RULING PLAN-SEALED-FILE-RULING-CARRY).
+    FileRuling,
 }
 
 impl OwnerWorkKind {
@@ -144,6 +155,7 @@ impl OwnerWorkKind {
             Self::PublishBundle => "publish_bundle",
             Self::Custody => "custody",
             Self::ExportSecret => "export_secret",
+            Self::FileRuling => "file_ruling",
         }
     }
 
@@ -156,6 +168,7 @@ impl OwnerWorkKind {
             "publish_bundle" => Some(Self::PublishBundle),
             "custody" => Some(Self::Custody),
             "export_secret" => Some(Self::ExportSecret),
+            "file_ruling" => Some(Self::FileRuling),
             _ => None,
         }
     }
@@ -168,6 +181,7 @@ impl OwnerWorkKind {
             Self::Root => OwnerActKind::RootRequest,
             Self::Custody => OwnerActKind::CustodyTransition,
             Self::ExportSecret => OwnerActKind::Export,
+            Self::FileRuling => OwnerActKind::SealedFileRuling,
         }
     }
 }
@@ -354,6 +368,13 @@ pub enum OwnerWorkBody {
     /// executor is the install that holds the secret; nothing in custody
     /// changes.
     ExportSecret(ExportSecretWork),
+    /// The owner's ruling that a file the write door sealed whole holds no
+    /// secret (Engine RULING PLAN-SEALED-FILE-RULING-CARRY). The act is the
+    /// owner's alone: kind `sealed_file_ruling`, on the file's ASSET record
+    /// where he answered, `seen` zero ([`FILE_RULING_SEEN`]). It names the
+    /// file by its keyed digest alone; its carrier executes it, and nothing
+    /// in custody changes.
+    FileRuling(FileRulingWork),
 }
 
 impl OwnerWorkBody {
@@ -365,6 +386,7 @@ impl OwnerWorkBody {
             Self::PublishBundle { .. } => OwnerWorkKind::PublishBundle,
             Self::Custody { .. } => OwnerWorkKind::Custody,
             Self::ExportSecret(_) => OwnerWorkKind::ExportSecret,
+            Self::FileRuling(_) => OwnerWorkKind::FileRuling,
         }
     }
 }
@@ -520,6 +542,10 @@ impl OwnerWorkRequest {
         if let OwnerWorkBody::ExportSecret(work) = &self.work {
             export::validate_export_secret(self, work)?;
         }
+        // A sealed-file ruling is its carrier's to execute, on a zero `seen`.
+        if let OwnerWorkBody::FileRuling(work) = &self.work {
+            file_ruling::validate_file_ruling(self, work)?;
+        }
         Ok(())
     }
 
@@ -542,7 +568,8 @@ fn signed_alone_by_install_key(entry: &AuthorityLogEntry) -> Result<()> {
 /// a world key work map is kind, then mode; a root work map is kind, change,
 /// root, machine, each field the change does not state nil, then its
 /// revision basis (`root_basis`); a publication work map is kind, then home;
-/// a custody work map is `custody`'s, an export secret map `export`'s. The
+/// a custody work map is `custody`'s, an export secret map `export`'s, a
+/// sealed-file ruling's `file_ruling`'s. The
 /// privacy basis is nil for work the owner's act asks for, else a map of
 /// edit, after, then key_owner.
 pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
@@ -600,6 +627,7 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             *screen,
         ),
         OwnerWorkBody::ExportSecret(work) => export::export_secret_work_value(work),
+        OwnerWorkBody::FileRuling(work) => file_ruling::file_ruling_work_value(work),
     };
     Value::Map(vec![
         (
@@ -686,6 +714,7 @@ pub(super) fn decode_owner_work_request(entries: &[(Value, Value)]) -> Result<Au
         }
         OwnerWorkKind::Custody => custody::decode_custody_work(work)?,
         OwnerWorkKind::ExportSecret => export::decode_export_secret_work(work)?,
+        OwnerWorkKind::FileRuling => file_ruling::decode_file_ruling_work(work)?,
     };
     let privacy_basis = match required(entries, "privacy_basis")? {
         Value::Nil => None,

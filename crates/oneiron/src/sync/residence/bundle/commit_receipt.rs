@@ -142,7 +142,8 @@ fn asks_here(
             OwnerWorkBody::WorldKey { .. }
             | OwnerWorkBody::Root { .. }
             | OwnerWorkBody::Custody { .. }
-            | OwnerWorkBody::ExportSecret(_) => false,
+            | OwnerWorkBody::ExportSecret(_)
+            | OwnerWorkBody::FileRuling(_) => false,
         })
 }
 

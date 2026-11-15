@@ -35,8 +35,9 @@ pub struct OwnerWorkDrain {
 /// key work and a root change open keys with it, a bundle publication waits
 /// for it as it always has, and a custody register, rotate or bind's holder
 /// opens its protected input with it. A revoke needs no byte, a rewrap
-/// with no input seals the value its holder holds, and an export secret
-/// reads only the custody leaf it seals (FIX 11845).
+/// with no input seals the value its holder holds, an export secret
+/// reads only the custody leaf it seals (FIX 11845), and a sealed-file
+/// ruling holds a digest alone.
 fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
     !matches!(
         work,
@@ -48,6 +49,7 @@ fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
             input: None,
             ..
         } | OwnerWorkBody::ExportSecret(_)
+            | OwnerWorkBody::FileRuling(_)
     )
 }
 
@@ -229,6 +231,11 @@ impl Vault {
             (OwnerWorkBody::ExportSecret(work), _) => {
                 self.export_secret_work_in_txn(txn, &fold, hash, request, work)?
             }
+            // Its carrier executes a sealed-file ruling and appends its
+            // result as it records it; one that is pending all the same has
+            // nothing to do here, as every install keeps the ruling from the
+            // fold.
+            (OwnerWorkBody::FileRuling(_), _) => Some(OwnerWorkOutcome::Enacted { detail: None }),
             (
                 OwnerWorkBody::WorldKey { .. }
                 | OwnerWorkBody::Root { .. }

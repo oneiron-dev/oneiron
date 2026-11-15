@@ -169,6 +169,13 @@ pub enum OwnerActKind {
     /// proposal lands `Proposed` under the carrying owner's principal, and
     /// only the owner accepts.
     ModelBindingPropose,
+    /// The owner's ruling that a file the write door sealed whole holds no
+    /// secret (`OwnerWorkBody::FileRuling`; Engine RULING
+    /// PLAN-SEALED-FILE-RULING-CARRY, 14 Nov 16:48), carried to every install
+    /// of his vault. Its `target` is the file's ASSET record and its `seen`
+    /// zero (`FILE_RULING_SEEN`): a ruling always lands. The owner's alone;
+    /// no Grant line names it.
+    SealedFileRuling,
 }
 
 impl OwnerActKind {
@@ -198,6 +205,7 @@ impl OwnerActKind {
             Self::OriginCut => "origin_cut",
             Self::DeviceSuccession => "device_succession",
             Self::ModelBindingPropose => "model_binding_propose",
+            Self::SealedFileRuling => "sealed_file_ruling",
         }
     }
 
@@ -227,6 +235,7 @@ impl OwnerActKind {
             "origin_cut" => Self::OriginCut,
             "device_succession" => Self::DeviceSuccession,
             "model_binding_propose" => Self::ModelBindingPropose,
+            "sealed_file_ruling" => Self::SealedFileRuling,
             _ => return None,
         })
     }
