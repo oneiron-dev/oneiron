@@ -168,8 +168,11 @@ pub struct EnrolledOwnerKey {
 
 /// What an enrolled owner key is, read from its enrollment row alone (pass
 /// 27 R4): a device's own key, or the recovery root's authority key. The
-/// owner's "last key held on a device" counts the first kind only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// owner's "last key held on a device" counts the first kind only. A reply
+/// names a kind by its serde name, `device` or `recovery_authority`: the
+/// enum is the one place that spells them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EnrolledOwnerKeyKind {
     /// A device's own owner signing key, held in its keystore
     /// ([`OWNER_KEY_POSSESSION_KIND`]).

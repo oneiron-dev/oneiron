@@ -264,8 +264,9 @@ struct KeyReply {
     /// When it was signed, advisory unix seconds.
     at: u64,
     /// `device`: a device's own key; `recovery_authority`: the recovery
-    /// root's authority key, which this route's removal refuses.
-    kind: &'static str,
+    /// root's authority key, which this route's removal refuses. The names
+    /// are the enum's own serde names.
+    kind: EnrolledOwnerKeyKind,
     /// Whether this install holds the key, so it can sign a removal.
     held_here: bool,
     /// Every machine a counted enrollment names as holding the key as a
@@ -306,7 +307,7 @@ struct ChangeReply {
     /// `device` or `recovery_authority`, as the list's `kind`. Absent on a
     /// switch back to web sign-in.
     #[serde(skip_serializing_if = "Option::is_none")]
-    kind: Option<&'static str>,
+    kind: Option<EnrolledOwnerKeyKind>,
     /// The key that vouched for the change, as hex: an enrollment's
     /// predecessor, a removal's proof, and for a switch back to web sign-in
     /// the owner key whose proof the act carries.
@@ -511,14 +512,6 @@ fn authority_key_hex(key: &AuthorityKey) -> String {
     }
 }
 
-/// A key's kind as the wire names it.
-fn kind_name(kind: EnrolledOwnerKeyKind) -> &'static str {
-    match kind {
-        EnrolledOwnerKeyKind::Device => "device",
-        EnrolledOwnerKeyKind::RecoveryAuthority => "recovery_authority",
-    }
-}
-
 fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
     let key = change.change.key();
     ChangeReply {
@@ -531,7 +524,7 @@ fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
         },
         public_key: key.map(|key| revision_hex(&key.public_key)),
         machine: change.machine.to_hex(),
-        kind: key.map(|key| kind_name(key.kind)),
+        kind: key.map(|key| key.kind),
         signed_by: authority_key_hex(&change.signed_by),
         at: change.at,
     }
@@ -560,7 +553,7 @@ fn key_reply(key: &EnrolledOwnerKey, held: &[AuthorityKey]) -> KeyReply {
         live: key.live,
         eligible: key.eligible,
         at: key.at,
-        kind: kind_name(key.kind),
+        kind: key.kind,
         held_here: held.contains(&AuthorityKey::Ed25519(key.public_key)),
         device_machines: key
             .device_machines
