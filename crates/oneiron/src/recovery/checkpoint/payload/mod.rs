@@ -145,13 +145,13 @@ macro_rules! getter_modules {
             /// `txn`, through the restore-only sink.
             pub(in crate::recovery::checkpoint) fn restore_in_txn(
                 self,
-                dbs: &impl ManifestDbs,
+                store: &Store,
                 txn: &mut RwTxn<'_>,
                 opened: OpenedOwnerRows,
             ) -> Result<Restored> {
                 match self {
-                    $(Self::$name => $($module)::+::restore_in_txn(dbs, txn, opened),)+
-                    $(Self::$row => $($row_module)::+::ADAPTER.restore_in_txn(dbs, txn, opened),)+
+                    $(Self::$name => $($module)::+::restore_in_txn(store, txn, opened),)+
+                    $(Self::$row => $($row_module)::+::ADAPTER.restore_in_txn(store, txn, opened),)+
                 }
             }
         }
@@ -167,15 +167,15 @@ getter_modules! {
         Entities => crate::ports::checkpoint;
         Note => crate::note::checkpoint;
         EntityDoc => crate::entity_doc::checkpoint;
-        TypedBody => crate::typed_body::checkpoint;
         EntityRevision => crate::vault::entity_revision::checkpoint;
+    }
+    rows {
+        TypedBody => crate::typed_body::checkpoint;
         ProvenanceBirth => crate::provenance::birth::checkpoint;
         CodeDocument => crate::code_document::checkpoint;
         CodeRevision => crate::code_revision::checkpoint;
         OfficeBody => crate::office_body::checkpoint;
         BlobArtifact => crate::blob_artifact::checkpoint;
-    }
-    rows {
         TextSource => crate::bm25::checkpoint;
         PhoneticSource => crate::batch::checkpoint;
         ProvenanceBody => crate::provenance::body::checkpoint;

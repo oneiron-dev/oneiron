@@ -7,7 +7,7 @@ use crate::embed::EmbeddingProvenance;
 use crate::entity_id::EntityId;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, Check, ExactTable, Join,
+    Adapter, Capture, Check, ExactTable, Join, Restore,
 };
 use crate::store::checkpoint_payload::rows::{OpenedOwnerRows, OwnerRef};
 
@@ -40,6 +40,7 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 /// The restore already carried the current LIVE rows, including absence. Leave

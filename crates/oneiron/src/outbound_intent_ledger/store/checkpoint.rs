@@ -56,7 +56,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::checkpoint_payload::Subtype;
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, CapturedByAdapter, Check, Join,
+    Adapter, Capture, CapturedByAdapter, Check, Join, Restore,
 };
 use crate::store::checkpoint_payload::rows::{
     self, Captured, OwnerRef, RowDb, RowLocator, Unresolved,
@@ -358,6 +358,7 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::Own(check),
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 /// Every ledger record and attempt binding in `txn`, by call, with each

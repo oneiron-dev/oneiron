@@ -14,20 +14,23 @@ use super::super::storage::checkpoint::{put_author, take_author};
 use super::PROPOSALS;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
-use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OwnerRef, RowLocator, Unresolved,
-};
+use crate::store::Store;
+use crate::store::checkpoint_payload::rows::descriptor::{AdapterTable, CapturedByAdapter};
+use crate::store::checkpoint_payload::rows::{self, ActorPart, Captured, OwnerRef, Unresolved};
+
+/// The stranded proposals, which the code-revision getter's own capture
+/// places.
+pub(crate) const TABLE: &dyn AdapterTable = &CapturedByAdapter(PROPOSALS);
 
 /// Files each proposal under its revision's session, and records that
 /// session for the rows keyed by the revision.
 pub(crate) fn capture(
-    dbs: &impl ManifestDbs,
+    store: &Store,
     txn: &RoTxn<'_>,
     sessions: &mut BTreeMap<EntityId, EntityId>,
     out: &mut Captured,
 ) -> Result<()> {
-    for row in rows::typed_rows(dbs, txn, PROPOSALS, out)? {
+    for row in rows::typed_rows(store, txn, PROPOSALS, out)? {
         let revision = &row.value.revision;
         if revision.revision_id != row.key {
             out.unclassified(row.at, None, Unresolved::NoOwner);
@@ -40,14 +43,6 @@ pub(crate) fn capture(
         })?;
     }
     Ok(())
-}
-
-pub(crate) fn owns(at: &RowLocator) -> bool {
-    at.in_table(PROPOSALS.decl())
-}
-
-pub(crate) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    rows::check_row(PROPOSALS, at, value)
 }
 
 /// A proposal with its revision's opened author back, re-encoded.
