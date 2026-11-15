@@ -44,7 +44,7 @@ impl From<ConsentReceipt> for HubConsentReceipt {
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
-            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
+            grant_ref: Some("trust-grant".to_owned()),
         }
     }
 }
@@ -426,7 +426,7 @@ pub fn skill_hub_clawhub_search_as_owner(
 ) -> MemoryResult<crate::skill_hub::ClawHubSearchReply> {
     owner.revalidate(vault)?;
     let hub = vault.skill_hub_record(&input.hub)?;
-    if hub.kind != SkillHubKind::HttpIndex {
+    if hub.kind == SkillHubKind::HttpIndex {
         return Err(crate::memory::MemoryError::bad_request(
             "ClawHub search requires a configured HTTP hub",
         ));
