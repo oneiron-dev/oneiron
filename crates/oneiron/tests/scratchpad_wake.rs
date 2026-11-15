@@ -18,19 +18,23 @@
 use oneiron::attempt_queue::{
     AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef,
     AttemptResumePoint, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome,
-    EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome, HoldAttemptForBudget, ManifestEntry,
-    ManifestKind, RetryAttempt, RetryOutcome,
+    EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome, ForceAttemptCancel,
+    ForceCancelOutcome, HoldAttemptForBudget, ManifestEntry, ManifestKind, RetryAttempt,
+    RetryOutcome,
 };
 use oneiron::memory::MEMORY_CODE_INVALID_STATE;
 use oneiron::receipt::{attempt_pack_receipt, attempt_pack_receipt_id};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::run_lifecycle::force_cancel_authority;
 use oneiron::test_doors::scratchpad_wake::run_bound_memory;
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use oneiron_testkit::{FixtureVault, TestVault, fixture_cache};
 
 const KIND: &str = "test.scratchpad_wake";
 const WORKER: &str = "worker:scratchpad-wake";
+/// The owner who force-cancels a running wake.
+const OWNER: &str = "person:scratchpad-wake-owner";
 /// The one session label every wake in a test writes on.
 const LABEL: &str = "wake-label";
 /// The receipt field that names the pads a wake's terminal write sealed,
@@ -216,6 +220,45 @@ fn an_abandoned_wake_seals_its_pad() {
         "the abandoned wake's terminal write seals its pad"
     );
     assert_eq!(scratch_ref(&vault, leased.id), Some(pad.to_hex()));
+}
+
+/// The owner force-cancels a running wake before its first line. The
+/// cancel only signals the wake's executor, so that line can come after the
+/// terminal write: it opens no pad, since the run's end already sealed its
+/// pads and named them on the receipt.
+#[test]
+fn a_wake_cancelled_before_its_first_line_opens_no_pad() {
+    let (copy, vault, agent) = open();
+    let queue = AttemptQueue::new(&vault);
+    let t = copy.clock().now();
+    let (leased, run) = wake(&queue, t);
+    let outcome = queue
+        .force_cancel(ForceAttemptCancel {
+            id: leased.id,
+            authority: force_cancel_authority(OWNER).expect("owner authority"),
+            reason: Some("the owner stops it".to_owned()),
+            now: t + 5,
+        })
+        .expect("force cancel");
+    assert!(
+        matches!(outcome, ForceCancelOutcome::Cancelled(_)),
+        "{outcome:?}"
+    );
+    let memory = run_bound_memory(&vault, agent, run).expect("run-bound memory");
+    let refused = memory
+        .scratchpad_append(LABEL, "a line after the cancel", None, false)
+        .expect_err("a wake that ended opens no pad");
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE, "{refused:?}");
+    assert_eq!(
+        memory.scratchpad_ref(LABEL).expect("pad read"),
+        None,
+        "the refused line leaves the ended wake no pad"
+    );
+    assert_eq!(
+        scratch_ref(&vault, leased.id),
+        None,
+        "the cancelled wake's receipt names no pad"
+    );
 }
 
 #[test]
