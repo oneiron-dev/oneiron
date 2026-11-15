@@ -9,7 +9,13 @@ pub const MAX_DBS: u32 = 32;
 /// owner act's carrier: an act whose carrier an anchor chain, and not the
 /// roster's, marked removed at the act's parents was refused and now
 /// stands, and an act whose carrier only an anchor chain admitted stood and
-/// is now refused. A stored checkpoint image written before it holds the
+/// is now refused. Every other judge all installs share reads the roster's
+/// chain alone too (Fable pass 29, step K3): an owner key's enrolment, a
+/// residence result's signer, a one-machine read pick, and the ten owner-act
+/// gates that ask whether a machine's chain names the signing key no longer
+/// count an anchor's chain, so such a row that only an anchor's chain
+/// supported is now refused, and one an anchor's removal mark refused now
+/// stands. A stored checkpoint image written before it holds the
 /// old answers and no longer decodes (the authority fold schema moves with
 /// it). No old-meaning reader or migration is provided (the lead's M-1
 /// stored-change rule, path "loud").
