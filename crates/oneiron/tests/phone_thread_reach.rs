@@ -39,6 +39,7 @@ const OCCURRED_AT: u64 = 1_769_947_200;
 const LINE_NUMBER: &str = "+15550100";
 const CALLER_A: &str = "+15550000001";
 const CALLER_B: &str = "+15550000002";
+const CALLER_C: &str = "+15550000003";
 const CALL_A: &str = "call-A";
 const CALL_B: &str = "call-B";
 const A_SECRET: &str = "A's secret is 1234";
@@ -316,20 +317,17 @@ fn phone_thread_id(agent: EntityId, number: &str) -> EntityId {
     .expect("phone thread id derives")
 }
 
-/// Keeps one phone message: the caller's words as one Counterparty message or
-/// the answer as one Companion message, each its own witness call, as
-/// `KeptTurn::keep_phone` keeps them.
-#[allow(clippy::too_many_arguments)]
-fn keep_phone_message(
-    vault: &Vault,
-    agent: EntityId,
+/// One phone message as a turn of `conversation`: the caller's words as one
+/// Counterparty message or the answer as one Companion message, as
+/// `KeptTurn::keep_phone` builds them.
+fn phone_turn(
     conversation: EntityId,
     author: WitnessAuthor,
     content: &str,
     call_id: &str,
     caller_speaker: bool,
     at: u64,
-) -> (EntityId, EntityId) {
+) -> WitnessTurn {
     let mut turn = WitnessTurn {
         conversation_ref: conversation.to_hex(),
         turn_ref: None,
@@ -354,6 +352,23 @@ fn keep_phone_message(
         json!({ "voice": { "call": call_id } })
     };
     turn.messages[0].metadata = Some(metadata);
+    turn
+}
+
+/// Keeps one phone message, each its own witness call, as
+/// `KeptTurn::keep_phone` keeps them.
+#[allow(clippy::too_many_arguments)]
+fn keep_phone_message(
+    vault: &Vault,
+    agent: EntityId,
+    conversation: EntityId,
+    author: WitnessAuthor,
+    content: &str,
+    call_id: &str,
+    caller_speaker: bool,
+    at: u64,
+) -> (EntityId, EntityId) {
+    let turn = phone_turn(conversation, author, content, call_id, caller_speaker, at);
     let receipt = vault
         .witness_call_turn(agent, &turn)
         .expect("the phone message is kept");
@@ -680,5 +695,44 @@ fn a_kept_call_thread_is_marked_and_keeps_its_mark() {
     assert!(
         err.contains("birth fact"),
         "the refusal names the birth fact; seen {err}",
+    );
+}
+
+#[test]
+fn a_call_does_not_keep_into_a_thread_that_does_not_name_its_line_agent() {
+    let reach = reach_fixture();
+    let squatted = phone_thread_id(reach.fixture.agent, CALLER_C);
+    let at = TimeRange {
+        start: OCCURRED_AT,
+        end: OCCURRED_AT,
+    };
+    // An unmarked CONVERSATION (an empty MessagePack map, as a plain mint)
+    // stands at the id the line agent's calls from C land in.
+    reach
+        .fixture
+        .vault
+        .put_entity(
+            &squatted,
+            ENTITY_TYPE_CONVERSATION,
+            at,
+            OCCURRED_AT,
+            &[0x80],
+        )
+        .expect("an unmarked conversation stands at C's thread id");
+    let turn = phone_turn(
+        squatted,
+        WitnessAuthor::Counterparty,
+        "C's words",
+        "call-C",
+        true,
+        OCCURRED_AT + 4,
+    );
+    let kept = reach
+        .fixture
+        .vault
+        .witness_call_turn(reach.fixture.agent, &turn);
+    assert!(
+        kept.is_err(),
+        "a call must not keep into a thread that does not name its line agent",
     );
 }
