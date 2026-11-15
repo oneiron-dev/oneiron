@@ -90,6 +90,29 @@ fn retire_refused_retry(vault: &Vault, state: &mut State) -> MessageStreamResult
     vault.message_streams.remove(state.handle())
 }
 
+/// A Retry's terminal (`seed.action` is Some only on one) binds the sitting
+/// the reply it answers again joined, read from that reply's TURN, never
+/// named by the opener (FIX 1034), as FIX G230-RETRY-OMITTED-SESSION-BAND
+/// places a room's Retry. Its new TURN joins that sitting while it is open,
+/// or the one its actor has open on that machine now; with no such sitting,
+/// `memory` is returned as it is. Every other stream keeps its handle.
+fn bind_retry_sitting<'v>(
+    vault: &'v Vault,
+    seed: &storage::Seed,
+    memory: crate::memory::Memory<'v>,
+) -> crate::error::Result<crate::memory::Memory<'v>> {
+    let Some(action) = &seed.action else {
+        return Ok(memory);
+    };
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        match vault.turn_sitting_key_in_txn(&txn, &action.assistant_turn)? {
+            Some(key) => memory.with_session(key),
+            None => memory,
+        },
+    )
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the terminal write joins its outcome, its reply's assertions and its gates"
@@ -114,6 +137,7 @@ fn terminal_write(
     let mut receipt = opening_receipt(state, (finality, reason), finish_reason, recovered);
     // The opener's own proof, restored, reads every link below (FIX 1667).
     let memory = super::super::reader::terminal_memory(vault, seed)?;
+    let memory = bind_retry_sitting(vault, seed, memory)?;
     let unlinked_prose = continuation_unlinked_prose(vault, state, &memory);
     // A host's gate is host code inside the transaction, so a gated write
     // takes the hosts' door: a group of its own.
