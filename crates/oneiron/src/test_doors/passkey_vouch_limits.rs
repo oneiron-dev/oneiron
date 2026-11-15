@@ -3,7 +3,9 @@
 //! and a history of signed rows no door writes, at the main-log heads or on
 //! a sibling branch, which the fold judges.
 
-use crate::authority::{AuthorityEntryHash, AuthorityKey, AuthorityOp};
+use crate::authority::{
+    ActAuthority, AuthorityEntryHash, AuthorityKey, AuthorityOp, OwnerKeyEnrollment,
+};
 use crate::{Result, Vault};
 
 /// Signs a `RevokeDevice` of `revoked` by `signer` alone (`sign` gets its
@@ -69,6 +71,30 @@ where
     S: FnMut(&AuthorityKey, &[u8]) -> Vec<u8>,
 {
     append_signed_rows_at(vault, Some(parents), rows, sign)
+}
+
+/// The owner key enrollment of `input`'s key on `parents`, a sibling branch
+/// of every row stored since: signed by `predecessor` (`sign` gets its
+/// authority transcript), cosigned by this install as its carrier, with no
+/// roster check of the door's own. True when the fold counted it (Astra
+/// delta review finding 2).
+///
+/// # Errors
+///
+/// An agent's act, an install that cannot carry it, an owner proof that no
+/// longer holds, or the store's refusal of the row.
+pub fn enrol_owner_key_on<S>(
+    vault: &Vault,
+    authority: &ActAuthority,
+    input: OwnerKeyEnrollment,
+    parents: Vec<AuthorityEntryHash>,
+    predecessor: AuthorityKey,
+    sign: S,
+) -> Result<bool>
+where
+    S: FnOnce(&[u8]) -> Vec<u8>,
+{
+    vault.enrol_owner_key_on_parents_for_test(authority, input, parents, predecessor, sign)
 }
 
 /// The vault's main-log heads now, the parents a row appended now names.

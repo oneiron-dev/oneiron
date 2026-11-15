@@ -25,7 +25,11 @@
 //! an agent's revoke of another owner key (Sol xhigh stack review F1, F2),
 //! nor revokes, on a sibling branch, an owner key its own parents do not
 //! hold yet (Astra stack review finding 1), nor answers a machine as the
-//! owner's or removes one by a roster-signed profile (OPUS-SECREAD-A N1).
+//! owner's or removes one by a roster-signed profile (OPUS-SECREAD-A N1),
+//! nor unbinds or rebinds another owner key's actor (Astra delta review
+//! finding 1). A device key's enrolment of a key confirms it, so a passkey's
+//! vouch for the same key on a sibling branch limits nothing once the fold
+//! merges the two (Astra delta review finding 2).
 //! A passkey that only another passkey vouched for has its own confirmation
 //! door (F5).
 //!
@@ -53,7 +57,7 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::passkey_vouch_limits::{
-    SignedRow, append_signed_rows, append_signed_rows_on, main_log_heads,
+    SignedRow, append_signed_rows, append_signed_rows_on, enrol_owner_key_on, main_log_heads,
     revoke_owner_key_signed_by,
 };
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
@@ -428,6 +432,133 @@ fn a_key_only_a_passkey_vouched_for_cannot_fence_the_owners_device_key() {
     assert!(
         hosted.live_owner_key(&ed_key(&owner_device())),
         "the owner's device key stands"
+    );
+}
+
+/// Astra delta review finding 1: the owner's device key binds a fresh owner
+/// key as the owner; a key only the passkey vouched for then revokes that
+/// binding on a sibling branch at the highest epoch (which no later bind
+/// could clear once the branches merge), and rebinds the key to another
+/// actor at the heads. Neither counts.
+#[test]
+fn a_key_only_a_passkey_vouched_for_unbinds_no_other_owner_key() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    let fork = main_log_heads(&hosted.vault).expect("the heads before the fork");
+    let fresh = ed_key(&fresh_owner_key());
+    hosted
+        .vault
+        .enrol_owner_signing_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &fresh_owner_key()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key enrols a fresh key");
+    let owner = hosted
+        .proof
+        .actor_for_read(&hosted.vault)
+        .expect("the vault's owner");
+    let bound = append_signed_rows(
+        &hosted.vault,
+        vec![SignedRow {
+            op: AuthorityOp::BindActor {
+                authority_key: fresh.clone(),
+                actor_ref: owner,
+                actor_class: "human".to_owned(),
+                epoch: 1,
+            },
+            signer: ed_key(&owner_device()),
+            cosigners: Vec::new(),
+        }],
+        signs_as,
+    )
+    .expect("the bind is stored");
+    assert_eq!(
+        bound,
+        vec![true],
+        "guard: the owner's device key binds the fresh key as the owner"
+    );
+    let revoked = append_signed_rows_on(
+        &hosted.vault,
+        fork,
+        vec![SignedRow {
+            op: AuthorityOp::RevokeActor {
+                authority_key: fresh.clone(),
+                epoch: u64::MAX,
+            },
+            signer: ed_key(&host_held()),
+            cosigners: Vec::new(),
+        }],
+        signs_as,
+    )
+    .unwrap_or_default();
+    assert!(
+        !revoked.first().copied().unwrap_or(false),
+        "the limited key's sibling revoke of the fresh key's binding counts for nothing"
+    );
+    let rebound = append_signed_rows(
+        &hosted.vault,
+        vec![SignedRow {
+            op: AuthorityOp::RebindActor {
+                authority_key: fresh,
+                actor_ref: oneiron::EntityId::now(),
+                actor_class: "human".to_owned(),
+                epoch: 2,
+            },
+            signer: ed_key(&host_held()),
+            cosigners: Vec::new(),
+        }],
+        signs_as,
+    )
+    .unwrap_or_default();
+    assert!(
+        !rebound.first().copied().unwrap_or(false),
+        "the limited key rebinds no other owner key to another actor"
+    );
+}
+
+/// Astra delta review finding 2: the owner's device key enrols a fresh key
+/// at the heads, and the passkey vouches for the same key on a sibling
+/// branch (a blind signature the page's host obtained). Once the fold merges
+/// the two, the key acts in full: the device key's enrolment confirms it, so
+/// it revokes the passkey-vouched key.
+#[test]
+fn a_device_keys_enrolment_confirms_against_a_sibling_passkey_vouch() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    let fork = main_log_heads(&hosted.vault).expect("the heads before the fork");
+    hosted
+        .vault
+        .enrol_owner_signing_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &fresh_owner_key()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key enrols a fresh key");
+    let vouched = enrol_owner_key_on(
+        &hosted.vault,
+        &hosted.owner(),
+        keyed_enrollment(&hosted, machine, &fresh_owner_key()),
+        fork,
+        passkey_roster_key(),
+        |transcript| passkey_signs(transcript, FLAGS_PRESENT_VERIFIED),
+    )
+    .expect("the sibling vouch is stored");
+    assert!(
+        vouched,
+        "guard: the passkey's sibling vouch for the same fresh key counts"
+    );
+    assert!(
+        revoke_owner_key_signed_by(
+            &hosted.vault,
+            ed_key(&fresh_owner_key()),
+            ed_key(&host_held()),
+            |transcript| fresh_owner_key().sign(transcript).to_bytes().to_vec(),
+        )
+        .unwrap_or(false),
+        "the key the device key enrolled acts in full after the merge"
     );
 }
 
