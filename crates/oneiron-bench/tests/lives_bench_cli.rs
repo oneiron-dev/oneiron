@@ -6,6 +6,9 @@
 //! loopback HTTP: `vault.witness` per turn, `vault.recall` per question.
 //! On a tree without the subcommand, `load` prints its usage and exits 1.
 //!
+//! Other systems join through the adapter protocol (`--system <name>=<url>`);
+//! the tests serve a stub adapter in their own process.
+//!
 //! `cargo test --locked -p oneiron-bench --test lives_bench_cli`.
 #![allow(
     clippy::disallowed_methods,
@@ -16,8 +19,10 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
+use axum::Json;
+use axum::extract::{Path as UrlPath, State};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
@@ -328,4 +333,280 @@ fn a_life_without_days_is_refused_by_name() {
         stderr.contains("L9X0001") && stderr.contains("days"),
         "stderr names the life and the missing field: {stderr}"
     );
+}
+
+/// Every request a stub adapter took: its operation and its body.
+type Seen = Arc<Mutex<Vec<(String, Value)>>>;
+
+#[derive(Clone)]
+struct StubState {
+    seen: Seen,
+    ready: bool,
+}
+
+/// A stub adapter on loopback, in this test's own runtime.
+struct Stub {
+    url: String,
+    seen: Seen,
+    _runtime: tokio::runtime::Runtime,
+}
+
+/// Lower-case words of three characters or more.
+fn words(text: &str) -> BTreeSet<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// It records every request, and ranks a search over the turns its store took
+/// by how many words they share with the query (ties in ingest order; a turn
+/// sharing none is not returned), each answer timed at `system_ms: 1.5`.
+async fn stub_call(
+    State(state): State<StubState>,
+    UrlPath(op): UrlPath<String>,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    let mut seen = state.seen.lock().unwrap();
+    seen.push((op.clone(), body.clone()));
+    let answer = match op.as_str() {
+        "settle" => json!({"ready": state.ready}),
+        "ingest" => json!({"system_ms": 1.5}),
+        "search" => {
+            let query = words(body["query"].as_str().unwrap_or(""));
+            let k = usize::try_from(body["k"].as_u64().unwrap_or(10)).unwrap();
+            let mut ranked = seen
+                .iter()
+                .filter(|(op, turn)| op == "ingest" && turn["store"] == body["store"])
+                .enumerate()
+                .map(|(order, (_, turn))| {
+                    let text = turn["turn"]["text"].as_str().unwrap_or("").to_owned();
+                    (query.intersection(&words(&text)).count(), order, text)
+                })
+                .filter(|(shared, _, _)| *shared > 0)
+                .collect::<Vec<_>>();
+            ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            let items = ranked
+                .into_iter()
+                .take(k)
+                .map(|(_, _, text)| json!({"text": text}))
+                .collect::<Vec<_>>();
+            json!({"items": items, "system_ms": 1.5})
+        }
+        _ => json!({}),
+    };
+    Json(answer)
+}
+
+fn stub(ready: bool) -> Stub {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let seen = Seen::default();
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new()
+        .route("/v1/lives/{op}", axum::routing::post(stub_call))
+        .with_state(StubState {
+            seen: Arc::clone(&seen),
+            ready,
+        });
+    runtime.spawn(async move { axum::serve(listener, app).await });
+    Stub {
+        url,
+        seen,
+        _runtime: runtime,
+    }
+}
+
+/// The fixture's turns in file order: (life, turn id, text as ingested).
+fn fixture_turns() -> Vec<(String, String, String)> {
+    let mut turns = Vec::new();
+    for line in std::fs::read_to_string(fixture()).unwrap().lines() {
+        let life: Value = serde_json::from_str(line).unwrap();
+        for day in life["days"].as_array().unwrap() {
+            for session in day["sessions"].as_array().unwrap() {
+                for turn in session["turns"].as_array().unwrap() {
+                    let text = turn["text"].as_str().map_or_else(
+                        || {
+                            let lines = turn["lines"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .map(|l| l.as_str().unwrap())
+                                .collect::<Vec<_>>();
+                            format!("{}\n{}", turn["tool"].as_str().unwrap(), lines.join("\n"))
+                        },
+                        str::to_owned,
+                    );
+                    turns.push((
+                        life["life_id"].as_str().unwrap().to_owned(),
+                        turn["id"].as_str().unwrap().to_owned(),
+                        text,
+                    ));
+                }
+            }
+        }
+    }
+    turns
+}
+
+#[test]
+fn an_external_system_gets_the_same_lives_and_questions() {
+    let stub = stub(true);
+    let dir = tempfile::tempdir().unwrap();
+    let system = format!("stub={}", stub.url);
+    let (output, report) = lives(
+        dir.path(),
+        &[&fixture()],
+        &[
+            "--grades",
+            "light,medium",
+            "--limit",
+            "5",
+            "--system",
+            &system,
+        ],
+    );
+    succeeded(&output);
+    let report = report.expect("a report");
+    let systems = report["systems"].as_array().expect("systems");
+    assert_eq!(systems.len(), 2);
+    let (oneiron, stubbed) = (&systems[0], &systems[1]);
+    assert_eq!(oneiron["name"], "oneiron");
+    assert_eq!(stubbed["name"], "stub");
+    assert_eq!(stubbed["status"], "measured", "{stubbed}");
+    let seen = stub.seen.lock().unwrap().clone();
+    // The same input: every fixture turn once, in fixture order, with its text.
+    let ingested = seen
+        .iter()
+        .filter(|(op, _)| op == "ingest")
+        .map(|(_, body)| body)
+        .collect::<Vec<_>>();
+    let expected = fixture_turns();
+    assert_eq!(ingested.len(), expected.len());
+    assert_eq!(report["corpus"]["documents"], ingested.len());
+    assert_eq!(stubbed["documents"], ingested.len());
+    for (body, (_, id, text)) in ingested.iter().zip(&expected) {
+        assert_eq!(body["turn"]["id"], id.as_str());
+        assert_eq!(body["turn"]["text"], text.as_str());
+    }
+    // The times every system is given: a day's 09:00 UTC plus 20 s a turn.
+    assert_eq!(ingested[0]["at"], 1_740_992_400, "L90001 d1s1t01");
+    assert_eq!(ingested[11]["turn"]["role"], "tool");
+    assert_eq!(ingested[11]["at"], 1_741_597_260, "L90001 d2s1t04");
+    let conversations = ingested
+        .iter()
+        .map(|body| body["conversation"].as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(conversations.len(), 4, "one conversation per session");
+    // The same questions at the same grades, each at its life's end.
+    let keys = |system: &Value| {
+        system["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| format!("{}/{}/{}/{}", r["life"], r["qid"], r["grade"], r["as_of"]))
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(keys(stubbed).len(), 20);
+    assert_eq!(keys(oneiron), keys(stubbed));
+    let searched = seen.iter().filter(|(op, _)| op == "search").count();
+    assert_eq!(searched, 20, "one search per question per grade");
+    for grade in ["light", "medium"] {
+        let rows = rows(stubbed, grade);
+        for r in &rows {
+            assert!(r["ms"].as_f64().unwrap() > 0.0, "{r}");
+            assert_eq!(r["system_ms"], 1.5, "{r}");
+        }
+        // The stub's key puts each English string question's evidence first.
+        for (life, qid) in [
+            ("L90001", "q01"),
+            ("L90001", "q02"),
+            ("L90001", "q05"),
+            ("L90002", "q01"),
+            ("L90002", "q02"),
+        ] {
+            let r = row(&rows, life, qid);
+            assert_eq!(r["answer_in_context"], true, "{grade} {life} {qid}: {r}");
+            assert_eq!(r["evidence_rank"], 1, "{grade} {life} {qid}: {r}");
+        }
+        // The Japanese question shares no word with an English turn.
+        let japanese = row(&rows, "L90001", "j01");
+        assert_eq!(japanese["items"], 0);
+        assert_eq!(japanese["answer_in_context"], false);
+        let summary = stubbed["summary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["grade"] == grade)
+            .unwrap();
+        assert_eq!(summary["answer_in_context"], 5);
+        assert_eq!(summary["system_latency"]["completed"], 10, "{summary}");
+    }
+}
+
+#[test]
+fn a_plain_http_adapter_off_loopback_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (output, report) = lives(
+        dir.path(),
+        &[&fixture()],
+        &["--system", "x=http://10.0.0.1:9"],
+    );
+    assert!(!output.status.success());
+    assert!(report.is_none(), "refused before any store is opened");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("https") && stderr.contains("loopback"),
+        "stderr names the rule: {stderr}"
+    );
+}
+
+#[test]
+fn an_adapter_that_never_settles_is_not_ready_and_the_rest_still_run() {
+    let stub = stub(false);
+    let dir = tempfile::tempdir().unwrap();
+    let system = format!("stub={}", stub.url);
+    let (output, report) = lives(
+        dir.path(),
+        &[&fixture()],
+        &[
+            "--grades",
+            "light",
+            "--system",
+            &system,
+            "--settle-max-seconds",
+            "2",
+        ],
+    );
+    succeeded(&output);
+    let report = report.expect("a report");
+    let systems = report["systems"].as_array().expect("systems");
+    assert_eq!(systems.len(), 2);
+    assert_eq!(systems[0]["name"], "oneiron");
+    assert_eq!(systems[0]["status"], "measured");
+    assert_eq!(systems[0]["rows"].as_array().unwrap().len(), 10);
+    let stubbed = &systems[1];
+    assert_eq!(stubbed["status"], "not_ready", "{stubbed}");
+    assert!(
+        stubbed["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("not ready")),
+        "{stubbed}"
+    );
+    assert_eq!(stubbed["rows"].as_array().unwrap().len(), 0);
+    let settles = stub
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(op, _)| op == "settle")
+        .count();
+    assert!(settles >= 2, "settle was polled: {settles}");
 }
