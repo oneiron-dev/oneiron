@@ -145,6 +145,48 @@ pub(crate) fn free_names(expr: &str) -> BTreeSet<&'static str> {
     used
 }
 
+/// The inside of each string literal of `text`.
+fn string_literals(text: &str) -> Vec<&str> {
+    let mut literals = Vec::new();
+    let mut open: Option<usize> = None;
+    let mut escaped = false;
+    for (at, ch) in text.char_indices() {
+        let Some(start) = open else {
+            if ch == '"' {
+                open = Some(at + 1);
+            }
+            continue;
+        };
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            literals.push(&text[start..at]);
+            open = None;
+        }
+    }
+    literals
+}
+
+/// The bound names a string literal of `expr` names inside its braces: a format string's implicit capture
+/// (`format!("{input}")`, `{input:?}`, the width in `{:>surface$}`). [`free_names`] blanks every string, so
+/// [`check_names`] refuses such a call rather than miss the name (Astra review of UC-01 PR 1, F1). `{{` is a brace.
+fn format_captures(expr: &str) -> BTreeSet<&'static str> {
+    let mut captured = BTreeSet::new();
+    for literal in string_literals(expr) {
+        for group in literal.replace("{{", "").split('{').skip(1) {
+            let group = group.split_once('}').map_or(group, |(head, _)| head);
+            for (start, end) in identifiers(group) {
+                if let Some(&name) = BOUND_NAMES.iter().find(|&&name| name == &group[start..end]) {
+                    captured.insert(name);
+                }
+            }
+        }
+    }
+    captured
+}
+
 /// Whether `row` gets a generated door: a host-door row that does not say `"door": "hand"`.
 pub(crate) fn generated(row: &Dict) -> bool {
     has_door(row) && !row.contains_key("door")
@@ -165,9 +207,24 @@ fn expression<'r>(row: &'r Dict, key: &str, what: &str) -> Result<&'r str, Gener
         .ok_or_else(|| refuse(row, &format!("`{key}` is {what}, one Rust expression")))
 }
 
-/// The checks of a row's bound names, for every row (DESIGN section 1.3): an embedded SDK fn binds no `server` and
-/// no `answer`, and `rows` belongs to a generated door, over `answer` or `input`.
+/// The checks of a row's bound names, for every row (DESIGN section 1.3): no string literal names one (a format
+/// capture, which [`free_names`] cannot see), an embedded SDK fn binds no `server` and no `answer`, and `rows` belongs
+/// to a generated door, over `answer` or `input`.
 pub(crate) fn check_names(row: &Dict) -> Result<(), GenerateError> {
+    for key in ["call", "file_call", "rows"] {
+        let Some(text) = row.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(name) = format_captures(text).first() {
+            return Err(refuse(
+                row,
+                &format!(
+                    "`{key}` names `{name}` inside a string (`{{{name}}}`): the generator reads no format string, so \
+                     pass it as an argument (`format!(\"{{}}\", {name})`)"
+                ),
+            ));
+        }
+    }
     for key in ["call", "file_call"] {
         let Some(call) = row.get(key).and_then(Value::as_str) else {
             continue;
@@ -511,6 +568,27 @@ mod tests {
         ];
         for &(expr, expected) in cases {
             assert_eq!(names(expr), expected, "{expr}");
+        }
+    }
+
+    #[test]
+    fn format_captures_read_bound_names_in_braces() {
+        let cases: &[(&str, &[&str])] = &[
+            ("format!(\"{input}\")", &["input"]),
+            ("format!(\"{input:?} for {owner}\")", &["input", "owner"]),
+            ("format!(\"{:>surface$}\", x)", &["surface"]),
+            ("format!(\"{{{input}}}\")", &["input"]),
+            ("format!(\"{{input}}\")", &[]),
+            ("format!(\"{0} {x:?}\", input)", &[]),
+            (
+                "f(\"vault.owner.get\", \"a \\\"{memory}\\\"\")",
+                &["memory"],
+            ),
+            ("memory.f(owner, input)?", &[]),
+        ];
+        for &(expr, expected) in cases {
+            let got: Vec<&str> = format_captures(expr).into_iter().collect();
+            assert_eq!(got, expected, "{expr}");
         }
     }
 

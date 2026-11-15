@@ -31,12 +31,18 @@ VERBS = pathlib.Path("scripts/sdk/verbs")
 # a `calls` fn takes them.
 BOUND_NAMES = ["memory", "vault", "owner", "surface", "input", "server", "answer"]
 
-# Each known wrapper: the `use` path that imports it, the closure parameters it hands the call, and whether the call
-# reads through the credential's handle.
+# Each known wrapper: its full path, which the door file's `use` line must resolve to, the closure parameters it hands
+# the call, and whether the call reads through the credential's handle.
 WRAPPERS = {
-    "as_owner": ("host_doors::support::owner_listing::as_owner", ("memory", "owner"), True),
-    "as_owner_naming": ("legal_hold_doors::as_owner_naming", ("server", "owner"), False),
+    "as_owner": ("crate::api::facade::host_doors::support::owner_listing::as_owner", ("memory", "owner"), True),
+    "as_owner_naming": ("crate::api::facade::legal_hold_doors::as_owner_naming", ("server", "owner"), False),
 }
+
+# A string or char literal, whose whitespace is part of its value.
+LITERAL = re.compile(r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])')")
+
+# A raw string literal, which the migrator does not read.
+RAW_STRING = re.compile(r'(?<!\w)b?r#*"')
 
 FN = re.compile(r"^(?P<doc>(?:[ \t]*(?:///|#\[)[^\n]*\n)*)pub\(crate\) async fn (?P<name>\w+)\s*\(", re.M)
 
@@ -56,6 +62,15 @@ def self_bound(text):
     for m in re.finditer(r"(?:^|move|[(,=])\s*\|([^|]*)\|", text):
         bound.update(re.findall(r"[A-Za-z_]\w*", m.group(1)))
     return bound
+
+
+def format_captures(expr):
+    """The generator's `format_captures`: the bound names a string literal names inside its braces (`{input}`)."""
+    captured = set()
+    for literal in re.findall(r'"((?:\\.|[^"\\])*)"', expr):
+        for group in literal.replace("{{", "").split("{")[1:]:
+            captured.update(n for n in re.findall(r"(?<![0-9])[A-Za-z_]\w*", group.split("}")[0]) if n in BOUND_NAMES)
+    return captured
 
 
 def free_names(expr):
@@ -129,8 +144,29 @@ def split_args(text):
     return parts
 
 
+def module_path(path):
+    """The module path of a source file under SERVER (`crate::api::facade::free_time_doors`)."""
+    parts = list(path.relative_to(SERVER).with_suffix("").parts)
+    if parts[-1] in ("mod", "lib", "main"):
+        parts.pop()
+    return "::".join(["crate", *parts])
+
+
+def absolute(path, module):
+    """A `use` path written from `module` (`super::x`, `self::x`, `crate::x`) as a full `crate::` path; any other path
+    (an external crate's) as it is."""
+    parts = path.split("::")
+    if parts[0] not in ("self", "super"):
+        return path
+    base = module.split("::")
+    while parts[0] in ("self", "super"):
+        if parts.pop(0) == "super":
+            base.pop()
+    return "::".join(base + parts)
+
+
 def use_map(source):
-    """Each name a file's `use` lines import, with its full path (`self` names the module itself)."""
+    """Each name a file's `use` lines import, with its path as written (`self` names the module itself)."""
     names = {}
     for m in re.finditer(r"^use ([^;]+);", source, re.M):
         path = " ".join(m.group(1).split())
@@ -159,7 +195,9 @@ def resolve(expr, names):
 
 
 def squash(text):
-    return re.sub(r"\s+", "", text)
+    """`text` without whitespace outside its string and char literals (Astra review of UC-01 PR 1, F2)."""
+    parts = LITERAL.split(text)
+    return "".join(part if at % 2 else re.sub(r"\s+", "", part) for at, part in enumerate(parts))
 
 
 def call_result(call):
@@ -192,7 +230,7 @@ def generated_door(row, call):
     )
 
 
-def check_door(source, match, rows, names):
+def check_door(source, match, rows, names, module):
     """The row edit for one door fn, or a refusal naming why it stays hand-written."""
     name = match.group("name")
     end = balanced(source, source.index("{", match.end()), "{", "}")
@@ -224,7 +262,8 @@ def check_door(source, match, rows, names):
     if not wrapper or wrapper.group(1) not in WRAPPERS:
         refuse("its body is not one known wrapper call")
     use_path, closure_params, on_handle = WRAPPERS[wrapper.group(1)]
-    if not names.get(wrapper.group(1), "").endswith(use_path):
+    # The whole path, resolved from this file's module: a suffix match takes any wrapper of that name (F3).
+    if absolute(names.get(wrapper.group(1), ""), module) != use_path:
         refuse(f"`{wrapper.group(1)}` is not imported from {use_path}")
     close = balanced(body, wrapper.end() - 1, "(", ")")
     if squash(body[close:]) != ".await":
@@ -245,6 +284,10 @@ def check_door(source, match, rows, names):
     if "server" in free_names(door_call):
         refuse("its call reads the server beyond its vault")
     call = new_call(row)
+    if RAW_STRING.search(blank_strings(door_call)) or RAW_STRING.search(blank_strings(call)):
+        refuse("its call has a raw string literal, which the migrator does not read")
+    if format_captures(call):
+        refuse("its call names a bound name inside a string (a format capture), which the generator refuses")
     if squash(call_result(call)) != squash(door_call):
         refuse(f"its call `{door_call}` is not the row's `{call_result(call)}`")
     if ("memory" in free_names(call)) != on_handle:
@@ -265,12 +308,15 @@ def main(argv):
     moved = refused = 0
     for door_file in paths:
         path = pathlib.Path(door_file)
+        if SERVER not in path.parents:
+            return f"{path} is not under {SERVER}"
         source = path.read_text()
         names = use_map(source)
+        module = module_path(path)
         accepted = []
         for match in FN.finditer(source):
             try:
-                edit = check_door(source, match, rows, names)
+                edit = check_door(source, match, rows, names, module)
             except ValueError as reason:
                 refused += 1
                 print(f"## HAND {path}:{source.count(chr(10), 0, match.start()) + 1} {match.group('name')}: {reason}")

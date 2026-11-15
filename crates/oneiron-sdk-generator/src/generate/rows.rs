@@ -1301,6 +1301,12 @@ mod tests {
                 row("`call` uses `answer`, which only `rows` binds"),
             ),
             (
+                r#""proof": "owner", "call": "format!(\"{input}\")""#,
+                row(
+                    "`call` names `input` inside a string (`{input}`): the generator reads no format string, so pass it as an argument (`format!(\"{}\", input)`)",
+                ),
+            ),
+            (
                 r#""proof": "owner", "call": "f(owner, &input)?", "host_door_caller": true"#,
                 row(&format!(
                     "a generated door takes no caller from the dispatch (`host_door_caller`){keep}"
