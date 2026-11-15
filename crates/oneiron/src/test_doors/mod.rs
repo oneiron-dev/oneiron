@@ -36,6 +36,7 @@ pub mod companion_grant_index;
 pub mod connector_key_suspend;
 pub mod consolidation;
 pub mod credit_decay_fit;
+pub mod curator_finding;
 pub mod dag_append;
 pub mod derivation_floor;
 pub mod derive;
