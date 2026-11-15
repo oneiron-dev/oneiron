@@ -148,16 +148,8 @@ pub(super) struct Mark {
     pub(super) prior: Arc<BTreeSet<AuthorityEntryHash>>,
 }
 
-/// Whose trust a machine is judged under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum StandingView {
-    /// `T(X)`, pin-free and install-free: validity, and `read_X`, which is
-    /// diagnostics and holder execution, never who may edit.
-    Under(MachineAdmitter),
-    /// `T(pin)` with this install's floors and counting: the settings this
-    /// install reads, and the machines it counts.
-    Install,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::machine_standing::StandingView;
 
 /// Why this install does not count one admitter's chains of a machine, if
 /// it does not: its own projections, which the structural fold never sees.

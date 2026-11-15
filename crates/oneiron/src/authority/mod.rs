@@ -327,6 +327,8 @@ pub(crate) use home_pick::{
 };
 pub(crate) use host_action::StoredHostAction;
 pub use host_action::{HostActionAuthority, HostActionIdentity};
+#[cfg(oneiron_test_support)]
+pub(crate) use host_re_root::re_root_authority_as_host_for_test;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
@@ -350,6 +352,7 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
+pub(crate) use mesh_machine::reindex_mesh_machine_endpoint;
 pub use mesh_machine::{
     MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
     MeshMachineAddressEnvelope, MeshMachineBinding,
@@ -469,11 +472,12 @@ pub(crate) use history_admission::{
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
+pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
@@ -490,10 +494,10 @@ pub(crate) use principal_standing::{
 };
 pub(crate) use principal_standing::{
     NoStanding, PACT_STANDING_LAPSED, PrincipalStanding, StandingHome, live_agent_principal_in,
-    principal_standing_in, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+    principal_standing_covering_or_lapse_in_txn, principal_standing_in, principal_standing_in_txn,
+    principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
-use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
@@ -502,6 +506,7 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
+use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
@@ -518,7 +523,8 @@ pub(crate) use machine_write::{
     machine_claim_needs_history_observing, machine_claim_read_admitted,
     machine_claim_signer_bound_in_txn, machine_history_authority_descends,
     machine_history_authority_descends_with_image, machine_history_host_context,
-    resign_machine_claim_after_mask_in_txn, verify_machine_claim_in_txn,
+    resign_machine_claim_after_mask_in_txn, sign_retained_machine_claim_for_store_in_txn,
+    verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

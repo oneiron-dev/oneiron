@@ -926,3 +926,15 @@ selection, text, style, property identity reservations, field conversion and
 removal receipts, errors and gaps keep their existing paths. No original source
 span or authority is added. This is source-only namespace preservation within
 the existing 17480/18510 pack, not a compiler, runtime or Office certificate.
+
+
+## Namespace scope keyed by prefix (FIX STEMMA-NS-PREFIX-SCAN, 2026-11-13)
+
+`src/word_xml.rs` only. Each start tag's namespace frame keys its declarations
+by prefix, keeping the declared order for the element's `namespaces` map, and
+the tree builders' scope keeps an index from each prefix to the open frames that
+bind it, as `src/parse_budget.rs`'s `Scope` does. Resolving the element name,
+each prefixed attribute and each `mc:Choice` `Requires` token now costs one
+hash, not a scan of the tag's declarations and of every open frame: one tag with
+d declarations and a prefixed attributes cost O(a*d). The innermost binding
+still wins, and the built tree, the refusals and their order are unchanged.

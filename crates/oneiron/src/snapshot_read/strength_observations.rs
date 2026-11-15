@@ -12,26 +12,22 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
+use crate::derive::ARCHIVE_NOT_A_CLAIM;
 use crate::dreamer_consolidation::selection::{SelectionConfig, selection_config_pin_in_txn};
 use crate::dreamer_consolidation::strength::{
-    ConsolidationStrengthPolicy, OBSERVATIONS, StrengthObservations, observation_pin_in_txn,
-    policy_in_txn, strength_policy_pin_in_txn,
+    ConsolidationStrengthPolicy, OBSERVATIONS, StrengthObservations, archive_fence_in_txn,
+    observation_pin_in_txn, policy_in_txn, strength_policy_pin_in_txn,
 };
 use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::{Scope, grant_scope, holds_system_agent_grant, steward_reach_in};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Result, Vault};
 
-/// The next observation page, bounded by the effective snapshot page settings.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrengthObservationsPageRequest {
-    /// The preceding page's opaque cursor; absent on the first page.
-    pub cursor: Option<String>,
-    /// The most claims served, capped at the effective page row bound.
-    pub limit: Option<u32>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::strength_observations::StrengthObservationsPageRequest;
 
 /// One observation page and the policy and config it was read under.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,47 +40,10 @@ pub struct StrengthObservationsPage {
     pub next: Option<String>,
 }
 
-/// Whether all observed sources still read at their observed revisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObservedClaimStatus {
-    Current,
-    Moved,
-    Withheld,
-}
-
-/// An observed claim whose own row reads for this caller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ObservedClaim {
-    pub claim: String,
-    pub predicate: String,
-    pub last_activity_ms: u64,
-    pub status: ObservedClaimStatus,
-    /// The readable sources in id order, then one bare entry per withheld one.
-    pub sources: Vec<ObservedSource>,
-    /// The full source list exceeds an otherwise empty page's byte bound.
-    pub sources_omitted: bool,
-    pub signals: Option<ObservedSignals>,
-    pub pin: Option<String>,
-}
-
-/// A source's coarse status; withheld sources disclose nothing else, and are
-/// served after every readable one so their place in the id order stays unread.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum ObservedSource {
-    Current { source: String },
-    Moved { source: String },
-    Withheld,
-}
-
-/// The native strength scorer's evidence inputs, without per-source detail.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObservedSignals {
-    pub source_count: usize,
-    pub latest_learned_at_ms: u64,
-    pub distinct_diversity: usize,
-}
+#[doc(hidden)]
+pub use oneiron_records::snapshot_read::strength_observations::{
+    ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource,
+};
 
 /// Reads observations through the caller's live reach and scoped read.
 ///
@@ -147,8 +106,13 @@ fn observations_page(
     }
     let scope = observation_reader_scope_in_txn(memory, &txn, owner.as_ref())?;
     read.read_projected_in_txn(&txn, &[], None, |txn, _| {
-        let mut page = StrengthObservationsPage {
+        let judge = ArchiveFenceJudge {
+            actor: memory.actor(),
+            now_ms: vault.store.clock.now_recorded_at().saturating_mul(1_000),
             policy: policy_in_txn(vault, txn)?,
+        };
+        let mut page = StrengthObservationsPage {
+            policy: judge.policy.clone(),
             policy_pin: strength_policy_pin_in_txn(vault, txn)?,
             config: vault.consolidation_selection_in_txn(txn)?,
             config_pin: selection_config_pin_in_txn(vault, txn)?,
@@ -162,7 +126,7 @@ fn observations_page(
         while let Some(entry) = rows.next() {
             let (id, observations) = entry?;
             let Some(mut claim) =
-                observed_claim_in_txn(vault, txn, &read, scope.as_ref(), id, observations)?
+                observed_claim_in_txn(vault, txn, &read, scope.as_ref(), id, observations, &judge)?
             else {
                 continue;
             };
@@ -280,6 +244,50 @@ fn observed_claim_reads_in_txn(
         && read.entity_raw_live_in(txn, &id)?.is_some())
 }
 
+/// Who the page judges the archive fence for, at what clock, under which
+/// policy: the caller, the page's recorded-at clock in milliseconds (as
+/// Archive's), and the page's effective strength policy.
+struct ArchiveFenceJudge {
+    actor: EntityId,
+    now_ms: u64,
+    policy: ConsolidationStrengthPolicy,
+}
+
+/// The archive fence's reason token over the readable observed claim `id`
+/// for `judge` (RULING S69C4-FENCE-NOISE = B): `None` when Archive's fence
+/// lets it through now. It reads the stored row, as Archive does.
+fn archive_fence_token_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    judge: &ArchiveFenceJudge,
+) -> Result<Option<String>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store.read(), txn, &id)?
+    else {
+        return Ok(Some(ARCHIVE_NOT_A_CLAIM.to_owned()));
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw)
+        .filter(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+        .filter(|_| raw.len() > ENTITY_METADATA_HEADER_LEN)
+    else {
+        return Ok(Some(ARCHIVE_NOT_A_CLAIM.to_owned()));
+    };
+    let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+        return Ok(Some(ARCHIVE_NOT_A_CLAIM.to_owned()));
+    };
+    Ok(archive_fence_in_txn(
+        vault,
+        txn,
+        judge.actor,
+        &id,
+        &body,
+        header.learned_at,
+        judge.now_ms,
+        &judge.policy,
+    )?
+    .map(|fence| fence.token().to_owned()))
+}
+
 fn observed_claim_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -287,6 +295,7 @@ fn observed_claim_in_txn(
     scope: Option<&Scope>,
     id: EntityId,
     observations: StrengthObservations,
+    judge: &ArchiveFenceJudge,
 ) -> Result<Option<ObservedClaim>> {
     if !observed_claim_reads_in_txn(vault, txn, read, scope, id)? {
         return Ok(None);
@@ -311,10 +320,13 @@ fn observed_claim_in_txn(
             distinct_diversity: diversity.len(),
         }
     });
-    let pin = if current {
-        observation_pin_in_txn(vault, txn, &id)?
+    let (pin, fence) = if current {
+        (
+            observation_pin_in_txn(vault, txn, &id)?,
+            archive_fence_token_in_txn(vault, txn, id, judge)?,
+        )
     } else {
-        None
+        (None, None)
     };
     Ok(Some(ObservedClaim {
         claim: id.to_hex(),
@@ -325,6 +337,7 @@ fn observed_claim_in_txn(
         sources_omitted: false,
         signals,
         pin,
+        fence,
     }))
 }
 

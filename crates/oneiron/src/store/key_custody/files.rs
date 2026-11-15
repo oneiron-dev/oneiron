@@ -292,6 +292,19 @@ pub(in crate::store) fn arm_after_key_marker_check(callback: impl FnOnce() + 'st
     AFTER_KEY_MARKER_CHECK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
 
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static ENTRY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many custody entries this thread has opened to read
+/// ([`LocalCustody::read`]), for the integration test of a warm authority
+/// view's reads (FIX 23233). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn custody_entry_reads_for_test() -> usize {
+    ENTRY_READS.with(std::cell::Cell::get)
+}
+
 /// One binding's custody on this host's filesystem. It owns storage and
 /// lifecycle only: whether a subject may be read, published or retired is
 /// its client's policy.
@@ -411,6 +424,8 @@ impl LocalCustody<'_> {
                 callback();
             }
         });
+        #[cfg(oneiron_test_support)]
+        ENTRY_READS.with(|reads| reads.set(reads.get() + 1));
         let mut file = safe_open(
             &dir.join(entry_name(id.generation())),
             false,

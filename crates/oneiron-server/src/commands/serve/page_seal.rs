@@ -39,6 +39,18 @@ pub(crate) fn open_served_vault_anchored<H: oneiron_vault_contract::host::Host>(
     config: &ServeConfig,
     anchor: Option<Arc<CustodyAnchorCredentials>>,
 ) -> anyhow::Result<OpenedServedVault> {
+    // The operator's core-dump switch, set before the vault opens its first
+    // off-record room (census row L6-18): on unless the config or its
+    // environment override turns it off.
+    oneiron_store::session_overlay::set_off_record_dump_suppression(
+        config.off_record_dump_suppression,
+    );
+    if !config.off_record_dump_suppression {
+        tracing::warn!(
+            "off_record_dump_suppression is off: a core file of this process, or a debugger \
+             attached to it, can read the bytes of an open off-record room"
+        );
+    }
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     if let Some(warning) = dicts.warning {
         tracing::warn!(dict_paths = ?dicts.paths, "{warning}");

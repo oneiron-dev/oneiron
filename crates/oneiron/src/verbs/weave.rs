@@ -11,23 +11,9 @@ use crate::dreamer_runner::{
 };
 use crate::memory::{DreamerAttemptRef, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
-use serde::{Deserialize, Serialize};
 
-/// Admit and enqueue a generated candidate weave recipe, pinned by the
-/// engine to its version, content hash, subject and evidence. The recipe
-/// executes on the host's workflow runtime, not in the HTTP handler.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveEnqueueRequest {
-    pub skill_ref: String,
-    pub subject_ref: String,
-    pub evidence_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct WeaveScheduleCleared {
-    pub cleared: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::weave::{WeaveEnqueueRequest, WeaveScheduleCleared};
 
 fn owner_handle(memory: &Memory<'_>, owner: &AuthenticatedOwner) -> MemoryResult<()> {
     if memory.actor_class() != EdgeActorClass::Human

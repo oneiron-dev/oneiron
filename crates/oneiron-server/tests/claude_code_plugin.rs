@@ -55,7 +55,9 @@ fn expand_home(text: &str) -> String {
 /// quotes, and the quotes go. A command holding any other shell syntax is
 /// refused, so this split is the shell's.
 fn shell_words(command: &str) -> Vec<String> {
-    for forbidden in ['\'', '\\', '$', '`', ';', '|', '&', '<', '>', '(', ')', '*', '?'] {
+    for forbidden in [
+        '\'', '\\', '$', '`', ';', '|', '&', '<', '>', '(', ')', '*', '?',
+    ] {
         assert!(
             !command.contains(forbidden),
             "{command:?} holds {forbidden:?}, more shell than the plugin's commands use"
@@ -99,7 +101,11 @@ fn parse(argv: &[String]) -> Result<(), String> {
 /// The value after `flag` in `argv`, when `flag` is there.
 fn flag_value<'a>(argv: &'a [String], flag: &str) -> Option<&'a str> {
     let at = argv.iter().position(|word| word == flag)?;
-    Some(argv.get(at + 1).unwrap_or_else(|| panic!("{flag} has no value")).as_str())
+    Some(
+        argv.get(at + 1)
+            .unwrap_or_else(|| panic!("{flag} has no value"))
+            .as_str(),
+    )
 }
 
 fn words(argv: &[&str]) -> Vec<String> {
@@ -110,32 +116,52 @@ fn words(argv: &[&str]) -> Vec<String> {
 fn the_marketplace_lists_the_plugin_folder() {
     let marketplace = read_json(&repo_root().join(".claude-plugin/marketplace.json"));
     assert_eq!(marketplace["name"], "oneiron");
-    assert!(marketplace["owner"]["name"].as_str().is_some_and(|name| !name.is_empty()));
-    let plugins = marketplace["plugins"].as_array().expect("plugins is a list");
+    assert!(
+        marketplace["owner"]["name"]
+            .as_str()
+            .is_some_and(|name| !name.is_empty())
+    );
+    let plugins = marketplace["plugins"]
+        .as_array()
+        .expect("plugins is a list");
     let entry = plugins
         .iter()
         .find(|plugin| plugin["name"] == "oneiron")
         .expect("the marketplace lists the oneiron plugin");
     let source = entry["source"].as_str().expect("a relative source path");
-    assert!(source.starts_with("./"), "{source:?} is not relative to the marketplace");
+    assert!(
+        source.starts_with("./"),
+        "{source:?} is not relative to the marketplace"
+    );
     let folder = repo_root().join(source);
     assert_eq!(
         folder.canonicalize().expect("the source folder exists"),
-        plugin_root().canonicalize().expect("the plugin folder exists"),
+        plugin_root()
+            .canonicalize()
+            .expect("the plugin folder exists"),
     );
 
     let manifest = read_json(&plugin_root().join(".claude-plugin/plugin.json"));
     assert_eq!(manifest["name"], "oneiron");
-    assert!(manifest["description"].as_str().is_some_and(|text| !text.is_empty()));
+    assert!(
+        manifest["description"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty())
+    );
     for part in [".mcp.json", "hooks/hooks.json", "skills/oneiron/SKILL.md"] {
-        assert!(plugin_root().join(part).is_file(), "the plugin carries {part}");
+        assert!(
+            plugin_root().join(part).is_file(),
+            "the plugin carries {part}"
+        );
     }
 }
 
 #[test]
 fn every_hook_command_parses_with_the_oneiron_cli() {
     let hooks = read_json(&plugin_root().join("hooks/hooks.json"));
-    let events = hooks["hooks"].as_object().expect("hooks.hooks is an object");
+    let events = hooks["hooks"]
+        .as_object()
+        .expect("hooks.hooks is an object");
     // The built lanes (docs/ops/claude-code-hooks.md): the four events and the
     // `oneiron hook` event each runs. A new event is added here on purpose.
     let expected = BTreeMap::from([
@@ -157,7 +183,9 @@ fn every_hook_command_parses_with_the_oneiron_cli() {
         assert_eq!(commands.len(), 1, "{event} runs one oneiron hook");
         let hook = commands[0];
         assert_eq!(hook["type"], "command", "{event}");
-        let host_timeout = hook["timeout"].as_f64().expect("each hook names its timeout");
+        let host_timeout = hook["timeout"]
+            .as_f64()
+            .expect("each hook names its timeout");
         let argv = shell_words(&expand_home(hook["command"].as_str().expect("a command")));
         assert_eq!(
             argv[..5],
@@ -170,7 +198,9 @@ fn every_hook_command_parses_with_the_oneiron_cli() {
         // The hook gives up before Claude Code would stop it, so it always
         // exits 0 on its own and never shows as a hook error.
         let own_timeout = flag_value(&argv, "--timeout")
-            .map_or(HOOK_DEFAULT_TIMEOUT_SECS, |secs| secs.parse().expect("seconds"));
+            .map_or(HOOK_DEFAULT_TIMEOUT_SECS, |secs| {
+                secs.parse().expect("seconds")
+            });
         assert!(
             own_timeout < host_timeout,
             "{event}: oneiron's {own_timeout} s is not under Claude Code's {host_timeout} s"
@@ -185,15 +215,38 @@ fn every_hook_command_parses_with_the_oneiron_cli() {
     }
 
     // The check above can fail: a mistyped event is refused by the same parse.
-    assert!(parse(&words(&["oneiron", "hook", "--host", "claude-code", "sessionstart"])).is_err());
-    assert!(parse(&words(&["oneiron", "hook", "--host", "claude", "session-start"])).is_err());
+    assert!(
+        parse(&words(&[
+            "oneiron",
+            "hook",
+            "--host",
+            "claude-code",
+            "sessionstart"
+        ]))
+        .is_err()
+    );
+    assert!(
+        parse(&words(&[
+            "oneiron",
+            "hook",
+            "--host",
+            "claude",
+            "session-start"
+        ]))
+        .is_err()
+    );
 }
 
 #[test]
 fn the_mcp_server_is_the_stdio_bridge_with_the_agent_credential() {
     let config = read_json(&plugin_root().join(".mcp.json"));
-    let servers = config["mcpServers"].as_object().expect("mcpServers is an object");
-    assert_eq!(servers.keys().map(String::as_str).collect::<Vec<_>>(), ["oneiron"]);
+    let servers = config["mcpServers"]
+        .as_object()
+        .expect("mcpServers is an object");
+    assert_eq!(
+        servers.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["oneiron"]
+    );
     let server = &servers["oneiron"];
     assert_eq!(server["command"], "oneiron");
     let mut argv = vec!["oneiron".to_owned()];
@@ -206,7 +259,10 @@ fn the_mcp_server_is_the_stdio_bridge_with_the_agent_credential() {
     );
     assert_eq!(argv[1], "mcp");
     assert_eq!(flag_value(&argv, "--surface"), Some("tool-first"));
-    assert_eq!(flag_value(&argv, "--credential-file"), Some(AGENT_CREDENTIAL));
+    assert_eq!(
+        flag_value(&argv, "--credential-file"),
+        Some(AGENT_CREDENTIAL)
+    );
     if let Err(error) = parse(&argv) {
         panic!("{argv:?} does not parse: {error}");
     }
@@ -231,7 +287,10 @@ fn the_skill_names_only_verbs_the_engine_has_and_its_setup_parses() {
     };
     assert_eq!(field("name"), "oneiron");
     let description = field("description");
-    assert!(!description.is_empty() && description.len() <= 1024, "{description:?}");
+    assert!(
+        !description.is_empty() && description.len() <= 1024,
+        "{description:?}"
+    );
 
     // Every `vault.*` and `self.*` the skill names in backticks is a verb.
     let verbs_dir = repo_root().join("scripts/sdk/verbs");
@@ -241,10 +300,14 @@ fn the_skill_names_only_verbs_the_engine_has_and_its_setup_parses() {
         .step_by(2)
         .filter(|token| token.starts_with("vault.") || token.starts_with("self."))
         .collect();
-    assert!(named.contains("vault.recall") && named.contains("vault.remember"), "{named:?}");
+    assert!(
+        named.contains("vault.recall") && named.contains("vault.remember"),
+        "{named:?}"
+    );
     for verb in &named {
         assert!(
-            verb.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.'),
+            verb.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.'),
             "{verb:?}"
         );
         assert!(
