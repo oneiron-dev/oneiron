@@ -130,9 +130,9 @@ const fn measured_on_its_own_rows(signal: AgentHealthSignal) -> bool {
 /// its own attempts' rows alone, and each attempt its findings named and
 /// every row it cites (its evidence, the attempts it witnessed, the one
 /// holding a confession) is an attempt that ran in a project inside it. A
-/// card with no finding, one whose attempt is unknown, and one citing a row
-/// that is no such attempt (another project's duplicate run, a receipt, a
-/// task, a trap's anchor) do not.
+/// card that names no attempt at all, one whose finding's attempt is
+/// unknown, and one citing a row that is no such attempt (another project's
+/// duplicate run, a receipt, a task, a trap's anchor) do not.
 fn card_inside_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
