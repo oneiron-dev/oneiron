@@ -98,7 +98,11 @@ impl Vault {
         stamp: &DerivationStamp,
         batch: &DerivationBatch,
     ) -> Result<DerivationReceipt> {
-        batch.validate()?;
+        let max_items = super::setting_keys::BATCH_MAX_ITEMS
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .0;
+        batch.validate(usize::try_from(max_items).unwrap_or(usize::MAX))?;
         super::sources::recheck_in_txn(self, txn, stamp, batch)?;
         let mut context = ItemContext {
             batch: EntityId::now(),

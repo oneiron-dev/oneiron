@@ -311,25 +311,62 @@ pub struct DerivationBatch {
     pub sources: Vec<crate::snapshot_read::SourceVersion>,
 }
 
-/// The most items one batch holds.
+/// The most items one batch holds by default, and the floor of the owner's
+/// `derive.batch.max_items`: the engine's own jobs size their batches to fit
+/// it (the Dreamer's strength archive pages 200 claims a batch), so the owner
+/// may raise the cap but never set it below this.
 pub const MAX_BATCH_ITEMS: usize = 256;
+
+/// The value of `derive.batch.max_items`: the most items one batch holds, at
+/// least [`MAX_BATCH_ITEMS`].
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub(crate) struct DerivationBatchCap(pub(crate) u32);
+
+impl crate::setting::SettingValue for DerivationBatchCap {
+    /// A cap is at least [`MAX_BATCH_ITEMS`].
+    fn check(self) -> Result<Self> {
+        if usize::try_from(self.0).is_ok_and(|cap| cap >= MAX_BATCH_ITEMS) {
+            Ok(self)
+        } else {
+            Err(Error::InvalidConfig(format!(
+                "a derivation batch cap is at least {MAX_BATCH_ITEMS} items: the engine's own \
+                 jobs fill batches that large"
+            )))
+        }
+    }
+}
 
 impl DerivationBatch {
     /// Checks the batch's shape: at least one item and no more than
-    /// [`MAX_BATCH_ITEMS`], every local name non-empty and unique, every
-    /// local reference naming an earlier item that creates a row
+    /// `max_items` (the owner's `derive.batch.max_items`, [`MAX_BATCH_ITEMS`]
+    /// by default), every local name non-empty and unique, every local
+    /// reference naming an earlier item that creates a row
     /// ([`DerivationItem::creates_row`]), at most one `about` item for a
     /// person, and a version for every stored source cited.
     ///
     /// # Errors
     ///
     /// A malformed batch, which aborts the whole commit.
-    pub(super) fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self, max_items: usize) -> Result<()> {
         if self.items.is_empty() {
             return Err(malformed("a derivation batch holds at least one item"));
         }
-        if self.items.len() > MAX_BATCH_ITEMS {
-            return Err(malformed("a derivation batch holds at most 256 items"));
+        if self.items.len() > max_items {
+            return Err(malformed(
+                "a derivation batch holds more items than derive.batch.max_items (default 256)",
+            ));
         }
         let mut earlier: BTreeSet<&str> = BTreeSet::new();
         let mut nameable: BTreeSet<&str> = BTreeSet::new();

@@ -11,16 +11,20 @@ use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
-/// The fewest characters an agent's NOTE is born with: Unicode scalar values
-/// of the trimmed markdown (OF-073 stage 1; CALLS "OF-073 auto-note
-/// minimum"). A person's or the engine's own NOTE has no floor, and an edit
-/// meets none.
+/// The fewest characters an agent's NOTE is born with by default: Unicode
+/// scalar values of the trimmed markdown (OF-073 stage 1; CALLS "OF-073
+/// auto-note minimum"); the owner's `note.birth.agent_min_chars` sets it. A
+/// person's or the engine's own NOTE has no floor, and an edit meets none.
 pub(crate) const AUTO_NOTE_MIN_CHARS: usize = 16;
 
-/// The floor `kind` sets on an agent's birth. The floor guards extraction, so
-/// a kind that never feeds it (Disabled, private strategy) sets none, and a
-/// session-sealed kind (the scratchpad) bounds its own lines.
-fn auto_note_floor(descriptor: Option<&super::NoteKindDescriptor>) -> Option<usize> {
+/// The floor `kind` sets on an agent's birth, where the owner's floor is
+/// `min_chars`. The floor guards extraction, so a kind that never feeds it
+/// (Disabled, private strategy) sets none, and a session-sealed kind (the
+/// scratchpad) bounds its own lines.
+fn auto_note_floor(
+    descriptor: Option<&super::NoteKindDescriptor>,
+    min_chars: usize,
+) -> Option<usize> {
     use super::{ExtractionDefault, RetentionDefault};
     match descriptor {
         Some(descriptor)
@@ -32,7 +36,7 @@ fn auto_note_floor(descriptor: Option<&super::NoteKindDescriptor>) -> Option<usi
         {
             None
         }
-        _ => Some(AUTO_NOTE_MIN_CHARS),
+        _ => Some(min_chars),
     }
 }
 
@@ -60,12 +64,16 @@ impl Vault {
         if actor_class != EdgeActorClass::Agent {
             return Ok(());
         }
+        let min_chars = super::setting_keys::AGENT_NOTE_MIN_CHARS
+            .read_in_txn(self, txn, &[], None)?
+            .value;
+        let min_chars = usize::try_from(min_chars).unwrap_or(usize::MAX);
         let chars = markdown.trim().chars().count();
-        if chars >= AUTO_NOTE_MIN_CHARS {
+        if chars >= min_chars {
             return Ok(());
         }
         let descriptor = super::descriptor_in_txn(&self.store, txn, &kind.as_str())?;
-        match auto_note_floor(descriptor.as_ref()) {
+        match auto_note_floor(descriptor.as_ref(), min_chars) {
             Some(floor) if chars < floor => {
                 Err(invalid("an agent's NOTE body is under the minimum length"))
             }
