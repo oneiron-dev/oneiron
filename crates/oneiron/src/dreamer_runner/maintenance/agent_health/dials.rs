@@ -13,8 +13,9 @@ use super::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::learning_setting::{
-    SettingSpec, setting_value_in_scope_in_txn, setting_value_in_scope_sourced_in_txn,
+    setting_value_in_scope_in_txn, setting_value_in_scope_sourced_in_txn,
 };
+use crate::setting::Setting;
 use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Result, Vault};
 
@@ -156,20 +157,20 @@ fn dials_in(
     });
     let mut seeded = BTreeMap::new();
     let mut loop_rows = Some(Vec::new());
-    let mut value = |spec: &SettingSpec| -> Result<f64> {
+    let mut value = |knob: &Setting<f64>| -> Result<f64> {
         let loop_input = [
-            HEALTH_REVIEW.key,
-            HEALTH_LOOP_REPEATS.key,
-            HEALTH_REVIEW_WINDOW_HOURS.key,
-            HEALTH_CARD_FLOOR.key,
+            HEALTH_REVIEW.spec.name,
+            HEALTH_LOOP_REPEATS.spec.name,
+            HEALTH_REVIEW_WINDOW_HOURS.spec.name,
+            HEALTH_CARD_FLOOR.spec.name,
         ]
-        .contains(&spec.key);
-        let Some((revision_spec, revision)) = policy.seed(spec) else {
+        .contains(&knob.spec.name);
+        let Some((revision_seed, revision)) = policy.seed(knob) else {
             if !loop_input {
                 return setting_value_in_scope_in_txn(
                     vault,
                     rtxn,
-                    spec,
+                    knob,
                     project,
                     type_ref.as_ref(),
                 );
@@ -177,30 +178,26 @@ fn dials_in(
             let (read, rows) = setting_value_in_scope_sourced_in_txn(
                 vault,
                 rtxn,
-                spec,
+                knob,
                 project,
                 type_ref.as_ref(),
             )?;
             loop_rows = union_source_rows([loop_rows.take(), rows]);
             return Ok(read);
         };
-        let (read, rows) = setting_value_in_scope_sourced_in_txn(
-            vault,
-            rtxn,
-            &revision_spec,
-            project,
-            type_ref.as_ref(),
-        )?;
-        // No rows: the seed decided, so the revision's own did.
+        let (read, rows) =
+            setting_value_in_scope_sourced_in_txn(vault, rtxn, knob, project, type_ref.as_ref())?;
+        // No rows: the shipped seed decided, so the revision's seed stands in
+        // its place; an owner's row or a fit outranks it.
         let revision_seeded = rows.as_ref().is_some_and(Vec::is_empty);
         if revision_seeded {
-            seeded.insert(spec.key, revision);
+            seeded.insert(knob.spec.name, revision);
         }
         if loop_input {
             loop_rows =
                 union_source_rows([loop_rows.take(), if revision_seeded { None } else { rows }]);
         }
-        Ok(read)
+        Ok(if revision_seeded { revision_seed } else { read })
     };
     // One read of the silent dial: the raw minutes and the adapted seconds
     // below come from this same value.

@@ -78,7 +78,6 @@ pub use oneiron_store::sandbox_path;
 pub use oneiron_store::scan_checks::ScanCheck;
 pub use oneiron_store::scan_kind::DEFAULT_SCAN_CHECK_THRESHOLD;
 pub use oneiron_store::scan_kind::EngineScan;
-pub use oneiron_store::setting_seed;
 pub use oneiron_store::skill_hub_predicates;
 pub use oneiron_store::snapshot_key;
 pub use oneiron_store::snapshot_lock_result;

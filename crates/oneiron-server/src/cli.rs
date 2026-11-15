@@ -188,8 +188,9 @@ pub enum Command {
     /// Fork alarms a held root handoff left: list them, or acknowledge one.
     #[command(subcommand)]
     HandoffAlarms(HandoffAlarmsCommand),
-    /// Your learned settings: the catalog and your seed and pin rows at the
-    /// vault, a project or a task type; put or clear one.
+    /// Your spawn-choice rows: your seed and pin rows over model, width,
+    /// pattern and budget at the vault, a project or a task type; put or
+    /// clear one.
     #[command(subcommand)]
     LearningSettings(LearningSettingsCommand),
     /// Your commitment reminder route: where your own promise reminders go;

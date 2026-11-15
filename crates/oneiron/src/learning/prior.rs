@@ -4,11 +4,13 @@
 //! One law covers carried scores, hub imports, type splits and project forks.
 //! The engine door here stores a cell's prior; the owner's seed never comes
 //! through it, because a seed is a setting row the owner writes
-//! ([`crate::learning_setting::put_setting_row`]).
+//! (`settings.set` on a learned key, `crate::learning_setting`).
 
+use super::setting_keys::LEARNING_SHIPPED_PRIOR_RUNS;
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::learning_setting::{self, SettingSpec};
+use crate::learning_setting;
+use crate::setting::Setting;
 use crate::side_table::{self, Named, SideTable};
 
 use super::cell::{LearningCell, LearningPredicate, TypeRef};
@@ -142,23 +144,26 @@ pub(super) fn stored_prior_for_cell_in_txn(
     of: &str,
     digest: &[u8; 32],
 ) -> Result<(StoredPrior, bool)> {
-    let spec = match cell.predicate {
+    let knob = match cell.predicate {
         LearningPredicate::Setting => cell
             .setting_key
             .as_deref()
-            .and_then(learning_setting::setting_spec),
+            .and_then(learning_setting::learned_setting),
         _ => None,
     };
-    if let Some(spec) = spec
-        && let Some((value, weight_runs)) =
-            learning_setting::owner_seed_in_txn(vault, txn, spec, cell)?
+    if let Some(knob) = knob
+        && let Some((value, weight_runs)) = knob.seed_in_txn(
+            &vault.store,
+            txn,
+            &learning_setting::known_in_txn(vault, txn, cell.project, cell.type_ref.as_ref())?,
+        )?
     {
         return Ok((
             StoredPrior::plain(Prior {
                 origin: PriorOrigin::Seed,
                 value: point_value(form, of, value),
                 weight_runs,
-                from: Some(format!("setting row {}", spec.key)),
+                from: Some(format!("setting row {}", knob.spec.name)),
             }),
             false,
         ));
@@ -172,8 +177,8 @@ pub(super) fn stored_prior_for_cell_in_txn(
     {
         return Ok((StoredPrior::plain(prior), true));
     }
-    let prior = match spec {
-        Some(spec) => shipped_setting_prior(vault, txn, form, of, spec)?,
+    let prior = match knob {
+        Some(knob) => shipped_setting_prior(vault, txn, form, of, knob)?,
         None => Prior::shipped(form),
     };
     Ok((StoredPrior::plain(prior), false))
@@ -184,18 +189,15 @@ fn shipped_setting_prior(
     txn: &heed::RoTxn<'_>,
     form: EstimateForm,
     of: &str,
-    spec: &SettingSpec,
+    knob: &Setting<f64>,
 ) -> Result<Prior> {
-    let weight_runs = learning_setting::setting_value_in_txn(
-        &vault.store,
-        txn,
-        &learning_setting::LEARNING_SHIPPED_PRIOR_RUNS,
-    )?;
+    let weight_runs =
+        learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_SHIPPED_PRIOR_RUNS)?;
     Ok(Prior {
         origin: PriorOrigin::Shipped,
-        value: point_value(form, of, spec.seed),
+        value: point_value(form, of, learning_setting::knob_seed(knob)),
         weight_runs,
-        from: Some(format!("catalog {}", spec.key)),
+        from: Some(format!("catalog {}", knob.spec.name)),
     })
 }
 

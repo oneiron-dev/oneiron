@@ -170,14 +170,14 @@ impl Vault {
     pub fn offer_floor_slices(&self, seat: &EvalSeat) -> Result<FloorSlicePolicy> {
         let min_families = crate::learning_setting::setting_value_scoped(
             self,
-            &crate::learning_setting::EVAL_FLOOR_MIN_FAMILIES,
+            &crate::skill_optimize::eval_set::setting_keys::EVAL_FLOOR_MIN_FAMILIES,
             None,
             None,
         )?
         .max(0.0) as u32;
         let min_families_per_slice = crate::learning_setting::setting_value_scoped(
             self,
-            &crate::learning_setting::EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
+            &crate::skill_optimize::eval_set::setting_keys::EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
             None,
             None,
         )?

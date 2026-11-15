@@ -13,9 +13,11 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::claim::learning_evidence::Anchor;
 use crate::error::Result;
-use crate::learning_setting::{SettingCheck, global_setting_subject, record_setting_check_in_txn};
+use crate::learning_setting::{
+    SettingCheck, global_setting_subject, knob_bounds, record_setting_check_in_txn,
+};
 use crate::receipt::task_type_ref::TypeRef;
-use crate::store::setting_seed::ATTRIBUTION_UNCLEAR_FLOOR;
+use crate::skill_attribution::setting_keys::ATTRIBUTION_UNCLEAR_FLOOR;
 
 use super::judge::JudgeTrace;
 use super::split::held_reason;
@@ -180,8 +182,8 @@ fn fit_unclear_floor(lane: AttributionLane, cases: &[AuditCase], floor_used: f32
         reason = "the catalog's unit-interval bounds narrowed to the judge's f32 floor"
     )]
     let (min, max) = (
-        ATTRIBUTION_UNCLEAR_FLOOR.min as f32,
-        ATTRIBUTION_UNCLEAR_FLOOR.max as f32,
+        knob_bounds(&ATTRIBUTION_UNCLEAR_FLOOR).min as f32,
+        knob_bounds(&ATTRIBUTION_UNCLEAR_FLOOR).max as f32,
     );
     let mut candidates = vec![min, max, floor_used.clamp(min, max)];
     for (_, confidence) in judged.iter().flat_map(|case| case.regions.iter().flatten()) {
@@ -273,10 +275,10 @@ pub(crate) fn record_unclear_floor_fit_in_txn(
         return Ok(());
     };
     let check = SettingCheck {
-        subject: global_setting_subject(ATTRIBUTION_UNCLEAR_FLOOR.key)?,
+        subject: global_setting_subject(ATTRIBUTION_UNCLEAR_FLOOR.spec.name)?,
         // Intentionally global: the floor is the vault's (FIX 6038).
         project: None,
-        key: ATTRIBUTION_UNCLEAR_FLOOR.key.to_owned(),
+        key: ATTRIBUTION_UNCLEAR_FLOOR.spec.name.to_owned(),
         // The vault-wide fit, whichever tree version the audit ran under.
         type_ref: TypeRef::root(0),
         observed: f64::from(*floor),

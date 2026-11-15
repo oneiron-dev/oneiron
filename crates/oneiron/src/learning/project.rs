@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::setting_keys::LEARNING_WINDOW_HALF_LIFE_DAYS;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
@@ -15,7 +16,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning_setting::{self, LEARNING_WINDOW_HALF_LIFE_DAYS};
+use crate::learning_setting;
 use crate::ports::EntityStoreRead;
 use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;

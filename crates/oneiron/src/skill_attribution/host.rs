@@ -40,16 +40,16 @@ use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
-use crate::learning_setting::setting_value_scoped;
+use crate::learning_setting::{knob_bounds, setting_value_scoped};
 use crate::limit_ask::EngineLimit;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::task_type_ref::TypeRef;
 use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
-use crate::store::setting_seed::CREDIT_CHECK_EVERY_HOP;
-use crate::store::setting_seed::CREDIT_DEPTH_CAP;
-use crate::store::setting_seed::CREDIT_ENABLED;
-use crate::store::setting_seed::SettingSpec;
+use crate::setting::Setting;
+use crate::skill_attribution::setting_keys::CREDIT_CHECK_EVERY_HOP;
+use crate::skill_attribution::setting_keys::CREDIT_DEPTH_CAP;
+use crate::skill_attribution::setting_keys::CREDIT_ENABLED;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The role a run outside any team plays.
@@ -392,14 +392,14 @@ fn credit_options(
     project: Option<EntityId>,
     type_ref: &TypeRef,
 ) -> Result<CreditOptions> {
-    let value = |spec: &SettingSpec| setting_value_scoped(vault, spec, project, Some(type_ref));
+    let value = |key: &Setting<f64>| setting_value_scoped(vault, key, project, Some(type_ref));
     let cap = value(&CREDIT_DEPTH_CAP)?;
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         reason = "the catalog bounds the cap to 0..=1024 hops"
     )]
-    let depth_cap = (cap < CREDIT_DEPTH_CAP.max).then(|| cap.floor() as u32);
+    let depth_cap = (cap < knob_bounds(&CREDIT_DEPTH_CAP).max).then(|| cap.floor() as u32);
     Ok(CreditOptions {
         enabled: value(&CREDIT_ENABLED)? >= 0.5,
         depth_cap,

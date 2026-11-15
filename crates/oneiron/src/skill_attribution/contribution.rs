@@ -252,7 +252,7 @@ pub fn contribution_check_candidates_after(
 ) -> Result<Vec<(String, ContributionTarget, ContributionCandidate)>> {
     let rate = crate::learning_setting::setting_value(
         vault,
-        &crate::store::setting_seed::CONTRIBUTION_CHECK_RATE,
+        &crate::skill_attribution::setting_keys::CONTRIBUTION_CHECK_RATE,
     )?;
     if rate <= 0.0 || limit == 0 {
         return Ok(Vec::new());

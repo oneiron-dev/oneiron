@@ -104,6 +104,7 @@ pub(crate) use self::projector::{
 pub(crate) use oneiron_skill_attribution::row_ids::{
     attribution_judgment_row_ids, edit_proposal_row_ids,
 };
+pub(crate) mod setting_keys;
 mod skill_erase;
 pub(crate) use self::skill_erase::erase_scan_in_txn;
 mod split;

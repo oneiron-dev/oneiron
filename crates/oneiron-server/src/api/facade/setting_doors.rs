@@ -1,17 +1,17 @@
-//! The host doors of the owner's learned-setting rows:
+//! The host doors of the owner's spawn-choice rows:
 //! `vault.settings.learning`, `.put` and `.clear`. `host_doors` re-exports
 //! them, so the generated HTTP facade handler and the MCP dispatcher call
 //! them by the name every host door has, and a tool call, a code-mode call
 //! and an SDK call meet one admission: the vault owner's proof, as
 //! `/v1/owner/settings/learning` takes it (`owner_routes::owner`). The
 //! engine's writers check the owner again in their own write. The list
-//! (untangle 6.6c) and the put and clear (6.6d) also answer a holder of
-//! `engine.controls` on a verified slip of its own, whose grant the engine
-//! checks in its read or write.
+//! (untangle 6.6c) also answers a holder of `engine.controls` on a verified
+//! slip of its own, whose grant the engine checks in its read; the put and
+//! the clear are the owner's alone (a learned knob is a setting key now, set
+//! with `settings.set`).
 //!
-//! Each lists its rows (`host_door_lists`). The catalog, the knob and
-//! choice rows and the cached fits a knob's value falls back to live in
-//! side tables, which hold no row; each lists the goal claim and the
+//! Each lists its rows (`host_door_lists`). The choice rows live in a side
+//! table, which holds no row; each lists the goal claim and the
 //! project a row it shows is scoped to.
 use std::sync::Arc;
 
@@ -22,7 +22,6 @@ use oneiron::learning_setting_doors::{
 };
 use oneiron::memory::{MemoryError, MemoryResult};
 
-use super::engine_control_doors::engine_controller;
 use super::host_doors::support::{Listed, internal};
 use super::substrate_read_doors::{as_reader, substrate_reader};
 use crate::auth::CoreAuth;
@@ -76,9 +75,9 @@ fn settings_rows(view: &LearningSettingsView) -> Vec<EntityId> {
         .collect()
 }
 
-/// `vault.settings.learning`: the catalog and the rows, for the owner under
+/// `vault.settings.learning`: the spawn-choice rows, for the owner under
 /// its proof or a holder of `engine.controls` (untangle 6.6c, the read side
-/// of the dials it may tune), which the engine checks at the read.
+/// of the spawn choices), which the engine checks at the read.
 pub(crate) async fn vault_settings_learning(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -104,70 +103,30 @@ pub(crate) async fn vault_settings_learning(
     }
 }
 
-/// `vault.settings.learning.put`: one seed or pin, by the owner under its
-/// proof or by a holder of `engine.controls` (untangle 6.6d) on a dial it
-/// may tune, which the engine's writer checks.
+/// `vault.settings.learning.put`: one seed or pin on a spawn choice, by the
+/// owner under its proof alone.
 pub(crate) async fn vault_settings_learning_put(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LearningSettingPut,
 ) -> Listed<LearningSettingsView> {
     const VERB: &str = "vault.settings.learning.put";
-    match engine_controller(server, auth, VERB) {
-        Ok(Some(_)) => {
-            as_owner_listing(server, auth, VERB, move |server, owner| {
-                learning_setting_doors::put_learning_setting_as_owner(server.vault(), owner, input)
-            })
-            .await
-        }
-        Ok(None) => {
-            let answer = as_reader(server, auth, VERB, move |server, holder| {
-                learning_setting_doors::put_learning_setting_as_holder(
-                    server.vault(),
-                    holder,
-                    input,
-                )
-            })
-            .await;
-            let rows = answer.as_ref().map_or_else(|_| Vec::new(), settings_rows);
-            (answer, rows)
-        }
-        Err(refusal) => (Err(refusal), Vec::new()),
-    }
+    as_owner_listing(server, auth, VERB, move |server, owner| {
+        learning_setting_doors::put_learning_setting_as_owner(server.vault(), owner, input)
+    })
+    .await
 }
 
-/// `vault.settings.learning.clear`: one row cleared, by the owner under its
-/// proof or by a holder of `engine.controls` (untangle 6.6d) on a dial it
-/// may tune; the owner's pins and work-budget rows stand.
+/// `vault.settings.learning.clear`: one spawn-choice row cleared, by the
+/// owner under its proof alone.
 pub(crate) async fn vault_settings_learning_clear(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LearningSettingClear,
 ) -> Listed<LearningSettingsView> {
     const VERB: &str = "vault.settings.learning.clear";
-    match engine_controller(server, auth, VERB) {
-        Ok(Some(_)) => {
-            as_owner_listing(server, auth, VERB, move |server, owner| {
-                learning_setting_doors::clear_learning_setting_as_owner(
-                    server.vault(),
-                    owner,
-                    input,
-                )
-            })
-            .await
-        }
-        Ok(None) => {
-            let answer = as_reader(server, auth, VERB, move |server, holder| {
-                learning_setting_doors::clear_learning_setting_as_holder(
-                    server.vault(),
-                    holder,
-                    input,
-                )
-            })
-            .await;
-            let rows = answer.as_ref().map_or_else(|_| Vec::new(), settings_rows);
-            (answer, rows)
-        }
-        Err(refusal) => (Err(refusal), Vec::new()),
-    }
+    as_owner_listing(server, auth, VERB, move |server, owner| {
+        learning_setting_doors::clear_learning_setting_as_owner(server.vault(), owner, input)
+    })
+    .await
 }

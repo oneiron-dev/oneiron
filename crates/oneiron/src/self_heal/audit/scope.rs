@@ -2,7 +2,8 @@
 //! its attempt ran in, frozen at seal time, and its confession's task type.
 
 use crate::attempt_queue::AttemptRecord;
-use crate::learning_setting::{AUDIT_RATE, setting_value_in_scope_in_txn};
+use crate::learning_setting::{knob_bounds, setting_value_in_scope_in_txn};
+use crate::skill_optimize::audit_rate::setting_keys::AUDIT_RATE;
 use crate::{EntityId, Result, Vault};
 
 use super::{SealedAttemptReceipt, invalid};
@@ -27,7 +28,7 @@ pub(super) fn audit_rate_in_txn(
         receipt.project,
         Some(&receipt.confession.type_ref),
     )?;
-    if !rate.is_finite() || !(AUDIT_RATE.min..=AUDIT_RATE.max).contains(&rate) {
+    if !rate.is_finite() || !knob_bounds(&AUDIT_RATE).contains(rate) {
         return Err(invalid(
             "the seal audit rate is bounded and strictly positive",
         ));

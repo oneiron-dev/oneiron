@@ -2482,8 +2482,11 @@ host actor, and a vault that holds none answers the list unhooked and logs a war
 ## Learned settings
 
 A learned setting is a knob the vault fits from its own runs, such as the audit rate
-(`audit_rate`), a planner floor or a health dial (`health.loop.repeats`). You can lay two kinds of
-row on a knob. A **seed** is a prior the fit starts from, weighted in runs. A **pin** is the value,
+(`audit.rate`), a planner floor or a health dial (`health.loop.repeats`). Each knob is a Setting
+key: set a value row (a seed, with its weight in runs) or a pin with `vault.settings.set`, and
+read it with `vault.settings.get` and `vault.settings.list`, over the facade
+(`POST /v1/core/facade/vault.settings.set`) and MCP. A set whose value is absent or null clears
+the row. A **seed** is a prior the fit starts from, weighted in runs. A **pin** is the value,
 whatever the fit says.
 
 A row applies to the vault, to one project's goal, to one project, or to one task type (a type
@@ -2493,16 +2496,18 @@ replaces the goal. A read takes the narrowest pin (goal, then project, then type
 Without a pin, it takes the goal's seed, then the project's, then the type's: those are your word
 for that scope alone, so a fit learned across the whole vault does not override them. Failing
 that, it takes the vault's fit once the fit has runs of its own, then the vault's seed (the fit's
-own prior), then the catalog seed. The catalog keeps each knob's bounds; a value outside them is
+own prior), then the default. The key's schema keeps each knob's bounds; a value outside them is
 refused.
 
-A spawn's model, width, pattern and budget take the same seeds and pins, under the keys `model`,
-`width`, `pattern` and `budget`. The value is typed: a model id, a count of agents, a pattern token
-(`solo`, `ceo_decides`, `committee`, `vote`, `market`, `rotation`), or lease units. The planner
-lays these rows under each planned spawn. The narrowest pin comes first, then the narrowest seed;
-an owner pin replaces the spawn call's own seed, and the call's own pin always stands. A model
-row counts only where a seat serves that model. A pin that disagrees with a pinned pattern or
-width is passed over for the next row, and a budget only ever narrows the caller's budget.
+A spawn's model, width, pattern and budget take seeds and pins of their own, under the keys
+`model`, `width`, `pattern` and `budget`, through `oneiron learning-settings`,
+`/v1/owner/settings/learning` and the `vault.settings.learning` verbs. The value is typed: a
+model id, a count of agents, a pattern token (`solo`, `ceo_decides`, `committee`, `vote`,
+`market`, `rotation`), or lease units. The planner lays these rows under each planned spawn. The
+narrowest pin comes first, then the narrowest seed; an owner pin replaces the spawn call's own
+seed, and the call's own pin always stands. A model row counts only where a seat serves that
+model. A pin that disagrees with a pinned pattern or width is passed over for the next row, and
+a budget only ever narrows the caller's budget.
 
 An unplanned named-agent launch with no explicit budget also takes the owner's budget pin or
 seed, for its inherited project and placed task type. Its launch preview reads the same setting;
@@ -2511,25 +2516,23 @@ budget always stands. Planned launches, workflows and reader loans keep their ex
 The setting supplies a cap, not funds, and does not change the identity of a retried request.
 
 ```sh
-oneiron learning-settings list                                  # catalog, values now, your rows
-oneiron learning-settings list --key health.loop.repeats
-oneiron learning-settings put health.loop.repeats pin 5 --why "noisy tools" --project HEX32
-oneiron learning-settings put audit_rate seed 0.1 --weight-runs 20 --why "start low"
-oneiron learning-settings put health.silent.minutes pin 60 --why "slow jobs" --task-type research
-oneiron learning-settings clear health.loop.repeats pin --project HEX32
+oneiron learning-settings list                                  # your spawn-choice rows
+oneiron learning-settings list --key pattern
 oneiron learning-settings put pattern pin committee --why "review work" --goal HEX32
 oneiron learning-settings put model seed openai/gpt-6@1 --weight-runs 10 --why "try it" --task-type research
+oneiron learning-settings clear pattern pin --goal HEX32
 ```
 
 The commands open a stopped vault. A running server answers the same at
 `GET /v1/owner/settings/learning[?key=…]`, `POST /v1/owner/settings/learning` with
-`{"key", "mode": "seed"|"pin", "value"?, "choice"?, "weight_runs"?, "why", "goal"?, "project"?,
+`{"key", "mode": "seed"|"pin", "choice", "weight_runs"?, "why", "goal"?, "project"?,
 "task_type"?}`, and `POST /v1/owner/settings/learning/clear` with `{"key", "mode", "goal"?,
-"project"?, "task_type"?}`. A knob's row carries `value`; a spawn choice's carries `choice`, such
-as `{"model": "provider/name@rev"}`, `{"width": 3}`, `{"pattern": "vote"}` or `{"budget": 500}`.
-Each answers with the key's catalog entry and rows. The host verbs `vault.settings.learning`,
-`.put` and `.clear` take the same input over the facade and MCP. All of them are the owner's
-alone, and clearing an absent row succeeds.
+"project"?, "task_type"?}`. A row carries the `choice` its key names, such as
+`{"model": "provider/name@rev"}`, `{"width": 3}`, `{"pattern": "vote"}` or `{"budget": 500}`.
+Each answers with the key's rows. The host verbs `vault.settings.learning`,
+`.put` and `.clear` take the same input over the facade and MCP; the list also answers a holder
+of `engine.controls`, while the put and the clear are the owner's alone. Clearing an absent row
+succeeds.
 
 The app's policy actions have host verbs too. Each runs the same action as
 `POST /v1/core/actions/{verb}`:

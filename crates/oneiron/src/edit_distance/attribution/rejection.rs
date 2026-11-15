@@ -29,7 +29,8 @@ use crate::Vault;
 use crate::edit_distance::delta::MEASUREMENT_ENGINE_VERSION;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning_setting::{ATTRIBUTION_UNCLEAR_FLOOR, setting_value_in_txn};
+use crate::learning_setting::setting_value_in_txn;
+use crate::skill_attribution::setting_keys::ATTRIBUTION_UNCLEAR_FLOOR;
 use crate::skill_attribution::{
     AttributionLane, UnclearAttribution, UnclearContext, delete_unclear_in_txn, put_unclear_in_txn,
 };

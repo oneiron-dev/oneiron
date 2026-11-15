@@ -24,12 +24,12 @@ pub enum LearningSettingScope {
     TaskType,
 }
 
-/// `vault.settings.learning`'s input: the whole catalog and every row, or
-/// one key's.
+/// `vault.settings.learning`'s input: every spawn-choice row, or one
+/// key's.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LearningSettingsRequest {
-    /// Only this catalog key or spawn choice.
+    /// Only this spawn choice: `model`, `width`, `pattern` or `budget`.
     #[serde(default)]
     pub key: Option<String>,
 }
@@ -47,17 +47,6 @@ pub struct LearningSettingClear {
     pub project: Option<String>,
     #[serde(default)]
     pub task_type: Option<String>,
-}
-
-/// One catalog knob: its bounds and seed, and what the vault reads for it
-/// now (a vault pin, else the vault fit, else a vault seed, else the seed).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LearningSettingSpecView {
-    pub key: String,
-    pub min: f64,
-    pub max: f64,
-    pub seed: f64,
-    pub value: f64,
 }
 
 pub fn bad(message: &'static str) -> Error {

@@ -9,11 +9,11 @@ use crate::entity_id::EntityId;
 use crate::learning::{Anchor, LearningCell, LearningPredicate, TypeRef};
 use crate::learning_setting::global_setting_subject;
 use crate::receipt::{ContributionCheck, CreditOptions, PackAttributionFields, UsedProvenanceEdge};
+use crate::skill_attribution::setting_keys::CREDIT_DECAY;
 use crate::skill_attribution::{
     CheckedEdge, ContributionCheckRecord, ContributionFork, ContributionPair, LateCreditReceipt,
     contributed,
 };
-use crate::store::setting_seed::CREDIT_DECAY;
 use crate::{Result, Vault};
 
 /// The scored axis of the door's credited outcome.
@@ -126,9 +126,9 @@ pub fn credit_and_check_adjacent_edge(
 pub fn credit_decay_fit_runs(vault: &Vault) -> Result<Option<f64>> {
     let cell = LearningCell::new(
         LearningPredicate::Setting,
-        global_setting_subject(CREDIT_DECAY.key)?,
+        global_setting_subject(CREDIT_DECAY.spec.name)?,
     )
-    .setting_key(CREDIT_DECAY.key)
+    .setting_key(CREDIT_DECAY.spec.name)
     .type_ref(root_type(vault)?)
     .project(None);
     Ok(crate::learning::learning_estimate(vault, &cell)?.map(|estimate| estimate.runs))

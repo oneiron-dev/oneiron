@@ -197,7 +197,6 @@ pub mod secret_record;
 pub mod secret_rotation;
 pub mod serialize;
 pub mod session_overlay;
-pub mod setting_seed;
 pub mod settings;
 pub mod side_table;
 pub mod skill_attribution;

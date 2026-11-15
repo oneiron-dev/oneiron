@@ -68,10 +68,10 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::error::Error;
-use crate::learning_setting::setting_value_in_txn;
-use crate::store::setting_seed::GROUP_COMMIT_MAX_WRITES;
-use crate::store::setting_seed::GROUP_COMMIT_WINDOW_MS;
-use crate::store::setting_seed::SettingSpec;
+use crate::learning_setting::{knob_bounds, knob_seed, setting_value_in_txn};
+use crate::setting::Setting;
+use crate::store::group_commit::setting_keys::GROUP_COMMIT_MAX_WRITES;
+use crate::store::group_commit::setting_keys::GROUP_COMMIT_WINDOW_MS;
 
 use super::legal_hold::RefusalBatch;
 use super::{Store, StoreCore, active_write_txn_depth};
@@ -458,13 +458,15 @@ impl Limits {
     /// row that cannot be read leaves its seed in force: tuning never fails a
     /// write.
     fn read(store: &Store, txn: &RoTxn<'_>) -> Self {
-        let value =
-            |spec: &SettingSpec| setting_value_in_txn(store, txn, spec).unwrap_or(spec.seed);
+        let value = |key: &Setting<f64>| {
+            setting_value_in_txn(store, txn, key).unwrap_or_else(|_| knob_seed(key))
+        };
         let window_ms = value(&GROUP_COMMIT_WINDOW_MS);
         Self {
             window: Duration::try_from_secs_f64(window_ms / 1000.0).unwrap_or(Duration::ZERO),
             // The row lies within the catalog's 1..=4096, so the cast is exact.
-            max_writes: value(&GROUP_COMMIT_MAX_WRITES).clamp(1.0, GROUP_COMMIT_MAX_WRITES.max)
+            max_writes: value(&GROUP_COMMIT_MAX_WRITES)
+                .clamp(1.0, knob_bounds(&GROUP_COMMIT_MAX_WRITES).max)
                 as usize,
             #[cfg(test)]
             hold_until: store.group_commit.hooks.take_hold(),
@@ -1380,4 +1382,5 @@ pub(crate) mod hooks {
 }
 
 #[cfg(test)]
+pub(crate) mod setting_keys;
 mod tests;

@@ -243,7 +243,6 @@ pub(crate) use oneiron_store::conversation_span;
 pub use oneiron_store::dreamer_attempt_kind;
 pub(crate) use oneiron_store::dreamer_attempt_payload;
 pub mod dreamer_wake_policy;
-pub use oneiron_store::setting_seed;
 pub use oneiron_store::snapshot_key;
 pub use oneiron_store::snapshot_lock_result;
 pub(crate) use oneiron_store::source_audience_obligation;
@@ -331,7 +330,7 @@ pub mod workflow_definition;
 pub use scan_checks::ScanCheck;
 pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
 pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
-mod group_commit;
+pub(crate) mod group_commit;
 #[doc(hidden)]
 pub mod handle;
 pub(crate) use oneiron_store::replay_only_commits;

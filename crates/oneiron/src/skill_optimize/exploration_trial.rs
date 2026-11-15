@@ -47,6 +47,7 @@ use crate::{EntityId, Error, Result, Vault};
 
 mod overrun_ask;
 mod routing;
+pub(crate) mod setting_keys;
 
 use self::overrun_ask::{answer_in_txn, climb_stale_ask};
 use self::routing::lineage_route_in_txn;
@@ -73,28 +74,6 @@ const MAX_LINEAGE: usize = 1024;
 /// distinct projects, as the project lineage walk bounds it.
 const MAX_PROJECT_LINEAGE: usize = 256;
 
-/// Hours an unanswered overrun ask waits on the role it went to before it
-/// climbs to the next role up its chain: the ask's reminder. At the chain's
-/// top it waits on, until [`EXPLORATION_ASK_LAPSE_HOURS`].
-pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
-    crate::store::setting_seed::SettingSpec {
-        key: "exploration.ask.climb_hours",
-        min: 1.0,
-        max: 720.0,
-        seed: 24.0,
-    };
-
-/// Hours an unanswered overrun ask waits at the top of its chain, counted
-/// from its last climb, before it lapses as a decline: the trial closes and
-/// its routed runs are measured. Checked once the climb window has passed too.
-pub(crate) const EXPLORATION_ASK_LAPSE_HOURS: crate::store::setting_seed::SettingSpec =
-    crate::store::setting_seed::SettingSpec {
-        key: "exploration.ask.lapse_hours",
-        min: 1.0,
-        max: 2160.0,
-        seed: 72.0,
-    };
-
 /// The engine's own versioned queue identity for an overrun ask: the cost
 /// comparison is deterministic, so no model read precedes it.
 const OVERRUN_QUEUE: &str = "skill.exploration_slice";
@@ -117,7 +96,7 @@ pub(crate) enum ExplorationTrialClose {
     /// The board declined a run past the goal's exploration slice.
     OverrunDeclined,
     /// The overrun ask went unanswered at the top of its chain for
-    /// [`EXPLORATION_ASK_LAPSE_HOURS`].
+    /// [`setting_keys::EXPLORATION_ASK_LAPSE_HOURS`].
     OverrunLapsed,
     /// An offline floor regressed on the held-out set.
     FloorsRegressed,

@@ -16,20 +16,11 @@
 //! the ask. No step writes a person's vector yet, so on a vault today the
 //! rung keeps every list as it is (FIX [LINKER-PERSON-VECTOR-PRODUCER]).
 
+use super::setting_keys::LINKER_VECTOR_MARGIN;
 use crate::error::Result;
-use crate::learning_setting::{SettingSpec, setting_value_in_txn};
+use crate::learning_setting::setting_value_in_txn;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{EntityId, Vault};
-
-/// How far the nearest candidate's cosine must lead the next one's before
-/// the vector rung puts it first: an owner-steered catalog row over a cosine
-/// difference, 0 to 1.
-pub const LINKER_VECTOR_MARGIN: SettingSpec = SettingSpec {
-    key: "linker.vector.margin",
-    min: 0.0,
-    max: 1.0,
-    seed: 0.05,
-};
 
 /// The stored vector of `turn`, the rung's query: `None` when the vault has
 /// no embedding model or the turn has no vector yet.

@@ -25,6 +25,8 @@
 mod budget_resolution;
 mod measured;
 mod receipt;
+pub(crate) mod setting_keys;
+use setting_keys::{PLANNER_BIG_PLAN_WIDTH, PLANNER_SOLO_MARGIN, PLANNER_SOLO_SUCCESS_FLOOR};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,9 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::learning_setting::{
-    PLANNER_BIG_PLAN_WIDTH, PLANNER_SOLO_MARGIN, PLANNER_SOLO_SUCCESS_FLOOR, setting_value,
-};
+use crate::learning_setting::{knob_seed, setting_value};
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung,
     ProviderPin, Reversibility,
@@ -218,9 +218,9 @@ impl PlannerThresholds {
     #[must_use]
     pub fn seeded() -> Self {
         Self {
-            solo_success_floor: PLANNER_SOLO_SUCCESS_FLOOR.seed,
-            solo_margin: PLANNER_SOLO_MARGIN.seed,
-            big_plan_width: PLANNER_BIG_PLAN_WIDTH.seed as u32,
+            solo_success_floor: knob_seed(&PLANNER_SOLO_SUCCESS_FLOOR),
+            solo_margin: knob_seed(&PLANNER_SOLO_MARGIN),
+            big_plan_width: knob_seed(&PLANNER_BIG_PLAN_WIDTH) as u32,
         }
     }
 

@@ -11,6 +11,7 @@
 //! `coach.heal`. A closed-form job rides the maintenance lane, and the wake
 //! driver runs it in-engine. The Issues job rides the `coach.heal` queue
 //! itself (see [`super::coach_heal`]).
+use self::setting_keys::TRADEOFF_REMINDER_HOURS;
 use super::super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,
     DreamerRunnerStore,
@@ -35,6 +36,7 @@ mod eval_measurement;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
 mod person_threshold;
 // Q2 tuning's quick picks, read, policy call and proposal (FIX 2437).
+pub(crate) mod setting_keys;
 mod think_threshold;
 
 pub use self::think_threshold::ThinkThresholdPolicy;
@@ -249,18 +251,6 @@ const MAINTENANCE_FACETS: [&str; 12] = [
     COACH_LAYOUT_SUGGESTIONS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
-/// Hours a pending tradeoff ask waits on one rung before it climbs, a learned
-/// setting the owner seeds or pins (FIX 707). Canon names no window; the
-/// shipped seed is one night apart, less an hour of wake jitter, so a nightly
-/// pass climbs once a night.
-pub const TRADEOFF_REMINDER_HOURS: crate::learning_setting::SettingSpec =
-    crate::learning_setting::SettingSpec {
-        key: "coach.tradeoff_reminder_hours",
-        min: 1.0,
-        max: 720.0,
-        seed: 23.0,
-    };
-
 /// When the Coach last climbed, or first saw, a pending tradeoff ask. Key: the
 /// ask's proposal.
 const TRADEOFF_CLIMB: SideTable<EntityId, u64, Raw> =

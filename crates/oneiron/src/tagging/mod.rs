@@ -49,6 +49,7 @@ mod reconciler;
 mod register;
 mod role;
 mod save;
+pub(crate) mod setting_keys;
 mod tags;
 mod trace;
 mod vector;
@@ -72,7 +73,6 @@ pub use tags::{
     TurnTags,
 };
 pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
-pub use vector::LINKER_VECTOR_MARGIN;
 pub use verbs::{
     DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
     TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,

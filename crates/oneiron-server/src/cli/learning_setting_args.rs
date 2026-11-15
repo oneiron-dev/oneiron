@@ -1,6 +1,7 @@
-//! `oneiron learning-settings`: the owner's learned-setting rows on a stopped
+//! `oneiron learning-settings`: the owner's spawn-choice rows on a stopped
 //! vault (`oneiron::learning_setting_doors`); a running server answers the
-//! same at `/v1/owner/settings/learning`.
+//! same at `/v1/owner/settings/learning`. A learned knob is a setting key,
+//! set with the `vault.settings.set` verb.
 
 use clap::{Args, Subcommand, ValueEnum};
 
@@ -8,8 +9,8 @@ use crate::config::ServeArgs;
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum LearningSettingsCommand {
-    /// The catalog, each knob with the value the vault reads now, and your
-    /// seed and pin rows.
+    /// Your spawn-choice seed and pin rows, each with what was learned
+    /// under it.
     List(Box<LearningSettingListArgs>),
     /// Lay one seed or pin at the vault, a project's goal, a project or a
     /// task type, replacing the row of the same key, mode and scope.
@@ -28,7 +29,7 @@ pub enum LearningSettingModeArg {
 
 #[derive(Args, Clone, Debug)]
 pub struct LearningSettingListArgs {
-    /// Only this catalog key or spawn choice.
+    /// Only this spawn choice: `model`, `width`, `pattern` or `budget`.
     #[arg(long)]
     pub key: Option<String>,
 
@@ -38,12 +39,12 @@ pub struct LearningSettingListArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct LearningSettingPutArgs {
-    /// The catalog key, e.g. `health.loop.repeats`, or a spawn choice:
-    /// `model`, `width`, `pattern` or `budget`.
+    /// A spawn choice: `model`, `width`, `pattern` or `budget`. A learned
+    /// knob is a setting: set it with the `vault.settings.set` verb.
     pub key: String,
     pub mode: LearningSettingModeArg,
-    /// A catalog knob's value, within its bounds; a model id, an agent
-    /// count, a pattern token or lease units for a spawn choice.
+    /// The choice's value: a model id, an agent count, a pattern token or
+    /// lease units.
     pub value: String,
     /// A seed's weight in runs; a pin takes none.
     #[arg(long)]

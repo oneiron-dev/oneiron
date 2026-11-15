@@ -15,7 +15,8 @@ use super::{
     HEALTH_WAIT_MINUTES, HEALTH_WAIT_SHARE, HEALTH_WIDEN_DENIALS,
 };
 use crate::edge::EdgeKind;
-use crate::learning_setting::SettingSpec;
+use crate::learning_setting::knob_bounds;
+use crate::setting::Setting;
 use crate::{EntityId, Error, Result, Vault};
 
 pub(crate) use crate::skill::health_review::AGENT_HEALTH_REVIEW_SKILL_ID;
@@ -25,7 +26,7 @@ pub(crate) use crate::skill::health_review::REVIEWER_POLICY_FILE;
 /// The detector dials a revision may seed. The review switch, the owner copy
 /// and the escalation TTL decide whether and to whom a card goes; a revision
 /// never seeds them.
-const POLICY_DIALS: [&SettingSpec; 11] = [
+static POLICY_DIALS: [&Setting<f64>; 11] = [
     &HEALTH_LOOP_REPEATS,
     &HEALTH_CHECK_FAILS,
     &HEALTH_WAIT_SHARE,
@@ -97,12 +98,13 @@ impl ReviewerPolicy {
         }
     }
 
-    /// `spec` with the revision's seed in place of its compiled one, and the
-    /// revision. `None` when the revision seeds no valid value for it.
-    pub(super) fn seed(&self, spec: &SettingSpec) -> Option<(SettingSpec, EntityId)> {
+    /// The revision's seed for the dial `knob`, which stands in place of its
+    /// compiled one, and the revision. `None` when the revision seeds no valid
+    /// value for it.
+    pub(super) fn seed(&self, knob: &Setting<f64>) -> Option<(f64, EntityId)> {
         let revision = self.revision?;
-        let seed = *self.seeds.get(spec.key)?;
-        Some((SettingSpec { seed, ..*spec }, revision))
+        let seed = *self.seeds.get(knob.spec.name)?;
+        Some((seed, revision))
     }
 
     /// The pass's record of each fallback: a revision's bad policy or key
@@ -210,16 +212,21 @@ fn decode(bytes: &[u8]) -> (BTreeMap<&'static str, f64>, Vec<PolicyFallback>) {
     };
     let mut fallbacks: Vec<PolicyFallback> = entries
         .keys()
-        .filter(|key| !POLICY_DIALS.iter().any(|spec| spec.key == key.as_str()))
+        .filter(|key| {
+            !POLICY_DIALS
+                .iter()
+                .any(|knob| knob.spec.name == key.as_str())
+        })
         .map(|key| PolicyFallback::Unknown(key.clone()))
         .collect();
     let mut seeds = BTreeMap::new();
-    for spec in POLICY_DIALS {
-        match entries.get(spec.key).and_then(serde_json::Value::as_f64) {
-            Some(seed) if seed.is_finite() && (spec.min..=spec.max).contains(&seed) => {
-                seeds.insert(spec.key, seed);
+    for knob in &POLICY_DIALS {
+        let name = knob.spec.name;
+        match entries.get(name).and_then(serde_json::Value::as_f64) {
+            Some(seed) if seed.is_finite() && knob_bounds(knob).contains(seed) => {
+                seeds.insert(name, seed);
             }
-            _ => fallbacks.push(PolicyFallback::Dial(spec.key)),
+            _ => fallbacks.push(PolicyFallback::Dial(name)),
         }
     }
     (seeds, fallbacks)

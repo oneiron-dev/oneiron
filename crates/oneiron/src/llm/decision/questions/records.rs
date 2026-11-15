@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 pub use super::criteria::{MAX_CRITERION_BYTES, QuestionCriteria};
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::llm::decision::questions::records::{
-    ARTIFACT_ADAPTER, QUESTION_CALL_BUDGET_MS,
-};
+pub use oneiron_verb_wire::llm::decision::questions::records::ARTIFACT_ADAPTER;
+
+use super::setting_keys::QUESTION_CALL_BUDGET_MS;
 
 /// One artifact a standing artifact question asks: the artifact its answers land in, and
 /// which of its units are asked, as a `vault.artifacts.ask` names them.
@@ -166,9 +166,10 @@ impl QuestionDefinition {
 pub fn question_call_budget(vault: &Vault, explicit: Option<u64>) -> Result<std::time::Duration> {
     let ms = match explicit {
         Some(ms) => ms,
-        None => crate::learning_setting::setting_value(vault, &QUESTION_CALL_BUDGET_MS)?
-            .round()
-            .clamp(QUESTION_CALL_BUDGET_MS.min, QUESTION_CALL_BUDGET_MS.max) as u64,
+        None => budget_ms(crate::learning_setting::setting_value(
+            vault,
+            &QUESTION_CALL_BUDGET_MS,
+        )?),
     };
     Ok(std::time::Duration::from_millis(ms))
 }
@@ -189,18 +190,18 @@ pub fn question_call_budget_with_fallback(
         return Ok(explicit);
     }
     let txn = vault.store.env.read_txn()?;
-    let override_ms = crate::learning_setting::setting_override_in_txn(
-        &vault.store,
-        &txn,
-        &QUESTION_CALL_BUDGET_MS,
-    )?;
-    Ok(match override_ms {
-        Some(ms) => std::time::Duration::from_millis(
-            ms.round()
-                .clamp(QUESTION_CALL_BUDGET_MS.min, QUESTION_CALL_BUDGET_MS.max) as u64,
-        ),
-        None => fallback,
+    let read = QUESTION_CALL_BUDGET_MS.read_in_dbs_txn(&vault.store, &txn, &[], None)?;
+    // The shipped seed is no override: a host keeps its own shipped clock.
+    Ok(match read.source {
+        crate::setting::SettingSource::Default => fallback,
+        _ => std::time::Duration::from_millis(budget_ms(read.value)),
     })
+}
+
+/// A question budget in force, to the nearest millisecond inside the key's range.
+fn budget_ms(value: f64) -> u64 {
+    let range = crate::learning_setting::knob_bounds(&QUESTION_CALL_BUDGET_MS);
+    value.round().clamp(range.min, range.max) as u64
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

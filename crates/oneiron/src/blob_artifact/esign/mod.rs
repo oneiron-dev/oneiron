@@ -25,6 +25,7 @@ pub mod esign_seal_verify_reasons;
 // FIX [LIBTEST-QUARANTINE-BLOB-ARTIFACT-ESIGN-TESTS]: the lib test target's type check fails here (18 errors: E0063 x14, E0061 x2, E0639 x1, E0599 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
+pub(crate) mod setting_keys;
 mod tests;
 pub(crate) use lane_scope::bounded_by_whole_vault;
 pub use ledger::PROJECT_MEMBERS_ONLY;
@@ -67,8 +68,7 @@ pub use door::{
 mod escalation;
 pub(crate) use escalation::erase_held_signing_actor_in_txn;
 pub use escalation::{
-    ESIGN_ASK_CLIMB_HOURS, HOLD_ALLOW, HOLD_DECLINE, HeldAskWait, HeldSigning, HeldSigningAnswer,
-    HeldSigningState,
+    HOLD_ALLOW, HOLD_DECLINE, HeldAskWait, HeldSigning, HeldSigningAnswer, HeldSigningState,
 };
 mod principals;
 pub use capability::EsignCapability;

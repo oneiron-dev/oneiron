@@ -10,11 +10,12 @@ use super::super::{
 };
 use super::HealthReviewReceipt;
 use crate::learning::{Anchor, LearningCell, LearningPredicate, TypeRef};
-use crate::learning_setting::{SettingCheck, SettingSpec, global_setting_subject};
+use crate::learning_setting::{SettingCheck, global_setting_subject, knob_bounds};
+use crate::setting::Setting;
 use crate::{Result, Vault};
 
 /// The float policy: the exact reviewer to its knob, and the fitted target.
-/// `Some((spec, Some(target)))` records a fitting check; `Some((spec, None))`
+/// `Some((knob, Some(target)))` records a fitting check; `Some((knob, None))`
 /// withdraws the state's row; `None` is inert. For `long_wait` and
 /// `cost_spike`, confirmed keeps `D` and dismissed fits `m`, which suppresses
 /// under strict `>` exactly: no epsilon, no `+1`, no clamp, no reconstruction
@@ -29,46 +30,46 @@ fn float_setting_target(
     by_owner: bool,
     exact_dial: Option<f64>,
     exact_measured: Option<f64>,
-) -> Option<(&'static SettingSpec, Option<f64>)> {
+) -> Option<(&'static Setting<f64>, Option<f64>)> {
     if !by_owner {
         return None;
     }
-    let spec = match reviewer {
+    let knob = match reviewer {
         "coach.agent_health.long_wait.v1" => &HEALTH_WAIT_SHARE,
         "coach.agent_health.cost_spike.v1" => &HEALTH_COST_SPIKE,
         "coach.agent_health.silent.v1" => &HEALTH_SILENT_MINUTES,
         _ => return None,
     };
     match outcome {
-        AgentHealthOutcome::Open | AgentHealthOutcome::Unresolved => Some((spec, None)),
+        AgentHealthOutcome::Open | AgentHealthOutcome::Unresolved => Some((knob, None)),
         AgentHealthOutcome::Confirmed | AgentHealthOutcome::Dismissed => {
-            if spec.key == HEALTH_SILENT_MINUTES.key {
-                return silent_setting_target(spec, outcome, exact_dial, exact_measured);
+            if knob.spec.name == HEALTH_SILENT_MINUTES.spec.name {
+                return silent_setting_target(knob, outcome, exact_dial, exact_measured);
             }
             let (dial, measured) = match (exact_dial, exact_measured) {
                 (Some(dial), Some(measured)) => (dial, measured),
-                _ => return Some((spec, None)),
+                _ => return Some((knob, None)),
             };
             if !dial.is_finite() || !measured.is_finite() {
-                return Some((spec, None));
+                return Some((knob, None));
             }
-            if dial < spec.min || dial > spec.max {
-                return Some((spec, None));
+            if !knob_bounds(knob).contains(dial) {
+                return Some((knob, None));
             }
             if measured <= dial {
-                return Some((spec, None));
+                return Some((knob, None));
             }
             let target = match outcome {
                 AgentHealthOutcome::Confirmed => dial,
                 AgentHealthOutcome::Dismissed => measured,
                 AgentHealthOutcome::Open | AgentHealthOutcome::Unresolved => {
-                    return Some((spec, None));
+                    return Some((knob, None));
                 }
             };
-            if !target.is_finite() || target < spec.min || target > spec.max {
-                return Some((spec, None));
+            if !target.is_finite() || !knob_bounds(knob).contains(target) {
+                return Some((knob, None));
             }
-            Some((spec, Some(target)))
+            Some((knob, Some(target)))
         }
     }
 }
@@ -83,45 +84,45 @@ fn float_setting_target(
 /// `round(T * 60) > quiet` before recording a dismissal. Anything infeasible
 /// withdraws the state's row; no clamp, no fake success.
 fn silent_setting_target(
-    spec: &'static SettingSpec,
+    knob: &'static Setting<f64>,
     outcome: AgentHealthOutcome,
     exact_dial: Option<f64>,
     exact_measured: Option<f64>,
-) -> Option<(&'static SettingSpec, Option<f64>)> {
+) -> Option<(&'static Setting<f64>, Option<f64>)> {
     let (dial, measured) = match (exact_dial, exact_measured) {
         (Some(dial), Some(measured)) => (dial, measured),
-        _ => return Some((spec, None)),
+        _ => return Some((knob, None)),
     };
     if !dial.is_finite() || !measured.is_finite() {
-        return Some((spec, None));
+        return Some((knob, None));
     }
-    if dial < spec.min || dial > spec.max {
-        return Some((spec, None));
+    if !knob_bounds(knob).contains(dial) {
+        return Some((knob, None));
     }
     // The frozen quiet seconds stay within the producer's exact-integer range.
     if measured < 0.0 || measured.fract() != 0.0 || measured > (1u64 << f64::MANTISSA_DIGITS) as f64
     {
-        return Some((spec, None));
+        return Some((knob, None));
     }
     let quiet = measured as u64;
     // The actual inclusive trigger, through the same native adaptation.
     if quiet < (dial * 60.0).round() as u64 {
-        return Some((spec, None));
+        return Some((knob, None));
     }
     let target = match outcome {
         AgentHealthOutcome::Confirmed => dial,
         AgentHealthOutcome::Dismissed => (measured + 1.0) / 60.0,
-        AgentHealthOutcome::Open | AgentHealthOutcome::Unresolved => return Some((spec, None)),
+        AgentHealthOutcome::Open | AgentHealthOutcome::Unresolved => return Some((knob, None)),
     };
-    if !target.is_finite() || target < spec.min || target > spec.max {
-        return Some((spec, None));
+    if !target.is_finite() || !knob_bounds(knob).contains(target) {
+        return Some((knob, None));
     }
     // A dismissal must suppress through the same native conversion: when
     // rounding leaves the integer-second grid unmoved, withdraw instead.
     if matches!(outcome, AgentHealthOutcome::Dismissed) && (target * 60.0).round() as u64 <= quiet {
-        return Some((spec, None));
+        return Some((knob, None));
     }
-    Some((spec, Some(target)))
+    Some((knob, Some(target)))
 }
 
 /// Projects one owner receipt's float-dial effect in `txn`: a fitting check
@@ -137,7 +138,7 @@ pub(super) fn project_float_setting_fit_in_txn(
     held: &HealthReviewReceipt,
     now: u64,
 ) -> Result<()> {
-    let Some((spec, target)) = float_setting_target(
+    let Some((knob, target)) = float_setting_target(
         &held.reviewer,
         held.outcome,
         held.by_owner,
@@ -146,13 +147,13 @@ pub(super) fn project_float_setting_fit_in_txn(
     ) else {
         return Ok(());
     };
-    let subject = global_setting_subject(spec.key)?;
+    let subject = global_setting_subject(knob.spec.name)?;
     match target {
         Some(observed) => {
             let check = SettingCheck {
                 subject,
                 project: None,
-                key: spec.key.to_owned(),
+                key: knob.spec.name.to_owned(),
                 type_ref: TypeRef::root(0),
                 observed,
                 receipt: held.receipt.clone(),
@@ -164,7 +165,7 @@ pub(super) fn project_float_setting_fit_in_txn(
         }
         None => {
             let cell = LearningCell::new(LearningPredicate::Setting, subject)
-                .setting_key(spec.key)
+                .setting_key(knob.spec.name)
                 .type_ref(TypeRef::root(0))
                 .project(None);
             let _ = crate::learning::evidence::withdraw_evidence_in_txn(

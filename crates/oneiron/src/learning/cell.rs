@@ -177,7 +177,7 @@ impl LearningCell {
                     "learning.setting keys a setting_key",
                 ))?;
                 need(
-                    crate::learning_setting::setting_spec(key).is_some(),
+                    crate::learning_setting::learned_setting(key).is_some(),
                     "learning.setting keys a setting-catalog row",
                 )?;
             }

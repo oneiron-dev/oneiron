@@ -537,7 +537,7 @@ pub(crate) fn erase_held_batch_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    if crate::learning_setting::names_no_actor(vault, wtxn, actor)? {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
         return Ok(());
     }
     let Some(held) = HELD.get_lenient(&vault.store, &*wtxn, &())? else {

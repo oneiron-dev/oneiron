@@ -20,6 +20,7 @@ use super::ceremony::{sign, signed_event};
 use super::field_admission::{EventFields, InspectedPages, inspect_event_pages};
 use super::ledger::state_in;
 use super::model::*;
+use super::setting_keys::ESIGN_ASK_CLIMB_HOURS;
 use crate::llm::decision::DecisionAsk;
 use crate::model_decision::AnswerActor;
 use crate::model_decision::catalogue;
@@ -37,17 +38,6 @@ pub const HOLD_ALLOW: &str = "allow";
 /// The answer that keeps the signature from landing.
 pub const HOLD_DECLINE: &str = "decline";
 
-/// Hours a held sign act's unanswered ask waits on the person it went to
-/// before it climbs to the next role up its chain (CALLS "OF-415 held
-/// signing climb"). At the vault owners it waits on: no unanswered ask
-/// signs or lapses.
-pub const ESIGN_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
-    crate::store::setting_seed::SettingSpec {
-        key: "esign.ask.climb_hours",
-        min: 1.0,
-        max: 720.0,
-        seed: 24.0,
-    };
 /// The most bytes of the document title the question quotes.
 const TITLE_MAX_BYTES: usize = 256;
 

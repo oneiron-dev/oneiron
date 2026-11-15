@@ -1,123 +1,217 @@
-//! Learned settings (ARCH-0003 #learning-settings): the catalog of learned
-//! knobs, the owner's seed and pin rows over them, and the one read that
-//! resolves the value in force.
+//! Learned settings (ARCH-0003 #learning-settings; Setting stage 3): the learned knobs are
+//! catalogue keys, each a `setting_keys!` row of the module that reads it with a learned kind
+//! (`Kind::learned(min, max)`), and every reader reads one through the Setting walk
+//! ([`crate::setting`]): the owner's pin, else the narrowest seed or fit (at one scope the fit
+//! first, once it has runs of its own), else the shipped seed. An owner or a holder of the knob's
+//! `engine.controls` class sets a seed or a pin with `settings.set`; a seed is a value row with its
+//! weight in runs.
 //!
-//! A new learned knob is a CATALOG ROW here, never a constant in the module
-//! that reads it: the catalog names its key, its bounds and its shipped seed,
-//! and every reader asks [`setting_value`]. The owner steers a row with a
-//! [`SettingRow`] — a SEED replaces the shipped value, a PIN fixes the value
-//! in force — and nobody hand-writes the value itself.
-//!
-//! The fitted half is `learning.setting` ([`crate::learning`]): fitting checks
-//! enter through [`record_setting_check`], the projector folds them over the
-//! seed (the owner's for the cell's scope, else the vault's, else the
-//! catalog's at the shipped weight) and caches each scope's fit beside its
-//! claim. The value in force is the pin, else the fit once it has own runs,
-//! else the owner's seed, else the catalog seed, narrowest scope first: the
-//! project's goal, the project, the task type, the vault
-//! ([`setting_value_scoped`]). A pin fixes the value used while the fit keeps
-//! learning underneath it. A spawn's model, width, pattern and budget are
-//! typed choices, not numbers: [`crate::learning_setting_choice`].
-
-use serde::{Deserialize, Serialize};
+//! What stays here is what the walk does not do: the fitting checks and the key each scope's fit is
+//! cached under ([`record_setting_check`]; the projector folds them over the seed,
+//! `Setting::seed_in_txn`), the typed list the fitter finds a knob in ([`LEARNED_SETTINGS`]), the
+//! readers' places ([`known_in_txn`]), the hook that refolds a knob's fits when its seed moves
+//! ([`refold_fits_on_change`]), and the owner rows' key shape the spawn choices keep
+//! ([`crate::learning_setting_choice`]).
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::write_envelope::WriteActor;
+use crate::setting::{LearnedRange, Setting, SettingChange};
 
-mod actor_erase;
 mod fit;
-mod holder;
-mod resolution;
 mod scope_erase;
 mod sourced;
 mod subject;
-pub(crate) mod tables;
-mod witness;
-pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
 pub use fit::{SettingCheck, global_setting_subject, record_setting_check};
-pub(crate) use fit::{owner_seed_in_txn, record_setting_check_in_txn, setting_fit_key};
-pub use holder::ENGINE_CONTROL_SETTINGS;
-pub(crate) use resolution::{setting_value_in_scope_in_txn, setting_value_scoped_in_txn};
-pub(crate) use scope_erase::{erase_setting_scope_in_txn, project_row_keys};
+pub(crate) use fit::{record_setting_check_in_txn, setting_fit_key};
+pub(crate) use scope_erase::{erase_setting_fits_in_txn, project_row_keys};
 pub(crate) use sourced::setting_value_in_scope_sourced_in_txn;
 
-pub use crate::store::setting_seed::{
-    ATTRIBUTION_UNCLEAR_FLOOR, AUDIT_RATE, CONTRIBUTION_CHECK_RATE, CREDIT_CHECK_EVERY_HOP,
-    CREDIT_DECAY, CREDIT_DEPTH_CAP, CREDIT_ENABLED, GROUP_COMMIT_MAX_WRITES,
-    GROUP_COMMIT_WINDOW_MS, LEARNING_BORROWED_PRIOR_RUNS, LEARNING_SHIPPED_PRIOR_RUNS,
-    LEARNING_WINDOW_HALF_LIFE_DAYS, PLANNER_BIG_PLAN_WIDTH, PLANNER_SOLO_MARGIN,
-    PLANNER_SOLO_SUCCESS_FLOOR, SettingSpec,
-};
+use crate::agent_dispatch::planner::setting_keys as planner;
+use crate::blob_artifact::esign::setting_keys as esign;
+use crate::dreamer_runner::maintenance::agent_health::setting_keys as health;
+use crate::dreamer_runner::maintenance::coach::setting_keys as coach;
+use crate::learning::setting_keys as learning;
+use crate::llm::decision::questions::setting_keys as questions;
+use crate::self_heal::setting_keys as self_heal;
+use crate::skill_attribution::setting_keys as attribution;
+use crate::skill_optimize::audit_rate::setting_keys as audit;
+use crate::skill_optimize::eval_set::setting_keys as eval_set;
+use crate::skill_optimize::exploration_trial::setting_keys as exploration;
+use crate::store::group_commit::setting_keys as group_commit;
+use crate::tagging::setting_keys as tagging;
 
-/// The fewest families an offer eval set needs (FIX 10446): the owner's
-/// floor for a measured card. Zero asks for none.
-pub const EVAL_FLOOR_MIN_FAMILIES: SettingSpec = SettingSpec {
-    key: "eval_floor_min_families",
-    min: 0.0,
-    max: 1_000_000.0,
-    seed: 0.0,
-};
-
-/// The fewest families each required floor slice needs (FIX 10446). Zero
-/// asks for none.
-pub const EVAL_FLOOR_MIN_FAMILIES_PER_SLICE: SettingSpec = SettingSpec {
-    key: "eval_floor_min_families_per_slice",
-    min: 0.0,
-    max: 1_000_000.0,
-    seed: 0.0,
-};
-
-/// Every learned knob the engine reads.
-pub const SETTING_CATALOG: &[SettingSpec] = &[
-    ATTRIBUTION_UNCLEAR_FLOOR,
-    GROUP_COMMIT_WINDOW_MS,
-    GROUP_COMMIT_MAX_WRITES,
-    CREDIT_DECAY,
-    CREDIT_ENABLED,
-    CREDIT_DEPTH_CAP,
-    CREDIT_CHECK_EVERY_HOP,
-    CONTRIBUTION_CHECK_RATE,
-    AUDIT_RATE,
-    LEARNING_WINDOW_HALF_LIFE_DAYS,
-    LEARNING_SHIPPED_PRIOR_RUNS,
-    LEARNING_BORROWED_PRIOR_RUNS,
-    PLANNER_SOLO_SUCCESS_FLOOR,
-    PLANNER_SOLO_MARGIN,
-    PLANNER_BIG_PLAN_WIDTH,
-    EVAL_FLOOR_MIN_FAMILIES,
-    EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_LOOP_REPEATS,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_CHECK_FAILS,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_WAIT_SHARE,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_WAIT_MINUTES,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_SILENT_MINUTES,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_WIDEN_DENIALS,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_COST_SPIKE,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_ESCALATE_TTL_HOURS,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_CARD_FLOOR,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_DUP_MIN_COST,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_OWNER_COPY,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW_WINDOW_HOURS,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_COST_MIN_RUNS,
-    crate::dreamer_runner::maintenance::agent_health::HEALTH_TREND_PERIOD_DAYS,
-    crate::dreamer_runner::maintenance::coach::TRADEOFF_REMINDER_HOURS,
-    crate::dreamer_runner::maintenance::attribution_labels::ATTRIBUTION_LABEL_RECEIPTS,
-    crate::skill::EXPLORATION_ASK_CLIMB_HOURS,
-    crate::skill::EXPLORATION_ASK_LAPSE_HOURS,
-    crate::blob_artifact::esign::ESIGN_ASK_CLIMB_HOURS,
-    crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS,
-    crate::self_heal::DETECTOR_CENTROID_MIN_SIMILARITY,
-    crate::tagging::LINKER_VECTOR_MARGIN,
+/// Every learned knob the engine reads, typed: the fitter finds the knob a setting cell learns by
+/// its name ([`learned_setting`]). The catalogue's learned keys and this list are the same set
+/// (unit test `learned_settings_are_the_catalogue_learned_keys`).
+pub(crate) static LEARNED_SETTINGS: [&Setting<f64>; 40] = [
+    &attribution::ATTRIBUTION_UNCLEAR_FLOOR,
+    &attribution::CONTRIBUTION_CHECK_RATE,
+    &attribution::CREDIT_DECAY,
+    &attribution::CREDIT_ENABLED,
+    &attribution::CREDIT_DEPTH_CAP,
+    &attribution::CREDIT_CHECK_EVERY_HOP,
+    &group_commit::GROUP_COMMIT_WINDOW_MS,
+    &group_commit::GROUP_COMMIT_MAX_WRITES,
+    &learning::LEARNING_WINDOW_HALF_LIFE_DAYS,
+    &learning::LEARNING_SHIPPED_PRIOR_RUNS,
+    &learning::LEARNING_BORROWED_PRIOR_RUNS,
+    &planner::PLANNER_SOLO_SUCCESS_FLOOR,
+    &planner::PLANNER_SOLO_MARGIN,
+    &planner::PLANNER_BIG_PLAN_WIDTH,
+    &audit::AUDIT_RATE,
+    &exploration::EXPLORATION_ASK_CLIMB_HOURS,
+    &exploration::EXPLORATION_ASK_LAPSE_HOURS,
+    &eval_set::EVAL_FLOOR_MIN_FAMILIES,
+    &eval_set::EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
+    &health::HEALTH_REVIEW,
+    &health::HEALTH_LOOP_REPEATS,
+    &health::HEALTH_CHECK_FAILS,
+    &health::HEALTH_WAIT_SHARE,
+    &health::HEALTH_WAIT_MINUTES,
+    &health::HEALTH_SILENT_MINUTES,
+    &health::HEALTH_WIDEN_DENIALS,
+    &health::HEALTH_COST_SPIKE,
+    &health::HEALTH_ESCALATE_TTL_HOURS,
+    &health::HEALTH_CARD_FLOOR,
+    &health::HEALTH_DUP_MIN_COST,
+    &health::HEALTH_OWNER_COPY,
+    &health::HEALTH_REVIEW_WINDOW_HOURS,
+    &health::HEALTH_COST_MIN_RUNS,
+    &health::HEALTH_TREND_PERIOD_DAYS,
+    &coach::TRADEOFF_REMINDER_HOURS,
+    &coach::ATTRIBUTION_LABEL_RECEIPTS,
+    &esign::ESIGN_ASK_CLIMB_HOURS,
+    &questions::QUESTION_CALL_BUDGET_MS,
+    &self_heal::DETECTOR_CENTROID_MIN_SIMILARITY,
+    &tagging::LINKER_VECTOR_MARGIN,
 ];
 
-/// The catalog row named `key`, if the engine knows it.
+/// The learned knob named `name`, if the engine reads one.
 #[must_use]
-pub fn setting_spec(key: &str) -> Option<&'static SettingSpec> {
-    SETTING_CATALOG.iter().find(|spec| spec.key == key)
+pub(crate) fn learned_setting(name: &str) -> Option<&'static Setting<f64>> {
+    LEARNED_SETTINGS
+        .iter()
+        .copied()
+        .find(|key| key.spec.name == name)
 }
+
+/// The range every row and every fit of the learned knob `key` stays in.
+#[must_use]
+pub(crate) fn knob_bounds(key: &Setting<f64>) -> LearnedRange {
+    key.spec.kind.learned_range().unwrap_or(LearnedRange {
+        min: f64::NEG_INFINITY,
+        max: f64::INFINITY,
+    })
+}
+
+/// The value the learned knob `key` ships with: the catalogue default, in force until an owner's
+/// seed or pin, or a fit, decides.
+#[must_use]
+pub(crate) fn knob_seed(key: &Setting<f64>) -> f64 {
+    key.kind.default_typed()
+}
+
+/// The places a read under `project` and `type_ref` knows, for a learned knob's walk: the
+/// project's current intake goal ([`project_goal_in_txn`]), the project, and the task type unless
+/// it is the root (the fits of the root type are the untyped cells). The vault is always the last
+/// place of the walk.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn known_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<crate::entity_id::EntityId>,
+    type_ref: Option<&crate::learning::TypeRef>,
+) -> Result<Vec<crate::setting::SettingScope>> {
+    use crate::setting::SettingScope as Place;
+    let goal = match project {
+        Some(project) => project_goal_in_txn(vault, txn, project)?,
+        None => None,
+    };
+    Ok(goal
+        .map(Place::Goal)
+        .into_iter()
+        .chain(project.map(Place::Project))
+        .chain(
+            type_ref
+                .filter(|type_ref| !type_ref.is_root())
+                .map(|type_ref| Place::TaskType(type_ref.node_id.clone())),
+        )
+        .collect())
+}
+
+/// The value in force for the learned knob `key` for the whole vault: the owner's pin, else the
+/// vault-scope fit once it has runs of its own, else the vault's seed, else the shipped seed.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn setting_value(vault: &Vault, key: &Setting<f64>) -> Result<f64> {
+    let rtxn = vault.store.env.read_txn()?;
+    setting_value_in_txn(&vault.store, &rtxn, key)
+}
+
+/// [`setting_value`] inside a transaction the caller already holds, from the store alone.
+pub(crate) fn setting_value_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    key: &Setting<f64>,
+) -> Result<f64> {
+    Ok(key.read_in_dbs_txn(store, txn, &[], None)?.value)
+}
+
+/// The value in force for the learned knob `key` where `project` and `type_ref` apply: the walk
+/// over the project's goal, the project, the task type and the vault ([`known_in_txn`]). With
+/// neither named it is [`setting_value`].
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn setting_value_scoped(
+    vault: &Vault,
+    key: &Setting<f64>,
+    project: Option<crate::entity_id::EntityId>,
+    type_ref: Option<&crate::learning::TypeRef>,
+) -> Result<f64> {
+    let rtxn = vault.store.env.read_txn()?;
+    setting_value_in_scope_in_txn(vault, &rtxn, key, project, type_ref)
+}
+
+/// [`setting_value_scoped`] inside a transaction the caller already holds.
+pub(crate) fn setting_value_in_scope_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &Setting<f64>,
+    project: Option<crate::entity_id::EntityId>,
+    type_ref: Option<&crate::learning::TypeRef>,
+) -> Result<f64> {
+    let known = known_in_txn(vault, txn, project, type_ref)?;
+    Ok(key.read_in_txn(vault, txn, &known, None)?.value)
+}
+
+/// Every learned knob's `on_change`: a value row is a seed, the prior its scope's fits fold from,
+/// so a change of one (a set or a clear) refolds the knob's fits in the same write. A pin moves no
+/// prior: the fit keeps learning beside it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn refold_fits_on_change(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    if change.mode != crate::setting::SettingMode::Value {
+        return Ok(());
+    }
+    crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, &change.key, change.at)
+}
+
+// The owner's rows over the spawn choices (`crate::learning_setting_choice`) keep the row shape the
+// learned knobs had before stage 3: a seed or a pin at the vault, a project's goal, a project or a
+// task type, keyed by `choice "\0" mode`, then the scope.
 
 /// How an owner row steers its setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -139,30 +233,9 @@ impl SettingMode {
     }
 }
 
-/// One owner seed or pin over a vault-scoped setting. The setter is the owner
-/// who writes it ([`put_setting_row`]), never a field the caller fills in.
-///
-/// Canon scopes a row `spawn | goal | project | vault`. This row is the
-/// vault's; [`put_scoped_setting_row`] lays one over a goal, a project or a
-/// task type. The spawn layer is the spawn call's own seed or pin
-/// (`agent_dispatch::SpawnNeed`), so no stored row has a spawn scope.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SettingRow {
-    /// The catalog key this row steers.
-    pub key: String,
-    pub mode: SettingMode,
-    pub value: f64,
-    /// The seed's weight in runs; `None` for a pin, whose weight is unbounded.
-    pub weight_runs: Option<f64>,
-    /// Unix seconds the row was set.
-    pub at: u64,
-    /// The owner's own reason, kept as written.
-    pub why: String,
-}
-
 /// Where an owner row applies. A goal, project or task-type row steers only
 /// the reads that name that goal's project, that project or that type
-/// ([`setting_value_scoped`]); every other read sees the vault's row.
+/// (`learning_setting_choice`'s read); every other read sees the vault's row.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingScope {
     Vault,
@@ -174,59 +247,9 @@ pub enum SettingScope {
     Type(crate::learning::TypeRef),
 }
 
-/// Owner rows, keyed by `setting_key "\0" mode`, so a seed and a pin over one
-/// key stand side by side; a goal, project or type row appends its scope.
-const SETTING: SideTable<String, StoredSettingRow, Raw> =
-    SideTable::new(&side_table::LEARNING_SETTING);
-
-const ROW_VERSION: u8 = 2;
-const ROW_LABEL: &str = "learning setting row";
-
 /// Longest reason a row keeps, in bytes: a sentence for the record, not a
 /// document.
 const MAX_WHY_BYTES: usize = 1024;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredSettingRow {
-    v: u8,
-    value: f64,
-    weight_runs: Option<f64>,
-    by: String,
-    witness: Option<crate::entity_id::EntityId>,
-    at: u64,
-    why: String,
-    /// Whether a holder of `engine.controls` set this row through the
-    /// holder's door, not the owner through the owner's: an owner's pin
-    /// stands over a holder's at every scope a read walks
-    /// ([`resolution::resolve_in_txn`]). Not written on an owner's row,
-    /// whose bytes stay as they were before a holder set any row.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    by_holder: bool,
-}
-
-/// Who sets a row: the owner through the owner's door, or a holder of
-/// `engine.controls` through the holder's.
-#[derive(Clone, Copy)]
-enum Setter {
-    Owner(crate::entity_id::EntityId),
-    Holder(crate::entity_id::EntityId),
-}
-
-impl RawValue for StoredSettingRow {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        rmp_serde::to_vec_named(self)
-            .map_err(|_| CodecError::Value(Error::InvariantViolation(ROW_LABEL)))
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: Self = rmp_serde::from_slice(bytes)
-            .map_err(|_| CodecError::Value(Error::CorruptedIndex(ROW_LABEL)))?;
-        if row.v != ROW_VERSION {
-            return Err(CodecError::Value(Error::CorruptedIndex(ROW_LABEL)));
-        }
-        Ok(row)
-    }
-}
 
 fn row_key(key: &str, mode: SettingMode) -> String {
     format!("{key}\0{}", mode.as_str())
@@ -295,213 +318,6 @@ pub(crate) fn check_row_terms(
     }
 }
 
-/// Records an owner seed or pin, replacing the row of the same key and mode.
-///
-/// Seeds and pins are the owner's (ARCH-0003 #learning-settings): `owner` must
-/// pass the owner-write check in the transaction that writes the row, and the
-/// row records that owner as its setter.
-///
-/// # Errors
-///
-/// [`Error::InvalidClaimBody`] for a key outside the catalog, a value outside
-/// the row's bounds, a pin carrying a weight or a seed without a positive one,
-/// or a reason over 1 KiB; the owner-write refusal when `owner` is not the
-/// vault's owner; storage errors.
-pub fn put_setting_row(vault: &Vault, owner: &WriteActor, row: &SettingRow) -> Result<()> {
-    put_scoped_setting_row(vault, owner, &SettingScope::Vault, row)
-}
-
-/// [`put_setting_row`] over `scope`: a project's or a task type's own seed
-/// or pin, under the same owner rule and bounds. A seed is the prior of its
-/// scope's fit, so a seed at any scope refolds the knob's fits.
-///
-/// # Errors
-///
-/// As [`put_setting_row`], and [`Error::InvalidClaimBody`] for a malformed
-/// type reference.
-pub fn put_scoped_setting_row(
-    vault: &Vault,
-    owner: &WriteActor,
-    scope: &SettingScope,
-    row: &SettingRow,
-) -> Result<()> {
-    let spec = checked_spec(scope, row)?;
-    vault.with_write_txn_grouped(|wtxn| {
-        vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
-        let witness = witness::put_in_txn(vault, wtxn, owner, scope, row)?;
-        let setter = Setter::Owner(owner.entity_ref());
-        put_row_in_txn(vault, wtxn, spec, scope, row, setter, witness)
-    })
-}
-
-/// Checks `row` against its catalog row and the row terms every setter
-/// keeps; the catalog row.
-fn checked_spec(scope: &SettingScope, row: &SettingRow) -> Result<&'static SettingSpec> {
-    if let SettingScope::Type(type_ref) = scope {
-        type_ref.validate()?;
-    }
-    let spec = setting_spec(&row.key).ok_or(invalid("no learned setting has this key"))?;
-    check_row_terms(row.mode, row.weight_runs, &row.why)?;
-    if !row.value.is_finite() || row.value < spec.min || row.value > spec.max {
-        return Err(invalid(
-            "a setting value must lie within its catalog bounds",
-        ));
-    }
-    Ok(spec)
-}
-
-/// Stores `row` over `scope` as `setter` set it, its act witnessed by
-/// `witness`, and refolds the knob's fits when the row moves them. The
-/// caller has checked the setter and the row in this writer.
-fn put_row_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    spec: &SettingSpec,
-    scope: &SettingScope,
-    row: &SettingRow,
-    setter: Setter,
-    witness: crate::entity_id::EntityId,
-) -> Result<()> {
-    let (by, by_holder) = match setter {
-        Setter::Owner(owner) => (owner, false),
-        Setter::Holder(holder) => (holder, true),
-    };
-    let stored = StoredSettingRow {
-        v: ROW_VERSION,
-        value: row.value,
-        weight_runs: row.weight_runs,
-        by: by.to_hex(),
-        witness: Some(witness),
-        at: row.at,
-        why: row.why.clone(),
-        by_holder,
-    };
-    SETTING.put(
-        &vault.store,
-        wtxn,
-        &scoped_row_key(spec.key, row.mode, scope),
-        &stored,
-    )?;
-    // A seed is the fit's prior: every fit over this knob refolds from it.
-    if *scope == SettingScope::Vault || row.mode == SettingMode::Seed {
-        crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, spec.key, row.at)?;
-    }
-    Ok(())
-}
-
-/// Withdraws the owner's seed or pin over `key`, returning the setting to
-/// whatever stands beneath it. Only the owner may.
-///
-/// # Errors
-///
-/// The owner-write refusal when `owner` is not the vault's owner; storage
-/// errors.
-pub fn clear_setting_row(
-    vault: &Vault,
-    owner: &WriteActor,
-    key: &str,
-    mode: SettingMode,
-) -> Result<()> {
-    clear_scoped_setting_row(vault, owner, &SettingScope::Vault, key, mode)
-}
-
-/// [`clear_setting_row`] over `scope`.
-///
-/// # Errors
-///
-/// As [`clear_setting_row`].
-pub fn clear_scoped_setting_row(
-    vault: &Vault,
-    owner: &WriteActor,
-    scope: &SettingScope,
-    key: &str,
-    mode: SettingMode,
-) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| {
-        vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
-        clear_row_in_txn(vault, wtxn, scope, key, mode)
-    })
-}
-
-/// Deletes the row over `key`, `mode` and `scope`, and refolds the knob's
-/// fits when a seed goes. The caller has checked the setter in this writer.
-fn clear_row_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    scope: &SettingScope,
-    key: &str,
-    mode: SettingMode,
-) -> Result<()> {
-    SETTING.delete(&vault.store, wtxn, &scoped_row_key(key, mode, scope))?;
-    if mode == SettingMode::Seed {
-        let now = crate::unix_seconds_now();
-        crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, key, now)?;
-    }
-    Ok(())
-}
-
-/// The value in force for `spec`: the owner's pin, else the vault-scope fit
-/// once it has own runs, else the owner's seed, else the catalog seed.
-///
-/// # Errors
-///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
-pub fn setting_value(vault: &Vault, spec: &SettingSpec) -> Result<f64> {
-    let rtxn = vault.store.env.read_txn()?;
-    setting_value_in_txn(&vault.store, &rtxn, spec)
-}
-
-/// [`setting_value`] inside a transaction the caller already holds.
-pub(crate) fn setting_value_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-) -> Result<f64> {
-    setting_value_scoped_in_txn(store, txn, spec, None, None)
-}
-
-/// The vault override for `spec`, when an owner row or fitted value decided
-/// the same resolution as [`setting_value_in_txn`]. A catalog seed is not an
-/// override, so a caller may retain its own shipped fallback.
-pub(crate) fn setting_override_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-) -> Result<Option<f64>> {
-    let (value, decided) =
-        resolution::resolve_in_txn(store, txn, spec, &[SettingScope::Vault], None)?;
-    Ok(match decided {
-        resolution::Decided::Catalog => None,
-        resolution::Decided::Owner { .. } | resolution::Decided::Fit { .. } => Some(value),
-    })
-}
-
-/// The value in force for `spec` where `project` and `type_ref` apply: the
-/// narrowest pin (the project's goal's, then the project's, then the
-/// type's, then the vault's), the owner's pins before any pin a holder of
-/// `engine.controls` set; else the goal's fit, else the goal's seed;
-/// else the project's fit at this type, then its own fit, once either has
-/// own runs, else the project's seed; else the type's fit, else the type's
-/// seed; else the vault-scope fit, else the vault's seed, else the catalog
-/// seed. A scope's seed is its own fit's prior, so that fit outranks it; a
-/// goal, project or type seed is the owner's word for that scope alone,
-/// which no fit learned from a wider scope overrides. The goal is the
-/// project's current intake goal ([`project_goal_in_txn`]). With neither
-/// named it is [`setting_value`].
-///
-/// # Errors
-///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
-pub fn setting_value_scoped(
-    vault: &Vault,
-    spec: &SettingSpec,
-    project: Option<crate::entity_id::EntityId>,
-    type_ref: Option<&crate::learning::TypeRef>,
-) -> Result<f64> {
-    let rtxn = vault.store.env.read_txn()?;
-    setting_value_in_scope_in_txn(vault, &rtxn, spec, project, type_ref)
-}
-
 /// The goal a read under `project` serves: the goal claim the project's goal
 /// pointer names, its current intake goal (OF-542). Goal intake alone moves
 /// that pointer, so a goal row steers the project's work while its goal
@@ -553,80 +369,20 @@ fn read_scopes(
         .collect()
 }
 
-/// Every owner row as stored, in key order: its scope, the row, and the
-/// owner who set it (32 hex, or "erased" once that owner was erased), for
-/// the owner's list doors. A type row's key names its node only, so its
-/// scope reads `tree_version` 0: a type row matches its node at any tree
-/// version.
-///
-/// # Errors
-///
-/// A row that does not decode; storage errors.
-pub fn list_setting_rows(vault: &Vault) -> Result<Vec<(SettingScope, SettingRow, String)>> {
-    let rtxn = vault.store.env.read_txn()?;
-    list_setting_rows_in_txn(vault, &rtxn)
-}
+#[cfg(test)]
+mod tests {
+    use super::LEARNED_SETTINGS;
 
-/// [`list_setting_rows`] in the caller's snapshot, for a reader whose other
-/// rows must be read beside the same owner rows (FIX 8358).
-///
-/// # Errors
-///
-/// As [`list_setting_rows`].
-pub(crate) fn list_setting_rows_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-) -> Result<Vec<(SettingScope, SettingRow, String)>> {
-    let mut out = Vec::new();
-    for (stored_key, stored) in SETTING.scan(&vault.store, rtxn)? {
-        let Some((key, mode, scope)) = parse_row_key(&stored_key) else {
-            continue;
-        };
-        out.push((
-            scope,
-            SettingRow {
-                key: key.to_owned(),
-                mode,
-                value: stored.value,
-                weight_runs: stored.weight_runs,
-                at: stored.at,
-                why: stored.why,
-            },
-            stored.by,
-        ));
+    #[test]
+    fn learned_settings_are_the_catalogue_learned_keys() {
+        let mut catalogue: Vec<&str> = crate::setting::catalogue()
+            .into_iter()
+            .filter(|spec| spec.is_learned() && !spec.name.starts_with("test."))
+            .map(|spec| spec.name)
+            .collect();
+        let mut listed: Vec<&str> = LEARNED_SETTINGS.iter().map(|key| key.spec.name).collect();
+        catalogue.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(listed, catalogue);
     }
-    Ok(out)
-}
-
-pub(crate) fn owner_row_value(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    mode: SettingMode,
-) -> Result<Option<f64>> {
-    scoped_row_value(store, txn, spec, mode, &SettingScope::Vault)
-}
-
-fn scoped_row_value(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    mode: SettingMode,
-    scope: &SettingScope,
-) -> Result<Option<f64>> {
-    Ok(scoped_row(store, txn, spec, mode, scope)?.map(|row| row.value))
-}
-
-fn scoped_row(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    mode: SettingMode,
-    scope: &SettingScope,
-) -> Result<Option<StoredSettingRow>> {
-    Ok(SETTING
-        .get(store, txn, &scoped_row_key(spec.key, mode, scope))?
-        // A row written under wider bounds than today's catalog is not a
-        // value this reader can stand behind; the next row down is.
-        .filter(|row| (spec.min..=spec.max).contains(&row.value)))
 }

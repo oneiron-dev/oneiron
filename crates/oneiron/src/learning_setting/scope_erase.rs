@@ -1,35 +1,28 @@
-//! An erased scope's owner rows and fits go with it (FIX 6038, FIX 11533):
-//! its erase deletes every seed and pin laid over that project or goal,
-//! whoever set it, and every cached fit keyed by it as a project or a
-//! subject, even where no cell is left. Rows over the vault, a type,
+//! An erased scope's fits go with it (FIX 6038, FIX 11533): its erase deletes
+//! every cached fit keyed by that project or goal as a project or a subject,
+//! even where no cell is left. The seeds and pins laid over it are setting
+//! rows, which the setting eraser takes with the scope
+//! (`setting::erase_setting_entity_in_txn`). Fits over the vault, a type,
 //! another project or another goal stay as they are.
 
 use super::fit::parse_setting_fit_key;
-use super::{SETTING, SettingScope, parse_row_key};
+use super::{SettingScope, parse_row_key};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-/// Deletes the owner setting rows scoped to `entity` as a project or a goal
-/// and every cached fit keyed by it as a project or a subject, in the
-/// erase's own transaction. A key its codec does not read is passed over
+/// Deletes every cached fit keyed by `entity` as a project or a subject, in
+/// the erase's own transaction. A key its codec does not read is passed over
 /// with a WARN, never an abort: the erase is the owner's own act.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn erase_setting_scope_in_txn(
+pub(crate) fn erase_setting_fits_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<()> {
-    let rows = SETTING
-        .iter_raw_from(&vault.store, wtxn, &[])?
-        .map(|row| row.map(|(key, _)| key))
-        .collect::<Result<Vec<_>>>()?;
-    for key in project_row_keys(rows, entity, "setting") {
-        SETTING.delete(&vault.store, wtxn, &key)?;
-    }
     let fits = crate::learning::project::SETTING_FIT
         .iter_raw_from(&vault.store, wtxn, &[])?
         .map(|row| row.map(|(key, _)| key))

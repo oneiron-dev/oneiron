@@ -1,6 +1,7 @@
 //! Immutable, content-addressed centroid inputs beside vault-local telemetry.
 //! Current vectors can change; replay never consults them. A source's erase
 //! reaches every snapshot that copied it ([`erase`], FIX 10094).
+use super::setting_keys::DETECTOR_CENTROID_MIN_SIMILARITY;
 use super::{
     DiagnosticSourceKind,
     distillation::{MintedExample, centroid_labels},
@@ -10,7 +11,7 @@ use super::{
     },
 };
 use crate::entity_id::bytes_to_hex_lower;
-use crate::learning_setting::{SettingSpec, setting_value};
+use crate::learning_setting::setting_value;
 use crate::limit_ask::EngineLimit;
 use crate::store::{ResponseFamily, ResponseRead};
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
@@ -23,15 +24,6 @@ pub(crate) use erase::{
 
 pub(crate) use crate::store::centroid_evidence::snapshot_live_in_txn;
 use crate::store::centroid_evidence::{CentroidEvidence, EVIDENCE, VectorEvidence};
-
-/// The cosine a T2a candidate must reach against its corpus's centroid (FIX
-/// 2078): an owner-steered catalog row over every cosine, -1 to 1.
-pub const DETECTOR_CENTROID_MIN_SIMILARITY: SettingSpec = SettingSpec {
-    key: "detector.centroid.min_similarity",
-    min: -1.0,
-    max: 1.0,
-    seed: 0.8,
-};
 
 /// One pass's T2a corpus for one family (FIX 2078): every entity a minted
 /// T2's live reviewed-positive examples retrieved that holds a vector, by id,

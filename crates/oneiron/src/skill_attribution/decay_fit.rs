@@ -16,7 +16,7 @@ use super::contribution_targets::ContributionTarget;
 use super::late_credit::{CREDIT_RECEIPT, receipt_id};
 use crate::learning::Anchor;
 use crate::learning_setting::{SettingCheck, global_setting_subject, record_setting_check_in_txn};
-use crate::store::setting_seed::CREDIT_DECAY;
+use crate::skill_attribution::setting_keys::CREDIT_DECAY;
 use crate::{Result, Vault};
 
 /// How a matched ancestor check observes `credit_decay`.
@@ -94,9 +94,9 @@ fn observe_in_txn(
         return Ok(());
     };
     let check = SettingCheck {
-        subject: global_setting_subject(CREDIT_DECAY.key)?,
+        subject: global_setting_subject(CREDIT_DECAY.spec.name)?,
         project: fields.project,
-        key: CREDIT_DECAY.key.to_owned(),
+        key: CREDIT_DECAY.spec.name.to_owned(),
         type_ref: fields.type_ref.clone(),
         observed,
         receipt: record.check.receipt.clone(),

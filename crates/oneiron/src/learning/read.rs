@@ -7,10 +7,11 @@
 //! `carried` prior, never as own evidence, and a borrowed reading is
 //! assembled here at read: it never mints a claim.
 
+use super::setting_keys::LEARNING_BORROWED_PRIOR_RUNS;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning_setting::{self, LEARNING_BORROWED_PRIOR_RUNS};
+use crate::learning_setting;
 
 use super::cell::{LearningCell, TypeRef};
 use super::estimate::{Estimate, Prior, PriorOrigin};

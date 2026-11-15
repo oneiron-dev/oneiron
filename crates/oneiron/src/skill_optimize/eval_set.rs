@@ -52,6 +52,7 @@ pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, f
 mod measurement;
 mod repair_task;
 mod replay_input;
+pub(crate) mod setting_keys;
 mod sufficiency;
 
 use std::collections::BTreeSet;

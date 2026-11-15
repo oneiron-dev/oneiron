@@ -65,7 +65,7 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
     emit(&answer)
 }
 
-/// The owner's learned-setting rows on a stopped vault; `serve` answers the
+/// The owner's spawn-choice rows on a stopped vault; `serve` answers the
 /// same at `/v1/owner/settings/learning`. Each operation runs its
 /// `vault.settings.learning*` row's verb hooks once around the engine door,
 /// as the route does (FIX 9479).
@@ -101,32 +101,22 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
         )?,
         LearningSettingsCommand::Put(args) => {
             let raw = args.value.trim();
-            let (value, choice) = match SpawnChoice::from_key(&args.key) {
-                Some(SpawnChoice::Model) => {
-                    (None, Some(LearningChoiceValue::Model(raw.to_owned())))
+            let choice = match SpawnChoice::from_key(&args.key) {
+                Some(SpawnChoice::Model) => LearningChoiceValue::Model(raw.to_owned()),
+                Some(SpawnChoice::Pattern) => LearningChoiceValue::Pattern(raw.to_owned()),
+                Some(SpawnChoice::Width) => LearningChoiceValue::Width(
+                    raw.parse()
+                        .map_err(|_| anyhow::anyhow!("a width is a whole count of agents"))?,
+                ),
+                Some(SpawnChoice::Budget) => LearningChoiceValue::Budget(
+                    raw.parse()
+                        .map_err(|_| anyhow::anyhow!("a budget is a whole count of lease units"))?,
+                ),
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "a learned knob is a setting: set it with settings.set"
+                    ));
                 }
-                Some(SpawnChoice::Pattern) => {
-                    (None, Some(LearningChoiceValue::Pattern(raw.to_owned())))
-                }
-                Some(SpawnChoice::Width) => (
-                    None,
-                    Some(LearningChoiceValue::Width(raw.parse().map_err(|_| {
-                        anyhow::anyhow!("a width is a whole count of agents")
-                    })?)),
-                ),
-                Some(SpawnChoice::Budget) => (
-                    None,
-                    Some(LearningChoiceValue::Budget(raw.parse().map_err(|_| {
-                        anyhow::anyhow!("a budget is a whole count of lease units")
-                    })?)),
-                ),
-                None => (
-                    Some(
-                        raw.parse::<f64>()
-                            .map_err(|_| anyhow::anyhow!("a catalog knob's value is a number"))?,
-                    ),
-                    None,
-                ),
             };
             hooked_row(
                 &vault,
@@ -135,8 +125,7 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
                 LearningSettingPut {
                     key: args.key,
                     mode: mode(args.mode),
-                    value,
-                    choice,
+                    choice: Some(choice),
                     weight_runs: args.weight_runs,
                     why: args.why,
                     goal: args.goal,

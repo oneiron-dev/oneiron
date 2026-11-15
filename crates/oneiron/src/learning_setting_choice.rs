@@ -19,10 +19,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::LivePlanRequest;
+use crate::deletion::names_no_actor;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::learning_setting::{
-    SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, project_row_keys,
+    SettingMode, SettingScope, check_row_terms, parse_row_key, project_row_keys,
     read_scopes_in_txn, scoped_row_key,
 };
 use crate::learning_setting_doors::{LearningSettingMode, LearningSettingScope};

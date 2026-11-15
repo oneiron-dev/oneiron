@@ -67,7 +67,7 @@ pub use leader_starter::{
 };
 mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
-mod planner;
+pub(crate) mod planner;
 mod planner_live;
 pub(crate) use planner_live::seat_model_rates_in_txn;
 mod project_conversation;
