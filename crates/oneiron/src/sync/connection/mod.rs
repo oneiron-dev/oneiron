@@ -518,7 +518,9 @@ impl SyncConnection {
     /// drops; the new mode is published once that commits. The owner's mode
     /// directives record their result there (OF-534). `predicted` puts an
     /// opened machine at the predicted level (ARCH-0023b
-    /// #predicted-residence), which the transport runs as opened.
+    /// #predicted-residence), which the transport runs as opened. A switch to
+    /// sync-opened, the predicted level included, withdraws this install's
+    /// full-copy mark in that same transaction (L7-47).
     async fn switch_residence_mode(
         &self,
         mode: SyncResidenceMode,
@@ -559,8 +561,16 @@ impl SyncConnection {
                 }
             }
         }
+        if switching && effective == SyncResidenceMode::Opened {
+            vault.load_install_signing_if_minted().map_err(storage)?;
+        }
         vault
             .with_write_txn_grouped(|txn| {
+                if switching && effective == SyncResidenceMode::Opened {
+                    // L7-47: the mark is withdrawn in the same transaction
+                    // that records the switch.
+                    vault.declare_full_copy_in_txn(txn, false)?;
+                }
                 if switching && effective == SyncResidenceMode::All {
                     // A cached id refuses local writes until promoted; the
                     // full windows supersede every read cache.
