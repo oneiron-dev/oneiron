@@ -14,6 +14,7 @@ doctest = false
 [dependencies]
 blake3 = { workspace = true }
 bytes = { version = "1.12.1", features = ["serde"] }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-spawn = { path = "../oneiron-spawn" }
 serde = { workspace = true }
 serde_json = { workspace = true }

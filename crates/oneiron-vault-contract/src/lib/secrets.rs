@@ -121,31 +121,9 @@ pub fn write_credentials(
 }
 
 pub fn hex(bytes: &[u8]) -> String {
-    // Single allocation, no per-byte format! temporaries (secret material may
-    // pass through here via TokenHex::from_token).
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push(HEX[(b >> 4) as usize] as char);
-        s.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    s
+    oneiron_hex::encode(bytes)
 }
 
 pub fn from_hex(s: &str) -> Option<Vec<u8>> {
-    // Byte-wise: never slices the &str, so non-ASCII input returns None
-    // instead of panicking on a char boundary.
-    let b = s.as_bytes();
-    if !b.len().is_multiple_of(2) {
-        return None;
-    }
-    b.as_chunks::<2>()
-        .0
-        .iter()
-        .map(|p| {
-            let hi = (p[0] as char).to_digit(16)?;
-            let lo = (p[1] as char).to_digit(16)?;
-            Some(((hi as u8) << 4) | lo as u8)
-        })
-        .collect()
+    oneiron_hex::decode_vec_any_case(s)
 }
