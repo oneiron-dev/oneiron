@@ -82,7 +82,7 @@ impl Memory<'_> {
                 .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
         {
             return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
+                super::MEMORY_CODE_NOT_FOUND,
                 format!("{verb} is the vault owner's"),
                 &["Call it as the vault's owner."],
             ));
