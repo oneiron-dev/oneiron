@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::SelfEffect;
 use crate::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::memory::repo_doors::{
     RepoCheckoutBindInput, RepoExportInput, RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput,
     RepoProposalResolveInput, RepoProposalSubmitInput, RepoSnapshotsGetInput,
@@ -251,13 +251,5 @@ impl SelfEffect {
     }
 }
 
-/// A run repo row's closed input from its JSON.
-fn typed<T: serde::de::DeserializeOwned>(input: Value) -> Result<T> {
-    serde_json::from_value(input)
-        .map_err(|_| Error::InvalidConfig("invalid typed component arguments".to_owned()))
-}
-
-/// A verb hook's rewrite of one row's input, decoded as the guest's is.
-fn retyped<T: serde::de::DeserializeOwned>(args: &Value) -> std::result::Result<T, String> {
-    serde_json::from_value(args.clone()).map_err(|error| error.to_string())
-}
+#[doc(hidden)]
+use oneiron_records::code_run::repo_calls::{retyped, typed};

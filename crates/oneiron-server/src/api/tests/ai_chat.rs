@@ -59,7 +59,10 @@ async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCo
     )
 }
 
-fn chat(body: Value) -> Request<Body> {
+fn chat(mut body: Value) -> Request<Body> {
+    // The route answers the whole saved message unless `stream` is set
+    // (50f37a5e62b, #1700); these tests read the NDJSON lines.
+    body["stream"] = json!(true);
     core_request_with_authz("POST", "/v1/ai/chat", owner_bearer(), Some(&body))
 }
 
@@ -163,7 +166,11 @@ async fn a_credential_revoked_mid_turn_sees_no_more_of_the_reply_and_it_is_not_f
             "POST",
             "/v1/ai/chat",
             test_bearer(recipe),
-            Some(&json!({"conversation_ref": oneiron::EntityId::now().to_hex(), "text": "hi"})),
+            Some(&json!({
+                "conversation_ref": oneiron::EntityId::now().to_hex(),
+                "text": "hi",
+                "stream": true,
+            })),
         );
         async move { send(&server, request).await }
     });
@@ -356,8 +363,9 @@ async fn without_a_model_chat_refuses_and_status_says_why() {
         json!("no_model_configured")
     );
     assert_eq!(body["models"]["configured"], json!(false));
-    // A session hint without a Dreamer is accepted and changes nothing.
-    let (status, _) = send(
+    // A session hint without a Dreamer is refused with a typed 503
+    // (be36113c7cc, FIX 11405): there is nothing to hand the hint to.
+    let (status, body) = send(
         &server,
         core_request_with_authz(
             "POST",
@@ -367,7 +375,9 @@ async fn without_a_model_chat_refuses_and_status_says_why() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], json!("dreamer_unavailable"));
     host.shutdown().await;
 }
 
