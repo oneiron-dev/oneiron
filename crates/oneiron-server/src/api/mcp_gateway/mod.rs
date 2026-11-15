@@ -67,6 +67,13 @@ pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflo
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::code_mode_verbs::draft_checked_span;
+// The integration tests' door to the code-mode host-verb gates (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::actor_dispatch::mcp_host_verb_gate;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::admission::mcp_admit_host_verb;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::code_mode_verbs::McpCodeModeVerbs;
 #[cfg(test)]
 pub(crate) use self::device_release::release_hook;
 // The integration tests' door to the carrier release check (census L2-38).

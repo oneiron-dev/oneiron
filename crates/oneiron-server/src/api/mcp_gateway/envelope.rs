@@ -180,6 +180,11 @@ impl McpGatewayError {
         }
     }
 
+    /// The refusal's stable code and message, as the gateway typed them.
+    pub(crate) fn code_and_message(&self) -> (&'static str, &str) {
+        (self.kind, &self.message)
+    }
+
     /// A request field past a byte bound (`[limits]`): the typed tool error
     /// names the field, the bound and the bytes received.
     pub(super) fn payload_too_large(

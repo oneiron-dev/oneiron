@@ -247,6 +247,12 @@ pub(crate) use self::mcp_gateway::draft_checked_span;
 pub(crate) use self::mcp_gateway::carrier_releases_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::run_board_pins_for_test;
+// The integration tests' door to the code-mode host-verb gates (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::{McpCodeModeVerbs, mcp_admit_host_verb, mcp_host_verb_gate};
+// The `#[cfg(test)]` list below names it too; one import per build.
+#[cfg(all(oneiron_test_support, not(test)))]
+pub(crate) use self::mcp_gateway::resolve_mcp_gateway_actor;
 #[cfg(test)]
 pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
