@@ -221,6 +221,15 @@ impl Vault {
                 return Err(transition("source_changed"));
             }
             let author = self.dreamer_authority_in_txn(txn, self.now_recorded_at())?;
+            // Every row the model's prompt carried: each draft's birth names
+            // them as prompt inputs (FIX 8192), so the meeting's worlds and
+            // the recipients' name rows' worlds follow its words.
+            let prompt: Vec<EntityId> = source
+                .turn_refs
+                .iter()
+                .chain(&source.name_rows)
+                .copied()
+                .collect();
             let mut written = Vec::with_capacity(drafts.len());
             for draft in &drafts {
                 let mut savepoint = self.store.env.nested_write_txn(txn)?;
@@ -230,7 +239,7 @@ impl Vault {
                     author,
                     id,
                     draft,
-                    &[],
+                    &prompt,
                 ) {
                     Ok(claim_id) => {
                         savepoint.commit()?;

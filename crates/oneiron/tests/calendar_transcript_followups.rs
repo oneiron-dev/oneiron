@@ -32,6 +32,7 @@ use oneiron::calendar::follow_up::{
 use oneiron::calendar::transcript::{
     TranscriptFileDropRequest, TranscriptIngestOutcome, ingest_file_drop_transcript,
 };
+use oneiron::provenance::made_by::MadeByInputRole;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::settings::ReadDestination;
 use oneiron::store::ports::ManualClock;
@@ -311,6 +312,23 @@ fn parsable_transcript_yields_session_then_followups() {
     assert_eq!(body.subject, ClaimSubject::Entity(yuki));
     assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
     assert_eq!(body.source, Some(ClaimSource::Imported));
+    let birth = fx
+        .vault
+        .row_birth(claim)
+        .unwrap()
+        .expect("the draft carries a birth");
+    let prompt: Vec<EntityId> = birth
+        .made_by
+        .inputs
+        .iter()
+        .filter(|input| input.role == MadeByInputRole::Prompt)
+        .map(|input| input.row)
+        .collect();
+    assert_eq!(
+        prompt,
+        vec![turns[0], turns[1], yuki],
+        "the birth names every row the prompt carried: the meeting's TURNs, then Yuki's name row"
+    );
     assert_eq!(
         fx.waiting(&session),
         vec![*claim],
