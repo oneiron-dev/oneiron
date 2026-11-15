@@ -336,13 +336,16 @@ impl Vault {
             Ok(AuthorityPut::Stored(_)) => {}
             Ok(AuthorityPut::Pending(_)) => return Ok(PendingLanding::Waiting),
             // A row whose signer's enrollment has not landed waits for it,
-            // as one waiting for history does.
+            // as one waiting for history does, and so does a row the door
+            // holds at a bound (a stranger's shared bound, the owner's
+            // reserve under the memory floor): a held row is never refused.
             Err(error)
                 if super::super::readonly_fold::is_history_incomplete(&error)
                     || matches!(
                         error,
                         crate::error::Error::Record(
                             crate::error::RecordError::AuthorityLogSignerPending { .. }
+                                | crate::error::RecordError::AuthorityLogFull { .. }
                         )
                     ) =>
             {

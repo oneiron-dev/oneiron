@@ -640,7 +640,7 @@ impl AuthorityStructure {
             if self.anchors.contains(anchor) || self.own_anchors.contains(anchor))
     }
 
-    fn is_own_anchor(&self, key: &AuthorityKey) -> bool {
+    pub(super) fn is_own_anchor(&self, key: &AuthorityKey) -> bool {
         matches!(key, AuthorityKey::Ed25519(anchor) if self.own_anchors.contains(anchor))
     }
 

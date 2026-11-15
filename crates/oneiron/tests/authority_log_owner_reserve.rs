@@ -14,8 +14,13 @@
 //! install carries. The log stays under its floor, the owner removes the
 //! machine, and a waiting row lands once the owner raises the floor.
 //!
-//! Red on main: both tests (every flood row lands, the fold passes its floor,
-//! and the removal errors).
+//! The owner's work also covers what it writes under this install's key
+//! beside the act: an owner's world edit that mints the world's key here
+//! lands past the reserve with its key wraps.
+//!
+//! Red on main: the first two tests (every flood row lands, the fold passes
+//! its floor, and the removal errors). The third is green on main, where no
+//! row waits, and guards the reserve's owner work.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve`.
 
@@ -24,11 +29,11 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
-    AuthorityObservationPolicy, AuthorityOp, AuthoritySignature, AuthorityVaultId,
+    AuthorityObservationPolicy, AuthorityOp, AuthoritySignature, AuthorityVaultId, KeyWork,
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
     MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerAct,
-    OwnerActKind, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash, authority_transcript,
-    machine_profile_proof_transcript,
+    OwnerActKind, ReadLocation, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
+    authority_transcript, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -324,4 +329,56 @@ fn a_row_held_at_the_owner_reserve_lands_once_the_owner_raises_the_floor() {
             .all(|check| check.kind != OWNER_RESERVE_CHECK),
         "raising the floor clears the owner reserve's check"
     );
+}
+
+#[test]
+fn an_owners_world_edit_past_the_reserve_mints_its_key_on_this_install() {
+    let (rooted, flooder) = floored_vault_with_flooder();
+    let here = rooted
+        .vault
+        .local_machine()
+        .expect("this install")
+        .expect("this install's machine")
+        .id;
+    rooted
+        .vault
+        .set_machine_role(
+            &rooted.proof,
+            ActSurface::ThisInstall,
+            here,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the owner marks this install yours");
+    let world = rooted
+        .vault
+        .create_world(&rooted.proof, "Kept here", rooted.vault.now_recorded_at())
+        .expect("the owner's world");
+    let (landed, end) = flood(&rooted, &flooder);
+    let FloodEnd::Waited(_) = end else {
+        panic!(
+            "after {landed} flood rows the flood ended {end:?}: no row waited at the owner \
+             reserve"
+        );
+    };
+    let receipt = rooted
+        .vault
+        .set_world_privacy_as(
+            &rooted.proof,
+            ActSurface::ThisInstall,
+            world,
+            WorldPrivacy {
+                read: ReadLocation::OneMachine(here),
+                ..WorldPrivacy::default()
+            },
+            None,
+        )
+        .expect("the owner's world edit lands past the reserve");
+    assert!(
+        matches!(receipt.key_work, KeyWork::Enacted),
+        "this install minted the world's key in the edit: {:?}",
+        receipt.key_work
+    );
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
 }

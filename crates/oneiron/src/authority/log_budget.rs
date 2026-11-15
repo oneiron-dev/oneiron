@@ -171,59 +171,68 @@ fn owner_reserve_start(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Re
 }
 
 /// An upper bound on the peak a fold of `rows` projects
-/// ([`fold_projected_bytes`]), `rows` being each stored row's store id and
-/// parents. A row's ancestor pairs are bounded parents first: a row on one
-/// parent has that parent's bound and the parent itself, exactly as the fold
-/// counts them; a join has the lesser of the same sum over its parents and
-/// the rows bounded before it plus the log's missing parents, since every
-/// ancestor of it is one or the other. A parent no row is counts once, as the
-/// fold counts a missing parent. A one-signer chain is bounded exactly.
-fn stored_fold_projection(rows: &BTreeMap<crate::EntityId, &[AuthorityEntryHash]>) -> u64 {
-    let stored = |parent: &AuthorityEntryHash| {
-        authority_log_entity_id_from_hash(parent)
-            .ok()
-            .filter(|id| rows.contains_key(id))
-    };
+/// ([`fold_projected_bytes`]), `rows` being each stored row's entry hash, as
+/// the fold keys its rows, and parents. A row's ancestor pairs are bounded
+/// parents first: a row on one parent has that parent's bound and the parent
+/// itself, exactly as the fold counts them; a join has the lesser of the same
+/// sum over its parents and the rows bounded before it plus the log's missing
+/// parents, since every ancestor of it is one or the other. A parent no row
+/// is counts once, as the fold counts a missing parent. A one-signer chain is
+/// bounded exactly. A parent still unbounded when its child is bounded closes
+/// a cycle, which no signed history holds; the log is then bounded as if
+/// every row had every row and every missing parent among its ancestors.
+fn stored_fold_projection(rows: &BTreeMap<AuthorityEntryHash, &[AuthorityEntryHash]>) -> u64 {
     let missing = rows
         .values()
         .flat_map(|parents| parents.iter())
-        .filter(|parent| stored(parent).is_none())
+        .filter(|parent| !rows.contains_key(*parent))
         .collect::<BTreeSet<_>>()
         .len() as u64;
-    let mut bound = BTreeMap::<crate::EntityId, u64>::new();
+    let most = (rows.len() as u64).saturating_add(missing);
+    let mut bound = BTreeMap::<AuthorityEntryHash, u64>::new();
     let mut entered = BTreeSet::new();
+    let mut cyclic = false;
     let mut pairs = 0_u64;
     for start in rows.keys() {
         let mut stack = vec![(*start, false)];
-        while let Some((id, parents_bounded)) = stack.pop() {
-            let parents = rows[&id];
+        while let Some((hash, parents_bounded)) = stack.pop() {
+            let parents = rows[&hash];
             if parents_bounded {
-                let through = |parent: &AuthorityEntryHash| {
-                    stored(parent)
-                        .and_then(|parent| bound.get(&parent).copied())
-                        .map_or(1, |ancestors| ancestors.saturating_add(1))
+                let mut through = |parent: &AuthorityEntryHash| {
+                    if !rows.contains_key(parent) {
+                        return 1;
+                    }
+                    bound.get(parent).map_or_else(
+                        || {
+                            cyclic = true;
+                            most
+                        },
+                        |ancestors| ancestors.saturating_add(1),
+                    )
                 };
                 let ancestors = match parents {
                     [parent] => through(parent),
                     _ => parents
                         .iter()
-                        .map(through)
+                        .map(&mut through)
                         .fold(0, u64::saturating_add)
                         .min((bound.len() as u64).saturating_add(missing)),
                 };
-                bound.insert(id, ancestors);
+                bound.insert(hash, ancestors);
                 pairs = pairs.saturating_add(ancestors);
-            } else if entered.insert(id) {
-                stack.push((id, true));
+            } else if entered.insert(hash) {
+                stack.push((hash, true));
                 stack.extend(
                     parents
                         .iter()
-                        .filter_map(stored)
-                        .filter(|parent| !entered.contains(parent))
-                        .map(|parent| (parent, false)),
+                        .filter(|parent| rows.contains_key(*parent) && !entered.contains(*parent))
+                        .map(|parent| (*parent, false)),
                 );
             }
         }
+    }
+    if cyclic {
+        pairs = (rows.len() as u64).saturating_mul(most);
     }
     fold_projected_bytes(rows.len(), pairs)
 }
@@ -436,7 +445,7 @@ pub(super) fn door_view(
         #[cfg(test)]
         DOOR_VIEW_BUILDS.with(|builds| builds.set(builds.get() + 1));
         let evidence = super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?;
-        let mut ids = Vec::new();
+        let mut hashes = Vec::new();
         let mut entries = Vec::new();
         for (id, body) in authority_log_rows_in_txn(store, txn)? {
             // A covered row counts once, from the image.
@@ -446,8 +455,9 @@ pub(super) fn door_view(
             {
                 continue;
             }
-            ids.push(id);
-            entries.push(decode_authority_log_entry_body(&body)?);
+            let entry = decode_authority_log_entry_body(&body)?;
+            hashes.push(authority_entry_hash(&entry)?);
+            entries.push(entry);
         }
         // The structure reads the image's carried rows as the stored rows
         // they stand for: it admits what the covered history admitted, never
@@ -468,7 +478,7 @@ pub(super) fn door_view(
                 Some(entry),
             );
         }
-        let mut parents: BTreeMap<_, &[AuthorityEntryHash]> = ids
+        let mut parents: BTreeMap<_, &[AuthorityEntryHash]> = hashes
             .iter()
             .copied()
             .zip(entries.iter().map(|entry| entry.parent_hashes.as_slice()))
@@ -476,10 +486,7 @@ pub(super) fn door_view(
         if let Some(evidence) = &evidence {
             for (hash, row) in evidence.rows() {
                 tally.count(&structure, &row.signer, row.slip_op, evidence.body(hash));
-                parents.insert(
-                    authority_log_entity_id_from_hash(hash)?,
-                    row.parents.as_slice(),
-                );
+                parents.insert(*hash, row.parents.as_slice());
             }
         }
         let projected_bytes = stored_fold_projection(&parents);
@@ -550,9 +557,8 @@ pub(crate) enum AuthorityDoor {
 /// rest wait (rule 5: never refused). Once the stored log's projected peak
 /// passes the owner's reserve under the memory floor
 /// ([`FOLD_MEMORY_OWNER_RESERVE_DIVISOR`]), every row but the owner's work
-/// waits: the owner's work is a row a slip issuer signs or cosigns, or the
-/// owner's will this install carries. The door reads the stored log's
-/// structure as the fold's bounds do.
+/// waits and the owner's work lands ([`owner_work`]). The door reads the
+/// stored log's structure as the fold's bounds do.
 pub(crate) fn authority_door(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -576,8 +582,7 @@ pub(crate) fn authority_door(
     // raise the floor or for a checkpoint image to end the rows that filled
     // it.
     if view.projected_bytes > owner_reserve_start(store, txn)?
-        && !signed_by(entry, &view.structure.issuers)
-        && !carries_own_will(store, txn, entry)?
+        && !owner_work(store, txn, &view.structure, entry)?
     {
         return Ok(AuthorityDoor::AtBound);
     }
@@ -611,13 +616,33 @@ pub(crate) fn authority_door(
     Ok(AuthorityDoor::AtBound)
 }
 
+/// Whether `entry` is the owner's work, which lands past the owner's reserve
+/// under the memory floor ([`FOLD_MEMORY_OWNER_RESERVE_DIVISOR`]): a row a
+/// slip issuer signs or cosigns, a row an anchor this install takes as its
+/// own signs (its root records and machine marks), or the owner's will this
+/// install carries ([`carries_own_will`]). Another install's key passes none
+/// of them at this door, and neither does a stranger's anchor.
+fn owner_work(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    structure: &AuthorityStructure,
+    entry: &AuthorityLogEntry,
+) -> crate::error::Result<bool> {
+    Ok(signed_by(entry, &structure.issuers)
+        || structure.is_own_anchor(entry.signer_key())
+        || carries_own_will(store, txn, entry)?)
+}
+
 /// Whether `entry` is the owner's will this install carries (FIX 7930): signed
 /// by this install's own machine key, which only its own doors hold and sign
 /// with after they revalidate the owner or an agent's Grant, and carrying
 /// that will (an owner or delegated act, or owner work's request, result or
 /// cancel), or the frontier join such an act rides on (FIX 7908), or a
 /// custody request's permit piece (FIX 11866), or a membership execution
-/// record it signed for a change no host issuer signed (FIX 12335). Such a row leaves the lifetime signer bound, which still raises
+/// record it signed for a change no host issuer signed (FIX 12335), or the
+/// world key wraps and residence results that work writes under this
+/// install's key ([AUTHORITY-LOG-SIGNER-FLOOD]: key delivery after an
+/// admission, a key minted in a world edit, a residence directive's end). Such a row leaves the lifetime signer bound, which still raises
 /// its typed check, were the count not advisory; strangers, other installs' rows and a replica's retries
 /// keep their treatment. No local or replicated flag is read. An install
 /// whose key is not known yet keeps today's path
@@ -656,7 +681,9 @@ fn carries_own_will(
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::FrontierJoin(_)
-        | AuthorityOp::CustodyPermitPiece(_) => true,
+        | AuthorityOp::CustodyPermitPiece(_)
+        | AuthorityOp::WorldKeyWraps(_)
+        | AuthorityOp::ResidenceResult(_) => true,
         AuthorityOp::MachineProfile(profile) => profile.act.is_some(),
         _ => false,
     })
