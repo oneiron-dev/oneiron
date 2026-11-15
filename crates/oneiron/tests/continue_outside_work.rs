@@ -763,3 +763,85 @@ fn only_an_agent_whose_grant_names_the_verb_may_continue() {
         "the granted agent binds the work: {bound:?}"
     );
 }
+
+#[test]
+fn an_agent_with_no_grant_learns_nothing_of_the_repo() {
+    // The Grant refusal is the whole answer an agent with no Grant gets:
+    // a repo this node does not serve, a commit that is not the ref's tip
+    // and a commit the store does not hold each answer that refusal, as
+    // the right hand-off does. The door judges the caller before it reads
+    // the served store or the pushed ref.
+    let (_dir, vault, owner_proof) = owner_vault();
+    let (_bare, commit_p, commit_c) = seed_custody_repo(&vault);
+    let conversation = import_conversation(&vault, &owner_proof);
+    let agent = ensure_agent(&vault, &owner_proof, "continue_outside_work_agent");
+    let policy = login_policy("claude-code");
+    let registry = ProviderAdapterRegistry::standard();
+    let caller = RunnerContinueCaller::GrantedAgent(agent);
+    let before = counts(&vault);
+    let check = |repo: &str| {
+        vault
+            .continue_outside_work_check(
+                caller,
+                &registry,
+                &policy,
+                &ContinueOutsideWorkCheckRequest {
+                    repo: repo.to_owned(),
+                    runner: "claude-code".to_owned(),
+                },
+            )
+            .expect_err("the check refuses an agent with no Grant")
+    };
+    let refusal = check("demo");
+    assert!(
+        refusal
+            .message
+            .contains("no live Grant of this agent names this act"),
+        "precondition: the check answers the Grant refusal: {refusal:?}"
+    );
+    assert_eq!(
+        check("absent"),
+        refusal,
+        "a repo this node does not serve answers the Grant refusal"
+    );
+    let hand_off = |repo: &str, commit: &str| {
+        vault
+            .continue_outside_work(
+                caller,
+                &registry,
+                &policy,
+                &ContinueOutsideWorkRequest {
+                    repo: repo.to_owned(),
+                    git_ref: CONTINUE_REF.to_owned(),
+                    commit: commit.to_owned(),
+                    conversation: conversation.to_hex(),
+                    runner: "claude-code".to_owned(),
+                    note: None,
+                },
+            )
+            .expect_err("the door refuses an agent with no Grant")
+    };
+    let refusal = hand_off("demo", &commit_c);
+    assert!(
+        refusal
+            .message
+            .contains("no live Grant of this agent names this act"),
+        "precondition: the door answers the Grant refusal: {refusal:?}"
+    );
+    assert_eq!(
+        hand_off("absent", &commit_c),
+        refusal,
+        "a repo this node does not serve answers the Grant refusal"
+    );
+    assert_eq!(
+        hand_off("demo", &commit_p),
+        refusal,
+        "a commit that is not the ref's tip answers the Grant refusal"
+    );
+    assert_eq!(
+        hand_off("demo", &"0".repeat(40)),
+        refusal,
+        "a commit the store does not hold answers the Grant refusal"
+    );
+    assert_eq!(counts(&vault), before, "nothing is written");
+}
