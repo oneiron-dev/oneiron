@@ -595,7 +595,8 @@ struct LaunchSurface<'a, 'env> {
     vault: &'a Vault,
     txn: &'a mut heed::RwTxn<'env>,
     launch: &'a mut StoredLaunch,
-    /// The accepted standing policy row an AUTO clearance stood on, if any.
+    /// The accepted standing approval a cleared width check cites: the
+    /// launch's rung-0 row, if any.
     clearance: Option<String>,
 }
 
@@ -661,7 +662,6 @@ pub(super) struct WaveLaunchGate {
     governed: ResolvedFanoutPolicy,
     standing: Option<StandingPolicy>,
     disposition: FanoutAutoDisposition,
-    clearance: Option<String>,
 }
 
 impl WaveLaunchGate {
@@ -708,17 +708,10 @@ impl WaveLaunchGate {
         } else {
             FanoutAutoDisposition::SurfaceHuman
         };
-        // An accepted standing row answers alone when it exists, so an Allow
-        // beside one stood on it.
-        let clearance = standing
-            .as_ref()
-            .filter(|_| disposition == FanoutAutoDisposition::Allow)
-            .map(|row| row.row_ref.to_hex());
         Ok(Self {
             governed,
             standing,
             disposition,
-            clearance,
         })
     }
 }
@@ -782,6 +775,12 @@ pub(super) fn admit_wave_launch_in(
     let policy = &gate.governed.policy;
     let plan = payload.plan(launch_ref, input.actor, policy.mode)?;
     let estimate = fanout_estimate(&plan)?;
+    // The accepted standing approval that covers the launch is its rung 0 in
+    // every mode (CHECKIN-PR1-SHAPE Q2), and the row a cleared width check
+    // cites. The standing row was rechecked above.
+    let rung_zero =
+        crate::fanout_auto::rung_zero_row(gate.standing.as_ref(), u64::from(estimate.total_count))
+            .map(|row| row.to_hex());
     let mut launch = StoredLaunch {
         launch_ref,
         actor: TaskActor::Actor(input.actor),
@@ -809,12 +808,13 @@ pub(super) fn admit_wave_launch_in(
         &plan,
         Some(policy.approval_threshold),
         wave_launch_history(),
+        rung_zero.as_deref(),
         &CachedAuto(gate.disposition),
         &mut LaunchSurface {
             vault,
             txn,
             launch: &mut launch,
-            clearance: gate.clearance.clone(),
+            clearance: rung_zero.clone(),
         },
         input.now.saturating_mul(1000),
     )?;

@@ -433,7 +433,8 @@ pub(super) struct TxnSurface<'a, 'env> {
     pub(super) vault: &'a Vault,
     pub(super) txn: &'a mut heed::RwTxn<'env>,
     pub(super) run: &'a mut StoredFanout,
-    /// The accepted standing policy row an AUTO clearance stood on, if any.
+    /// The accepted standing approval a cleared width check cites: the
+    /// plan's rung-0 row, if any.
     pub(super) clearance: Option<String>,
 }
 

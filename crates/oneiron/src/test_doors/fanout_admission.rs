@@ -1,7 +1,9 @@
 //! Door for `tests/check_in_fanout_modes.rs` (ROLES-CHECKIN PR 1): one
 //! fan-out admission under a mode named by its wire token, so the same test
 //! runs before and after the check-in rename and shows that admission did
-//! not change.
+//! not change. `tests/check_in_fanout_rung0.rs` (PR 3) admits the same plan
+//! with a rung-0 standing row and, for a pathology, a consult history that
+//! closes a cycle.
 
 use std::cell::Cell;
 
@@ -81,6 +83,25 @@ pub fn admit_one(
     total: u32,
     threshold: u32,
 ) -> Result<AdmissionOutcome> {
+    admit_with_rung_zero(mode, classifier, total, threshold, None, false)
+}
+
+/// [`admit_one`] with `standing_row` as the plan's rung-0 row, the covering
+/// standing approval a production caller reads. With `cycle`, the consult
+/// history already holds the edge back from the plan's peer to its asker,
+/// so the plan closes a consult cycle: a pathology.
+///
+/// # Errors
+///
+/// An unknown mode token, or an admission error.
+pub fn admit_with_rung_zero(
+    mode: &str,
+    classifier: Classifier,
+    total: u32,
+    threshold: u32,
+    standing_row: Option<&str>,
+    cycle: bool,
+) -> Result<AdmissionOutcome> {
     let mode: CheckInMode = serde_json::from_value(serde_json::Value::String(mode.to_owned()))
         .map_err(|error| Error::InvalidConfig(format!("mode token: {error}")))?;
     let edges = if total == 0 {
@@ -103,14 +124,20 @@ pub fn admit_one(
         answer: classifier,
         calls: Cell::new(0),
     };
+    let back_edge = [FanoutPlanEdge {
+        from_peer_ref: "peer_b".to_owned(),
+        to_peer_ref: "peer_a".to_owned(),
+        count: 1,
+    }];
     let mut sink = CountingSink { rows: 0 };
     let admission = admit_fanout_with_history(
         &plan,
         Some(threshold),
         FanoutHistory {
-            edges: &[],
+            edges: if cycle { &back_edge[..] } else { &[] },
             peer_rates: &[],
         },
+        standing_row,
         &classifier,
         &mut sink,
         NOW_MS,

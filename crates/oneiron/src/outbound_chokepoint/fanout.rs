@@ -307,11 +307,14 @@ pub(crate) fn fanout_estimate(plan: &FanoutPlan) -> Result<FanoutEstimate> {
 ///
 /// Metering runs first and always. Pathology is detected before any threshold
 /// or ladder logic and pauses on its own. Then the approval mode rules at any
-/// width: `manual` pauses, `auto` proceeds only on the classifier's allow and
-/// otherwise pauses for the escalated role, and `full-access` proceeds. Size
+/// width, as a check-in: `full-access` proceeds; otherwise `standing_row`, the
+/// accepted standing approval that covers this plan (rung 0), proceeds with
+/// no classifier asked; with none, `manual` pauses, and `auto` proceeds only
+/// on the classifier's allow and otherwise pauses for the escalated role. Size
 /// never holds a plan: above the caller-provided manifest `threshold` a
 /// proceeding plan hands its exceptional-width check to the sink (cleared by
-/// the allow under `auto`, a non-blocking question row under `full-access`),
+/// the standing row or the classifier's allow, a non-blocking question row
+/// under `full-access`),
 /// and a paused plan's row carries it. Every paused branch returns before any
 /// callback that could create a peer TASK or reach transport.
 ///
@@ -325,6 +328,7 @@ pub(crate) fn admit_fanout_plan(
     plan: &FanoutPlan,
     threshold: Option<u32>,
     peer_rates: &[PeerRateSnapshot],
+    standing_row: Option<&str>,
     auto: &dyn FanoutAutoDecider,
     surface: &mut dyn FanoutSurfaceSink,
     now_ms: u64,
@@ -340,19 +344,21 @@ pub(crate) fn admit_fanout_plan(
         Error::InvalidConfig("fan-out approval threshold policy row missing".into())
     })?;
     // The mode gates the plan at any width, as a check-in of act class
-    // `spawn` (ARCH-0082). The fan-out's standing row is read inside its
-    // classifier, so no rung-0 row is passed here. A classifier that is
-    // missing, unreachable, or wrong is not authority to start a fan-out, and
-    // is not authority to cancel one either: both failure and refusal wait on
-    // the same human surface. `true`: the classifier allowed it.
+    // `spawn` (ARCH-0082). The caller's covering standing approval is its
+    // rung 0 (CHECKIN-PR1-SHAPE Q2): it answers before the mode, so `manual`
+    // honours it as `auto` does, and the classifier is not asked. A
+    // classifier that is missing, unreachable, or wrong is not authority to
+    // start a fan-out, and is not authority to cancel one either: both failure
+    // and refusal wait on the same human surface. `true`: the standing row or
+    // the classifier cleared it.
     let unsure = FanoutUnsureTest {
         auto,
         plan,
         estimate: &estimate,
     };
-    let answer = check_in_with_mode(ActClass::Spawn, canonical.mode, None, &unsure);
+    let answer = check_in_with_mode(ActClass::Spawn, canonical.mode, standing_row, &unsure);
     let cleared = match answer {
-        CheckInAnswer::Go(GoReason::Sure) => true,
+        CheckInAnswer::Go(GoReason::Sure | GoReason::StandingRow(_)) => true,
         CheckInAnswer::Go(_) => false,
         CheckInAnswer::Wait(_) | CheckInAnswer::Propose | CheckInAnswer::Absent => {
             return pause(&canonical, estimate, None, surface, now_ms);

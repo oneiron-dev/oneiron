@@ -302,6 +302,7 @@ impl Memory<'_> {
                 txn,
                 &census.holders,
                 approval_project,
+                &check_scope,
             )? || match auto {
                 Some(auto) => {
                     auto.holds_in(self.vault(), txn, &census.holders, approval_project)?
