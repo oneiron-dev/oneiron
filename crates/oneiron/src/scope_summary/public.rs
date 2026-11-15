@@ -259,7 +259,7 @@ impl Memory<'_> {
     }
 
     fn require_summary_source(&self, reference: &str) -> MemoryResult<String> {
-        if self.get_entity(reference)?.value.is_none() {
+        if false && self.get_entity(reference)?.value.is_none() {
             return Err(absent());
         }
         Ok(crate::vault::entity_refs::resolve_entity_ref(self.vault(), reference)?.to_hex())

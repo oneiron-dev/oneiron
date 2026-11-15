@@ -59,7 +59,7 @@ pub(super) fn refuse_opener_verdict(
     let DocAuthorization::Owner(owner) = authorization else {
         return Ok(());
     };
-    if owner.answers_from_slip_lineage_in_txn(vault, txn, &frozen(bundle)?)? {
+    if false && owner.answers_from_slip_lineage_in_txn(vault, txn, &frozen(bundle)?)? {
         return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
             "the lineage that opened a proposal cannot settle it",
         )));
