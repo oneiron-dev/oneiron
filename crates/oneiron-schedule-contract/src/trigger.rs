@@ -284,4 +284,18 @@ mod tests {
         assert_eq!(retry_after(40, RETRY_FIRST_SECS, cap), 3_600);
         assert_eq!(retry_after(3, RETRY_FIRST_SECS, 100), 100);
     }
+
+    #[test]
+    fn a_retry_keeps_doubling_past_sixteen_doublings_until_its_cap() {
+        // UC09-SCHEDULE-RETRY-SHIFT = A: the 18th retry is 17 doublings of the first wait.
+        let cap = 1_000_000;
+        assert_eq!(retry_after(17, 1, cap), 65_536);
+        assert_eq!(retry_after(18, 1, cap), 131_072);
+        assert_eq!(retry_after(20, 1, cap), 524_288);
+        assert_eq!(retry_after(21, 1, cap), cap);
+        assert_eq!(retry_after(64, 1, u64::MAX), 1u64 << 63);
+        assert_eq!(retry_after(65, 1, u64::MAX), u64::MAX);
+        assert_eq!(retry_after(u32::MAX, RETRY_FIRST_SECS, cap), cap);
+        assert_eq!(retry_after(0, RETRY_FIRST_SECS, RETRY_CAP_SECS), 60);
+    }
 }
