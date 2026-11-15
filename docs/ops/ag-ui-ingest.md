@@ -136,12 +136,14 @@ preconditions, intent, input and action contract, but not the repair, observed
 outcome or grader answer. A trace is a task only if its answer is not leaked
 in the workspace or the history (ARCH-0053 `#eval-trace-task`): the reader
 refuses a task whose trimmed answer is in any string or object key of its
-`initial_state` or `input`, or is the whole text of a number or boolean there.
+`initial_state` or `input`, or in its `intent`, or is the whole text of a number
+or boolean there.
 The check is exact text, not similarity: a paraphrased answer passes it, and a
 short answer that recurs by chance refuses the task. A tool world's answer is
 its end state: the reader refuses a task whose `initial_state` already is that
-state, or holds it, or whose `input` holds it, as exact JSON. The intent is the task's
-own words and is not checked. This is not a certificate of task quality.
+state, or holds it, or whose `input` holds it, as exact JSON. The intent is shown to
+the candidate with them, so the same checks refuse an intent that holds the answer
+or the end state. This is not a certificate of task quality.
 
 The reader preserves the AG-UI read receipt, exact content pin, authenticated
 capture binding and live-owner checks. A missing or withheld source returns no
@@ -169,8 +171,12 @@ and the candidate. In one write it compiles the task as above (every refusal
 applies, the leaked-answer refusal included), assigns the capture's family root
 (`entity:<claim>`) to a `sealed_confirmation` family, and records the seed
 `pending`. The family gets its split before any case derives from it. A root that
-already belongs to a development or judge-audit family is refused. A withheld
-capture returns no seed; a replay returns the seed already proposed.
+already belongs to a development or judge-audit family is refused, and so is a
+root whose sealed family a cohort already holds: a case added to it then would sit
+outside that cohort's membership, and the cohort's retirement would release it to
+development unserved. A withheld capture returns no seed; a replay returns the
+seed already proposed. The write rechecks that the capture is still live, so a
+proposal that compiled before an erase records nothing.
 
 `Memory::settle_eval_repair_seed` is the gate. The measuring host answers the task
 under each arm and hands both answers (a text response, or tool calls) and the
@@ -181,21 +187,28 @@ outcome and never the candidate's own text. Then it records one `repair` case in
 the sealed family, reading the capture's root, with a `world_outcome` label whose
 value is the outcome's BLAKE3 hex and whose reference is
 `ag_ui:<claim>:<source_hash>#outcome/<ordinal>`; the seed is `confirmed`.
-Otherwise it is `refused` (`old_passed` or `candidate_failed`) and no case exists,
-so nothing derives from it. A sealed family never feeds training.
+Otherwise it is `refused` (`old_passed` or `candidate_failed`; `family_held` when
+a cohort took the family since the seed was proposed) and no case exists, so
+nothing derives from it. A sealed family never feeds training. The gate reads
+through the caller's scoped reader before it looks for a seed, so a caller the
+capture is withheld from learns nothing of its seed, not even whether one exists.
+Its write settles only the seed row it read: a seed that changed meanwhile (an
+erase and a new proposal, or another settle) is not graded with that verdict.
 
 An `adjudicated_response` task compiles with no observed answer, so its seed is
 proposed `awaiting_label`, and the gate grades nothing until
 `Memory::label_eval_repair_seed` lands its label. Only an `adjudicated_audit`
 label is taken (an owner's pick arrives through its ask, and a judge's verdict
 is never a check). Its value is the adjudicated answer: at most 512 bytes (a
-longer one is refused, never cut), refused if the task's workspace or history
-holds it, and kept only as the BLAKE3 of its bytes, with the label's reference,
-weight and date. The label is set once (the same answer and reference again
-change nothing) and makes the seed `pending`. The gate then compares each
-response's BLAKE3 with it, and a confirmed case carries an `adjudicated_audit`
-label (the answer's BLAKE3 hex, the audit's reference) in place of the
-`world_outcome` one. No row holds the adjudicated answer's text.
+longer one is refused, never cut), refused if the task's workspace, history or
+intent holds it or the label's own reference does, and kept only as the BLAKE3
+of its bytes, with the label's reference, weight and date. The label door, like
+the gate, reads before it looks for a seed, and writes only the seed row it
+read. The label is set once (the same answer and reference again change nothing)
+and makes the seed `pending`. The gate then compares each response's BLAKE3 with
+it, and a confirmed case carries an `adjudicated_audit` label (the answer's BLAKE3
+hex, the audit's reference) in place of the `world_outcome` one. No row holds the
+adjudicated answer's text.
 
 `Vault::pending_eval_repair_seeds` lists the seeds the gate has not graded. An
 erased capture takes its seeds with it; a confirmed seed's case stays, without

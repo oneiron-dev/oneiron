@@ -143,16 +143,30 @@ impl EvalRepairTask {
 
     /// The digest an adjudicated answer is held by, after the checks a
     /// compiled answer gets: the task's grader is an adjudicated response,
-    /// and the answer is not leaked in the workspace or the history.
-    pub(super) fn adjudicated_answer_digest(&self, answer: &str) -> Result<[u8; 32]> {
+    /// and the answer is not leaked in the workspace, the history or the
+    /// intent. Nor is it in the label's own `reference`, which the seed and
+    /// its case keep as text.
+    pub(super) fn adjudicated_answer_digest(
+        &self,
+        answer: &str,
+        reference: &str,
+    ) -> Result<[u8; 32]> {
         if !matches!(self.expected, EvalRepairExpected::Adjudicated(_)) {
             return Err(Error::InvalidClaimBody(
                 "only an adjudicated-response Repair task takes an adjudicated answer",
             ));
         }
-        if answer_leaks(&self.initial_state, answer) || answer_leaks(&self.input["input"], answer) {
+        if answer_leaks(&self.initial_state, answer)
+            || answer_leaks(&self.input["input"], answer)
+            || answer_leaks(&self.input["intent"], answer)
+        {
             return Err(Error::InvalidClaimBody(
                 "Repair task answer is leaked in its workspace or history",
+            ));
+        }
+        if answer_leaks(&Value::String(reference.to_owned()), answer) {
+            return Err(Error::InvalidClaimBody(
+                "an adjudicated label's reference holds its answer",
             ));
         }
         Ok(*blake3::hash(answer.as_bytes()).as_bytes())
@@ -444,14 +458,19 @@ impl Memory<'_> {
         };
         // A trace is a task only if its answer is not leaked in the workspace
         // or the history (ARCH-0053 #eval-trace-task): the rebuilt state and
-        // the input. The intent is the task's own words and is not checked.
+        // the input, and the intent, which the candidate is shown with them.
         // An adjudicated answer is checked when its label lands.
+        let intent = Value::String(spec.intent.clone());
         let leaked = match &expected {
             EvalRepairExpected::Response(answer) => {
-                answer_leaks(&spec.initial_state, answer) || answer_leaks(&spec.input, answer)
+                answer_leaks(&spec.initial_state, answer)
+                    || answer_leaks(&spec.input, answer)
+                    || answer_leaks(&intent, answer)
             }
             EvalRepairExpected::State(state) => {
-                state_leaks(&spec.initial_state, state) || state_leaks(&spec.input, state)
+                state_leaks(&spec.initial_state, state)
+                    || state_leaks(&spec.input, state)
+                    || state_leaks(&intent, state)
             }
             EvalRepairExpected::Adjudicated(_) => false,
         };
