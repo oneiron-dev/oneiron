@@ -23,6 +23,8 @@
 //! limits through a row no door writes: it rotates to no successor and
 //! enrols no device that could re-root, and its cosign lends no consent to
 //! an agent's revoke of another owner key (Sol xhigh stack review F1, F2).
+//! A passkey that only another passkey vouched for has its own confirmation
+//! door (F5).
 //!
 //! The passkey is a software P-256 key here; each assertion is built as a
 //! browser's `navigator.credentials.get` returns it (authenticator data,
@@ -147,6 +149,12 @@ fn assert_over(challenge: &[u8], flags: u8) -> Assertion {
 }
 
 fn assert_over_at(challenge: &[u8], flags: u8, origin: &str) -> Assertion {
+    assert_by(&passkey(), challenge, flags, origin)
+}
+
+/// What `navigator.credentials.get` returns for `challenge` when the
+/// passkey `key` answers it at `origin`.
+fn assert_by(key: &P256SigningKey, challenge: &[u8], flags: u8, origin: &str) -> Assertion {
     let mut authenticator_data = Sha256::digest(b"oneiron.test").to_vec();
     authenticator_data.push(flags);
     authenticator_data.extend_from_slice(&[0; 4]);
@@ -157,7 +165,7 @@ fn assert_over_at(challenge: &[u8], flags: u8, origin: &str) -> Assertion {
     .into_bytes();
     let mut signed = authenticator_data.clone();
     signed.extend_from_slice(&Sha256::digest(&client_data_json));
-    let signature: P256Signature = passkey().sign(&signed);
+    let signature: P256Signature = key.sign(&signed);
     Assertion {
         authenticator_data,
         client_data_json,
@@ -665,5 +673,109 @@ fn a_key_only_a_passkey_vouched_for_lends_no_consent_to_a_revoke() {
     assert!(
         hosted.live_owner_key(&ed_key(&owner_device())),
         "the owner's device key stands"
+    );
+}
+
+/// A second passkey of the owner's, which the first one vouches for.
+fn second_passkey() -> P256SigningKey {
+    P256SigningKey::from_slice(&[0x4B; 32]).expect("a P-256 scalar")
+}
+
+fn second_passkey_roster_key() -> AuthorityKey {
+    AuthorityKey::P256(
+        second_passkey()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec(),
+    )
+}
+
+/// The second passkey's enrollment input: its assertion over its
+/// enrollment challenge.
+fn second_passkey_enrollment(hosted: &HostedVault) -> OwnerPasskeyEnrollment {
+    let public_key = second_passkey()
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec();
+    let challenge = hosted
+        .vault
+        .owner_passkey_enrollment_challenge_as(&hosted.owner(), &public_key)
+        .expect("the second passkey's enrollment challenge");
+    let assertion = assert_by(
+        &second_passkey(),
+        &challenge,
+        FLAGS_PRESENT_VERIFIED,
+        ORIGIN,
+    );
+    OwnerPasskeyEnrollment {
+        credential_id: b"passkey-credential-0002".to_vec(),
+        public_key,
+        authenticator_data: assertion.authenticator_data,
+        client_data_json: assertion.client_data_json,
+        signature: assertion.signature,
+    }
+}
+
+/// The second passkey signs an authority transcript as the browser would.
+fn second_passkey_signs(transcript: &[u8]) -> Vec<u8> {
+    let assertion = assert_by(
+        &second_passkey(),
+        &webauthn_challenge(transcript),
+        FLAGS_PRESENT_VERIFIED,
+        ORIGIN,
+    );
+    webauthn_assertion_envelope(
+        &assertion.authenticator_data,
+        &assertion.client_data_json,
+        &assertion.signature,
+    )
+    .expect("an envelope")
+}
+
+/// Sol xhigh stack review F5: a passkey that only another passkey vouched
+/// for is confirmed through its own door, as a device's key is: the owner's
+/// device key vouches for it again, and from then on it vouches for further
+/// keys.
+#[test]
+fn a_device_key_confirms_a_passkey_another_passkey_vouched_for() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .enrol_owner_passkey_as(
+            &hosted.owner(),
+            &second_passkey_enrollment(&hosted),
+            passkey_roster_key(),
+            |transcript| Ok(passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)),
+        )
+        .expect("the first passkey vouches for the second");
+    let further = ed25519_dalek::SigningKey::from_bytes(&[0x4C; 32]);
+    let vouch_for_further = || {
+        hosted.vault.enrol_owner_signing_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &further),
+            second_passkey_roster_key(),
+            |transcript| Ok(second_passkey_signs(transcript)),
+        )
+    };
+    assert!(
+        vouch_for_further().is_err(),
+        "guard: the unconfirmed second passkey vouches for nothing"
+    );
+    hosted
+        .vault
+        .confirm_owner_passkey_as(
+            &hosted.owner(),
+            &second_passkey_enrollment(&hosted),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the second passkey");
+    vouch_for_further().expect("the confirmed passkey vouches for a further key");
+    assert!(
+        hosted.live_owner_key(&ed_key(&further)),
+        "the further key is enrolled"
     );
 }
