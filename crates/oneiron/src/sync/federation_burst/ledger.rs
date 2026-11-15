@@ -1,7 +1,8 @@
 //! Payload-free batch receipts, kept after durable work completes.
 use super::{
     BurstPeer, DeferredWork, FederationBurstBaselineState, FederationBurstDecision,
-    FederationBurstDisposition, FederationBurstReceipt, FederationBurstWorkState, corrupt,
+    FederationBurstDisposition, FederationBurstPeerRef, FederationBurstReceipt,
+    FederationBurstWorkState, corrupt,
 };
 use crate::store::Store;
 use crate::{Result, Vault};
@@ -21,13 +22,21 @@ pub(super) fn load(
     let Some(bytes) = vault.store.sync_queue.get(txn, &key(id))? else {
         return Ok(None);
     };
-    let row: FederationBurstReceipt = rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?;
-    if row.batch_ref != blake3::Hash::from(*id).to_hex().to_string()
-        || row.peer != peer.receipt_peer()
-    {
+    decode(&bytes, &peer.receipt_peer(), id).map(Some)
+}
+
+/// One stored receipt as the ledger reads it: the row must name the batch
+/// `id` and the peer `named`, else it is corrupt.
+pub(crate) fn decode(
+    bytes: &[u8],
+    named: &FederationBurstPeerRef,
+    id: &[u8; 32],
+) -> Result<FederationBurstReceipt> {
+    let row: FederationBurstReceipt = rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
+    if row.batch_ref != blake3::Hash::from(*id).to_hex().to_string() || row.peer != *named {
         return Err(corrupt());
     }
-    Ok(Some(row))
+    Ok(row)
 }
 
 fn put(store: &Store, txn: &mut heed::RwTxn<'_>, row: &FederationBurstReceipt) -> Result<()> {

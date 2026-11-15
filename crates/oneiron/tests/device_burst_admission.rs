@@ -4,7 +4,11 @@
 //! device's own baseline is deferred, or isolated and proposed, and the home
 //! gets it back by itself once the device's rate is at its baseline again.
 //!
-//! Run: `cargo test --locked -p oneiron --all-features --test device_burst_admission`.
+//! The last test reads a receipt stored before own devices had receipts
+//! through the ledger's door (the lead's M-1 STORED-CHANGE-RULE, Engine
+//! RULING L7-41-STORED-RECEIPT = B).
+//!
+//! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test device_burst_admission`.
 
 use std::sync::Arc;
 
@@ -16,10 +20,11 @@ use oneiron::store::ports::ManualClock;
 use oneiron::sync::WindowKey;
 use oneiron::sync::federation_burst::{
     BurstPeer, DeviceBurstAdmission, DevicePeer, FederationBurstBaseline,
-    FederationBurstDisposition, FederationBurstOutcome, FederationBurstPeerRef,
-    FederationBurstPolicy, FederationBurstReceipt, FederationBurstWorkState,
-    admit_device_window_update, ready_device_work,
+    FederationBurstBaselineState, FederationBurstDisposition, FederationBurstOutcome,
+    FederationBurstPeerRef, FederationBurstPolicy, FederationBurstReceipt,
+    FederationBurstWorkState, admit_device_window_update, ready_device_work,
 };
+use oneiron::test_doors::burst_receipt_stored_shape::decode_burst_receipt_row;
 use oneiron::{EntityId, Vault, VaultConfig};
 use tempfile::TempDir;
 
@@ -242,6 +247,75 @@ fn an_isolated_device_burst_is_proposed_and_replays_without_a_human() -> TestRes
         ),
         "the receipt keeps the original disposition: {:?}",
         landed.disposition
+    );
+    Ok(())
+}
+
+/// A federated peer's burst receipt as a vault stored it before own devices
+/// had receipts: it names the peer by `principal` and `grant`, field for
+/// field in the order the ledger wrote them.
+#[derive(serde::Serialize)]
+struct ReceiptStoredBeforeDevices {
+    batch_ref: String,
+    principal: EntityId,
+    grant: EntityId,
+    window_key: String,
+    disposition: FederationBurstDisposition,
+    state: FederationBurstWorkState,
+    baseline: FederationBurstBaselineState,
+}
+
+#[test]
+fn a_receipt_stored_before_device_peers_loads_and_lists_as_before() -> TestResult {
+    let principal = EntityId::now();
+    let grant = EntityId::now();
+    let batch_ref = "a1".repeat(32);
+    let stored_row = ReceiptStoredBeforeDevices {
+        batch_ref: batch_ref.clone(),
+        principal,
+        grant,
+        window_key: "base".to_owned(),
+        disposition: FederationBurstDisposition::Defer {
+            replay_ref: batch_ref.clone(),
+        },
+        state: FederationBurstWorkState::Pending,
+        baseline: FederationBurstBaselineState {
+            baseline: FederationBurstBaseline {
+                name: "peer".to_owned(),
+                writes_per_sec: 1.0,
+                structural_streak: 1.0,
+            },
+            learned: true,
+            vault_size: 64,
+            recent_writes: 5,
+            rate_ratio: 5.0,
+            streak: 1,
+            streak_ratio: 1.0,
+        },
+    };
+    let stored = rmp_serde::to_vec_named(&stored_row)?;
+    let federated = FederationBurstPeerRef::Federated { principal, grant };
+
+    let loaded = decode_burst_receipt_row(&stored, &federated, &batch_ref)
+        .map_err(|error| format!("a receipt stored before own devices loads: {error}"))?;
+    assert_eq!(
+        serde_json::to_value(&loaded)?,
+        serde_json::to_value(&stored_row)?,
+        "it lists as the peer's burst doors answered it before"
+    );
+    assert_eq!(
+        rmp_serde::to_vec_named(&loaded)?,
+        stored,
+        "written again, a federated receipt keeps its stored bytes"
+    );
+
+    let other_peer = FederationBurstPeerRef::Federated {
+        principal: EntityId::now(),
+        grant,
+    };
+    assert!(
+        decode_burst_receipt_row(&stored, &other_peer, &batch_ref).is_err(),
+        "another peer does not read it"
     );
     Ok(())
 }
