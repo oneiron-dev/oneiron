@@ -15,6 +15,7 @@ mod embedder_space;
 mod embedding;
 mod failure_signals;
 mod feedback;
+pub mod gpu_jobs;
 pub mod import;
 mod keystore;
 mod limits;
@@ -45,6 +46,7 @@ pub use channel_endpoints::ChannelEndpointsConfig;
 pub use connectors::{ConnectorHostConfig, ConnectorTransport};
 pub use desktop::DesktopConfig;
 pub use device_sync::DeviceSyncConfig;
+pub use gpu_jobs::{GpuJobsSettings, GpuOfferSettings};
 pub(crate) use diagnostics::{locate_toml_failure, locate_toml_section, parse_toml};
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,

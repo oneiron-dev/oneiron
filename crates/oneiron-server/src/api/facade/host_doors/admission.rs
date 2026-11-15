@@ -225,6 +225,9 @@ pub(in crate::api::facade) fn door_admits(
         // or an agent acting for the owner (an agent puts `local` alone).
         Proof::PacksSetup => super::packs::setup_admits(server, auth, verb),
         Proof::MediaOwnerGrade => owner_grade(auth, MEDIA_OWNERS),
+        // The customer GPU job rows (row L10-31): the owner's own proof, or an agent's own Grant naming a
+        // read verb; start and cancel are the owner's acts.
+        Proof::GpuJobCaller => super::gpu_jobs::gpu_job_caller_admits(server, auth, verb),
         Proof::VideoJobOwnerGrade => owner_grade(auth, VIDEO_JOB_OWNERS),
         // A person's own trusted-contact acts (FIX 8169): the live person whose own slip the engine door
         // revalidates.

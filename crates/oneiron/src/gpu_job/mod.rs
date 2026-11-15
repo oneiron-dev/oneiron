@@ -24,19 +24,26 @@ use crate::llm::run_admission::{
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod caller;
 mod connector;
 mod offer;
 mod permits;
 mod start;
 mod step;
 pub(crate) mod tables;
+mod wire;
 
+pub use caller::GpuJobVerb;
 pub use connector::{
     GpuConnectorError, GpuJobConnector, GpuJobSignal, GpuJobSpec, GpuResourceRef,
     GpuResourceStatus, GpuTermination,
 };
 pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;
+pub use wire::{
+    GpuJobList, GpuJobListRequest, GpuJobQuoteRequest, GpuJobQuoteTerms, GpuJobRef,
+    GpuJobStartRequest, GpuJobStatus, GpuJobStopView,
+};
 
 /// Producer of the customer's 95 percent warning.
 pub const GPU_JOB_WARNING_PRODUCER: &str = "gpu_job.warning";
@@ -81,6 +88,37 @@ pub enum GpuJobError {
     Ended,
     #[error(transparent)]
     Connector(#[from] connector::GpuConnectorError),
+}
+
+/// The verb doors' refusal: a malformed request is the caller's, a quote or
+/// job in the wrong state names it, a reservation that does not fit is a
+/// spent budget, and an unknown job is not found.
+impl From<GpuJobError> for crate::memory::MemoryError {
+    fn from(error: GpuJobError) -> Self {
+        use crate::memory::{
+            MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INTERNAL,
+            MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
+        };
+        let refusal = match error {
+            GpuJobError::Vault(error) => return error.into(),
+            refusal => refusal,
+        };
+        let code = match &refusal {
+            GpuJobError::Start(_) | GpuJobError::PriceShape(_) | GpuJobError::QuoteOverflow => {
+                MEMORY_CODE_BAD_REQUEST
+            }
+            GpuJobError::Resume(_)
+            | GpuJobError::QuoteChanged
+            | GpuJobError::QuoteExpired
+            | GpuJobError::QuoteUsed
+            | GpuJobError::AdmissionMismatch
+            | GpuJobError::Ended => MEMORY_CODE_INVALID_STATE,
+            GpuJobError::Denied(_) => MEMORY_CODE_BUDGET_SPENT,
+            GpuJobError::NotFound => MEMORY_CODE_NOT_FOUND,
+            GpuJobError::Vault(_) | GpuJobError::Connector(_) => MEMORY_CODE_INTERNAL,
+        };
+        MemoryError::new(code, refusal.to_string(), &[])
+    }
 }
 
 /// Where a job's offer was: what the customer bought, not the binding.

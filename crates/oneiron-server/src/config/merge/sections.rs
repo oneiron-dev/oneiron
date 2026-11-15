@@ -364,6 +364,9 @@ impl PartialServeConfig {
         if let Some(value) = self.connectors {
             resolved.connectors = value;
         }
+        if let Some(value) = self.gpu_jobs {
+            resolved.gpu_jobs = value.resolve()?;
+        }
         // An explicit no stands as firmly as a yes.
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = Some(value);

@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.jobs.quote",
+  "description": "Quotes one chunk of a customer GPU job on one of this host's offers: the rate times its maximum run time plus startup, teardown and rounding. Writes nothing. The owner calls it, or an agent whose Grant names it.",
+  "input": "crate::gpu_job::GpuJobQuoteRequest",
+  "output": "crate::gpu_job::GpuJobQuoteTerms",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.jobs.quote\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "gpu_job_caller"
+}

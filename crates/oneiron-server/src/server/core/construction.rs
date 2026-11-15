@@ -374,6 +374,7 @@ impl SyncServer {
             model_budgets,
             cloud_registration,
             connector_elicitations: Arc::default(),
+            gpu_jobs: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),
             desktop_guest: None,

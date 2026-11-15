@@ -136,6 +136,7 @@ impl fmt::Debug for ServeConfig {
             .field("device_sync", &self.device_sync)
             .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
+            .field("gpu_jobs", &self.gpu_jobs)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)

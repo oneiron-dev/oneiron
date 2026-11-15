@@ -287,6 +287,12 @@ pub(crate) async fn start_desktop_workers(
         Arc::clone(&sync_server),
         admitted(),
     ));
+    // Customer GPU jobs step on their offers' backends (row L10-31), when
+    // `[gpu_jobs]` posts an offer.
+    workers.extend(crate::gpu_host::spawn_gpu_job_steps(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Past the vault's deletion these two run on, to let its backups go at
     // their deadline (FIX 11979): every pass admitted, as today.
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));

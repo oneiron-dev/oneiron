@@ -190,6 +190,10 @@ pub struct SyncServer {
     /// and `connector.answer` reads them.
     pub(crate) connector_elicitations:
         Arc<crate::connector_elicitation::ConnectorElicitationRegistry>,
+    /// The GPU backends this server registered and the permits of the GPU
+    /// job chunks it runs (row L10-31), for the `vault.gpu.jobs.*` doors and
+    /// the GPU job worker.
+    pub(crate) gpu_jobs: Arc<crate::gpu_host::GpuJobHost>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
