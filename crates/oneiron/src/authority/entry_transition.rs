@@ -18,7 +18,7 @@ use super::*;
 
 pub(super) use super::entry_transition_predicates::{
     active_participant_keys, changes_roster, entry_is_retired, floor_refuses,
-    has_authority_consent, lands_restriction_only, op_is_retired_device_op,
+    has_authority_consent, lands_restriction_only, only_withdraws, op_is_retired_device_op,
 };
 
 #[expect(clippy::large_enum_variant, reason = "transient per-entry fold value")]
@@ -68,8 +68,9 @@ pub(super) fn fold_entry_state(
     // #1430b). A row a handoff or a removal vouches for is never refused, and
     // still lands restriction only, as does every row the fold with no vouch
     // holds back or only the vouch admits (`install_fold::NoVouch`). No floor
-    // refuses a roster row, which vouches for its own signer's rows below it
-    // (`changes_roster`); its signer's own order binds it below.
+    // refuses a roster row, which vouches for its own signer's withdrawals
+    // below it (`changes_roster`, `only_withdraws`); its signer's own order
+    // binds it below.
     let past_floor = context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))
