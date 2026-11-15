@@ -43,7 +43,9 @@
 //! back, also for each key a limited key vouched for or rotated to while it
 //! was on. It reads at each row's parents: a row on a sibling branch of the
 //! choice keeps the limits, and an off beside an on that did not see it
-//! reads off.
+//! reads off. A vault whose only owner key is a passkey asks for no proof
+//! (Engine ruling CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A), so its web
+//! session turns the choice off, never on.
 //!
 //! The passkey is a software P-256 key here; each assertion is built as a
 //! browser's `navigator.credentials.get` returns it (authenticator data,
@@ -1482,4 +1484,31 @@ fn the_door_turns_full_owner_on_only_with_an_owner_key_this_install_holds() {
         "the door asks for an owner key: {refused:?}"
     );
     assert!(!full_owner_reads_on(&hosted), "the choice stays off");
+}
+
+/// No owner key's proof: an act the carrier alone signs.
+fn no_proof() -> Option<(AuthorityKey, fn(&[u8]) -> Vec<u8>)> {
+    None
+}
+
+/// Engine ruling CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A: a hosted vault whose
+/// only owner key is a passkey asks for no owner key's proof, since no proof
+/// the fold takes could answer it. So the owner's web session, which this
+/// install carries with no proof, turns the choice off; turning it on still
+/// waits for an owner key's proof.
+#[test]
+fn a_passkey_only_vault_turns_full_owner_off_with_no_proof_and_not_on() {
+    let hosted = HostedVault::open();
+    enrol_passkey(&hosted);
+    assert!(
+        set_passkey_full_owner(&hosted.vault, &hosted.owner(), false, no_proof(), None)
+            .expect("the act is stored"),
+        "a passkey-only vault takes the web session's off with no proof"
+    );
+    assert!(
+        !set_passkey_full_owner(&hosted.vault, &hosted.owner(), true, no_proof(), None)
+            .expect("the act is stored"),
+        "turning it on waits for an owner key's proof"
+    );
+    assert!(!full_owner_reads_on(&hosted), "the choice reads off");
 }
