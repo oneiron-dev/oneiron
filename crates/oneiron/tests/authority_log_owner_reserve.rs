@@ -18,9 +18,17 @@
 //! beside the act: an owner's world edit that mints the world's key here
 //! lands past the reserve with its key wraps.
 //!
-//! Red on main: the first two tests (every flood row lands, the fold passes
-//! its floor, and the removal errors). The third is green on main, where no
-//! row waits, and guards the reserve's owner work.
+//! A history import stays one batch, as for every row the door holds
+//! (OWNER-RESERVE-IMPORT = A, Engine 15 Nov 17:50): the owner's import that
+//! carries one row past the reserve that is not the owner's work refuses
+//! whole (`AuthorityLogFull`, typed and retryable), the owner's typed check
+//! names the reserve, and the same import lands whole once the owner raises
+//! the floor.
+//!
+//! Red on main: the first, second and fourth tests (every flood row lands,
+//! the fold passes its floor, and the removal errors; no row waits). The
+//! third is green on main, where no row waits, and guards the reserve's
+//! owner work.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve`.
 
@@ -29,11 +37,12 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
-    AuthorityObservationPolicy, AuthorityOp, AuthoritySignature, AuthorityVaultId, KeyWork,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
+    AuthorityObservationPolicy, AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer,
+    KeyWork, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
     MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerAct,
     OwnerActKind, ReadLocation, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
-    authority_transcript, machine_profile_proof_transcript,
+    authority_log_entity_id, authority_transcript, encode_authority_log_entry_body,
+    machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -59,6 +68,7 @@ const OWNER_RESERVE_CHECK: &str = "authority_log_owner_reserve";
 struct Rooted {
     _dir: tempfile::TempDir,
     vault: Vault,
+    issuer: HostSlipIssuer,
     owner: EntityId,
     proof: AuthenticatedOwner,
     vault_id: AuthorityVaultId,
@@ -84,6 +94,7 @@ fn rooted() -> Rooted {
     Rooted {
         _dir: dir,
         vault,
+        issuer,
         owner,
         proof,
         vault_id,
@@ -235,6 +246,38 @@ fn flood(rooted: &Rooted, flooder: &Flooder) -> (u64, FloodEnd) {
     (FLOOD_CAP, FloodEnd::Cap)
 }
 
+/// The row a second install of this vault signs under the host root: it
+/// takes this install's history, as sync does, and the host root rebinds its
+/// key there. A row the host root signs is the owner's work at every
+/// install's door, and this install does not hold it yet.
+fn host_root_row_from_a_second_install(rooted: &Rooted) -> Vec<u8> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let other = Vault::open(dir.path(), VaultConfig::device()).expect("the second install");
+    other.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let history = stored_history(&rooted.vault);
+    other
+        .import_signed_authority_history(&history)
+        .expect("the second install takes the history");
+    oneiron::test_support::bind_host_actor(&other, &rooted.issuer, EntityId::now(), "agent")
+        .expect("the host root rebinds its key on the second install");
+    let mut signed: Vec<Vec<u8>> = stored_history(&other)
+        .into_iter()
+        .filter(|row| !history.contains(row))
+        .collect();
+    assert_eq!(
+        signed.len(),
+        1,
+        "the second install signed one row, the host root's"
+    );
+    signed.remove(0)
+}
+
+fn stored_history(vault: &Vault) -> Vec<Vec<u8>> {
+    vault
+        .export_signed_authority_history()
+        .expect("the install's history")
+}
+
 fn floored_vault_with_flooder() -> (Rooted, Flooder) {
     let rooted = rooted();
     let flooder = admit_flooder(&rooted);
@@ -378,6 +421,70 @@ fn an_owners_world_edit_past_the_reserve_mints_its_key_on_this_install() {
         matches!(receipt.key_work, KeyWork::Enacted),
         "this install minted the world's key in the edit: {:?}",
         receipt.key_work
+    );
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
+}
+
+#[test]
+fn an_owners_import_past_the_reserve_refuses_whole_and_lands_once_the_floor_is_raised() {
+    let (rooted, flooder) = floored_vault_with_flooder();
+    let owners_row = host_root_row_from_a_second_install(&rooted);
+    let (landed, end) = flood(&rooted, &flooder);
+    let FloodEnd::Waited(held) = end else {
+        panic!(
+            "after {landed} flood rows the flood ended {end:?}: no row waited at the owner \
+             reserve"
+        );
+    };
+    let held_id = authority_log_entity_id(&held).expect("the held row's id");
+    let import = vec![
+        owners_row.clone(),
+        encode_authority_log_entry_body(&held).expect("the held row's body"),
+    ];
+    let refused = rooted
+        .vault
+        .import_signed_authority_history(&import)
+        .expect_err("an import carrying a row past the owner reserve refuses");
+    assert_eq!(
+        refused.kind(),
+        ErrorKind::AuthorityLogFull,
+        "the refusal is typed and retryable: {refused}"
+    );
+    assert!(
+        !stored_history(&rooted.vault).contains(&owners_row),
+        "the import refuses whole: the owner's row does not land either"
+    );
+    assert_eq!(
+        rooted
+            .vault
+            .get_authority_log_entry(&held_id)
+            .expect("read"),
+        None,
+        "the held row does not land"
+    );
+    let checks = rooted.vault.authority_log_checks().expect("the checks");
+    assert!(
+        checks.iter().any(|check| check.kind == OWNER_RESERVE_CHECK),
+        "the owner's typed check names the reserve: {checks:?}"
+    );
+    set_floor(&rooted.vault, 4 * FLOOR_BYTES);
+    rooted
+        .vault
+        .import_signed_authority_history(&import)
+        .expect("the import lands whole under the raised floor");
+    assert!(
+        stored_history(&rooted.vault).contains(&owners_row),
+        "the owner's row lands"
+    );
+    assert_eq!(
+        rooted
+            .vault
+            .get_authority_log_entry(&held_id)
+            .expect("read")
+            .as_ref(),
+        Some(held.as_ref()),
+        "the held row lands"
     );
     let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
