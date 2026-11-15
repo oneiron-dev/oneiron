@@ -27,7 +27,7 @@ use oneiron::note::{
     OriginalBytes,
 };
 use oneiron::test_doors::fingerprint_keep_import_digests as door;
-use oneiron_contracts::fingerprint::{ContentHash, LegacyHash, TagMode, purposes};
+use oneiron_contracts::fingerprint::{LegacyHash, TagMode, purposes};
 use serde_json::{Value, json};
 
 // Not formatted, so each copy stays line for line equal to main's.
@@ -389,9 +389,9 @@ fn the_blob_version_hash_keeps_its_bytes() {
         );
     }
     for body in &bodies {
-        // The head's arm is `*ContentHash::of(bytes).as_bytes()`.
+        // The head's arm, `*ContentHash::of(bytes).as_bytes()`, through its cfg seam.
         assert_eq!(
-            *ContentHash::of(body).as_bytes(),
+            door::blob_version_content_hash(body),
             base_blob::VersionBody::Bytes(body).content_hash(),
             "{} bytes",
             body.len()

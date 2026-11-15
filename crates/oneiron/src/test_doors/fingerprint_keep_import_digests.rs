@@ -1,6 +1,6 @@
 //! Door for `tests/fingerprint_keep_import_digests.rs` (PLAN-UC-04 stage 6.2b): a claim
-//! import batch's and a note import batch's content hash, and a history message's hash,
-//! which the engine computes in private code.
+//! import batch's and a note import batch's content hash, a history message's hash, and a
+//! blob version's content hash, which the engine computes in private code.
 
 /// The content hash of a claim import batch.
 ///
@@ -27,4 +27,10 @@ pub fn history_message_hash(
     unknown_speaker: bool,
 ) -> String {
     crate::ingest::history::history_message_hash_for_test(message, unknown_speaker)
+}
+
+/// The content hash of a blob version whose body is held in memory.
+#[must_use]
+pub fn blob_version_content_hash(bytes: &[u8]) -> [u8; 32] {
+    crate::blob_artifact::version_content_hash_for_test(bytes)
 }

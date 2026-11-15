@@ -51,6 +51,12 @@ pub(super) const HEAD: SideTable<EntityId, BlobArtifactVersion, Raw> =
 const HIGHWATER: SideTable<EntityId, [u8; 8], Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_HIGHWATER);
 
+/// The content hash of a version whose body is held in memory.
+#[cfg(oneiron_test_support)]
+pub(crate) fn version_content_hash_for_test(bytes: &[u8]) -> [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN] {
+    VersionBody::Bytes(bytes).content_hash()
+}
+
 /// The bytes one appended version holds: a slice, or a body staged from a
 /// reader before the append writes anything (FIX 12091).
 #[derive(Clone, Copy)]

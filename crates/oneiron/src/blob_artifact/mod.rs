@@ -113,6 +113,8 @@ pub use self::verbs::{
 pub(crate) use self::versions::RoomResponseVersion;
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::versions::version_content_hash_for_test;
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
 // minted/bound in the merge-queue finish writer; the MQ child names these via
 // this BLOB parent alias, never via the private versions child path.
