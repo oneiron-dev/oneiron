@@ -1,5 +1,6 @@
 //! One Scope: six-axis audience lattice with explicit bottom on every wire axis.
 use crate::EntityId;
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeSet;
 
@@ -148,8 +149,10 @@ impl<T: ScopeAtom> ScopeAxis<T> {
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("sensitivity")]
 pub enum Sensitivity {
     Public,
     Private,
@@ -159,23 +162,8 @@ pub enum Sensitivity {
 
 impl Sensitivity {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Public => "public",
-            Self::Private => "private",
-            Self::Sensitive => "sensitive",
-            Self::Restricted => "restricted",
-        }
-    }
-    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "public" => Some(Self::Public),
-            "private" => Some(Self::Private),
-            "sensitive" => Some(Self::Sensitive),
-            "restricted" => Some(Self::Restricted),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
