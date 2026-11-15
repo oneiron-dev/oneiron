@@ -133,6 +133,26 @@ async fn list(server: &Arc<SyncServer>, path: &str) -> Value {
     value
 }
 
+/// Every text part of every message in a fake-seen request body, in order: a
+/// message's content may be one string or a list of parts.
+fn seen_texts(request: &Value) -> Vec<String> {
+    let mut texts = Vec::new();
+    if let Some(messages) = request["messages"].as_array() {
+        for message in messages {
+            if let Some(text) = message["content"].as_str() {
+                texts.push(text.to_owned());
+            } else if let Some(parts) = message["content"].as_array() {
+                for part in parts {
+                    if let Some(text) = part["text"].as_str() {
+                        texts.push(text.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    texts
+}
+
 #[tokio::test]
 async fn dag_routes_roundtrip_trunk_thread_fork_scope_migration_and_auth() {
     let (_dir, server, actor) = setup();
@@ -308,10 +328,58 @@ async fn dag_addressing_route_validates_recipients_without_limiting_listing() {
 
 #[tokio::test]
 async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply() {
-    let reply = Reply::Text {
-        text: "the Dreamer's summary".to_owned(),
-        model: "test-model".to_owned(),
-    };
+    // A sitting's summary call answers in lines citing the call-local T
+    // labels its records show (FIX 7509); anything else on this one-model
+    // fake (a Micro round's extraction) is answered with no candidates.
+    let reply = Reply::Computed(Arc::new(move |request: &Value| {
+        let texts = seen_texts(request);
+        if !texts
+            .iter()
+            .any(|text| text.contains("Summarize these records."))
+        {
+            return json!({"candidates": []}).to_string();
+        }
+        let mut labels: Vec<String> = Vec::new();
+        let mut page_index = 0_u64;
+        for text in texts.iter().rev() {
+            let Ok(input) = serde_json::from_str::<Value>(text) else {
+                continue;
+            };
+            let Some(records) = input.get("records").and_then(Value::as_str) else {
+                continue;
+            };
+            page_index = input["page"]["index"].as_u64().unwrap_or(0);
+            // The T labels the records show, in first-seen order: `[T1] ..`.
+            let bytes = records.as_bytes();
+            let mut i = 0;
+            while i + 3 <= bytes.len() {
+                if bytes[i] == b'[' && bytes[i + 1] == b'T' {
+                    let mut j = i + 2;
+                    while j < bytes.len() && bytes[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    if j > i + 2 && j < bytes.len() && bytes[j] == b']' {
+                        let label = &records[i + 1..j];
+                        if !labels.iter().any(|seen| seen == label) {
+                            labels.push(label.to_owned());
+                        }
+                        i = j + 1;
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+            break;
+        }
+        // Past the first page a page writes no line; the first page's line
+        // (or the one call's) is the body the test reads back.
+        let lines = if page_index <= 1 {
+            vec![json!({"text": "the Dreamer's summary", "turn_refs": labels})]
+        } else {
+            Vec::new()
+        };
+        json!({"lines": lines, "keep": ""}).to_string()
+    }));
     let fake = FakeLlm::start(vec![], Some(reply)).await;
     let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
     let conv = post(
@@ -675,7 +743,9 @@ async fn a_summary_declaration_without_a_dreamer_is_refused() {
         json!({"advance": true, "body": {"txt": "root"}, "actor": actor}),
     )
     .await;
-    let request = json!({"scope": {"path": {"branch_span": {"after": root["id"], "through": root["id"]}}}, "actor": actor});
+    // The scope must resolve before the declaration reaches the writer gate
+    // (FIX 2951); an empty branch span is refused as a misshapen scope.
+    let request = json!({"scope": {"path": "canonical"}, "actor": actor});
     let (status, body) = route_json(
         server.clone(),
         json_request("POST", &format!("{path}/summaries"), request),
@@ -786,8 +856,10 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
 
 #[tokio::test]
 async fn thread_meta_and_summary_routes_roundtrip() {
+    // Thread and canonical summaries answer in the typed text/keep contract
+    // (OF-028): the body the test reads back is the reply's text.
     let reply = Reply::Text {
-        text: "thread summary".to_owned(),
+        text: json!({"text": "thread summary", "keep": ""}).to_string(),
         model: "test-model".to_owned(),
     };
     let fake = FakeLlm::start(vec![], Some(reply)).await;
@@ -1208,8 +1280,10 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
 /// not that reply (review repros).
 #[tokio::test]
 async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
+    // Canonical summaries answer in the typed text/keep contract (OF-028):
+    // the body the test reads back is the reply's text.
     let reply = Reply::Text {
-        text: "summary prose one".to_owned(),
+        text: json!({"text": "summary prose one", "keep": ""}).to_string(),
         model: "test-model".to_owned(),
     };
     let fake = FakeLlm::start(vec![], Some(reply)).await;
@@ -1306,12 +1380,52 @@ async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
 async fn the_dreamers_extraction_and_narrative_roles_call_their_own_providers_under_their_own_runs()
 {
     use oneiron::llm::run_admission::{MemoryReceipts, RunEvent};
+    // Extraction-role work is two shapes now (FIX 7510): a Micro round's
+    // extraction, and the sieve follower's batched readings over the spans
+    // its question lists. Each answers in its own contract.
     let extractor = FakeLlm::start(
         vec![],
-        Some(Reply::text(json!({"candidates": []}).to_string())),
+        Some(Reply::Computed(Arc::new(move |request: &Value| {
+            let texts = seen_texts(request);
+            if texts
+                .first()
+                .is_some_and(|text| text.starts_with("Extract durable memory claims"))
+            {
+                return json!({"candidates": []}).to_string();
+            }
+            // The follower's question is the last part that parses as one:
+            // every span it lists is read back, unlinked, as its own kind.
+            let mut readings = Vec::new();
+            for text in texts.iter().rev() {
+                let Ok(question) = serde_json::from_str::<Value>(text) else {
+                    continue;
+                };
+                let Some(spans) = question.get("spans").and_then(Value::as_array) else {
+                    continue;
+                };
+                for span in spans {
+                    readings.push(json!({
+                        "span": span.get("span").cloned().unwrap_or(Value::Null),
+                        "kind": span.get("kind").cloned().unwrap_or(Value::Null),
+                        "novel": span.get("novel").and_then(Value::as_bool).unwrap_or(false),
+                        "confidence": span.get("confidence").cloned().unwrap_or(Value::Null),
+                        "entity": Value::Null,
+                    }));
+                }
+                break;
+            }
+            json!({"readings": readings}).to_string()
+        }))),
     )
     .await;
-    let narrator = FakeLlm::start(vec![], Some(Reply::text("thread summary"))).await;
+    // Thread summaries answer in the typed text/keep contract (OF-028).
+    let narrator = FakeLlm::start(
+        vec![],
+        Some(Reply::text(
+            json!({"text": "thread summary", "keep": ""}).to_string()
+        )),
+    )
+    .await;
     let (_dir, vault) = rooted_vault();
     route_extraction(&vault);
     let models = crate::ai_host::test_support::models_toml(&format!(
