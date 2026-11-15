@@ -7,8 +7,9 @@
 //! lifted-key masking exactly, so no span is refused and none falls back.
 
 use super::BoundBranchRead;
+use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
-use crate::claim::ScopedRead;
+use crate::claim::{ClaimSource, ScopedRead};
 use crate::dreamer_consolidation::TurnText;
 use crate::dreamer_consolidation::evidence::{
     EvidenceLocator, EvidenceReader, ExtractedCandidate, VerifiedCandidate,
@@ -215,16 +216,30 @@ impl BoundBranchRead {
         checked: &PromotionCandidate,
         now_ms: u64,
     ) -> MemoryResult<VerifiedCandidate> {
+        let (occurred, learned_at) =
+            crate::dreamer_consolidation::executor::extraction::claim_times(now_ms);
+        let mut stamped = checked.clone();
+        stamped.occurred = occurred;
+        stamped.learned_at = learned_at;
+        self.verify_observation_evidence_in_txn(memory, read, txn, operand, &stamped)
+    }
+    /// Verifies one observation operand's evidence against this projection in the caller transaction.
+    /// Whole turns bind whole stored text while unmasked ranges bind directly.
+    /// Masked ranges map from served coordinates to stored coordinates exactly with no fallback.
+    /// The checked proposal verifies as is with no clock stamp, so rebuilds without a frozen clock share one rule.
+    pub(crate) fn verify_observation_evidence_in_txn(
+        &self,
+        memory: &Memory<'_>,
+        read: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        operand: &CandidateOperand,
+        checked: &PromotionCandidate,
+    ) -> MemoryResult<VerifiedCandidate> {
         let mut locators = Vec::with_capacity(operand.evidence.len());
         for evidence in &operand.evidence {
             locators.push(self.stored_locator_in_txn(memory, read, txn, evidence)?);
         }
-        let (occurred, learned_at) =
-            crate::dreamer_consolidation::executor::extraction::claim_times(now_ms);
-        let mut proposal = checked.clone();
-        proposal.occurred = occurred;
-        proposal.learned_at = learned_at;
-        let extracted = ExtractedCandidate::new(proposal, locators)
+        let extracted = ExtractedCandidate::new(checked.clone(), locators)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         let reader = BoundEvidenceReader {
             bound: self,
@@ -235,6 +250,27 @@ impl BoundBranchRead {
             &reader, extracted,
         )
         .map_err(|error| MemoryError::bad_request(error.to_string()))
+    }
+    /// Reads a verified candidate's evidence meet and observed-preference qualification in the caller transaction.
+    /// The meet folds from the verified evidence set exactly as native verification folds it.
+    /// A generated meet with a preference predicate qualifies only when the verified refs hold observed-preference support.
+    /// Proposal times play no role here, so stamped and stamp-free verification share this one rule.
+    pub(crate) fn observation_qualification_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        candidate: &VerifiedCandidate,
+    ) -> MemoryResult<(ClaimSource, bool)> {
+        let meet = candidate.evidence.meet();
+        let predicate =
+            crate::dreamer_consolidation::candidate_probe_body(&candidate.candidate)?.predicate;
+        let observed = meet == ClaimSource::Generated
+            && crate::claim::is_preference_predicate(&predicate)
+            && crate::claim::observed_preference_support_in_txn(
+                vault,
+                txn,
+                &candidate.evidence.refs(),
+            )?;
+        Ok((meet, observed))
     }
     /// Binds one turn evidence to its stored locator in the caller transaction.
     /// Whole turns cover whole stored text while spans map exactly when masked.

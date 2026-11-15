@@ -81,7 +81,8 @@ fn check_extraction_request(input: &AiVerdictRequest, pack: &ExtractionPack) -> 
     }
 }
 
-/// Bounds each unbounded native row collection by the native decision state bound.
+/// Bounds each unbounded native row collection and the conflict selector by the native
+/// decision state bound.
 fn check_pack_bounds(pack: &ExtractionPack) -> MemoryResult<()> {
     let lengths = [
         pack.candidates.len(),
@@ -89,6 +90,7 @@ fn check_pack_bounds(pack: &ExtractionPack) -> MemoryResult<()> {
         pack.priors.len(),
         pack.questions.len(),
         pack.earlier.len(),
+        pack.set_members.as_ref().map_or(0, Vec::len),
     ];
     if lengths
         .iter()
