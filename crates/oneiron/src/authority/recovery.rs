@@ -16,7 +16,7 @@ impl Vault {
     /// All of that, including the vault identity used for derivation, shares one
     /// write transaction. An error commits no recovery or frontier join.
     /// A host root lost with its seed recovers through
-    /// [`Self::recover_host_root_from_kit`] instead, which carries what the
+    /// [`Self::recover_host_root_to_new_seed`] instead, which carries what the
     /// vault needs under a new host root.
     pub fn recover_owner_authority_from_kit(
         &self,

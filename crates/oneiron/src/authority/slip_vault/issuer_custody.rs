@@ -69,6 +69,21 @@ fn seed_absent() -> Error {
     Error::Secret(SecretError::KeystoreUnavailable(HOST_ISSUER_SEED_ABSENT))
 }
 
+/// One host root move at a time in this process. A move reads this
+/// install's slot, writes its successor seed there, moves the root, and on a
+/// failure puts back the slot it read; two moves interleaved would let the
+/// losing one's put-back delete or overwrite the winner's live seed. Across
+/// processes, the vault's writer lease admits one opener at a time.
+static HOST_ROOT_MOVES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Takes [`HOST_ROOT_MOVES`] for one move. A move that panicked while
+/// holding it left the slot in an unknown state, so the next one refuses.
+fn lock_host_root_moves() -> Result<std::sync::MutexGuard<'static, ()>> {
+    HOST_ROOT_MOVES
+        .lock()
+        .map_err(|_| Error::InvariantViolation("host root move lock poisoned"))
+}
+
 /// What [`Vault::recover_host_issuer_seed`] found in this install's slot.
 enum HostIssuerSeedRecovery {
     /// The slot holds a seed, read and left as it is: its issuer.
@@ -132,6 +147,7 @@ impl Vault {
     /// re-root that then fails puts the seed read back. A keystore with no
     /// in-place replace keeps nothing and moves nothing.
     pub fn re_root_host_to_new_seed(&self, current: &HostSlipIssuer) -> Result<HostReRoot> {
+        let _moving = lock_host_root_moves()?;
         let keystore = self.device_keystore()?;
         let slot = self.host_issuer_slot()?;
         let kept = keystore
@@ -166,13 +182,15 @@ impl Vault {
     /// Recovers this vault's root on this install after its seed is lost
     /// (L1-07; OF-570): a successor seed drawn here takes this install's
     /// slot, and the restored kit's enrolled authority key moves the root to
-    /// it ([`Self::recover_host_root_from_kit`]). Refused before any draw
+    /// it (`Self::recover_host_root_from_kit`). Refused before any draw
     /// when the slot holds the live root's seed, one the escrow gave back at
     /// keystore install included: that root moves by re-root. An empty slot
     /// is filled create-only; a slot holding a retired seed is replaced in
     /// place. A recovery that then fails leaves the slot as it was: emptied
-    /// again, or its retired seed put back.
+    /// again, or its retired seed put back. One root move runs at a time in
+    /// this process, this and a re-root alike.
     pub fn recover_host_root_to_new_seed(&self, secret: RestoredKitSecret) -> Result<HostReRoot> {
+        let _moving = lock_host_root_moves()?;
         let keystore = self.device_keystore()?;
         let slot = self.host_issuer_slot()?;
         let kept = keystore.get(&slot).map_err(keystore_error)?;

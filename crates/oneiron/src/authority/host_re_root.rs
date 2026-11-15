@@ -11,8 +11,8 @@
 //!
 //! When the root's seed is lost and its escrow gives none back, the same move
 //! is signed by the recovery kit's authority key the owner enrolled before the
-//! loss ([`Vault::recover_host_root_from_kit`]; L1-07, OF-570): one move body
-//! for both signers.
+//! loss ([`Vault::recover_host_root_to_new_seed`]; L1-07, OF-570): one move
+//! body for both signers.
 use super::slip_vault::require_host;
 use super::*;
 use crate::claim::HandoffKind;
@@ -149,8 +149,10 @@ impl Vault {
     /// managed recovery rides account auth (identity.md
     /// `#cloud-agent-recovery`). The move retires the kit's key with every
     /// other key (L1-07-KIT-AFTER-MOVE = B). An error always means nothing
-    /// moved, which [`Self::recover_host_root_to_new_seed`] relies on.
-    pub fn recover_host_root_from_kit(
+    /// moved, which [`Self::recover_host_root_to_new_seed`] relies on. Crate
+    /// private: that wrapper is the one way in, so its refusal while this
+    /// install holds the live root always runs first.
+    pub(crate) fn recover_host_root_from_kit(
         &self,
         secret: RestoredKitSecret,
         next: &HostSlipIssuer,

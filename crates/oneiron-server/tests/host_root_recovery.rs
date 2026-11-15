@@ -420,9 +420,12 @@ fn a_lost_host_root_recovers_with_the_enrolled_kit_and_keeps_the_vault_id() {
     assert!(next.contains("token agent"), "{moved:#}");
     assert!(next.contains("enroll-authority"), "{moved:#}");
 
-    // The same vault under the new root: this install mints again.
+    // The same vault under the new root: this install mints again. Agent B
+    // is another principal, so its mint revokes none of agent A's slips: A's
+    // slip stops working only because the move retired the root that minted
+    // it.
     assert_eq!(host.vault_id(NEW), vault_id);
-    let agent_b = json(host.oneiron(&["token", "agent", "--name", "claude-code"], NEW));
+    let agent_b = json(host.oneiron(&["token", "agent", "--name", "codex"], NEW));
 
     let link = host.bootstrap_link(NEW);
     let server = host.serve(NEW, "serve-after");
