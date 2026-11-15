@@ -1,5 +1,6 @@
 pub mod export;
 pub(crate) mod secret_scan;
+pub(crate) mod setting_keys;
 
 mod actor_content;
 mod agent_definition_create;

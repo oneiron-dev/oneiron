@@ -682,7 +682,11 @@ async fn set_secret_scan(
     let request = payload.read(&server).await?;
     let receipt = blocking(move || {
         let vault = server.vault();
-        Ok(vault.set_secret_scan_mode(&owner, request.mode, vault.now_recorded_at())?)
+        Ok(crate::owner::secrets::switch_secret_scan(
+            vault,
+            &owner,
+            request.mode,
+        )?)
     })
     .await?;
     Ok(Json(receipt))

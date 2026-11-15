@@ -212,9 +212,6 @@ crate::side_table::side_tables! {
     /// Owner policy-row change receipt, in sequence order. Key: u64be sequence.
     OWNER_POLICY_CHANGE_RECEIPT: VaultMeta b"owner_policy:change:receipt:v1:" Raw Admitted
         [restore: live] [family: unclassified] [tier: canonical];
-    /// The owner's `secrets: on | off` switch for the write-door secret scan. Key: ().
-    OWNER_POLICY_SECRET_SCAN_MODE: VaultMeta b"owner_policy:secret_scan:mode:v1" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// One claim the owner's whole-vault restore inserted as Proposed: a member of that
     /// restore's inbox group. Only the owner restore door writes it. Key: hex32 (restore
     /// receipt) ":" hex32 (claim).

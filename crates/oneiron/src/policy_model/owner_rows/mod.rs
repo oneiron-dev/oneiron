@@ -19,6 +19,7 @@ pub use notifications::{
     PolicyNotificationTarget,
 };
 pub use secret_scan_switch::SecretScanReceipt;
+pub(crate) use secret_scan_switch::secret_scan_switched_in_txn;
 pub use world_placement_switch::{WorldMachinePlacement, machine_placement_settings};
 pub use world_privacy_switch::WorldPrivacyReceipt;
 pub use world_privacy_will::{

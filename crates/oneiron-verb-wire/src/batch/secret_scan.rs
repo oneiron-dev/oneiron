@@ -9,9 +9,9 @@ pub use crate::batch::secret_scan::lift_history::SecretLiftClose;
 pub use crate::batch::secret_scan::lift_history::SecretLiftRequest;
 
 /// The vault's `secrets` setting: whether the write door scans what a host
-/// writes into this vault for credential shapes. On by default; only the
-/// vault owner switches it, and every switch writes a receipt
-/// (`Vault::set_secret_scan_mode`).
+/// writes into this vault for credential shapes. On by default; the vault
+/// owner switches it (the engine's catalogue key `secret_scan.mode`), and
+/// every switch is a setting change row.
 /// Serve and export redact credentials in both modes.
 #[derive(
     Debug,
@@ -34,4 +34,7 @@ pub enum SecretScanMode {
     /// The write door does not scan; serve and export still redact.
     Off,
 }
+
+/// The engine's catalogue key `secret_scan.mode` holds the switch.
+impl oneiron_setting_contract::SettingValue for SecretScanMode {}
 pub mod lift_history;

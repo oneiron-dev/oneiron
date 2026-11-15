@@ -12,7 +12,7 @@ mod shapes;
 mod whole_read;
 use oneiron_store::batch::secret_scan::wordlist;
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
@@ -74,7 +74,7 @@ use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
-use crate::side_table::{self, Named, SideTable, SideTableDbs};
+use crate::side_table::SideTableDbs;
 use crate::store::Store;
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";
@@ -92,29 +92,17 @@ const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_ov
 #[doc(hidden)]
 pub use oneiron_verb_wire::batch::secret_scan::SecretScanMode;
 
-/// The owner's switch row. Key: ().
-const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
-    SideTable::new(&side_table::OWNER_POLICY_SECRET_SCAN_MODE);
-
-/// The switch as the write door reads it. An absent row reads as on, and so
-/// does a row that does not decode: the scan fails closed.
+/// The switch as the write door reads it: the catalogue key
+/// `secret_scan.mode`, which the owner sets through `vault.settings.set`. An
+/// absent row reads as on, and so does a row that does not decode (the key's
+/// default and strictest value): the scan fails closed.
 pub(crate) fn secret_scan_mode_in_txn(
     store: &impl SideTableDbs,
     txn: &RoTxn<'_>,
 ) -> Result<SecretScanMode> {
-    Ok(SECRET_SCAN_MODE
-        .get_lenient(store, txn, &())?
-        .unwrap_or_default())
-}
-
-/// Stores the switch. The owner door that calls this checks the owner and
-/// writes the receipt in the same transaction.
-pub(crate) fn put_secret_scan_mode_in_txn(
-    store: &impl SideTableDbs,
-    txn: &mut RwTxn<'_>,
-    mode: SecretScanMode,
-) -> Result<()> {
-    SECRET_SCAN_MODE.put(store, txn, &(), &mode)
+    Ok(super::setting_keys::SECRET_SCAN_MODE
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value)
 }
 
 /// The batch write door: every entity put, claim candidate, text field and

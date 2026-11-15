@@ -1,28 +1,30 @@
 //! The owner's `secrets: on | off` switch for the write-door secret scan.
 //!
-//! The switch is a vault setting held in this vault's metadata, read inside
-//! every batch write transaction. Only a live vault owner changes it, and each
-//! change lands its receipt and a typed event in the same transaction.
+//! The switch is the catalogue key `secret_scan.mode`, read inside every
+//! batch write transaction. The owner changes it through `vault.settings.set`
+//! (any other caller proposes). Each applied change lands its setting change
+//! row and a typed event in the same transaction, and those change rows are
+//! the switch's change log.
 
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
 use crate::Vault;
 use crate::batch::secret_scan::{
-    LiftTrigger, SecretScanMode, enqueue_lift_in_txn, put_secret_scan_mode_in_txn,
-    secret_scan_mode_in_txn,
+    LiftTrigger, SecretScanMode, enqueue_lift_in_txn, secret_scan_mode_in_txn,
 };
-use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, GateError, Result};
+use crate::batch::setting_keys::SECRET_SCAN_MODE;
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
 use crate::gate::PolicyRowScope;
-use crate::side_table::{self, Named, SideTable};
+use crate::setting::{EncodedValue, SettingChange, SettingMode, settings_after_in_txn};
 
 /// Event kind on the shared owner-policy stream for a switch change.
 const SECRET_SCAN_CHANGED: &str = "policy.secret_scan.changed";
 
+/// How many setting change rows one page of the change log reads.
+const CHANGE_LOG_PAGE: usize = 256;
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::policy_model::owner_rows::secret_scan_switch::SecretScanReceipt;
-
-const RECEIPTS: SideTable<u64, SecretScanReceipt, Named> =
-    SideTable::new(&side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT);
 
 impl Vault {
     /// The vault's `secrets` setting. On unless the owner switched it off.
@@ -31,83 +33,92 @@ impl Vault {
         secret_scan_mode_in_txn(&self.store, &txn)
     }
 
-    /// Switches the write-door secret scan for this vault.
-    ///
-    /// Off skips the ingest scan on batch writes and staged sources; serve and
-    /// export redaction run in both modes. Only a live vault owner may switch
-    /// it (an Admin or Delegate may not, whatever grants it holds). The new
-    /// mode, its receipt and a `policy.secret_scan.changed` event commit in
-    /// one transaction; a call that keeps the current mode is receipted too.
-    /// Off to on also queues a historical lift run in that transaction
-    /// ([`Vault::start_secret_lift`]), for what was stored while it was off.
+    /// Every change of the switch, oldest first: the setting change rows of
+    /// `secret_scan.mode`, each numbered by its place among them.
     ///
     /// # Errors
-    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof belongs to
-    /// another vault, its person is no longer live, or the actor is not an
-    /// owner of this vault.
-    pub fn set_secret_scan_mode(
-        &self,
-        owner: &AuthenticatedOwner,
-        mode: SecretScanMode,
-        now: u64,
-    ) -> Result<SecretScanReceipt> {
-        let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self, &txn)?;
-        if !super::authority::owners_in_txn(self, &txn)?.contains(&actor) {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "only the vault owner switches the secret scan",
-            )));
-        }
-        let previous = secret_scan_mode_in_txn(&self.store, &txn)?;
-        let last = RECEIPTS
-            .iter_rev_from(&self.store, &txn, &[])?
-            .next()
-            .transpose()?
-            .map(|(revision, _)| revision);
-        let revision = match last {
-            None => 1,
-            Some(revision) => revision.checked_add(1).ok_or(Error::InvariantViolation(
-                "secret scan receipt revision overflow",
-            ))?,
-        };
-        let receipt = SecretScanReceipt {
-            receipt_id: self.store.clock.entity_id()?.to_hex(),
-            revision,
-            author: actor.to_hex(),
-            mode,
-            previous,
-            at: now,
-        };
-        put_secret_scan_mode_in_txn(&self.store, &mut txn, mode)?;
-        if previous == SecretScanMode::Off && mode == SecretScanMode::On {
-            enqueue_lift_in_txn(&self.store, &mut txn, LiftTrigger::Switch, Some(actor), now)?;
-        }
-        RECEIPTS.put(&self.store, &mut txn, &revision, &receipt)?;
-        put_event_in_txn(
-            self,
-            &mut txn,
-            &PolicyChangedEvent {
-                kind: SECRET_SCAN_CHANGED.to_owned(),
-                receipt_id: receipt.receipt_id.clone(),
-                author: receipt.author.clone(),
-                scope: Some(PolicyRowScope::Vault),
-                target: None,
-                at: now,
-            },
-        )?;
-        txn.commit()?;
-        Ok(receipt)
-    }
-
-    /// Every switch change in revision order.
+    ///
+    /// Storage errors.
     pub fn secret_scan_change_log(&self) -> Result<Vec<SecretScanReceipt>> {
         let txn = self.store.env.read_txn()?;
-        Ok(RECEIPTS
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(_, receipt)| receipt)
-            .collect())
+        let mut receipts = Vec::new();
+        let mut after = None;
+        loop {
+            let (changes, through) =
+                settings_after_in_txn(&self.store, &txn, after, CHANGE_LOG_PAGE)?;
+            for change in changes
+                .iter()
+                .filter(|change| change.key == SECRET_SCAN_MODE.spec.name)
+            {
+                let revision = u64::try_from(receipts.len())
+                    .ok()
+                    .and_then(|count| count.checked_add(1))
+                    .ok_or(Error::ArithmeticOverflow("secret scan change revision"))?;
+                receipts.push(receipt_of(change, revision));
+            }
+            match through {
+                Some(sequence) => after = Some(sequence),
+                None => break,
+            }
+        }
+        Ok(receipts)
     }
+}
+
+/// One change row of the switch as its change log shows it.
+fn receipt_of(change: &SettingChange, revision: u64) -> SecretScanReceipt {
+    SecretScanReceipt {
+        receipt_id: change.id.to_hex(),
+        revision,
+        author: change.by.as_ref().map(EntityId::to_hex).unwrap_or_default(),
+        mode: mode_of(change.value.as_ref()),
+        previous: mode_of(change.prior.as_ref()),
+        at: change.at,
+    }
+}
+
+/// A row's mode: no row, or one that does not decode, reads on.
+fn mode_of(value: Option<&EncodedValue>) -> SecretScanMode {
+    value
+        .and_then(EncodedValue::decode::<SecretScanMode>)
+        .unwrap_or_default()
+}
+
+/// The `secret_scan.mode` key's hook, in the write of each applied change:
+/// the `policy.secret_scan.changed` event on the owner-policy stream, named by
+/// the change's id, and, when the switch goes from off back to on, a
+/// historical lift run ([`Vault::start_secret_lift`]) for what was stored
+/// while it was off.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn secret_scan_switched_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    let on_now = secret_scan_mode_in_txn(&vault.store, txn)? == SecretScanMode::On;
+    // A pin set over no pin covers a value row this hook does not read, which
+    // may hold off.
+    let was_off = change.prior.as_ref().map(|prior| mode_of(Some(prior)))
+        == Some(SecretScanMode::Off)
+        || (change.mode == SettingMode::Pin && change.prior.is_none());
+    if on_now && was_off {
+        enqueue_lift_in_txn(&vault.store, txn, LiftTrigger::Switch, change.by, change.at)?;
+    }
+    put_event_in_txn(
+        vault,
+        txn,
+        &PolicyChangedEvent {
+            kind: SECRET_SCAN_CHANGED.to_owned(),
+            receipt_id: change.id.to_hex(),
+            author: change.by.as_ref().map(EntityId::to_hex).unwrap_or_default(),
+            scope: Some(PolicyRowScope::Vault),
+            target: None,
+            at: change.at,
+        },
+    )
 }
 
 #[cfg(test)]

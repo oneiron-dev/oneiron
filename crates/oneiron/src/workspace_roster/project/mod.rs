@@ -45,6 +45,7 @@ mod resolution;
 mod result_header;
 mod revision;
 mod roster;
+pub(crate) mod setting_keys;
 mod validity;
 mod widen;
 pub use asks::ProjectAsk;

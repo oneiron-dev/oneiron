@@ -540,7 +540,7 @@ retention; copies the owner kept remain readable.
 
 ```sh
 oneiron secret-scan            # current setting and every change to it
-oneiron secret-scan off        # owner only; writes a receipt
+oneiron secret-scan off        # owner only; one change of the setting secret_scan.mode
 oneiron secret-scan on
 ```
 
@@ -550,8 +550,13 @@ custody, and the record keeps its handle in its place: `[secret sc12]` inside te
 field's whole value. The rest of the write lands. A recovery phrase, a key inside a binary file
 and anything else the door finds but cannot place still refuse the whole write.
 `off` skips the write-door scan on ingest. Serve and export still redact credentials either
-way. Each change is receipted with its revision, the owner who made it and the previous
-setting. Only a live owner of the vault can switch it.
+way. The switch is the setting `secret_scan.mode`, so `vault.settings.set` switches it too.
+Only a live owner of the vault switches it outright; anyone else's change waits on the owner's
+check-in, unless the owner's Grant hands that agent this one key. Each change is a setting change
+row, shown here with its revision (its place among the switch's changes), who made it and the
+previous setting. Switching it to the mode it already holds records nothing new, and the answer
+is the change that set it. Switching it back on queues a historical lift run for what was stored
+while it was off.
 
 ## Reveal a secret by its handle
 

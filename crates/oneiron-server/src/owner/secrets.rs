@@ -765,3 +765,43 @@ pub(crate) fn sign_with_anchor(
         signed,
     })
 }
+
+/// The owner switches the write-door secret scan (the catalogue key
+/// `secret_scan.mode`) through the Setting door, as `vault.settings.set`
+/// does, and gets the switch's change-log row for the mode now in force: the
+/// change just made, or, when the switch already held that mode, the change
+/// that set it. Switching back on queues the historical lift run in the same
+/// write (the key's hook).
+///
+/// # Errors
+///
+/// As `Vault::set_setting`; `InvariantViolation` when the change waits on a
+/// check-in, or when the switch holds the mode with no change row recording
+/// it (a row a sync or a restore brought, set again to the same mode).
+pub(crate) fn switch_secret_scan(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    mode: oneiron::policy_model::SecretScanMode,
+) -> Result<oneiron::policy_model::SecretScanReceipt, oneiron::Error> {
+    use oneiron::policy_model::SecretScanMode;
+    use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+    let value = match mode {
+        SecretScanMode::On => "on",
+        SecretScanMode::Off => "off",
+    };
+    let outcome = vault.set_setting(
+        SettingCaller::Owner(owner),
+        SetSetting::vault_value("secret_scan.mode", serde_json::json!(value)),
+    )?;
+    if let SetSettingOutcome::Pending { .. } = outcome {
+        return Err(oneiron::Error::InvariantViolation(
+            "an owner's switch of the secret scan waits on no check-in",
+        ));
+    }
+    vault
+        .secret_scan_change_log()?
+        .pop()
+        .ok_or(oneiron::Error::InvariantViolation(
+            "the secret scan switch holds a mode no change row records",
+        ))
+}
