@@ -369,7 +369,8 @@ fn executor_config_hash(
 /// [`executor_config_hash`] over what it reads of the storage: the session
 /// ref of a session binding and the route target. The config marker stores
 /// its hex, so it keeps its bytes (K, PLAN-UC-04 3.4b): each field a u64
-/// big-endian length and its bytes.
+/// big-endian length and its bytes, but the frozen time, its 8 big-endian
+/// bytes with no length (`hash_u64`).
 fn executor_config_hash_for_binding(
     session_ref: Option<&str>,
     route_target: Option<RouteTarget>,

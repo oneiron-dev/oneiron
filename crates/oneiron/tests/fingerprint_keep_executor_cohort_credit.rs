@@ -334,10 +334,7 @@ fn config(task: &str) -> EngineExecutorConfig {
         model_locality: ModelLocality::OnDevice,
         seat_effort: None,
         global_tier: ModelTierRef("standard".to_owned()),
-        determinism: CodeRunDeterminism {
-            frozen_unix_ms: 1_700_000_000_000,
-            rng_seed: [0xab; CODE_RUN_RNG_SEED_LEN],
-        },
+        determinism: CodeRunDeterminism::new(1_700_000_000_000, [0xab; CODE_RUN_RNG_SEED_LEN]),
         limits: EngineExecutorLimits::default(),
         wake: None,
     }
@@ -368,18 +365,12 @@ fn configs() -> Vec<EngineExecutorConfig> {
         run_id: id(0x22),
         model: ModelId::new("anthropic/claude-test@2026-01-01").expect("a valid model id"),
         global_tier: ModelTierRef(String::new()),
-        determinism: CodeRunDeterminism {
-            frozen_unix_ms: 0,
-            rng_seed: [0; CODE_RUN_RNG_SEED_LEN],
-        },
+        determinism: CodeRunDeterminism::new(0, [0; CODE_RUN_RNG_SEED_LEN]),
         ..config("task")
     });
     configs.push(EngineExecutorConfig {
         global_tier: ModelTierRef("x".repeat(300)),
-        determinism: CodeRunDeterminism {
-            frozen_unix_ms: u64::MAX,
-            rng_seed: [0xff; CODE_RUN_RNG_SEED_LEN],
-        },
+        determinism: CodeRunDeterminism::new(u64::MAX, [0xff; CODE_RUN_RNG_SEED_LEN]),
         ..config("task")
     });
     configs
