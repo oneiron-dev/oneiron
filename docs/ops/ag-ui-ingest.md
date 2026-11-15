@@ -108,7 +108,9 @@ JSON `initial_state`, `preconditions` (JSON-pointer equality checks on that
 snapshot), `intent`, `input`, `tools`, `allowed_actions`, and a `grader`.
 
 - `world: text_response` executes no tools: `tools` must be empty, the only
-  allowed action is `respond`, and the grader is `observed_response_equals`.
+  allowed action is `respond`, and the grader is `observed_response_equals`, or
+  `adjudicated_response` when the app's outcome is no usable answer (see the
+  seeds below: the check is then an adjudicated audit label).
 - `world: {json_state_tools: {tools: [...]}}` (census L1-20, ruling
   L1-20-TOOLWORLD = B) declares pure tools over the state, each a `name` and one
   `effect` at a JSON pointer the declaration fixes: `set` writes the call's
@@ -181,6 +183,20 @@ value is the outcome's BLAKE3 hex and whose reference is
 `ag_ui:<claim>:<source_hash>#outcome/<ordinal>`; the seed is `confirmed`.
 Otherwise it is `refused` (`old_passed` or `candidate_failed`) and no case exists,
 so nothing derives from it. A sealed family never feeds training.
+
+An `adjudicated_response` task compiles with no observed answer, so its seed is
+proposed `awaiting_label`, and the gate grades nothing until
+`Memory::label_eval_repair_seed` lands its label. Only an `adjudicated_audit`
+label is taken (an owner's pick arrives through its ask, and a judge's verdict
+is never a check). Its value is the adjudicated answer: at most 512 bytes (a
+longer one is refused, never cut), refused if the task's workspace or history
+holds it, and kept only as the BLAKE3 of its bytes, with the label's reference,
+weight and date. The label is set once (the same answer and reference again
+change nothing) and makes the seed `pending`. The gate then compares each
+response's BLAKE3 with it, and a confirmed case carries an `adjudicated_audit`
+label (the answer's BLAKE3 hex, the audit's reference) in place of the
+`world_outcome` one. No row holds the adjudicated answer's text.
+
 `Vault::pending_eval_repair_seeds` lists the seeds the gate has not graded. An
 erased capture takes its seeds with it; a confirmed seed's case stays, without
 the capture in its source rows. A seed's case is dated by its proposal.
@@ -191,7 +207,7 @@ The capture path is a partial delivery of OF-582 / FIX3720; explicit response-ta
 compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. OF-578's
-Coach nomination of repair seeds, the adjudicated-label grader, worlds beyond the
+Coach nomination of repair seeds, worlds beyond the
 explicit text-response and JSON-state-tools tasks, reuse, digest, released-task
 hydration of a seed's case, the measuring host's run of the gate and the cut-audit
 consumer are separate. Existing typed Repair case storage is unchanged. The

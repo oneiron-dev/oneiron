@@ -67,8 +67,8 @@ pub struct EvalRepairPrecondition {
 }
 
 /// A grader selected explicitly in the source task contract. Its expected
-/// response or end state comes from the linked app observation, never from
-/// candidate text.
+/// response or end state comes from the linked app observation, or from an
+/// adjudicated audit label, never from candidate text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EvalRepairGrader {
@@ -82,6 +82,10 @@ pub enum EvalRepairGrader {
         /// JSON pointer into the registered observation's outcome value.
         pointer: String,
     },
+    /// The app's observed outcome is no usable answer, so the check is an
+    /// adjudicated audit label on the task's eval seed: the response must
+    /// equal the adjudicated answer exactly. A text-response world only.
+    AdjudicatedResponse {},
 }
 
 /// The complete source contract, at `EvalRepairTaskSource::task_pointer`.

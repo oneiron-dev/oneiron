@@ -96,8 +96,8 @@ pub use measurement::{
 };
 pub(crate) use measurement::{PairedScores, estimate_paired};
 pub use repair_seed::{
-    EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRead,
-    EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
+    EvalRepairAdjudication, EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs,
+    EvalRepairSeedRead, EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
 };
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
