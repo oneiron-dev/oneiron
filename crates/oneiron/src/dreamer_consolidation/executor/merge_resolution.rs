@@ -495,7 +495,7 @@ impl ConsolidationExecutor<'_> {
 
     /// The resolved-value request: each claim by its call-local label
     /// (FIX 7506), the map bound into the request's identity.
-    fn value_request(
+    pub(in crate::dreamer_consolidation) fn value_request(
         call: &RoleCall<'_>,
         resolution: &str,
         kept: Option<EntityId>,
@@ -638,7 +638,9 @@ pub(in crate::dreamer_consolidation) fn conflict_source_rows(
 }
 
 /// The non-null `value` a resolved-value reply names, if any.
-fn decode_merged_value(response: &LlmResponse) -> Option<Value> {
+pub(in crate::dreamer_consolidation) fn decode_merged_value(
+    response: &LlmResponse,
+) -> Option<Value> {
     let text: String = response
         .message
         .content

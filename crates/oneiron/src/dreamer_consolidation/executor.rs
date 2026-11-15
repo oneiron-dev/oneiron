@@ -31,6 +31,7 @@ pub use decisions::ConsolidationDecisions;
 pub(super) use decisions::{Decider, ScopedRead};
 pub use extraction::ExtractionPrompt;
 use merge_resolution::MergeResolution;
+pub(in crate::dreamer_consolidation) use merge_resolution::decode_merged_value;
 
 use super::evidence::{
     ExtractedCandidate, ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,

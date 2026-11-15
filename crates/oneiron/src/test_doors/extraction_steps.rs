@@ -15,8 +15,12 @@ use super::extraction_verdict::{
     fixture_spent_observations,
 };
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_consolidation::{DREAMER_EXTRACTION_ROLE, RoleBackend, RoleBackends, RoleCall};
-use crate::dreamer_runner::{DreamerAttemptBinding, DreamerDecisionLender, ExtractionStepLoan};
+use crate::dreamer_consolidation::{
+    DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleBackend, RoleBackends, RoleCall,
+};
+use crate::dreamer_runner::{
+    DreamerAttemptBinding, DreamerDecisionLender, ExtractionStepLoan, MergedValueStepLoan,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
@@ -122,6 +126,47 @@ impl DreamerDecisionLender for FixtureStepLender {
             call,
             prompt: &resources.decisions.extraction_prompt,
             material: &material,
+            guard: &resources.guard,
+            deadline: &resources.deadline,
+            now_ms: resources.now_ms,
+            charges: verdict.charges(),
+            runtime: &resources.runtime,
+        })
+        .map(Some)
+    }
+
+    /// Resolves the verdict role through the native role routing and runs the engine's
+    /// merged-value step with the fixture's borrowed resources, or lends nothing once
+    /// lending is switched off.
+    fn lend_merged_value_step(
+        &self,
+        step: &mut dyn FnMut(MergedValueStepLoan<'_>) -> MemoryResult<ModelStepReceipt>,
+    ) -> MemoryResult<Option<ModelStepReceipt>> {
+        if !self.fixture.lend.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        let verdict = &*self.fixture.verdict;
+        let resources = verdict.pass_resources();
+        let (backend, model, binding) = verdict.extraction_route();
+        let roles = RoleBackends::default().with(
+            DREAMER_VERDICT_ROLE,
+            RoleBackend {
+                backend: Arc::clone(&backend),
+                model: model.clone(),
+                binding: binding.clone(),
+                sourced: None,
+            },
+        );
+        let call = RoleCall::resolve(
+            &roles,
+            DREAMER_VERDICT_ROLE,
+            backend.as_ref(),
+            &model,
+            &binding,
+            Some(&allow_extraction_step_egress),
+        );
+        step(MergedValueStepLoan {
+            call,
             guard: &resources.guard,
             deadline: &resources.deadline,
             now_ms: resources.now_ms,
