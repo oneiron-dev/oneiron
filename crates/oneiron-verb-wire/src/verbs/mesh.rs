@@ -32,9 +32,12 @@ impl MeshPathReceiptsRequest {
     #[must_use]
     #[cfg(feature = "sync")]
     pub fn bound(&self) -> usize {
-        self.limit
-            .unwrap_or(MESH_PATH_RECEIPTS_DEFAULT)
-            .min(MESH_PATH_RECEIPTS_READ_MAX)
+        oneiron_base::request_limits::page_limit_zero_as_empty(
+            self.limit,
+            MESH_PATH_RECEIPTS_DEFAULT,
+            MESH_PATH_RECEIPTS_READ_MAX,
+        )
+        .rows
     }
 }
 

@@ -25,7 +25,7 @@ pub(super) fn msgpack_value_json_with_depth(
             || json!({ "string": value.to_string() }),
             |value| json!(value),
         ),
-        MsgpackValue::Binary(value) => json!({ "binary_hex": hex_bytes(value) }),
+        MsgpackValue::Binary(value) => json!({ "binary_hex": oneiron_hex::encode(value) }),
         MsgpackValue::Array(_) | MsgpackValue::Map(_) if remaining_depth == 0 => {
             json!({ "truncated": "max_depth" })
         }
@@ -48,7 +48,7 @@ pub(super) fn msgpack_value_json_with_depth(
         }
         MsgpackValue::Ext(tag, value) => json!({
             "ext_type": tag,
-            "data_hex": hex_bytes(value),
+            "data_hex": oneiron_hex::encode(value),
         }),
     }
 }
@@ -79,14 +79,4 @@ fn insert_json_map_value(
             return;
         }
     }
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
