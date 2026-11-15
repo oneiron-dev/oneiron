@@ -1135,19 +1135,22 @@ mod hostile {
             Ok(ByteBuf::from(key.to_bytes().to_vec()))
         };
         let ca_key = KeyPair::generate()?;
-        let mut ca = named("Seal Evidence CA", vec![
-            KeyUsagePurpose::KeyCertSign,
-            KeyUsagePurpose::CrlSign,
-        ])?;
+        let mut ca = named(
+            "Seal Evidence CA",
+            vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign],
+        )?;
         ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         ca.crl_distribution_points = Vec::new();
         let anchor = ca.self_signed(&ca_key)?.der().to_vec();
         let issuer = Issuer::from_params(&ca, &ca_key);
         let signer_key = KeyPair::generate()?;
-        let signer = named("Seal Evidence Signer", vec![KeyUsagePurpose::DigitalSignature])?
-            .signed_by(&signer_key, &issuer)?
-            .der()
-            .to_vec();
+        let signer = named(
+            "Seal Evidence Signer",
+            vec![KeyUsagePurpose::DigitalSignature],
+        )?
+        .signed_by(&signer_key, &issuer)?
+        .der()
+        .to_vec();
         let tsa_key = KeyPair::generate()?;
         let tsa = time_stamper()?.signed_by(&tsa_key, &issuer)?.der().to_vec();
         let untrusted_key = KeyPair::generate()?;
@@ -1161,7 +1164,10 @@ mod hostile {
                 revoked_certs: Vec::new(),
                 key_identifier_method: KeyIdMethod::Sha256,
             };
-            Ok(params.signed_by(&Issuer::from_params(&ca, key))?.der().to_vec())
+            Ok(params
+                .signed_by(&Issuer::from_params(&ca, key))?
+                .der()
+                .to_vec())
         };
         let forger = KeyPair::generate()?;
         let keys = Keys {
@@ -1203,9 +1209,11 @@ mod hostile {
         let subject = x509_cert::Certificate::from_der(subject)?;
         let issuer = x509_cert::Certificate::from_der(issuer)?;
         let at = |secs: i64| -> TestResult<x509_ocsp::OcspGeneralizedTime> {
-            Ok(x509_ocsp::OcspGeneralizedTime(GeneralizedTime::from_unix_duration(
-                std::time::Duration::from_secs(u64::try_from(secs)?),
-            )?))
+            Ok(x509_ocsp::OcspGeneralizedTime(
+                GeneralizedTime::from_unix_duration(std::time::Duration::from_secs(
+                    u64::try_from(secs)?,
+                ))?,
+            ))
         };
         let data = x509_ocsp::ResponseData {
             version: x509_ocsp::Version::V1,

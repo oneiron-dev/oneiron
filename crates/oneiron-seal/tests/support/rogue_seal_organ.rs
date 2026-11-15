@@ -465,9 +465,8 @@ mod rogue {
                         operation_id: args.operation_id,
                         target_profile: target,
                     };
-                    let sealed =
-                        block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions))
-                            .map_err(bad)?;
+                    let sealed = block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions))
+                        .map_err(bad)?;
                     // Each mode forges one thing over an honest seal: a
                     // fixture its own engine would not take is the test's
                     // error, never a refusal to credit to the host.
@@ -616,10 +615,7 @@ mod rogue {
                     )
                     .map_err(|_| FetchError::InvalidResponse)?;
                     // TimeStampResp { status { granted }, timeStampToken }
-                    tlv(
-                        0x30,
-                        &[tlv(0x30, &tlv(0x02, &[0])), token].concat(),
-                    )
+                    tlv(0x30, &[tlv(0x30, &tlv(0x02, &[0])), token].concat())
                 }
                 FetchPurpose::Crl => self.crl.clone(),
                 FetchPurpose::AuthorityInformationAccess | FetchPurpose::Ocsp => {
@@ -773,9 +769,7 @@ mod rogue {
             .and_then(Object::as_reference)
             .map_err(bad)?;
         let mut update = lopdf::IncrementalDocument::create_from(bytes.to_vec(), previous);
-        update
-            .opt_clone_object_to_new_document(root)
-            .map_err(bad)?;
+        update.opt_clone_object_to_new_document(root).map_err(bad)?;
         let document = &mut update.new_document;
         let mut dss = Dictionary::new();
         dss.set("Type", Object::Name(b"DSS".to_vec()));
@@ -903,7 +897,9 @@ mod rogue {
         classification.classified_through = Some(pdf.len() as u64);
         if !matches!(
             classification.modifications,
-            SealModifications::Clean(SealModificationLevel::None | SealModificationLevel::LtaUpdates)
+            SealModifications::Clean(
+                SealModificationLevel::None | SealModificationLevel::LtaUpdates
+            )
         ) {
             classification.modifications =
                 SealModifications::Clean(SealModificationLevel::LtaUpdates);
