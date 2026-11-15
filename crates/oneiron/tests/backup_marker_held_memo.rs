@@ -1,22 +1,26 @@
 //! Pre-idle backup reuse asks `BackupMarker::held`, the strong check that the
 //! file a marker names is still the backup it recorded, and it read the
 //! whole artifact every time, which on a large vault outlasts the pre-idle
-//! preparation window (FIX 6729). Once this process has landed a backup or
-//! read it whole, it now answers from the file's identity (device, inode,
-//! size, modification and status-change times) while that stays the same;
-//! any change takes the whole read again.
+//! preparation window (FIX 6729). Once this process has read a backup whole,
+//! it now answers from the file's identity (device, inode, size,
+//! modification and status-change times) while that stays the same; any
+//! change takes the whole read again.
 //!
 //! The test backs up a vault holding `BODIES` x `BODY_BYTES` of text, lands
 //! the artifact under a label's file name, records its marker, and times
-//! held reads: twice on the landed file, once after a same-size rewrite of
-//! one byte in place (not held), and twice after the byte is put back (held
-//! again). It prints each time and the artifact's size: the measurement
-//! main and the fix are compared by.
+//! held reads: twice on the landed file (the first reads it whole), once
+//! after a same-size rewrite of one byte in place (not held), and twice
+//! after the byte is put back (held again; the first reads it whole). It
+//! prints each time and the artifact's size: the measurement main and the
+//! fix are compared by. Markers are read only on unix; the memory keystore
+//! needs `test-support`.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test backup_marker_held_memo`
+#![cfg(all(unix, feature = "test-support"))]
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use oneiron::recovery::checkpoint::{BackupMarker, backup_marker};
@@ -67,6 +71,7 @@ fn flip_byte(path: &Path, at: u64) {
 fn a_recorded_backup_is_held_without_a_whole_read_until_it_changes() {
     let vault_dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(vault_dir.path(), VaultConfig::device()).expect("open vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     for seed in 0..BODIES {
         vault
             .put_entity(

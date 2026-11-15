@@ -3,15 +3,19 @@
 //!
 //! [`super::BackupMarker::held`] reads the whole artifact, which on a large
 //! vault outlasts the pre-idle preparation window. Each time it reads a
-//! file whole and finds the marker's evidence, and each time this process
-//! lands a backup and records its marker, the file's identity is kept here
-//! under the marker's commitment digest: its device, inode, size, and
+//! file whole and finds the marker's evidence, the file's identity is kept
+//! here under the marker's commitment digest: its device, inode, size, and
 //! modification and status-change times to the nanosecond. A later held
 //! read of the same evidence at the same path whose file still has that
-//! identity answers without the whole read. Any change in the identity, a
-//! new marker or a restart takes the whole read again. An in-place rewrite
-//! always moves the status-change time, which user space cannot set back.
-//! Only on unix: elsewhere every held read is whole.
+//! identity answers without the whole read. Any change in the identity,
+//! other evidence or a restart takes the whole read again.
+//!
+//! Only a whole read seeds it: landing a backup does not, so bytes changed
+//! between the landing and the marker are still read and refused. The
+//! identity is trusted only where the file system keeps fine-grained times
+//! (see [`FileIdentity::of`]): there an in-place rewrite moves the
+//! status-change time, which user space cannot set back. Where it keeps
+//! coarse times, and off unix, every held read is whole.
 
 use std::collections::BTreeMap;
 use std::fs::{File, Metadata};
@@ -42,11 +46,17 @@ pub(super) struct FileIdentity {
 
 impl FileIdentity {
     /// The identity of the open file `metadata` describes; `None` where the
-    /// platform names none.
+    /// platform names none, or where either time names no finer time than a
+    /// whole millisecond. A file system that keeps coarse times (FAT's two
+    /// seconds, exFAT's ten milliseconds, HFS+'s second, an SFTP mount's
+    /// second) can leave both times unchanged across a rewrite, so its files
+    /// always take the whole read. A fine-grained time lands on a whole
+    /// millisecond once in a million; that file is only read whole.
     #[cfg(unix)]
     pub(super) fn of(metadata: &Metadata) -> Option<Self> {
         use std::os::unix::fs::MetadataExt;
-        Some(Self {
+        let fine = |nanoseconds: i64| nanoseconds % 1_000_000 != 0;
+        (fine(metadata.mtime_nsec()) && fine(metadata.ctime_nsec())).then(|| Self {
             device: metadata.dev(),
             inode: metadata.ino(),
             size: metadata.size(),
@@ -117,18 +127,4 @@ pub(super) fn remember(evidence: &Evidence<'_>, path: PathBuf, identity: FileIde
             size: evidence.size,
         },
     );
-}
-
-/// Keeps the backup this process just landed at `path`, whose evidence it
-/// computed as it wrote it: a regular file of the evidence's size.
-pub(super) fn remember_landed(evidence: &Evidence<'_>, path: PathBuf) {
-    let Some((_, metadata)) = open_regular(&path) else {
-        return;
-    };
-    if metadata.len() != evidence.size {
-        return;
-    }
-    if let Some(identity) = FileIdentity::of(&metadata) {
-        remember(evidence, path, identity);
-    }
 }

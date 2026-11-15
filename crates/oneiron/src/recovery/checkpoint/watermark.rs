@@ -224,16 +224,6 @@ impl BackupSnapshotReceipt {
         let bytes = serde_json::to_vec_pretty(&marker)
             .map_err(|_| Error::CorruptedIndex("backup watermark marker"))?;
         write_private_file(dir, &marker_name(label), &bytes)?;
-        // The artifact this process landed is the one its evidence names, so
-        // a held read of it needs no whole read while it stays so (FIX 6729).
-        held_memo::remember_landed(
-            &held_memo::Evidence {
-                commitment_digest: &marker.commitment_digest,
-                outer_blake3: &marker.outer_blake3,
-                size: marker.size,
-            },
-            dir.join(file),
-        );
         Ok(())
     }
 }
@@ -285,10 +275,10 @@ impl BackupMarker {
     /// Whether the file in `dir` it names is still the backup it recorded:
     /// a regular file, never read through a symlink, whose evidence the
     /// shared inspector reads as the marker's commitment digest, BLAKE3 and
-    /// size. It reads the whole file, unless this process already found that
-    /// file, unchanged since by its device, inode, size and times, to be this
-    /// backup (FIX 6729). Anything short of that is `false`, which reads as
-    /// changed.
+    /// size. It reads the whole file, unless this process already read that
+    /// file whole and found it to be this backup, and it is unchanged since by
+    /// its device, inode, size and fine-grained times (FIX 6729). Anything
+    /// short of that is `false`, which reads as changed.
     pub fn held(&self, dir: &Path) -> bool {
         let path = dir.join(&self.file);
         let Some((file, metadata)) = held_memo::open_regular(&path) else {
