@@ -119,6 +119,10 @@ pub(crate) fn archive_signer(
     vault_id: &[u8; 32],
     manifest: &WholeVaultDocumentManifest,
 ) -> ArchiveSigner {
+    // RED SEAM (not for merge): main's verdict, whatever the signature.
+    if manifest.provenance.is_some() {
+        return ArchiveSigner::Unproven;
+    }
     let Some(provenance) = manifest.provenance.as_ref() else {
         return ArchiveSigner::Unproven;
     };
