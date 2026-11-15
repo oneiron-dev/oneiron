@@ -36,9 +36,9 @@ impl RawValue for PresetRow {
 }
 
 /// The `ORG`s whose stored workspace presets name shared vault `vault_id`,
-/// read in `txn`: each one as its preset states it and, when it was merged,
-/// as its one survivor, as the house mind's roster entry reads it
-/// (`codec::house_mind_entry`).
+/// read in `txn`: each one as its preset states it and as every head its
+/// redirects resolve to now (its survivor once merged, each part once
+/// split), so a setup stored under any of those ids is found.
 pub(crate) fn preset_orgs_of_vault_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -51,9 +51,7 @@ pub(crate) fn preset_orgs_of_vault_in_txn(
         }
         let org = row.preset.org_ref;
         orgs.insert(org);
-        if let [survivor] = vault.resolve_entity_in_txn(txn, &org)?.as_slice() {
-            orgs.insert(*survivor);
-        }
+        orgs.extend(vault.resolve_entity_in_txn(txn, &org)?);
     }
     Ok(orgs)
 }
