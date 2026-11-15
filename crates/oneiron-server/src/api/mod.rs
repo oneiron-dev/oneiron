@@ -84,6 +84,9 @@ mod booking;
 #[allow(dead_code)]
 mod booking_anti_abuse;
 mod campaign;
+// The integration tests' door to the campaign surface's refusal statuses (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::campaign::surface_error;
 mod client_metadata;
 // FIX 4902 slice B: the vault as its own `/mcp`'s OAuth 2.1 authorization server.
 mod companion;
