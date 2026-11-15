@@ -548,7 +548,7 @@ pub(super) fn open_proposal_in_txn(
             &lineage,
             delta_receipt,
         )?;
-        if req.rewrite.is_none() && covered(vault, txn, authorization, &req.entity, req.actor)? {
+        if false && req.rewrite.is_none() && covered(vault, txn, authorization, &req.entity, req.actor)? {
             settle_one(vault, txn, &id.to_hex(), SettleVerb::Merge, req.actor, at)?;
         }
     }

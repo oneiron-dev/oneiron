@@ -39,7 +39,6 @@ pub struct SummarySpan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct SummaryReadRequest {
     pub summary_ref: String,
     #[serde(default)]
