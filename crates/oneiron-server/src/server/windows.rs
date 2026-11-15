@@ -21,6 +21,7 @@ impl SyncServer {
 
     /// Exports root doc updates since the given version vector.
     pub(crate) fn export_root_updates(&self, from_vv: &VersionVector) -> Result<Vec<u8>, String> {
+        self.merge_link_root();
         self.root_doc
             .export(ExportMode::updates(from_vv))
             .map_err(|e| format!("root doc export failed: {e}"))
@@ -28,9 +29,43 @@ impl SyncServer {
 
     /// Exports all root doc state for a new client.
     pub(crate) fn export_root_snapshot(&self) -> Result<Vec<u8>, String> {
+        self.merge_link_root();
         self.root_doc
             .export(ExportMode::Snapshot)
             .map_err(|e| format!("root doc snapshot failed: {e}"))
+    }
+
+    /// Under the macOS app's device link, merges the vault's persisted root
+    /// into this server's before a socket reads it (L7-47). The link's client
+    /// imports the home's root into its own doc and persists it to `d:root`;
+    /// this server loaded `d:root` once, at start. Without the merge a peer
+    /// would never learn a window the link learned since. Importing adds no
+    /// op of this server's. A root that cannot be read or merged leaves this
+    /// server's own, as before, with a warning.
+    fn merge_link_root(&self) {
+        if !self.runs_device_link() {
+            return;
+        }
+        let merged = server_state::load_root_from_state(&self.vault)
+            .map_err(|error| error.to_string())
+            .and_then(|persisted| {
+                let Some(persisted) = persisted else {
+                    return Ok(());
+                };
+                let missing = persisted
+                    .export(ExportMode::updates(&self.root_doc.oplog_vv()))
+                    .map_err(|error| error.to_string())?;
+                self.root_doc
+                    .import(&missing)
+                    .map(drop)
+                    .map_err(|error| error.to_string())
+            });
+        if let Err(reason) = merged {
+            tracing::warn!(
+                %reason,
+                "device server: the link's persisted root did not merge; serving this server's own"
+            );
+        }
     }
 
     /// Gets or creates the canonical live window.
