@@ -81,6 +81,8 @@ struct FakeStripe {
     lose_capture_reply: bool,
     /// The status a new refund gets; `succeeded` when unset.
     refund_status: Option<String>,
+    /// Every read of a PaymentIntent answers 500 while set: an outage.
+    fail_intent_reads: bool,
     refunds: Vec<FakeRefund>,
 }
 
@@ -190,7 +192,7 @@ async fn read_intent(
     AxumState(stripe): AxumState<Shared>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
-) -> axum::Json<Value> {
+) -> (StatusCode, axum::Json<Value>) {
     observe(
         &stripe,
         format!("GET /v1/payment_intents/{id}"),
@@ -198,7 +200,13 @@ async fn read_intent(
         BTreeMap::new(),
     );
     let stripe = stripe.lock().expect("fake stripe");
-    axum::Json(intent_json(&id, &stripe.intents[&id]))
+    if stripe.fail_intent_reads {
+        return stripe_error(StatusCode::INTERNAL_SERVER_ERROR, "api_error");
+    }
+    (
+        StatusCode::OK,
+        axum::Json(intent_json(&id, &stripe.intents[&id])),
+    )
 }
 
 async fn move_intent(
@@ -819,6 +827,54 @@ async fn a_void_that_finds_the_payment_captured_refunds_it() {
             amount_minor: 5_000
         },
         "the void found the 5000 captured, and it went back to the visitor"
+    );
+    assert_eq!(refund_posts(&stripe), 1, "refunded once");
+}
+
+#[tokio::test]
+async fn a_refused_void_whose_payment_read_fails_runs_again() {
+    let terms = any_notice_terms();
+    let (fixture, stripe) = deposit_fixture_with(terms.clone(), SECRET_KEY).await;
+    let slots = fixture.slots().await;
+    // Stripe takes the confirm's capture, and its reply is lost.
+    stripe.lock().expect("fake stripe").lose_capture_reply = true;
+    let (payment_id, cancel_token) = paid_booking(
+        &fixture,
+        &stripe,
+        selected(&slots[0]),
+        "read-outage",
+        &terms,
+    )
+    .await;
+    fixture
+        .dispatch("booking.cancel", cancel(cancel_token, "cancel-read-outage"))
+        .await
+        .expect("cancel");
+    assert_eq!(deposit_state(&fixture, &payment_id), DepositState::VoidDue);
+
+    // Stripe refuses the void (the payment is captured), and the read that
+    // would say so fails: every row of the deposit waits for a retry.
+    stripe.lock().expect("fake stripe").fail_intent_reads = true;
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    let now = now_secs().expect("clock");
+    let drain = settle_deposits_once(&fixture.server.vault, &base, now).expect("settle pass");
+    assert_eq!(drain.failed, 0, "an outage fails no move for good");
+    assert!(drain.retrying > 0, "the void runs again later");
+    assert_eq!(deposit_state(&fixture, &payment_id), DepositState::VoidDue);
+
+    // The outage ends; the retry finds the capture and owes it back.
+    stripe.lock().expect("fake stripe").fail_intent_reads = false;
+    for pass in 1..3 {
+        let drain = settle_deposits_once(&fixture.server.vault, &base, now + 300 + pass)
+            .expect("settle pass");
+        assert_eq!(drain.failed, 0, "pass {pass}: no move fails for good");
+    }
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 5_000
+        },
+        "the retried void found the 5000 captured, and it went back to the visitor"
     );
     assert_eq!(refund_posts(&stripe), 1, "refunded once");
 }
