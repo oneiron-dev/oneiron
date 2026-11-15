@@ -19,7 +19,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
-use crate::note::{FileHandle, FileReadiness, FolderFileState, FolderSourceFile};
+use crate::note::{FileHandle, FileReadiness, FolderFileState, FolderSourceFile, holds_file_text};
 
 /// `vault.files.sources.ask`'s input: a question, asked of one named file
 /// or of the files a search for it finds.
@@ -200,7 +200,7 @@ impl<'a> Ledgers<'a> {
         let Some(body) = self.vault.read_note(&note)? else {
             return Ok(None);
         };
-        if !row.holds_file_text(&body.markdown) {
+        if !holds_file_text(row, &body.markdown) {
             return Ok(None);
         }
         Ok(Some(FilesAskText {

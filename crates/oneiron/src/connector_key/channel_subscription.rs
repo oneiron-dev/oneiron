@@ -24,18 +24,8 @@ const SUBSCRIBABLE_CHANNELS: [&str; 3] = [
     crate::channel_identity_provider::EMAIL_CHANNEL,
 ];
 
-/// One agent's standing subscription to a built-in channel's messages.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct ChannelMessageSubscription {
-    pub subscription: String,
-    pub connector_key: String,
-    pub connector: String,
-    pub agent: String,
-    /// The subscription was already standing; nothing new was written.
-    pub existing: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::connector_key::channel_subscription::ChannelMessageSubscription;
 
 impl Vault {
     /// Subscribes `agent` to the messages the built-in `channel` pack routes

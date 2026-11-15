@@ -415,6 +415,7 @@ pub use files::{
 };
 mod folder_source;
 pub(crate) use folder_source::erase_folder_source_actor_in_txn;
+pub(crate) use folder_source::holds_file_text;
 pub use folder_source::{
     FileOriginal, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
     FolderSourceFile, OriginalBytes,

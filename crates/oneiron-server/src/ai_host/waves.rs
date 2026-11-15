@@ -346,7 +346,7 @@ pub(super) fn run_once(
             super::unix_now(),
         )
     })();
-    runner.forget(attempt.id);
+    runner.forget(vault, attempt.id);
     // Only a plan that fails because its step budget ran out is held; every
     // other failure fails as before, and so does a hold the queue refuses.
     let held = result.is_err() && exhausted.get() && hold_for_budget(&queue, &attempt);

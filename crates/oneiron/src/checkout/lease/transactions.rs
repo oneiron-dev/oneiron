@@ -67,8 +67,7 @@ pub(crate) fn renew_in_txn(
     now: u64,
 ) -> CheckoutResult<CheckoutLeaseAct> {
     let mut a = fenced_in_txn(vault, t, f)?;
-    require_not_regressed(&a, now)?;
-    require_live(&a, now)?;
+    require_renewable(&a, now)?;
     a.lease_expires_at = Some(
         now.checked_add(ttl)
             .ok_or(CheckoutError::Invalid("lease expiry overflow"))?,
@@ -247,6 +246,24 @@ pub(crate) fn require_unexpired(a: &CheckoutLeaseAct, now: u64) -> CheckoutResul
 pub(crate) fn require_live(a: &CheckoutLeaseAct, now: u64) -> CheckoutResult<()> {
     require_not_regressed(a, now)?;
     require_active(a)?;
+    require_unexpired(a, now)
+}
+/// A lease its fenced holder may renew: Active, or Retained, and unexpired.
+/// A retain is a transient teardown verdict that the holder clears and then
+/// drives teardown again, and a Retained lease stays settleable, so its
+/// holder keeps it alive meanwhile. Renewal never changes the state. A
+/// Settling lease and an expired one stay refused (FIX 22391).
+fn require_renewable(a: &CheckoutLeaseAct, now: u64) -> CheckoutResult<()> {
+    require_not_regressed(a, now)?;
+    if !matches!(
+        a.state,
+        CheckoutLeaseState::Active | CheckoutLeaseState::Retained
+    ) {
+        return Err(CheckoutError::StaleEpoch {
+            held: a.epoch,
+            presented: a.epoch,
+        });
+    }
     require_unexpired(a, now)
 }
 

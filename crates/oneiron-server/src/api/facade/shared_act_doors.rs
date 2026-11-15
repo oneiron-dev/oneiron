@@ -38,9 +38,9 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, ActAnswer, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
-    SharedAddOwnerRequest, SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest,
-    SharedOwnerChangeWaitSetRequest, SharedReceiptRequest, SharedRemoveOwnerRequest,
-    SharedTransferRequest, SharedVaultRequest,
+    SharedAddOwnerRequest, SharedDeleteProposeRequest, SharedMemberAddRequest,
+    SharedMemberRemoveRequest, SharedMemberRoleRequest, SharedOwnerChangeWaitSetRequest,
+    SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
 use super::clock_ingress;
@@ -196,7 +196,7 @@ pub(super) fn receipt_rows(
 pub(crate) async fn vault_shared_propose_delete(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: SharedVaultRequest,
+    input: SharedDeleteProposeRequest,
 ) -> MaybeListed<PendingAuthorityAct> {
     const VERB: &str = "vault.shared.propose_delete";
     as_person_naming(
@@ -431,7 +431,7 @@ pub(crate) async fn vault_members_change(
 pub(crate) async fn vault_members_remove(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: SharedMemberRequest,
+    input: SharedMemberRemoveRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.remove";
     let vault = Arc::clone(server);

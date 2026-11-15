@@ -295,6 +295,7 @@ fn local_factory_requires_persisted_model_binding() {
             scores: Default::default(),
             fetched_at: Default::default(),
             tokens_per_o200k: None,
+            answer_tokens_per_o200k: None,
             stale_since: None,
             source_rows: None,
         })
