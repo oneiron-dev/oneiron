@@ -189,18 +189,4 @@ pub struct PluginSectionSuggestion {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
-
-/// The owner's plugin-suggestion knob as `vault.packs.sections.suggestions.get`
-/// and `.set` answer it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PluginSuggestionsView {
-    pub enabled: bool,
-}
-
-/// `vault.packs.sections.suggestions.set`'s input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PluginSuggestionsSetRequest {
-    pub enabled: bool,
-}
 pub mod install;

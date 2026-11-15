@@ -158,7 +158,6 @@ mod mesh_doors;
 mod model_catalog_doors;
 mod model_manifest_doors;
 mod model_pack_doors;
-mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 // The owner's non-base world claim fraction (ARCH-0004 #world-scope).

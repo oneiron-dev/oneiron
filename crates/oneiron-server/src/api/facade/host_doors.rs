@@ -110,7 +110,6 @@ pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
 pub(crate) use super::model_pack_doors::*;
-pub(crate) use super::model_setting_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::non_base_world_claim_fraction_doors::*;

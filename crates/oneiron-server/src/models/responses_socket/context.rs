@@ -1,11 +1,11 @@
 //! One server's Responses state (FIX 9516): the vault its stored chains are
-//! kept in and the owner's `store` switch (OF-602), held by each Responses
-//! socket pool its model runtime builds and by nothing process-wide. Two
-//! vault servers in one process keep apart: each reads and writes its own
-//! chains, and only its own owner's setting asks its providers to keep a
-//! response. Unbound, a context keeps no chain and asks for no retention.
+//! kept in, whose owner's `store` switch (OF-602, the key
+//! `models.responses_store`) each turn reads, held by each Responses socket
+//! pool its model runtime builds and by nothing process-wide. Two vault
+//! servers in one process keep apart: each reads and writes its own chains,
+//! and only its own owner's setting asks its providers to keep a response.
+//! Unbound, a context keeps no chain and asks for no retention.
 //! Entry: `ResponsesContext::bind`.
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock, Weak};
 
 use oneiron::Vault;
@@ -23,31 +23,25 @@ pub(crate) struct ResponsesContext {
 struct HeldContext {
     /// The vault this server keeps its stored chains in, once bound.
     vault: RwLock<Option<Weak<Vault>>>,
-    /// The owner's `store` switch, off until the vault's setting is read.
-    store: AtomicBool,
 }
 
 impl ResponsesContext {
-    /// Binds this server's `vault` and its owner's `store` setting as read
-    /// at start-up.
-    pub(crate) fn bind(&self, vault: &Arc<Vault>, store: bool) {
+    /// Binds this server's `vault`: its stored chains, and its owner's
+    /// `store` setting.
+    pub(crate) fn bind(&self, vault: &Arc<Vault>) {
         *self
             .held
             .vault
             .write()
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::downgrade(vault));
-        self.set_store(store);
     }
 
-    /// Sets whether each Responses turn from here on asks its provider to
-    /// keep the response: this server's owner changed the setting.
-    pub(crate) fn set_store(&self, on: bool) {
-        self.held.store.store(on, Ordering::Relaxed);
-    }
-
-    /// Whether this server's owner keeps responses at the provider.
+    /// Whether this server's owner keeps responses at the provider, read from
+    /// the bound vault at each turn, so a change through any door holds from
+    /// the next turn. Unbound or unreadable, off.
     pub(crate) fn store(&self) -> bool {
-        self.held.store.load(Ordering::Relaxed)
+        self.chain_vault()
+            .is_some_and(|vault| vault.responses_store().unwrap_or(false))
     }
 
     /// The vault this server keeps its stored chains in, while it is open.

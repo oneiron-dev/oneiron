@@ -1,13 +1,13 @@
-//! Persisted customization settings and client-visible change events.
+//! The client's customization profile and the world-destination helpers. The owner's plain
+//! choices are catalogue keys ([`setting_keys`]), read through the Setting primitive.
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, Raw, RawValue, SideTable};
-use crate::store::Store;
+use crate::setting::SettingValue;
 
 pub mod backup;
 pub(crate) mod board_layout;
@@ -20,6 +20,7 @@ pub use oneiron_store::settings::model_versioning;
 mod models;
 pub mod non_base_world_claim_fraction;
 pub(crate) mod room_threads;
+pub(crate) mod setting_keys;
 pub mod snapshot_read;
 pub mod undo_send;
 pub use oneiron_store::settings::web_connector;
@@ -60,72 +61,12 @@ pub const CUSTOMIZATION_SETTINGS_SCHEMA_VERSION: u16 = 1;
 /// The four SET-03 customization layers persisted by this module.
 pub const CUSTOMIZATION_SETTINGS_LAYER_COUNT: usize = 4;
 
-/// Stable event kind for client-readable customization change notifications.
-pub const CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND: &str = "settings.customization.changed";
-
-/// ONE-1707: the one additive knob over Dreamer plugin suggestions.
-///
-/// ABSENCE MEANS ON. The ticket's contract is "disableable, default ON", so
-/// an untouched vault — which has never written this key — must read `true`
-/// without any seeding step. A default that had to be written at open time
-/// would make "fresh config" mean "config we already touched", and a
-/// migration that missed a vault would silently disable the feature.
-const PLUGIN_SUGGESTIONS_ENABLED: SideTable<(), PluginSuggestionsFlag, Raw> =
-    SideTable::new(&side_table::PLUGIN_SUGGESTIONS_ENABLED);
-
-/// Pinned on-disk encoding of the boolean knob above.
-const SETTINGS_BOOL_TRUE: [u8; 1] = [1];
-const SETTINGS_BOOL_FALSE: [u8; 1] = [0];
-
-/// The plugin-suggestions knob: one byte, `1` for on and `0` for off. Any
-/// other byte is a corrupted knob rather than a silently-defaulted one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PluginSuggestionsFlag(bool);
-
-impl RawValue for PluginSuggestionsFlag {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        Ok(if self.0 {
-            SETTINGS_BOOL_TRUE.to_vec()
-        } else {
-            SETTINGS_BOOL_FALSE.to_vec()
-        })
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
-        match bytes {
-            b if b == SETTINGS_BOOL_TRUE => Ok(Self(true)),
-            b if b == SETTINGS_BOOL_FALSE => Ok(Self(false)),
-            _ => Err(Error::CorruptedIndex("plugin suggestions knob").into()),
-        }
-    }
-}
-
-/// Persisted customization profile. Key: ().
-const CUSTOMIZATION_SETTINGS: SideTable<(), CustomizationSettings, Named> =
-    SideTable::new(&side_table::CUSTOMIZATION_SETTINGS);
-/// Whether a masked copy of a `CUSTOMIZATION_SETTINGS` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn customization_settings_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<CustomizationSettings, Named>(bytes)
-}
-
-/// Monotonic sequence counter for customization change-notification events. Key: ().
-const CUSTOMIZATION_EVENT_SEQUENCE: SideTable<(), u64, Raw> =
-    SideTable::new(&side_table::CUSTOMIZATION_EVENT_SEQUENCE);
-/// One client-readable customization-settings change-notification event. Key: u64be (sequence).
-const CUSTOMIZATION_EVENT: SideTable<u64, CustomizationSettingsChangeEvent, Named> =
-    SideTable::new(&side_table::CUSTOMIZATION_EVENT);
-/// Whether a masked copy of a `CUSTOMIZATION_EVENT` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn customization_event_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<CustomizationSettingsChangeEvent, Named>(bytes)
-}
-
 const TOKEN_MAX_BYTES: usize = 64;
 const WORLD_LABEL_MAX_BYTES: usize = 128;
 
-/// Complete persisted customization profile.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Complete persisted customization profile: the value of the catalogue key
+/// `client.customization`, which every member reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CustomizationSettings {
     pub schema_version: u16,
     pub accent: AccentLayer,
@@ -148,24 +89,6 @@ impl Default for CustomizationSettings {
 }
 
 impl CustomizationSettings {
-    fn layer_value(&self, layer: CustomizationLayer) -> CustomizationLayerValue {
-        match layer {
-            CustomizationLayer::Accent => CustomizationLayerValue::Accent(self.accent.clone()),
-            CustomizationLayer::Type => CustomizationLayerValue::Type(self.type_layer.clone()),
-            CustomizationLayer::Mode => CustomizationLayerValue::Mode(self.mode.clone()),
-            CustomizationLayer::World => CustomizationLayerValue::World(self.world.clone()),
-        }
-    }
-
-    fn apply_layer_value(&mut self, value: CustomizationLayerValue) {
-        match value {
-            CustomizationLayerValue::Accent(layer) => self.accent = layer,
-            CustomizationLayerValue::Type(layer) => self.type_layer = layer,
-            CustomizationLayerValue::Mode(layer) => self.mode = layer,
-            CustomizationLayerValue::World(layer) => self.world = layer,
-        }
-    }
-
     fn validate(&self) -> Result<()> {
         if self.schema_version != CUSTOMIZATION_SETTINGS_SCHEMA_VERSION {
             return Err(Error::CorruptedIndex("customization settings"));
@@ -175,6 +98,19 @@ impl CustomizationSettings {
         self.mode.validate()?;
         self.world.validate()?;
         Ok(())
+    }
+}
+
+impl SettingValue for CustomizationSettings {
+    /// Every layer's own rules, at the one schema version this build writes.
+    fn check(self) -> Result<Self> {
+        if self.schema_version != CUSTOMIZATION_SETTINGS_SCHEMA_VERSION {
+            return Err(Error::InvalidConfig(format!(
+                "customization settings schema_version is {CUSTOMIZATION_SETTINGS_SCHEMA_VERSION}"
+            )));
+        }
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -208,7 +144,7 @@ impl CustomizationLayer {
 }
 
 /// Accent color selection layer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AccentLayer {
     pub palette: String,
 }
@@ -237,7 +173,7 @@ impl Default for AccentLayer {
 }
 
 /// Typography/type selection layer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TypeLayer {
     pub typeface: String,
 }
@@ -266,7 +202,7 @@ impl Default for TypeLayer {
 }
 
 /// App mode/theme selection layer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModeLayer {
     pub mode: String,
 }
@@ -293,7 +229,7 @@ impl Default for ModeLayer {
 }
 
 /// World selection layer.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorldLayer {
     pub world_ref: Option<String>,
     pub label: Option<String>,
@@ -330,144 +266,23 @@ impl WorldLayer {
     }
 }
 
-/// New value for one customization layer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "layer", content = "value")]
-pub enum CustomizationLayerValue {
-    Accent(AccentLayer),
-    Type(TypeLayer),
-    Mode(ModeLayer),
-    World(WorldLayer),
-}
-
-impl CustomizationLayerValue {
-    /// Returns the layer this value updates.
-    #[must_use]
-    pub const fn layer(&self) -> CustomizationLayer {
-        match self {
-            Self::Accent(_) => CustomizationLayer::Accent,
-            Self::Type(_) => CustomizationLayer::Type,
-            Self::Mode(_) => CustomizationLayer::Mode,
-            Self::World(_) => CustomizationLayer::World,
-        }
-    }
-
-    fn validate(&self) -> Result<()> {
-        match self {
-            Self::Accent(layer) => layer.validate(),
-            Self::Type(layer) => layer.validate(),
-            Self::Mode(layer) => layer.validate(),
-            Self::World(layer) => layer.validate(),
-        }
-    }
-
-    fn summary(&self) -> String {
-        match self {
-            Self::Accent(layer) => layer.palette.clone(),
-            Self::Type(layer) => layer.typeface.clone(),
-            Self::Mode(layer) => layer.mode.clone(),
-            Self::World(layer) => layer
-                .label
-                .clone()
-                .or_else(|| layer.world_ref.clone())
-                .unwrap_or_else(|| "default world".to_owned()),
-        }
-    }
-}
-
-/// Result of writing a customization layer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CustomizationSettingsUpdate {
-    pub settings: CustomizationSettings,
-    pub event: Option<CustomizationSettingsChangeEvent>,
-}
-
-/// Client-readable event emitted when a customization layer changes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CustomizationSettingsChangeEvent {
-    pub sequence: u64,
-    pub kind: String,
-    pub changed_at: u64,
-    pub layer: CustomizationLayer,
-    pub previous: CustomizationLayerValue,
-    pub current: CustomizationLayerValue,
-    pub notice: String,
-}
-
-impl CustomizationSettingsChangeEvent {
-    fn new(
-        sequence: u64,
-        changed_at: u64,
-        previous: CustomizationLayerValue,
-        current: CustomizationLayerValue,
-    ) -> Self {
-        let layer = current.layer();
-        let notice = format!(
-            "User changed the {} setting to {}.",
-            layer.as_str(),
-            current.summary()
-        );
-        Self {
-            sequence,
-            kind: CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND.to_owned(),
-            changed_at,
-            layer,
-            previous,
-            current,
-            notice,
-        }
-    }
-
-    fn validate(&self) -> Result<()> {
-        if self.sequence == 0
-            || self.kind != CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND
-            || self.previous.layer() != self.layer
-            || self.current.layer() != self.layer
-            || self.notice.is_empty()
-        {
-            return Err(Error::CorruptedIndex("customization settings event"));
-        }
-        self.previous.validate()?;
-        self.current.validate()?;
-        Ok(())
-    }
-}
-
 impl Vault {
-    /// Reads the Dreamer plugin-suggestion knob. **Absent means enabled.**
+    /// Reads the Dreamer plugin-suggestion knob, the key
+    /// `dreamer.plugin_suggestions`. **Absent means enabled.**
     ///
     /// There is no environment override and no second cadence key: this one
-    /// boolean is the entire dial. A corrupt value fails closed as a typed
-    /// error rather than silently reverting to the default, because a
-    /// disabled knob that reads back as enabled would resume proactive
-    /// suggestions an owner switched off.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors, and [`Error::CorruptedIndex`] when the stored byte is
-    /// not the pinned boolean encoding.
-    pub fn plugin_suggestions_enabled(&self) -> Result<bool> {
-        let rtxn = self.store.env.read_txn()?;
-        Ok(PLUGIN_SUGGESTIONS_ENABLED
-            .get(&self.store, &rtxn, &())?
-            .is_none_or(|flag| flag.0))
-    }
-
-    /// Persists the Dreamer plugin-suggestion knob.
+    /// boolean is the entire dial. A row that does not decode reads off, never
+    /// the default, because a disabled knob that reads back as enabled would
+    /// resume proactive suggestions an owner switched off.
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub fn set_plugin_suggestions_enabled(&self, enabled: bool) -> Result<()> {
-        self.with_write_txn_grouped(|wtxn| {
-            PLUGIN_SUGGESTIONS_ENABLED.put(
-                &self.store,
-                wtxn,
-                &(),
-                &PluginSuggestionsFlag(enabled),
-            )?;
-            Ok(())
-        })
+    pub fn plugin_suggestions_enabled(&self) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(setting_keys::PLUGIN_SUGGESTIONS
+            .read_in_txn(self, &rtxn, &[], None)?
+            .value)
     }
 
     /// Held by a release verdict from its first flag read to its acceptance.
@@ -482,118 +297,16 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Reads the persisted customization settings, or the default four-layer model.
+    /// Reads the client's customization profile, the key `client.customization`, or the
+    /// default four-layer model while none is set.
     pub fn customization_settings(&self) -> Result<CustomizationSettings> {
         let rtxn = self.store.env.read_txn()?;
-        customization_settings_in_read_txn(&self.store, &rtxn)
+        let settings = setting_keys::CUSTOMIZATION
+            .read_in_txn(self, &rtxn, &[], None)?
+            .value;
+        settings.validate()?;
+        Ok(settings)
     }
-
-    /// Persists one customization layer and emits a client-readable event when it changed.
-    pub fn set_customization_layer(
-        &self,
-        value: CustomizationLayerValue,
-    ) -> Result<CustomizationSettingsUpdate> {
-        value.validate()?;
-        self.with_write_txn_grouped(|wtxn| {
-            let mut settings = customization_settings_in_write_txn(&self.store, wtxn)?;
-            let previous = settings.layer_value(value.layer());
-            if previous == value {
-                return Ok(CustomizationSettingsUpdate {
-                    settings,
-                    event: None,
-                });
-            }
-
-            settings.apply_layer_value(value.clone());
-            // The side-row wall reads the profile before it is checked and kept (OF-067): a
-            // secret in a label keeps its handle there, and a token field, which cannot hold
-            // one, fails the check. The event carries the value as kept.
-            CUSTOMIZATION_SETTINGS.admit(self, wtxn, &(), &mut settings)?;
-            settings.validate()?;
-            let value = settings.layer_value(value.layer());
-            let sequence = next_customization_event_sequence(&self.store, wtxn)?;
-            let event = CustomizationSettingsChangeEvent::new(
-                sequence,
-                self.store.clock.now_recorded_at(),
-                previous,
-                value,
-            );
-            event.validate()?;
-            CUSTOMIZATION_SETTINGS.put(self, wtxn, &(), &settings)?;
-            CUSTOMIZATION_EVENT.put(self, wtxn, &sequence, &event)?;
-            Ok(CustomizationSettingsUpdate {
-                settings,
-                event: Some(event),
-            })
-        })
-    }
-
-    /// Reads customization change events after `after_sequence`, capped by `limit`.
-    pub fn customization_events_after(
-        &self,
-        after_sequence: u64,
-        limit: usize,
-    ) -> Result<Vec<CustomizationSettingsChangeEvent>> {
-        let rtxn = self.store.env.read_txn()?;
-        customization_events_after_in_txn(&self.store, &rtxn, after_sequence, limit)
-    }
-}
-
-fn customization_settings_in_read_txn(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-) -> Result<CustomizationSettings> {
-    let Some(settings) = CUSTOMIZATION_SETTINGS.get(store, rtxn, &())? else {
-        return Ok(CustomizationSettings::default());
-    };
-    settings.validate()?;
-    Ok(settings)
-}
-
-fn customization_settings_in_write_txn(
-    store: &Store,
-    wtxn: &RwTxn<'_>,
-) -> Result<CustomizationSettings> {
-    let Some(settings) = CUSTOMIZATION_SETTINGS.get(store, wtxn, &())? else {
-        return Ok(CustomizationSettings::default());
-    };
-    settings.validate()?;
-    Ok(settings)
-}
-
-fn next_customization_event_sequence(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<u64> {
-    let next = match CUSTOMIZATION_EVENT_SEQUENCE.get(store, wtxn, &())? {
-        Some(current) => current
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("customization event sequence"))?,
-        None => 1,
-    };
-    CUSTOMIZATION_EVENT_SEQUENCE.put(store, wtxn, &(), &next)?;
-    Ok(next)
-}
-
-fn customization_events_after_in_txn(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    after_sequence: u64,
-    limit: usize,
-) -> Result<Vec<CustomizationSettingsChangeEvent>> {
-    let mut events = Vec::new();
-    for row in CUSTOMIZATION_EVENT.iter_from(store, rtxn, &[])? {
-        let (sequence, event) = row?;
-        if sequence <= after_sequence {
-            continue;
-        }
-        if events.len() >= limit {
-            break;
-        }
-        event.validate()?;
-        if event.sequence != sequence {
-            return Err(Error::CorruptedIndex("customization settings event"));
-        }
-        events.push(event);
-    }
-    Ok(events)
 }
 
 fn validate_token(field: &'static str, value: &str) -> Result<()> {
