@@ -2,9 +2,10 @@
 //! itself (ARCH-0052 #d5-proof-open; Engine ruling L6-17-PROVENANCE = C,
 //! 14 Nov). An export copies the talk out of the room under the slip's
 //! authority, as a save writes it into the vault, so it runs the save's
-//! `minted_as_shown` check. A slip narrowed or handed on since its mint gets
-//! the refusal an outsider gets (`OffRecordNotInRoom`, the room routes' 404),
-//! and the room hears nothing. The exact minted slip still exports.
+//! `minted_as_shown` check. A slip narrowed (even only in its lifetime) or
+//! handed on since its mint gets the refusal an outsider gets
+//! (`OffRecordNotInRoom`, the room routes' 404), and the room hears nothing.
+//! The exact minted slip still exports.
 //!
 //! Run with: `cargo test --locked -p oneiron --all-features --test
 //! room_export_slip_provenance`.
@@ -228,6 +229,40 @@ fn a_narrowed_slip_is_refused_at_export_as_an_outsider() -> TestResult {
     );
     assert_eq!(narrowed.claims().holder_ref, room.yuki.to_hex());
     room.assert_export_refused(&narrowed, "a narrowed slip")
+}
+
+/// A caveat that only shortens the slip's lifetime still narrows it.
+/// Verification trims the lifetime left anyway, so the mint comparison
+/// cannot see this caveat; the slip's caveats can (REVIEW-7848 round 1).
+#[test]
+fn a_slip_narrowed_only_in_its_lifetime_is_refused_at_export_as_an_outsider() -> TestResult {
+    let room = room()?;
+    let minted = room.minted()?;
+    let exact = room.verified_by_host(&minted)?;
+    let mut shortened = minted;
+    room.issuer
+        .attenuate(
+            &mut shortened,
+            SlipCaveat {
+                ttl_secs: Some(60),
+                ..Default::default()
+            },
+        )
+        .map_err(at("shorten yuki's slip"))?;
+    let shortened = room.verified_by_host(&shortened)?;
+    assert!(
+        exact.claims().ttl_secs > 60 && shortened.claims().ttl_secs <= 60,
+        "fixture: the caveat did not shorten the slip ({} s, then {} s)",
+        exact.claims().ttl_secs,
+        shortened.claims().ttl_secs
+    );
+    assert_eq!(
+        shortened.scope(),
+        exact.scope(),
+        "fixture: the caveat narrowed more than the lifetime"
+    );
+    assert_eq!(shortened.claims().holder_ref, room.yuki.to_hex());
+    room.assert_export_refused(&shortened, "a slip narrowed only in its lifetime")
 }
 
 #[test]
