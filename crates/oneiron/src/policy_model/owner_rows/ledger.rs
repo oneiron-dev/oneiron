@@ -6,6 +6,7 @@ use crate::batch::secret_scan::admit_typed;
 use crate::check_in::CheckInDecision;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{PolicyRowChange, PolicyRowScope};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
@@ -160,6 +161,45 @@ pub(super) fn put_event_in_txn(
     event: &PolicyChangedEvent,
 ) -> Result<()> {
     EVENTS.put(&vault.store, txn, &event.receipt_id, &encode(event)?)
+}
+
+/// The change receipts, bound through the declared table, for the actor
+/// erase's rewrite. Key: the u64be sequence.
+const RECEIPTS: SideTable<u64, Vec<u8>, Raw> =
+    SideTable::new(&side_table::OWNER_POLICY_CHANGE_RECEIPT);
+
+/// The hard erase's actor scrub over the change receipts (review round 1 of
+/// #8085: an erased asker stayed named; FIX
+/// [CHECK-IN-POLICY-RECEIPT-REQUESTER-UNSCRUBBED]). A receipt whose check-in
+/// decision names `actor` as the asker whose approved check-in the Owner
+/// applied keeps its ruling, its author and its decision, and the asker
+/// becomes [`ERASED_CALL_IDENTITY`], as a shared act's decision does. A
+/// restore's actor sweep runs it again over the restored receipts.
+///
+/// # Errors
+///
+/// A stored receipt that does not read; storage errors.
+pub(crate) fn erase_change_receipt_requester_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let actor_hex = actor.to_hex();
+    for (sequence, raw) in RECEIPTS.scan(&vault.store, wtxn)? {
+        let mut receipt: PolicyRowReceipt = decode(&raw)?;
+        let Some(requester) = receipt
+            .check_in
+            .as_mut()
+            .and_then(|decision| decision.requester.as_mut())
+        else {
+            continue;
+        };
+        if *requester == actor_hex || EntityId::from_hex(requester).is_ok_and(|id| id == *actor) {
+            ERASED_CALL_IDENTITY.clone_into(requester);
+            RECEIPTS.put(&vault.store, wtxn, &sequence, &encode(&receipt)?)?;
+        }
+    }
+    Ok(())
 }
 
 /// Every landed ruling in ledger order: the immutable receipts a queued
