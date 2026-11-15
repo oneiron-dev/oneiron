@@ -3,6 +3,7 @@
 
 mod cli_env;
 mod egress;
+mod guest_pids;
 mod host_net_floor;
 pub mod image_release;
 mod relay_protocol;
@@ -12,6 +13,9 @@ pub use cli_env::{apply_cli_env_to_command, set_cli_env};
 pub use egress::{
     CredentialEgressRecord, CredentialEgressStatus, EgressRelay, HttpRequest, HttpResponse,
     LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason, PreparedDatagram,
+};
+pub use guest_pids::{
+    GuestPressure, HostPidSpace, TASK_KERNEL_MEMORY_FLOOR_BYTES, live_guests, physical_pids_limit,
 };
 pub use host_net_floor::{
     HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,
@@ -158,6 +162,11 @@ pub struct SessionManifest {
     /// Absent from a record that predates it.
     #[serde(default)]
     pub image_release: image_release::ImageReleaseObservation,
+    /// Pressure the guest showed before its container went away (FIX 8013):
+    /// `None` where nothing was observed (predates it, unreadable, or a
+    /// backend whose pressure is counted elsewhere). Evidence only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_pressure: Option<GuestPressure>,
 }
 
 /// Evidence verified before a guest can make its first network call.
@@ -280,7 +289,9 @@ impl ContainerRuntime {
             fence_proof: None,
             fence_unproven: true,
             image_release,
+            guest_pressure: None,
         };
+        guest_pids::note_spawned();
         Ok(GuestSession {
             runtime: self.program.clone(),
             name,
@@ -381,7 +392,9 @@ impl ContainerRuntime {
                 fence_proof: None,
                 fence_unproven: true,
                 image_release,
+                guest_pressure: None,
             };
+            guest_pids::note_spawned();
             let mut session = GuestSession {
                 runtime: self.program.clone(),
                 name: name.clone(),
@@ -443,7 +456,15 @@ fn run_args(name: &str, spec: &GuestSpec) -> Result<Vec<OsString>> {
         format!("--memory={memory_mib}m"),
         format!("--memory-swap={memory_mib}m"),
         format!("--cpus={}.{:03}", cpu_millis / 1000, cpu_millis % 1000),
-        format!("--pids-limit={pids}"),
+        format!(
+            "--pids-limit={}",
+            guest_pids::physical_pids_limit(
+                pids,
+                memory_mib,
+                guest_pids::HostPidSpace::read(),
+                guest_pids::live_guests().saturating_add(1),
+            )
+        ),
         format!("--tmpfs=/tmp:rw,nosuid,nodev,size={tmpfs_mib}m"),
     ]
     .into_iter()
@@ -500,6 +521,38 @@ fn with_stderr_tail(error: Error, tail: &str) -> Error {
     }
 }
 
+/// The host cgroup directory holding `pids.events` for the container the
+/// inspect `evidence` names, if any. `CgroupPath` joined under
+/// `/sys/fs/cgroup` first, then as given, then the container pid's own
+/// `/proc/<pid>/cgroup` line. Fails soft to `None`.
+#[cfg(target_os = "linux")]
+fn pressure_cgroup_dir(evidence: &serde_json::Value) -> Option<PathBuf> {
+    if let Some(path) = supervisor::cgroup_path(evidence) {
+        let joined = PathBuf::from("/sys/fs/cgroup").join(path.trim_start_matches('/'));
+        if joined.join("pids.events").is_file() {
+            return Some(joined);
+        }
+        let given = PathBuf::from(path);
+        if given.is_absolute() && given.join("pids.events").is_file() {
+            return Some(given);
+        }
+    }
+    let pid = supervisor::container_pid(evidence)?;
+    let own = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    let relative = own
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))?
+        .trim_start_matches('/');
+    if relative
+        .split('/')
+        .any(|part| part == ".." || part.is_empty())
+    {
+        return None;
+    }
+    let dir = PathBuf::from("/sys/fs/cgroup").join(relative);
+    dir.join("pids.events").is_file().then_some(dir)
+}
+
 /// One running guest. Dropping it stops and removes the container.
 pub struct GuestSession {
     runtime: PathBuf,
@@ -533,6 +586,30 @@ impl GuestSession {
             .unwrap_or_default()
     }
 
+    /// Reads this session's cgroup `pids.events` while its container runs:
+    /// `Some` on a nonzero `max` count, else `None`. Best-effort, never an error.
+    pub fn observe_pressure(&self) -> Option<GuestPressure> {
+        #[cfg(target_os = "linux")]
+        {
+            let evidence = supervisor::inspect_value(&self.runtime, &self.name)?;
+            let dir = pressure_cgroup_dir(&evidence)?;
+            let text = std::fs::read_to_string(dir.join("pids.events")).ok()?;
+            guest_pids::parse_pids_events(&text).map(|hits| GuestPressure::Processes { hits })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    /// Stores what [`observe_pressure`](Self::observe_pressure) sees into
+    /// this session's manifest, when it sees anything. Never an error.
+    pub fn record_pressure(&mut self) {
+        if let Some(pressure) = self.observe_pressure() {
+            self.manifest.guest_pressure = Some(pressure);
+        }
+    }
+
     #[must_use]
     pub fn abandoned(&self) -> bool {
         #[cfg(target_os = "linux")]
@@ -555,6 +632,7 @@ impl GuestSession {
 
 impl Drop for GuestSession {
     fn drop(&mut self) {
+        guest_pids::note_dropped();
         #[cfg(target_os = "linux")]
         self.supervisor.take();
         drop(self.child.stdin.take());

@@ -238,7 +238,7 @@ impl MicroVmBackend for ContainerBackend {
                 Arc::clone(&relay),
             )
             .map_err(|e| failed(e.to_string()))?;
-        let manifest = guest.manifest().clone();
+        let mut manifest = guest.manifest().clone();
         self.state(vm)?
             .get_mut(vm.id())
             .ok_or_else(|| failed("unknown handle"))?
@@ -291,10 +291,21 @@ impl MicroVmBackend for ContainerBackend {
             (result, watcher.join().unwrap_or(false))
         });
         // Whatever the watcher left is this run's to end.
-        let guest = session
+        let mut guest = session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+        if let Some(live) = guest.as_mut() {
+            // The container still runs here, so its cgroup still reads;
+            // the stored manifest then carries what its guest showed.
+            live.record_pressure();
+            manifest.guest_pressure = live.manifest().guest_pressure.clone();
+            if let Ok(mut states) = self.states.lock()
+                && let Some(state) = states.get_mut(vm.id())
+            {
+                state.manifest = Some(manifest.clone());
+            }
+        }
         let abandoned = killed_abandoned || guest.as_ref().is_some_and(GuestSession::abandoned);
         drop(guest);
         if abandoned {
