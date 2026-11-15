@@ -44,7 +44,12 @@ LITERAL = re.compile(r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])')")
 # A raw string literal, which the migrator does not read.
 RAW_STRING = re.compile(r'(?<!\w)b?r#*"')
 
-FN = re.compile(r"^(?P<doc>(?:[ \t]*(?:///|#\[)[^\n]*\n)*)pub\(crate\) async fn (?P<name>\w+)\s*\(", re.M)
+# A door fn with its doc comment and attributes, and the blank and plain `//` lines between them, which go with it when
+# it is deleted (Sol review of UC-01 PR 1, F2: a doc cut off by a blank line was left behind).
+FN = re.compile(
+    r"^(?P<doc>(?:[ \t]*(?:///|#\[)[^\n]*\n(?:[ \t]*(?://(?![/!])[^\n]*)?\n)*)*)pub\(crate\) async fn (?P<name>\w+)\s*\(",
+    re.M,
+)
 
 
 def refuse(reason):
