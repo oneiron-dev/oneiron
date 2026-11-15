@@ -580,9 +580,60 @@ impl Vault {
         issuer: &HostSlipIssuer,
         slip_id: [u8; 32],
     ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Host, slip_id)
+    }
+    /// [`Self::revoke_capability_slip_once`] asked by the vault's owner, who
+    /// revokes any slip: `owner` is revalidated as the vault's owner in the
+    /// revoking transaction (FIX 8216, lead ruling
+    /// FIX-8216-PAIRING-OWNER-ACT = A).
+    pub fn revoke_capability_slip_as_owner(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Owner(owner), slip_id)
+    }
+    /// [`Self::revoke_capability_slip_once`] asked by a holder that is not
+    /// the owner: only a slip whose logged mint names `holder_ref` (FIX
+    /// 8216). Any other id, one with no logged mint included, is refused
+    /// with `AuthorityRefused` before anything is written, already revoked
+    /// or not, so the answer says nothing about another holder's slips.
+    pub fn revoke_capability_slip_held_by(
+        &self,
+        issuer: &HostSlipIssuer,
+        holder_ref: &str,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Holder(holder_ref), slip_id)
+    }
+    /// Appends one signed revocation of `slip_id` for `by`, judged in the
+    /// revoking transaction.
+    fn revoke_capability_slip_by(
+        &self,
+        issuer: &HostSlipIssuer,
+        by: SlipRevoker<'_>,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
+        match by {
+            SlipRevoker::Host => {}
+            SlipRevoker::Owner(owner) => {
+                owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+            }
+            SlipRevoker::Holder(holder_ref) => {
+                let held = fold
+                    .slips
+                    .mints
+                    .get(&slip_id)
+                    .is_some_and(|mint| mint.action.claims.holder_ref == holder_ref);
+                if !held {
+                    return Err(super::owner_act::authority_refused(SLIP_REVOKE_NOT_HOLDER));
+                }
+            }
+        }
         if fold.slips.explicit_revoked.contains(&slip_id) {
             return Ok(false);
         }
@@ -888,6 +939,18 @@ pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Res
         return Err(invalid_authority());
     }
     Ok(())
+}
+/// The refusal of a holder's revoke of a slip whose logged mint names
+/// another holder, or no logged mint at all (FIX 8216).
+const SLIP_REVOKE_NOT_HOLDER: &str = "a holder revokes only the slips its own logged mints name";
+/// Who asks a slip's revocation, judged in the revoking transaction.
+enum SlipRevoker<'a> {
+    /// The host itself: an engine path, or a door that judged its caller.
+    Host,
+    /// The vault's owner, for any slip.
+    Owner(&'a crate::consent::AuthenticatedOwner),
+    /// A holder that is not the owner, for the slips minted to it.
+    Holder(&'a str),
 }
 pub(super) fn random_slip_id() -> [u8; 32] {
     use rand_core::{OsRng, RngCore};

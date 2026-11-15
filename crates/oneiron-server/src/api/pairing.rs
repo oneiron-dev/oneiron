@@ -638,13 +638,32 @@ pub(super) async fn revoke(
     Json(request): Json<RevokeSlip>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
-    // Revoking a slip is the vault owner's act: a full-scope slip someone
-    // else holds is refused (OWNER-GRADE-IS-NOT-OWNERSHIP).
-    super::owner_routes::owner(&auth, &server)?;
-    with_issuer(&server, |issuer| {
-        server
-            .vault()
-            .revoke_capability_slip(issuer, request.slip_id)
-    })?;
+    // Owner or self (FIX 8216, lead ruling FIX-8216-PAIRING-OWNER-ACT = A):
+    // the vault owner revokes any slip; a full-scope slip someone else holds
+    // is not ownership (OWNER-GRADE-IS-NOT-OWNERSHIP), so its holder revokes
+    // only the slips its own logged mints name. A host slip names no person
+    // and revokes nothing but as the owner its host action names.
+    match super::owner_routes::owner(&auth, &server) {
+        Ok(owner) => with_issuer(&server, |issuer| {
+            server
+                .vault()
+                .revoke_capability_slip_as_owner(issuer, &owner, request.slip_id)
+        })?,
+        Err(refusal) => {
+            let holder = auth
+                .principal_ref()
+                .and(auth.verified_slip())
+                .map(|slip| slip.claims().holder_ref.as_str())
+                .ok_or(refusal)?;
+            let issuer = server.host_issuer().ok_or_else(ApiError::unauthorized)?;
+            server
+                .vault()
+                .revoke_capability_slip_held_by(issuer, holder, request.slip_id)
+                .map_err(|error| match error.kind() {
+                    oneiron::ErrorKind::AuthorityRefused => ApiError::forbidden_scope("owner"),
+                    _ => ApiError::unauthorized(),
+                })?
+        }
+    };
     Ok(Json(serde_json::json!({"revoked":true})))
 }
