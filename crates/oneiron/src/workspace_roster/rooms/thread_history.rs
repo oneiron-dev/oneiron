@@ -33,6 +33,7 @@ impl Memory<'_> {
             None => self.rooms_messages_page(room, after, limit),
             Some(root) => self.thread_messages_page(room, EntityId::from_hex(root)?, after, limit),
         }?;
+        page.for_org = self.turns_for_org(&page.rows)?;
         page.actors =
             self.actor_attributions(page.rows.iter().map(|turn| turn.actor.clone()).collect())?;
         Ok(page)
@@ -157,6 +158,7 @@ fn page_after(
         rows,
         next_after,
         scope,
+        for_org: std::collections::BTreeMap::new(),
         actors: std::collections::BTreeMap::new(),
     })
 }

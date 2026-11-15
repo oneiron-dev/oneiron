@@ -9,7 +9,6 @@ use super::constants::{
     POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
     POLICY_CONSULT_FANOUT_PRECEDENCE_KEY,
 };
-use crate::EntityId;
 use crate::check_in::CheckInMode;
 use crate::error::{Error, Result};
 use crate::gate::consult_fanout_values::ConsultFanOutPolicy;
@@ -17,24 +16,10 @@ use crate::gate::consult_fanout_values::ConsultFanOutRate;
 use crate::gate::consult_fanout_values::ConsultFanOutScope;
 use crate::gate::consult_fanout_values::TaskCreateRateLimit;
 
-/// The precedence row is itself vault policy. The stricter option ignores
-/// holder overrides; neither option permits a child to exceed the vault.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum FanoutPrecedence {
-    NestedNarrowing,
-    MostRestrictive,
-}
-
-impl FanoutPrecedence {
-    pub(crate) fn stricter(self, other: Self) -> Self {
-        if self == Self::MostRestrictive || other == Self::MostRestrictive {
-            Self::MostRestrictive
-        } else {
-            Self::NestedNarrowing
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::gate::fanout_policy::FanoutPrecedence;
+#[doc(hidden)]
+use oneiron_records::gate::fanout_policy::canonical_ref;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -122,12 +107,6 @@ pub(crate) fn parse_scoped_rows(value: &Value) -> Option<Vec<FanoutScopedRow>> {
         rows.push(row);
     }
     Some(rows)
-}
-
-fn canonical_ref(id: &str) -> Option<EntityId> {
-    EntityId::from_hex(id)
-        .ok()
-        .filter(|parsed| parsed.to_hex() == id)
 }
 
 impl ConsultFanOutScope {

@@ -550,7 +550,9 @@ step_budget_units = 16000
     );
     let host = AiHost::start(vault.clone(), Some(&second), true).await;
     // Cuts only the first host's backoff wait; spend and lineage stay.
-    let woke = dispatcher.wake_workflow_retries(unix_now()).unwrap();
+    let woke = dispatcher
+        .wake_workflow_retries(unix_seconds_now())
+        .unwrap();
     let held = eventually(Duration::from_secs(20), || {
         workflow_is_held_for_budget(&vault)
     })
