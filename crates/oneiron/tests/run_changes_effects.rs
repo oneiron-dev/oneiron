@@ -1,20 +1,25 @@
 //! ARCH-0040 #revert-run (REV-2), design RUNCHANGES-3 row X (Engine 13 Nov
 //! 10:30): a run's external effects join its change journal. Each gate
 //! receipt an effect the run asks records is recorded under the run in the
-//! receipt's own write: a `connector.outbound.schedule` through the outbound
-//! chokepoint's held admission, and a `cancel` of a TASK through its own
-//! external-effect gate. The journal lists each receipt beside the run's
-//! other changes, in write order, and `vault.revert_run` of a run nobody
-//! settled never replays one: it reports an effect that ran as one-way and
-//! one the gate held or refused as never landed.
+//! receipt's own write, as a `connector.outbound.schedule` through the
+//! outbound chokepoint's held admission does. The vault owner's run cancels
+//! the owner's own TASK on the owner's proof, with no gate asked
+//! (OWNER-SOFT-CANCEL, #8097), so no receipt stands for it: the journal
+//! records an `owner_task_cancel` change naming the TASK in the cancel's
+//! write (ruling RUNCHANGES-OWNER-CANCEL-IN-RUN = B, 16 Nov). The journal
+//! lists each change beside the run's other changes, in write order, and
+//! `vault.revert_run` of a run nobody settled never replays one: it reports
+//! an effect that ran as one-way and one the gate held or refused as never
+//! landed.
 //!
 //! The run calls the verbs through its host's verb door, which serves each
 //! call on the owner's memory bound to the run's own write origin, as a
 //! host's door does.
 //!
-//! Red on the base (runchanges-4-deletion): no effect receipt joins a run's
-//! journal, so the runs list none, and the revert of a run that only asked
-//! effects answers not_found. Green on the head.
+//! Red on main: no effect receipt joins a run's journal, so the runs list
+//! none, and the revert of a run that only asked effects answers not_found.
+//! Red with the owner's gate-free cancel and no journal for it: the run lists
+//! its send only, and the revert reports no cancel. Green on the head.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test run_changes_effects`
 #![cfg(all(oneiron_test_support, feature = "test-support"))]
@@ -35,7 +40,6 @@ use oneiron::test_support::{
     bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
 };
 use oneiron::{ClaimSource, EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
-use oneiron_authority::federation::scope_codec::{effect_preset, encode_scope_value};
 use rmpv::Value;
 use serde_json::json;
 
@@ -188,11 +192,9 @@ impl AgentVerbDoor for OwnerVerbDoor {
 }
 
 /// Defaults that land the owner's Generated claims, as the code-run gate
-/// pins install them (tests/gate_pins_claim_producers.rs), and one scoped
-/// grant that lets the owner's TASK cancel run. Without a grant for it the
-/// cancel's external-effect gate asks (an irreversible effect, and no
-/// authority for the `tasks` channel), under the shipped manifest too: the
-/// crate's own cancel tests mint a standing grant for it first.
+/// pins install them (tests/gate_pins_claim_producers.rs). The manifest
+/// holds no grant for the `tasks` channel: the owner's run cancels the
+/// owner's own TASK on the owner's proof, which asks no gate.
 fn run_policy(actor: EntityId) -> TestResult<Vec<u8>> {
     let axes = || {
         Value::Map(vec![
@@ -200,19 +202,6 @@ fn run_policy(actor: EntityId) -> TestResult<Vec<u8>> {
             (Value::from("sensitivity"), Value::from("normal")),
         ])
     };
-    let cancel_grant = Value::Map(vec![
-        (Value::from("actor_class"), Value::from("human")),
-        (Value::from("actor_ref"), Value::from(actor.to_hex())),
-        (Value::from("effector"), Value::from("external:cancel")),
-        (
-            Value::from("scope"),
-            encode_scope_value(&effect_preset()).map_err(at("the effect scope"))?,
-        ),
-        (
-            Value::from("selectors"),
-            Value::Map(vec![(Value::from("channel"), Value::from("tasks"))]),
-        ),
-    ]);
     let manifest = Value::Map(vec![
         (
             Value::from("schema_version"),
@@ -244,10 +233,6 @@ fn run_policy(actor: EntityId) -> TestResult<Vec<u8>> {
                     (Value::from("warned"), Value::Boolean(true)),
                 ]),
             )]),
-        ),
-        (
-            Value::from("scoped_grants"),
-            Value::Array(vec![cancel_grant]),
         ),
     ]);
     let mut data = Vec::new();
@@ -293,18 +278,46 @@ fn receipt_of(answer: &serde_json::Value) -> TestResult<String> {
         .to_owned())
 }
 
-/// The external-effect receipts the run lists, in order.
-fn effects(f: &Fixture, run: &str) -> TestResult<Vec<String>> {
-    f.changes(run)?
+/// The effects the run lists, in order: an external effect by its gate
+/// receipt, an owner's gate-free TASK cancel by its TASK.
+fn effects(f: &Fixture, run: &str) -> TestResult<Vec<(String, String)>> {
+    let mut listed = Vec::new();
+    for change in f.changes(run)? {
+        let (kind, field) = match change["kind"].as_str() {
+            Some(kind @ "external_effect") => (kind, "receipt_ref"),
+            Some(kind @ "owner_task_cancel") => (kind, "task_ref"),
+            _ => continue,
+        };
+        let named = change[field].as_str().ok_or("an effect names no ref")?;
+        listed.push((kind.to_owned(), named.to_owned()));
+    }
+    Ok(listed)
+}
+
+/// The change ref of the owner's TASK cancel the run lists: the id the
+/// cancel took for itself, which a revert reports it by.
+fn owner_cancel_of(f: &Fixture, run: &str) -> TestResult<String> {
+    let changes = f.changes(run)?;
+    let cancel = changes
         .iter()
-        .filter(|change| change["kind"] == "external_effect")
-        .map(|change| {
-            Ok(change["receipt_ref"]
-                .as_str()
-                .ok_or("an effect names no receipt")?
-                .to_owned())
-        })
-        .collect()
+        .find(|change| change["kind"] == "owner_task_cancel")
+        .ok_or_else(|| format!("the run lists no owner's TASK cancel: {changes:?}"))?;
+    Ok(cancel["cancel_ref"]
+        .as_str()
+        .ok_or("the cancel names no cancel_ref")?
+        .to_owned())
+}
+
+/// The owner's run cancels the owner's TASK at once and asks no gate.
+fn assert_gate_free(cancelled: &serde_json::Value) {
+    assert_eq!(
+        cancelled["approval"], "auto",
+        "the owner's run cancels the owner's TASK at once: {cancelled}"
+    );
+    assert!(
+        cancelled["gate_decision_ref"].is_null(),
+        "the owner's own cancel asks no gate: {cancelled}"
+    );
 }
 
 /// The owner's own TASK, made outside any run.
@@ -330,8 +343,9 @@ fn reported_for(outcome: &serde_json::Value) -> &'static str {
 
 /// A run schedules a send and cancels the owner's TASK. Another run
 /// schedules a send of its own, and the owner schedules one outside any run.
-/// The run lists its two effect receipts, in write order; the other run
-/// lists its own only, and the owner's joins neither.
+/// The run lists its send's receipt, then its gate-free cancel of the TASK,
+/// in write order; the other run lists its own send only, and the owner's
+/// joins neither.
 #[test]
 fn run_changes_list_names_a_runs_scheduled_send_and_cancel() -> TestResult {
     let f = Fixture::open()?;
@@ -344,6 +358,7 @@ fn run_changes_list_names_a_runs_scheduled_send_and_cancel() -> TestResult {
         send_to("owen@example.com"),
     )?;
     let cancelled = f.call(&run, "cancel", json!({ "task_ref": task }))?;
+    assert_gate_free(&cancelled);
     let theirs = f.call(
         &other,
         "connector.outbound.schedule",
@@ -357,16 +372,20 @@ fn run_changes_list_names_a_runs_scheduled_send_and_cancel() -> TestResult {
     let listed = effects(&f, "run-effects-list")?;
     assert_eq!(
         listed,
-        vec![receipt_of(&sent)?, receipt_of(&cancelled)?],
-        "the send's receipt, then the cancel's"
+        vec![
+            ("external_effect".to_owned(), receipt_of(&sent)?),
+            ("owner_task_cancel".to_owned(), task),
+        ],
+        "the send's receipt, then the cancel of the TASK"
     );
     assert_eq!(
         effects(&f, "run:run-effects-other")?,
-        vec![receipt_of(&theirs)?],
+        vec![("external_effect".to_owned(), receipt_of(&theirs)?)],
         "the other run's send only"
     );
+    let own = receipt_of(&own)?;
     assert!(
-        !listed.contains(&receipt_of(&own)?),
+        listed.iter().all(|(_, named)| *named != own),
         "the owner's own send joins no run"
     );
     Ok(())
@@ -374,9 +393,9 @@ fn run_changes_list_names_a_runs_scheduled_send_and_cancel() -> TestResult {
 
 /// A run nobody reviewed schedules a send and cancels the owner's TASK.
 /// Undo-all of the run replays and takes back neither: it reports the
-/// cancel, which its gate let run, as one-way, and the send as its gate
-/// answered it, one-way if let run and never landed if held. Asked again, it
-/// answers the same.
+/// cancel, which ran on the owner's proof, as one-way, and the send as its
+/// gate answered it, one-way if let run and never landed if held. Asked
+/// again, it answers the same.
 #[test]
 fn revert_all_reports_a_runs_effects_without_replaying_them() -> TestResult {
     let f = Fixture::open()?;
@@ -388,11 +407,11 @@ fn revert_all_reports_a_runs_effects_without_replaying_them() -> TestResult {
         send_to("owen@example.com"),
     )?;
     let cancelled = f.call(&run, "cancel", json!({ "task_ref": task }))?;
-    assert_eq!(
-        cancelled["approval"], "auto",
-        "the owner's run cancels the owner's TASK at once: {cancelled}"
+    assert_gate_free(&cancelled);
+    let (send, cancel) = (
+        receipt_of(&sent)?,
+        owner_cancel_of(&f, "run-effects-revert")?,
     );
-    let (send, cancel) = (receipt_of(&sent)?, receipt_of(&cancelled)?);
 
     let expected = vec![
         (cancel.clone(), "one_way".to_owned()),
