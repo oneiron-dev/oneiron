@@ -89,7 +89,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/machines/held/confirm",
-                summary: "The owner confirms the held machine answers he names, on an install that holds his key: all of them stand or nothing is written; a named entry that no longer asks is a conflict.",
+                summary: "The owner confirms the held machine answers he names, on an install that holds his key: all of them stand or nothing is written; a named entry that no longer asks is a conflict, and one that names other keys than its machine stands under is refused.",
                 row: None,
                 shape: Some(RestShape::json(
                     held_entries_body_schema,
@@ -102,7 +102,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/machines/held/dismiss",
-                summary: "The owner dismisses the ask of the held machine answers he names, on this install alone: each stays held, and his other devices still ask.",
+                summary: "The owner dismisses the ask of the held machine answers he names, on this install alone: each stays held, and his other devices still ask; a named entry that no longer asks is a conflict.",
                 row: None,
                 shape: Some(RestShape::json(
                     held_entries_body_schema,
@@ -537,8 +537,10 @@ async fn get_held(
 /// answers he names. Each becomes his own proven answer about its machine,
 /// in one transaction. On an install that holds no owner key it refuses
 /// before it writes (409, state `owner_key_required`): a confirm promises a
-/// proven answer. A confirmed removal revokes the machine's mesh pairing and
-/// grants, as `/machines/remove` does.
+/// proven answer. An entry that names other keys than its machine stands
+/// under is refused: a confirm never replaces a machine's keys. A confirmed
+/// removal revokes the machine's mesh pairing and grants, as
+/// `/machines/remove` does.
 async fn confirm_held(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -565,7 +567,8 @@ async fn confirm_held(
 
 /// `POST /v1/owner/machines/held/dismiss`: the owner dismisses the ask of
 /// the held answers he names, on this install alone. Nothing is written to
-/// the log: each answer stays held, and his other devices still ask.
+/// the log: each answer stays held, and his other devices still ask. A named
+/// entry that no longer asks is a conflict.
 async fn dismiss_held(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
