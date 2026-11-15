@@ -30,11 +30,19 @@
 //!   person's: a settle under it that lifts a restriction is refused, while
 //!   the person's own slip still settles.
 //!
-//! Each red is a settle by no person: it is refused, and the restricting
-//! member stands. The guards show a person holder and the owner still
-//! settle. The controls show the cut is narrow: the agent holder and the
-//! Dreamer still settle a conflict whose members restrict no one (the
-//! Dreamer keeps autoapply + revert there).
+//! RULING RESTRICTION-CLOSE-BY-DERIVE-ITEM = A (19:43) is folded in as well:
+//! the Dreamer's derive supersede item whose old claim restricts someone is
+//! refused with its own reason and left; a revert by anyone but the owner
+//! leaves each item whose inverse would close a restricting row, and the
+//! owner's revert still closes it. The source re-check
+//! (`dreamer.claim_source_recheck`) holds its stale rung on a restricting
+//! claim for a person, as the curator's own pass does.
+//!
+//! Each red is a close by no person: it is refused or held, and the
+//! restricting row stands. The guards show a person holder and the owner
+//! still settle. The controls show the cut is narrow: the agent holder and
+//! the Dreamer still settle, supersede, revert and mark stale rows that
+//! restrict no one (the Dreamer keeps autoapply + revert there).
 //!
 //! The conflicts are two Generated `delivery_window.context` rows about one
 //! PERSON, landed on the raw door and opened by the Dreamer's marker
@@ -44,7 +52,9 @@
 //! lands through the cfg door `test_doors::curator_finding`, as the curator
 //! lands a finding over a critical target. The vault is rooted under a host
 //! (an owner's native Grant needs a rooted vault), with the shipped default
-//! manifest plus that one rule.
+//! manifest plus that one rule. The re-check's vault is opened owned and
+//! started as a host, as `tests/claim_source_recheck_decide.rs` opens it (its
+//! seed installs the mail pack as the embedded owner), with the same rule.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test conflict_settle_restriction`.
@@ -52,7 +62,7 @@
 
 use ed25519_dalek::Signer;
 use oneiron::agent_def::AgentCeiling;
-use oneiron::authority::{HostSlipIssuer, SlipCaveat, VerifiedSlip};
+use oneiron::authority::{HostSlipIssuer, MachineRole, SlipCaveat, VerifiedSlip};
 use oneiron::campaign::claims::{
     CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_DO_NOT_CONTACT,
     encode_do_not_contact_value,
@@ -62,21 +72,31 @@ use oneiron::dreamer_consolidation::{
     ConflictReviewScope, ConflictSettleOutcome, ConflictSettlement,
 };
 use oneiron::error::{GateDenialReason, GateError};
+use oneiron::llm::decision::HeldLadder;
 use oneiron::memory::{
     ClaimInput, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest,
     ClaimSettlement, ClaimSettlementReason, ClaimSettlementVerdict, MemoryAuthoringAction,
     MemoryResult, resolve_entity_ref,
 };
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::model_decision::DecisionBandPolicy;
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::claim_source_recheck::{self, SeededRecheck};
 use oneiron::test_doors::comm_claim_rows::put_comm_claim_row;
 use oneiron::test_doors::curator_finding::{
     emit_retract_finding, land_stale_consolidation, run_curator_once,
 };
-use oneiron::test_doors::derive::open_conflict;
+use oneiron::test_doors::derive::{
+    Claim, Committed, Derived, Named, Supersede, commit, commit_claims, open_conflict,
+    refusal_receipt, revert, revert_as_owner,
+};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ClaimApprovalStatus, ClaimBody,
+    ClaimLifecycleStatus, ClaimSource, ClaimSubject, ContentPart, EdgeActorClass, EntityId, Error,
+    FatalLlmError, FinishReason, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
+    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse,
+    LlmStreamResult, LlmUsage, ModelId, TimeRange, UnsupportedCapability, Vault, VaultConfig,
+    WakeAttemptContext, WakePassDeadline, WriteActor,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -91,6 +111,22 @@ const NOTE: &str = "profile.note";
 
 /// The refusal of a settle by no person that lifts a restriction.
 const LIFTS_A_RESTRICTION: &str = "a claim that restricts someone's access";
+
+/// The refusal of a derive supersede item whose old claim restricts
+/// someone (`oneiron::derive::SUPERSEDE_RESTRICTION`, spelled out so this
+/// file also builds on the red tree, which lacks the token).
+const SUPERSEDE_RESTRICTION: &str = "gate.deny.derive.supersede_restriction";
+
+/// Why a revert by no owner leaves an item whose inverse would close a
+/// restricting row (`oneiron::derive::REVERT_LIFTS_RESTRICTION`, spelled
+/// out for the same reason).
+const REVERT_LIFTS_RESTRICTION: &str = "derive.revert.lifts_restriction";
+
+/// The re-check judge's rubric and the support question's wording, as
+/// `tests/claim_source_recheck_decide.rs` passes them: prompt data beside the
+/// host.
+const RECHECK_RUBRIC: &str = "the test rubric the judge reads the claim against its supports by";
+const RECHECK_WORDING: &str = "Do the claim's supports, as they stand now, still carry the claim?";
 
 struct Fixture {
     vault: Vault,
@@ -163,7 +199,7 @@ impl Fixture {
             owner_proof,
             _directory: directory,
         };
-        fixture.declare_delivery_window_normal();
+        declare_delivery_window_normal(&fixture.vault, &fixture.owner_proof);
         fixture
     }
 
@@ -474,8 +510,7 @@ impl Fixture {
         prior: serde_json::Value,
         next: serde_json::Value,
     ) -> (EntityId, EntityId) {
-        let (approval, head) =
-            self.writes(self.agent_holder(), true, "observed", predicate, prior);
+        let (approval, head) = self.writes(self.agent_holder(), true, "observed", predicate, prior);
         assert_eq!(approval, "auto", "the {predicate} head lands");
         let (approval, replacement) =
             self.writes(self.agent_holder(), true, "observed", predicate, next);
@@ -581,51 +616,132 @@ impl Fixture {
             .expect("the row stands")
     }
 
-    /// Installs the shipped manifest plus one rule: `delivery_window.context`
-    /// is normal, as `tests/agent_holder_settle_restriction.rs` declares it.
-    fn declare_delivery_window_normal(&self) {
-        let id = oneiron_store::policy_record::default_policy_manifest_id()
-            .expect("default policy manifest id");
-        let body = self
-            .vault
-            .get(&id)
-            .expect("read default policy manifest")
-            .expect("default policy manifest exists");
-        let Value::Map(mut fields) =
-            rmpv::decode::read_value(&mut body.as_slice()).expect("decode default policy manifest")
-        else {
-            panic!("default policy manifest is a map");
-        };
-        let (_, Value::Array(rules)) = fields
-            .iter_mut()
-            .find(|(key, _)| key.as_str() == Some("rules"))
-            .expect("default policy rules")
-        else {
-            panic!("default policy rules are an array");
-        };
-        rules.push(Value::Map(vec![
-            (Value::from("prefix"), Value::from(DELIVERY_WINDOW_CONTEXT)),
-            (Value::from("exact"), Value::Boolean(true)),
-            (
-                Value::from("axes"),
-                Value::Map(vec![
-                    (Value::from("criticality"), Value::from("normal")),
-                    (Value::from("sensitivity"), Value::from("normal")),
-                ]),
-            ),
-        ]));
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &Value::Map(fields))
-            .expect("encode delivery window policy");
-        self.vault
-            .install_owner_policy_manifest(
-                &self.owner_proof,
-                id,
-                bytes,
-                self.vault.now_recorded_at(),
-            )
-            .expect("declare the delivery window normal");
+    /// The Dreamer, the actor of the derive batches below.
+    fn dreamer(&self) -> WriteActor {
+        self.vault.dreamer_authority().expect("the Dreamer")
     }
+
+    /// The Dreamer's batch of one claim `derived` of `predicate` about the
+    /// subject holding `value`, citing a fresh TURN, landed at Auto. Returns
+    /// the batch and the claim's row.
+    fn derived_claim(
+        &self,
+        predicate: &'static str,
+        value: serde_json::Value,
+    ) -> (EntityId, EntityId) {
+        let dreamer = self.dreamer();
+        let committed = commit_claims(
+            &self.vault,
+            dreamer.entity_ref(),
+            dreamer.actor_class(),
+            "run-derived-claim",
+            &[Claim {
+                local: "derived",
+                predicate,
+                subject: Named::Stored(self.subject),
+                value,
+                evidence: vec![Named::Stored(turn(&self.vault))],
+            }],
+        )
+        .expect("the batch commits");
+        let [item] = committed.items.as_slice() else {
+            panic!("one item: {:?}", committed.items);
+        };
+        assert!(item.landed, "the derived claim lands: {item:?}");
+        assert_eq!(item.approval.as_deref(), Some("auto"), "at Auto: {item:?}");
+        (committed.batch, item.rows[0])
+    }
+
+    /// The Dreamer's batch of one supersede item `supersede`: `new` replaces
+    /// `old`.
+    fn dreamer_supersedes(&self, new: EntityId, old: EntityId) -> Committed {
+        let dreamer = self.dreamer();
+        commit(
+            &self.vault,
+            dreamer.entity_ref(),
+            dreamer.actor_class(),
+            "run-supersede",
+            &[Derived::Supersede(Supersede {
+                local: "supersede",
+                new: Named::Stored(new),
+                old: Named::Stored(old),
+            })],
+        )
+        .expect("the batch commits")
+    }
+
+    /// The Dreamer's revert of its own batch `batch`: the items undone and
+    /// the items left, each with why.
+    fn dreamer_reverts(&self, batch: EntityId) -> (Vec<String>, Vec<(String, String)>) {
+        let dreamer = self.dreamer();
+        revert(
+            &self.vault,
+            dreamer.entity_ref(),
+            dreamer.actor_class(),
+            batch,
+        )
+        .expect("revert")
+        .expect("the Dreamer may revert its own batch")
+    }
+}
+
+/// Installs the shipped manifest plus one rule: `delivery_window.context` is
+/// normal, as `tests/agent_holder_settle_restriction.rs` declares it.
+fn declare_delivery_window_normal(vault: &Vault, owner_proof: &AuthenticatedOwner) {
+    let id = oneiron_store::policy_record::default_policy_manifest_id()
+        .expect("default policy manifest id");
+    let body = vault
+        .get(&id)
+        .expect("read default policy manifest")
+        .expect("default policy manifest exists");
+    let Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("decode default policy manifest")
+    else {
+        panic!("default policy manifest is a map");
+    };
+    let (_, Value::Array(rules)) = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+        .expect("default policy rules")
+    else {
+        panic!("default policy rules are an array");
+    };
+    rules.push(Value::Map(vec![
+        (Value::from("prefix"), Value::from(DELIVERY_WINDOW_CONTEXT)),
+        (Value::from("exact"), Value::Boolean(true)),
+        (
+            Value::from("axes"),
+            Value::Map(vec![
+                (Value::from("criticality"), Value::from("normal")),
+                (Value::from("sensitivity"), Value::from("normal")),
+            ]),
+        ),
+    ]));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(fields))
+        .expect("encode delivery window policy");
+    vault
+        .install_owner_policy_manifest(owner_proof, id, bytes, vault.now_recorded_at())
+        .expect("declare the delivery window normal");
+}
+
+/// A TURN, the evidence a derived claim cites, as `tests/derive_revert.rs`
+/// puts one.
+fn turn(vault: &Vault) -> EntityId {
+    let at = vault.now_recorded_at();
+    let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "user")]))
+        .expect("a TURN body");
+    let turn = EntityId::now();
+    vault
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: at, end: at },
+            at,
+            &body,
+        )
+        .expect("a TURN");
+    turn
 }
 
 fn at() -> TimeRange {
@@ -983,4 +1099,368 @@ fn a_persons_own_slip_still_rejects_a_proposed_do_not_contact() {
     assert_eq!(settled.verdict, ClaimSettlementVerdict::Rejected);
     assert_eq!(settled.reason, ClaimSettlementReason::HolderDeclined);
     assert_eq!(f.stored(bar).lifecycle, ClaimLifecycleStatus::Retracted);
+}
+
+/// RESTRICTION-CLOSE-BY-DERIVE-ITEM, red: the Dreamer's derive supersede
+/// item closed a delivery window. It is now refused with its own reason, and
+/// the window stands.
+#[test]
+fn a_derive_supersede_never_closes_a_delivery_window() {
+    let f = Fixture::new();
+    let old = f.generated(DELIVERY_WINDOW_CONTEXT, f.subject, window("asleep"));
+    let new = f.generated(DELIVERY_WINDOW_CONTEXT, f.subject, window("driving"));
+
+    let committed = f.dreamer_supersedes(new, old);
+
+    assert_eq!(
+        f.stored(old).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the restricting window still holds: {:?}",
+        committed.items
+    );
+    let [item] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(!item.landed, "the supersede item is refused: {item:?}");
+    assert_eq!(item.reasons, vec![SUPERSEDE_RESTRICTION.to_owned()]);
+    assert_eq!(
+        refusal_receipt(&f.vault, committed.batch, "supersede").expect("read the receipt"),
+        Some(vec![SUPERSEDE_RESTRICTION.to_owned()])
+    );
+}
+
+/// RESTRICTION-CLOSE-BY-DERIVE-ITEM, guard: the same supersede item over a
+/// note still closes it.
+#[test]
+fn a_derive_supersede_still_closes_a_note() {
+    let f = Fixture::new();
+    let old = f.generated(NOTE, f.subject, Value::from("the first note"));
+    let new = f.generated(NOTE, f.subject, Value::from("the second note"));
+
+    let committed = f.dreamer_supersedes(new, old);
+
+    let [item] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(item.landed, "the supersede item lands: {item:?}");
+    assert_eq!(f.stored(old).lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(f.stored(new).lifecycle, ClaimLifecycleStatus::Active);
+}
+
+/// RESTRICTION-CLOSE-BY-DERIVE-ITEM, red: the Dreamer's revert of its own
+/// batch retracted the delivery window the batch landed. The item is now
+/// left, and the window stands for the owner's revert.
+#[test]
+fn a_derive_revert_never_retracts_its_own_delivery_window() {
+    let f = Fixture::new();
+    let (batch, derived) = f.derived_claim(DELIVERY_WINDOW_CONTEXT, window_json("asleep"));
+
+    let (reverted, left) = f.dreamer_reverts(batch);
+
+    assert_eq!(
+        f.stored(derived).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the restricting window still holds (reverted: {reverted:?}, left: {left:?})"
+    );
+    assert!(reverted.is_empty(), "nothing is undone: {reverted:?}");
+    assert_eq!(
+        left,
+        vec![("derived".to_owned(), REVERT_LIFTS_RESTRICTION.to_owned())]
+    );
+}
+
+/// RESTRICTION-CLOSE-BY-DERIVE-ITEM, guard: the owner's revert of the
+/// Dreamer's batch still retracts the delivery window it landed.
+#[test]
+fn the_owners_revert_still_retracts_a_derived_delivery_window() {
+    let f = Fixture::new();
+    let (batch, derived) = f.derived_claim(DELIVERY_WINDOW_CONTEXT, window_json("asleep"));
+
+    let (reverted, left) = revert_as_owner(&f.vault, batch)
+        .expect("revert")
+        .expect("the owner may revert any batch");
+
+    assert_eq!(reverted, vec!["derived".to_owned()]);
+    assert!(left.is_empty(), "nothing is left: {left:?}");
+    assert_eq!(f.stored(derived).lifecycle, ClaimLifecycleStatus::Retracted);
+}
+
+/// RESTRICTION-CLOSE-BY-DERIVE-ITEM, control: the Dreamer's revert of its
+/// own batch still retracts the note it landed.
+#[test]
+fn a_derive_revert_still_retracts_its_own_note() {
+    let f = Fixture::new();
+    let (batch, derived) = f.derived_claim(NOTE, json!("the first note"));
+
+    let (reverted, left) = f.dreamer_reverts(batch);
+
+    assert_eq!(reverted, vec!["derived".to_owned()]);
+    assert!(left.is_empty(), "nothing is left: {left:?}");
+    assert_eq!(f.stored(derived).lifecycle, ClaimLifecycleStatus::Retracted);
+}
+
+/// The re-check's judge: it answers every question a request asks
+/// `unsupported` at 0.9, so the re-check marks the claim stale.
+struct UnsupportedJudge;
+
+/// The ids the request's last user turn asks about, in order; none when the
+/// turn carries no `questions` array.
+fn asked_ids(request: &LlmRequest) -> Vec<String> {
+    let Some(turn) = request
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == LlmMessageRole::User)
+    else {
+        return Vec::new();
+    };
+    let text: String = turn
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let Ok(turn) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    turn.get("questions")
+        .and_then(serde_json::Value::as_array)
+        .map(|questions| {
+            questions
+                .iter()
+                .filter_map(|entry| entry.get("id")?.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The judge's reply: `unsupported` at 0.9 under each asked id. Usage is
+/// nonzero.
+fn unsupported(ids: &[String]) -> LlmResponse {
+    let reply: serde_json::Map<String, serde_json::Value> = ids
+        .iter()
+        .map(|id| {
+            (
+                id.clone(),
+                json!({ "supported": 0.05, "weakened": 0.05, "unsupported": 0.9 }),
+            )
+        })
+        .collect();
+    LlmResponse {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content: vec![ContentPart::Text {
+                text: serde_json::Value::Object(reply).to_string(),
+                signature: None,
+            }],
+        },
+        usage: LlmUsage {
+            input: LlmInputUsage {
+                total: 10,
+                cache_read: 0,
+                cache_write: 0,
+            },
+            output: LlmOutputUsage {
+                total: 5,
+                text: 5,
+                reasoning: 0,
+            },
+            raw_provider: serde_json::Value::Null,
+            call_metadata: None,
+        },
+        finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
+    }
+}
+
+impl LlmBackend for UnsupportedJudge {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let reply = unsupported(&asked_ids(&request));
+        Box::pin(async move { Ok(reply) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(LlmError::Fatal(FatalLlmError::Unsupported(
+            UnsupportedCapability {
+                capability: LlmCapability::Streaming,
+                model: None,
+                reason: None,
+            },
+        )))
+    }
+}
+
+/// The source re-check's vault: opened owned and started as a host, as
+/// `tests/claim_source_recheck_decide.rs` opens it, with the delivery window
+/// declared normal.
+struct RecheckFixture {
+    vault: Vault,
+    // Dropped after the vault.
+    _directory: tempfile::TempDir,
+}
+
+impl RecheckFixture {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().expect("vault dir");
+        // The seed installs the mail pack and syncs the source as the
+        // embedded owner, whose proof needs the vault's writer lease.
+        let vault =
+            Vault::open_owned(directory.path(), VaultConfig::default()).expect("open vault");
+        let owner = vault.ensure_embedded_owner_actor().expect("owner");
+        let issuer = HostSlipIssuer::from_secret(b"conflict-settle-restriction recheck")
+            .expect("fixture host issuer");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault
+            .ensure_host_root_slip(&issuer)
+            .expect("the host root binds the owner");
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install profiled");
+        vault
+            .provision_engine_machine_identities(&issuer)
+            .expect("the engine's machine signers");
+        let owner_proof = vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("owner proof");
+        declare_delivery_window_normal(&vault, &owner_proof);
+        Self {
+            vault,
+            _directory: directory,
+        }
+    }
+
+    /// Seeds the re-check of a claim of `predicate` holding `value` and runs
+    /// it with the `unsupported` judge on the host's ladder. Returns the
+    /// claim.
+    fn recheck_unsupported(&self, predicate: &str, value: Value) -> EntityId {
+        let now_ms = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("the clock")
+                .as_millis(),
+        )
+        .expect("now in milliseconds");
+        let SeededRecheck { claim, attempt } =
+            claim_source_recheck::seed_claim(&self.vault, now_ms, predicate, value)
+                .expect("the seeded re-check");
+        let guard = BudgetGuard::with_reserve_units(
+            "conflict-settle-restriction-recheck",
+            100_000,
+            500,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let model = ModelId::new("test/judge@r1").expect("judge model");
+        let deadline = WakePassDeadline::new(60_000);
+        let context = WakeAttemptContext {
+            vault: &self.vault,
+            deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
+            budget_id: "test",
+            now_ms,
+            prepared_wake: None,
+            prepared_attempt: None,
+            spend_meter: None,
+        };
+        let held = HeldLadder::unstaffed();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(claim_source_recheck::run(
+                &context,
+                &attempt,
+                &UnsupportedJudge,
+                &guard,
+                &model,
+                RECHECK_RUBRIC,
+                held.ladder(),
+                DecisionBandPolicy::default(),
+                RECHECK_WORDING,
+            ))
+            .expect("the re-check runs");
+        claim
+    }
+
+    /// The approval of the re-check's finding about `claim`. A row that does
+    /// not read as a claim body is skipped, as `claim_source_recheck::finding`
+    /// skips it.
+    fn finding_approval(&self, claim: EntityId) -> ClaimApprovalStatus {
+        let rows = self
+            .vault
+            .entities_by_type(ENTITY_TYPE_CLAIM)
+            .expect("claim rows");
+        rows.into_iter()
+            .filter_map(|id| self.vault.get_claim(&id).ok().flatten())
+            .find(|body| {
+                body.subject == ClaimSubject::Entity(claim)
+                    && body
+                        .value
+                        .as_str()
+                        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                        .is_some_and(|value| value.get("recheck").is_some())
+            })
+            .expect("the re-check's finding")
+            .approval
+    }
+}
+
+/// The source re-check, red: its stale rung on a delivery window, declared
+/// normal, applied with no one's approval. The rung now waits as a held
+/// finding for a person, and the window stays unmarked.
+#[test]
+fn the_source_recheck_never_marks_a_delivery_window_stale() {
+    let f = RecheckFixture::new();
+
+    let window = f.recheck_unsupported(DELIVERY_WINDOW_CONTEXT, window("asleep"));
+
+    let head = f
+        .vault
+        .get_claim(&window)
+        .expect("claim read")
+        .expect("the window stands");
+    assert!(!head.stale, "the restricting window still holds");
+    let finding = claim_source_recheck::finding(&f.vault, window).expect("the re-check's finding");
+    assert_eq!(
+        finding
+            .pointer("/action/kind")
+            .and_then(serde_json::Value::as_str),
+        Some("stale"),
+        "the held rung marks stale: {finding}"
+    );
+    assert_eq!(
+        finding
+            .pointer("/recheck/verdict")
+            .and_then(serde_json::Value::as_str),
+        Some("unsupported"),
+        "{finding}"
+    );
+    assert_eq!(
+        f.finding_approval(window),
+        ClaimApprovalStatus::Proposed,
+        "the stale rung waits for a person"
+    );
+}
+
+/// The source re-check, control: its stale rung on a note still applies at
+/// once.
+#[test]
+fn the_source_recheck_still_marks_a_note_stale() {
+    let f = RecheckFixture::new();
+
+    let note = f.recheck_unsupported(NOTE, Value::from("the first note"));
+
+    let head = f
+        .vault
+        .get_claim(&note)
+        .expect("claim read")
+        .expect("the note stands");
+    assert!(head.stale, "the note's stale mark applied");
 }
