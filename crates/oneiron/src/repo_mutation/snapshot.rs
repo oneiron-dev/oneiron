@@ -100,6 +100,12 @@ impl SnapshotCustody {
             .withholds(path, content, self.root.as_deref())
     }
 
+    /// Whether custody declares `path`: a vault-resident path, whose bytes
+    /// only the vault writes (a T2 file, ARCH-0069 S4).
+    pub(super) fn declares(&self, path: &str) -> bool {
+        self.exclusions.declares(path, self.root.as_deref())
+    }
+
     /// A file's entry as the policy keeps it.
     pub(super) fn file(
         &self,
@@ -375,16 +381,24 @@ pub(super) fn restore_repo_snapshot(
 
     // A withheld file the checkout no longer holds comes back from the
     // snapshot head's own commit (FIX 2230). One at or inside a linked
-    // checkout stays as it is: the restore never writes into one.
-    let mut recreated = withheld_files_to_recreate(vault, repo_ref, repo_root, &snapshot, &lifted)?;
-    recreated.retain(|path, _| {
-        !linked_paths.iter().chain(&residual_paths).any(|linked| {
+    // checkout stays as it is, and its bytes are never read: the restore
+    // never writes into one.
+    let in_linked_checkout = |path: &str| {
+        linked_paths.iter().chain(&residual_paths).any(|linked| {
             path == linked
                 || path
                     .strip_prefix(linked.as_str())
                     .is_some_and(|rest| rest.starts_with('/'))
         })
-    });
+    };
+    let mut recreated = withheld_files_to_recreate(
+        vault,
+        repo_ref,
+        repo_root,
+        &snapshot,
+        &lifted,
+        in_linked_checkout,
+    )?;
 
     // The paths this restore changes: only their index entries are reset.
     let mut changed: BTreeSet<String> = current.difference(&desired).cloned().collect();
@@ -547,25 +561,41 @@ fn checkout_holds_entry(target: &Path, entry: &StoredRepoSnapshotEntry) -> Resul
 /// no byte of a withheld file (OF-067), so the repository's own object store
 /// is the one source: a path that commit tracks as a regular file whose bytes
 /// custody still withholds comes back as those bytes, and recaptures as the
-/// snapshot's own entry. Any other gone withheld file stays gone: a T2 file
-/// re-materializes from the vault alone, never from a snapshot (ARCH-0069
-/// S4). A withheld file the checkout still holds keeps its bytes and its
-/// permissions, which may be owner-only.
+/// snapshot's own entry. Any other gone withheld file stays gone:
+/// - a path custody declares is vault-resident, and a T2 file there
+///   re-materializes from the vault alone under its lease, never from a
+///   snapshot or a commit (ARCH-0069 S4), so a lease that expired stays torn
+///   down;
+/// - a path `skip` names (one at or inside a linked checkout), whose bytes
+///   are not read either;
+/// - every path off Unix, where no file is owner-only from its first byte.
+///
+/// A withheld file the checkout still holds keeps its bytes and its
+/// permissions, which may be owner-only. The commit is read at the snapshot
+/// head, whatever revision the caller's `repo_ref` pins.
 fn withheld_files_to_recreate(
     vault: &Vault,
     repo_ref: &RepoRef,
     repo_root: &Path,
     snapshot: &StoredRepoSnapshot,
     lifted: &BTreeSet<String>,
+    skip: impl Fn(&str) -> bool,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     let Some(head) = snapshot.head.as_deref() else {
         return Ok(BTreeMap::new());
     };
+    if !cfg!(unix) {
+        return Ok(BTreeMap::new());
+    }
+    let custody = SnapshotCustody::of(vault, repo_root)?;
     let mut gone = BTreeSet::new();
     for entry in &snapshot.entries {
         let withheld =
             entry.kind == StoredRepoSnapshotEntryKind::Withheld || lifted.contains(&entry.path);
-        if withheld && fs::symlink_metadata(repo_path_on_disk(repo_root, &entry.path)?).is_err() {
+        if !withheld || skip(&entry.path) || custody.declares(&entry.path) {
+            continue;
+        }
+        if fs::symlink_metadata(repo_path_on_disk(repo_root, &entry.path)?).is_err() {
             gone.insert(entry.path.clone());
         }
     }
@@ -573,9 +603,15 @@ fn withheld_files_to_recreate(
         return Ok(BTreeMap::new());
     }
     let wire = GitWire::new(vault)?;
-    let repo = wire.open_repo(repo_ref.clone(), repo_root)?;
+    let at_head = match repo_ref {
+        RepoRef::LocalFolder { path, .. } => RepoRef::LocalFolder {
+            path: path.clone(),
+            commit: head.to_owned(),
+        },
+        other => other.clone(),
+    };
+    let repo = wire.open_repo(at_head, repo_root)?;
     let commit = wire.resolve_commit(&repo, head)?;
-    let custody = SnapshotCustody::of(vault, repo_root)?;
     Ok(commit_files(&wire, &repo, &commit, Some(&gone))?
         .into_iter()
         .filter(|(path, file)| custody.withholds(path, &file.content).is_some())

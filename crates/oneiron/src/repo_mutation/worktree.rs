@@ -223,8 +223,12 @@ pub(super) fn write_repo_file_no_symlink(
 
 /// Writes `content` at `path` as a new file that only its owner may read,
 /// from its first byte. It never writes over a file that exists or through a
-/// symlink. A withheld file holds bytes custody keeps out of every snapshot,
-/// so a restore that writes one anew never widens who may read it (FIX 2230).
+/// symlink, the path's ancestors included: the file is created through its
+/// directory's held descriptor, as a T2 file is, and nothing is written when
+/// an ancestor moved since the walk. A withheld file holds bytes custody
+/// keeps out of every snapshot, so a restore that writes one anew never
+/// widens who may read it, nor where it lands (FIX 2230). Unix only: the
+/// restore recreates no withheld file elsewhere.
 pub(super) fn create_owner_only_repo_file_no_symlink(
     repo_root: &Path,
     path: &str,
@@ -237,26 +241,41 @@ pub(super) fn create_owner_only_repo_file_no_symlink(
 
 #[cfg(unix)]
 fn create_owner_only_file_no_follow(path: &Path, content: &[u8], executable: bool) -> Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(if executable { 0o700 } else { 0o600 })
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
+    use std::os::unix::fs::PermissionsExt;
+
+    use crate::secret_lease::FileIdentity;
+    use crate::secret_lease::written::{Links, Target};
+
+    let target = Target::open(path)?;
+    let mut file = target.create()?;
+    // The post-open floor, as the T2 writer's: an ancestor moved or swapped
+    // since the walk leaves the held directory off the path, so no byte is
+    // written there and the empty file this created goes again.
+    if !target.still_named_by(path)? {
+        let identity = FileIdentity::of(&file.metadata()?);
+        drop(file);
+        target.remove(identity, Links::Sole)?;
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+            "an ancestor of a restored withheld file moved while it was written",
+        )));
+    }
+    if executable {
+        file.set_permissions(fs::Permissions::from_mode(0o700))?;
+    }
     file.write_all(content)?;
     file.flush()?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn create_owner_only_file_no_follow(path: &Path, content: &[u8], _executable: bool) -> Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(content)?;
-    file.flush()?;
-    Ok(())
+fn create_owner_only_file_no_follow(
+    _path: &Path,
+    _content: &[u8],
+    _executable: bool,
+) -> Result<()> {
+    Err(Error::InvariantViolation(
+        "a withheld file is recreated only on unix",
+    ))
 }
 
 fn safe_repo_file_target(repo_root: &Path, path: &str) -> Result<PathBuf> {

@@ -85,10 +85,17 @@ impl SnapshotExclusionSet {
     /// absolute declarations; pass `None` when the snapshot has no local root.
     #[must_use]
     pub fn excludes(&self, path: &str, content_hash: &[u8; 32], root: Option<&str>) -> bool {
+        self.declares(path, root) || self.registered_hashes.contains(content_hash)
+    }
+
+    /// Whether a custody record or a T2 registration declares `path`: a
+    /// vault-resident path, whose bytes only the vault writes (ARCH-0069
+    /// S4). `root` anchors absolute declarations, as in [`Self::excludes`].
+    #[must_use]
+    pub(crate) fn declares(&self, path: &str, root: Option<&str>) -> bool {
         self.declared_paths
             .iter()
             .any(|declared| path_matches_declared(path, declared, root))
-            || self.registered_hashes.contains(content_hash)
     }
 
     /// Why [`Vault::apply_custody_to_snapshot`]'s policy keeps one file it
