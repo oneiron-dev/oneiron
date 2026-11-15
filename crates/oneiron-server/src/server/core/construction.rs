@@ -57,7 +57,16 @@ impl SyncServer {
                             ),
                         ));
                     }
-                    Some(Arc::new(issuer))
+                    let issuer = Arc::new(issuer);
+                    // A self-host root is an owner key: held on the handle
+                    // from the first request, it proves the owner acts this
+                    // install carries (row CARRIER-OWNER-PROOF). The upkeep
+                    // pass holds the same signer; a managed host's custodial
+                    // root proves nothing and is never held here.
+                    if !hosted {
+                        vault.hold_checkpoint_root_signer(issuer.clone());
+                    }
+                    Some(issuer)
                 }
                 Err(error) if hosted => return Err(error),
                 Err(error) => {
