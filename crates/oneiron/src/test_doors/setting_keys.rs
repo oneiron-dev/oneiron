@@ -8,9 +8,55 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::EngineControlClass;
 use crate::setting::{
-    ItemDomain, Kind, ReadBy, ScopeKind, SetBy, SettingChange, SettingSync, higher_is_tighter,
-    lower_is_tighter,
+    ItemDomain, Kind, ReadBy, ScopeKind, SetBy, SettingChange, SettingSync, SettingValue,
 };
+
+/// `test.bounds`'s value: a struct whose every part names its order.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct TestBounds {
+    /// The most handles open at once: lower is stricter.
+    pub max_open: u64,
+    /// The least wait between two reads, in seconds: higher is stricter.
+    pub floor_secs: u64,
+}
+
+impl SettingValue for TestBounds {}
+
+oneiron_setting_contract::each_order!(TestBounds {
+    max_open: lower,
+    floor_secs: higher,
+});
+
+fn default_bounds() -> TestBounds {
+    TestBounds {
+        max_open: 8,
+        floor_secs: 10,
+    }
+}
+
+fn strictest_bounds() -> TestBounds {
+    TestBounds {
+        max_open: 0,
+        floor_secs: u64::MAX,
+    }
+}
+
+fn every_permit() -> Vec<String> {
+    ["read", "send", "share"].map(str::to_owned).to_vec()
+}
+
+fn no_permit() -> Vec<String> {
+    Vec::new()
+}
+
+fn plain_label() -> String {
+    "plain".to_owned()
+}
+
+/// `test.custom_window`'s comparator: a window is no wider when it is no longer.
+fn window_no_wider(a: &u64, b: &u64) -> bool {
+    a <= b
+}
 
 /// How many changes `test.hooked` has seen.
 static HOOKED_CHANGES: AtomicU64 = AtomicU64::new(0);
@@ -118,13 +164,13 @@ crate::setting::setting_keys! {
     };
     /// A work budget a holder of the work-budget class tunes inside the owner's cap.
     pub TEST_WORK_BUDGET: u64 = "test.work_budget" {
-        kind: Kind::new(ten).strictest(zero).tighter(lower_is_tighter::<u64>),
+        kind: Kind::new(ten).strictest(zero).lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Project],
         set_by: SetBy::Class(EngineControlClass::WorkBudget),
     };
     /// Whether an agent keeps quiet: the agent tightens its own row; loosening asks.
     pub TEST_AGENT_QUIET: bool = "test.agent_quiet" {
-        kind: Kind::new(quiet_default).strictest(quietest).tighter(higher_is_tighter::<bool>),
+        kind: Kind::new(quiet_default).strictest(quietest).higher(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         set_by: SetBy::Subject,
     };
@@ -156,7 +202,7 @@ crate::setting::setting_keys! {
     };
     /// Whether a person keeps quiet: the person tightens their own row.
     pub TEST_PERSON_QUIET: bool = "test.person_quiet" {
-        kind: Kind::new(quiet_default).strictest(quietest).tighter(higher_is_tighter::<bool>),
+        kind: Kind::new(quiet_default).strictest(quietest).higher(),
         scopes: &[ScopeKind::Vault, ScopeKind::Person],
         set_by: SetBy::Subject,
     };
@@ -180,5 +226,45 @@ crate::setting::setting_keys! {
     pub TEST_LEARNED_RATE: f64 = "test.learned_rate" {
         kind: Kind::new(learned_rate_seed).learned(0.0, 1.0),
         scopes: &crate::setting::LEARNED_SCOPES,
+    };
+    /// A cap whose rows meet (stage 6.0): lower is stricter, at the vault, a world or a project;
+    /// a holder of the work-budget class moves it.
+    pub TEST_ORDERED_CAP: u64 = "test.ordered_cap" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        scopes: &[ScopeKind::Vault, ScopeKind::World, ScopeKind::Project],
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A permit list whose rows meet to their intersection.
+    pub TEST_PERMIT_LIST: Vec<String> = "test.permit_list" {
+        kind: Kind::new(every_permit).strictest(no_permit).subset(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// Bounds whose rows meet part by part.
+    pub TEST_BOUNDS: TestBounds = "test.bounds" {
+        kind: Kind::new(default_bounds).strictest(strictest_bounds).each(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A label that guards nothing: every move is neutral.
+    pub TEST_NEUTRAL_LABEL: String = "test.neutral_label" {
+        kind: Kind::new(plain_label).neutral(),
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A number with no order that a holder of the work-budget class moves.
+    pub TEST_CLASS_NUMBER: u64 = "test.class_number" {
+        kind: Kind::new(seven),
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A window judged by its own comparator: one slot, at the vault.
+    pub TEST_CUSTOM_WINDOW: u64 = "test.custom_window" {
+        kind: Kind::new(ten).custom(window_no_wider),
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A cap the owner sets, whose rows meet, with a row at an agent's own scope: the agent is
+    /// that row's subject, not a holder.
+    pub TEST_AGENT_CAP: u64 = "test.agent_cap" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Agent],
     };
 }

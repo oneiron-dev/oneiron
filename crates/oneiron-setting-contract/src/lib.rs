@@ -8,10 +8,14 @@
 //! - [`ScopeKind`] and [`SettingScope`], where a row applies, and the read's scope chain;
 //! - [`SettingMode`], [`Restore`], [`SettingSync`], [`ReadBy`] and [`Setter`];
 //! - [`RowKey`], the stored key bytes `name 0x00 item 0x00 mode scope`;
-//! - [`decide`], the pure order in which a read takes its value from the rows it found:
-//!   the narrowest owner pin, else the narrowest value row (the item's own row first), a
-//!   holder's row held inside the owner's, or inside the catalogue default where the owner set
-//!   none, on a key that names a tighter direction, else the catalogue default. A row that does
+//! - [`Order`], how a key says which side of a change is safe, and the meet and comparator each
+//!   order derives ([`each_order!`] for a struct); [`ChangeDirection`], the way a change moved its
+//!   row; [`Quorum`];
+//! - [`decide_met`], the read of a key whose order has a meet: the narrowest owner pin, else the
+//!   vault's value rows, else the default, met with every value row its scope reaches;
+//! - [`decide`], the read of every other key: the narrowest owner pin, else the narrowest value
+//!   row (the item's own row first; a learned key's holder row held inside the owner's, or inside
+//!   the catalogue default where the owner set none), else the catalogue default. A row that does
 //!   not decode never reads as the default.
 //!
 //! The catalogue row (`SettingSpec`), the tables and the doors are the engine's: they name its
@@ -19,13 +23,20 @@
 
 mod decide;
 mod key;
+mod order;
 mod scope;
 mod value;
 
-pub use self::decide::{Decided, FoundFit, FoundRow, decide};
+pub use self::decide::{Decided, FoundFit, FoundRow, Met, decide, decide_met};
 pub use self::key::{RowKey, check_item, check_name};
+pub use self::order::{
+    AbsentEnd, ChainOrder, ChangeDirection, EachOrder, Order, Quorum, SetOrder, absent_meet,
+    absent_no_wider, absent_part_meet, absent_part_no_wider, chain_meet, chain_no_wider, each_meet,
+    each_no_wider, exact_meet, exact_no_wider, higher_meet, higher_no_wider, lower_meet,
+    lower_no_wider, subset_meet, subset_no_wider, superset_meet, superset_no_wider,
+};
 pub use self::scope::{ScopeKind, SettingScope};
-pub use self::value::{EncodedValue, SettingValue, higher_is_tighter, lower_is_tighter};
+pub use self::value::{EncodedValue, SettingValue};
 
 use oneiron_contracts::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
@@ -159,6 +170,8 @@ pub enum SettingSource {
     Row(SettingScope),
     /// A learned key's fit, learned in this cell.
     Fit(FitCell),
+    /// Several rows met, on a key whose order has a meet, to a value none of them holds alone.
+    Met,
     /// No row: the catalogue default.
     Default,
     /// The deciding row at this scope does not decode: the key's strictest value, never the

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use oneiron_setting_contract::RowKey;
 
 use super::read::{CONTENT_ROWS, ROWS, StoredRow};
-use super::{EncodedValue, Setter, SettingMode, SettingScope};
+use super::{ChangeDirection, EncodedValue, Setter, SettingMode, SettingScope};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -46,6 +46,10 @@ pub struct SettingChange {
     /// change, whose bytes it leaves as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight_runs: Option<f64>,
+    /// Which way the change moved its row, by the key's order (DESIGN 1.5): `Looser` and
+    /// `Unordered` are the receipts of a widening. Absent on a change written before stage 6.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<ChangeDirection>,
 }
 
 /// Writes `change` under the next sequence, in the caller's write; returns its sequence.

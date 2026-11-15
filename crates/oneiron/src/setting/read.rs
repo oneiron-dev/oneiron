@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_setting_contract::{Decided, FitCell, FoundFit, FoundRow, RowKey, decide};
+use oneiron_setting_contract::{
+    Decided, FitCell, FoundFit, FoundRow, Met, Order, Quorum, RowKey, decide, decide_met,
+};
 
 use super::learned::{LoadedFit, SettingFitView, fit_view, fits_in_txn};
 use super::{
@@ -60,6 +62,7 @@ impl StoredRow {
 }
 
 /// One row the walk found: where it sits, and its stored row when that decodes.
+#[derive(Clone)]
 pub(super) struct Loaded {
     pub(super) scope: SettingScope,
     pub(super) found: FoundRow<EncodedValue>,
@@ -127,17 +130,9 @@ pub(super) enum Walked<V> {
     Unreadable(SettingScope),
 }
 
-/// The walk over loaded rows and a learned key's fits, with values decoded by `decode`;
-/// `default` is the catalogue default, a holder's cap where the owner set no row.
-pub(super) fn walk<V: Clone>(
-    loaded: &[Loaded],
-    fits: &[LoadedFit],
-    chain: &[SettingScope],
-    decode: impl Fn(&EncodedValue) -> Option<V>,
-    tighter: Option<&dyn Fn(&V, &V) -> bool>,
-    default: &V,
-) -> Walked<V> {
-    let found: Vec<FoundRow<V>> = loaded
+/// The rows `loaded`, with values decoded by `decode`.
+fn decoded<V>(loaded: &[Loaded], decode: impl Fn(&EncodedValue) -> Option<V>) -> Vec<FoundRow<V>> {
+    loaded
         .iter()
         .map(|row| FoundRow {
             at: row.found.at,
@@ -146,7 +141,60 @@ pub(super) fn walk<V: Clone>(
             by_owner: row.found.by_owner,
             value: row.found.value.as_ref().and_then(&decode),
         })
-        .collect();
+        .collect()
+}
+
+/// The read of a key whose order has a meet ([`decide_met`]), over loaded rows on `chain`, with
+/// values decoded by `decode`. The source is the narrowest row that holds the result; the
+/// default when no row took part or the result is the default; else [`SettingSource::Met`].
+pub(super) fn walk_met<V: Clone + PartialEq>(
+    loaded: &[Loaded],
+    chain: &[SettingScope],
+    decode: impl Fn(&EncodedValue) -> Option<V>,
+    meet: &dyn Fn(&V, &V) -> V,
+    default: &V,
+) -> Walked<V> {
+    let found = decoded(loaded, decode);
+    match decide_met(&found, chain.len().saturating_sub(1), meet, default) {
+        Met::Unreadable(at) => Walked::Unreadable(chain[at].clone()),
+        Met::Value { value, by, rows } => match by {
+            Some(by) => {
+                let index = found
+                    .iter()
+                    .position(|row| std::ptr::eq(row, by))
+                    .unwrap_or_default();
+                let loaded = &loaded[index];
+                Walked::Row {
+                    value,
+                    source: match by.mode {
+                        SettingMode::Pin => SettingSource::Pin(loaded.scope.clone()),
+                        SettingMode::Value => SettingSource::Row(loaded.scope.clone()),
+                    },
+                    revision: loaded.revision,
+                }
+            }
+            None if rows == 0 || value == *default => Walked::Default,
+            None => Walked::Row {
+                value,
+                source: SettingSource::Met,
+                revision: 0,
+            },
+        },
+    }
+}
+
+/// The walk of a key that reads one row, over loaded rows and a learned key's fits, with values
+/// decoded by `decode`; `default` is the catalogue default, and with `no_wider` (a learned key's
+/// comparator) a holder's cap where the owner set no row.
+pub(super) fn walk<V: Clone>(
+    loaded: &[Loaded],
+    fits: &[LoadedFit],
+    chain: &[SettingScope],
+    decode: impl Fn(&EncodedValue) -> Option<V>,
+    no_wider: Option<&dyn Fn(&V, &V) -> bool>,
+    default: &V,
+) -> Walked<V> {
+    let found = decoded(loaded, &decode);
     // A fit that does not decode as the key's type is passed over: it is no row of the key.
     let (found_fits, fit_cells): (Vec<FoundFit<V>>, Vec<&FitCell>) = fits
         .iter()
@@ -167,7 +215,7 @@ pub(super) fn walk<V: Clone>(
             .position(|row| std::ptr::eq(row, decided))
             .unwrap_or_default()
     };
-    match decide(&found, &found_fits, tighter, Some(default)) {
+    match decide(&found, &found_fits, no_wider, Some(default)) {
         Decided::Default => Walked::Default,
         Decided::Fit(fit) => {
             let index = found_fits
@@ -236,42 +284,77 @@ impl<T: SettingValue> Setting<T> {
         self.spec.check_item(item)?;
         let chain = SettingScope::chain(known, self.spec.scopes)?;
         let loaded = load_in_txn(dbs, txn, self.spec, &chain, item)?;
-        let fits = fits_in_txn(dbs, txn, self.spec, &chain)?;
-        let tighter = self.kind.tighter_typed();
-        let tighter_ref = tighter.as_ref().map(|f| f as &dyn Fn(&T, &T) -> bool);
         let default = self.kind.default_typed();
-        Ok(
-            match walk(
-                &loaded,
-                &fits,
-                &chain,
-                Kind::<T>::decode,
-                tighter_ref,
-                &default,
-            ) {
-                Walked::Row {
-                    value,
-                    source,
-                    revision,
-                } => Resolved {
-                    value,
-                    source,
-                    revision,
-                },
-                Walked::Default => Resolved {
-                    value: default,
-                    source: SettingSource::Default,
-                    revision: 0,
-                },
-                Walked::Unreadable(scope) => Resolved {
-                    value: self.kind.strictest_typed().ok_or(Error::CorruptedIndex(
-                        "a setting row does not decode and its key names no strictest value",
-                    ))?,
-                    source: SettingSource::Unreadable(scope),
-                    revision: 0,
-                },
+        let walked = match self.kind.meet_typed().filter(|_| self.spec.reads_met()) {
+            Some(meet) => walk_met(&loaded, &chain, Kind::<T>::decode, &meet, &default),
+            None => {
+                let fits = fits_in_txn(dbs, txn, self.spec, &chain)?;
+                let cap = self
+                    .kind
+                    .no_wider_typed()
+                    .filter(|_| self.spec.is_learned());
+                let cap_ref = cap.as_ref().map(|f| f as &dyn Fn(&T, &T) -> bool);
+                walk(&loaded, &fits, &chain, Kind::<T>::decode, cap_ref, &default)
+            }
+        };
+        Ok(match walked {
+            Walked::Row {
+                value,
+                source,
+                revision,
+            } => Resolved {
+                value,
+                source,
+                revision,
             },
-        )
+            Walked::Default => Resolved {
+                value: default,
+                source: SettingSource::Default,
+                revision: 0,
+            },
+            Walked::Unreadable(scope) => Resolved {
+                value: self.kind.strictest_typed().ok_or(Error::CorruptedIndex(
+                    "a setting row does not decode and its key names no strictest value",
+                ))?,
+                source: SettingSource::Unreadable(scope),
+                revision: 0,
+            },
+        })
+    }
+}
+
+/// What one call asked of a key, met with the value in force (DESIGN 1.5 "The read", step 3).
+/// Nothing is stored.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Requested<T> {
+    /// The value the call runs under: the meet of the value in force and the ask.
+    pub value: T,
+    /// Whether the ask was wider than the value in force, and was clamped to it.
+    pub clamped: bool,
+    /// The value in force the ask was met with, and the row that decided it.
+    pub in_force: Resolved<T>,
+}
+
+impl<T: SettingValue> Setting<T> {
+    /// `ask`, one call's request, met with `in_force`, the value [`Self::read_in_txn`] read: an
+    /// over-ask is clamped, and says so; an ask no wider than the value in force runs as asked.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` for a key whose order has no meet: a request never reaches it.
+    pub fn narrowed(&self, in_force: Resolved<T>, ask: &T) -> Result<Requested<T>> {
+        let meet = self.kind.meet_typed().ok_or_else(|| {
+            Error::InvalidConfig(format!(
+                "`{}` has no order with a meet: a request cannot narrow it",
+                self.spec.name
+            ))
+        })?;
+        let value = meet(&in_force.value, ask);
+        Ok(Requested {
+            clamped: value != *ask,
+            value,
+            in_force,
+        })
     }
 }
 
@@ -343,36 +426,50 @@ pub(super) fn in_force_in_txn(
 ) -> Result<(EncodedValue, SettingSource, u64)> {
     let loaded = load_in_txn(dbs, txn, spec, chain, item)?;
     let fits = fits_in_txn(dbs, txn, spec, chain)?;
-    let tighter = |a: &EncodedValue, b: &EncodedValue| spec.kind.is_tighter(a, b).unwrap_or(false);
-    let tighter_ref = spec
-        .kind
-        .has_direction()
-        .then_some(&tighter as &dyn Fn(&EncodedValue, &EncodedValue) -> bool);
+    in_force_of(spec, &loaded, &fits, chain)
+}
+
+/// The value in force for `spec` over `chain`, from rows already loaded: [`in_force_in_txn`]'s
+/// walk, for a caller that weighs the rows as a change would leave them.
+pub(super) fn in_force_of(
+    spec: &SettingSpec,
+    loaded: &[Loaded],
+    fits: &[LoadedFit],
+    chain: &[SettingScope],
+) -> Result<(EncodedValue, SettingSource, u64)> {
     let default = spec.kind.default_value()?;
-    Ok(
-        match walk(
-            &loaded,
-            &fits,
+    let meet =
+        |a: &EncodedValue, b: &EncodedValue| spec.kind.meet(a, b).unwrap_or_else(|| a.clone());
+    let cap = |a: &EncodedValue, b: &EncodedValue| spec.kind.no_wider(a, b).unwrap_or(false);
+    let cap_ref = (spec.is_learned() && spec.kind.order() != Order::None)
+        .then_some(&cap as &dyn Fn(&EncodedValue, &EncodedValue) -> bool);
+    let walked = if spec.reads_met() {
+        walk_met(loaded, chain, |value| Some(value.clone()), &meet, &default)
+    } else {
+        walk(
+            loaded,
+            fits,
             chain,
             |value| Some(value.clone()),
-            tighter_ref,
+            cap_ref,
             &default,
-        ) {
-            Walked::Row {
-                value,
-                source,
-                revision,
-            } => (value, source, revision),
-            Walked::Default => (default, SettingSource::Default, 0),
-            Walked::Unreadable(scope) => (
-                spec.kind.strictest_value()?.ok_or(Error::CorruptedIndex(
-                    "a setting row does not decode and its key names no strictest value",
-                ))?,
-                SettingSource::Unreadable(scope),
-                0,
-            ),
-        },
-    )
+        )
+    };
+    Ok(match walked {
+        Walked::Row {
+            value,
+            source,
+            revision,
+        } => (value, source, revision),
+        Walked::Default => (default, SettingSource::Default, 0),
+        Walked::Unreadable(scope) => (
+            spec.kind.strictest_value()?.ok_or(Error::CorruptedIndex(
+                "a setting row does not decode and its key names no strictest value",
+            ))?,
+            SettingSource::Unreadable(scope),
+            0,
+        ),
+    })
 }
 
 /// Every stored row of `spec`, in key order.
@@ -488,6 +585,10 @@ pub struct SettingCatalogueEntry {
     /// Who sets it without asking: `owner`, `subject`, or the `engine.controls` grant verb of
     /// its class.
     pub set_by: String,
+    /// The key's order: which side of a change is safe.
+    pub order: Order,
+    /// How many holders must say yes to a loose move.
+    pub quorum: Quorum,
     /// The check-in act class of a change.
     pub act_class: String,
     pub read_by: ReadBy,
@@ -607,6 +708,8 @@ impl Vault {
                     SetBy::Subject => "subject".to_owned(),
                     SetBy::Class(class) => class.grant_verb().to_owned(),
                 },
+                order: spec.kind.order(),
+                quorum: spec.quorum,
                 act_class: spec.act.as_str().to_owned(),
                 read_by: spec.read_by,
                 restore: spec.restore,

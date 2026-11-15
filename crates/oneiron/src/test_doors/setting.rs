@@ -197,3 +197,32 @@ pub fn setting_change(
     let txn = vault.store.env.read_txn()?;
     crate::setting::change_in_txn(&vault.store, &txn, sequence)
 }
+
+/// `test.ordered_cap` read where the reader knows `known`, and `ask`, one call's request, met
+/// with it: the request layer of the typed read (stage 6.0).
+///
+/// # Errors
+///
+/// As `Setting::read_in_txn` and `Setting::narrowed`.
+#[cfg(feature = "test-support")]
+pub fn ordered_cap_requested(
+    vault: &Vault,
+    known: &[SettingScope],
+    ask: u64,
+) -> Result<crate::setting::Requested<u64>> {
+    let key = &super::setting_keys::TEST_ORDERED_CAP;
+    let txn = vault.store.env.read_txn()?;
+    key.narrowed(key.read_in_txn(vault, &txn, known, None)?, &ask)
+}
+
+/// The same request of `test.custom_window`, a key whose order has no meet.
+///
+/// # Errors
+///
+/// `InvalidConfig`: a request never reaches a key with no meet.
+#[cfg(feature = "test-support")]
+pub fn custom_window_requested(vault: &Vault, ask: u64) -> Result<crate::setting::Requested<u64>> {
+    let key = &super::setting_keys::TEST_CUSTOM_WINDOW;
+    let txn = vault.store.env.read_txn()?;
+    key.narrowed(key.read_in_txn(vault, &txn, &[], None)?, &ask)
+}

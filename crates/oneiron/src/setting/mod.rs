@@ -13,11 +13,12 @@
 //! - Read: [`Setting::read_in_txn`] for a typed reader; the verbs read through the same walk. One
 //!   walk for every key ([`oneiron_setting_contract::decide`]); every read says which row
 //!   decided it.
-//! - Set: [`Vault::set_setting`], one door whose power is checked live in its write: the owner
-//!   sets every key; an agent whose live owner Grant lists the key's own line
-//!   (`settings.set:<key>`), or a live holder of the key's `engine.controls` class, sets the
-//!   key's value rows inside the owner's; a subject tightens its own row; anyone else's change,
-//!   and an agent's widening, waits on a check-in.
+//! - Set: [`Vault::set_setting`], one door that judges every write as a move (DESIGN 1.5, stage
+//!   6.0): the key's order says which way the move goes, the caller's capacity says what it may
+//!   do, and the authority rule admits it or not, live in the write. The owner makes any move; a
+//!   holder of the key (its own Grant line `settings.set:<key>`, or a live `engine.controls`
+//!   grant for its class) tightens at once and asks the user to loosen; a row's subject narrows
+//!   its own row; anything else waits on a check-in. Every change row records its direction.
 //! - Change stream: every change is one `SETTING_CHANGE` row, written in the commit that makes it,
 //!   and the feeds' `settings` source.
 //! - Verbs: `vault.settings.get`, `vault.settings.list`, `vault.settings.set`.
@@ -35,8 +36,9 @@ pub(crate) mod tables;
 use std::marker::PhantomData;
 
 pub use oneiron_setting_contract::{
-    EncodedValue, FitCell, ReadBy, Resolved, Restore, ScopeKind, Setter, SettingMode, SettingScope,
-    SettingSource, SettingSync, SettingValue, higher_is_tighter, lower_is_tighter,
+    AbsentEnd, ChainOrder, ChangeDirection, EachOrder, EncodedValue, FitCell, Order, Quorum,
+    ReadBy, Resolved, Restore, ScopeKind, SetOrder, Setter, SettingMode, SettingScope,
+    SettingSource, SettingSync, SettingValue,
 };
 
 #[cfg(feature = "sync")]
@@ -53,7 +55,7 @@ pub(crate) use self::change::{
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
-pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};
+pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};
 pub(crate) use self::read::{SettingListFilter, SettingReader, reader_reads_key_in_txn};
 pub(crate) use self::set::run_after_commit;
 pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
@@ -116,7 +118,7 @@ pub struct SettingSpec {
     pub name: &'static str,
     /// The row's doc comment: what the key chooses.
     pub doc: &'static str,
-    /// The value's type: decode, check, JSON Schema, default, strictest, tighter direction.
+    /// The value's type: decode, check, JSON Schema, default, strictest, order.
     pub kind: &'static dyn ValueKind,
     /// The kinds of scope a row may sit at. The vault is always one.
     pub scopes: &'static [ScopeKind],
@@ -124,6 +126,10 @@ pub struct SettingSpec {
     pub item: Option<ItemDomain>,
     /// Who may set it without asking.
     pub set_by: SetBy,
+    /// How many holders must say yes to a loose move. `All` waits for its count, which lands with
+    /// the Grant of a person's setting class (stage 6d-1): the door refuses a loose move of such a
+    /// key until then.
+    pub quorum: Quorum,
     /// The check-in act class of a change (ARCH-0082 act table).
     pub act: ActClass,
     pub read_by: ReadBy,
@@ -146,6 +152,7 @@ impl SettingSpec {
         scopes: &[ScopeKind::Vault],
         item: None,
         set_by: SetBy::Owner,
+        quorum: Quorum::One,
         act: ActClass::ReversibleWork,
         read_by: ReadBy::Holders,
         restore: Restore::Live,
@@ -164,6 +171,13 @@ impl SettingSpec {
     #[must_use]
     pub fn is_learned(&self) -> bool {
         self.kind.learned_range().is_some()
+    }
+
+    /// Whether a read meets the key's rows (DESIGN 1.5 "The read"): its order has a meet and no
+    /// fit learns it. Only such a key has a free safe move; every other key reads one row.
+    #[must_use]
+    pub fn reads_met(&self) -> bool {
+        self.kind.order().has_meet() && !self.is_learned()
     }
 
     /// Whether `item` is one this key admits: none for a key that is no family, one of its
@@ -231,11 +245,14 @@ pub trait ValueKind: Sync {
     ///
     /// `InvalidConfig` for a value of another shape, or the check's refusal.
     fn from_json(&self, json: serde_json::Value) -> Result<EncodedValue>;
-    /// Whether the key names which direction is tighter.
-    fn has_direction(&self) -> bool;
-    /// Whether `a` is at least as tight as `b`; `None` without a direction or when either does
-    /// not decode.
-    fn is_tighter(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool>;
+    /// The key's order: which side of a change is safe.
+    fn order(&self) -> Order;
+    /// The stricter of `a` and `b`, encoded; `None` for an order with no meet, or when either
+    /// does not decode.
+    fn meet(&self, a: &EncodedValue, b: &EncodedValue) -> Option<EncodedValue>;
+    /// Whether `a` is no wider than `b`: by the order's comparator, and by equality where the
+    /// key has none; `None` when either does not decode.
+    fn no_wider(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool>;
     /// `stored` with every mention of the erased entity `id` taken out, when the key names how
     /// ([`Kind::erase_mentions`]) and `stored` mentions it; `None` otherwise.
     fn erase_mentions_in(&self, stored: &EncodedValue, id: EntityId) -> Option<EncodedValue> {
@@ -250,11 +267,15 @@ pub trait ValueKind: Sync {
 }
 
 /// The typed [`ValueKind`] of a key whose value is a `T`: its default, and optionally its
-/// strictest value, its tighter direction and how an erase takes an entity out of a value.
+/// strictest value, its order and how an erase takes an entity out of a value.
 pub struct Kind<T> {
     default: fn() -> T,
     strictest: Option<fn() -> T>,
-    tighter: Option<fn(&T, &T) -> bool>,
+    order: Order,
+    /// The order's meet; only an order constructor below writes it.
+    meet: Option<fn(&T, &T) -> T>,
+    /// The order's comparator; `None`: equality.
+    no_wider: Option<fn(&T, &T) -> bool>,
     erase_mentions: Option<fn(&T, EntityId) -> Option<T>>,
     learned: Option<LearnedRange>,
 }
@@ -266,7 +287,9 @@ impl<T: SettingValue> Kind<T> {
         Self {
             default,
             strictest: None,
-            tighter: None,
+            order: Order::None,
+            meet: None,
+            no_wider: None,
             erase_mentions: None,
             learned: None,
         }
@@ -281,12 +304,40 @@ impl<T: SettingValue> Kind<T> {
         }
     }
 
-    /// This kind, whose tighter direction is `tighter(a, b)`: `a` is at least as tight as `b`
-    /// ([`lower_is_tighter`], [`higher_is_tighter`]).
+    /// This kind, of a key whose moves guard nothing ([`Order::Neutral`]): no access,
+    /// authority, money or identity moves with its value, so an agent holder's move never asks.
     #[must_use]
-    pub const fn tighter(self, tighter: fn(&T, &T) -> bool) -> Self {
+    pub const fn neutral(self) -> Self {
         Self {
-            tighter: Some(tighter),
+            order: Order::Neutral,
+            ..self
+        }
+    }
+
+    /// This kind, judged by its own comparator ([`Order::Custom`]): `no_wider(a, b)` says `a` is
+    /// no wider than `b`, as the manifest's comparator arm for the table says today. It has no
+    /// meet, so the key has one slot, at the vault, and takes no request.
+    #[must_use]
+    pub const fn custom(self, no_wider: fn(&T, &T) -> bool) -> Self {
+        Self {
+            order: Order::Custom,
+            meet: None,
+            no_wider: Some(no_wider),
+            ..self
+        }
+    }
+
+    /// This kind with `order`, and the meet and comparator that order derives.
+    const fn ordered(
+        self,
+        order: Order,
+        meet: fn(&T, &T) -> T,
+        no_wider: fn(&T, &T) -> bool,
+    ) -> Self {
+        Self {
+            order,
+            meet: Some(meet),
+            no_wider: Some(no_wider),
             ..self
         }
     }
@@ -322,8 +373,124 @@ impl<T: SettingValue> Kind<T> {
         self.strictest.map(|strictest| strictest())
     }
 
-    pub(crate) fn tighter_typed(&self) -> Option<fn(&T, &T) -> bool> {
-        self.tighter
+    /// The order's meet; `None` for an order that has none.
+    pub(crate) fn meet_typed(&self) -> Option<fn(&T, &T) -> T> {
+        self.meet
+    }
+
+    /// The order's comparator, for the cap a learned key's holder row is held inside; `None`
+    /// where the key has none.
+    pub(crate) fn no_wider_typed(&self) -> Option<fn(&T, &T) -> bool> {
+        self.no_wider
+    }
+}
+
+impl<T: SettingValue + PartialOrd> Kind<T> {
+    /// This kind, whose smaller value is the stricter ([`Order::Lower`]): a cap, a lifetime, a
+    /// threshold. On an `Option`, [`Self::lower_or_absent`] names which end the absent value is.
+    #[must_use]
+    pub const fn lower(self) -> Self {
+        self.ordered(
+            Order::Lower,
+            oneiron_setting_contract::lower_meet::<T>,
+            oneiron_setting_contract::lower_no_wider::<T>,
+        )
+    }
+
+    /// This kind, whose larger value is the stricter ([`Order::Higher`]): a wait, a rest, a count
+    /// of agreeing rulings.
+    #[must_use]
+    pub const fn higher(self) -> Self {
+        self.ordered(
+            Order::Higher,
+            oneiron_setting_contract::higher_meet::<T>,
+            oneiron_setting_contract::higher_no_wider::<T>,
+        )
+    }
+}
+
+impl<T: SettingValue + PartialOrd> Kind<Option<T>> {
+    /// This kind, of an optional number whose smaller value is the stricter, with the absent
+    /// value at `end` ("no cap" is the loosest cap).
+    #[must_use]
+    pub const fn lower_or_absent(self, end: AbsentEnd) -> Self {
+        match end {
+            AbsentEnd::Loosest => self.ordered(
+                Order::Lower,
+                oneiron_setting_contract::absent_meet::<T, false, false>,
+                oneiron_setting_contract::absent_no_wider::<T, false, false>,
+            ),
+            AbsentEnd::Strictest => self.ordered(
+                Order::Lower,
+                oneiron_setting_contract::absent_meet::<T, false, true>,
+                oneiron_setting_contract::absent_no_wider::<T, false, true>,
+            ),
+        }
+    }
+
+    /// This kind, of an optional number whose larger value is the stricter, with the absent
+    /// value at `end` ("never prune" is the strictest horizon of a receipt).
+    #[must_use]
+    pub const fn higher_or_absent(self, end: AbsentEnd) -> Self {
+        match end {
+            AbsentEnd::Loosest => self.ordered(
+                Order::Higher,
+                oneiron_setting_contract::absent_meet::<T, true, false>,
+                oneiron_setting_contract::absent_no_wider::<T, true, false>,
+            ),
+            AbsentEnd::Strictest => self.ordered(
+                Order::Higher,
+                oneiron_setting_contract::absent_meet::<T, true, true>,
+                oneiron_setting_contract::absent_no_wider::<T, true, true>,
+            ),
+        }
+    }
+}
+
+impl<T: SettingValue + ChainOrder> Kind<T> {
+    /// This kind, whose stricter value ranks first in its type's list ([`Order::Chain`]).
+    #[must_use]
+    pub const fn chain(self) -> Self {
+        self.ordered(
+            Order::Chain,
+            oneiron_setting_contract::chain_meet::<T>,
+            oneiron_setting_contract::chain_no_wider::<T>,
+        )
+    }
+}
+
+impl<T: SettingValue + SetOrder> Kind<T> {
+    /// This kind, of a permit list ([`Order::Subset`]): a subset is the stricter.
+    #[must_use]
+    pub const fn subset(self) -> Self {
+        self.ordered(
+            Order::Subset,
+            oneiron_setting_contract::subset_meet::<T>,
+            oneiron_setting_contract::subset_no_wider::<T>,
+        )
+    }
+
+    /// This kind, of a protect list ([`Order::Superset`]): a superset is the stricter.
+    #[must_use]
+    pub const fn superset(self) -> Self {
+        self.ordered(
+            Order::Superset,
+            oneiron_setting_contract::superset_meet::<T>,
+            oneiron_setting_contract::superset_no_wider::<T>,
+        )
+    }
+}
+
+impl<T: SettingValue + EachOrder> Kind<T> {
+    /// This kind, of a struct whose every part names its order
+    /// ([`oneiron_setting_contract::each_order!`]): it is no wider when every part is.
+    #[must_use]
+    pub const fn each(self) -> Self {
+        self.ordered(
+            Order::Each,
+            oneiron_setting_contract::each_meet::<T>,
+            oneiron_setting_contract::each_no_wider::<T>,
+        )
     }
 }
 
@@ -385,13 +552,21 @@ impl<T: SettingValue> ValueKind for Kind<T> {
         Ok(encoded)
     }
 
-    fn has_direction(&self) -> bool {
-        self.tighter.is_some()
+    fn order(&self) -> Order {
+        self.order
     }
 
-    fn is_tighter(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool> {
-        let tighter = self.tighter?;
-        Some(tighter(&Self::decode(a)?, &Self::decode(b)?))
+    fn meet(&self, a: &EncodedValue, b: &EncodedValue) -> Option<EncodedValue> {
+        let meet = self.meet?;
+        EncodedValue::encode(&meet(&Self::decode(a)?, &Self::decode(b)?)).ok()
+    }
+
+    fn no_wider(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool> {
+        let (a, b) = (Self::decode(a)?, Self::decode(b)?);
+        Some(match self.no_wider {
+            Some(no_wider) => no_wider(&a, &b),
+            None => a == b,
+        })
     }
 
     fn learned_range(&self) -> Option<LearnedRange> {
@@ -433,11 +608,15 @@ impl ValueKind for NoKind {
         Err(no_kind())
     }
 
-    fn has_direction(&self) -> bool {
-        false
+    fn order(&self) -> Order {
+        Order::None
     }
 
-    fn is_tighter(&self, _a: &EncodedValue, _b: &EncodedValue) -> Option<bool> {
+    fn meet(&self, _a: &EncodedValue, _b: &EncodedValue) -> Option<EncodedValue> {
+        None
+    }
+
+    fn no_wider(&self, _a: &EncodedValue, _b: &EncodedValue) -> Option<bool> {
         None
     }
 }
