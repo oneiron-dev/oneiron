@@ -25,14 +25,17 @@
 //! * The member's actor and a work companion born here are switched off;
 //!   their PERSONs, anchors and every word they wrote stay. What they made
 //!   keeps running (ARCH-0053 #author-off-no-cascade) and is listed.
-//! * The access grants those actors held, and the companion-profile grant
-//!   minted for a born companion, are revoked.
+//! * The access grants and the capability slips those actors held, and the
+//!   companion-profile grant minted for a born companion, are revoked: a
+//!   switched-off actor keeps no credential to read with.
 //! * A brought companion is her member's own: she is detached from her work
 //!   facet here, never switched off.
 //! * The delegated mailbox is released and closed (a tombstone): no send can
 //!   use it. Mail already landed stays under its audience. The owner's
-//!   offboard revokes its custody in the same writer; an admin's names it
-//!   for the owner, since only the owner signs a custody revoke.
+//!   offboard revokes its custody in the same writer, as its last step,
+//!   since the revoke tears down lease files no rollback restores; an
+//!   admin's names it for the owner, since only the owner signs a custody
+//!   revoke.
 //! * The member and their companion leave every room they stand in; the
 //!   room keeps its history.
 //! * The leaver's open member asks are declined and the check-ins they
@@ -44,7 +47,7 @@ use serde::{Deserialize, Serialize};
 
 use super::work_companion::require_settings_authority_in_txn;
 use super::*;
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, HostSlipIssuer};
 use crate::channel_identity::ChannelIdentityStep;
 use crate::check_in::{LeaverCheckIns, settle_leaver_check_ins_in_txn};
 use crate::edge::EdgeActorClass;
@@ -146,6 +149,10 @@ pub struct MemberOffboardingOutcome {
     pub companion: Option<OffboardedCompanion>,
     /// The access grants revoked here.
     pub access_grants_revoked: Vec<EntityId>,
+    /// The capability slips the switched-off actors held, revoked here by
+    /// this install's live host issuer (hex ids); none when this install
+    /// holds no live host issuer, as a member removal then revokes none.
+    pub actor_slips_revoked: Vec<String>,
     /// The delegated mailbox identity, when the member had one, and the
     /// state it was left in (`tombstone` once retired).
     pub identity_ref: Option<EntityId>,
@@ -184,6 +191,7 @@ impl MemberOffboardingOutcome {
             actors_switched_off: Vec::new(),
             companion: None,
             access_grants_revoked: Vec::new(),
+            actor_slips_revoked: Vec::new(),
             identity_ref: None,
             identity_state: None,
             custody_revoked: None,
@@ -204,6 +212,17 @@ struct Settled {
     outcome: MemberOffboardingOutcome,
     custody: Option<SecretCustodyWork>,
     count: ScanCount,
+}
+
+/// Who offboards in the writer, and with what: the offboarder's PERSON, the
+/// live host issuer that revokes the actors' slips (`None` when this install
+/// holds none), the custody revoke's audit surface, and the writer's
+/// recorded time.
+struct Leaver<'a> {
+    offboarder: EntityId,
+    issuer: Option<&'a HostSlipIssuer>,
+    surface: ActSurface,
+    now: u64,
 }
 
 impl Vault {
@@ -255,21 +274,44 @@ impl Vault {
             // writer that carries the custody revoke.
             self.load_signing_for_revoke()?;
         }
-        let settle = |txn: &mut heed::RwTxn<'_>, offboarder: EntityId, now: u64| {
+        let settle = |txn: &mut heed::RwTxn<'_>,
+                      offboarder: EntityId,
+                      now: u64,
+                      issuer: Option<&HostSlipIssuer>| {
             self.settle_offboarding_in_txn(
-                txn, &intent, &digest, vault_id, owner, offboarder, surface, now,
+                txn,
+                &intent,
+                &digest,
+                vault_id,
+                owner,
+                Leaver {
+                    offboarder,
+                    issuer,
+                    surface,
+                    now,
+                },
             )
         };
         let (seat_receipt, settled) = if seat_stands {
+            // The workspace power is judged again in the removal's writer
+            // before its check-in, so a caller who lost it since the read
+            // above commits nothing, not even a pending check-in.
+            let guard = |txn: &heed::RoTxn<'_>| {
+                require_settings_authority_in_txn(self, txn, vault_id, owner, OFFBOARD_REFUSAL)
+            };
             let (receipt, settled) = self.remove_shared_member_then(
                 owner,
                 vault_id,
                 intent.person_ref,
                 intent.check_in_ref,
+                guard,
                 settle,
             )?;
             (Some(receipt.id), settled)
         } else {
+            // The seat ended earlier; the actors' slips still go, under the
+            // same live host issuer a removal's writer uses.
+            let loaded = self.membership_issuer(None);
             let settled = self.with_write_txn(|txn| {
                 let offboarder = owner.revalidate_person_in_txn(self, txn)?;
                 if self
@@ -280,8 +322,9 @@ impl Vault {
                         "the member's seat changed during offboarding; retry",
                     ));
                 }
+                let issuer = self.executing_host_issuer_in_txn(txn, loaded)?;
                 let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-                settle(txn, offboarder, now)
+                settle(txn, offboarder, now, issuer.as_ref())
             })?;
             (None, settled)
         };
@@ -291,6 +334,9 @@ impl Vault {
             count,
         } = settled;
         count.finish(self);
+        if !outcome.actor_slips_revoked.is_empty() {
+            self.store.notify_credential_revocations();
+        }
         if let Some(custody) = &custody {
             self.mirror_custody_change(custody);
         }
@@ -299,8 +345,7 @@ impl Vault {
     }
 
     /// The workspace half of an offboarding, in the writer that ends (or
-    /// found ended) the seat, by `offboarder` at `now`.
-    #[allow(clippy::too_many_arguments)]
+    /// found ended) the seat, as `leaver` names it.
     fn settle_offboarding_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -308,10 +353,14 @@ impl Vault {
         digest: &[u8; 32],
         vault_id: u64,
         owner: &AuthenticatedOwner,
-        offboarder: EntityId,
-        surface: ActSurface,
-        now: u64,
+        leaver: Leaver<'_>,
     ) -> Result<Settled> {
+        let Leaver {
+            offboarder,
+            issuer,
+            surface,
+            now,
+        } = leaver;
         require_settings_authority_in_txn(self, txn, vault_id, owner, OFFBOARD_REFUSAL)?;
         refuse_self_offboard(offboarder, intent)?;
         if OFFBOARDING
@@ -362,6 +411,20 @@ impl Vault {
         }
         outcome.access_grants_revoked =
             revoke_leaver_access_grants_in_txn(self, txn, &actors, born_grant, now)?;
+        // "Revoke the actor" (ARCH-0063:152): a slip the actor holds would
+        // still read under its owner-minted agent Grants, which judge the
+        // Grant and its pact, not the definition switched off above.
+        if let Some(issuer) = issuer {
+            for actor in &actors {
+                for slip in
+                    self.revoke_held_capability_slips_in_txn(txn, issuer, &actor.to_hex(), None)?
+                {
+                    outcome
+                        .actor_slips_revoked
+                        .push(crate::entity_id::bytes_to_hex_lower(&slip));
+                }
+            }
+        }
 
         // The companion: a brought one is detached; the binding ends.
         if let (Some(person), Some(actor)) = (row.companion_person_ref, row.companion_actor_ref) {
@@ -394,8 +457,9 @@ impl Vault {
             });
         }
 
-        // The delegated mailbox: retired; its custody the owner's to revoke.
-        let mut custody = None;
+        // The delegated mailbox: retired; its custody the owner's to revoke,
+        // which this writer does last.
+        let mut owner_revokes = None;
         if let Some(identity) = row.identity_ref {
             let (state, custody_name) = self.retire_leaver_mailbox_in_txn(txn, &identity, now)?;
             outcome.identity_ref = Some(identity);
@@ -404,16 +468,7 @@ impl Vault {
                 && custody_live_in_txn(self, txn, &name)?
             {
                 if crate::policy_model::is_live_vault_owner_in_txn(self, txn, &offboarder)? {
-                    self.revoke_secret_in_txn(
-                        txn,
-                        &name,
-                        crate::secret_rotation::RevokeCause::Revoked,
-                        now,
-                    )?;
-                    custody = Some(
-                        self.carry_custody_revoke_in_txn(txn, offboarder, surface, &name, now)?,
-                    );
-                    outcome.custody_revoked = Some(name);
+                    owner_revokes = Some(name);
                 } else {
                     outcome.custody_left_for_owner = Some(name);
                 }
@@ -472,6 +527,21 @@ impl Vault {
                 completed_at: now,
             },
         )?;
+
+        // Last: the owner's custody revoke tears down the custody's lease
+        // files, which a rollback of this writer would not restore, so it
+        // runs after every step here that can refuse.
+        let mut custody = None;
+        if let Some(name) = owner_revokes {
+            self.revoke_secret_in_txn(
+                txn,
+                &name,
+                crate::secret_rotation::RevokeCause::Revoked,
+                now,
+            )?;
+            custody = Some(self.carry_custody_revoke_in_txn(txn, offboarder, surface, &name, now)?);
+            outcome.custody_revoked = Some(name);
+        }
         Ok(Settled {
             outcome,
             custody,

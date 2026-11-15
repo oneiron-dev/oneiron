@@ -242,10 +242,21 @@ impl Fixture {
         onboarded: &Onboarded,
         companion: CompanionChoice,
     ) -> Result<()> {
+        self.onboard_in(&self.preset, onboarding_id, onboarded, companion)
+    }
+
+    /// [`Self::onboard`] into the workspace `preset` names.
+    fn onboard_in(
+        &self,
+        preset: &WorkspaceRosterPreset,
+        onboarding_id: &str,
+        onboarded: &Onboarded,
+        companion: CompanionChoice,
+    ) -> Result<()> {
         let profile_grant = companion.birth().map(|birth| birth.profile_grant_ref);
         let intent = MemberOnboardingIntent {
             onboarding_id: onboarding_id.to_owned(),
-            workspace: self.preset.clone(),
+            workspace: preset.clone(),
             person_ref: onboarded.member,
             actor_ref: onboarded.actor,
             actor_definition: definition(&format!("garden.member.{onboarding_id}")),
@@ -539,6 +550,83 @@ fn a_member_whose_seat_already_ended_is_offboarded_with_no_second_removal() -> R
     assert_eq!(outcome.seat_receipt, None, "no seat stood to end");
     assert!(!fx.enabled(member.actor)? && !fx.enabled(member.companion_actor)?);
     assert!(!fx.on_roster(member.member)?);
+    Ok(())
+}
+
+/// A work companion this onboarding did not bear is not this workspace's
+/// to switch off: born in another workspace for the same member, then named
+/// again as a "work" companion here, she is only detached when the member
+/// leaves here, and she keeps serving the other workspace.
+#[test]
+fn a_work_companion_born_in_another_workspace_is_detached_not_switched_off() -> Result<()> {
+    let fx = fixture(None)?;
+    let annex_vault = 43;
+    fx.vault.initialize_shared_vault(
+        &fx.owner_proof,
+        annex_vault,
+        None,
+        &[],
+        fx.vault.now_recorded_at(),
+    )?;
+    let annex = WorkspaceRosterPreset {
+        workspace_ref: "workspace-member-offboard-annex".to_owned(),
+        workspace_vault_id: annex_vault,
+        org_ref: seed_row(&fx.vault, ENTITY_TYPE_ORG)?,
+        venture_name: "Garden Annex".to_owned(),
+        ..fx.preset.clone()
+    };
+    let member = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
+    let birth = |work_facet_ref: EntityId, companion: &Onboarded| CompanionBirthIntent {
+        person_ref: companion.companion_person,
+        actor_ref: companion.companion_actor,
+        work_facet_ref,
+        profile_grant_ref: EntityId::now(),
+        actor_definition: definition("garden.companion.annex"),
+        display_name: "yuki".to_owned(),
+    };
+    let in_annex = Onboarded {
+        member,
+        actor: EntityId::now(),
+        companion_person: EntityId::now(),
+        companion_actor: EntityId::now(),
+        companion_facet: seed_row(&fx.vault, ENTITY_TYPE_FACET)?,
+        profile_grant: None,
+    };
+    fx.onboard_in(
+        &annex,
+        "offboard-annex-born",
+        &in_annex,
+        CompanionChoice::Work(birth(in_annex.companion_facet, &in_annex)),
+    )?;
+    let here = Onboarded {
+        actor: EntityId::now(),
+        companion_facet: seed_row(&fx.vault, ENTITY_TYPE_FACET)?,
+        ..in_annex
+    };
+    fx.onboard(
+        "offboard-annex-named-here",
+        &here,
+        CompanionChoice::Work(birth(here.companion_facet, &here)),
+    )?;
+
+    let outcome = fx.offboard("offboard-annex-1", member, &fx.owner_proof)?;
+
+    let companion = outcome.companion.expect("the member had a companion");
+    assert_eq!(
+        companion.kind,
+        OffboardedCompanionKind::Unrecorded,
+        "she stood before this onboarding began, so she was not born here"
+    );
+    assert!(!companion.switched_off && companion.facet_detached);
+    assert!(
+        fx.enabled(here.companion_actor)?,
+        "the companion born in the annex keeps running"
+    );
+    assert_eq!(outcome.actors_switched_off, vec![here.actor]);
+    assert!(
+        fx.enabled(in_annex.actor)?,
+        "the member's annex actor is the annex's"
+    );
     Ok(())
 }
 

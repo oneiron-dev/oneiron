@@ -426,7 +426,7 @@ impl Vault {
     /// change's revocations, never supplies the caller's authority (FIX 2222).
     /// None when this install holds no live host issuer; the run then lands
     /// as before.
-    pub(super) fn executing_host_issuer_in_txn(
+    pub(crate) fn executing_host_issuer_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         issuer: Option<HostSlipIssuer>,
