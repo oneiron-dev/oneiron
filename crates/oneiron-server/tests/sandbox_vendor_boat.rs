@@ -7,9 +7,10 @@
 //! The run makes one VM from the owner's saved snapshot of the pinned guest
 //! image, with none of the account's secrets, no disk snapshot and a
 //! lifetime of the step's own time; it starts every command in a network
-//! namespace of its own as the VM's unprivileged user; it sends the owner's
-//! key only to the API and moves each file through a signed URL with no key
-//! of ours; and it deletes the VM at the end, confirming its id. A refused
+//! namespace of its own, as the VM's user with no supplementary group and
+//! no new privilege; it sends the owner's key only to the API and moves
+//! each file through a signed URL with no key of ours; and it deletes the
+//! VM at the end, confirming its id. A refused
 //! create, a VM that fails to start, a lost command and a signed URL off the
 //! API's scheme never show a secret and leave no VM behind.
 //!
@@ -48,7 +49,8 @@ const VM: &str = "bx_k7m2p9qr";
 const UPLOAD_TOKEN: &str = "upload-7f3a9c";
 const DOWNLOAD_TOKEN: &str = "download-2c9e41";
 /// What every command starts under.
-const NO_NETWORK_AS_USER: &str = "sudo -n unshare --net -- runuser -u user --";
+const CONFINED_PREFIX: &str = "sudo -n unshare --net -- \
+    setpriv --reuid=user --regid=user --clear-groups --no-new-privs --";
 
 /// How the stand-in answers.
 struct Script {
@@ -392,13 +394,13 @@ fn a_switched_run_goes_to_boat_with_the_key_only_at_its_api() {
         [
             json!({
                 "command": format!(
-                    "{NO_NETWORK_AS_USER} mkdir -m 0700 /tmp/oneiron-batch /tmp/oneiron-batch/workspace"
+                    "{CONFINED_PREFIX} mkdir -m 0700 /tmp/oneiron-batch /tmp/oneiron-batch/workspace"
                 ),
                 "detached": true,
             }),
             json!({
                 "command": format!(
-                    "{NO_NETWORK_AS_USER} /usr/local/bin/oneiron-guest --batch \
+                    "{CONFINED_PREFIX} /usr/local/bin/oneiron-guest --batch \
                      /tmp/oneiron-batch/host-frames /tmp/oneiron-batch/guest-frames \
                      /tmp/oneiron-batch/workspace"
                 ),
