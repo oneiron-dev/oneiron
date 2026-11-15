@@ -985,7 +985,10 @@ fn insert_ready_row<R: Read + Seek>(
                     .asset_text_birth(&id, occurred, row.learned_at, &body, &weighted)
                     .apply(wtxn)
             } else {
-                let mut batch = vault.batch_in().mask(mask).put(
+                // The archive's learned time is kept: a TURN learned past this
+                // store's clock is restored, not refused at the public door's
+                // ceiling (census L7-21; `BatchBuilder::put_archived`).
+                let mut batch = vault.batch_in().mask(mask).put_archived(
                     &id,
                     row.entity_type,
                     occurred,
@@ -1306,9 +1309,8 @@ fn validate_existing_source<R: Read + Seek>(
     Ok(())
 }
 
-pub(super) fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("whole-vault import: {reason}"))
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::batch::export::document_import::{invalid, parse_id};
 
 impl Vault {
     /// Whether an actorless archive restore refused its expression preferences for lack of
@@ -1526,14 +1528,6 @@ fn omit_project_revisions<R: Read + Seek>(
         after = Some(id);
     }
     Ok(())
-}
-
-pub(super) fn parse_id(text: &str) -> Result<EntityId> {
-    let id = EntityId::from_hex(text)?;
-    if id.to_hex() != text {
-        return Err(invalid("entity ID must be lowercase hex"));
-    }
-    Ok(id)
 }
 
 /// Whether the stored row `raw` is the archived `row`, whose body re-serializes
