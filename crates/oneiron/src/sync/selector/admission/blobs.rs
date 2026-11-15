@@ -210,6 +210,7 @@ fn admit_federated_entity_blob_graded(
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
         refuse_peer_agent_definition_widening(&vault.store, txn, &here, blob)?;
+        refuse_peer_task_authority_fact(header.entity_type, &blob[ENTITY_METADATA_HEADER_LEN..])?;
         if matches!(grading, ImportGrading::Imported { .. })
             && matches!(
                 header.entity_type,
@@ -255,6 +256,26 @@ fn admit_federated_entity_blob_graded(
     admitted.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
     admitted.extend_from_slice(&encoded);
     Ok((id, admitted))
+}
+
+/// Refuses a peer's TASK authority fact (role 6). Who owns, took, cancelled
+/// or acknowledged a task is read from these facts, and the task fold believes
+/// every fact it holds: a fact carries no proof of who made it until it
+/// carries its carrier's signature (pass 28 R5). So a federation peer sends
+/// none, or its Owner or Cancelled fact would decide a task here. Typed as the
+/// peer's bytes, so the frame quarantines (FIX TASK-FACT-FROM-FEDERATION-PEER).
+#[cfg(feature = "sync")]
+fn refuse_peer_task_authority_fact(entity_type: u8, body: &[u8]) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_TASK
+        && crate::write_envelope::task_body::task_role_from_body_bytes(body)?
+            == crate::write_envelope::task_body::TaskRole::AuthorityFact
+    {
+        return Err(RecordError::InvalidTaskBody(
+            "a federation peer cannot send a task authority fact",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// The source a foreign TURN or CONVERSATION is stamped with (OF-149).
