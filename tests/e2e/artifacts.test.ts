@@ -279,10 +279,11 @@ suite.todo(test, "ARTIFACTS-07", "waits on typed hosted document-organ edit/retr
  *
  * Recipient HTTP implementation: GET /sign loads the shell; the capability is
  * /sign#token, scrubbed and thereafter ONLY in POST bodies. /sign/action takes
- * {token, action: {action: "load" | "save_field" | "complete" | "reject", ...}}.
- * Complete has consent and next; SaveField has field and typed FieldValue.
- * SigningOutcome includes page, not_your_turn, awaiting_seal, held_for_owner,
- * consent_required and terminal. POST /sign/pdf takes {token, item}.
+ * {token, action: {action: "load" | "save_field" | "review" | "complete" | "reject", ...}}.
+ * Complete has consent and next, and needs a Review that still stands (UETA
+ * section 10; a later save_field voids it); SaveField has field and typed
+ * FieldValue. SigningOutcome includes page, not_your_turn, awaiting_seal,
+ * held_for_owner, consent_required, review_required and terminal. POST /sign/pdf takes {token, item}.
  * These ceremony DTOs lack generated typed HTTP/SDK calls/OpenAPI schemas.
  * Do not hand-roll them as an escape from G01, or inherit the owner's signed
  * PublicHttpClient for the recipient. Bearer recipient access is its authority;
@@ -291,7 +292,7 @@ suite.todo(test, "ARTIFACTS-07", "waits on typed hosted document-organ edit/retr
  * With a pinned tiny PDF, local test-only certificate/trust, real seal organ
  * and independent verifier: freeze the exact item version, send under explicit
  * grant, open as recipient, refuse a different/invalid capability without any
- * field mutation, sign with consent and await awaiting_seal -> public terminal
+ * field mutation, review, sign with consent and await awaiting_seal -> public terminal
  * task/receipt. Audit/certificate pages must precede sealing and be covered.
  * Inspect atomic version/status/audit publication, SealJob provenance and the
  * send + recipient authority; no extra Keep after signing. Download the exact

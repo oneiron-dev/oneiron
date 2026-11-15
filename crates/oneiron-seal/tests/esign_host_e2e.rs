@@ -335,6 +335,11 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
     oneiron::test_support::mark_esign_sent(&vault, id, actor, now)?;
     assert!(!vault.esign_document(id)?.ready_to_seal());
     let capability = capabilities.into_iter().next().ok_or("no capability")?.1;
+    // UETA section 10: the signer reviews before they complete.
+    assert!(matches!(
+        vault.execute_signing_action(&capability, &SigningAction::Review, None, None)?,
+        SigningOutcome::Page(_)
+    ));
     assert_eq!(
         vault.execute_signing_action(
             &capability,

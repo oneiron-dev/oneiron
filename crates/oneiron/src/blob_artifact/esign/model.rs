@@ -29,6 +29,17 @@ pub enum EsignEvent {
     FieldSaved {
         signature: SignatureRow,
     },
+    /// The signer reviewed what they sign (UETA section 10; ARCH-0064 :235,
+    /// :241): the frozen items and their own field values at that moment.
+    /// Complete needs a review that still stands; the recipient's next
+    /// FieldSaved voids it. Chains stored before this event fold as before.
+    Reviewed {
+        recipient: String,
+        /// Frozen item ids and versions reviewed, as `Signed` binds them.
+        items: Vec<EsignItem>,
+        /// The recipient's own field values when they reviewed, by field id.
+        values: BTreeMap<String, FieldValue>,
+    },
     Signed {
         recipient: String,
         next: Option<String>,
@@ -71,6 +82,7 @@ impl EsignEvent {
             Self::Viewed { .. } => "esign.viewed",
             Self::AccessVerified { .. } => "esign.access_verified",
             Self::FieldSaved { .. } => "esign.field",
+            Self::Reviewed { .. } => "esign.reviewed",
             Self::Signed { .. } => "esign.signed",
             Self::Declined { .. } => "esign.declined",
             Self::Voided { .. } => "esign.voided",
@@ -108,6 +120,15 @@ pub struct EsignState {
     pub reminders: BTreeSet<(String, u32)>,
     pub(super) sent_at: Option<u64>,
     pub(super) reminder_at: BTreeMap<String, u64>,
+    /// Each recipient's standing review, until their next saved field.
+    pub(super) reviews: BTreeMap<String, EsignReview>,
+}
+
+/// What one recipient's [`EsignEvent::Reviewed`] bound.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct EsignReview {
+    pub(super) items: Vec<EsignItem>,
+    pub(super) values: BTreeMap<String, FieldValue>,
 }
 
 /// A draft refuses only what it cannot be: no count or size cap on its items,

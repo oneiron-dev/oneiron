@@ -907,6 +907,10 @@ async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() 
         saved["data"]["values"][&field]["value"]["value"],
         "approved"
     );
+    // UETA section 10: the recipient reviews the saved value, then completes.
+    let (status, reviewed) = post(serde_json::json!({"action":"review"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reviewed["outcome"], "page");
     let (status, completed) = post(serde_json::json!({
         "action":"complete", "consent":true, "next":null
     }))

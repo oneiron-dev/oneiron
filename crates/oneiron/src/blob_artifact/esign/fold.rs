@@ -36,6 +36,23 @@ impl EsignState {
             reminders: Default::default(),
             sent_at: None,
             reminder_at: Default::default(),
+            reviews: BTreeMap::new(),
+        })
+    }
+    /// The recipient's own field values as they stand, by field id: what a
+    /// review binds.
+    pub(super) fn recipient_values(&self, recipient: &str) -> BTreeMap<String, FieldValue> {
+        self.signatures
+            .iter()
+            .filter(|(_, row)| row.recipient == recipient)
+            .map(|(field, row)| (field.clone(), row.value.clone()))
+            .collect()
+    }
+    /// Whether the recipient's review still stands: it bound the frozen
+    /// items and the values they hold now (UETA section 10).
+    pub(super) fn review_stands(&self, recipient: &str) -> bool {
+        self.reviews.get(recipient).is_some_and(|review| {
+            review.items == self.document.items && review.values == self.recipient_values(recipient)
         })
     }
     /// One deterministic terminal target at the first overdue unfinished
@@ -183,6 +200,31 @@ impl EsignState {
                 validate_value(field, &signature.value)?;
                 self.signatures
                     .insert(signature.field.clone(), signature.clone());
+                // A saved field voids the recipient's review (UETA section
+                // 10): they review again before they complete.
+                self.reviews.remove(&signature.recipient);
+            }
+            EsignEvent::Reviewed {
+                recipient,
+                items,
+                values,
+            } => {
+                self.require_turn(recipient, now)?;
+                if self.recipients[recipient].access != AccessStatus::Verified {
+                    return Err(invalid("access authentication required"));
+                }
+                if *items != self.document.items || *values != self.recipient_values(recipient) {
+                    return Err(invalid(
+                        "a review binds the frozen items and the recipient's current values",
+                    ));
+                }
+                self.reviews.insert(
+                    recipient.clone(),
+                    EsignReview {
+                        items: items.clone(),
+                        values: values.clone(),
+                    },
+                );
             }
             EsignEvent::Signed {
                 recipient, next, ..
