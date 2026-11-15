@@ -510,16 +510,28 @@ impl SyncServer {
         self
     }
 
-    /// Pays every paid embedding request from `line`, the host's own,
-    /// instead of the vault's background line (ARCH-0053
-    /// `#embedding-admission-built`: "A host may push its own embedding line
-    /// instead"): the primary endpoint's, its pods' and its remote rung's, in
-    /// the embedder slot this server holds now and in one it attaches later.
-    /// A request the line refuses is never sent, a rung's batch then embeds
-    /// on the device, and the vault's Owners are told once that the line is
-    /// spent.
+    /// Pays the background embedding requests of this server's embedder
+    /// slot from `line`, the host's own, instead of the vault's background
+    /// line (ARCH-0053 `#embedding-admission-built`: "A host may push its own
+    /// embedding line instead"): the primary endpoint's, its pods' and its
+    /// remote rung's, in the slot this server holds now and in one it
+    /// attaches later. A request the line refuses is never sent: a rung's
+    /// batch then embeds on the device, another batch waits for a later
+    /// pass, and the vault's Owners are told once that the line is spent.
+    ///
+    /// Two kinds of paid request stay off the line, as they stay off the
+    /// vault's: the startup probes, sent while serve or first-run setup
+    /// builds the slot, before it holds any line; and an evaluation's
+    /// exact-model queries, admitted on the evaluation's own run.
+    ///
+    /// A second push keeps the first line, here and in every slot, so the
+    /// server and its slots never pay on different host lines.
     #[must_use]
     pub fn with_embedding_line(mut self, line: oneiron::BudgetGuard) -> Self {
+        if self.embedding_line.is_some() {
+            tracing::warn!("a server's host embedding line is pushed once");
+            return self;
+        }
         if let Some(slot) = self.embedder_slot() {
             slot.push_host_line(line.clone());
         }

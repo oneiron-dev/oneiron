@@ -14,7 +14,8 @@ use crate::server::SyncServer;
 /// `server`, holding an endpoint embedder slot bound to the server vault's
 /// background line, as serve binds the slot it builds
 /// (`commands::build_embedder`). The slot's endpoint is never probed or
-/// called here.
+/// called here. Call it off the runtime's async threads, as serve builds its
+/// slot: the slot's blocking HTTP client panics when built in async code.
 ///
 /// # Errors
 ///

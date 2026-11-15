@@ -124,12 +124,25 @@ fn spent_line_notices(vault: &Vault, owner: EntityId) -> usize {
         .count()
 }
 
+/// Runs `body` on a blocking thread of a runtime on the engine's stack, as
+/// serve builds its embedder slot off the runtime's async threads
+/// (`commands::serve`): an endpoint slot's blocking HTTP client panics when
+/// it is built inside async code. A failed assertion fails the test with its
+/// own message.
+fn on_a_blocking_engine_thread(name: &str, body: impl FnOnce() + Send + 'static) {
+    run_on_engine_stack(name, move || async move {
+        if let Err(error) = tokio::task::spawn_blocking(body).await {
+            std::panic::resume_unwind(error.into_panic());
+        }
+    });
+}
+
 /// The owner caps the vault's system principal at one and a half batches.
 /// The background line admits the first batch, refuses the next three before
 /// they are sent, and tells the owner once, not once per refused batch.
 #[test]
 fn a_spent_background_line_tells_the_owners_once() {
-    run_on_engine_stack("spent-line-notice", || async {
+    on_a_blocking_engine_thread("spent-line-notice", || {
         let (_dir, vault, owner, system) = vault();
         cap_the_system_principal(&vault, owner, system);
         let server = with_bound_endpoint_slot(server(&vault)).expect("bound slot");
@@ -148,11 +161,21 @@ fn a_spent_background_line_tells_the_owners_once() {
     });
 }
 
+/// When the host pushes its line, against when the server takes its
+/// embedder slot.
+#[derive(Clone, Copy)]
+enum HostPush {
+    BeforeTheSlot,
+    AfterTheSlot,
+    /// Before the slot, and then a second line with nothing in it.
+    TwiceBeforeTheSlot,
+}
+
 /// A host line of two batches pays instead of the vault's background line,
 /// whose owner cap would admit one: two batches go out on the host's line,
-/// the third is refused, and the owner is told once. `push_first` pushes the
-/// host's line before the server holds its embedder slot, else after.
-fn a_host_line_pays_instead_of_the_vault_line(push_first: bool) {
+/// the third is refused, and the owner is told once. A second push keeps the
+/// first line, in the server and in the slot it takes later.
+fn a_host_line_pays_instead_of_the_vault_line(push: HostPush) {
     let (_dir, vault, owner, system) = vault();
     cap_the_system_principal(&vault, owner, system);
     let host_line = BudgetGuard::with_reserve_units(
@@ -161,14 +184,24 @@ fn a_host_line_pays_instead_of_the_vault_line(push_first: bool) {
         1,
         BudgetExhaustionPolicy::Suspend,
     );
-    let server = if push_first {
-        with_bound_endpoint_slot(server(&vault).with_embedding_line(host_line.clone()))
-            .expect("bound slot")
-    } else {
-        with_bound_endpoint_slot(server(&vault))
-            .expect("bound slot")
-            .with_embedding_line(host_line.clone())
-    };
+    let server = match push {
+        HostPush::BeforeTheSlot => {
+            with_bound_endpoint_slot(server(&vault).with_embedding_line(host_line.clone()))
+        }
+        HostPush::AfterTheSlot => with_bound_endpoint_slot(server(&vault))
+            .map(|server| server.with_embedding_line(host_line.clone())),
+        HostPush::TwiceBeforeTheSlot => with_bound_endpoint_slot(
+            server(&vault)
+                .with_embedding_line(host_line.clone())
+                .with_embedding_line(BudgetGuard::with_reserve_units(
+                    "second-host-embedding",
+                    0,
+                    1,
+                    BudgetExhaustionPolicy::Suspend,
+                )),
+        ),
+    }
+    .expect("bound slot");
     let receipts = Arc::new(MemoryReceipts::default());
 
     let (admitted, posted) = send_batches(&server, &receipts, 3);
@@ -190,15 +223,22 @@ fn a_host_line_pays_instead_of_the_vault_line(push_first: bool) {
 
 #[test]
 fn a_host_line_pushed_before_the_slot_pays_instead_of_the_vault_line() {
-    run_on_engine_stack("host-line-before-slot", || async {
-        a_host_line_pays_instead_of_the_vault_line(true);
+    on_a_blocking_engine_thread("host-line-before-slot", || {
+        a_host_line_pays_instead_of_the_vault_line(HostPush::BeforeTheSlot);
     });
 }
 
 #[test]
 fn a_host_line_pushed_after_the_slot_pays_instead_of_the_vault_line() {
-    run_on_engine_stack("host-line-after-slot", || async {
-        a_host_line_pays_instead_of_the_vault_line(false);
+    on_a_blocking_engine_thread("host-line-after-slot", || {
+        a_host_line_pays_instead_of_the_vault_line(HostPush::AfterTheSlot);
+    });
+}
+
+#[test]
+fn a_second_host_line_keeps_the_first() {
+    on_a_blocking_engine_thread("host-line-pushed-twice", || {
+        a_host_line_pays_instead_of_the_vault_line(HostPush::TwiceBeforeTheSlot);
     });
 }
 
@@ -206,7 +246,7 @@ fn a_host_line_pushed_after_the_slot_pays_instead_of_the_vault_line() {
 /// every batch, as before: spend changes for no one, and no one is told.
 #[test]
 fn with_no_cap_and_no_host_line_every_batch_goes_out_untold() {
-    run_on_engine_stack("background-line-uncapped", || async {
+    on_a_blocking_engine_thread("background-line-uncapped", || {
         let (_dir, vault, owner, _system) = vault();
         let server = with_bound_endpoint_slot(server(&vault)).expect("bound slot");
         let receipts = Arc::new(MemoryReceipts::default());

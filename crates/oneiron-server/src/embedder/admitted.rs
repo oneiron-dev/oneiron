@@ -46,9 +46,13 @@ pub(crate) const BACKGROUND_EMBEDDING_LINE: &str = "background-embedding";
 /// that clock builds the line again from the vault's budget policy.
 const BACKGROUND_LINE_SECS: u64 = 86_400;
 
-/// What the Owners' notice of a spent line says its batches do instead.
-const SPENT_LINE_DETAIL: &str =
-    "background embeddings spent their budget line; each batch embeds on the device instead";
+/// What the Owners' notice of a spent line says its batches do instead: a
+/// refused rung batch embeds on the device (`oneiron::embed`'s rung
+/// fallback), while a refused batch of the primary endpoint or its pods
+/// stays pending for a later pass.
+const SPENT_LINE_DETAIL: &str = "background embeddings spent their budget line: paid requests \
+     are refused until it has room; a remote rung's batches embed on the device meanwhile, and \
+     other batches wait";
 
 /// One line's meter, and the one notice it owes when it is spent
 /// (0053-EMB-EXHAUST-NOTICE = B: one notice per spent line, not per batch).
@@ -85,10 +89,11 @@ impl LineInstance {
 /// device still goes.
 ///
 /// A host may push its own line instead ([`Self::push_host_line`]): every
-/// paid request then spends on that one line, and the vault's is not built.
+/// later paid request of the slot's doors then spends on that one line, and
+/// the vault's is not built.
 ///
-/// Until a vault binds it (`init`'s probes, a slot no vault serves) and no
-/// host pushes one, each request meters on a line of its own, as
+/// Until a vault binds it and no host pushes one (the startup probes, a slot
+/// no vault serves), each request meters on a line of its own, as
 /// [`AdmittedRequests::on_line`] says.
 #[derive(Default)]
 pub(crate) struct BackgroundLine {
@@ -137,21 +142,27 @@ impl BackgroundLine {
 
     /// Tells the bound vault's Owners that `line` is spent, the first time
     /// it refuses a request for spend (ARCH-0053 `#embedding-admission-built`;
-    /// Engine ruling 0053-EMB-EXHAUST-NOTICE = B). A notice that is not
-    /// recorded is logged; the batch embeds on the device either way.
+    /// Engine ruling 0053-EMB-EXHAUST-NOTICE = B). Only a recorded notice
+    /// counts: while no vault is bound, or when the notice's write fails
+    /// (logged), the line's next refusal for spend tries again. The refused
+    /// request stays refused either way.
     fn tell_spent(&self, line: &LineInstance, denied: &RunDenied) {
         if !matches!(
             denied,
             RunDenied::Budget {
                 denied: BudgetDenied::Exhausted
             }
-        ) || line.told.swap(true, Ordering::AcqRel)
-        {
+        ) {
             return;
         }
         let Some(vault) = self.vault.get().and_then(|(vault, _)| vault.upgrade()) else {
             return;
         };
+        // One refusal of the line writes the notice at a time; the rest
+        // return here.
+        if line.told.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs());
@@ -161,9 +172,11 @@ impl BackgroundLine {
             SPENT_LINE_DETAIL,
             now,
         ) {
+            line.told.store(false, Ordering::Release);
             tracing::warn!(
                 kind = ?error.kind(),
-                "background embeddings spent their line; the Owners' notice was not recorded"
+                "background embeddings spent their line; the Owners' notice was not recorded, \
+                 and the line's next refusal tries again"
             );
         }
     }
@@ -248,11 +261,11 @@ impl EndpointSection for RemoteEmbedderConfig {
 /// The paid door of one endpoint.
 pub(crate) struct AdmittedRequests {
     connector: PaidConnector,
-    /// Each request's line while no vault binds [`Self::background`]. No
-    /// host pushes one yet, so it has no limit: each request still takes
-    /// its permit and writes its rows.
+    /// Each request's line while [`Self::background`] holds no line (no
+    /// vault binds it and no host pushes one): no limit, so each request
+    /// still takes its permit and writes its rows.
     limit_units: u64,
-    /// The vault's background line, once a vault binds it.
+    /// The host's line or the vault's background line, once one is there.
     background: Arc<BackgroundLine>,
     receipts: Arc<dyn RunReceiptSink>,
 }
@@ -326,8 +339,8 @@ pub(super) fn pay_pod_batches(
 ) -> oneiron::Result<()> {
     http.pay_pods_through(Arc::new(AdmittedRequests {
         connector: pod_connector(pool, model_key)?,
-        // No host pushes a line yet, as the primary's: each request still
-        // takes its permit and writes its rows.
+        // As the primary's: no limit while `background` holds no line, and
+        // each request still takes its permit and writes its rows.
         limit_units: u64::MAX,
         background,
         receipts,
