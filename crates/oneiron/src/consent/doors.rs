@@ -7,7 +7,7 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use super::bound::{ActorBound, GrantBound};
 use super::codec::GRANTS;
 use super::effect::{
-    ApproveOnceAuthorization, CATASTROPHE_FLOOR_V2, CatastropheClass, ComposedEffect,
+    ApproveOnceAuthorization, CATASTROPHE_FLOOR_V3, CatastropheClass, ComposedEffect,
     ConsentDecision, EffectDigest,
 };
 use super::grant::{
@@ -632,7 +632,7 @@ pub struct ConsentEvaluation {
 #[must_use]
 pub fn bound_catastrophe_class(bound: &GrantBound) -> Option<CatastropheClass> {
     let class = bound.class().as_str();
-    CATASTROPHE_FLOOR_V2
+    CATASTROPHE_FLOOR_V3
         .into_iter()
         .find(|catastrophe| catastrophe.as_str() == class)
 }
@@ -729,7 +729,7 @@ pub(crate) fn revoke_standing_grant_in_txn(
         return Ok(false);
     };
     row.status = status;
-    GRANTS.put(store, wtxn, &key, &row)?;
+    super::codec::put_grant_row_in_txn(store, wtxn, &key, &row)?;
     if retire_reason_rules {
         super::owner_reason::retire_owner_reason_rules_in_txn(store, wtxn, grant_ref)?;
     }

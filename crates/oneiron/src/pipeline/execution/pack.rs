@@ -26,10 +26,16 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(mut self) -> Result<PipelineOutput> {
+        // A candidate scoring set is a caller input: one outside its knob
+        // ranges fails closed before any read (RESEARCH-0651 contract item 1).
+        self.params.validate()?;
         // A project filter is the ingest door's project id, held to its
         // bounds before any index, expansion or telemetry work (H38).
         if let Some(project_id) = self.project_id_filter.as_deref() {
             crate::codebase::validate_project_id(project_id)?;
+        }
+        if self.eval {
+            self.refuse_nondeterminism()?;
         }
         // Scoped search already denies before counting candidates. Also stop
         // resolved-deny builders before index trust checks, host expansion,
@@ -121,14 +127,18 @@ impl PipelineBuilder<'_> {
         self.no_match_floors = Some(std::sync::Arc::new(self.vault.no_match_floors()));
         let started_at = self.vault.store.clock.now_recorded_at();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
-        let (occurred_range, temporal_hints) = self.resolved_occurred_range(temporal_now);
+        // Only a host window filters on occurred time. A range the query's
+        // own words name is a soft input to the temporal channel, never a
+        // filter (canon research-1009 P1.1): a phrase that names a window
+        // with no row in it must not empty the run.
+        let occurred_range = self.occurred_range;
+        let (query_range, temporal_hints) = self.query_temporal_range(temporal_now);
         // A parsed query range replaces the effort's default now anchor for
         // the temporal scan. Keep the effort flag: it is not a host window,
         // so the independent recency blend still applies.
-        if self.occurred_range.is_none()
+        if let Some((start, end)) = query_range
             && let Some(config) = self.temporal_search.as_mut()
             && config.effort_anchor
-            && let Some((start, end)) = occurred_range
         {
             config.anchor_start = start;
             config.anchor_end = end;
@@ -343,7 +353,9 @@ impl PipelineBuilder<'_> {
         let mut replay_inputs = attempt.replay_inputs;
         let mut critical = attempt.critical;
 
-        self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
+        if !self.eval {
+            self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
+        }
 
         let mut claim_bodies = HashMap::new();
         let mut claims_suppressed = 0_usize;
@@ -399,7 +411,9 @@ impl PipelineBuilder<'_> {
                     },
                 )?;
                 retried = true;
-                self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
+                if !self.eval {
+                    self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
+                }
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 text_exhausted = retry.text_exhausted;
@@ -546,7 +560,7 @@ impl PipelineBuilder<'_> {
             .session
             .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
             && self.read.holds_room_rows();
-        let capture = capture_enabled && !withheld;
+        let capture = capture_enabled && !withheld && !self.eval;
         let telemetry_run_id = if !capture {
             if let Some(session) = self.session {
                 if capture_enabled {
@@ -764,18 +778,19 @@ impl PipelineBuilder<'_> {
         }
     }
 
-    /// The occurred-time window this run filters on, and the temporal phrases
-    /// the query held. A host window or a host temporal search wins over the
-    /// query, which is then not read. Query phrases never fail the run: one
-    /// the parser cannot use is reported and left out.
-    fn resolved_occurred_range(&self, now: u64) -> (Option<(u64, u64)>, Vec<TemporalHintReport>) {
+    /// The occurred-time range the query's own words name, and the temporal
+    /// phrases the query held. The range only re-anchors the effort's
+    /// temporal scan; it never filters. A host window or a host temporal
+    /// search wins over the query, which is then not read. Query phrases
+    /// never fail the run: one the parser cannot use is reported and left out.
+    fn query_temporal_range(&self, now: u64) -> (Option<(u64, u64)>, Vec<TemporalHintReport>) {
         if self.occurred_range.is_some()
             || self
                 .temporal_search
                 .as_ref()
                 .is_some_and(|config| !config.effort_anchor)
         {
-            return (self.occurred_range, Vec::new());
+            return (None, Vec::new());
         }
 
         let Some((query, _)) = self.text_search.as_ref() else {
@@ -816,6 +831,7 @@ impl PipelineBuilder<'_> {
             self.vector_search.is_some() || hyde_expanded,
             space,
             &floors,
+            &self.params,
             |id| match rtxn.as_ref() {
                 Some(rtxn) => {
                     Ok(read_entity_metadata(&self.read, rtxn, id)?.map(|meta| meta.entity_type))

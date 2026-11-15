@@ -12,11 +12,16 @@ use super::frames::{
     BoardRenderMode, BoardStreamFrame, CarrierCoalesceBuffer, CoalesceOutcome, FrameEnqueueOutcome,
     FrameKind, StreamConnectionId,
 };
-use super::wake::WakeEnvelope;
+use super::wake::{WakeDelivery, WakeEnvelope};
 
 /// Pending wakes of one kind (TASK, review or room) one connection holds
 /// before the oldest of that kind is dropped.
 const PENDING_WAKES_CAP: usize = 256;
+
+/// Envelope ids one connection remembers having handed over, each with its
+/// acknowledgement (RC99): as many as its three kinds of pending wakes hold,
+/// the oldest forgotten first.
+pub const HANDED_WAKES_CAP: usize = 3 * PENDING_WAKES_CAP;
 
 #[derive(Debug)]
 pub struct StreamConnectionState {
@@ -27,9 +32,26 @@ pub struct StreamConnectionState {
     pub last_touched_at: u64,
     pub(super) carrier: CarrierCoalesceBuffer,
     pub(super) wakes: VecDeque<WakeEnvelope>,
+    /// The envelope ids drained to the host, oldest first, each with whether
+    /// the host acknowledged it. Memory only, at most [`HANDED_WAKES_CAP`].
+    pub(super) handed: VecDeque<(String, WakeDelivery)>,
 }
 
 impl StreamConnectionState {
+    /// Records envelope id `event_ref` as handed over. An id already recorded
+    /// keeps its state, because one id names one occurrence. Past
+    /// [`HANDED_WAKES_CAP`] ids the oldest is forgotten.
+    pub(super) fn record_handed(&mut self, event_ref: &str) {
+        if self.handed.iter().any(|(id, _)| id == event_ref) {
+            return;
+        }
+        if self.handed.len() >= HANDED_WAKES_CAP {
+            self.handed.pop_front();
+        }
+        self.handed
+            .push_back((event_ref.to_owned(), WakeDelivery::Handed));
+    }
+
     /// Queues `wake` behind the others. Wakes wait for a host-side adapter
     /// that may never come: past [`PENDING_WAKES_CAP`] wakes of its own kind
     /// the oldest of that kind goes first, so no kind evicts another's wake:
@@ -58,7 +80,12 @@ pub struct BoardStreamRegistry {
     pub(super) published_tasks: super::publish::PublishedTasks,
     pub(super) published_reviews: super::review::PublishedReviews,
     pub(super) published_room_wakes: super::room_wake::PublishedRoomWakes,
+    pub(super) published_task_wakes: super::task_wake::PublishedTaskWakes,
     attached: Arc<Notify>,
+    /// Signalled on each attach and on each connection's first bound reader,
+    /// so the host offers the staged TASK wakes to a connection that can now
+    /// read them (census L2-38).
+    task_wake_replay: Arc<Notify>,
 }
 
 impl BoardStreamRegistry {
@@ -87,6 +114,7 @@ impl BoardStreamRegistry {
         // so the reviews and room wakes queued for it are owed again.
         self.published_reviews.forget(&c);
         self.published_room_wakes.forget(&c);
+        self.published_task_wakes.forget(&c);
         self.connections.insert(
             c,
             StreamConnectionState {
@@ -97,9 +125,11 @@ impl BoardStreamRegistry {
                 last_touched_at: now,
                 carrier: Default::default(),
                 wakes: VecDeque::new(),
+                handed: VecDeque::new(),
             },
         );
         self.attached.notify_one();
+        self.task_wake_replay.notify_one();
     }
 
     /// Signalled on each attach, so the host's review pass reaches a
@@ -110,11 +140,29 @@ impl BoardStreamRegistry {
         Arc::clone(&self.attached)
     }
 
+    /// Signalled on each attach and on each [`Self::note_reader_bound`], so
+    /// the host's staged TASK wake pass reaches a connection once it can
+    /// read (census L2-38). A signal sent while nobody waits is kept for the
+    /// next wait.
+    #[must_use]
+    pub fn task_wake_replay_notifier(&self) -> Arc<Notify> {
+        Arc::clone(&self.task_wake_replay)
+    }
+
+    /// The host bound a connection's first reader: the staged TASK wakes it
+    /// may read are offered to it at the next pass. Registration attaches a
+    /// credential's connection before any call binds its reader, and an
+    /// unbound connection reads nothing.
+    pub fn note_reader_bound(&self) {
+        self.task_wake_replay.notify_one();
+    }
+
     /// Teardown drops the connection together with its queued wakes.
     pub fn detach(&mut self, c: &StreamConnectionId) {
         self.connections.remove(c);
         self.published_reviews.forget(c);
         self.published_room_wakes.forget(c);
+        self.published_task_wakes.forget(c);
     }
 
     fn change(
