@@ -14,6 +14,7 @@ use std::borrow::Cow;
 use super::super::overlay_erase::fence_overlay_replay_in_txn;
 use super::super::records::{
     MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
+    stored_replay_generation,
 };
 use super::super::response_erase::fence_replay_in_txn;
 use super::super::response_owners::stamp_response_owner_in_txn;
@@ -90,7 +91,10 @@ impl SessionBinding<'_> {
                     &REPLAY_RECORDS,
                     &record.run_id,
                     record,
-                    |current| replay_generation_matches(current, expected),
+                    |current| {
+                        let stored = current.map(CodeRunReplayRecord::generation).transpose()?;
+                        replay_generation_matches(stored, expected)
+                    },
                     &MODEL_HEAL_COUNTS,
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
@@ -110,8 +114,8 @@ impl SessionBinding<'_> {
             None => self
                 .session
                 .routed_side_txn(&self.route, |txn, read, write| {
-                    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
-                    replay_generation_matches(current.as_ref(), expected)?;
+                    let stored = stored_replay_generation(&read, &*txn, &record.run_id)?;
+                    replay_generation_matches(stored, expected)?;
                     prepare(txn, read, write)?;
                     let record =
                         fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
@@ -139,7 +143,6 @@ impl SessionBinding<'_> {
         actor: EntityId,
     ) -> Result<CodeRunReplayGeneration> {
         use crate::side_table::RoutedDbs;
-        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         let fenced = match self.route.target() {
             RouteTarget::Base => Cow::Borrowed(record),
@@ -151,8 +154,8 @@ impl SessionBinding<'_> {
         self.answered(|| {
             self.session
                 .routed_side_txn(&self.route, |wtxn, read, write| {
-                    let current = REPLAY_RECORDS.get(&read, wtxn, &record.run_id)?;
-                    replay_generation_matches(current.as_ref(), expected)?;
+                    let stored = stored_replay_generation(&read, wtxn, &record.run_id)?;
+                    replay_generation_matches(stored, expected)?;
                     match write {
                         RoutedDbs::Base(vault) => {
                             stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
@@ -205,8 +208,8 @@ fn put_base_replay_in_txn(
     healed_model: Option<&ModelId>,
     prepare: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>, RoutedDbs<'_>) -> Result<()>,
 ) -> Result<()> {
-    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
-    replay_generation_matches(current.as_ref(), expected)?;
+    let stored = stored_replay_generation(&read, &*txn, &record.run_id)?;
+    replay_generation_matches(stored, expected)?;
     let RoutedDbs::Base(vault) = write else {
         return Err(crate::Error::InvariantViolation(
             "a base route wrote outside base",

@@ -41,7 +41,7 @@ use crate::entity_id::EntityId;
 use crate::session_overlay::{JournalEntry, OverlayKeyspace};
 use crate::{Error, Result};
 
-use super::records::{REPLAY_RECORDS, replay_generation_matches};
+use super::records::{REPLAY_RECORDS, replay_generation_matches, stored_replay_generation};
 use super::routing::SessionBinding;
 
 impl SessionBinding<'_> {
@@ -139,8 +139,8 @@ impl SessionBinding<'_> {
         receipt: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
     ) -> Result<()> {
-        let current = REPLAY_RECORDS.get(&self.session.read_view()?, wtxn, &receipt.run_id)?;
-        replay_generation_matches(current.as_ref(), expected)
+        let stored = stored_replay_generation(&self.session.read_view()?, wtxn, &receipt.run_id)?;
+        replay_generation_matches(stored, expected)
     }
 
     /// Keeps `receipt` in `wtxn` with `row` as its first row, for a staged

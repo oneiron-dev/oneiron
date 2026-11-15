@@ -218,8 +218,8 @@ impl Vault {
             )?;
             also(&mut wtxn, &finished.output)?;
             if let Some((receipt, generation)) = receipt {
-                let current = REPLAY_RECORDS.get(&self.store, &wtxn, &receipt.run_id)?;
-                replay_generation_matches(current.as_ref(), Some(*generation))?;
+                let stored = stored_replay_generation(&self.store, &wtxn, &receipt.run_id)?;
+                replay_generation_matches(stored, Some(*generation))?;
                 receipt.outputs.push(finished.output.clone());
                 self.put_code_run_replay_record_in_txn(&mut wtxn, receipt)?;
                 let next_generation = receipt.generation()?;

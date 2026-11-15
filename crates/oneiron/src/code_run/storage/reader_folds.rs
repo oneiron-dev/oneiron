@@ -11,7 +11,6 @@
 
 use super::corrections::{committed_checkpoint, put_correction_in_txn};
 use super::program_resume::{ProgramResumeCommit, join_program_resume_in_txn};
-use super::records::REPLAY_RECORDS;
 use super::replay_capsule::{join_step_context_in_txn, stage_step_context};
 use super::routing::SessionBinding;
 use crate::code_run::{
@@ -220,7 +219,6 @@ impl ExecutorStorage<'_> {
                 )
             }
             Self::Session(binding) => {
-                REPLAY_RECORDS.encode_value(record)?;
                 let next = record.generation()?;
                 binding.put_replay_record_with_receipts(
                     record,

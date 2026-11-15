@@ -13,8 +13,8 @@ use super::super::replay::{
 };
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output_sourced,
-    load_whole_body, read_body_row_range,
+    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, finish_output_sourced, load_whole_body,
+    read_body_row_range,
 };
 use super::speech_identity::{
     ResultSpeech, canonical_witness_executor_turn_sourced, executor_speech_message_id_for_run,
@@ -168,7 +168,6 @@ impl SessionBinding<'_> {
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
     ) -> Result<CodeRunReplayGeneration> {
-        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         self.answered(|| self.put_replay_routed(record, expected, healed_model, |_, _| Ok(())))?;
         Ok(next_generation)
