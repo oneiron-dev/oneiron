@@ -36,9 +36,10 @@ impl Vault {
     /// id derives from the thread alone, so another host of this vault mints
     /// the same SESSION; when its entity arrived here without this store's
     /// own lifecycle record, the entity stands and only the record is
-    /// written. A phone keep passes its thread in `phone_thread` and the
-    /// minted SESSION carries that stamp; connector threads pass `None` and
-    /// stay unstamped (VOICE-PHONE-AGENT-REACH R1 fix).
+    /// written. A phone keep passes its proof in `phone_birth` and the minted
+    /// SESSION carries its thread's stamp, put through the phone keep's door;
+    /// connector threads pass `None` and stay unstamped
+    /// (VOICE-PHONE-AGENT-REACH R1 fix and R2 review F1).
     ///
     /// # Errors
     ///
@@ -50,7 +51,7 @@ impl Vault {
         conversation: EntityId,
         actor: EntityId,
         now: u64,
-        phone_thread: Option<EntityId>,
+        phone_birth: Option<&crate::voice_call::PhoneThreadBirth>,
     ) -> Result<EntityId> {
         let id = thread_session_id(conversation)?;
         if RECORDS.get(&self.store, wtxn, &id)?.is_some() {
@@ -90,22 +91,23 @@ impl Vault {
         };
         if !entity_stands {
             let body = session_entity_body(key)?;
-            let body = match phone_thread {
-                Some(thread) => crate::voice_call::stamp_phone_thread(&body, thread)?,
-                None => body,
+            let at = TimeRange {
+                start: now,
+                end: now,
             };
-            self.batch_in()
-                .put(
-                    &id,
-                    ENTITY_TYPE_SESSION,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &body,
-                )
-                .apply(wtxn)?;
+            match phone_birth {
+                Some(birth) => {
+                    let body = crate::voice_call::stamp_phone_thread(&body, birth.thread())?;
+                    self.batch_in()
+                        .put_phone_bound(&id, ENTITY_TYPE_SESSION, at, now, &body, birth)
+                        .apply(wtxn)?;
+                }
+                None => {
+                    self.batch_in()
+                        .put(&id, ENTITY_TYPE_SESSION, at, now, &body)
+                        .apply(wtxn)?;
+                }
+            }
         }
         RECORDS.put(&self.store, wtxn, &id, &record)?;
         Ok(id)

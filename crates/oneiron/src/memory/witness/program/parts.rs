@@ -16,7 +16,7 @@ impl Memory<'_> {
         plan: &WitnessPlan<'t>,
     ) -> MemoryResult<WitnessPlan<'t>> {
         let mut plan = plan.clone();
-        let phone_thread = plan.phone_thread;
+        let phone_thread = plan.phone_birth.map(|birth| birth.thread());
         for planned in &mut plan.messages {
             let Some(parts) = planned.envelope.parts.as_mut() else {
                 continue;

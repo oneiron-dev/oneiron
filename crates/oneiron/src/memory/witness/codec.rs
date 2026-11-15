@@ -228,8 +228,10 @@ pub(crate) fn guard_import_stamp(
 /// exception is gone); erase and withdraw truncate rows via
 /// `port_entity_scrub`, never through this put door, so legitimate erasure
 /// still lands. A fresh row, or a stored row with an empty or unstamped body,
-/// still passes from any door (a forged stamp on a new row only narrows who
-/// reads it). Every put door runs this beside [`guard_import_stamp`], replay
+/// passes here; a stamp's birth is the phone keep's alone, refused at every
+/// other door's early check (`voice_call::refuse_written_phone_mark`, R2
+/// review F1: under the default reach a stamp admits a row to its caller's
+/// call). Every put door runs this beside [`guard_import_stamp`], replay
 /// included; the session overlay arm judges the row its view holds now (its
 /// overlay row if any, else base).
 pub(crate) fn guard_phone_thread_mark(
