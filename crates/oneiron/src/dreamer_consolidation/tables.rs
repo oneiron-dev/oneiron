@@ -7,13 +7,9 @@ crate::side_table::side_tables! {
     /// decisions, never its value. Key: id16 (attempt) + u64be(position).
     DREAMER_CANDIDATE_DECISION: VaultMeta b"dreamer:candidate_decision:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Operator-set predicate key rules governing which claim keys the consolidator may fold;
-    /// defaults from key_defaults.json when absent. Key: ().
     /// Resident-owned v1 failure rules, stored as the validated JSON payload with its author.
     /// Key: ().
     DREAMER_FAILURE_RULES: VaultMeta b"dreamer:consolidation:failure_rules:v1" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    DREAMER_CONSOLIDATION_KEY_RULES: VaultMeta b"dreamer:consolidation:keys:v1" LegacyJson
         [restore: live] [family: unclassified] [tier: canonical];
     /// Owner-root reference pins and immutable child evidence accounting. Key: id16(root).
     DREAMER_CONSOLIDATION_ROOT: VaultMeta b"dreamer:consolidation:root:v1:" Named
@@ -39,9 +35,6 @@ crate::side_table::side_tables! {
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Operator-set conversation ids excluded from Dreamer consolidation. Key: ().
-    DREAMER_EXCLUDED_CONVERSATIONS: VaultMeta b"dreamer:excluded_conversations:v1" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Branch-scoped reflection-gap queue namespaced by partition hash and the branch's
     /// relationship/project scope axes. Key: hex64 ":" hex32-or-"none" ":" hex32-or-"none" ":"
     /// hash32.

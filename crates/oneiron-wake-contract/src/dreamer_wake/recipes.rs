@@ -3,6 +3,7 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_setting_contract::SettingValue;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -72,6 +73,13 @@ pub struct WakeRecipePolicy {
     /// window wins whenever it lends one. Shipped at 32768. An unknown
     /// window is never a refusal.
     pub thing_child_fallback_window_tokens: u64,
+}
+
+impl SettingValue for WakeRecipePolicy {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
 }
 
 impl WakeRecipePolicy {

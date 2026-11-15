@@ -352,12 +352,7 @@ impl ConsolidationFence {
             .reader(vault)?
             .with_claim_status(crate::claim::ClaimReadStatus::Recorded);
         let read = self.reader(vault)?;
-        let rules: crate::dreamer_consolidation::routing::PredicateKeyRules =
-            match crate::dreamer_consolidation::routing::KEY_RULES.get(&vault.store, txn, &())? {
-                Some(rules) => rules,
-                None => serde_json::from_str(include_str!("../key_defaults.json"))
-                    .map_err(|_| invalid_consolidation("invalid default key rules"))?,
-            };
+        let rules = vault.consolidation_key_rules_in_txn(txn)?;
         if rules != self.rules {
             return Err(invalid_consolidation("consolidation key rules changed"));
         }
@@ -543,12 +538,7 @@ impl ConsolidationFence {
                 },
             );
         }
-        let rules =
-            match crate::dreamer_consolidation::routing::KEY_RULES.get(&vault.store, txn, &())? {
-                Some(rules) => rules,
-                None => serde_json::from_str(include_str!("../key_defaults.json"))
-                    .map_err(|_| invalid_consolidation("invalid default key rules"))?,
-            };
+        let rules = vault.consolidation_key_rules_in_txn(txn)?;
         Ok(Self {
             actor,
             attempt: crate::attempt_queue::AttemptId::now(),

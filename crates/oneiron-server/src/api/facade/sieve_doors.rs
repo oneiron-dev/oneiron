@@ -1,11 +1,12 @@
 //! The owner's sieve doors: the interest queue and its retained spans,
-//! consumed-span receipts, the sieve and recipe policy rows, and the
-//! wake-budget lease refill. The engine owns the queue, the policies and
-//! the counter; each door rechecks the owner's proof.
+//! consumed-span receipts, the sieve policy row, and the wake-budget
+//! lease refill. The engine owns the queue, the policy and the counter;
+//! each door rechecks the owner's proof. The recipe policy is the setting
+//! `dreamer.wake.recipe_policy` (`vault.settings.get` / `vault.settings.set`).
 use std::sync::Arc;
 
+use oneiron::dreamer_wake::SievePolicy;
 use oneiron::dreamer_wake::sieve_doors::{self, *};
-use oneiron::dreamer_wake::{SievePolicy, WakeRecipePolicy};
 use oneiron::memory::MemoryError;
 
 use super::host_doors::support::Listed;
@@ -96,42 +97,6 @@ pub(crate) async fn vault_sieve_policy_set(
         "vault.sieve.policy.set",
         move |server, owner| {
             sieve_doors::sieve_policy_set_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_sieve_recipe_policy(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: SievePolicyRequest,
-) -> Listed<WakeRecipePolicy> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.sieve.recipe_policy",
-        move |server, owner| {
-            sieve_doors::sieve_recipe_policy_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_sieve_recipe_policy_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: SieveRecipePolicySetRequest,
-) -> Listed<WakeRecipePolicy> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.sieve.recipe_policy.set",
-        move |server, owner| {
-            sieve_doors::sieve_recipe_policy_set_as_owner(server.vault(), owner, &input)
                 .map_err(MemoryError::from)
         },
         |_| Vec::new(),

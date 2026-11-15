@@ -91,9 +91,6 @@ crate::side_table::side_tables! {
     /// Digest (32 bytes) of the last queued wake projector image. Key: ().
     DREAMER_WAKE_PROJECTION: VaultMeta b"dreamer:wake:projection:v1" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Owner-authored wake recipe budgets and rung instructions. Key: ().
-    DREAMER_WAKE_RECIPE_POLICY: VaultMeta b"dreamer:wake:recipe_policy:v1" LegacyJson
-        [restore: live] [family: unclassified] [tier: canonical];
     /// A paid wake call not yet settled, keyed by attempt id16 + step hash32 (FIX 11450).
     DREAMER_WAKE_OWED_CALL: VaultMeta b"dreamer:wake_owed_call:" Raw
         // Restore class: FIX 11450: a paid wake call not yet settled works on the wake budget

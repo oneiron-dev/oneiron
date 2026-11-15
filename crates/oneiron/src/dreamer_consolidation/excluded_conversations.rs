@@ -4,18 +4,13 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::consent::AuthenticatedOwner;
-use crate::side_table::{self, Named, SideTable};
+use crate::setting::{EncodedValue, SettingChange, SettingValue};
 use crate::{EntityId, Error, Result, Vault};
 
-/// Operator-set Dreamer conversation exclusions. Key: ().
-const EXCLUDED_CONVERSATIONS: SideTable<(), DreamerExcludedConversations, Named> =
-    SideTable::new(&side_table::DREAMER_EXCLUDED_CONVERSATIONS);
-
-/// Conversations whose turns must not enter a Dreamer consolidation pass.
-/// A queued branch that spans conversations is refused whole if any part is
-/// excluded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Conversations whose turns must not enter a Dreamer consolidation pass: the value of the
+/// owner's setting `dreamer.excluded_conversations`. A queued branch that spans conversations is
+/// refused whole if any part is excluded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerExcludedConversations {
     pub version: u8,
@@ -25,6 +20,13 @@ pub struct DreamerExcludedConversations {
 impl Default for DreamerExcludedConversations {
     fn default() -> Self {
         Self::new([])
+    }
+}
+
+impl SettingValue for DreamerExcludedConversations {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -70,39 +72,6 @@ impl DreamerExcludedConversations {
 }
 
 impl Vault {
-    /// Operator configuration seam, like the selection row. It is not an agent
-    /// verb; the live server exposes it only through its owner Dreamer route,
-    /// and the owner proof is revalidated inside the write transaction, so a
-    /// credential revoked while the request queued for the writer cannot
-    /// still replace or clear the row.
-    /// Replace semantics: writing an empty set clears the row, and setting the
-    /// same value again rewrites the same row. Readers load it per round/pass,
-    /// so it may be set any time before the first wake or resume. Turns a
-    /// scope's watermark already stepped past while excluded are not
-    /// retroactively queued if the conversation is later un-excluded.
-    pub fn set_dreamer_excluded_conversations(
-        &self,
-        owner: &AuthenticatedOwner,
-        setting: &DreamerExcludedConversations,
-    ) -> Result<()> {
-        setting.validate()?;
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let previous = EXCLUDED_CONVERSATIONS
-                .get(&self.store, txn, &())?
-                .unwrap_or_default();
-            EXCLUDED_CONVERSATIONS.put(&self.store, txn, &(), setting)?;
-            // Words framed before this commit forget the newly excluded
-            // conversations in the same commit (FIX 12551(a)).
-            let newly: BTreeSet<EntityId> = setting
-                .conversations
-                .difference(&previous.conversations)
-                .copied()
-                .collect();
-            crate::dreamer_wake::follower::exclude_in_txn(self, txn, &newly)
-        })
-    }
-
     pub fn dreamer_excluded_conversations(&self) -> Result<DreamerExcludedConversations> {
         let txn = self.store.env.read_txn()?;
         self.dreamer_excluded_conversations_in_txn(&txn)
@@ -120,10 +89,31 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<DreamerExcludedConversations> {
-        let setting = EXCLUDED_CONVERSATIONS
-            .get(&self.store, txn, &())?
-            .unwrap_or_default();
+        let setting = super::setting_keys::EXCLUDED_CONVERSATIONS
+            .read_in_txn(self, txn, &[], None)?
+            .value;
         setting.validate()?;
         Ok(setting)
     }
+}
+
+/// The hook of `dreamer.excluded_conversations`: words framed before the change forget the newly
+/// excluded conversations in the change's own commit (FIX 12551(a)). Turns a scope's watermark
+/// already stepped past while excluded are not queued again when a conversation is un-excluded.
+pub(super) fn forget_newly_excluded(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    let excluded = |value: Option<&EncodedValue>| {
+        value
+            .and_then(EncodedValue::decode::<DreamerExcludedConversations>)
+            .unwrap_or_default()
+            .conversations
+    };
+    let newly: BTreeSet<EntityId> = excluded(change.value.as_ref())
+        .difference(&excluded(change.prior.as_ref()))
+        .copied()
+        .collect();
+    crate::dreamer_wake::follower::exclude_in_txn(vault, txn, &newly)
 }

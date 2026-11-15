@@ -27,6 +27,7 @@ mod recipe_wake;
 pub(crate) mod recipes;
 mod refusal_dial;
 mod scheduling;
+pub(crate) mod setting_keys;
 mod settlement;
 pub(crate) mod sieve;
 pub(crate) mod statement_material;

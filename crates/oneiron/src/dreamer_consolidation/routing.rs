@@ -2,7 +2,7 @@
 use super::conflict::{candidate_facts, canonical_value_bytes};
 use super::provenance::source_meet;
 use super::{ConflictIdentity, ConflictSet, PromotionCandidate};
-use crate::side_table::{self, LegacyJson, SideTable};
+use crate::setting::SettingValue;
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,10 +12,20 @@ pub use oneiron_records::dreamer_consolidation::routing::PredicateKeyRule;
 
 pub type PredicateKeyRules = BTreeMap<String, PredicateKeyRule>;
 
-/// Operator-set predicate key rules governing which claim keys the consolidator may fold.
-/// Key: ().
-pub(super) const KEY_RULES: SideTable<(), PredicateKeyRules, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_CONSOLIDATION_KEY_RULES);
+/// The predicate key rules as the value of the setting `dreamer.consolidation.key_rules`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct ConsolidationKeyRules(pub(crate) PredicateKeyRules);
+
+impl SettingValue for ConsolidationKeyRules {}
+
+/// The shipped rules (`key_defaults.json`): the key's default.
+pub(super) fn shipped_key_rules() -> ConsolidationKeyRules {
+    ConsolidationKeyRules(
+        serde_json::from_str(include_str!("key_defaults.json"))
+            .expect("the shipped key_defaults.json decodes"),
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CandidateKeys {
@@ -210,18 +220,25 @@ fn cosine(a: &[f32], b: &[f32]) -> Result<f64> {
     Ok((dot / (an.sqrt() * bn.sqrt())).clamp(-1.0, 1.0))
 }
 impl Vault {
+    /// The predicate key rules in force: the owner's `dreamer.consolidation.key_rules`, else the
+    /// shipped rules.
+    ///
+    /// # Errors
+    ///
+    /// A stored row that does not decode; storage errors.
     pub fn consolidation_key_rules(&self) -> Result<PredicateKeyRules> {
         let txn = self.store.env.read_txn()?;
-        match KEY_RULES.get(&self.store, &txn, &())? {
-            Some(rules) => Ok(rules),
-            None => serde_json::from_str(include_str!("key_defaults.json"))
-                .map_err(|_| Error::CorruptedIndex("default key rules")),
-        }
+        self.consolidation_key_rules_in_txn(&txn)
     }
-    pub fn set_consolidation_key_rules(&self, rules: &PredicateKeyRules) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            KEY_RULES.put(&self.store, txn, &(), rules)?;
-            Ok(())
-        })
+
+    /// [`Vault::consolidation_key_rules`] in the caller's snapshot.
+    pub(crate) fn consolidation_key_rules_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<PredicateKeyRules> {
+        Ok(super::setting_keys::CONSOLIDATION_KEY_RULES
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .0)
     }
 }

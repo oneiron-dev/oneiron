@@ -404,11 +404,14 @@ pub(crate) fn erase_engine_control_actor_in_txn(
 }
 
 /// The five knobs that mix work with consent (S66-3), by their stored
-/// tables: no holder changes them; each stays an owner act at its own door.
+/// table, or by their setting key once the knob is a Setting: no holder
+/// changes them. Four are owner acts: at their own door, or a key that only
+/// the owner sets. The Dreamer's failure rules are not: an admitted resident
+/// claim sets them, and they stay in force only while that claim does (H398).
 pub const ENGINE_CONTROLS_OWNER_ONLY_KNOBS: [&str; 5] = [
     "VAULT_CLEANUP_POSTURE",
     "DREAMER_ACTION_MODE_POLICY",
-    "DREAMER_EXCLUDED_CONVERSATIONS",
+    "dreamer.excluded_conversations",
     "DREAMER_PROACTIVITY_PRESENTATION",
     "DREAMER_FAILURE_RULES",
 ];
