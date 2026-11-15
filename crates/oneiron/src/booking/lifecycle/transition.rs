@@ -121,7 +121,6 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
         BookingVerbRequest::Waitlist(_) => Err(BookingError::InvalidConstraint(
             "booking.waitlist has no writer (red proof)".to_owned(),
         )),
-        ),
     }
 }
 
