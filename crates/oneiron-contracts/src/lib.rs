@@ -6,6 +6,7 @@ pub mod affect;
 pub mod authority;
 pub mod claim;
 pub mod code_run;
+pub mod cursor_text;
 pub mod edge;
 pub mod entity_id;
 pub mod error;
