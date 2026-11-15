@@ -356,24 +356,10 @@ pub struct RecoveryKitRestoreArgs {
 
 /// A checkpoint pin's digest: exactly 64 hex digits, either case.
 fn pin_digest(text: &str) -> Result<[u8; 32], String> {
-    hex32(text, "a pin digest is 64 hex digits")
+    oneiron_hex::decode_any_case(text).ok_or_else(|| "a pin digest is 64 hex digits".to_owned())
 }
 
-/// A kit root's id as a refusal showed it: exactly 64 hex digits.
+/// A kit root's id as a refusal showed it: exactly 64 hex digits, either case.
 fn root_id(text: &str) -> Result<[u8; 32], String> {
-    hex32(text, "a root id is 64 hex digits")
-}
-
-/// Exactly 64 hex digits, either case; `what` words any other text.
-fn hex32(text: &str, what: &str) -> Result<[u8; 32], String> {
-    let refused = || what.to_owned();
-    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(refused());
-    }
-    let mut digest = [0u8; 32];
-    for (at, byte) in digest.iter_mut().enumerate() {
-        let pair = text.get(2 * at..2 * at + 2).ok_or_else(refused)?;
-        *byte = u8::from_str_radix(pair, 16).map_err(|_| refused())?;
-    }
-    Ok(digest)
+    oneiron_hex::decode_any_case(text).ok_or_else(|| "a root id is 64 hex digits".to_owned())
 }

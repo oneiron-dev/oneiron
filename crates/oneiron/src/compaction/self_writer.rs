@@ -412,7 +412,7 @@ impl CompactionExecution {
     /// The accepted snapshot, when the gate accepted this pass.
     pub(crate) fn snapshot(&self) -> Option<CompactionSnapshotRef> {
         Some(CompactionSnapshotRef {
-            content_hash: hex32(self.snapshot_hash.as_deref()?)?,
+            content_hash: oneiron_hex::decode(self.snapshot_hash.as_deref()?)?,
             byte_len: self.snapshot_len?,
         })
     }
@@ -434,18 +434,6 @@ impl CompactionExecution {
             blake3::hash(&bytes).as_bytes(),
         ))
     }
-}
-
-/// A 64-character lowercase hex digest's bytes.
-pub(super) fn hex32(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut out = [0_u8; 32];
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(out)
 }
 
 /// The snapshot of a summary's bytes: the artifact its packet names.

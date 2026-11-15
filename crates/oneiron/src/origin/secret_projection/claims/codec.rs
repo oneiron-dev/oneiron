@@ -390,18 +390,9 @@ pub(super) fn digest_value(digest: &[u8; 32]) -> Value {
     Value::from(crate::entity_id::bytes_to_hex_lower(digest))
 }
 
-/// The digest a [`digest_value`] holds.
+/// The digest a [`digest_value`] holds: 64 lowercase hex digits.
 pub(crate) fn digest_from_value(value: &Value) -> Result<[u8; 32]> {
-    let hex = text(value)?.as_bytes();
-    let mut digest = [0_u8; 32];
-    if hex.len() != 64 {
-        return Err(corrupt());
-    }
-    for (at, pair) in hex.chunks(2).enumerate() {
-        let pair = std::str::from_utf8(pair).map_err(|_| corrupt())?;
-        digest[at] = u8::from_str_radix(pair, 16).map_err(|_| corrupt())?;
-    }
-    Ok(digest)
+    oneiron_hex::decode(text(value)?).ok_or_else(corrupt)
 }
 
 pub(super) fn git_oid(value: &Value) -> Result<GitOid> {

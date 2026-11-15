@@ -258,7 +258,7 @@ pub(crate) fn parse_rows(text: &str) -> anyhow::Result<Vec<AccountKey>> {
         if id.is_empty() {
             anyhow::bail!("an account row has an empty id");
         }
-        let key_sha256 = digest_from_hex(&row.key_sha256).ok_or_else(|| {
+        let key_sha256 = oneiron_hex::decode_any_case(&row.key_sha256).ok_or_else(|| {
             anyhow::anyhow!("account {id}: key_sha256 is not a SHA-256 digest in 64 hex digits")
         })?;
         if key_sha256 == empty_key {
@@ -284,20 +284,6 @@ pub(crate) fn parse_rows(text: &str) -> anyhow::Result<Vec<AccountKey>> {
         });
     }
     Ok(rows)
-}
-
-fn digest_from_hex(hex: &str) -> Option<[u8; 32]> {
-    let hex = hex.trim().as_bytes();
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut digest = [0u8; 32];
-    for (byte, pair) in digest.iter_mut().zip(hex.chunks_exact(2)) {
-        let high = char::from(pair[0]).to_digit(16)?;
-        let low = char::from(pair[1]).to_digit(16)?;
-        *byte = u8::try_from(high * 16 + low).ok()?;
-    }
-    Some(digest)
 }
 
 /// A key's `key_sha256`, as an accounts file names it.

@@ -69,9 +69,10 @@ pub struct ConversationTurnSpan {
 }
 
 impl ConversationTurnSpan {
-    /// The fingerprint its landing pinned, as bytes.
+    /// The fingerprint its landing pinned, as bytes: 64 lowercase hex
+    /// digits, as the landing wrote it.
     pub(crate) fn pinned_fingerprint(&self) -> Option<[u8; 32]> {
-        super::self_writer::hex32(&self.fingerprint)
+        oneiron_hex::decode(&self.fingerprint)
     }
 }
 

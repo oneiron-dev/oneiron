@@ -123,25 +123,8 @@ pub fn ack_fanout_check_as(
         .into())
 }
 
-/// Exactly 32 lowercase hex bytes.
+/// A plan digest argument: 64 hex digits, either case (HEX-CASE-POLICY = A).
 pub(crate) fn decode_plan_digest(hex: &str) -> MemoryResult<[u8; 32]> {
-    let malformed = || MemoryError::bad_request("plan_digest must be 64 lowercase hex digits");
-    if hex.len() != 64 {
-        return Err(malformed());
-    }
-    let mut out = [0_u8; 32];
-    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        let high = nibble(pair[0]).ok_or_else(malformed)?;
-        let low = nibble(pair[1]).ok_or_else(malformed)?;
-        *slot = (high << 4) | low;
-    }
-    Ok(out)
-}
-
-const fn nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
+    oneiron_hex::decode_any_case(hex)
+        .ok_or_else(|| MemoryError::bad_request("plan_digest must be 64 hex digits"))
 }

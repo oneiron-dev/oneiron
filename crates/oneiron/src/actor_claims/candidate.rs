@@ -642,7 +642,9 @@ pub(crate) fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
     let Some(Value::Map(entries)) = body.evidence.as_ref() else {
         return None;
     };
-    let id_hex = |text: Option<&str>| text.is_some_and(|hex| is_hex(hex, 2 * ENTITY_ID_LEN));
+    let id_hex = |text: Option<&str>| {
+        text.is_some_and(|hex| oneiron_hex::is_lower_hex(hex, Some(2 * ENTITY_ID_LEN)))
+    };
     let (mut candidate, mut candidate_hash, mut receipt) = (None, None, None);
     let mut seen = 0_u8;
     for (key, value) in entries {
@@ -651,7 +653,9 @@ pub(crate) fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
             KEY_AT if value.as_u64().is_some() => 1,
             KEY_LANE if text == Some(LANE_RESIDENT_DREAM) => 2,
             KEY_ATTEMPT
-                if text.is_some_and(|hex| is_hex(hex, 2 * std::mem::size_of::<AttemptId>())) =>
+                if text.is_some_and(|hex| {
+                    oneiron_hex::is_lower_hex(hex, Some(2 * std::mem::size_of::<AttemptId>()))
+                }) =>
             {
                 4
             }
@@ -659,7 +663,9 @@ pub(crate) fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
                 candidate = text;
                 8
             }
-            KEY_CANDIDATE_HASH if text.is_some_and(|hex| is_hex(hex, 64)) => {
+            KEY_CANDIDATE_HASH
+                if text.is_some_and(|hex| oneiron_hex::is_lower_hex(hex, Some(64))) =>
+            {
                 candidate_hash = text;
                 16
             }
@@ -668,7 +674,7 @@ pub(crate) fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
             KEY_RECEIPT
                 if text
                     .and_then(|text| text.strip_prefix(RECEIPT_PREFIX))
-                    .is_some_and(|hex| is_hex(hex, 32)) =>
+                    .is_some_and(|hex| oneiron_hex::is_lower_hex(hex, Some(32))) =>
             {
                 receipt = text;
                 128
@@ -691,11 +697,6 @@ pub(crate) fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
     })
 }
 
-/// Whether `text` is exactly `len` hex digits.
-fn is_hex(text: &str, len: usize) -> bool {
-    text.len() == len && text.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 /// Where `id`'s envelope starts.
 fn occurred_start_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<u64> {
     let raw = vault
@@ -712,11 +713,7 @@ fn occurred_start_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -
 /// (its durable model step and landed diary entry are that attempt's) and
 /// when.
 fn candidate_evidence(attempt: AttemptId, at: u64) -> Value {
-    let hex: String = attempt
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let hex = oneiron_hex::encode(attempt.as_bytes());
     Value::Map(vec![
         (Value::from(KEY_AT), Value::from(at)),
         (Value::from(KEY_LANE), Value::from(LANE_RESIDENT_DREAM)),
