@@ -241,12 +241,18 @@ impl Host {
         std::fs::read_to_string(self.dir.path().join(format!("{name}.log"))).unwrap_or_default()
     }
 
-    /// Pairs the owner through a bootstrap link minted with `secret`.
-    fn pair_owner(&self, secret: &str) -> OneironClient {
+    /// A bootstrap link for the owner, minted with `secret` on the stopped
+    /// vault: a host command opens the vault, so it runs before `serve`.
+    fn bootstrap_link(&self, secret: &str) -> String {
         let link = json(self.oneiron(&["token", "bootstrap", "--url", &self.origin()], secret));
-        let (url, credential, _comm) = OneironClient::pair(link.as_str().unwrap()).unwrap();
-        OneironClient::connect(&url, &credential).unwrap()
+        link.as_str().unwrap().to_owned()
     }
+}
+
+/// Pairs the owner through `link` with the running server.
+fn pair(link: &str) -> OneironClient {
+    let (url, credential, _comm) = OneironClient::pair(link).unwrap();
+    OneironClient::connect(&url, &credential).unwrap()
 }
 
 /// A rooted vault with agent A's credential and an enrolled kit; the owner's
@@ -255,8 +261,9 @@ fn rooted_with_enrolled_kit(witness: bool) -> (Host, Value, [PathBuf; 2]) {
     let host = Host::new();
     let agent = json(host.oneiron(&["token", "agent", "--name", "claude-code"], OLD));
     if witness {
+        let link = host.bootstrap_link(OLD);
         let server = host.serve(OLD, "serve-before");
-        witness_text(&host.pair_owner(OLD));
+        witness_text(&pair(&link));
         drop_with_sigterm(server);
     }
     let pieces = host.issue_kit("kit-first", OLD);
@@ -416,15 +423,10 @@ fn a_lost_host_root_recovers_with_the_enrolled_kit_and_keeps_the_vault_id() {
     // The same vault under the new root: this install mints again.
     assert_eq!(host.vault_id(NEW), vault_id);
     let agent_b = json(host.oneiron(&["token", "agent", "--name", "claude-code"], NEW));
-    // The old machine's keystore, found again, holds a retired root.
-    refused(&run(host.oneiron_with_keys(
-        &["token", "agent", "--name", "claude-code"],
-        NEW,
-        &found,
-    )));
 
-    let _server = host.serve(NEW, "serve-after");
-    let owner = host.pair_owner(NEW);
+    let link = host.bootstrap_link(NEW);
+    let server = host.serve(NEW, "serve-after");
+    let owner = pair(&link);
     assert_eq!(recall(&owner), Ok(true), "what was saved is still found");
     let origin = host.origin();
     let new_agent =
@@ -435,6 +437,16 @@ fn a_lost_host_root_recovers_with_the_enrolled_kit_and_keeps_the_vault_id() {
         recall(&old_agent).is_err(),
         "agent A's slip stopped working"
     );
+    drop_with_sigterm(server);
+
+    // The old machine's keystore, found again, loads the old seed, and that
+    // root stays retired: it mints nothing.
+    let error = refused(&run(host.oneiron_with_keys(
+        &["token", "agent", "--name", "claude-code"],
+        NEW,
+        &found,
+    )));
+    assert!(!error.contains("holds no host issuer"), "{error}");
 }
 
 #[test]
