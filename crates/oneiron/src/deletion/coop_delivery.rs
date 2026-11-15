@@ -94,11 +94,7 @@ fn invalid(reason: &str) -> Error {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
+    oneiron_hex::encode(bytes)
 }
 
 /// Parses `N` bytes of lowercase or uppercase hex.

@@ -384,7 +384,7 @@ fn ask_key(turn: &EntityId, message: &EntityId, start: usize, end: usize) -> [u8
 }
 
 fn key_hex(key: &[u8; 32]) -> String {
-    key.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(key)
 }
 
 pub(super) fn parse_key(hex: &str) -> Option<[u8; 32]> {

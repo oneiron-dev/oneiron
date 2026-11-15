@@ -157,12 +157,7 @@ pub(crate) fn receipt_envelope_header(
 }
 
 pub(crate) fn hex_lower(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
+    oneiron_hex::encode(bytes)
 }
 
 /// Encodes an erase's initial REDACTION_AUDIT receipt body, signed by this
