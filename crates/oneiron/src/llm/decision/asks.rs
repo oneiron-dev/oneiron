@@ -390,7 +390,9 @@ impl Vault {
     /// the answer, and the Rule rung answers the next ask of the same question about the
     /// same evidence from it. The answer names the row, for the host's notice and its undo
     /// ([`Self::revoke_host_rule`]). A blank reason is none; one past
-    /// [`super::MAX_RULE_REASON_BYTES`] is refused.
+    /// [`super::MAX_RULE_REASON_BYTES`] is refused. An answer to a wire health check's ask
+    /// is what happened next: its outcome label lands in the same transaction, as the
+    /// owner's own act under his proof (ARCH-0044 C5).
     pub fn answer_decision_ask_with_reason(
         &self,
         owner: &AuthenticatedOwner,
@@ -399,13 +401,19 @@ impl Vault {
         reason: Option<&str>,
     ) -> Result<DecisionAsk> {
         self.recheck_owner(owner)?;
-        self.settle_decision_ask(seq, answer, rule_reason(reason)?, |txn, ask| {
-            if ask.to.ceiling != RoleRank::Owner {
-                return Err(invalid("the decision ask does not reach the owners"));
-            }
-            let by = owner.revalidate_in_txn(self, txn)?;
-            Ok((by, AskRole::Owner, HolderKind::Person))
-        })
+        self.settle_decision_ask(
+            seq,
+            answer,
+            rule_reason(reason)?,
+            |txn, ask| {
+                if ask.to.ceiling != RoleRank::Owner {
+                    return Err(invalid("the decision ask does not reach the owners"));
+                }
+                let by = owner.revalidate_in_txn(self, txn)?;
+                Ok((by, AskRole::Owner, HolderKind::Person))
+            },
+            Some(owner),
+        )
     }
 
     /// A role holder's answer to one ask: a person or a bound agent, verified as the writer
@@ -450,7 +458,7 @@ impl Vault {
                 return Ok(ask);
             }
         }
-        self.settle_decision_ask(seq, answer, None, answerer)
+        self.settle_decision_ask(seq, answer, None, answerer, None)
     }
 
     /// Whether `actor`, as `kind`, holds the role `ask` is at now (its holders read again).
@@ -472,13 +480,15 @@ impl Vault {
 
     /// One answer to ask `seq`, authorised by `answerer` (the actor, the role it answers as
     /// and its kind) in the snapshot the ask is read in and again in the one it is written
-    /// in. An owner's `reason` lands as a rule row in that write.
+    /// in. An owner's `reason` lands as a rule row in that write, and so does the outcome
+    /// label of a wire health check his `owner` proof answers.
     fn settle_decision_ask(
         &self,
         seq: u64,
         answer: DecisionAnswer,
         reason: Option<&str>,
         answerer: impl Fn(&heed::RoTxn<'_>, &DecisionAsk) -> Result<(EntityId, AskRole, HolderKind)>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<DecisionAsk> {
         let ask = {
             let txn = self.store.env.read_txn()?;
@@ -543,6 +553,9 @@ impl Vault {
             });
             ASKS.put(&self.store, txn, &seq, &held)?;
             crate::campaign::surface::apply_campaign_complaint_answer_in_txn(self, txn, &held)?;
+            if let Some(owner) = owner {
+                super::questions::land_owner_health_outcome_in_txn(self, txn, owner, &held)?;
+            }
             Ok(held)
         })?;
         // The answer is durable: every waiter on the ask wakes (FIX 4706).

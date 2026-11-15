@@ -18,6 +18,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::catalogue::WIRE_HEALTH;
 use oneiron::llm::decision::questions::{
     HEALTH_OUTCOME_PREDICATE, HealthAnswer, OutcomeBinding, OutcomeSource,
@@ -435,8 +436,11 @@ pub(crate) fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) 
     Ok(())
 }
 
-/// Looks for a role holder's answer to an asked check. The answer is what
-/// happened next: it lands as the decision's outcome.
+/// Looks for a role holder's answer to an asked check and settles the check
+/// on it. The answer is what happened next: the owner's answer door landed it
+/// as the decision's outcome label, in the write that kept the answer and
+/// under his proof (ARCH-0044 C5). This pass holds no owner proof, so it
+/// writes no label.
 fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let CheckState::Asked { question, unit } = &check.state else {
         return Ok(());
@@ -454,13 +458,6 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
     let DecisionAnswer::Choice(label) = answer.answer else {
         return Ok(());
     };
-    let unit_id = EntityId::from_hex(unit)?;
-    server.vault().record_health_outcome(
-        owner,
-        unit_id,
-        &label,
-        oneiron_vault_contract::now_ts(),
-    )?;
     check.state = CheckState::Answered {
         answer: label,
         probability: None,
@@ -510,16 +507,19 @@ pub(crate) fn fold_unread(server: &SyncServer) -> Result<()> {
 }
 
 /// The owner records what happened next to a check's crossing `unit`: a bot
-/// or a valid burst. It labels the bound decision.
-pub fn record_outcome(vault: &Vault, unit: EntityId, outcome: &str) -> Result<EntityId> {
+/// or a valid burst. It labels the bound decision, as his own act under the
+/// proof `owner` of the door that admitted him.
+pub fn record_outcome(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    unit: EntityId,
+    outcome: &str,
+) -> Result<EntityId> {
     if outcome != VALID_BURST && outcome != BOT {
         return Err(Error::InvalidConfig(format!(
             "a health outcome is {VALID_BURST} or {BOT}"
         )));
     }
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .map_err(|error| Error::InvalidConfig(format!("no owner principal: {error}")))?;
     vault.record_health_outcome(owner, unit, outcome, oneiron_vault_contract::now_ts())
 }
 

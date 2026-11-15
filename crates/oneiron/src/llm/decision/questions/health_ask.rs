@@ -1,7 +1,9 @@
 //! Wire health checks (OF-520) on the shared versioned question substrate. A crossing's
 //! typed decision ("is everything okay: a bot, or a valid burst?") is one one-off question
 //! over one unit, the crossing as the server kept it. A later outcome fact on that unit
-//! labels the decision for the loop, through the question's binding.
+//! labels the decision for the loop, through the question's binding. The
+//! owner stamps that fact as his own act, under the proof of the door that
+//! admitted him (ARCH-0044 C5; WIRE-HEALTH-OUTCOME-STAMPER = A).
 
 use super::{
     arrival,
@@ -12,8 +14,11 @@ use super::{
     },
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::consent::AuthenticatedOwner;
 use crate::llm::decision::types::invalid;
-use crate::llm::decision::{DecisionDial, DecisionQuestion, TypedDecision};
+use crate::llm::decision::{
+    DecisionAnswer, DecisionAsk, DecisionDial, DecisionQuestion, TypedDecision,
+};
 use crate::{
     ClaimCandidate, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault, WriteActor,
     WriteEnvelope, WriteProvenance,
@@ -24,6 +29,8 @@ pub const HEALTH_CROSSING_PREDICATE: &str = "wire.health.crossing";
 /// What happened next: a later fact on a crossing's unit. Its value is an answer option,
 /// which the question's binding maps to a label.
 pub const HEALTH_OUTCOME_PREDICATE: &str = "wire.health.outcome";
+/// The adapter a health question's record names.
+const HEALTH_ADAPTER: &str = "wire.health";
 
 /// One health decision to bind.
 pub struct HealthAnswer<'a> {
@@ -54,39 +61,98 @@ impl Vault {
     }
 
     /// Records what happened next to the crossing `unit`: the owner's `outcome`, an answer
-    /// option. Its arrival labels the bound decision.
+    /// option, as his own act under `owner`'s proof, revalidated in the write. Its arrival
+    /// labels the bound decision. A proof that is not the owner's own full, undelegated
+    /// credential refuses the write.
     pub fn record_health_outcome(
         &self,
-        principal: EntityId,
+        owner: &AuthenticatedOwner,
         unit: EntityId,
         outcome: &str,
         now: u64,
     ) -> Result<EntityId> {
-        if outcome.is_empty() || outcome.len() > 4096 {
-            return Err(invalid("invalid health outcome"));
-        }
-        let value = rmpv::Value::from(outcome);
-        let candidate = ClaimCandidate::new(
-            HEALTH_OUTCOME_PREDICATE,
-            ClaimSubject::Entity(unit),
-            value.clone(),
-            1.0,
-        )
-        .with_private_reader(principal)?;
-        let envelope = WriteEnvelope::new(
-            WriteActor::new(principal, EdgeActorClass::Human),
-            ClaimSource::UserStated,
-            WriteProvenance::new(value)?,
-            ClaimApprovalStatus::Approved,
-        );
-        let fact = EntityId::now();
         self.with_write_txn_grouped(|txn| {
-            self.batch_in()
-                .claim_candidate(&fact, candidate, &envelope, at(now), now)
-                .apply(txn)
-        })?;
-        Ok(fact)
+            let authored = owner.owner_authored_write_in_txn(self, txn)?;
+            owner_outcome_in_txn(self, txn, authored, unit, outcome, now)
+        })
     }
+}
+
+/// The owner's answer to `ask`, when it asks a health check, as that check's outcome: one
+/// `wire.health.outcome` fact on the crossing's unit, in the writer that keeps the answer,
+/// as the owner's own act under `owner`'s proof. The sweep that settles the check holds no
+/// proof, so the label lands here or not at all. An ask of another question, an answer
+/// that is no choice, a question not yet bound to its unit, and a proof that is not the
+/// owner's own full, undelegated credential land nothing; the answer stands either way.
+pub(crate) fn land_owner_health_outcome_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    ask: &DecisionAsk,
+) -> Result<Option<EntityId>> {
+    let Some(DecisionAnswer::Choice(outcome)) = ask.answer.as_ref().map(|held| &held.answer) else {
+        return Ok(None);
+    };
+    let key = VersionKey {
+        id: ask.question.id,
+        version: ask.question.version,
+    };
+    let Some(record) = QUESTION_VERSION.get(&vault.store, &*txn, &key)? else {
+        return Ok(None);
+    };
+    if record.definition.adapter != HEALTH_ADAPTER {
+        return Ok(None);
+    }
+    let [unit] = record.definition.units.as_slice() else {
+        return Err(Error::CorruptedIndex(
+            "health question without its one unit",
+        ));
+    };
+    if !ask.principal.is(record.principal) {
+        return Err(invalid("a health ask answers its own question"));
+    }
+    let Some(authored) = owner.owner_answer_in_txn(vault, txn)? else {
+        return Ok(None);
+    };
+    let answered_at = ask.answer.as_ref().map_or(0, |held| held.answered_at);
+    owner_outcome_in_txn(vault, txn, authored, *unit, outcome, answered_at).map(Some)
+}
+
+/// One `wire.health.outcome` fact on `unit`, the owner's `outcome`: Human, UserStated and
+/// Approved, private to him, landed under `authored`, the proof revalidated in `txn`.
+fn owner_outcome_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    authored: crate::consent::OwnerAuthoredWrite,
+    unit: EntityId,
+    outcome: &str,
+    now: u64,
+) -> Result<EntityId> {
+    if outcome.is_empty() || outcome.len() > 4096 {
+        return Err(invalid("invalid health outcome"));
+    }
+    let principal = authored.actor();
+    let value = rmpv::Value::from(outcome);
+    let candidate = ClaimCandidate::new(
+        HEALTH_OUTCOME_PREDICATE,
+        ClaimSubject::Entity(unit),
+        value.clone(),
+        1.0,
+    )
+    .with_private_reader(principal)?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(principal, EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        WriteProvenance::new(value)?,
+        ClaimApprovalStatus::Approved,
+    );
+    let fact = EntityId::now();
+    vault
+        .batch_in()
+        .with_owner_authored(Some(authored))
+        .claim_candidate(&fact, candidate, &envelope, at(now), now)
+        .apply(txn)?;
+    Ok(fact)
 }
 
 fn at(now: u64) -> TimeRange {
@@ -149,7 +215,7 @@ fn bind_health_answer_in_txn(
         principal: input.principal,
         definition: QuestionDefinition {
             question: question.clone(),
-            adapter: "wire.health".into(),
+            adapter: HEALTH_ADAPTER.into(),
             units: vec![unit],
             recipe: "wire.health.v1".into(),
             profile: "fleet-burst".into(),
