@@ -479,12 +479,11 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
     }
     let mut seen = BTreeSet::new();
     for row in rows {
-        // A draft grants nothing: it may pre-fill a tighter setting, but only
-        // the owner's own override can choose `always allow`.
-        if !seen.insert(&row.tool)
-            || row.rationale.trim().is_empty()
-            || row.rationale.len() > 4096
-            || row.disposition == SlateDisposition::AlwaysAllow
+        // A draft grants nothing: only the owner's stamp accepts a row. It
+        // pre-fills `always allow` only from the engine's drafter, under the
+        // owner's `connectors.slate.drafts_offer_always_allow` and his past
+        // rulings; an outside draft never does (`store_connector_slate`).
+        if !seen.insert(&row.tool) || row.rationale.trim().is_empty() || row.rationale.len() > 4096
         {
             return Err(invalid());
         }
@@ -728,6 +727,15 @@ impl Vault {
     ) -> Result<EntityId> {
         let manifest = SlateManifest::new(manifest.to_vec(), false);
         let rows: Vec<SlateDraftRow> = serde_json::from_str(model_output).map_err(|_| invalid())?;
+        // An outside draft may pre-fill a tighter setting, but never `always
+        // allow`: only the owner's own override, or the engine's drafter
+        // under his key and his past rulings, puts it on a row.
+        if rows
+            .iter()
+            .any(|row| row.disposition == SlateDisposition::AlwaysAllow)
+        {
+            return Err(invalid());
+        }
         let elicitation = manifest.elicitation.as_ref().map(|declaration| {
             super::slate_draft::rule_draft_elicitation_row(
                 declaration,

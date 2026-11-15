@@ -24,6 +24,7 @@ mod meter;
 pub mod qualification;
 mod qualification_kit;
 mod record;
+pub(crate) mod setting_keys;
 mod setup;
 mod slate;
 mod slate_draft;

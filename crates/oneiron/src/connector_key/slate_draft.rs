@@ -2,8 +2,12 @@
 //! the resolved manifest, and the owner's past grant rulings, which are the
 //! rows of the slates he stamped. Every row starts at `auto`; a draft may
 //! pre-fill `always ask` or `never allow` where those rulings show he wants
-//! them, and never widens. The model answers one typed choice per row, never
-//! prose, and the slate is always shown before anything is granted.
+//! them. It pre-fills `always allow` only where the owner turned on
+//! `connectors.slate.drafts_offer_always_allow` and his rulings show he chose
+//! it for every kind of call the tool makes. The model answers one typed
+//! choice per row, never prose, and the slate is always shown before
+//! anything is granted: a draft grants nothing until his stamp.
+use super::setting_keys::DRAFTS_OFFER_ALWAYS_ALLOW;
 use super::slate::{
     ConnectorGrantSlate, ELICITATION_ROW_DATA_CLASS, ELICITATION_ROW_KEY, SlateCapability,
     SlateDisposition, SlateDraftRow, SlateElicitationManifest, SlateManifest, SlateOwnerOverride,
@@ -137,6 +141,40 @@ impl SlatePastRulings {
             }
         }
         best
+    }
+    /// `always allow`, with the line that says why, when the owner chose it
+    /// for every one of the tool's traits the rulings know (at least one):
+    /// on [`PAST_RULING_MIN_CONNECTORS`] connectors or more, and on more
+    /// than half of those he ruled for that trait. The loosest setting needs
+    /// every trait's evidence to agree; the line names the weakest.
+    fn recommend_always_allow(
+        &self,
+        tool: &SlateToolManifest,
+    ) -> Option<(SlateDisposition, String)> {
+        let mut weakest: Option<(u32, u32, String)> = None;
+        for trait_ in SlateTrait::of(tool) {
+            let Some(counts) = self.by_trait.get(&trait_) else {
+                continue;
+            };
+            let total: u32 = counts.values().sum();
+            let allow = counts
+                .get(&SlateDisposition::AlwaysAllow)
+                .copied()
+                .unwrap_or(0);
+            if allow < PAST_RULING_MIN_CONNECTORS || allow * 2 <= total {
+                return None;
+            }
+            if weakest.as_ref().is_none_or(|(held, of, _)| {
+                u64::from(allow) * u64::from(*of) < u64::from(*held) * u64::from(total)
+            }) {
+                weakest = Some((allow, total, trait_.label().to_owned()));
+            }
+        }
+        let (allow, total, label) = weakest?;
+        Some((
+            SlateDisposition::AlwaysAllow,
+            format!("you chose always allow for {label} on {allow} of {total} connectors"),
+        ))
     }
 }
 
@@ -356,32 +394,77 @@ pub struct ConnectorSlateRedraft {
     pub rationale: BTreeMap<String, String>,
 }
 
-/// Admission and drift drafts never offer `always allow`; only the owner
-/// picks it, or asks for it in a re-draft.
+/// What admission and drift drafts offer: never `always allow`, unless the
+/// owner's `connectors.slate.drafts_offer_always_allow` is on and the rule
+/// rung drafted it from his past rulings (then the model may keep it or
+/// choose tighter). Otherwise only the owner picks it, or asks for it in a
+/// re-draft.
 const DRAFT_OPTIONS: [SlateDisposition; 3] = [
     SlateDisposition::Auto,
     SlateDisposition::AlwaysAsk,
     SlateDisposition::NeverAllow,
 ];
 
+/// The rule rung's row for an admission or drift draft: [`rule_draft_row`],
+/// or `always allow` where it would draft `auto`, `offer_always_allow` (the
+/// owner's `connectors.slate.drafts_offer_always_allow`) is on and the
+/// owner's rulings show `always allow` for the tool.
+fn admission_rule_draft_row(
+    tool: &SlateToolManifest,
+    rulings: &SlatePastRulings,
+    offer_always_allow: bool,
+) -> SlateDraftRow {
+    let rule = rule_draft_row(tool, rulings);
+    if !offer_always_allow || rule.disposition != SlateDisposition::Auto {
+        return rule;
+    }
+    match rulings.recommend_always_allow(tool) {
+        Some((disposition, rationale)) => SlateDraftRow {
+            disposition,
+            rationale,
+            ..rule
+        },
+        None => rule,
+    }
+}
+
 fn draft_rows(
     door: &str,
     tools: &[&SlateToolManifest],
     rulings: &SlatePastRulings,
     drafter: Option<&ConnectorSlateDrafter<'_>>,
+    offer_always_allow: bool,
 ) -> Vec<SlateDraftRow> {
     tools
         .iter()
         .map(|tool| {
-            let rule = rule_draft_row(tool, rulings);
+            let rule = admission_rule_draft_row(tool, rulings, offer_always_allow);
+            let options: &[SlateDisposition] = if rule.disposition == SlateDisposition::AlwaysAllow
+            {
+                &SlateDisposition::ALL
+            } else {
+                &DRAFT_OPTIONS
+            };
             match drafter {
-                Some(drafter) => {
-                    drafter.draft_row(door, tool, rulings, &rule, &DRAFT_OPTIONS, None, None)
-                }
+                Some(drafter) => drafter.draft_row(door, tool, rulings, &rule, options, None, None),
                 None => rule,
             }
         })
         .collect()
+}
+
+/// The owner's past rulings and his `connectors.slate.drafts_offer_always_allow`,
+/// as `txn` reads them.
+fn drafting_inputs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(SlatePastRulings, bool)> {
+    Ok((
+        past_rulings_in_txn(&vault.store, txn)?,
+        DRAFTS_OFFER_ALWAYS_ALLOW
+            .read_in_txn(vault, txn, &[], None)?
+            .value,
+    ))
 }
 
 fn fresh(store: &Store, draft: SlateDraftRow) -> Result<SlateRow> {
@@ -402,19 +485,23 @@ impl Vault {
     /// Connector add: draft the slate from the resolved manifest and the
     /// owner's past rulings, and store it unstamped for the one-tap accept.
     /// Without a model drafter the rule rung drafts every row; the rule rung
-    /// always drafts the elicitation row.
+    /// always drafts the elicitation row. A row drafts `always allow` only
+    /// under the owner's `connectors.slate.drafts_offer_always_allow`.
     pub fn draft_connector_admission_slate(
         &self,
         manifest: &SlateManifest,
         drafter: Option<&ConnectorSlateDrafter<'_>>,
     ) -> Result<EntityId> {
-        let rulings = self.connector_slate_past_rulings()?;
+        let (rulings, offer_always_allow) = {
+            let txn = self.store.env.read_txn()?;
+            drafting_inputs_in_txn(self, &txn)?
+        };
         let tools: Vec<_> = manifest.tools.iter().collect();
         let elicitation = manifest
             .elicitation
             .as_ref()
             .map(|declaration| rule_draft_elicitation_row(declaration, &rulings));
-        let rows = draft_rows("admission", &tools, &rulings, drafter)
+        let rows = draft_rows("admission", &tools, &rulings, drafter, offer_always_allow)
             .into_iter()
             .chain(elicitation)
             .map(|draft| fresh(&self.store, draft))
@@ -434,14 +521,14 @@ impl Vault {
         drafter: Option<&ConnectorSlateDrafter<'_>>,
     ) -> Result<ConnectorSlateDelta> {
         let manifest = &slate_manifest.tools;
-        let (prior, rulings, carry) = {
+        let (prior, (rulings, offer_always_allow), carry) = {
             let txn = self.store.env.read_txn()?;
             let prior = read_slate_in_store_txn(&self.store, &txn, prior_id)?
                 .ok_or(Error::EntityNotFound)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
             (
                 prior,
-                past_rulings_in_txn(&self.store, &txn)?,
+                drafting_inputs_in_txn(self, &txn)?,
                 policy.connector_class_carry(),
             )
         };
@@ -454,7 +541,7 @@ impl Vault {
             })
             .collect();
         let mut drafted: BTreeMap<String, SlateDraftRow> =
-            draft_rows("drift", &expanded, &rulings, drafter)
+            draft_rows("drift", &expanded, &rulings, drafter, offer_always_allow)
                 .into_iter()
                 .map(|row| (row.tool.clone(), row))
                 .collect();
