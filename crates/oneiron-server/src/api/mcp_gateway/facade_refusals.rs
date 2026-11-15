@@ -32,65 +32,7 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         refusal.wrong_root = Some(correction);
         return with_refusal_timing(refusal, retry_after, resets_at, legal_hold);
     }
-    let code = match error.code.as_str() {
-        oneiron::MEMORY_CODE_NOT_FOUND => -32004,
-        // OF-123: an effect whose person is not settled yet is a typed
-        // refusal like these, never an argument error; its kind below names it.
-        oneiron::MEMORY_CODE_FORBIDDEN
-        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-        | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
-        | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
-        | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
-        | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
-        | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
-        | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
-        | oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE
-        | oneiron::memory::MEMORY_CODE_PACED_HOLD
-        | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
-        // A row's world setting, a frozen vault and a render that met its
-        // deadline or a machine floor are typed refusals too, never an
-        // argument error (FIX 7562, 5325, 8242).
-        code if refusal_kind(code).is_some() => -32020,
-        oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
-        _ => -32602,
-    };
-    // A paid call's own refusals keep their names: a client tells a spent
-    // line from a model that did not answer without reading the sentence.
-    let kind = match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BUDGET_SPENT => Some("budget_spent"),
-        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => Some("model_unavailable"),
-        // OF-123: an effect whose person is not settled yet keeps its name
-        // too, so an agent reads it as `error.data.error_code`, not prose.
-        oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => Some("identity_unsettled"),
-        // FIX 2222: one stable kind for the typed host refusal, whichever
-        // door reported it.
-        oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
-        // FIX 11434: the owner binding refusal keeps one stable kind too.
-        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => Some(MCP_OWNER_BINDING_REQUIRED),
-        // WILL-PLAN L13 row 03: the room's audience gave no consent to this
-        // management; an agent reads the name, not the sentence.
-        oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
-            Some("off_record_room_management_consent_unavailable")
-        }
-        // FIX 7650: a foreign guest's proposal spool met the host's disk
-        // floor; the agent reads the name, not the sentence.
-        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
-            Some("sandbox_proposal_disk_floor")
-        }
-        // FIX 10011: an owner model pin no offered seat serves.
-        oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => {
-            Some("model_pin_unavailable")
-        }
-        // FIX 8753: a call its budget window paced waits in its caller's
-        // line; the agent reads the name and `resets_at`, not the sentence.
-        oneiron::memory::MEMORY_CODE_PACED_HOLD => Some("paced_hold"),
-        // FIX 6547: an agent thread's walk-in its room's audience does not
-        // admit, named as the facade's 409 names it.
-        oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN => {
-            Some("agent_thread_walk_in_forbidden")
-        }
-        code => refusal_kind(code),
-    };
+    let (code, kind) = mcp_refusal_row(error.code.as_str());
     let kind = if legal_hold.is_some() {
         Some("legal_hold")
     } else {
@@ -140,25 +82,73 @@ fn with_refusal_timing(
     refusal
 }
 
-/// The stable kind of a typed refusal whose code the gateway names in its
-/// own spelling, each a -32020 refusal: the owner's world read setting
-/// (FIX 7562), a hosted vault paused for its reap (FIX 5325), a deck render
-/// past its deadline or at a machine floor (FIX 8242), and a damaged
-/// authority clock floor, which the owner's repair answers (FIX 11190).
-/// `None` for any other code.
-fn refusal_kind(code: &str) -> Option<&'static str> {
-    Some(match code {
-        oneiron_contracts::memory::MEMORY_CODE_AUTHORITY_CLOCK_CORRUPT => "authority_clock_corrupt",
-        oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT => "world_recipient_limit",
-        oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
-            "world_placement_unverifiable"
+/// The gateway's refusal registry: the JSON-RPC number of a facade refusal
+/// whose code is `code`, and the stable kind an agent reads as
+/// `error.data.error_code` (`None`: the generic kind, `facade_error` or
+/// `write_verb_target_stale`). A code no row names is an argument error.
+fn mcp_refusal_row(code: &str) -> (i64, Option<&'static str>) {
+    match code {
+        oneiron::MEMORY_CODE_NOT_FOUND => (-32004, None),
+        oneiron::MEMORY_CODE_FORBIDDEN | oneiron::MEMORY_CODE_INVALID_STATE => (-32020, None),
+        // FIX 11434: the owner binding refusal keeps one stable kind.
+        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            (-32020, Some(MCP_OWNER_BINDING_REQUIRED))
         }
-        crate::managed::WRITES_FROZEN_TAG => "writes_frozen",
-        crate::slide_render::RENDER_DEADLINE => "render_deadline",
-        crate::slide_render::RENDER_MEMORY_FLOOR => "render_memory_floor",
-        crate::slide_render::RENDER_DISK_FLOOR => "render_disk_floor",
-        _ => return None,
-    })
+        // A paid call's own refusals keep their names: a client tells a spent
+        // line from a model that did not answer without reading the sentence.
+        oneiron::memory::MEMORY_CODE_BUDGET_SPENT => (-32020, Some("budget_spent")),
+        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => (-32603, Some("model_unavailable")),
+        // OF-123: an effect whose person is not settled yet is a typed
+        // refusal, never an argument error, and keeps its name, so an agent
+        // reads it as `error.data.error_code`, not prose.
+        oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => (-32020, Some("identity_unsettled")),
+        // FIX 2222: one stable kind for the typed host refusal, whichever
+        // door reported it.
+        oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => (-32020, Some(MCP_HOST_ACTION_REFUSED)),
+        // WILL-PLAN L13 row 03: the room's audience gave no consent to this
+        // management; an agent reads the name, not the sentence.
+        oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => (
+            -32020,
+            Some("off_record_room_management_consent_unavailable"),
+        ),
+        // FIX 7650: a foreign guest's proposal spool met the host's disk
+        // floor; the agent reads the name, not the sentence.
+        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
+            (-32020, Some("sandbox_proposal_disk_floor"))
+        }
+        // FIX 10011: an owner model pin no offered seat serves.
+        oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => {
+            (-32020, Some("model_pin_unavailable"))
+        }
+        // FIX 8753: a call its budget window paced waits in its caller's
+        // line; the agent reads the name and `resets_at`, not the sentence.
+        oneiron::memory::MEMORY_CODE_PACED_HOLD => (-32020, Some("paced_hold")),
+        // FIX 6547: an agent thread's walk-in its room's audience does not
+        // admit, named as the facade's 409 names it.
+        oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN => {
+            (-32020, Some("agent_thread_walk_in_forbidden"))
+        }
+        // A damaged authority clock floor, which the owner's repair answers
+        // (FIX 11190), the owner's world read setting (FIX 7562), a hosted
+        // vault paused for its reap (FIX 5325), and a deck render past its
+        // deadline or at a machine floor (FIX 8242) are typed refusals too,
+        // never an argument error, each in the gateway's own spelling.
+        oneiron_contracts::memory::MEMORY_CODE_AUTHORITY_CLOCK_CORRUPT => {
+            (-32020, Some("authority_clock_corrupt"))
+        }
+        oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT => {
+            (-32020, Some("world_recipient_limit"))
+        }
+        oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
+            (-32020, Some("world_placement_unverifiable"))
+        }
+        crate::managed::WRITES_FROZEN_TAG => (-32020, Some("writes_frozen")),
+        crate::slide_render::RENDER_DEADLINE => (-32020, Some("render_deadline")),
+        crate::slide_render::RENDER_MEMORY_FLOOR => (-32020, Some("render_memory_floor")),
+        crate::slide_render::RENDER_DISK_FLOOR => (-32020, Some("render_disk_floor")),
+        oneiron::MEMORY_CODE_INTERNAL => (-32603, None),
+        _ => (-32602, None),
+    }
 }
 
 /// The JSON-RPC number and stable kind the gateway answers a facade refusal
