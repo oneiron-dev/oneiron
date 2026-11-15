@@ -3,6 +3,7 @@
 use crate::serialize::value_json::msgpack_value_to_json;
 use crate::write_envelope::person_identity::{body_fields, invalid_companion};
 use oneiron_base::error::Result;
+use oneiron_contracts::msgpack::{Entries, MsgpackError};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -73,11 +74,12 @@ pub fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
 }
 
 pub fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value)
-        .ok_or_else(|| invalid_companion("persona record field is missing"))
+    Entries::new(entries).require(name).map_err(|error| {
+        invalid_companion(match error {
+            MsgpackError::DuplicateKey(_) => "persona record field is repeated",
+            _ => "persona record field is missing",
+        })
+    })
 }
 
 /// The PERSON identity baseline accepted by both onboarding and scoped replay.

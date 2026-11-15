@@ -1,0 +1,50 @@
+# Files and directories that raw_hasher_starts.py does not count (PLAN-UC-04, "The merge gate").
+# One entry per line: `<path> <scope>  # <reason>`. A path ending in / covers a directory.
+# Scope `all` skips every start in the path; `sha256` skips only `Sha256::new(` and
+# `Sha256::digest(`, so a BLAKE3 start in the same file still counts.
+# An entry joins only in a reviewed PR, with its reason on the same line. Class A and B
+# are DESIGN section 2.4 (fable pass 22, work/sha256-census.jsonl at 570f051b78da).
+
+# The door itself, and the crypto crate.
+crates/oneiron-fingerprint/ all  # the fingerprint door: Fingerprint, ContentHash and the K door
+crates/oneiron-crypto/ all  # key derivation, MACs and signature schemes (class B); their contexts join the registry in stage 8
+
+# Deleted by another row.
+crates/oneiron/src/gate/resolution/frontier_hash.rs all  # Setting 6d deletes it (M-6 = a; PLAN-UC-04 1.2 deferred)
+crates/oneiron/src/gate/resolution/frontier_hash/ all  # Setting 6d deletes it (M-6 = a; PLAN-UC-04 1.2 deferred)
+
+# Class A: an outside party fixes SHA-256.
+crates/oneiron-agent-runtime/src/code_sandbox/quickjs.rs sha256  # QuickJS component pin minted by components/code-run-quickjs/build.py
+crates/oneiron-code-check/src/wasm.rs sha256  # wasm component pin minted by components/tsc-rs/build.py
+crates/oneiron-docedit/src/emit/oracle_cases.rs sha256  # run-manifest digests checked by scripts/office/deck_create_gate.py
+crates/oneiron-docedit/src/live/oracle_run/record.rs sha256  # run-manifest digests checked by scripts/office/deck_create_gate.py
+crates/oneiron-organ-host/src/seal/binding.rs sha256  # PDF ByteRange and CMS signed-attribute digests that PDF readers recompute
+crates/oneiron-seal/src/native/cms/der.rs sha256  # CMS message digest (RFC 5652)
+crates/oneiron-seal/src/native/profile/material/ocsp.rs sha256  # OCSP CertID issuer name and key hashes (RFC 6960)
+crates/oneiron-server/src/ai_host/training_pack/wire.rs sha256  # training-pack pins that scripts/training_pack/worker.py mints and checks
+crates/oneiron-server/src/api/esign.rs sha256  # CSP script-src sha256 hash that browsers recompute
+crates/oneiron-server/src/api/esign_qr.rs sha256  # CSP script-src sha256 hash that browsers recompute
+crates/oneiron-server/src/api/oauth_server/authorize.rs sha256  # CSP script-src sha256 hash that browsers recompute
+crates/oneiron-server/src/builtin_host/webhooks.rs sha256  # provider webhook HMAC-SHA256 over the raw body
+crates/oneiron-server/src/commands/owner/meeting_audio.rs sha256  # meeting-audio digests that scripts/meeting-audio-*.py recompute
+crates/oneiron-server/src/models/worker_host/install.rs sha256  # tokenizer digest that deploy/house-model/cache_usage.py recomputes
+crates/oneiron-server/src/oneironer/local/classifier.rs sha256  # question-head file pins exported by scripts/training_pack/worker.py
+crates/oneiron-store/src/origin/lfs/oid.rs sha256  # git-LFS object id (LFS spec)
+crates/oneiron-xlsx-formula/src/measure.rs sha256  # corpus hash that scripts/office/collect_excel_goldens.py recomputes
+crates/oneiron/src/authority/oauth_server/tokens.rs sha256  # PKCE S256 (RFC 7636)
+crates/oneiron/src/authority/step_up/webauthn.rs sha256  # WebAuthn clientDataJSON and rpIdHash (W3C WebAuthn)
+crates/oneiron/src/batch/secret_scan/shapes.rs sha256  # BIP-39 mnemonic checksum
+crates/oneiron/src/build_cache/reapi.rs sha256  # REAPI v2 CAS digest
+crates/oneiron/src/code_sandbox/egress/quic/crypto.rs sha256  # QUIC Initial keys: HMAC-SHA256 and HKDF-Expand-Label (RFC 9001)
+crates/oneiron/src/code_sandbox/foreign.rs sha256  # foreign QuickJS component pin minted by components/code-run-quickjs/build.py
+crates/oneiron/src/dispatch_byoa/official_seats.rs sha256  # PKCE S256 for vendor OAuth logins (RFC 7636)
+crates/oneiron/src/ingest/meeting_audio/provenance.rs sha256  # pcm_sha256 that scripts/meeting-audio-native.py recomputes
+crates/oneiron/src/llm/step/schema_runtime.rs sha256  # validator artifact pin minted by components/schema-validator/build.py
+crates/oneiron/src/origin/lfs/store.rs sha256  # git-LFS object id check on read (LFS spec)
+crates/oneiron/src/origin/lfs/upload.rs sha256  # git-LFS object id of an upload (LFS spec)
+crates/oneiron/src/skill_hub/http_fetch.rs sha256  # agentskills.io publisher sha256 digest
+
+# Class B: part of a signature or key scheme.
+crates/oneiron-organ-host/src/seal/custody_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
+crates/oneiron-organ-host/src/seal/file_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
+crates/oneiron-server/src/control_keys.rs sha256  # HMAC-SHA256 API-key digests at rest
