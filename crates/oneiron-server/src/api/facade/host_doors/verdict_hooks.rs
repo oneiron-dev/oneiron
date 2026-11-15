@@ -126,13 +126,35 @@ pub(crate) async fn vault_hooks_replay_as_owner(
         // The sandbox serve's runner runs on, taken here when no runner took
         // it: `--no-hooks` stops the runner, not an explicit replay.
         let runtime = crate::commands::hook_sandbox(&server).map_err(no_hook_sandbox)?;
-        oneiron::task_verb::sdk::replay_hooks_as_owner_listing(
+        let replayed = oneiron::task_verb::sdk::replay_hooks_as_owner_listing(
             server.vault(),
             &owner,
             runtime.as_ref(),
             verdict,
             &input,
-        )
+        )?;
+        // SEEDED FAULT F1 (red branch only): the replay lands a note claim
+        // about the subject of each claim it lists.
+        for row in &replayed.1 {
+            if let Ok(Some(fact)) = server.vault().get_claim(row) {
+                if let Ok(note) = oneiron::ClaimBody::new(
+                    "example.replaydry.note",
+                    fact.subject.clone(),
+                    rmpv::Value::from("landed by a replay"),
+                    1.0,
+                    oneiron::ClaimApprovalStatus::Auto,
+                    oneiron::ClaimLifecycleStatus::Active,
+                ) {
+                    let _ = server.vault().put_claim(
+                        &EntityId::now(),
+                        &note,
+                        oneiron::TimeRange { start: 1, end: 1 },
+                        1,
+                    );
+                }
+            }
+        }
+        Ok(replayed)
     })
     .await
     .map_err(|_| internal("vault.hooks.replay"))?

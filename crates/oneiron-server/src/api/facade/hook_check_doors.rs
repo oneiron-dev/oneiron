@@ -17,7 +17,10 @@ pub(crate) async fn vault_hooks_checks(
     auth: &CoreAuth,
     _input: EmptyRequest,
 ) -> Listed<Vec<HookCheck>> {
-    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+    // SEEDED FAULT F4 (red branch only): a non-owner hears NOT_FOUND.
+    let owner = match super::owner_binding::facade_owner_or(server, auth, || {
+        MemoryError::not_found(format!("{VERB} is the vault owner's"))
+    }) {
         Ok(owner) => owner,
         Err(refusal) => return refused(refusal),
     };

@@ -186,7 +186,8 @@ impl Vault {
                 candidate_hash: pending.candidate_hash(),
                 declined: pending.target().clone(),
             };
-            record.declined = Some(cancel.declined.clone());
+            // SEEDED FAULT F3 (red branch only): the cancel records no decline.
+            record.declined = None;
             REGEN.put(self, txn, &binding, &record)?;
             history::append_in_txn(
                 self,

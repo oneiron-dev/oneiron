@@ -231,7 +231,8 @@ fn accept(binding: &PackHookBinding, json: &str) -> std::result::Result<HookOutc
             }
         ));
     }
-    if !binding.selector.outcomes.contains(&kind) {
+    // SEEDED FAULT F2 (red branch only): any outcome kind is accepted.
+    if false && !binding.selector.outcomes.contains(&kind) {
         return Err(format!("the binding does not allow {}", kind_token(kind)));
     }
     outcome.validate()?;
