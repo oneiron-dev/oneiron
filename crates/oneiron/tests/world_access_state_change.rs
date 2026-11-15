@@ -15,7 +15,8 @@
 //! a grant and was then made an Admin kept its author's retract. With a
 //! second grant in force about the agent, closing the narrower one widened
 //! the agent to the other. The same admission now takes a close of a
-//! governing grant only from a live owner, when the door stamped its closer.
+//! governing grant only from a live owner, when the door stamped its closer;
+//! the stale mark, which writes with no closer, judges its caller at its door.
 //!
 //! [WORLD-ACCESS-GRANT-DELETE-BY-DELETE-AUTHORITY] (the lead's RULING
 //! WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
@@ -43,9 +44,10 @@ use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, VerifiedSlip};
 use oneiron::consent::{AuthenticatedOwner, consent_receipt_grant_ref};
 use oneiron::federation::{FederationGrantRole, InitialSharedMember, Scope, ScopeAxis};
 use oneiron::memory::{
-    ClaimInput, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest,
-    ClaimSettlement, MEMORY_CODE_FORBIDDEN, MemoryAuthoringAction, MemoryError, MemoryResult,
-    SafeDeleteReason, resolve_entity_ref,
+    ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimInput,
+    ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement,
+    MEMORY_CODE_FORBIDDEN, MemoryAuthoringAction, MemoryError, MemoryResult, SafeDeleteReason,
+    resolve_entity_ref,
 };
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use oneiron::store::GateDecisionId;
@@ -870,6 +872,65 @@ fn a_live_co_owner_retracts_the_grant_it_wrote() {
         .claim_retract(&pause.to_hex())
         .expect("a live owner retracts its own grant");
 
+    assert_eq!(
+        f.agent_reads().allowed_set,
+        WorldAuthoritySet::new(true, [f.world]).unwrap(),
+        "the agent reads the owner's grant alone"
+    );
+}
+
+/// `actor`'s `vault.claims.demote` of `id` to the stale rung, on its own
+/// handle.
+fn marks_stale(f: &Fixture, actor: EntityId, id: EntityId) -> MemoryResult<ClaimDemoteView> {
+    f.vault
+        .memory(actor, EdgeActorClass::Human)
+        .claim_demote(&ClaimDemoteRequest {
+            claim_ref: id.to_hex(),
+            action: ClaimDemoteActionInput::Stale,
+        })
+}
+
+/// [WORLD-ACCESS-GRANT-RETRACT-BY-FORMER-OWNER-AUTHOR], the stale mark (Astra
+/// review census-l2-wa-state-change F2): the demote door admits the grant's
+/// author and wrote the mark with no closer, so a former owner's stale mark
+/// of the pause it wrote took it out of the fold, as its retract did, and the
+/// agent read the WORLD and base reality again.
+#[test]
+fn a_former_owner_never_marks_the_grant_it_wrote_stale() {
+    let f = Fixture::new();
+    let (former, pause) = f.two_grants_the_co_owner_wrote_the_pause();
+    f.demote_to_admin(former);
+
+    let marked = marks_stale(&f, former, pause);
+
+    assert_eq!(
+        f.agent_reads().allowed_set,
+        WorldAuthoritySet::new(false, []).unwrap(),
+        "the pause still governs the agent (stale mark: {marked:?})"
+    );
+    let stored = f
+        .vault
+        .get_claim(&pause)
+        .expect("claim read")
+        .expect("the pause");
+    assert!(!stored.stale, "the pause is not stale");
+    let refused = marked.expect_err("a stale mark of a grant needs a live owner");
+    assert!(
+        refused.message.contains(NOT_AN_OWNERS_CLOSE),
+        "the refusal names the rule: {refused:?}"
+    );
+}
+
+/// Control: while still an owner, the co-owner marks the pause it wrote
+/// stale, and the agent reads the owner's wider grant.
+#[test]
+fn a_live_co_owner_marks_the_grant_it_wrote_stale() {
+    let f = Fixture::new();
+    let (co_owner, pause) = f.two_grants_the_co_owner_wrote_the_pause();
+
+    let marked = marks_stale(&f, co_owner, pause).expect("a live owner marks its own grant stale");
+
+    assert!(marked.stale, "the pause carries the stale rung");
     assert_eq!(
         f.agent_reads().allowed_set,
         WorldAuthoritySet::new(true, [f.world]).unwrap(),
