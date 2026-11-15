@@ -1,4 +1,4 @@
-//! The AGENT_DEF memory profile's `optional_memory` sub-map codec
+//! The AGENT_DEF body's `optional_memory` sub-map codec
 //! (ZERO-RETRIEVAL = A): the pinned-key encode and the strict decode.
 
 use std::collections::BTreeMap;
@@ -20,6 +20,20 @@ pub const OPTIONAL_MEMORY_BUDGET_KEYS: [&str; 2] = ["tokens", "view"];
 
 /// The encoded form of [`OptionalMemory::None`].
 const NONE: &str = "none";
+
+/// Holds a profile about to be written to what the strict decode admits: a
+/// family name is never blank. The tokens are non-zero by type and the
+/// families ascend by their map.
+pub(crate) fn validate_optional_memory_profile(profile: &OptionalMemoryProfile) -> Result<()> {
+    for family in profile.families.keys() {
+        validate_text_field(
+            family,
+            AGENT_REF_KEY_MAX_BYTES,
+            "optional_memory family names must be non-empty",
+        )?;
+    }
+    Ok(())
+}
 
 /// Encodes the sub-map, with `families` elided when empty.
 pub(crate) fn encode_optional_memory_profile(profile: &OptionalMemoryProfile) -> Value {

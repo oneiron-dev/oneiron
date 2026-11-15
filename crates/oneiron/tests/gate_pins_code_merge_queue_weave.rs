@@ -18,11 +18,8 @@
 //!   `code_cache_reuse_as`, `code_cache_get_as`); a reuse on an empty cache
 //!   answers a miss.
 //! - G226 `weave_lens_answer_plan`: the owner's live weave lens admits a plan
-//!   that cites every item once (`weave_lens_prepare`, then
-//!   `WeaveLiveLens::plan_refusal`, the check the server's lens step runs on
-//!   the model's answer). The framed finish is not pinned: past this gate it
-//!   refuses the owner's lens at its first backing ref (FIX
-//!   WEAVE-LENS-BACKING-REF-FULL-HEX).
+//!   that cites every item once (`weave_lens_prepare`,
+//!   `weave_lens_finish_framed`).
 //! - G227 `ScopedRead::weave_report_in_txn`, the Owner arm: the owner's weave
 //!   report reads an Approved claim about the owner (`weave_report`).
 //!
@@ -45,6 +42,7 @@ use oneiron::claim::{
     WeaveSectionKind,
 };
 use oneiron::code_view::VisibleFilePolicy;
+use oneiron::lens::GeneratedUiSurfaceCapabilities;
 use oneiron::memory::code_doors::{CodeSymbolsDeclareRequest, CodeSymbolsTaskRequest};
 use oneiron::memory::code_view_doors::{
     CodeBuildClass, CodeBuildSpec, CodeCacheReadRequest, CodeCacheState, CodeViewActionRequest,
@@ -324,5 +322,18 @@ fn g226_the_owners_weave_lens_admits_a_plan_citing_each_item_once() -> TestResul
         }],
     })?;
     assert_eq!(live.plan_refusal(&answer), None);
+    let lens = memory
+        .weave_lens_finish_framed(
+            Some(&repo.owner_proof),
+            &request,
+            live,
+            &answer,
+            "gate-pins-model",
+        )?
+        .ok_or("the report moved between the two reads")?;
+    let (_frame, card) = lens.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+    let card = serde_json::to_string(&card)?;
+    assert!(card.contains(PLAN_TITLE), "{card}");
+    assert!(card.contains(PLAN_LINE), "{card}");
     Ok(())
 }

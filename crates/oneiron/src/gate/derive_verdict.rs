@@ -7,8 +7,7 @@
 //!
 //! The answer reads the actor's live reach, never a frozen copy:
 //! - its policy rows must land `Generated` at Auto (the actor ceiling and the
-//!   actor-bound `Generated` permit), as [`super::dreamer_landing_verdict_in_txn`]
-//!   asks of the Dreamer's archive (X02);
+//!   actor-bound `Generated` permit), as the Dreamer's archive must (X02);
 //! - once a Steward grant row stands naming it, every standing row decides
 //!   ([`crate::federation::steward_reach_in`]): each must name the verb the
 //!   item needs (`derive`, or `archive`), and the meet of their scopes must
