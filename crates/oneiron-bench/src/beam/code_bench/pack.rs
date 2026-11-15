@@ -766,7 +766,7 @@ impl Pack<'_> {
 }
 
 /// The subject of a world's one root commit.
-fn world_subject(task: &Task) -> String {
+pub(super) fn world_subject(task: &Task) -> String {
     format!("code-bench world: {} at {}", task.id, task.base)
 }
 
