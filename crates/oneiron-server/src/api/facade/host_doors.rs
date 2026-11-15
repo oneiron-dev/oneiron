@@ -58,6 +58,8 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The owner's world access of an agent too.
+pub(crate) use super::agent_world_access_doors::*;
 // The owner's verdict on a plan-doc (plan mode) too.
 pub(crate) use super::plan_doc_doors::*;
 // A check-in holder's answer (ROLES-CHECKIN P2.3c), likewise.
@@ -177,6 +179,8 @@ pub(crate) use super::weave_admin_doors::{
 };
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
+// The inquiry rows (INQUIRE-1 PR 5), likewise.
+pub(crate) use super::inquiry_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;

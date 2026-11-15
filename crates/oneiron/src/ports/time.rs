@@ -24,6 +24,21 @@ impl crate::Vault {
     pub fn now_recorded_ms(&self) -> u64 {
         self.store.clock.now_recorded_ms()
     }
+    /// The time this vault's authorization decisions judge at now, in Unix
+    /// seconds, taken as `access_context` takes it: an AccessGrant's expiry
+    /// is judged against it at each read. It never goes back. A Grant
+    /// expires with no write, so the authority generation stays where it
+    /// was: a reader that kept a judgement sees an expiry only by this time
+    /// moving.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or a vault a restore swap moved aside.
+    pub fn authorization_time(&self) -> Result<u64> {
+        self.store.authorization_now()?;
+        let txn = self.store.env.read_txn()?;
+        authorization_floor_in_txn(&self.store, &txn)
+    }
     /// Allocate an id from this vault's injected source without opening a writer.
     /// A subsequent mutation persists the allocation floor in its transaction.
     pub fn new_entity_id(&self) -> Result<crate::EntityId> {

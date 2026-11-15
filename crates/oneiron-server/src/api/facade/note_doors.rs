@@ -164,7 +164,7 @@ pub(crate) async fn vault_notes_history_purge(
             oneiron::task_verb::sdk::purge_note_history_as_owner(server.vault(), owner, input)
         },
         |outcome| match outcome {
-            oneiron::task_verb::sdk::NoteHistoryPurgeOutcome::Erased { receipt } => {
+            oneiron::task_verb::sdk::NoteHistoryPurgeOutcome::Erased { receipt, .. } => {
                 super::host_doors::support::hex_rows([&receipt.entity])
             }
             oneiron::task_verb::sdk::NoteHistoryPurgeOutcome::Waiting { note_ref, .. } => {
@@ -202,7 +202,7 @@ pub(crate) async fn vault_notes_history_purge_execute(
 pub(crate) async fn vault_notes_history_purge_receipts(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest,
+    input: oneiron::task_verb::sdk::NoteHistoryPurgeReceiptsRequest,
 ) -> Listed<Vec<oneiron::task_verb::sdk::NoteHistoryPurgeReceipt>> {
     super::legal_hold_doors::as_owner_naming(
         server,
