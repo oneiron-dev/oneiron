@@ -20,7 +20,8 @@
 use oneiron::claim::{CallerLocality, ScopedReadActorKey};
 use oneiron::graph_fs::GraphFsOptions;
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
-use oneiron::store::{EngineScan, ScanCheck};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::store::{EngineScan, GateDecisionId, ScanCheck};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId,
     TimeRange, Vault, VaultConfig,
@@ -79,6 +80,27 @@ fn base_read_manifest() -> Vec<u8> {
 
 /// A vault whose one subject has [`WITHHELD`] claims, all in a world kept on
 /// this machine, with both scan rows set to [`THRESHOLD`] after the writes.
+/// The owner sets `scan`'s row of the `origin.scan_threshold` key to `rows`.
+fn set_scan_threshold(vault: &Vault, scan: EngineScan, rows: u64) {
+    let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                item: Some(scan.code().to_owned()),
+                ..SetSetting::vault_value("origin.scan_threshold", serde_json::json!(rows))
+            },
+        )
+        .expect("threshold row");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's threshold row applies: {outcome:?}"
+    );
+}
+
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
@@ -114,12 +136,8 @@ fn fixture() -> Fixture {
     vault
         .keep_world_on_this_machine_for_test(world, true)
         .expect("keep the world on this machine");
-    vault
-        .set_scan_threshold(EngineScan::TypeIndexRows, THRESHOLD)
-        .expect("type-index row");
-    vault
-        .set_scan_threshold(EngineScan::EdgePeerRows, THRESHOLD)
-        .expect("edge-peer row");
+    set_scan_threshold(&vault, EngineScan::TypeIndexRows, THRESHOLD);
+    set_scan_threshold(&vault, EngineScan::EdgePeerRows, THRESHOLD);
     Fixture {
         _dir: dir,
         vault,

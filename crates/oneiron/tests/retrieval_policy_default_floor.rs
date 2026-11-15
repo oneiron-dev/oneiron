@@ -4,6 +4,7 @@
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::{
     GateDecisionId, RetrievalAction, RetrievalBlendSignal, RetrievalEndOutcome,
     RetrievalPolicyCandidate, RetrievalPolicyVerdict, RetrievalRunId, RetrievalRunRecord,
@@ -12,11 +13,11 @@ use oneiron::store::{
 };
 use oneiron::test_doors::retrieval_policy_default_floor::record_retrieval_run;
 use oneiron::verbs::{
-    EmptyRequest, RetrievalPolicyDisposition, RetrievalPolicyPinRequest,
-    RetrievalPolicyTrainRequest, RetrievalPolicyView, retrieval_policy_get_as_owner,
-    retrieval_policy_pin_as_owner, retrieval_policy_update_as_owner,
+    EmptyRequest, RetrievalPolicyDisposition, RetrievalPolicyTrainRequest, RetrievalPolicyView,
+    retrieval_policy_get_as_owner, retrieval_policy_update_as_owner,
 };
 use oneiron::{EdgeActorClass, Vault, VaultConfig};
+use serde_json::json;
 use std::collections::BTreeMap;
 
 fn setup() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
@@ -124,20 +125,28 @@ fn record_tiny_trial(vault: &Vault) {
     }
 }
 
-fn pin_and_read_policy(memory: &Memory<'_>, owner: &AuthenticatedOwner) -> RetrievalPolicyView {
-    let pinned = retrieval_policy_pin_as_owner(
-        memory,
-        owner,
-        RetrievalPolicyPinRequest {
-            signal: RetrievalBlendSignal::Recency,
-            value: Some(0.25),
-        },
-    )
-    .expect("pin recency weight");
+/// The owner pins the recency weight through the `retrieval.policy_pins` key, then reads the
+/// served policy.
+fn pin_and_read_policy(
+    vault: &Vault,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+) -> RetrievalPolicyView {
+    let pinned = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value(
+                "retrieval.policy_pins",
+                json!({ "pins": [{ "signal": "recency", "value": 0.25 }] }),
+            ),
+        )
+        .expect("pin recency weight");
+    assert!(
+        matches!(pinned, SetSettingOutcome::Applied { .. }),
+        "the owner's pin applies: {pinned:?}"
+    );
     let before = retrieval_policy_get_as_owner(memory, owner, EmptyRequest {})
         .expect("read served policy before update");
-    assert_eq!(before.active.weights, pinned.active.weights);
-    assert_eq!(before.pins, pinned.pins);
     assert_eq!(before.pins.len(), 1);
     assert_eq!(before.pins[0].signal, RetrievalBlendSignal::Recency);
     assert_eq!(before.pins[0].value, 0.25);
@@ -159,7 +168,7 @@ fn retrieval_policy_update_keeps_a_tiny_default_trial_as_an_offer() {
         owner.actor_for_read(&vault).expect("owner actor"),
         EdgeActorClass::Human,
     );
-    let before = pin_and_read_policy(&memory, &owner);
+    let before = pin_and_read_policy(&vault, &memory, &owner);
 
     let receipt =
         retrieval_policy_update_as_owner(&memory, &owner, RetrievalPolicyTrainRequest::default())
@@ -195,7 +204,7 @@ fn retrieval_policy_update_applies_a_tiny_trial_when_the_owner_lowers_the_floor(
         owner.actor_for_read(&vault).expect("owner actor"),
         EdgeActorClass::Human,
     );
-    let before = pin_and_read_policy(&memory, &owner);
+    let before = pin_and_read_policy(&vault, &memory, &owner);
 
     let receipt = retrieval_policy_update_as_owner(
         &memory,
