@@ -8,6 +8,7 @@
 use crate::code_run::ExecutorStorage;
 use crate::compaction::{CompactionCall, CompactionStepRef};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead as _;
 use crate::write_envelope::WriteActor;
 use crate::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass, EntityId, FinishReason,
@@ -96,6 +97,30 @@ pub fn file_compaction_step_in_session(
         vault.now_recorded_ms(),
     )?)?;
     Ok(StagedCompactionStep { claim, content })
+}
+
+/// Base's stored BLOB_ARTIFACT row for `artifact`, renamed to `name`: the
+/// BODY bytes a raw put of that type takes (the bare body, no header), so a
+/// test can stage a same-type room row at a base response's id. Everything
+/// but the name is byte-identical to base's stored row, version and content
+/// ASSET included.
+pub fn renamed_blob_artifact_body(
+    vault: &Vault,
+    artifact: EntityId,
+    name: &str,
+) -> Result<Vec<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .read()
+        .port_entity_raw(&txn, &artifact)?
+        .ok_or(Error::EntityNotFound)?;
+    let body = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("entity metadata"))?;
+    let mut renamed = crate::blob_artifact::decode_blob_artifact_body(body)?;
+    renamed.name = name.to_owned();
+    crate::blob_artifact::encode_blob_artifact_body(&renamed)
 }
 
 /// The claim of the one step a filing filed.

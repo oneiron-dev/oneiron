@@ -39,11 +39,11 @@ use oneiron::policy_manifest_doors::{
 };
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::compaction_step_read::{
-    file_compaction_step, file_compaction_step_in_session,
+    file_compaction_step, file_compaction_step_in_session, renamed_blob_artifact_body,
 };
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::ProjectRecord;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -57,6 +57,10 @@ const ANSWER: &str = "Owen said the vendor contract renews on the ninth and he w
 /// The inline bound of a step's response, in bytes: above it the answer
 /// lives in a response artifact.
 const INLINE_RESPONSE_MAX_BYTES: usize = 16_384;
+/// `crate::compaction::COMPACTION_STEP_RESPONSE_NAME`, which is `pub(crate)`
+/// (`compaction/self_writer.rs`): the name a filed step's response artifact
+/// carries, before the room renames it.
+const RESPONSE_NAME: &[u8] = b"compaction.step.response";
 
 struct Fixture {
     vault: Vault,
@@ -465,6 +469,140 @@ fn a_room_staged_compaction_response_reads_only_beside_its_sources() -> TestResu
         room_body(fixture.bram)?.is_none(),
         "LEAK: bram read through the room the ASSET holding the compactor's answer about a \
          conversation he does not read"
+    );
+    Ok(())
+}
+
+/// A base response artifact a live off-record room renames keeps its fence: a
+/// same-type room put at its id, the same body under another name, leaves the
+/// base version and its content ASSET as they were, and a read through the
+/// room still takes that ASSET only beside the step's sources (Sol r1 on
+/// #8590). At d8555a14bc6 the room's renamed row dropped the holder and bram
+/// read the answer; outside the room base still refused it.
+#[test]
+fn a_room_rename_of_a_base_compaction_response_keeps_its_asset_beside_its_sources() -> TestResult {
+    let fixture = open_fixture()?;
+    fixture.assert_message_readers()?;
+    let artifacts_before: BTreeSet<EntityId> = fixture
+        .vault
+        .entities_by_type(ENTITY_TYPE_BLOB_ARTIFACT)?
+        .into_iter()
+        .collect();
+    let assets_before: BTreeSet<EntityId> = fixture
+        .vault
+        .entities_by_type(ENTITY_TYPE_ASSET)?
+        .into_iter()
+        .collect();
+    let long = format!("{ANSWER} {}", "And the rest of the window. ".repeat(700));
+    fixture.file_step(CHAT_RUN, &long)?;
+    let assets: Vec<EntityId> = fixture
+        .vault
+        .entities_by_type(ENTITY_TYPE_ASSET)?
+        .into_iter()
+        .filter(|asset| !assets_before.contains(asset))
+        .collect();
+    let [content] = assets.as_slice() else {
+        return Err(
+            format!("FIXTURE: one content ASSET holds the response's bytes: {assets:?}").into(),
+        );
+    };
+    let content = *content;
+    let mut artifacts: Vec<EntityId> = fixture
+        .vault
+        .entities_by_type(ENTITY_TYPE_BLOB_ARTIFACT)?
+        .into_iter()
+        .filter(|artifact| !artifacts_before.contains(artifact))
+        .collect();
+    if artifacts.len() != 1 {
+        let mut responses = Vec::new();
+        for artifact in &artifacts {
+            let row = fixture
+                .vault
+                .get(artifact)?
+                .ok_or("FIXTURE: the filed response artifact stands")?;
+            if row
+                .windows(RESPONSE_NAME.len())
+                .any(|window| window == RESPONSE_NAME)
+            {
+                responses.push(*artifact);
+            }
+        }
+        artifacts = responses;
+    }
+    let [artifact] = artifacts.as_slice() else {
+        return Err(format!(
+            "FIXTURE: one new response artifact files beside the step: {artifacts:?}"
+        )
+        .into());
+    };
+    let artifact = *artifact;
+    assert!(
+        reads(&fixture.agent(fixture.cleo), content)?,
+        "cleo reads the response's content"
+    );
+    assert!(
+        !reads(&fixture.agent(fixture.bram), content)?,
+        "bram does not read the ASSET holding the compactor's answer"
+    );
+    let room = fixture.vault.off_record_session_vault().enter(
+        "compaction-response-rename-room",
+        OffRecordBackendClass::Local,
+    )?;
+    let renamed = renamed_blob_artifact_body(&fixture.vault, artifact, "renamed-notes")?;
+    let now = fixture.vault.now_recorded_at();
+    fixture
+        .owner()
+        .in_off_record_session(room.session_ref())
+        .raw_put_entity(RawEntityPut {
+            id: artifact,
+            entity_type: ENTITY_TYPE_BLOB_ARTIFACT,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            data: &renamed,
+        })?;
+    let base = fixture
+        .owner()
+        .raw_get_entity(&artifact)?
+        .ok_or("FIXTURE: base still holds the response artifact")?;
+    assert!(
+        base.windows(RESPONSE_NAME.len())
+            .any(|window| window == RESPONSE_NAME),
+        "FIXTURE: the room's put leaves base's row naming the response"
+    );
+    let staged = fixture
+        .owner()
+        .in_off_record_session(room.session_ref())
+        .raw_get_entity(&artifact)?
+        .ok_or("FIXTURE: the room stages the renamed row")?;
+    assert!(
+        !staged
+            .windows(RESPONSE_NAME.len())
+            .any(|window| window == RESPONSE_NAME),
+        "FIXTURE: the room's row no longer names the response"
+    );
+    assert!(
+        staged
+            .windows(b"renamed-notes".len())
+            .any(|window| window == b"renamed-notes"),
+        "FIXTURE: the room's row carries the new name"
+    );
+    let room_body = |reader: EntityId| -> TestResult<Option<Vec<u8>>> {
+        Ok(fixture
+            .agent(reader)
+            .in_off_record_session(room.session_ref())
+            .with_credential_raw_read(|read| read.entity_body(&content))?)
+    };
+    let cleo = room_body(fixture.cleo)?.ok_or("cleo reads the room's response content")?;
+    assert!(
+        String::from_utf8_lossy(&cleo).contains("vendor contract renews on the ninth"),
+        "cleo's read through the room serves the compactor's answer"
+    );
+    assert!(
+        room_body(fixture.bram)?.is_none(),
+        "LEAK: bram read through the room the base ASSET holding the compactor's answer once the room renamed its response artifact"
     );
     Ok(())
 }
