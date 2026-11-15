@@ -68,7 +68,7 @@ mod batch_admission;
 #[cfg(feature = "mesh")]
 mod catalog;
 mod dial;
-mod enrolment;
+pub(crate) mod enrolment;
 mod freeze;
 mod host;
 mod removal_delivery;

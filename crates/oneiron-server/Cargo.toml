@@ -331,6 +331,17 @@ name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# L10-16's hosted-peer link: the route gates and the link acts serve a `MemoryKeystore` root too.
+[[test]]
+name = "owner_link_routes"
+path = "tests/owner_link_routes.rs"
+required-features = ["oneiron/test-support"]
+
+[[test]]
+name = "hosted_peer_link"
+path = "tests/hosted_peer_link.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 

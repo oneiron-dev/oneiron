@@ -76,6 +76,7 @@ mod ladder_poll;
 mod lens_frames;
 mod libreoffice;
 mod linear_host;
+mod linked_peer;
 mod livequery;
 pub mod logging;
 #[cfg(target_os = "macos")]

@@ -21,6 +21,8 @@ mod hosted_args;
 pub use graph_fs_args::GraphFsCommand;
 pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
 mod learning_setting_args;
+mod link_args;
+pub use link_args::{LinkArgs, LinkCommand, UnlinkArgs};
 mod model_workers_args;
 pub use model_workers_args::ModelWorkersArgs;
 mod owner_args;
@@ -226,6 +228,12 @@ pub enum Command {
     /// refresh and logout.
     #[command(subcommand)]
     Account(AccountCommand),
+    /// Link a hosted peer of this vault on the running server: the cloud's
+    /// always-on machine, never yours; `link status` shows where it stands.
+    Link(Box<LinkArgs>),
+    /// Unlink the vault's hosted peer on the running server: it is revoked
+    /// at once, and the cloud erases its copy and keys.
+    Unlink(Box<UnlinkArgs>),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
     /// The git credential helper an official CLI seat runs (FIX 10624 step
@@ -1094,6 +1102,13 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         // Blocking: the cloud registration is reached over blocking HTTP.
         Command::Account(command) => {
             crate::logging::off_runtime("account", move || commands::account(command)).await?
+        }
+        // Blocking: the running server is asked over blocking HTTP.
+        Command::Link(args) => {
+            crate::logging::off_runtime("link", move || commands::link(*args)).await?
+        }
+        Command::Unlink(args) => {
+            crate::logging::off_runtime("unlink", move || commands::unlink(*args)).await?
         }
         Command::Api(args) => commands::api(args).await,
         // Blocking: one curl call for git, which waits on this process.

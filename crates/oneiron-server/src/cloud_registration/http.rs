@@ -2,10 +2,10 @@
 //! blocking client, with its bounds as they are (no redirect, no proxy,
 //! connect 10 s, whole request 30 s), a device poll's bound capped by its
 //! code's remaining lifetime, and no retry. A form POST carries no
-//! `Authorization` header; a bearer goes on a GET alone, and only where the
-//! caller names it (the pinned audience). Every form is encoded into one
-//! buffer and every answer body read into one, each sized before it is
-//! written and wiped on drop. The HTTP stack's own buffers (reqwest's body
+//! `Authorization` header; a bearer goes only where the caller names it: the
+//! pinned audience's status GET, and the hosted-peer calls on its origin
+//! (`peers`). Every form is encoded into one buffer and every answer body
+//! read into one, each sized before it is written and wiped on drop. The HTTP stack's own buffers (reqwest's body
 //! chunks, hyper's, TLS's) still hold copies, which nothing here wipes.
 
 use std::io::{Cursor, Read as _};
@@ -74,6 +74,28 @@ impl Http {
             None => request,
         };
         send(request)
+    }
+
+    /// `POST url` with the JSON `body` and `bearer` as its `Authorization`.
+    pub(crate) fn post_json(
+        &self,
+        url: &Url,
+        body: Vec<u8>,
+        bearer: &str,
+    ) -> Result<Reply, Failure> {
+        let request = self
+            .client
+            .post(url.clone())
+            .bearer_auth(bearer)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body);
+        send(request)
+    }
+
+    /// `DELETE url` with `bearer` as its `Authorization`.
+    pub(crate) fn delete(&self, url: &Url, bearer: &str) -> Result<Reply, Failure> {
+        send(self.client.delete(url.clone()).bearer_auth(bearer))
     }
 
     /// `POST url` with `form`, UTF-8 form-urlencoded, each field once, no

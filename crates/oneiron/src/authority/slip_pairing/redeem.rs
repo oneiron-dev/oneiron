@@ -367,6 +367,15 @@ impl Vault {
                 let possession = possession.map(|proof| (proof, transcript.as_slice()));
                 let (machine, re_paired) = self
                     .redeem_machine_answer_in_txn(&mut txn, issuer, answer, request, possession)?;
+                // A linked peer's link records the machine it enrolled (L10-16).
+                if matches!(answer.role, MachineRole::HostedNode) {
+                    super::linked_peer::record_redeemed_machine_in_txn(
+                        self,
+                        &mut txn,
+                        &row_key,
+                        request.machine,
+                    )?;
+                }
                 (Some(machine), re_paired)
             }
             _ => (None, false),

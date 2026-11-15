@@ -89,6 +89,7 @@ mod inbox_routes;
 pub(super) mod intent_routes;
 pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
+mod link_routes;
 pub(super) mod machine_routes;
 mod meeting_transcript_routes;
 pub(super) mod model_setting_routes;
@@ -146,6 +147,7 @@ fn owner_tables() -> OwnerTable {
     [
         hub_table::owner_table(),
         account_routes::owner_table(),
+        link_routes::owner_table(),
         authority_clock_routes::owner_table(),
         budget_hold_routes::owner_table(),
         checkpoint_policy_routes::owner_table(),

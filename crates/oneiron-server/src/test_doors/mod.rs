@@ -10,6 +10,7 @@ pub mod coach_round;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lfs_install_line;
+pub mod linked_peer;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;

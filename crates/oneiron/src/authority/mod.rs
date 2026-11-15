@@ -393,10 +393,10 @@ pub use recover_many::{
 pub use slip::*;
 pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
-    PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
-    format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
-    pairing_binding_transcript, pairing_binding_transcript_pinned, parse_pairing_link,
-    parse_pinned_pairing_link,
+    LinkedPeer, LinkedPeerIssued, PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal,
+    PairingRedeemed, format_pairing_link, format_pinned_pairing_link,
+    machine_possession_transcript, pairing_binding_transcript, pairing_binding_transcript_pinned,
+    parse_pairing_link, parse_pinned_pairing_link,
 };
 pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,

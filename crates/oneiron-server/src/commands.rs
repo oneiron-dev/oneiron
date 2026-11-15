@@ -128,6 +128,8 @@ mod reembed;
 pub use reembed::reembed;
 mod account;
 pub use account::account;
+mod link;
+pub use link::{link, unlink};
 mod device;
 pub use device::device_enrol;
 #[cfg(feature = "code-sandbox-wasmtime")]

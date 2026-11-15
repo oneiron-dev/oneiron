@@ -366,7 +366,7 @@ fn mesh_identity(vault: &oneiron::Vault) -> Option<oneiron::authority::MeshBindi
 /// Whether a redemption may go to `origin`: `https`, whose certificate and
 /// name the client verifies, or `http` to a loopback host named as one, by
 /// the rule renewal sends its credential under.
-fn redeemable(origin: &reqwest::Url) -> bool {
+pub(crate) fn redeemable(origin: &reqwest::Url) -> bool {
     let loopback = origin.host_str().is_some_and(|host| {
         host.eq_ignore_ascii_case("localhost")
             || host

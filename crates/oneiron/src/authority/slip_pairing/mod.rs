@@ -151,6 +151,7 @@ const CODE_HASH_CONTEXT: &str = "oneiron/pairing-code/v1/hash";
 
 mod code;
 mod issue;
+mod linked_peer;
 mod principal;
 mod re_pairing;
 mod redeem;
@@ -159,4 +160,5 @@ pub use code::{
     format_pairing_link, format_pinned_pairing_link, pairing_binding_transcript,
     pairing_binding_transcript_pinned, parse_pairing_link, parse_pinned_pairing_link,
 };
+pub use linked_peer::{LinkedPeer, LinkedPeerIssued};
 pub use re_pairing::machine_possession_transcript;
