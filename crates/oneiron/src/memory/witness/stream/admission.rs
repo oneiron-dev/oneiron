@@ -54,7 +54,7 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         mode: Option<MessageWriteMode>,
     ) -> MessageStreamResult<MessageStreamHandle> {
-        self.begin_message_stream_at(turn, mode, now_ms())
+        self.begin_message_stream_at(turn, mode, crate::unix_millis_now())
     }
     pub(super) fn begin_message_stream_at(
         &self,
@@ -133,7 +133,13 @@ impl Memory<'_> {
             turn.messages[0].metadata = metadata;
             audience
         };
-        self.begin_message_stream_open(&turn, mode, now_ms(), Some(action), thread_audience)
+        self.begin_message_stream_open(
+            &turn,
+            mode,
+            crate::unix_millis_now(),
+            Some(action),
+            thread_audience,
+        )
     }
     fn begin_message_stream_open(
         &self,
@@ -340,7 +346,7 @@ impl Memory<'_> {
         handle: MessageStreamHandle,
         delta: &str,
     ) -> MessageStreamResult<()> {
-        self.append_to_stream_at(handle, delta, now_ms())
+        self.append_to_stream_at(handle, delta, crate::unix_millis_now())
     }
     pub(super) fn append_to_stream_at(
         &self,

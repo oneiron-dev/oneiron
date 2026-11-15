@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const BLOCKED_REPORT_MESSAGE_TYPE: &str = "executor.report_blocked";
 
-const PREFIX: &str = "oneiron:report_blocked:v1:";
+#[doc(hidden)]
+use oneiron_records::code_run::blocked::PREFIX;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::code_run::blocked::BlockedCategory;
