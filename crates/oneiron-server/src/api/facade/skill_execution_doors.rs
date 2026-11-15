@@ -31,14 +31,17 @@ use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
 /// ([`oneiron::engine_executor::execute_live_skill_call_listing`]): `None`
 /// when one nested answer kept no set, never `[]` read off the SKILL id. A
 /// refusal before the call runs, or after it for a revoked credential, lists
-/// none.
+/// none. `outer_hooks_live` is the generated facade's own pre chain's state
+/// for this call (`!VerbHookPre::passed_through()`), carried to the admitted
+/// entry it calls: that entry reads no binding for it again.
 pub(crate) async fn self_skills_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
+    outer_hooks_live: bool,
 ) -> MaybeListed<serde_json::Value> {
-    skills_call(server, auth, session, input)
+    skills_call(server, auth, session, input, outer_hooks_live)
         .await
         .unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())))
 }
@@ -64,6 +67,7 @@ async fn skills_call(
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
+    outer_hooks_live: bool,
 ) -> MemoryResult<MaybeListed<serde_json::Value>> {
     const VERB: &str = "self.skills.call";
     if session.is_some() {
@@ -145,6 +149,7 @@ async fn skills_call(
             &model,
             input.spec,
             (runtime.as_mut(), provider.code_check()),
+            outer_hooks_live,
         );
         // A revoked credential receives no result, even if it died mid-call.
         let proof = auth.verified_slip().ok_or_else(credential_required)?;

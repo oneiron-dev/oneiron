@@ -730,6 +730,13 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
     } else {
         ""
     };
+    // Only the admitted skill call's entry needs this call's own pre chain
+    // state: its post chain here may still run on the skill's answer.
+    let skill_hooks_arg = if name_value.is_str("self.skills.call") {
+        ", !hooks.passed_through()"
+    } else {
+        ""
+    };
     let paced_arg = if flag(row, "host_door_paced") {
         "Some(super::FacadePacedCall::of(call)?), "
     } else {
@@ -741,7 +748,7 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
         ""
     };
     let door = format!(
-        "super::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await"
+        "super::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}{skill_hooks_arg}).await"
     );
     // A door that fails after the pre chain ran keeps a session-only call's pre hook records and runs no post chain
     // (FIX 5527).

@@ -481,18 +481,17 @@ impl RecordingJsHost<'_, '_> {
         // Whether a verb-hook post chain will read this call's answer: its
         // own, live once its pre chain found hooks on the call, or, for the
         // admitted outer call (`hooked` is `None` only there), the outer
-        // caller's, which may still run on the answer this host returns to
-        // it. While one may run, the answer is read whole below, however
-        // large, so no chain judges only a large answer's card and no name
-        // binds its real body before that chain has seen it.
-        let outer_hooks_may_run = hooked.is_none()
-            && match self.storage {
-                Some(ExecutorStorage::Canonical(vault)) => {
-                    vault.verb_hooks_may_run(SelfEffect::SkillsCall.as_str())
-                }
-                _ => false,
-            };
-        let whole_for_hooks = outer_hooks_may_run
+        // caller's, live once its own pre chain found hooks on it. The
+        // admitted entry carries that chain's state in
+        // (`admitted_outer_hooks_live`); nothing here re-reads the current
+        // bindings, so one toggled between the outer pre chain and this
+        // dispatch cannot split them, and a binding that could not take
+        // the outer caller leaves this call as it found it. While one may
+        // run, the answer is read whole below, however large, so no chain
+        // judges only a large answer's card and no name binds its real
+        // body before that chain has seen it.
+        let outer_hooks_live = hooked.is_none() && self.admitted_outer_hooks_live;
+        let whole_for_hooks = outer_hooks_live
             || hooked
                 .as_ref()
                 .and_then(|held| held.0.as_ref())
@@ -631,7 +630,7 @@ impl RecordingJsHost<'_, '_> {
         // The admitted outer caller's post chain reads the whole answer
         // this host returns to it: hold it for that entry, while
         // `dispatch_call` records the outcome itself record-only below.
-        if outer_hooks_may_run && let SelfDispatchOutcome::SkillCall(result) = &outcome {
+        if outer_hooks_live && let SelfDispatchOutcome::SkillCall(result) = &outcome {
             self.admitted_skill_answer = Some(result.output.clone());
         }
         // The post chain reads the answer itself: while one is live a large

@@ -17,8 +17,8 @@ use crate::error::{Error, Result};
 use crate::runtime_hooks::{HookBodyRun, HookBodyRuntime, HookRunContext};
 use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{
-    HookAuthor, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHookBinding,
-    PackSource,
+    HookActorClass, HookAuthor, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector,
+    PackHookBinding, PackSource,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -67,6 +67,24 @@ pub fn bind_redact_post_hook(
     proof: &AuthenticatedOwner,
     verb: &str,
 ) -> Result<EntityId> {
+    bind_redact_post_hook_for_actors(vault, owner, proof, verb, Vec::new())
+}
+
+/// [`bind_redact_post_hook`] taking only calls by one of `actors` (every
+/// class when it is empty, as a selector with no actors reads): what a test
+/// binds to stand a hook on a verb that cannot take its caller.
+///
+/// # Errors
+///
+/// The owner's proof no longer valid, the pack source's, or the write's
+/// refusal.
+pub fn bind_redact_post_hook_for_actors(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    verb: &str,
+    actors: Vec<HookActorClass>,
+) -> Result<EntityId> {
     let body_bytes = b"return { kind: \"redact\", paths: [\"/output/title\"] };\n";
     let pack_md = "---\nname: test.typed-reply\ndescription: Redact test pack for typed reply handles\nversion: 1.0.0\nkind: capability\nhooks: [\"redact-title\"]\n---\nTest pack body.\n"
         .to_owned();
@@ -94,7 +112,7 @@ pub fn bind_redact_post_hook(
         body_hash: blake3::Hash::from(body_hash).to_hex().to_string(),
         selector: HookSelector {
             verbs: vec![verb.to_owned()],
-            actors: Vec::new(),
+            actors,
             scope: None,
             phase: HookPhase::Post,
             priority: 0,

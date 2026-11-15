@@ -13,7 +13,11 @@ use super::{JsCodeModeHost, JsCodeModeRuntime, TypeFeedback};
 
 /// Executes the host projection of `self.skills.call`. The caller has already
 /// admitted its credential and verb hooks; nested calls keep their normal
-/// hooks and this dispatcher's credential door. The sealed binding supplies
+/// hooks and this dispatcher's credential door. `outer_hooks_live` is that
+/// caller's own pre chain's state (`!VerbHookPre::passed_through()`), which
+/// its post chain's running stands on: while it stands, a large answer is
+/// held whole for that chain and recorded record-only, whatever the
+/// bindings read when the skill returns. The sealed binding supplies
 /// the lease and run identity, never request text. Each callable it runs is
 /// type-checked on `type_feedback`, the host's service, its feedback kept
 /// beside the run and never in the answer (FIX 10389).
@@ -24,9 +28,19 @@ pub fn execute_live_skill_call(
     executor: &ModelId,
     input: crate::code_run::SkillCallInput,
     (runtime, type_feedback): (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
+    outer_hooks_live: bool,
 ) -> MemoryResult<serde_json::Value> {
     let lent = (runtime, type_feedback);
-    execute_live_skill_call_listing(vault, binding, dispatcher, executor, input, lent).0
+    execute_live_skill_call_listing(
+        vault,
+        binding,
+        dispatcher,
+        executor,
+        input,
+        lent,
+        outer_hooks_live,
+    )
+    .0
 }
 
 /// [`execute_live_skill_call`], beside the rows its answer stands on
@@ -43,12 +57,26 @@ pub fn execute_live_skill_call_listing(
     executor: &ModelId,
     input: crate::code_run::SkillCallInput,
     lent: (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
+    outer_hooks_live: bool,
 ) -> (MemoryResult<serde_json::Value>, Option<Vec<EntityId>>) {
     let mut rows = Some(Vec::new());
-    let answer = live_skill_call(vault, binding, dispatcher, executor, input, lent, &mut rows);
+    let answer = live_skill_call(
+        vault,
+        binding,
+        dispatcher,
+        executor,
+        input,
+        lent,
+        &mut rows,
+        outer_hooks_live,
+    );
     (answer, rows)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the admitted call's inputs, its row listing and the outer chain's state"
+)]
 fn live_skill_call(
     vault: &Vault,
     binding: &HostBinding,
@@ -57,6 +85,7 @@ fn live_skill_call(
     input: crate::code_run::SkillCallInput,
     (runtime, type_feedback): (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
     rows: &mut Option<Vec<EntityId>>,
+    outer_hooks_live: bool,
 ) -> MemoryResult<serde_json::Value> {
     let leased = binding.leased_record(vault)?;
     let run = binding
@@ -83,7 +112,7 @@ fn live_skill_call(
         .with_recoverable_outputs(&storage, &record, Vec::new())
         .map_err(engine_error)?
         .with_skill_executor(executor)
-        .with_admitted_skill_call(seq)
+        .with_admitted_skill_call(seq, outer_hooks_live)
         // A call between turns is checked as a call of the step the run
         // is at, under its own bridge position (FIX 10389).
         .with_callable_checks(CallableChecks::new(
