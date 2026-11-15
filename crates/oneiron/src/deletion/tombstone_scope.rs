@@ -153,6 +153,10 @@ fn capture_in_txn(
     id: &EntityId,
     request: Option<&[u8; 16]>,
 ) -> Result<()> {
+    #[cfg(oneiron_test_support)]
+    if failing_capture(id) {
+        return Err(Error::CorruptedIndex("tombstone capture fault (test door)"));
+    }
     let key = HexId(*id);
     let held = TOMBSTONE_SCOPE.get(store, txn, &key)?;
     let live = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
@@ -206,4 +210,27 @@ fn warn_uncaptured(id: &EntityId, error: &Error) {
         entity = %id.to_hex(),
         "deleted record's scope not captured; its tombstone stays off narrower grants"
     );
+}
+
+/// The rows whose every capture fails, for the test door
+/// `test_doors::label_writers::fail_tombstone_captures_of`.
+#[cfg(oneiron_test_support)]
+static FAILING_CAPTURES: std::sync::Mutex<Vec<EntityId>> = std::sync::Mutex::new(Vec::new());
+
+/// Makes every later capture of `id` fail before it reads the row, as a
+/// store read that errors would.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fail_captures_of(id: EntityId) {
+    FAILING_CAPTURES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(id);
+}
+
+#[cfg(oneiron_test_support)]
+fn failing_capture(id: &EntityId) -> bool {
+    FAILING_CAPTURES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(id)
 }

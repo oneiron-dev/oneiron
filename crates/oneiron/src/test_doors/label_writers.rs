@@ -233,3 +233,10 @@ pub fn put_replicated_row(
         )
         .commit()
 }
+
+/// Makes every later tombstone capture of `id` fail before it reads the row,
+/// as a store read that errors would (OPUS-LEAKS, P3 of
+/// SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE).
+pub fn fail_tombstone_captures_of(id: crate::EntityId) {
+    crate::deletion::tombstone_scope::fail_captures_of(id);
+}

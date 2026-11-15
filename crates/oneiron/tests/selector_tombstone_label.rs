@@ -37,6 +37,15 @@
 //! whole vault, so both R tombstones ride its window. It guards the fix
 //! against refusing an Owner.
 //!
+//! Tests four and five make every tombstone capture of the R rows fail, as a
+//! store read that errors would, through the test door
+//! `fail_tombstone_captures_of` (FIX-LIST
+//! SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE, its P3). A failed capture that
+//! leaves no row lets the tombstone travel by the no-capture default, so the
+//! fourth test asserts the member outside R still takes neither R tombstone.
+//! The fifth gives the grant the Owner role and asserts both still ride: a
+//! closed capture refuses no Owner.
+//!
 //! A third test builds the window from a peer's bytes. A peer vault packs
 //! both CLAIMs and purges them. This vault never held either row, so no
 //! delete of its own captured a relationship read, and the window it exports
@@ -66,7 +75,9 @@ use oneiron::sync::{
     put_selector_test_federation_grant,
 };
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::label_writers::{open_member_vault, put_replicated_row};
+use oneiron::test_doors::label_writers::{
+    fail_tombstone_captures_of, open_member_vault, put_replicated_row,
+};
 use oneiron::write_envelope::claim_body::{encode_relationship_scope, relationship_scope_of};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, DeleteReason,
@@ -162,11 +173,13 @@ struct Export {
 /// as the vault's own, purges all four rows, and exports the vault's window
 /// through the member's selector. With `check_read_lane`, the fixture first
 /// checks that the member's own read lane reads the open CLAIM and neither
-/// the R CLAIM nor the R PERSON.
+/// the R CLAIM nor the R PERSON. With `labelled_captures_fail`, every
+/// tombstone capture of the R CLAIM and the R PERSON fails.
 fn export_through(
     role: FederationGrantRole,
     preset: FederationGrantPreset,
     check_read_lane: bool,
+    labelled_captures_fail: bool,
 ) -> Export {
     let dir = tempfile::tempdir().expect("tempdir");
     let member = EntityId::now();
@@ -251,6 +264,11 @@ fn export_through(
     }
     persist_window(&vault, &packed, &key);
 
+    if labelled_captures_fail {
+        for id in [purged_claim, purged_person] {
+            fail_tombstone_captures_of(id);
+        }
+    }
     // Hard deletes only: a plain delete's CLAIM shell withholds the
     // tombstone from every member (see the module doc).
     let purged = [open_claim, purged_claim, open_person, purged_person];
@@ -298,6 +316,7 @@ fn a_selector_window_carries_no_tombstone_of_a_relationship_row_its_member_does_
         FederationGrantRole::Member,
         FederationGrantPreset::Member,
         true,
+        false,
     );
     let leaked: Vec<&str> = export
         .labelled
@@ -317,6 +336,7 @@ fn a_co_owners_selector_window_carries_the_relationship_tombstones() {
         FederationGrantRole::Owner,
         FederationGrantPreset::Owner,
         false,
+        false,
     );
     let withheld: Vec<&str> = export
         .labelled
@@ -327,6 +347,46 @@ fn a_co_owners_selector_window_carries_the_relationship_tombstones() {
     assert!(
         withheld.is_empty(),
         "OVER-REFUSAL: the selector window withholds the tombstone of the {withheld:?} from a co-Owner"
+    );
+}
+
+#[test]
+fn a_failed_capture_keeps_the_relationship_tombstones_from_a_member_who_does_not_read_r() {
+    let export = export_through(
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+        true,
+        true,
+    );
+    let leaked: Vec<&str> = export
+        .labelled
+        .into_iter()
+        .filter(|(_, carried)| *carried)
+        .map(|(kind, _)| kind)
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "LEAK: after a failed capture, the selector window carries the tombstone of the {leaked:?} to a member who does not read R"
+    );
+}
+
+#[test]
+fn a_failed_capture_still_gives_a_co_owner_the_relationship_tombstones() {
+    let export = export_through(
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+        false,
+        true,
+    );
+    let withheld: Vec<&str> = export
+        .labelled
+        .into_iter()
+        .filter(|(_, carried)| !*carried)
+        .map(|(kind, _)| kind)
+        .collect();
+    assert!(
+        withheld.is_empty(),
+        "OVER-REFUSAL: after a failed capture, the selector window withholds the tombstone of the {withheld:?} from a co-Owner"
     );
 }
 
