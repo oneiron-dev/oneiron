@@ -11,7 +11,8 @@ use super::{OfferCooldowns, PREFIX, key};
 impl OfferCooldowns {
     /// Keeps `fallback`, an engine model id, as the owner's fallback for the
     /// offer serving `wire_model`, under the id the offer's quota question
-    /// carries, as [`Self::answer`] keeps a `use_fallback` answer.
+    /// carries, as [`Self::answer`] keeps a `use_fallback` answer to a
+    /// question asked now.
     ///
     /// # Errors
     ///
@@ -26,6 +27,10 @@ impl OfferCooldowns {
         let vault = self.vault.as_ref().ok_or_else(|| {
             oneiron::Error::InvalidConfig("these rests keep no owner's choice".into())
         })?;
-        vault.set_model_fallback(key(offer, wire_model).trim_start_matches(PREFIX), fallback)
+        vault.answer_model_fallback(
+            key(offer, wire_model).trim_start_matches(PREFIX),
+            vault.now_recorded_at(),
+            fallback,
+        )
     }
 }

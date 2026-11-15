@@ -494,7 +494,7 @@ impl OfferCooldowns {
             }) else {
                 return Ok(false);
             };
-            vault.set_model_fallback(&question.id, model)?;
+            vault.answer_model_fallback(&question.id, question.asked_at, model)?;
         }
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;

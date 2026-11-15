@@ -7,22 +7,21 @@
 //! also override one agent's layout alone ("you can configure the defaults
 //! or change it too"); that agent's override sections win over both.
 //!
-//! Absent, every layer reads empty: the harness default cap applies and the
-//! agents' own layouts render as they are. Every change records the owner's
-//! act with the settings it replaces, as the other owner policy settings do.
+//! Unset, every layer reads empty: the harness default cap applies and the
+//! agents' own layouts render as they are. It is the catalogue key
+//! `context_board.layout` (`settings::setting_keys`): the owner sets it,
+//! through `vault.settings.set`, and every change is one `SETTING_CHANGE`
+//! row. An erase of an agent takes its override out of the value in place.
 
 use serde::{Deserialize, Serialize};
 
+use super::setting_keys::BOARD_LAYOUT;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::{BoardLayout, BoardLayoutError};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
-
-/// The owner's board layout settings. Absent reads empty.
-const BOARD_LAYOUT_SETTINGS: SideTable<(), BoardLayoutSettings, Named> =
-    SideTable::new(&side_table::BOARD_LAYOUT_SETTINGS);
+use crate::setting::{SetSetting, SettingCaller, SettingChange, SettingValue};
 
 /// The owner's board cap and layout layers.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -159,66 +158,106 @@ impl BoardLayoutSettings {
     }
 }
 
-/// An actor's erase removes the owner's override of that agent's board
-/// layout alone (FIX 3520); the other layers stay. A restore or a replayed
-/// erase runs it again and finds nothing to remove.
-pub(crate) fn erase_board_layout_agent_override_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    let Some(mut settings) = BOARD_LAYOUT_SETTINGS.get(&vault.store, &*txn, &())? else {
-        return Ok(());
-    };
-    let before = settings.agent_override_layouts.len();
+impl SettingValue for BoardLayoutSettings {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
+}
+
+/// An erase of `actor` takes the owner's override of that agent's board
+/// layout out of the value (FIX 3520); the other layers stay. `None` when
+/// the value names no override of it.
+pub(super) fn drop_agent_override(
+    settings: &BoardLayoutSettings,
+    actor: EntityId,
+) -> Option<BoardLayoutSettings> {
     settings
         .agent_override_layouts
-        .retain(|agent| agent.agent != *actor);
-    if settings.agent_override_layouts.len() != before {
-        BOARD_LAYOUT_SETTINGS.put(&vault.store, txn, &(), &settings)?;
+        .iter()
+        .any(|agent| agent.agent == actor)
+        .then(|| settings.clone().with_agent_override(actor, None))
+}
+
+/// Each agent override the change sets or changes names an agent the vault
+/// holds: its AGENT_DEF or its PERSON. An override the value already held
+/// stays, whatever became of its agent since.
+pub(super) fn check_agent_overrides_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    let Some(settings) = change
+        .value
+        .as_ref()
+        .and_then(|stored| stored.decode::<BoardLayoutSettings>())
+    else {
+        return Ok(());
+    };
+    let prior = change
+        .prior
+        .as_ref()
+        .and_then(|stored| stored.decode::<BoardLayoutSettings>())
+        .unwrap_or_default();
+    for agent in &settings.agent_override_layouts {
+        if prior.agent_override_layouts.contains(agent) {
+            continue;
+        }
+        let kind = vault
+            .entity_header_in_txn(&*txn, &agent.agent)?
+            .map(|header| header.entity_type);
+        if !matches!(
+            kind,
+            Some(crate::registry::ENTITY_TYPE_AGENT_DEF | crate::registry::ENTITY_TYPE_PERSON)
+        ) {
+            return Err(Error::InvalidConfig(format!(
+                "board layout override names {}, which is no agent the vault holds",
+                agent.agent.to_hex()
+            )));
+        }
     }
     Ok(())
 }
 
-/// The owner's board layout settings in `txn`, absent read empty.
+/// The owner's board layout settings in `txn`, unset read empty.
 pub(crate) fn board_layout_settings_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<BoardLayoutSettings> {
-    Ok(BOARD_LAYOUT_SETTINGS
-        .get(&vault.store, txn, &())?
-        .unwrap_or_default())
+    Ok(BOARD_LAYOUT.read_in_txn(vault, txn, &[], None)?.value)
 }
 
 impl Vault {
-    /// The owner's board cap and layout layers, absent read empty.
+    /// The owner's board cap and layout layers, unset read empty.
     pub fn board_layout_settings(&self) -> Result<BoardLayoutSettings> {
         let rtxn = self.store.env.read_txn()?;
         board_layout_settings_in_txn(self, &rtxn)
     }
 
     /// The owner sets the board cap, the default layout, the override, one
-    /// agent's override, or any of them; `None` leaves one as it is, and
-    /// `Some(None)` clears the cap. `agent_override` names the agent and its
-    /// layout; a `None` or empty layout clears that agent's override, and a
-    /// layout set must name an entity the vault holds. The Owner is
-    /// revalidated in the writer, and the settings are
-    /// written only when they change. A change records the owner's act with
-    /// the settings it replaces when `surface` names where the owner said
-    /// so, in the same commit. Answers the settings as they now read.
+    /// agent's override, or any of them, in one change of the key
+    /// `context_board.layout`; `None` leaves one as it is, and `Some(None)`
+    /// clears the cap. `agent_override` names the agent and its layout; a
+    /// `None` or empty layout clears that agent's override, and a layout set
+    /// must name an entity the vault holds. The owner is revalidated in the
+    /// writer, and a value equal to the one in force writes nothing. Answers
+    /// the settings as they now read.
+    ///
+    /// # Errors
+    ///
+    /// Settings the key refuses, an agent override naming no agent the vault
+    /// holds, a proof that no longer holds, and storage errors.
     pub fn set_board_layout_settings(
         &self,
         owner: &AuthenticatedOwner,
-        surface: Option<crate::authority::ActSurface>,
         cap_tok: Option<Option<u64>>,
         default_layout: Option<BoardLayout>,
         override_layout: Option<BoardLayout>,
         agent_override: Option<(EntityId, Option<BoardLayout>)>,
     ) -> Result<BoardLayoutSettings> {
+        // The key runs no after-commit hook, so the plain write door serves.
         self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
-            let prior = board_layout_settings_in_txn(self, txn)?;
-            let mut settings = prior.clone();
+            let mut settings = board_layout_settings_in_txn(self, txn)?;
             if let Some(cap) = cap_tok {
                 settings.cap_tok = cap;
             }
@@ -229,46 +268,17 @@ impl Vault {
                 settings.override_layout = layout;
             }
             if let Some((agent, layout)) = agent_override {
-                // An empty layout clears, as `None` does; a layout set names
-                // an agent the vault holds: its AGENT_DEF or its PERSON.
-                let layout = layout.filter(|layout| !layout.sections.is_empty());
-                if layout.is_some() {
-                    let kind = self
-                        .entity_header_in_txn(&*txn, &agent)?
-                        .map(|header| header.entity_type);
-                    if !matches!(
-                        kind,
-                        Some(
-                            crate::registry::ENTITY_TYPE_AGENT_DEF
-                                | crate::registry::ENTITY_TYPE_PERSON
-                        )
-                    ) {
-                        return Err(Error::InvalidConfig(format!(
-                            "board layout override names {}, which is no agent the vault holds",
-                            agent.to_hex()
-                        )));
-                    }
-                }
                 settings = settings.with_agent_override(agent, layout);
             }
-            settings.validate()?;
-            if settings != prior {
-                BOARD_LAYOUT_SETTINGS.put(&self.store, txn, &(), &settings)?;
-                let signed = crate::policy_setting_doors::record_policy_setting_act_in_txn(
-                    self,
-                    txn,
-                    crate::policy_setting_doors::PolicySetting::BoardLayout,
-                    actor,
-                    surface,
-                    &prior,
-                    &settings,
-                )?;
-                // The signed record goes last, best effort (FIX 4624).
-                if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
-                }
-            }
-            Ok(settings)
+            let value = serde_json::to_value(&settings).map_err(|error| {
+                Error::InvalidConfig(format!("board layout settings do not encode: {error}"))
+            })?;
+            self.set_setting_in_txn(
+                txn,
+                SettingCaller::Owner(owner),
+                &SetSetting::vault_value(BOARD_LAYOUT.spec.name, value),
+            )?;
+            board_layout_settings_in_txn(self, txn)
         })
     }
 }
