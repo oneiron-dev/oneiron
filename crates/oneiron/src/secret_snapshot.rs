@@ -209,7 +209,7 @@ impl Vault {
                 continue;
             }
             let Some(bytes) = file_contents(&entry.path) else {
-                report.quarantined_paths.push(entry.path.clone());
+                files.push(entry.clone());
                 continue;
             };
             if bytes.len() as u64 != entry.size_bytes
