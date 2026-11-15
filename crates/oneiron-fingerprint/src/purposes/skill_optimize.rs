@@ -11,7 +11,7 @@ legacy_purposes! {
 
     /// Where a Partial measurement is measured again: plain BLAKE3, the tag's bytes (with
     /// its final NUL), the request digest, the row's request time and its settle time (0 for
-    /// none; each u64 big-endian), all unframed. The re-measure row's key.
+    /// none; each u64 big-endian), all unframed. The re-measure row's key (FIX 12175).
     EVAL_MEASUREMENT_REMEASURE =
         (Blake3, HashedFirst, "skill_optimize:eval_measurement:remeasure:v1\0");
 }

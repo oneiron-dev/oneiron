@@ -36,7 +36,6 @@ const RETAINED_VERSION: u8 = 1;
 /// Version; the query, campaign and recipient entity; the epoch; the program
 /// and step; the body digest; the sender; the event row first asked under.
 const RETAINED_LEN: usize = 1 + 16 * 3 + 8 + 16 * 2 + 32 + 16 + 16;
-/// The domain of the retained request's digest.
 /// The additional domain separation for an email body's frozen subject.
 const EMAIL_PAYLOAD_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.email_payload.v1";
 

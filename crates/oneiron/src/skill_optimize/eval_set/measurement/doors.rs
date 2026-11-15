@@ -19,7 +19,6 @@ use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 /// One measurement, keyed by its request digest.
 const MEASUREMENTS: SideTable<[u8; 32], EvalMeasurement, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_EVAL_MEASUREMENT);
-/// The request digest's domain.
 /// Longest pin, scorer, axis or slice a request names.
 const MAX_REF_BYTES: usize = 256;
 /// The legs a claim counts an exposure for, in order: the incumbent, the
@@ -443,7 +442,6 @@ impl Vault {
     }
 }
 
-/// The re-measure's digest domain (FIX 12175).
 /// Where the request `digest` keys is measured again while its Partial
 /// `row` stands: one digest per Partial row, so each settled row opens a
 /// new one. A stored row's key, so it keeps its bytes (K, PLAN-UC-04 4.1).

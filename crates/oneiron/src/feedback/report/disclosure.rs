@@ -33,7 +33,6 @@ use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 /// The data class a publisher's standing disclosure covers: the text a
 /// reporter wrote, never text loaded from the vault rows a report cites.
 const REPORT_TEXT_CLASS: &str = "feedback.report_text";
-/// The domain a report request's digest is taken under.
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::feedback::report::disclosure::ReportDisclosureBasis;

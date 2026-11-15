@@ -73,7 +73,6 @@ use self::key::{PostKey, observe_key_in};
 pub(crate) use self::settlement::settle_task_proposal_in_txn;
 pub(super) use self::settlement::{envelope_actor_class, proposer_of};
 
-/// Domain of a post's request digest.
 /// Reason code of a proposal the addressed agent declined.
 const TAKE_DECLINED_REASON: &str = "gate.tasks.take.declined";
 /// Reason code of a proposal the addressed agent took.
