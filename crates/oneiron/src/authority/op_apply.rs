@@ -32,6 +32,9 @@ pub(super) fn apply_op(
                 _ => Some(signer),
             };
             upsert_device(state, device, admitter);
+            if matches!(op, AuthorityOp::OwnerKeyEnroll(enroll) if enroll.is_recovery_authority()) {
+                state.recovery_authority_keys.insert(device.key.clone());
+            }
             if state
                 .roster
                 .values()
@@ -125,6 +128,10 @@ pub(super) fn apply_op(
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => {}
+        // A recovery hold and its answers change no roster, no grant and no
+        // anchor: the fold judges their signers at the transition, and the
+        // hold view reads the rows.
+        AuthorityOp::RecoveryHold(_) | AuthorityOp::RecoveryHoldAnswer(_) => {}
         // Only a counted root appointment applies, onto its proof fold's merge
         // (`root_appointment_judge::Recovered`; the fold refuses every other
         // one before any op applies): every roster key is revoked and the

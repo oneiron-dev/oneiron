@@ -27,7 +27,7 @@ use oneiron::recovery::{
     CodeKeeping, KitIssue, KitSecretKind, PassphraseCost, PieceHome, restore_kit,
 };
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::root_recovery::released_authority_seed;
+use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::world_keys::{NoRecoveryBox, RecoveryBoxHold, RecoveryPreset, RecoveryRootSeed};
 use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
@@ -486,16 +486,18 @@ fn switching_back_to_standard_changes_no_roster_and_released_1_serves() {
         "released 0 is refused as not live: {refused}"
     );
 
-    let answer = fixture
-        .vault
-        .recover_owner_root(
-            &fixture.owner(),
-            ActSurface::ThisInstall,
-            fixture.released_material(1),
-            RootSuccessor::Device(fixture.enrollment(&new_key)),
-            std::slice::from_ref(&lost_key),
-        )
-        .expect("released generation 1 serves back on Standard");
+    // A zero wait: the nonzero default holds (OPUS-WAYBACK, covered in
+    // `owner_root_recovery_wait.rs`).
+    let answer = recover_owner_root_waiting(
+        &fixture.vault,
+        &fixture.owner(),
+        ActSurface::ThisInstall,
+        fixture.released_material(1),
+        RootSuccessor::Device(fixture.enrollment(&new_key)),
+        std::slice::from_ref(&lost_key),
+        std::time::Duration::from_secs(0),
+    )
+    .expect("released generation 1 serves back on Standard");
     assert!(
         matches!(answer, RootRecovery::Vouched { .. }),
         "generation 1 vouches"

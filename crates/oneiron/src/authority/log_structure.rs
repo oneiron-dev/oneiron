@@ -585,6 +585,15 @@ impl AuthorityStructure {
             {
                 true
             }
+            // A recovery hold's answer: a roster key vouches as an
+            // admitter's row does, and the kit's answer as the anchor's own
+            // rows do, signed alone (the fold still refuses an ItIsMe the
+            // anchor signs). A hold is vouched below as any roster row: its
+            // signer R is a roster key.
+            AuthorityOp::RecoveryHoldAnswer(_) => {
+                signed_by(entry, &self.admitters)
+                    || (self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty())
+            }
             _ => signed_by(entry, &self.admitters),
         }
     }
@@ -662,6 +671,11 @@ impl AuthorityStructure {
             // Only the pinned root's anchor appoints a root here: another
             // anchor's appointment admits no successor.
             AuthorityOp::RootAppointment(_) => !self.is_own_anchor(signer),
+            // A recovery hold's answer of a roster key is no stranger's (an
+            // admitter's signer returned false above); the kit's Cancel
+            // counts toward the shared stranger bound unless this install's
+            // own anchor signed it, as an appointment does.
+            AuthorityOp::RecoveryHoldAnswer(_) => !self.is_own_anchor(signer),
             _ => false,
         }
     }

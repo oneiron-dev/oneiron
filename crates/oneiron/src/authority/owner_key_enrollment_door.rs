@@ -45,8 +45,8 @@ const NO_CARRIER: &str = "this install has no live machine profile in the vault'
                           the owner's key enrollment";
 /// Integrity: the roster already names the key, live or revoked. A
 /// replacement is a fresh key, and the old one's ordinary revoke.
-const KEY_ON_ROSTER: &str = "the vault's roster already names this key, live or revoked; enrol a \
-                             fresh key";
+pub(crate) const KEY_ON_ROSTER: &str = "the vault's roster already names this key, live or revoked; enrol a \
+                                        fresh key";
 /// Integrity: the enrollment's fixed shape does not hold: a weak key, a
 /// proof that is not the key's own signature over its challenge, or a key
 /// that would sign its own entry.
@@ -241,7 +241,7 @@ struct EnrolledKeyBinding<'fold> {
 }
 
 /// An enrollment that does not verify, as the typed integrity refusal.
-fn not_valid(reason: &'static str) -> Error {
+pub(crate) fn not_valid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
 }
 
@@ -431,6 +431,39 @@ impl Vault {
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        self.enrol_owner_signing_key_for_actor_in_txn(
+            txn,
+            actor,
+            surface,
+            input,
+            kind,
+            predecessor,
+            sign_predecessor,
+        )
+    }
+
+    /// [`Self::enrol_owner_signing_key_in_txn`] for `actor`, an owner the
+    /// caller judged live in `txn`, with `surface` as the act's audit-only
+    /// surface: the recovery wait's landing seam, which runs with no owner
+    /// proof (OPUS-WAYBACK): the hold authorized the act, and the landing
+    /// rechecks the owner's liveness itself. Every other caller takes the
+    /// authority door above.
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`].
+    pub(super) fn enrol_owner_signing_key_for_actor_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        surface: ActSurface,
+        input: OwnerKeyEnrollment,
+        kind: EnrolledOwnerKeyKind,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let (carrier, carrier_key) = self

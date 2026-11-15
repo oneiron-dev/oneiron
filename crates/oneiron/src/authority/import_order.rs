@@ -187,6 +187,14 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
             carrier: Some(carrier),
             ..
         }) => vec![Grant::InstallKey(*carrier, entry.signer_key().clone())],
+        // A recovery hold's answer waits for its signer to vouch as a
+        // roster key does, or, for the kit's Cancel, for its signer to be an
+        // owner anchor, as the anchor's own rows do. A hold waits as any
+        // roster row below: its signer R is a roster key.
+        AuthorityOp::RecoveryHoldAnswer(_) => vec![
+            Grant::Admitter(entry.signer_key().clone()),
+            Grant::Anchor(entry.signer_key().clone()),
+        ],
         op => std::iter::once(&entry.signer)
             .chain(&entry.cosigns)
             .map(|signature| Grant::Admitter(signature.public_key.clone()))

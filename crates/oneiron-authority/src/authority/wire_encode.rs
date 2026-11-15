@@ -318,6 +318,10 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::RootAppointment(appointment) => {
             super::root_appointment::root_appointment_value(appointment)
         }
+        AuthorityOp::RecoveryHold(hold) => super::recovery_hold::recovery_hold_value(hold),
+        AuthorityOp::RecoveryHoldAnswer(answer) => {
+            super::recovery_hold::recovery_hold_answer_value(answer)
+        }
     }
 }
 

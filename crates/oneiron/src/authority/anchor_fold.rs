@@ -37,6 +37,22 @@ pub(super) fn fold_anchor_entry(
         {
             *key
         }
+        // A recovery hold's Cancel, signed alone by a valid root's anchor:
+        // the kit stops the attempt. An ItIsMe never folds here, so one the
+        // anchor signs falls through to the roster rules and is refused
+        // there: the anchor never ends a wait early. Like a mark, the Cancel
+        // moves the anchor's sequence and rests on no roster key.
+        (AuthorityOp::RecoveryHoldAnswer(answer), AuthorityKey::Ed25519(key))
+            if answer.answer == RecoveryHoldAnswerKind::Cancel
+                && state.root_anchors.contains_key(key) =>
+        {
+            if !entry.cosigns.is_empty() {
+                return Some(Err(AuthorityFoldIssue::InvalidEntry(hash)));
+            }
+            return Some(advance(state, entry, signer, hash).map(|()| {
+                state.anchor_entries.insert(hash);
+            }));
+        }
         _ => return None,
     };
     let AuthorityOp::MachineProfile(profile) = &entry.op else {

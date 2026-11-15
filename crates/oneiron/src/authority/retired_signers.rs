@@ -530,6 +530,14 @@ fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) 
                 AuthorityOp::MachineProfile(_) | AuthorityOp::RootAppointment(_),
                 AuthorityKey::Ed25519(key),
             ) => anchor(key),
+            // The kit's Cancel of a recovery hold, signed alone by a root's
+            // anchor: it rests on no roster key, as a mark does. An ItIsMe
+            // stays a roster row: the anchor never ends a wait early.
+            (AuthorityOp::RecoveryHoldAnswer(answer), AuthorityKey::Ed25519(key))
+                if answer.answer == RecoveryHoldAnswerKind::Cancel =>
+            {
+                anchor(key)
+            }
             _ => false,
         }
 }

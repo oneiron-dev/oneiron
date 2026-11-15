@@ -146,6 +146,7 @@ mod readonly_fold;
 mod recover_many;
 mod recovery;
 mod recovery_authority_generation;
+mod recovery_hold;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
@@ -243,6 +244,13 @@ pub use root_appointment_door::RootAppointmentReceipt;
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
 pub use root_recovery_door::{RootMaterial, RootRecovery, RootSuccessor};
+// A box recovery's wait and its answers (OPUS-WAYBACK).
+pub use oneiron_authority::authority::{
+    RecoveryHold, RecoveryHoldAnswer, RecoveryHoldAnswerKind, RecoveryHoldEnrolment,
+};
+pub use recovery_hold::{
+    RECOVERY_WAIT_DEFAULT, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView,
+};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
@@ -406,6 +414,7 @@ pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, EnrolledOwnerKeyKind, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, WaysBack,
 };
+pub(crate) use owner_key_enrollment_door::{KEY_ON_ROSTER, not_valid};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{

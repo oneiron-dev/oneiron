@@ -168,6 +168,13 @@ impl RecoveryAuthoritySigner {
         &self.source_root
     }
 
+    /// The key's own seed back in guarded memory: what the recovery wait
+    /// keeps in a device-keystore slot from the hold until the landing or
+    /// the cancel (OPUS-WAYBACK). In-crate only, like the seed's producer.
+    pub(crate) fn released_seed(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(self.signing.to_bytes())
+    }
+
     /// Pure proof of possession for the existing enrollment door. Its owner act,
     /// predecessor, carrying install and counted writer are still required there.
     /// This value is not an enrollment receipt or a successful material issue.
@@ -191,11 +198,31 @@ impl RecoveryAuthoritySigner {
     /// an authority entry's, or the move's leave-notice delegation's (FIX
     /// 7932), and nothing under another domain.
     pub(crate) fn sign_authority_transcript(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        Self::check_transcript_domain(transcript)?;
+        Ok(self.signing.sign(transcript).to_bytes().to_vec())
+    }
+
+    /// Signs `transcript` with a recovery wait's held slot seed (OPUS-WAYBACK
+    /// landing): the same domain rule as [`Self::sign_authority_transcript`],
+    /// without the signer's vault and source-root bindings, which the landing
+    /// rechecks from its fold (the slot keeps the seed alone).
+    pub(crate) fn sign_transcript_with_seed(seed: &[u8; 32], transcript: &[u8]) -> Result<Vec<u8>> {
+        Self::check_transcript_domain(transcript)?;
+        Ok(SigningKey::from_bytes(seed)
+            .sign(transcript)
+            .to_bytes()
+            .to_vec())
+    }
+
+    /// The one domain rule both signing halves enforce: an authority entry's
+    /// transcript, or a move's leave-notice delegation (FIX 7932), and
+    /// nothing else.
+    fn check_transcript_domain(transcript: &[u8]) -> Result<()> {
         if !transcript.starts_with(AUTHORITY_TRANSCRIPT_DOMAIN)
             && !transcript.starts_with(LEAVE_NOTICE_DELEGATION_DOMAIN)
         {
             return Err(invalid_authority());
         }
-        Ok(self.signing.sign(transcript).to_bytes().to_vec())
+        Ok(())
     }
 }

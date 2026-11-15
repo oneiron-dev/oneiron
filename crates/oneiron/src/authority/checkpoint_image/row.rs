@@ -65,8 +65,10 @@ pub struct AuthorityCheckpointRow {
 /// fold under another pin or peer set judges again (a home candidacy, a
 /// federation lifecycle act; FIX 3004, 3005); and each residence directive
 /// and result, which a machine's directive reader reads past the image (FIX
-/// 5412). An image past the optional-compaction trigger drops its residence
-/// bodies for [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] (FIX 11400).
+/// 5412); and each recovery hold and answer, which the hold view and the
+/// answer doors read past the image (OPUS-WAYBACK). An image past the
+/// optional-compaction trigger drops its residence bodies for
+/// [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] (FIX 11400).
 fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
         || matches!(
@@ -96,6 +98,8 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::FederationLifecycle(_)
                 | AuthorityOp::ResidenceDirective(_)
                 | AuthorityOp::ResidenceResult(_)
+                | AuthorityOp::RecoveryHold(_)
+                | AuthorityOp::RecoveryHoldAnswer(_)
         )
 }
 

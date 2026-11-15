@@ -36,7 +36,7 @@ use oneiron::recovery::{
 };
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::re_root_stale_sweep::re_root_authority_as_host;
-use oneiron::test_doors::root_recovery::released_authority_seed;
+use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
 use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
@@ -415,13 +415,18 @@ fn the_released_authority_seed_vouches_as_the_kit_does() {
     let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
     let lost = key_of(&fixture.lost_key);
 
-    let answer = fixture
-        .recover(
-            fixture.released(),
-            RootSuccessor::Device(fixture.enrollment(&new_key)),
-            std::slice::from_ref(&lost),
-        )
-        .expect("the box's released key vouches");
+    // A zero wait: the nonzero default holds (OPUS-WAYBACK, covered in
+    // `owner_root_recovery_wait.rs`).
+    let answer = recover_owner_root_waiting(
+        &fixture.vault,
+        &fixture.owner(),
+        ActSurface::ThisInstall,
+        fixture.released(),
+        RootSuccessor::Device(fixture.enrollment(&new_key)),
+        std::slice::from_ref(&lost),
+        std::time::Duration::from_secs(0),
+    )
+    .expect("the box's released key vouches");
 
     assert_vouched(&fixture, answer, &root_key, &key_of(&new_key), &lost);
 }

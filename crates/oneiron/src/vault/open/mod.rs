@@ -804,6 +804,15 @@ impl Vault {
         // nonces in memory (FIX 12023 W0). Read last, so every slip minted
         // while it opened takes the writer.
         vault.spent_nonces.note_open(&vault);
+        // A box recovery's wait lands lazily (OPUS-WAYBACK): this install's
+        // due holds land in their own transactions. A landing failure never
+        // fails the open: the next door call or open tries again.
+        if let Err(error) = vault.land_due_recovery_holds() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "due recovery holds did not land on open; the next door call tries again"
+            );
+        }
         Ok(vault)
     }
 

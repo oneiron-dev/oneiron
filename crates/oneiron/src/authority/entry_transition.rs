@@ -159,6 +159,7 @@ pub(super) fn fold_entry_state(
             anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
             owner_keys_ever: BTreeSet::new(),
+            recovery_authority_keys: BTreeSet::new(),
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
             grant_travel: BTreeMap::new(),
@@ -615,6 +616,23 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
+    // A recovery hold needs its signer R (a live recovery-authority key)
+    // and a fresh successor; a roster-signed answer needs a live owner key
+    // that is not R (an anchor's Cancel folded through the anchor's branch
+    // above). The answer's pairing to its hold is the doors' and the view's
+    // check, not the fold's: a successor is never live while its hold is
+    // live, so a successor-signed answer is refused above as
+    // not-in-ancestry, and any other live answer to an unknown hold is
+    // inert in the view.
+    if let AuthorityOp::RecoveryHold(hold) = &entry.op {
+        if let Err(issue) = super::recovery_hold::judge_recovery_hold(&state, entry, hold, hash) {
+            return EntryFold::Invalid(issue);
+        }
+    } else if let AuthorityOp::RecoveryHoldAnswer(_) = &entry.op {
+        if let Err(issue) = super::recovery_hold::judge_recovery_hold_answer(&state, entry, hash) {
+            return EntryFold::Invalid(issue);
+        }
+    }
     apply_op(&mut state, &entry.op, hash, &signer);
     if !state_has_authority_consent(&state, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
@@ -728,5 +746,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         // An appointment's successor is judged fresh over its whole ancestry
         // (`root_appointment_judge`, V1).
         AuthorityOp::RootAppointment(_) => false,
+        // A hold's successor is judged fresh by the hold's own arm below,
+        // against the parents' roster; an answer names no key.
+        AuthorityOp::RecoveryHold(_) | AuthorityOp::RecoveryHoldAnswer(_) => false,
     }
 }

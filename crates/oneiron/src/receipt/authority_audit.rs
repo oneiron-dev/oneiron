@@ -383,6 +383,32 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        // A box recovery's wait: its subject is the successor key, its
+        // detail the owner and the landing second (OPUS-WAYBACK).
+        AuthorityOp::RecoveryHold(hold) => (
+            Other,
+            "recovery_hold",
+            OpFields {
+                detail: Some(format!(
+                    "owner {} lands_at {}",
+                    hold.owner.to_hex(),
+                    hold.lands_at
+                )),
+                subject_ref: Some(hex_lower(&hold.enrolment.public_key)),
+                ..OpFields::default()
+            },
+        ),
+        // An answer to a wait: its subject is the hold, its detail the
+        // answer.
+        AuthorityOp::RecoveryHoldAnswer(answer) => (
+            Other,
+            "recovery_hold_answer",
+            OpFields {
+                detail: Some(answer.answer.as_str().to_owned()),
+                subject_ref: Some(hex_lower(&answer.hold)),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
         AuthorityOp::OwnerHandover(action) => (

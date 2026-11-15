@@ -59,7 +59,9 @@ use serde::Serialize;
 /// CARRIER-OWNER-PROOF).
 /// 37: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
 /// an owner key until the owner switches it back to web sign-in (the owner's ruling AUTH-5).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 37;
+/// 38: the fold keeps every key ever enrolled as the recovery root's authority key, so a
+/// recovery hold's signer R and an answer's owner key judge apart (OPUS-WAYBACK).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 38;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
