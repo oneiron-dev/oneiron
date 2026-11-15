@@ -212,16 +212,18 @@ fn project_scoped_reader_reads_own_project_learning_cell() {
 
 /// A narrowed reader reads its own project's cell as the cell's own runs
 /// alone make it: over the pack's shipped prior, at the catalog's window,
-/// each judge's score as the judge gave it. No row outside the project moves
-/// that answer or turns it into a refusal: not a prior the cell took from
+/// each judge's score as the judge gave it, citing its own evidence rows.
+/// No row outside the project moves that answer, its estimate or its
+/// provenance, or turns it into a refusal: not a prior the cell took from
 /// elsewhere (a stored parent prior, as a project cell keeps the vault's
 /// reading it borrowed before its first own run), not a run in the vault's
 /// cell that an empty cell of the project would borrow, not a judge
 /// conversion fitted on other cells' overlap, and not a window a vault row
 /// set. Red at main (the cell is refused there), at this PR's first head
-/// 308e715348a1 (it showed the parent prior), and at 387cd85a1b4 (it refused
-/// a cell over the parent prior, and an empty cell once the vault's cell had
-/// a run).
+/// 308e715348a1 (it showed the parent prior), at 387cd85a1b4 (it refused a
+/// cell over the parent prior, and an empty cell once the vault's cell had a
+/// run), and at 830aab27609 (its provenance showed the stored head, which the
+/// judge conversion wrote again).
 #[test]
 fn project_scoped_reader_reads_its_cell_from_its_own_runs_alone() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -237,11 +239,7 @@ fn project_scoped_reader_reads_its_cell_from_its_own_runs_alone() {
                     "actor=agent {agent:?}, grant=project {own_project:?}, executor={executor}; expected its own project's cell, not a refusal; seen {error:?}"
                 )
             });
-        json!({
-            "estimate": view["view"]["estimate"],
-            "own": view["view"]["own"],
-            "borrowed_from": view["view"]["borrowed_from"],
-        })
+        view["view"].clone()
     };
 
     // One own run, judged by JUDGE, over a parent prior; and an empty cell.
@@ -272,11 +270,14 @@ fn project_scoped_reader_reads_its_cell_from_its_own_runs_alone() {
         kept_before["estimate"]["runs"].as_f64(),
         kept_before["own"].as_bool(),
         kept_before["borrowed_from"].is_null(),
+        kept_before["provenance"]["evidence"]
+            .as_array()
+            .map(Vec::len),
     );
     assert_eq!(
         shown,
-        (Some("shipped"), Some(1.0), Some(true), true),
-        "actor=agent {agent:?}; expected its one own run over the shipped prior, never the parent prior; seen {kept_before}"
+        (Some("shipped"), Some(1.0), Some(true), true, Some(1)),
+        "actor=agent {agent:?}; expected its one own run over the shipped prior, never the parent prior, citing that run; seen {kept_before}"
     );
     let empty = (
         empty_before["estimate"]["prior"]["origin"].as_str(),
