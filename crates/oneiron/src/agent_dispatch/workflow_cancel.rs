@@ -64,13 +64,19 @@ impl AgentDispatcher<'_> {
         if payload.parent_attempt != Some(root) || active.run_id != record.intent.run_id {
             return Err(invalid("workflow step has foreign run-tree lineage"));
         }
+        let waits_to_run = matches!(
+            active.state,
+            AttemptState::Queued | AttemptState::Scheduled | AttemptState::Paused
+        );
         let stopped = self.stop_workflow_step_in(&mut txn, &active, &request, now)?;
         if wrote || stopped {
             record.active = active.id;
             RECORD.put(self.vault, &mut txn, &root, &record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
-            if stopped {
+            if stopped && waits_to_run {
+                // FIX 11482: the cancelled step's job notice committed here; a
+                // step only asked to land has none yet.
                 self.vault.store.notify_notification_updates();
             }
         } else {
@@ -150,6 +156,13 @@ impl AgentDispatcher<'_> {
         )?;
         Ok(())
     }
+}
+
+/// Whether the run's cancel `request` stopped its settled step `step`: the
+/// step was cancelled, or the requester asked it to land. A step that failed
+/// or was abandoned before the request was not stopped by it.
+pub(super) fn stopped_by_request(step: &AttemptRecord, request: &WorkflowCancelRequest) -> bool {
+    step.state == AttemptState::Cancelled || asked_by(step, &request.by)
 }
 
 /// Whether `by` already asked the step `step` to land.
