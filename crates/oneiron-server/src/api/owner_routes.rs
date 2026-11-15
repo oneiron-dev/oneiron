@@ -441,6 +441,13 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
             }
+            // [DISCLOSURE-CONFIRM-STALE-500]: a stale, changed, missing or
+            // resolved consent row the caller named answers as the core widen
+            // route does (`widen_refusal`), never a 500.
+            oneiron::ErrorKind::InvalidConsentGrantRow
+            | oneiron::ErrorKind::InvalidConsentBound => {
+                ApiError::invalid_state(Some("consent_widen_proposal"))
+            }
             oneiron::ErrorKind::SecretRefNotFound => ApiError::not_found("secret", None),
             oneiron::ErrorKind::SecretCustodyNotActive => {
                 ApiError::invalid_state(Some("secret_not_active"))
