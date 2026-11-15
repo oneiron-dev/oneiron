@@ -277,7 +277,7 @@ pub(super) fn load_run_jsonl_dataset(
         for item in &record.corpus {
             let entity_id = contract_corpus_entity_id(&record, item)?;
             let entity_hex = entity_id.to_hex();
-            source_id_by_entity_id.insert(entity_hex.clone(), item.id.clone());
+            source_id_by_entity_id.insert(entity_hex, item.id.clone());
             if !seen_corpus.insert((record.question_id.clone(), item.id.clone())) {
                 continue;
             }

@@ -23,21 +23,12 @@ use crate::store::result_manifest::ResultOccurrence;
 
 mod reference;
 
-/// The metadata key a MESSAGE's result attachment sits under. Only the
-/// executor door writes it.
-pub const MESSAGE_RESULT_METADATA_KEY: &str = "result";
-
-/// Where a MESSAGE's result came from: the run that produced its body, that
-/// run's occurrence of it, and its path in the run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MessageResultSource {
-    pub run_id: EntityId,
-    /// The producer's occurrence: where the body's authority and taint came
-    /// from. Never the MESSAGE's own hold on it.
-    pub occurrence: EntityId,
-    pub path: String,
-}
+#[doc(hidden)]
+use oneiron_verb_wire::memory::result_attachment::handle_digest;
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::result_attachment::{
+    MESSAGE_RESULT_METADATA_KEY, MessageResultSource,
+};
 
 /// One result attachment: what a MESSAGE says of a body it holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -191,17 +182,4 @@ impl MessageResultAttachment {
             other => other,
         }
     }
-}
-
-/// The digest a body's handle names.
-fn handle_digest(handle: &str) -> Option<[u8; 32]> {
-    let hex = handle.strip_prefix("code-run-output:blake3:")?;
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut digest = [0; 32];
-    for (byte, pair) in digest.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(digest)
 }

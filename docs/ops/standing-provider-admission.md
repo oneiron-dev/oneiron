@@ -20,6 +20,9 @@ the authenticated principal, the unit, the authorized logical source bodies and
 their hashes, and `source_frontier`. Sources are ordered unit first, then the
 requested evidence. It does not expose other question units or the saved read lane.
 These are graph logical bodies, not a separate image or audio download API.
+The owner gets each body as stored. Every other asker gets it as the typed Nulled
+rule releases it, and empty when that rule withholds it. Each `hash` is still the
+stored body's, and that hash is what admission compares.
 
 Provider work must use this preparation. Keep its question version, source order,
 hashes and frontier with the measurement. A frontier is data, not a grant. The

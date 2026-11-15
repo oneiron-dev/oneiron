@@ -23,7 +23,6 @@ use super::snapshot::{
     SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, encode_snapshot,
     restore_repo_snapshot,
 };
-use super::support::now_millis;
 use super::trailer::commit_message_with_provenance_trailer;
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome,
@@ -408,7 +407,7 @@ pub(super) fn execute_repo_mutation(
             let wire = GitWire::new(vault)?;
             let repo = wire.open_repo(repo_ref.clone(), repo_root)?;
             let commit = wire.resolve_commit(&repo, base_ref)?;
-            wire.add_worktree(&repo, worktree_path, &commit, now_millis())?;
+            wire.add_worktree(&repo, worktree_path, &commit, crate::unix_millis_now())?;
             Ok(None)
         }
         RepoMutationOperation::RecordConflict {
@@ -432,7 +431,7 @@ pub(super) fn execute_repo_mutation(
             validate_worktree_path(worktree_path)?;
             let wire = GitWire::new(vault)?;
             let repo = wire.open_repo(repo_ref.clone(), repo_root)?;
-            let removed = wire.remove_worktree(&repo, worktree_path, now_millis())?;
+            let removed = wire.remove_worktree(&repo, worktree_path, crate::unix_millis_now())?;
             if removed.is_none() {
                 return Err(Error::Code(CodeError::RepoMutationFailed(
                     "worktree is not registered with this repository".to_owned(),
