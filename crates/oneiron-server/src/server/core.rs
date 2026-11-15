@@ -111,6 +111,11 @@ pub struct SyncServer {
     /// Its presence says the vault is managed; the issuer inside is `None`
     /// where this install holds no issuer seed for it (FIX-LIST 3018).
     pub(crate) managed_issuer: Option<ManagedIssuer>,
+    /// This hosted vault's caller of its recovery box's kit-only hold, set
+    /// only by managed boot from its wake ledger's spawn identity; empty on
+    /// a self-hosted vault, which has no box (Fable pass 27 R7).
+    pub(crate) recovery_box_hold:
+        std::sync::OnceLock<crate::managed::recovery_box_hold::HypnosRecoveryBoxHold>,
     /// The self-host root's issuer, loaded at construction from this install's own issuer seed for
     /// the vault when a host secret is configured (FIX-LIST 3018); `None` with no secret, on a
     /// relay, or where this install holds no seed. Never the managed issuer.
@@ -350,7 +355,8 @@ const _: fn(&SyncServer) = |server| {
         standing_block_cache, broadcast_tx, next_conn_id, lease_registrar, reassert_manager,
         _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
-        context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
+        context_reads, renderer_scratch, query_checks, managed_issuer, recovery_box_hold,
+        host_root_issuer,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
         mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
