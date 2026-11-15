@@ -18,9 +18,9 @@
 //! The recovery box brings the authority key alone
 //! ([`RecoveryAuthoritySigner::from_released_seed`]): it vouches and never
 //! appoints. A lost key is one of the owner signing keys the acting owner
-//! enrolled, live on the roster. The root's own key, the new key and the host roots
-//! are never a lost key here; a self-hosted vault's lost host root is a
-//! ReRoot's ([`Vault::recover_owner_authority_from_kit`]).
+//! enrolled, live on the roster. The root's own key, the new key and the
+//! host roots are never a lost key here; a self-hosted vault's lost host
+//! root is a ReRoot's ([`Vault::recover_owner_authority_from_kit`]).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{
     KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner, RecoveryRootSeed,
 };
-use crate::{Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 /// The roster still holds a live root key, and the root's authority key is
 /// not a live owner key on it. Nothing was written.
