@@ -96,30 +96,49 @@ success verdict, a checked Oneiron action or a complete training/eval task.
 ## Explicit response-task compilation
 
 `Memory::read_eval_repair_task` is a native Rust reader for an explicitly
-specified response-only task. `EvalRepairTaskSource` names the exact capture
+specified task: a text response, or calls to declared pure tools over a JSON
+state. `EvalRepairTaskSource` names the exact capture
 claim and full source fingerprint, a linked outcome ordinal, the seat, and a
 JSON pointer into the linked **failure** event. That pointer must address an
 `EvalRepairTaskSpec`; no task is inferred from the repair text, event order,
 app role, or a completed run.
 
-The source contract has no defaults. It explicitly names `world: text_response`,
-a complete read-only JSON `initial_state`, `preconditions` (JSON-pointer equality
-checks on that snapshot), `intent`, `input`, `tools`, `allowed_actions`, and a
-`grader`. This world executes no tools: `tools` must be empty and the only
-allowed action is `respond`. Other worlds need their actual execution support;
-this reader does not pretend a text model call executes an outside app.
+The source contract has no defaults. It explicitly names a `world`, a complete
+JSON `initial_state`, `preconditions` (JSON-pointer equality checks on that
+snapshot), `intent`, `input`, `tools`, `allowed_actions`, and a `grader`.
+
+- `world: text_response` executes no tools: `tools` must be empty, the only
+  allowed action is `respond`, and the grader is `observed_response_equals`.
+- `world: {json_state_tools: {tools: [...]}}` (census L1-20, ruling
+  L1-20-TOOLWORLD = B) declares pure tools over the state, each a `name` and one
+  `effect` at a JSON pointer the declaration fixes: `set` writes the call's
+  argument there (or adds the field to the object that would hold it), `append`
+  pushes it onto the array there, and `remove` drops the field or array item
+  there (its argument is null). `tools` must name distinct declared tools; a tool
+  outside the declared set is refused. The only allowed action is `call_tool`,
+  and the grader is `observed_state_equals`.
+
+Any other pairing of world, actions and grader is refused. No world executes an
+outside app: a tool world's tools change only the task's own JSON state.
 
 The grader is `observed_response_equals`, with a JSON pointer into the linked
 registered outcome value. That value must be a string. `grade_response` compares
 exact bytes; it never trims, folds case, runs a judge, or classifies arbitrary app
-JSON as a success label. `response_input` contains the rebuilt state, checked
+JSON as a success label. `observed_state_equals` points at the end state the app
+observed. `grade_tool_calls` has fixed code apply a candidate's calls, in order,
+to the rebuilt `initial_state` through the offered tools (`apply_tool_calls`), and
+compares the state they leave with that end state as exact JSON. A call to a tool
+the task does not offer, a call that cannot apply, or more than 256 calls grades
+false. A candidate's own account of its end state is never graded. `response_input` contains the rebuilt state, checked
 preconditions, intent, input and action contract, but not the repair, observed
 outcome or grader answer. A trace is a task only if its answer is not leaked
 in the workspace or the history (ARCH-0053 `#eval-trace-task`): the reader
 refuses a task whose trimmed answer is in any string or object key of its
 `initial_state` or `input`, or is the whole text of a number or boolean there.
 The check is exact text, not similarity: a paraphrased answer passes it, and a
-short answer that recurs by chance refuses the task. The intent is the task's
+short answer that recurs by chance refuses the task. A tool world's answer is
+its end state: the reader refuses a task whose `initial_state` already is that
+state, or holds it, or whose `input` holds it, as exact JSON. The intent is the task's
 own words and is not checked. This is not a certificate of task quality.
 
 The reader preserves the AG-UI read receipt, exact content pin, authenticated
@@ -128,7 +147,7 @@ task and no source metadata. Unlinked outcomes, missing task fields, invalid
 pointers, unmet initial preconditions, unsupported task contracts and a leaked
 answer return an error, without changing the original ingest or source-reader paths. The task
 hash binds the canonical source recipe, full task contract and expected
-response; it is a content digest, not authority. All variants from one capture
+response or end state; it is a content digest, not authority. All variants from one capture
 share a family root for the explicitly named seat. No family is assigned here.
 
 This is task compilation only. It creates no eval case, outcome label, source
@@ -143,8 +162,8 @@ The capture path is a partial delivery of OF-582 / FIX3720; explicit response-ta
 compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. OF-578's
-Repair nomination, executable worlds beyond the explicit response-only task,
-family split, reuse, digest, released-task hydration, measurement and cut-audit
+Repair nomination, worlds beyond the explicit text-response and JSON-state-tools
+tasks, family split, reuse, digest, released-task hydration, measurement and cut-audit
 consumer are separate. Existing typed Repair case storage is unchanged. The
 file path adds no table, family ledger, migration, old-format reader, default
 cap or timer.

@@ -95,7 +95,8 @@ pub use measurement::{
 pub(crate) use measurement::{PairedScores, estimate_paired};
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
-    EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
+    EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairTool, EvalRepairToolCall,
+    EvalRepairToolEffect, EvalRepairWorld,
 };
 pub use replay_input::EvalTaskInput;
 pub use sufficiency::{

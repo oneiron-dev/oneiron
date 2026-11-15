@@ -199,7 +199,8 @@ pub use self::eval_set::{
 };
 pub use self::eval_set::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
-    EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
+    EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairTool, EvalRepairToolCall,
+    EvalRepairToolEffect, EvalRepairWorld,
 };
 pub(crate) use self::eval_set::{
     PairedScores, erase_eval_source_in_txn, estimate_paired, forget_eval_case_source_rows,
