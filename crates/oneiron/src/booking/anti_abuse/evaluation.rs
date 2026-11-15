@@ -260,6 +260,34 @@ pub fn hold_rate_knobs(
     merged
 }
 
+/// The strictest rung-2 send knobs across the rows in scope: the per-IP
+/// minute cap and the page's day budget. A row scoped to an event type
+/// narrows the page's one day budget while that event type is asked; it
+/// never opens a budget of its own.
+#[must_use]
+pub fn rung2_send_rate_knobs(
+    rows: &[BookingAntiAbuseRuleRow],
+    page_ref: &EntityId,
+    event_type: &Option<EventTypeKey>,
+) -> Option<(NonZeroU32, NonZeroU32)> {
+    let mut merged: Option<(NonZeroU32, NonZeroU32)> = None;
+    for row in scoped_rules(rows, page_ref, event_type) {
+        if let BookingAntiAbuseRule::Rung2SendRate {
+            per_minute_per_ip,
+            per_day_per_page,
+        } = &row.rule
+        {
+            merged = Some(match merged {
+                None => (*per_minute_per_ip, *per_day_per_page),
+                Some((rate, budget)) => {
+                    (rate.min(*per_minute_per_ip), budget.min(*per_day_per_page))
+                }
+            });
+        }
+    }
+    merged
+}
+
 /// Pure request evaluation over stored rows plus asserted facts. No storage
 /// access, so a honeypot or time-floor hit can be honoured with zero writes.
 ///
@@ -272,6 +300,7 @@ enum BookingEvaluationScope {
     Amend,
     Hold,
     SlotList,
+    Rung2Send,
 }
 
 fn rule_applies_to_evaluation(rule: &BookingAntiAbuseRule, scope: BookingEvaluationScope) -> bool {
@@ -301,6 +330,14 @@ fn rule_applies_to_evaluation(rule: &BookingAntiAbuseRule, scope: BookingEvaluat
         // controls are their endpoint counters, consumed by the adapter.
         BookingEvaluationScope::Hold => false,
         BookingEvaluationScope::SlotList => false,
+        // A rung-2 press is no form fill: it carries no honeypot, no submit
+        // clock and no intake, and it writes no booking a quarantine could
+        // keep for review. The visitor's address is its one evidence, so a
+        // doubtful address prompts a correction and never quarantines. Its
+        // buckets are spent by the adapter below this pure evaluator.
+        BookingEvaluationScope::Rung2Send => {
+            matches!(rule, BookingAntiAbuseRule::EmailPromptToCorrect { .. })
+        }
     }
 }
 
@@ -494,6 +531,16 @@ pub fn evaluate_booking_slot_list_request(
     facts: &BookingRequestFacts,
 ) -> BookingAbuseVerdict {
     evaluate_booking_request_for(rows, facts, BookingEvaluationScope::SlotList)
+}
+
+/// A rung-2 send is judged on the visitor's address alone; its per-IP and
+/// page-day buckets are the adapter's.
+#[must_use]
+pub fn evaluate_rung2_send_request(
+    rows: &[BookingAntiAbuseRuleRow],
+    facts: &BookingRequestFacts,
+) -> BookingAbuseVerdict {
+    evaluate_booking_request_for(rows, facts, BookingEvaluationScope::Rung2Send)
 }
 
 // -------------------------------------------------------------------------

@@ -9,9 +9,18 @@
 //! offers no rung 2: its answer is the owner's no-fit line with no control,
 //! and it asks for no email.
 //!
+//! The server's faces (INBOX-RESIDUE PR-3b-3a): rung 2 sends native mail
+//! only, so the host's classifier names the agent's named address from
+//! stored evidence alone, a dedicated address the vault proves is a native
+//! mailbox on the managed domain, and gives every other identity no face. A
+//! `scheduling@` name with no mailbox record is no named address.
+//!
 //! Red on main: `oneiron::booking::rung2`, the front's `agent_ref` and
-//! `constraint_no_fit` do not exist there, so this file does not build.
-//! `cargo test --locked -p oneiron --all-features --test booking_rung2_from`.
+//! `constraint_no_fit` do not exist there, so this file does not build; on
+//! #8130 `Vault::booking_rung2_offer_on_native_mail` does not exist.
+//! `cargo test --locked -p oneiron --all-features --test booking_rung2_from`;
+//! with `RUSTFLAGS="--cfg oneiron_test_support"` the recorded named mailbox
+//! test runs too.
 
 #![cfg(feature = "test-support")]
 
@@ -61,6 +70,11 @@ const NO_FIT_LINE: &str = "None of those times work for the host.";
 const NAMED_ADDRESS: &str = "scheduling@example.com";
 /// The same agent's campaign sender on a side domain.
 const SIDE_DOMAIN_ADDRESS: &str = "outreach@example-outreach.net";
+/// The host's managed native-mail domain.
+const NATIVE_DOMAIN: &str = "agents.example.com";
+/// A named address on the managed domain: a native mailbox only once the
+/// pack records the MTA holding it.
+const NAMED_MAILBOX: &str = "scheduling@agents.example.com";
 
 /// A rooted vault, its owner, one booking page and the page's agent. The
 /// vault closes before its directory.
@@ -207,6 +221,14 @@ impl Fixture {
         live: bool,
     ) -> TestResult<EntityId> {
         let id = EntityId::now();
+        self.birth_address(id, address, live)?;
+        self.faces.insert(id, face);
+        Ok(id)
+    }
+
+    /// The page agent's dedicated email identity `id` at `address`, live
+    /// when `live`. The test gives it no face.
+    fn birth_address(&self, id: EntityId, address: &str, live: bool) -> TestResult {
         let requested = ChannelIdentity::requested(
             "email",
             address,
@@ -231,8 +253,23 @@ impl Fixture {
                 .map_err(at("fulfill the address"))?;
             assert_eq!(active.state(), ChannelIdentityState::Active);
         }
-        self.faces.insert(id, face);
+        Ok(())
+    }
+
+    /// A live derived native mailbox of the page's agent, `mail-<id>@` on
+    /// `domain`.
+    fn derived_mailbox(&self, domain: &str) -> TestResult<EntityId> {
+        let id = EntityId::now();
+        self.birth_address(id, &format!("mail-{}@{domain}", id.to_hex()), true)?;
         Ok(id)
+    }
+
+    /// The page's rung-2 offer as the server reads it: with the vault's own
+    /// native-mail faces on `domain`.
+    fn native_offer(&self, now: u64, domain: Option<&str>) -> TestResult<Rung2Offer> {
+        self.vault
+            .booking_rung2_offer_on_native_mail(self.page, now, domain)
+            .map_err(at("the rung-2 offer on native mail"))
     }
 
     /// The page's rung-2 offer, with the host's faces.
@@ -393,5 +430,87 @@ fn the_no_fit_answer_is_the_owners_line_with_no_control() -> TestResult {
         panic!("the answer is one voice line");
     };
     assert_eq!(voice.text, LensText::new(NO_FIT_LINE)?);
+    Ok(())
+}
+
+#[test]
+fn the_agents_native_mailbox_is_the_rung2_from_the_server_reads() -> TestResult {
+    let fixture = Fixture::open()?;
+    let named_only = EntityId::now();
+    fixture.birth_address(named_only, NAMED_MAILBOX, true)?;
+    let mailbox = fixture.derived_mailbox(NATIVE_DOMAIN)?;
+    fixture.publish(Some(front(Some(fixture.agent))))?;
+
+    assert_eq!(
+        fixture.native_offer(NOW, Some(NATIVE_DOMAIN))?,
+        Rung2Offer::Offered(Rung2Sender {
+            page_ref: fixture.page,
+            agent_ref: fixture.agent,
+            identity_ref: mailbox,
+            facet_ref: None,
+            face: ChannelIdentityFace::AgentNamedAddress,
+        }),
+        "the native mailbox, never {named_only:?}, which only its name calls scheduling"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_address_that_is_no_native_mailbox_on_the_managed_domain_has_no_face() -> TestResult {
+    let fixture = Fixture::open()?;
+    fixture.birth_address(EntityId::now(), NAMED_MAILBOX, true)?;
+    fixture.birth_address(EntityId::now(), SIDE_DOMAIN_ADDRESS, true)?;
+    fixture.derived_mailbox("other.example.net")?;
+    fixture.publish(Some(front(Some(fixture.agent))))?;
+    assert_eq!(
+        fixture.native_offer(NOW, Some(NATIVE_DOMAIN))?,
+        Rung2Offer::NotOffered(Rung2Unavailable::NoNamedAddress),
+        "a scheduling@ name with no mailbox record, a side-domain sender, and a native \
+         mailbox off the managed domain"
+    );
+
+    fixture.derived_mailbox(NATIVE_DOMAIN)?;
+    assert!(matches!(
+        fixture.native_offer(NOW, Some(NATIVE_DOMAIN))?,
+        Rung2Offer::Offered(_)
+    ));
+    assert_eq!(
+        fixture.native_offer(NOW, None)?,
+        Rung2Offer::NotOffered(Rung2Unavailable::NoNamedAddress),
+        "a host that sends no native mail offers no rung 2"
+    );
+    Ok(())
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_recorded_named_mailbox_is_the_rung2_from() -> TestResult {
+    let fixture = Fixture::open()?;
+    let named = EntityId::now();
+    fixture.birth_address(named, NAMED_MAILBOX, true)?;
+    fixture.publish(Some(front(Some(fixture.agent))))?;
+    assert_eq!(
+        fixture.native_offer(NOW, Some(NATIVE_DOMAIN))?,
+        Rung2Offer::NotOffered(Rung2Unavailable::NoNamedAddress),
+        "before the pack records the MTA holding it"
+    );
+
+    oneiron::test_doors::claim_facet_birth::record_native_mailbox(
+        &fixture.vault,
+        named,
+        NAMED_MAILBOX,
+        AT + 30,
+    )
+    .map_err(at("record the native mailbox"))?;
+    assert_eq!(
+        fixture.native_offer(NOW, Some(NATIVE_DOMAIN))?,
+        Rung2Offer::Offered(Rung2Sender {
+            page_ref: fixture.page,
+            agent_ref: fixture.agent,
+            identity_ref: named,
+            facet_ref: None,
+            face: ChannelIdentityFace::AgentNamedAddress,
+        })
+    );
     Ok(())
 }

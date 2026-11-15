@@ -72,6 +72,15 @@ pub enum BookingAntiAbuseRule {
         enabled: bool,
         expires_after_secs: NonZeroU64,
     },
+    /// Rung 2: a visitor's press that asks the page's agent to continue by
+    /// email. A per-minute cap per IP plus a page-wide day budget, so no
+    /// stream of visitors spends the agent's sending reputation. One address
+    /// per session and the cold-send hold are law, not thresholds, so no row
+    /// carries them.
+    Rung2SendRate {
+        per_minute_per_ip: NonZeroU32,
+        per_day_per_page: NonZeroU32,
+    },
 }
 
 /// One versioned rule row.
@@ -105,6 +114,11 @@ pub struct BookingAntiAbuseOwnerConfig {
     pub max_active_holds_per_session: u8,
     pub hold_per_minute_per_ip: NonZeroU32,
     pub tentative_confirm_ttl_secs: NonZeroU64,
+    /// The rung-2 send thresholds come as a pair: with both set the seed
+    /// stack carries a [`BookingAntiAbuseRule::Rung2SendRate`] row; with
+    /// neither it carries none, and the rung-2 guard has no bucket to spend.
+    pub rung2_send_per_minute_per_ip: Option<NonZeroU32>,
+    pub rung2_send_per_day_per_page: Option<NonZeroU32>,
 }
 
 /// A logged owner stamp: `stamp_ref` names the logged owner action, and the
@@ -243,7 +257,8 @@ pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingErr
         | BookingAntiAbuseRule::EmailPromptToCorrect { .. }
         | BookingAntiAbuseRule::QuarantineBorderline
         | BookingAntiAbuseRule::EmailOtpReserve { .. }
-        | BookingAntiAbuseRule::TentativeConfirmLinkReserve { .. } => {}
+        | BookingAntiAbuseRule::TentativeConfirmLinkReserve { .. }
+        | BookingAntiAbuseRule::Rung2SendRate { .. } => {}
     }
     Ok(())
 }
@@ -267,6 +282,7 @@ pub fn booking_rule_variant_tag(rule: &BookingAntiAbuseRule) -> &'static str {
         BookingAntiAbuseRule::TentativeConfirmLinkReserve { .. } => {
             "tentative-confirm-link-reserve"
         }
+        BookingAntiAbuseRule::Rung2SendRate { .. } => "rung2-send-rate",
     }
 }
 
@@ -292,7 +308,8 @@ pub fn booking_rule_row_id(scope: &BookingRuleScope, rule: &BookingAntiAbuseRule
 /// Builds the full SHIP/RESERVE seed stack for one scope from owner-chosen
 /// thresholds. Every control arrives as a constructor argument; the module
 /// ships no threshold of its own. The reserve rows start with
-/// `enabled = false`.
+/// `enabled = false`, and the rung-2 send row is seeded only when the owner
+/// chose both of its thresholds.
 ///
 /// The returned rows are version 1 candidates, not yet stored; activation
 /// goes through [`apply_rule_amendment`] with expected version 0 like every
@@ -301,7 +318,7 @@ pub fn booking_rule_row_id(scope: &BookingRuleScope, rule: &BookingAntiAbuseRule
 /// # Errors
 ///
 /// [`BookingError::InvalidConstraint`] when any owner-chosen value falls
-/// outside the ratified ranges.
+/// outside the ratified ranges, or only one rung-2 send threshold is set.
 pub fn default_booking_anti_abuse_rows(
     page_ref: EntityId,
     event_type: Option<EventTypeKey>,
@@ -310,6 +327,23 @@ pub fn default_booking_anti_abuse_rows(
     let scope = BookingRuleScope {
         page_ref,
         event_type,
+    };
+    let rung2_send = match (
+        owner_config.rung2_send_per_minute_per_ip,
+        owner_config.rung2_send_per_day_per_page,
+    ) {
+        (Some(per_minute_per_ip), Some(per_day_per_page)) => {
+            Some(BookingAntiAbuseRule::Rung2SendRate {
+                per_minute_per_ip,
+                per_day_per_page,
+            })
+        }
+        (None, None) => None,
+        _ => {
+            return Err(refused(
+                "the rung-2 send thresholds come as a pair: set both or neither",
+            ));
+        }
     };
     let rules = [
         BookingAntiAbuseRule::RequiredIntake {
@@ -346,8 +380,8 @@ pub fn default_booking_anti_abuse_rows(
             expires_after_secs: owner_config.tentative_confirm_ttl_secs,
         },
     ];
-    let mut rows = Vec::with_capacity(rules.len());
-    for rule in rules {
+    let mut rows = Vec::with_capacity(rules.len() + 1);
+    for rule in rules.into_iter().chain(rung2_send) {
         let row = BookingAntiAbuseRuleRow {
             row_id: booking_rule_row_id(&scope, &rule),
             scope: scope.clone(),

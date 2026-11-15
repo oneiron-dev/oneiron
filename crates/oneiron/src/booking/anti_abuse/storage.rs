@@ -75,6 +75,9 @@ pub(super) const SESSION_HASH_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.sessi
 /// `task_verb.rs`'s node-local window counter.
 pub(super) const RATE_WINDOW_SECS: u64 = 60;
 
+/// The fixed window of the page-wide rung-2 send budget: one UTC day.
+pub(super) const RUNG2_PAGE_WINDOW_SECS: u64 = 86_400;
+
 /// Row-id shape: bounded, and tame enough to print in owner notices. One
 /// full page hex plus one full event-key digest must always fit.
 pub(super) const ROW_ID_MAX_LEN: usize = 160;

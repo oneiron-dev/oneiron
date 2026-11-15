@@ -12,7 +12,11 @@
 //!
 //! The face of each identity is the host's ([`ChannelIdentityFaceClassifier`]),
 //! as at every other selection: a face is a role, and no stored fact states
-//! it.
+//! it. Rung 2 sends native mail only, so the server's classifier is
+//! [`Vault::booking_rung2_offer_on_native_mail`]: the agent's named address is
+//! a dedicated address that the vault proves is a native mailbox on the host's
+//! managed domain, and every other identity has no face for rung 2. No face
+//! is ever read from a display name or a local part.
 //!
 //! The first send (INBOX-RESIDUE PR-3b-2) is the page agent's native-mail
 //! `send` to the visitor, from that identity. The vault keeps it before it is
@@ -28,9 +32,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::channel_identity::{
-    ChannelIdentityFaceClassifier, channel_identity_selection_candidates_in_txn,
+    ChannelIdentityFaceClassifier, ChannelIdentityFacts, ChannelIdentityShape,
+    channel_identity_selection_candidates_in_txn,
 };
-use crate::channel_identity_provider::native_mail::{NativeMailAdapter, NativeMailHost};
+use crate::channel_identity_provider::native_mail::{
+    NativeMailAdapter, NativeMailHost, is_native_mailbox_on_domain_in_txn,
+};
 use crate::channel_identity_provider::stalwart::NativeMailMessage;
 use crate::channel_identity_selection::{
     ChannelIdentityFace, ChannelIdentitySelectionError, ChannelIdentitySelectionQuery,
@@ -43,6 +50,7 @@ use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
     OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
+use crate::store::Store;
 use crate::write_envelope::thread_claim::CanonicalMessageId;
 use crate::{EntityId, Error, Result, TimeRange, Vault, WriteActor};
 
@@ -188,7 +196,41 @@ impl Vault {
         classify_face: &mut ChannelIdentityFaceClassifier<'_>,
     ) -> Result<Rung2Offer> {
         let txn = self.store.env.read_txn()?;
-        let Some(publication) = load_public_booking_page_in_txn(self, &txn, page_ref, now)? else {
+        self.booking_rung2_offer_in_txn(&txn, page_ref, now, classify_face)
+    }
+
+    /// [`Self::booking_rung2_offer`] with the faces rung 2 can send from:
+    /// the page agent's dedicated address is its named address when the
+    /// vault proves it a native mailbox on `native_mail_domain`, the host's
+    /// managed domain; every other identity has no face here, so no other
+    /// face is ever offered. With no managed domain (`None`) the host sends
+    /// no native mail, and no page offers rung 2.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::booking_rung2_offer`].
+    pub fn booking_rung2_offer_on_native_mail(
+        &self,
+        page_ref: EntityId,
+        now: u64,
+        native_mail_domain: Option<&str>,
+    ) -> Result<Rung2Offer> {
+        let txn = self.store.env.read_txn()?;
+        let store = &self.store;
+        let mut classify_face = |identity_ref: &EntityId, facts: &ChannelIdentityFacts| {
+            native_named_address_face_in_txn(store, &txn, native_mail_domain, identity_ref, facts)
+        };
+        self.booking_rung2_offer_in_txn(&txn, page_ref, now, &mut classify_face)
+    }
+
+    fn booking_rung2_offer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        page_ref: EntityId,
+        now: u64,
+        classify_face: &mut ChannelIdentityFaceClassifier<'_>,
+    ) -> Result<Rung2Offer> {
+        let Some(publication) = load_public_booking_page_in_txn(self, txn, page_ref, now)? else {
             return Ok(Rung2Offer::NotOffered(Rung2Unavailable::PageNotLive));
         };
         let Some(front) = publication.constraint_front else {
@@ -199,13 +241,13 @@ impl Vault {
         };
         let candidates = channel_identity_selection_candidates_in_txn(
             &self.store,
-            &txn,
+            txn,
             BOOKING_RUNG2_CHANNEL,
             &agent_ref,
             classify_face,
         )?;
         let decision =
-            channel_identity_selection_rules_in_txn(&self.store, &txn).and_then(|rules| {
+            channel_identity_selection_rules_in_txn(&self.store, txn).and_then(|rules| {
                 resolve_channel_identity_selection(
                     &rules,
                     ChannelIdentitySelectionQuery {
@@ -426,6 +468,29 @@ impl Vault {
         }
         Ok(Some(kept))
     }
+}
+
+/// The rung-2 face of one of the page agent's identities, from stored
+/// evidence alone: a dedicated address that is a native mailbox on the
+/// host's managed domain is the agent's named address; any other identity
+/// has none, since rung 2 cannot send from it.
+fn native_named_address_face_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    native_mail_domain: Option<&str>,
+    identity_ref: &EntityId,
+    facts: &ChannelIdentityFacts,
+) -> Result<Option<ChannelIdentityFace>> {
+    let Some(domain) = native_mail_domain else {
+        return Ok(None);
+    };
+    if !matches!(facts.shape, ChannelIdentityShape::DedicatedAddress) {
+        return Ok(None);
+    }
+    Ok(
+        is_native_mailbox_on_domain_in_txn(store, txn, *identity_ref, domain)?
+            .then_some(ChannelIdentityFace::AgentNamedAddress),
+    )
 }
 
 /// The BLOB artifact a rung-2 first send going out under `message_id` is

@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::storage::{
     CACHE_BODY_MAX_LEN, CACHE_KEY_DOMAIN, CACHE_KEY_TAG, QUARANTINE_RATE_DOMAIN, RATE_KEY_DOMAIN,
-    RATE_KEY_TAG, RATE_WINDOW_SECS, decode_row, encode_row, engine_failure, refused,
-    to_codec_error,
+    RATE_KEY_TAG, RATE_WINDOW_SECS, RUNG2_PAGE_WINDOW_SECS, decode_row, encode_row, engine_failure,
+    refused, to_codec_error,
 };
 use crate::booking::lifecycle::{booking_writer, digest_with};
 use crate::booking::{BookingError, EventTypeKey};
@@ -67,7 +67,7 @@ pub enum BookingRateDecision {
     Exceeded { retry_after_secs: u64 },
 }
 
-/// One node-local window counter, mirroring `task_verb.rs`: key per
+/// One node-local minute-window counter, mirroring `task_verb.rs`: key per
 /// (purpose, material), value `{window, count}`, overwritten each window.
 pub(super) fn consume_rate_token_in_txn(
     vault: &Vault,
@@ -77,7 +77,29 @@ pub(super) fn consume_rate_token_in_txn(
     per_minute: NonZeroU32,
     now_secs: u64,
 ) -> Result<BookingRateDecision, BookingError> {
-    let window = now_secs / RATE_WINDOW_SECS;
+    consume_window_token_in_txn(
+        vault,
+        wtxn,
+        purpose,
+        material,
+        per_minute,
+        RATE_WINDOW_SECS,
+        now_secs,
+    )
+}
+
+/// One node-local counter over fixed windows of `window_secs`. The purpose
+/// names the window length, so no two lengths share a key.
+fn consume_window_token_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    purpose: &[u8],
+    material: &[u8],
+    per_window: NonZeroU32,
+    window_secs: u64,
+    now_secs: u64,
+) -> Result<BookingRateDecision, BookingError> {
+    let window = now_secs / window_secs;
     let key = (*RATE_KEY_TAG, rate_digest(purpose, material));
     let count = match RATE
         .get(&vault.store, &*wtxn, &key)
@@ -93,9 +115,9 @@ pub(super) fn consume_rate_token_in_txn(
         }
         None => 0,
     };
-    if count >= u64::from(per_minute.get()) {
+    if count >= u64::from(per_window.get()) {
         return Ok(BookingRateDecision::Exceeded {
-            retry_after_secs: RATE_WINDOW_SECS - now_secs % RATE_WINDOW_SECS,
+            retry_after_secs: window_secs - now_secs % window_secs,
         });
     }
     let mut value = [0_u8; 16];
@@ -186,6 +208,48 @@ pub fn observe_hold_request(
     now_secs: u64,
 ) -> Result<BookingRateDecision, BookingError> {
     consume_rate_token(vault, b"hold", ip_hash, per_minute_per_ip, now_secs)
+}
+
+/// Consumes one rung-2 send token for this IP: a visitor's press that asks
+/// the page's agent to continue by email.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn observe_rung2_send_request(
+    vault: &Vault,
+    ip_hash: &[u8; 32],
+    per_minute_per_ip: NonZeroU32,
+    now_secs: u64,
+) -> Result<BookingRateDecision, BookingError> {
+    consume_rate_token(vault, b"rung2-send", ip_hash, per_minute_per_ip, now_secs)
+}
+
+/// Consumes one token of the page's rung-2 send budget for the current UTC
+/// day. The budget is page-wide and keyed by no caller material, so rotating
+/// IPs, addresses or sessions opens no fresh budget: it bounds how much of
+/// the agent's sending reputation one page can spend in a day.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn observe_rung2_page_send(
+    vault: &Vault,
+    page_ref: &EntityId,
+    per_day_per_page: NonZeroU32,
+    now_secs: u64,
+) -> Result<BookingRateDecision, BookingError> {
+    booking_writer(vault, |wtxn| {
+        consume_window_token_in_txn(
+            vault,
+            wtxn,
+            b"rung2-send-page-day",
+            page_ref.as_bytes(),
+            per_day_per_page,
+            RUNG2_PAGE_WINDOW_SECS,
+            now_secs,
+        )
+    })
 }
 
 // -------------------------------------------------------------------------

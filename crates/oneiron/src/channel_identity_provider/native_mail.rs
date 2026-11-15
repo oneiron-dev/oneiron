@@ -515,6 +515,23 @@ pub(crate) fn native_mail_actor_may_send_in_txn(
     )
 }
 
+/// Whether `identity_ref` is a native-mail identity whose mailbox is on the
+/// managed `domain`: a derived `mail-<id>` address there, or a named one the
+/// pack recorded the MTA holding. A name alone proves nothing: a named
+/// address with no mailbox record is no native mailbox.
+pub(crate) fn is_native_mailbox_on_domain_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: EntityId,
+    domain: &str,
+) -> Result<bool> {
+    Ok(
+        native_mail_identity_in_txn(store, txn, identity_ref)?.is_some_and(|identity| {
+            mailbox_local_part(domain, identity_ref, &identity.facts.address_or_handle).is_ok()
+        }),
+    )
+}
+
 /// Structural sender binding survives Released/Quarantine for terminal replay,
 /// but never permits another effect without a fresh may_send check.
 pub(crate) fn is_native_mail_identity_in_txn(

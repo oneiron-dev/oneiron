@@ -1089,6 +1089,14 @@ fn hash_booking_anti_abuse_rows(hasher: &mut Sha256, rows: &[BookingAntiAbuseRul
                 hash_bool(hasher, *enabled);
                 hash_u64(hasher, expires_after_secs.get());
             }
+            BookingAntiAbuseRule::Rung2SendRate {
+                per_minute_per_ip,
+                per_day_per_page,
+            } => {
+                hash_str(hasher, "rung2-send-rate");
+                hash_u64(hasher, u64::from(per_minute_per_ip.get()));
+                hash_u64(hasher, u64::from(per_day_per_page.get()));
+            }
         }
         hash_u64(hasher, row.version);
         hash_u64(hasher, row.amended_at);
