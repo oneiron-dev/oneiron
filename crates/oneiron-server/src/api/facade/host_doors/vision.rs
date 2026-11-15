@@ -47,6 +47,12 @@ pub(crate) async fn ai_ask_image(
 /// codes with (`api/ai/vision.rs`, and its provider failures in
 /// `api/ai/media.rs` `failure`), so the facade answers the door's refusal
 /// under the same code with the same status.
+///
+/// The facade asks its engine arms first (`facade/errors.rs`), and they also
+/// name six of these codes: `invalid_request`, `budget_denied`,
+/// `rate_limited` and `quota_spent` with this table's status, and
+/// `kept_on_device` and `world_route_not_admitted` with 503, which the
+/// facade answers in place of this table's 409.
 pub(crate) fn ask_image_refusal_status(code: &str) -> Option<StatusCode> {
     Some(match code {
         "empty_question"
