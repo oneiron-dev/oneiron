@@ -18,10 +18,13 @@
 //! its roster head is live, the result's signer must be the live, answered
 //! roster head's key, the pick names a roster-linked machine, and the
 //! names-the-key gates read the roster head or an accepted roster revision.
+//! The residence directive doors read the result judge's key too, so no
+//! directive is issued to, or run on, a machine whose result never stands.
 //!
 //! Each test serves a self-host vault that pins no root, so this install
-//! stands under the roster's chain alone. Each test's main assertion is the
-//! head's verdict: it fails on the base and passes on the head.
+//! stands under the roster's chain alone; T5 alone pins the owner's root.
+//! Each test's main assertion is the head's verdict: it fails on the base
+//! and passes on the head.
 
 #![cfg(oneiron_test_support)]
 
@@ -536,8 +539,8 @@ fn a_strangers_removal_mark_of_the_holding_machine_refuses_no_owner_key_enrollme
 /// Machine X has no roster revision; only the stranger's anchor marks X
 /// `Owned(Yours)` under the held key K. The directive to X is hand-signed
 /// by an owner key the door enrolled (the residence door would refuse X:
-/// `issue_residence_directive_as` needs `machine_proof_key`, which reads
-/// the trust chains, and the host alone signs directives). The directive
+/// `issue_residence_directive_as` needs X's live, answered roster head,
+/// and the host alone signs directives). The directive
 /// names the enrollment and the mark as parents, so its parent state holds
 /// the key on the roster (the mark hangs off an arbitrary valid row). The
 /// result, X's answer naming the directive's row as a parent, is
@@ -909,4 +912,65 @@ fn a_world_edit_under_the_roster_named_key_stands_with_effect() {
         Some(&settings),
         "the live edit states the owner's settings"
     );
+}
+
+/// T5 (the residence directive doors; Engine RULING 07:19,
+/// ANCHOR-JUDGES-RESIDENCE-DIRECTIVE-DOORS = A): the issue door refuses a
+/// directive to a machine only this install's pin calls "yours".
+///
+/// The owner prepares and activates a root on this install: its anchor marks
+/// this install `Owned(Yours)` and the install pins that root, while the
+/// install's roster head stays `Unanswered` (a serving install's role). So
+/// the install is mine under its pin, and its roster head names no residence
+/// signer: the result judge refuses every result it signs (T2).
+///
+/// Red pin (no door change): `issue_residence_directive_as` checks
+/// `machine_proof_key`, which reads the pinned trusted profile first
+/// (`machine_profile/mod.rs` `proving_profile`), so it issues a directive
+/// whose result never stands. Head: the door reads `residence_signer_key`,
+/// the live, answered roster head's key the result judge reads, and refuses
+/// with its own message. No elected home is designated, so the door's home
+/// check does not refuse it.
+#[test]
+fn the_residence_directive_door_refuses_a_machine_only_the_pin_calls_yours() {
+    let served = ServedVault::self_host();
+    let prepared = served
+        .vault
+        .prepare_owner_root(&served.owner)
+        .expect("guard: the owner's root is prepared");
+    served
+        .vault
+        .activate_owner_root(&served.owner, prepared, &BTreeSet::new())
+        .expect("guard: the owner's root is activated and pinned");
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.trusted_machine(served.carrier).is_some(),
+        "guard: this install is mine under its pin"
+    );
+    assert!(
+        fold.machine(served.carrier)
+            .and_then(|folded| folded.roster.as_ref())
+            .is_some_and(|roster| roster.is_live() && !roster.profile.role.answered()),
+        "guard: this install's roster head is live and unanswered"
+    );
+    drop(fold);
+
+    let issued = served.vault.issue_residence_directive_as(
+        &served.owner,
+        &served.issuer,
+        EntityId::from_bytes([0xD5; 16]).expect("an id"),
+        served.carrier,
+        ResidenceAct::Index,
+    );
+    match issued {
+        Ok(state) => {
+            panic!("the door issued a directive to a machine whose results never stand: {state:?}")
+        }
+        Err(error) => assert!(
+            error
+                .to_string()
+                .contains("names a machine the roster links and the owner answered"),
+            "the door refused it for another reason: {error}"
+        ),
+    }
 }
