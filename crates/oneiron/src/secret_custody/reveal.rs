@@ -71,8 +71,10 @@ pub use self::types::{
 };
 
 /// How long a pending reveal waits for its answer and its collection, in
-/// seconds. Canon names no window; a widen proposal's one-hour cap is the
-/// house ceiling for an ask that waits on the owner.
+/// seconds, until the owner sets `secrets.reveal.ask_window_secs`
+/// ([`setting_keys::REVEAL_ASK_WINDOW`](super::setting_keys::REVEAL_ASK_WINDOW)): its default.
+/// Canon names no window; a widen proposal's one-hour cap is the house default
+/// for an ask that waits on the owner.
 pub const REVEAL_ASK_TTL_SECS: u64 = 3600;
 
 #[doc(hidden)]

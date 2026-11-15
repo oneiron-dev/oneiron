@@ -43,8 +43,8 @@
 
 use super::agent::{file_ask_in_txn, standing};
 use super::{
-    FileSight, READER_AGENT, REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAsker,
-    RevealAuthority, RevealGrantScope, RevealRow, SecretRevealState, checked_text, reveal_class,
+    FileSight, READER_AGENT, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAsker, RevealAuthority,
+    RevealGrantScope, RevealRow, SecretRevealState, checked_text, reveal_class,
 };
 use crate::consent::{
     ApproveOnceAuthorization, StandingConsentGrant, approve_once_authorization_in_txn,
@@ -52,6 +52,7 @@ use crate::consent::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::secret_custody::setting_keys::reveal_ask_window_in_txn;
 use crate::secret_custody::{
     CustodyClass, SecretCustodyFloor, SecretCustodyStatus, SecretSight, masked_file_in_txn,
     read_secret_custody_admission_in_txn,
@@ -328,11 +329,12 @@ impl Vault {
             return Ok((SecretSight::Masked, Vec::new()));
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let window = reveal_ask_window_in_txn(self, txn)?;
         let grants = load_active_standing_grants(&self.store, txn)?;
         let mut ready = Vec::with_capacity(read.groups.len());
         let mut asks = Vec::new();
         for group in &read.groups {
-            let ask = read.ask_in_txn(self, txn, group, now)?;
+            let ask = read.ask_in_txn(self, txn, group, now, window)?;
             let plan = match read.covering_grant(group, &grants)? {
                 Some((scope, grant_ref)) => GroupPlan::Ready(Ready::Covered(scope, grant_ref)),
                 None => asked_plan_in_txn(self, txn, &ask, now)?,
@@ -345,7 +347,7 @@ impl Vault {
         }
         if ready.len() < read.groups.len() {
             for (group, ask) in asks {
-                let mut asked = read.row(group, now, SecretRevealState::Asked);
+                let mut asked = read.row(group, now, window, SecretRevealState::Asked);
                 file_ask_in_txn(self, txn, &ask, &mut asked, now)?;
                 REVEALS.put(&self.store, txn, &ask, &asked)?;
             }
@@ -357,7 +359,7 @@ impl Vault {
                 Ready::Covered(scope, grant_ref) => {
                     // Each read under a grant is its own receipt.
                     let reveal = self.store.clock.entity_id()?;
-                    let mut row = read.row(group, now, SecretRevealState::Covered);
+                    let mut row = read.row(group, now, window, SecretRevealState::Covered);
                     let digest = row.ask_digest(&reveal);
                     row.once_digest = Some(*digest.as_bytes());
                     let used = self.record_standing_grant_use_in_txn(txn, &grant_ref, digest)?;
@@ -391,6 +393,7 @@ impl KeyRead<'_> {
         txn: &heed::RoTxn<'_>,
         group: &ReadGroup,
         now: u64,
+        window: u64,
     ) -> Result<EntityId> {
         let base = file_ask_id(
             self.asker,
@@ -398,7 +401,7 @@ impl KeyRead<'_> {
             &self.hash,
             self.per_class.then_some(group.class),
         )?;
-        let current = self.row(group, now, SecretRevealState::Asked);
+        let current = self.row(group, now, window, SecretRevealState::Asked);
         open_ask_id_in_txn(vault, txn, base, &current, now)
     }
 
@@ -428,8 +431,9 @@ impl KeyRead<'_> {
         }
     }
 
-    /// The reveal row `group` of this read writes, in `state`, at `now`.
-    fn row(&self, group: &ReadGroup, now: u64, state: SecretRevealState) -> RevealRow {
+    /// The reveal row `group` of this read writes, in `state`, at `now`, open for `window`
+    /// seconds.
+    fn row(&self, group: &ReadGroup, now: u64, window: u64, state: SecretRevealState) -> RevealRow {
         RevealRow {
             reader: READER_AGENT.to_owned(),
             actor: Some(self.asker.agent),
@@ -443,7 +447,7 @@ impl KeyRead<'_> {
             project: self.asker.project,
             run: self.asker.run.clone(),
             created_at: now,
-            expires_at: now.saturating_add(REVEAL_ASK_TTL_SECS),
+            expires_at: now.saturating_add(window),
             state,
             once_digest: None,
             asked_decision: None,
