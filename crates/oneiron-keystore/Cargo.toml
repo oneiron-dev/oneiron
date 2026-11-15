@@ -43,8 +43,9 @@ windows-future = "0.3"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_System_RemoteDesktop", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
-# The process-memory adapter, the scripted presence prompt and the manual
-# presence clocks, for this crate's tests and its dependents' tests.
+# The process-memory adapter (slots and sealed bytes), the scripted presence
+# prompt and device PIN, and the manual presence clocks, for this crate's
+# tests and its dependents' tests.
 test-keystore = []
 
 [dev-dependencies]
