@@ -23,24 +23,32 @@
 //! registration of a hosted node, and the node's own answer, home pick or
 //! removal of another machine; or the root's registration of the owner's
 //! laptop and the laptop's pairing of a new machine.
+//!
+//! The door tests at the end run a real vault whose serving install carries
+//! the owner's acts: an answer it cannot prove is stored and held, and the
+//! owner's answer on an install that holds his key stands and ends the ask.
 
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityAttestation, AuthorityEntryHash,
-    AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier,
-    AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER,
-    authority_entry_hash, authority_transcript, fold_authority_log, fold_authority_log_for_posture,
-    genesis_vault_id, machine_profile_proof_transcript,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
+    AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp,
+    AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
+    HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+    MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
+    OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash,
+    authority_transcript, fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
+    machine_profile_proof_transcript,
 };
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::conversation_training_fold::leaves_out;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
-use oneiron::{EntityId, HostingPrivacyPosture};
+use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::{
     ConversationTrainingSet, ConversationTrainingVaultSet, HomeNodePick,
     conversation_training_vault_target, home_pick_target, machine_answer_revision,
@@ -1364,5 +1372,133 @@ fn a_training_choice_for_another_person_is_still_refused() {
         fold.issues.len() > issues_before,
         "a choice for another person is an invalid entry: {:?}",
         fold.issues
+    );
+}
+
+/// One vault as a managed host serves it: the Hosted posture, rooted under
+/// the test host (a custodial root, so the roster holds no key that proves
+/// for the owner), this install profiled `Unanswered`, and the embedded owner
+/// authenticated. The vault drops first.
+struct ServedVault {
+    vault: Vault,
+    issuer: HostSlipIssuer,
+    owner: AuthenticatedOwner,
+    _dir: tempfile::TempDir,
+}
+
+impl ServedVault {
+    fn hosted() -> Self {
+        let dir = tempfile::tempdir().expect("vault directory");
+        let mut config = VaultConfig::device();
+        config.privacy.posture = HostingPrivacyPosture::Hosted;
+        let vault = Vault::open(dir.path(), config).expect("hosted vault");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's machine profile under the host root");
+        let (_, owner) = embedded_owner(&vault).expect("authenticated embedded owner");
+        Self {
+            vault,
+            issuer,
+            owner,
+            _dir: dir,
+        }
+    }
+
+    /// This install's MACHINE row.
+    fn install(&self) -> EntityId {
+        self.vault
+            .local_machine()
+            .expect("read this install")
+            .expect("this install is profiled")
+            .id
+    }
+
+    /// Whether the fold trusts this install as the owner's machine.
+    fn install_is_mine(&self) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("authority fold")
+            .trusted_machine(self.install())
+            .is_some()
+    }
+
+    /// The owner enrols this install's owner signing key: the roster then
+    /// holds a key that proves for him, and this handle holds it.
+    fn enrol_owner_key(&self) {
+        self.vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall),
+                &self.issuer,
+            )
+            .expect("the owner enrols this install's owner signing key");
+    }
+
+    /// The owner answers through this install that it is his.
+    fn answer_this_install_is_mine(&self) {
+        self.vault
+            .set_machine_role(
+                &self.owner,
+                ActSurface::ThisInstall,
+                self.install(),
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
+            )
+            .expect("the answer door stores the owner's answer");
+    }
+
+    /// The entries of the answers about this install that still ask.
+    fn asking(&self) -> BTreeSet<AuthorityEntryHash> {
+        asking(
+            &self.vault.authority_fold().expect("authority fold"),
+            self.install(),
+        )
+    }
+}
+
+/// The answer door on an install that holds no owner key: the owner's
+/// "yours" is stored and held, so an owner device can ask him. Before the
+/// door reported a held answer it refused here and stored nothing.
+#[test]
+fn a_yours_answer_this_install_cannot_prove_is_stored_and_held() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    assert_eq!(
+        served.asking().len(),
+        1,
+        "the answer is stored and asks the owner"
+    );
+    assert!(
+        !served.install_is_mine(),
+        "a held answer makes no machine the owner's"
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert_eq!(
+        fold.machine(served.install())
+            .and_then(|machine| machine.roster.as_ref())
+            .map(|head| head.profile.role),
+        Some(MachineRole::Unanswered),
+        "the machine stands as it did"
+    );
+}
+
+/// The confirm is the same door on an install that holds the owner's key:
+/// his answer there is proven, stands, and ends the ask of the held one.
+#[test]
+fn the_owners_answer_on_an_install_that_holds_his_key_stands_and_ends_the_ask() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    assert_eq!(served.asking().len(), 1, "guard: the first answer is held");
+    served.enrol_owner_key();
+    served.answer_this_install_is_mine();
+    assert!(
+        served.install_is_mine(),
+        "the proven answer makes it his machine"
+    );
+    assert_eq!(
+        served.asking(),
+        BTreeSet::new(),
+        "the owner's answer ends the ask"
     );
 }
