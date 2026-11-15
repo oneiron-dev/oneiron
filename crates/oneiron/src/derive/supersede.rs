@@ -149,7 +149,7 @@ fn refuse(
 /// The body of the claim `id` as `read` serves it in `txn`; `None` for a row
 /// that is not a claim, is gone, or lies outside that read. A read whose
 /// credential no longer stands serves no row.
-fn claim_body_in(
+pub(super) fn claim_body_in(
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,

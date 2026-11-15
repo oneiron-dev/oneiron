@@ -53,6 +53,14 @@ pub const ARCHIVE_SOURCE_WITHHELD: &str = "gate.deny.derive.archive_source_withh
 /// was observed.
 pub const ARCHIVE_SOURCE_MOVED: &str = "gate.deny.derive.archive_source_moved";
 
+/// The refusal of an archive that would close a claim restricting
+/// someone's access (`federation::claim_removal_widens_in`: a delivery
+/// window, an opt-out, a do-not-contact, a held campaign member, ...). A
+/// derivation is no person's act, and lifting a restriction is a widening,
+/// which asks a person (RULING RESTRICTION-CLOSE-BY-DERIVE-ARCHIVE-TOPOLOGY;
+/// canon #widen-world-floor).
+pub const ARCHIVE_RESTRICTION: &str = "gate.deny.derive.archive_restriction";
+
 /// The reason a landed archive's receipt names.
 const ARCHIVE_ALLOWED: &str = "gate.allow.derive.archive";
 
@@ -101,6 +109,9 @@ pub(super) fn stage_in_txn(
     let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
         return refuse(vault, txn, context, claim, ARCHIVE_NOT_A_CLAIM);
     };
+    if crate::federation::claim_removal_widens_in(vault, txn, &body)? {
+        return refuse(vault, txn, context, claim, ARCHIVE_RESTRICTION);
+    }
     let now_ms = context.now.saturating_mul(1_000);
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
     let checked = recheck_archive_observations_in_txn(
