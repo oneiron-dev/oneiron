@@ -462,7 +462,8 @@ pub(crate) enum SettlementSettler {
     /// The owner or a person holder on their own slip: closes anything.
     Person,
     /// The vault's Dreamer under standing review: never closes user-stated truth; closes a
-    /// restricting member only with the owner's `dreamer.lifts_restrictions` key on.
+    /// restricting member only with the owner's `dreamer.lifts_restrictions` key on, and only
+    /// one the owner's revert stands again as it was.
     Dreamer,
     /// Anyone else (agent holder, derive batch, auto close): closes neither.
     Delegate,
@@ -498,7 +499,10 @@ impl SettlementSettler {
 /// refused the same way unless the owner's
 /// [`DREAMER_LIFTS_RESTRICTIONS`](super::setting_keys::DREAMER_LIFTS_RESTRICTIONS)
 /// key is on; then the answer receipts the lift in its `restriction_lift` entry
-/// (RULING DREAMER-SETTLE-KEY-SCOPE = B). `close_as`
+/// (RULING DREAMER-SETTLE-KEY-SCOPE = B). Even then it never lifts a member the
+/// owner's revert would not stand again as it was (an owner-approved
+/// Dreamer-born MACHINE member, another machine's member; RULING
+/// DREAMER-LIFT-REVERT = A): that conflict waits for the owner. `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
 /// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
@@ -595,6 +599,12 @@ pub(crate) fn apply_settlement_in_txn(
                 if !dreamer_may_lift {
                     return Err(invalid_consolidation(
                         "only a person supersedes a claim that restricts someone's access",
+                    ));
+                }
+                // Every lift the key allows stays revertible (RULING DREAMER-LIFT-REVERT = A).
+                if !revert_stands_again_as_it_was_in_txn(vault, txn, &body)? {
+                    return Err(invalid_consolidation(
+                        "the owner's revert would not stand this restriction again as it was",
                     ));
                 }
                 lifted.push(body.predicate);
@@ -943,6 +953,32 @@ fn superseded_elsewhere_in_txn(
     }
     count.finish(vault);
     Ok(standing)
+}
+
+/// Whether the owner's revert of a settlement that superseded `body` stands
+/// it again as it was ([`restore_member_in_txn`]): the Dreamer lifts a
+/// restriction under the owner's key only then (RULING DREAMER-LIFT-REVERT
+/// = A). Any claim but a MACHINE one stands again in place. A Dreamer-born
+/// MACHINE claim stands again as the Dreamer's copy, which keeps a Proposed
+/// or an Auto approval but lands every other one as Auto (a generated Auto
+/// delivery window holds nothing), so an owner-approved one waits for the
+/// owner. Another machine's claim never reopens: the revert leaves it closed.
+fn revert_stands_again_as_it_was_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Result<bool> {
+    if !crate::authority::machine_claim_needs_history(&vault.store, txn, body)? {
+        return Ok(true);
+    }
+    if !matches!(
+        body.approval,
+        ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Auto
+    ) {
+        return Ok(false);
+    }
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
+    Ok(crate::memory::claim_author(body) == Some(dreamer))
 }
 
 /// Stands a Dreamer-born MACHINE member `loser` again as the Dreamer's fresh
