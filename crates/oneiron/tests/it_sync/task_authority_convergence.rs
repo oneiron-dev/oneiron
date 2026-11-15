@@ -21,6 +21,12 @@
 //!   fact proves nothing however its body decorates itself, and two peers that
 //!   minted conflicting proofs refuse rather than pick one.
 //!
+//! Since #8610 (Fable pass 28 R5) a fact counts on another install only when its carrier's
+//! signature proves it, and an unrooted vault writes its facts unsigned: they count on the
+//! install that wrote them only (RULING TASK-FACT-RULING-CROSSED-OPTION-D = B). These vaults
+//! are unrooted, so the two cases that read a fact another node wrote are ignored until the
+//! pair is rooted and admits each other's machine (FIX IT-SYNC-TASK-AUTHORITY-ROOTED-PAIR).
+//!
 //! Window choice: the two fail-closed cases write only through the window doc
 //! and stay in the harness's fixed [`WINDOW`]. The two verb-driven cases
 //! cannot — `cancel` and `tasks.update` stamp their facts with the wall
@@ -424,6 +430,7 @@ impl TaskPair {
 /// does, and the cancel is a real effect rather than a proposal parked for
 /// someone else to approve.
 #[test]
+#[ignore = "stale since #8610: node A's Owner fact is unsigned in an unrooted vault and counts on node A only (RULING TASK-FACT-RULING-CROSSED-OPTION-D = B); rework on a rooted pair (FIX IT-SYNC-TASK-AUTHORITY-ROOTED-PAIR)"]
 fn owner_fact_replicates_and_peer_owner_cancels_directly() {
     let pair = TaskPair::open();
 
@@ -571,6 +578,7 @@ fn zero_owner_fails_closed() {
 /// refuses on BOTH of them. Picking either owner would hand direct-cancel
 /// authority over someone's task to whichever row happened to arrive.
 #[test]
+#[ignore = "stale since #8610: an unsigned Owner fact that reached a node through the window counts on neither node, so no fork forms (RULING TASK-FACT-RULING-CROSSED-OPTION-D = B; FIX IT-SYNC-TASK-AUTHORITY-ROOTED-PAIR)"]
 fn owner_fork_fails_closed() {
     let (a, b) = vault_pair();
     let task_ref = EntityId::now();
