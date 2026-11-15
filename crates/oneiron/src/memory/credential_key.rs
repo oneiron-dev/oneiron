@@ -320,16 +320,20 @@ pub(crate) fn actor_is_vault_owner_in_txn(
 /// owner needs no owner binding, but its PERSON must still be live, as the
 /// owner key's own reads require (Sol R5-007). A soft delete keeps the
 /// PERSON header as a shell, so the row's deletion state decides (Astra on
-/// #1413).
+/// #1413). A merge or split keeps the row and revokes no owner binding, so
+/// the identity lifecycle decides too: a merged or split PERSON is a
+/// redirect, not an owner, as the consent owner door holds (Astra on #8148).
 pub(crate) fn owner_exemption_holds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: EntityId,
 ) -> MemoryResult<bool> {
     let row = crate::vault::live_entity_row_in_txn(&vault.store, txn, &owner)?;
-    if row.live_type() != Some(crate::registry::ENTITY_TYPE_PERSON) {
-        // Gone, a deleted shell, or no longer a PERSON: the exemption has no
-        // holder.
+    if row.live_type() != Some(crate::registry::ENTITY_TYPE_PERSON)
+        || !crate::consent::person_is_live_in_txn(vault, txn, &owner)?
+    {
+        // Gone, a deleted shell, no longer a PERSON, or merged or split
+        // away: the exemption has no holder.
         return Ok(false);
     }
     actor_is_vault_owner_in_txn(vault, txn, owner, EdgeActorClass::Human)
