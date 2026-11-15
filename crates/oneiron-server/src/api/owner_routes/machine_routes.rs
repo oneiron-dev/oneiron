@@ -67,7 +67,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/machines/remove",
-                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict. A removal that stands on an install that holds an owner key also ends the owner keys whose enrollment names the machine (`ended_owner_keys`); otherwise the reply lists them as still live (`live_owner_keys`). Removing an already removed machine again ends the owner keys that still name it, each enrolled where its removal was not yet known, and writes no second removal. A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`.",
+                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict. A removal that stands on an install that holds an owner key also ends the owner keys whose enrollment names the machine (`ended_owner_keys`); otherwise the reply lists them as still live (`live_owner_keys`). `ends_recovery_root` says whether one of the ended keys was also the recovery root's authority key. Removing an already removed machine again ends the owner keys that still name it, each enrolled where its removal was not yet known, and writes no second removal. A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`.",
                 row: None,
                 shape: Some(RestShape::json(
                     remove_machine_body_schema,
@@ -249,6 +249,12 @@ struct MachineAnswer {
     /// owner device. Absent on any other answer, and when none is left.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     live_owner_keys: Vec<String>,
+    /// Whether a removal ended the recovery root's authority key, and with
+    /// it the recovery kit: one of `ended_owner_keys` was also enrolled as
+    /// the root's. Absent on any other answer, and when it ended no such
+    /// key.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    ends_recovery_root: bool,
 }
 
 /// One answer about a machine that waits for the owner's confirm.
@@ -310,6 +316,7 @@ fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold) -> MachineAnswer 
         held,
         ended_owner_keys: Vec::new(),
         live_owner_keys: Vec::new(),
+        ends_recovery_root: false,
     }
 }
 
@@ -432,6 +439,7 @@ async fn remove(
             let mut answer = answer_of(machine, &server.vault().authority_fold()?);
             answer.ended_owner_keys = receipt.ended_keys.iter().map(revision_hex).collect();
             answer.live_owner_keys = receipt.live_keys.iter().map(revision_hex).collect();
+            answer.ends_recovery_root = receipt.remaining.ends_recovery_root;
             Ok(Ok(answer))
         },
     )

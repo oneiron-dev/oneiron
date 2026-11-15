@@ -85,6 +85,11 @@ pub struct RemainingOwnerKeys {
     pub device_keys: usize,
     /// Whether the recovery root's authority key is live.
     pub recovery_root: bool,
+    /// Whether the act ends the recovery root's authority key, and with it
+    /// the recovery kit that derives the key: one of the keys it ends is
+    /// also enrolled as the root's. In a question, what the act would end;
+    /// in a receipt, what it ended.
+    pub ends_recovery_root: bool,
 }
 
 impl RemainingOwnerKeys {
@@ -200,12 +205,16 @@ impl Vault {
                 return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
             }
         }
+        let ends_recovery_root = holds_recovery_root(&ending);
         let ended = self
             .end_owner_keys_in_txn(&mut txn, ending)?
             .pop()
             .ok_or_else(invalid_authority)?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
-        let remaining = self.owner_keys_remaining_in_txn(&txn, &after, &[])?;
+        let remaining = RemainingOwnerKeys {
+            ends_recovery_root,
+            ..self.owner_keys_remaining_in_txn(&txn, &after, &[])?
+        };
         txn.commit()?;
         Ok(OwnerKeyRemoval::Removed { ended, remaining })
     }
@@ -275,12 +284,16 @@ impl Vault {
             .into_iter()
             .map(|enrolled| enrolled.public_key)
             .collect();
+        let ends_recovery_root = landing.held().is_none() && holds_recovery_root(&ending);
         let ended_keys = if landing.held().is_none() {
             ending.into_iter().map(|key| key.public_key).collect()
         } else {
             Vec::new()
         };
-        let remaining = self.owner_keys_remaining_in_txn(&txn, &after, &[])?;
+        let remaining = RemainingOwnerKeys {
+            ends_recovery_root,
+            ..self.owner_keys_remaining_in_txn(&txn, &after, &[])?
+        };
         txn.commit()?;
         #[cfg(feature = "sync")]
         if landing.held().is_none() {
@@ -316,6 +329,7 @@ impl Vault {
             ));
         }
         let ended_keys = ending.iter().map(|key| key.public_key).collect();
+        let ends_recovery_root = holds_recovery_root(&ending);
         self.end_owner_keys_in_txn(txn, ending)?;
         let after = self.authority_view_readonly_in_txn(txn)?;
         let live_keys = self
@@ -323,7 +337,10 @@ impl Vault {
             .into_iter()
             .map(|enrolled| enrolled.public_key)
             .collect();
-        let remaining = self.owner_keys_remaining_in_txn(txn, &after, &[])?;
+        let remaining = RemainingOwnerKeys {
+            ends_recovery_root,
+            ..self.owner_keys_remaining_in_txn(txn, &after, &[])?
+        };
         let standing = after
             .machine(machine)
             .cloned()
@@ -420,7 +437,9 @@ impl Vault {
     /// is held on a device: a self-hosted vault's owner root. Only an
     /// Ed25519 key counts as a device key: the fold takes an owner proof
     /// from no other suite (`owner_proof_key`) and no install holds one to
-    /// sign with, so while only a P-256 key remains the doors ask.
+    /// sign with, so while only a P-256 key remains the doors ask. The
+    /// answer also says whether `ending` holds the recovery root's key
+    /// ([`RemainingOwnerKeys::ends_recovery_root`]).
     fn owner_keys_remaining_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -428,6 +447,10 @@ impl Vault {
         ending: &[EnrolledOwnerKey],
     ) -> Result<RemainingOwnerKeys> {
         let hosted = self.is_hosted();
+        let mut remaining = RemainingOwnerKeys {
+            ends_recovery_root: holds_recovery_root(ending),
+            ..RemainingOwnerKeys::default()
+        };
         let ending: BTreeSet<AuthorityKey> = ending
             .iter()
             .map(|enrolled| AuthorityKey::Ed25519(enrolled.public_key))
@@ -438,7 +461,6 @@ impl Vault {
             .filter(|enrolled| enrolled.recovery_authority)
             .map(|enrolled| AuthorityKey::Ed25519(enrolled.public_key))
             .collect();
-        let mut remaining = RemainingOwnerKeys::default();
         for key in fold.roster.keys() {
             if ending.contains(key) || !fold.proves_owner_acts(key, hosted) {
                 continue;
@@ -493,4 +515,10 @@ impl Vault {
         }
         Ok(ended)
     }
+}
+
+/// Whether `keys` hold the recovery root's authority key: a key that a
+/// counted enrolment marks the root's, whatever else it is enrolled as.
+fn holds_recovery_root(keys: &[EnrolledOwnerKey]) -> bool {
+    keys.iter().any(|key| key.recovery_authority)
 }

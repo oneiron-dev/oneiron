@@ -115,7 +115,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/owner-signing-keys/remove",
-                summary: "The owner removes one enrolled device owner key (`public_key`, 64 hex) and keeps its machine. The owner key this install holds signs the revocation; an install that holds none answers 409 `owner_key_required`. A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`. Answers the revocation only once the fold counted it.",
+                summary: "The owner removes one enrolled device owner key (`public_key`, 64 hex) and keeps its machine. The owner key this install holds signs the revocation; an install that holds none answers 409 `owner_key_required`. A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`. Answers the revocation only once the fold counted it, with what remains and whether the removal also ended the recovery root's authority key (`ends_recovery_root`).",
                 row: None,
                 shape: Some(RestShape::json(
                     remove_request_body_schema,
@@ -196,6 +196,9 @@ struct RemovalReply {
     remaining_device_keys: usize,
     /// Whether the recovery root's authority key is live.
     recovery_root: bool,
+    /// Whether this removal ended the recovery root's authority key, and
+    /// with it the recovery kit: the key was also enrolled as the root's.
+    ends_recovery_root: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -317,9 +320,12 @@ pub(super) fn last_device_key_confirmation(
 
 /// What a removal answers when it would end the last owner key held on a
 /// device and the owner has not confirmed (the owner's ruling AUTH-5): 409,
-/// state `last_device_key`, with what remains. Nothing was written.
+/// state `last_device_key`, with what remains, and whether it would also
+/// end the recovery kit's key. Nothing was written.
 pub(super) fn last_device_key_refusal(remaining: RemainingOwnerKeys) -> ApiError {
-    let recovery = if remaining.recovery_root {
+    let recovery = if remaining.ends_recovery_root {
+        "it also ends the recovery kit's key"
+    } else if remaining.recovery_root {
         "the recovery kit's key stays enrolled"
     } else {
         "no recovery kit's key stays enrolled"
@@ -612,6 +618,7 @@ async fn remove(
             signed_by: authority_key_hex(&ended.signed_by),
             remaining_device_keys: remaining.device_keys,
             recovery_root: remaining.recovery_root,
+            ends_recovery_root: remaining.ends_recovery_root,
         })),
         OwnerKeyRemoval::LastDeviceKey(remaining) => Err(last_device_key_refusal(remaining).into()),
     }

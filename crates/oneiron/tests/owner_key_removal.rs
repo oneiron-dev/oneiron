@@ -18,7 +18,8 @@
 //!
 //! The key list says before a removal what it ends: a key's row names every
 //! machine a counted enrolment names for it, and says whether one marks it
-//! the recovery root's.
+//! the recovery root's. A removal that ends such a key says that it ends the
+//! recovery root's key, in its question and in its receipt.
 
 #![cfg(oneiron_test_support)]
 
@@ -1858,5 +1859,184 @@ fn the_key_list_marks_a_key_enrolled_both_ways_as_the_recovery_roots() {
             !first.recovery_authority,
             "the key list marks a key enrolled both ways as the recovery root's: a plain device key is not"
         );
+    }
+}
+
+impl RemovalVault {
+    /// Enrols the key `shared_signing_key` holds both ways: as a device's
+    /// key for `device_machine` through the door, and as the recovery
+    /// root's on a sibling branch that the second machine `carrier` carries
+    /// (`carrier_signing_key` is its machine key). Both enrolments count.
+    /// Answers the key.
+    fn enrol_key_both_ways(
+        &self,
+        device_machine: EntityId,
+        carrier: EntityId,
+        carrier_signing_key: &SigningKey,
+        shared_signing_key: &SigningKey,
+    ) -> [u8; 32] {
+        let predecessor_signing_key = SigningKey::from_bytes(&[76; 32]);
+        let (_, branch_parent) =
+            self.enrol_owner_key_on_machine(self.install(), &predecessor_signing_key);
+        let (shared_key, device_enrolment) =
+            self.enrol_owner_key_on_machine(device_machine, shared_signing_key);
+        let recovery_time = now_seconds();
+        let (recovery_entry, recovery_enrolment) = self.sibling_enrolment_row(
+            vec![branch_parent],
+            1,
+            &predecessor_signing_key,
+            carrier,
+            carrier_signing_key,
+            carrier,
+            shared_signing_key,
+            RECOVERY_AUTHORITY_POSSESSION_KIND,
+            recovery_time,
+        );
+        self.vault
+            .put_authority_log_entry(
+                &recovery_entry,
+                TimeRange {
+                    start: recovery_time,
+                    end: recovery_time,
+                },
+                recovery_time,
+            )
+            .expect("the sibling recovery enrolment lands");
+        let fold = self.vault.authority_fold().expect("authority fold");
+        assert!(
+            fold.valid_entries.contains(&device_enrolment),
+            "a key enrolled both ways: the device enrolment counts"
+        );
+        assert!(
+            fold.valid_entries.contains(&recovery_enrolment),
+            "a key enrolled both ways: the recovery enrolment counts"
+        );
+        shared_key
+    }
+}
+
+#[test]
+fn a_removal_that_ends_a_key_enrolled_both_ways_says_it_ends_the_recovery_roots() {
+    // The receipt: the key is the second machine's, and other device keys
+    // remain, so the removal asks nothing and lands.
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let machine_b = removal_vault.enrol_machine_with([0x76; 16], JOINING_SEED);
+    let shared_key = removal_vault.enrol_key_both_ways(
+        machine_b,
+        machine_b,
+        &signing(JOINING_SEED),
+        &SigningKey::from_bytes(&[77; 32]),
+    );
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the removal of the second machine lands");
+    match machine_removal {
+        MachineRemoval::Written(receipt) => {
+            assert_eq!(
+                receipt.ended_keys,
+                vec![shared_key],
+                "a removal that ends a key enrolled both ways: the key ends with its machine"
+            );
+            assert!(
+                receipt.remaining.ends_recovery_root,
+                "a removal that ends a key enrolled both ways says in its receipt that it ended the recovery root's key"
+            );
+            assert!(
+                !receipt.remaining.recovery_root,
+                "a removal that ends a key enrolled both ways leaves no recovery root's key live"
+            );
+        }
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!(
+                "a removal that ends a key enrolled both ways: other device keys remain, so no ask: {remaining:?}"
+            )
+        }
+    }
+
+    // The question: the key is this install's own machine's, beside its two
+    // other device keys, so removing this machine would end every device key.
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let install = removal_vault.install();
+    let machine_b = removal_vault.enrol_machine_with([0x76; 16], JOINING_SEED);
+    removal_vault.enrol_key_both_ways(
+        install,
+        machine_b,
+        &signing(JOINING_SEED),
+        &SigningKey::from_bytes(&[77; 32]),
+    );
+    let rows = removal_vault.stored_rows();
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            install,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the removal of this install's machine asks first");
+    match machine_removal {
+        MachineRemoval::LastDeviceKey(remaining) => {
+            assert_eq!(
+                remaining.device_keys, 0,
+                "a removal that would end a key enrolled both ways: no device key would remain"
+            );
+            assert!(
+                remaining.ends_recovery_root,
+                "a removal that would end a key enrolled both ways says in its question that it ends the recovery root's key"
+            );
+            assert!(
+                !remaining.recovery_root,
+                "a removal that would end a key enrolled both ways would leave no recovery root's key live"
+            );
+        }
+        MachineRemoval::Written(receipt) => {
+            panic!(
+                "a removal that would end the last device keys asks first and writes nothing: {receipt:?}"
+            )
+        }
+    }
+    removal_vault.assert_nothing_stored_since(rows);
+}
+
+#[test]
+fn a_removal_that_ends_only_device_keys_does_not_say_it_ends_the_recovery_roots() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let second_signing_key = SigningKey::from_bytes(&[71; 32]);
+    let (_, second_key) = removal_vault.enrol_second_machine_and_key(&second_signing_key);
+    let removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            second_key,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the owner removes the second key");
+    match removal {
+        OwnerKeyRemoval::Removed { ended, remaining } => {
+            assert_eq!(
+                ended.public_key, second_key,
+                "a removal that ends only device keys: the second key ends"
+            );
+            assert!(
+                !remaining.ends_recovery_root,
+                "a removal that ends only device keys does not say it ended the recovery root's key"
+            );
+        }
+        OwnerKeyRemoval::LastDeviceKey(remaining) => {
+            panic!(
+                "a removal that ends only device keys: this install's key remains, so no ask: {remaining:?}"
+            )
+        }
     }
 }
