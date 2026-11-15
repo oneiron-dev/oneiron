@@ -138,11 +138,6 @@ impl Vault {
                 return Err(refused("a machine proves no archive custody to itself"));
             }
             let listed = super::history_fetch::selection_rows_in_txn(self, txn, &fetch.selection)?;
-            if !carried.is_subset(&listed) {
-                return Err(refused(
-                    "a custody proof row the archive manifest does not list",
-                ));
-            }
             if carried.len() != listed.len() {
                 return Err(refused("a custody proof short of the archive's rows"));
             }
