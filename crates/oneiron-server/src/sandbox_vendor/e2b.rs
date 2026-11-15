@@ -331,7 +331,8 @@ impl E2bClient {
 
     fn kill_on(&self, http: &Client, key: &str, sandbox: &str) -> oneiron::Result<()> {
         HTTP.send_delete(
-            http.delete(self.sandbox_url(sandbox)?).header("X-API-Key", key),
+            http.delete(self.sandbox_url(sandbox)?)
+                .header("X-API-Key", key),
             &[key],
         )
         .map(drop)

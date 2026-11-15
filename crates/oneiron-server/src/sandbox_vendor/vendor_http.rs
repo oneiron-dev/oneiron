@@ -347,8 +347,10 @@ impl Answer {
     }
 
     fn out_of_order(&self) -> oneiron::Error {
-        self.http
-            .failed(format!("a {} call answered out of order", self.http.0.as_str()))
+        self.http.failed(format!(
+            "a {} call answered out of order",
+            self.http.0.as_str()
+        ))
     }
 
     fn secret_texts(&self) -> Vec<&str> {
