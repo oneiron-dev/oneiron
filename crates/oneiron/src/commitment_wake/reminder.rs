@@ -48,8 +48,9 @@ const REMINDER_ROUTE: SideTable<(), CommitmentReminderRoute, Named> =
 pub const COMMITMENT_REMINDER_CONTENT_PREFIX: &str = "commitment-reminder:v1:";
 /// The verb a reminder to a third party travels as.
 const NUDGE_VERB: &str = "send";
-/// The longest promise text a reminder quotes.
-const MAX_QUOTED_PROMISE_CHARS: usize = 400;
+/// The longest promise text a reminder quotes: the default of
+/// `commitment.reminder.max_quoted_chars`.
+pub(crate) const MAX_QUOTED_PROMISE_CHARS: usize = 400;
 
 /// Where the owner's own commitment reminders go, and the owner's civil clock.
 ///
@@ -213,10 +214,12 @@ impl Vault {
         if let Some(worded) = worded {
             return Ok(Some(worded));
         }
+        let txn = self.store.env.read_txn()?;
+        let cap = crate::commitment::setting_keys::reminder_quote_cap_in(self, &txn)?;
         let offset = self
-            .commitment_reminder_route()?
+            .commitment_reminder_route_in_txn(&txn)?
             .and_then(|route| route.utc_offset_minutes_at(reminder.due_at));
-        Ok(Some(reminder_text(&record, &reminder, offset)))
+        Ok(Some(reminder_text(&record, &reminder, offset, cap)))
     }
 }
 
@@ -260,8 +263,9 @@ pub(super) fn reminder_text(
     record: &CommitmentRecord,
     reminder: &ReminderRef,
     offset: Option<i16>,
+    max_quoted_chars: usize,
 ) -> String {
-    let promise = quoted_promise(record);
+    let promise = quoted_promise(record, max_quoted_chars);
     let when = civil_time(reminder.due_at, offset);
     match (record.obligor.kind, reminder.phase) {
         (CommitmentObligorKind::ThirdParty, CommitmentWakePhase::Lead) => {
@@ -284,13 +288,13 @@ pub(super) fn reminder_text(
 }
 
 /// The promise as recorded, as much of it as a reminder quotes.
-pub(super) fn quoted_promise(record: &CommitmentRecord) -> String {
+pub(super) fn quoted_promise(record: &CommitmentRecord, max_quoted_chars: usize) -> String {
     record
         .content
         .text
         .trim()
         .chars()
-        .take(MAX_QUOTED_PROMISE_CHARS)
+        .take(max_quoted_chars)
         .collect()
 }
 
@@ -423,10 +427,14 @@ pub(super) fn dispatch_obligor_agent_turn(
     let offset = vault
         .commitment_reminder_route()?
         .and_then(|route| route.utc_offset_minutes_at(event.due_at));
+    let cap = {
+        let txn = vault.store.env.read_txn()?;
+        crate::commitment::setting_keys::reminder_quote_cap_in(vault, &txn)?
+    };
     let mut briefing = format!(
         "commitment: {}\n{}\n",
         event.trigger_ref(),
-        reminder_text(commitment, &reminder, offset)
+        reminder_text(commitment, &reminder, offset, cap)
     );
     briefing.truncate(briefing.floor_char_boundary(CONTEXT_SPEC_MAX_TEXT_BYTES));
     let outcome = dispatcher.dispatch_with_context(

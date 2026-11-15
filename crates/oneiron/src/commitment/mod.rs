@@ -8,6 +8,7 @@
 mod codec;
 mod instance_state;
 mod lapse_batch;
+pub(crate) mod setting_keys;
 mod types;
 mod write;
 

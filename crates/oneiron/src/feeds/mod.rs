@@ -41,6 +41,7 @@
 //! the per-verb sources (slice 4.2); until then these are the engine's doors.
 
 mod edges;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 
 use std::collections::BTreeSet;
@@ -464,12 +465,28 @@ struct WithdrawnType {
 struct CursorRow {
     position: Option<FeedPosition>,
     updated_at: u64,
+    /// `Some(true)` once a prune deleted rows from this cursor's source while the cursor lay
+    /// idle past retention. A marked cursor is lapsed whatever the window, until its resync
+    /// writes it fresh: without the mark, a raised window would page on past the deleted rows, a
+    /// silent skip. Every row this code writes holds `Some`. `None` is a row written before the
+    /// mark existed: a prune may have passed it unmarked, so it never takes a window above
+    /// [`FEED_RETENTION_SECS`]. At the default nothing moves, as a lapsed cursor stays lapsed
+    /// until its resync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pruned_past: Option<bool>,
 }
 
 impl CursorRow {
-    /// Whether this cursor in `source` lay idle past retention at `now`.
-    fn lapsed(&self, source: FeedSource, now: u64) -> bool {
-        source.pruned() && now.saturating_sub(self.updated_at) > FEED_RETENTION_SECS
+    /// Whether this cursor in `source` lay idle past `retention_secs` at `now`, or the prune
+    /// passed it: a marked cursor stays lapsed whatever the window, until its resync. A row
+    /// written before the mark existed keeps [`FEED_RETENTION_SECS`] as its longest window.
+    fn lapsed(&self, source: FeedSource, now: u64, retention_secs: u64) -> bool {
+        let window = match self.pruned_past {
+            Some(true) => return source.pruned(),
+            Some(false) => retention_secs,
+            None => retention_secs.min(FEED_RETENTION_SECS),
+        };
+        source.pruned() && now.saturating_sub(self.updated_at) > window
     }
 
     fn position(&self) -> Result<Option<Position>> {
@@ -525,6 +542,7 @@ impl Vault {
                 let cursor = CursorRow {
                     position: position.map(FeedPosition::of).transpose()?,
                     updated_at: at,
+                    pruned_past: Some(false),
                 };
                 CURSORS.put(&self.store, txn, &(subscription, [source.tag()]), &cursor)?;
                 FOLLOWING.put(&self.store, txn, &([source.tag()], subscription), &())?;
@@ -581,6 +599,10 @@ impl Vault {
             .get(&self.store, &txn, &(actor, request.subscription))?
             .ok_or(Error::EntityNotFound)?;
         let now = self.store.clock.now_recorded_at();
+        let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+            .read_in_txn(self, &txn, &[], None)?
+            .value
+            .0;
         let mut cursors = Vec::with_capacity(row.selector.sources.len());
         for source in &row.selector.sources {
             let cursor = CURSORS
@@ -588,7 +610,7 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex(
                     "feed subscription without its cursor",
                 ))?;
-            if cursor.lapsed(*source, now) {
+            if cursor.lapsed(*source, now, retention) {
                 return Ok(FeedRead::Gap(FeedGap {
                     resync_from: FeedResyncFrom::Snapshot,
                 }));
@@ -676,6 +698,7 @@ impl Vault {
                         .map(FeedPosition::of)
                         .transpose()?,
                     updated_at: at,
+                    pruned_past: Some(false),
                 };
                 CURSORS.put(&self.store, txn, &(subscription, [source.tag()]), &cursor)?;
             }
@@ -726,6 +749,10 @@ pub(crate) fn ack_feed_in_txn(
         .ok_or(Error::EntityNotFound)?;
     let mut seen = Vec::with_capacity(request.through.len());
     let at = vault.store.clock.now_recorded_at();
+    let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+        .read_in_txn(vault, txn, &[], None)?
+        .value
+        .0;
     for token in &request.through {
         let (source, position) = open_position(&row, request.subscription, token)?;
         if !row.selector.sources.contains(&source) {
@@ -743,7 +770,7 @@ pub(crate) fn ack_feed_in_txn(
             .ok_or(Error::CorruptedIndex(
                 "feed subscription without its cursor",
             ))?;
-        if current.lapsed(source, at) {
+        if current.lapsed(source, at, retention) {
             return Err(invalid(
                 "a feed cursor lay idle past retention: resync, then take a snapshot",
             ));
@@ -767,6 +794,9 @@ pub(crate) fn ack_feed_in_txn(
                 None => current.position,
             },
             updated_at: at,
+            // An ack never reaches a lapsed cursor (refused above), and a cursor that never
+            // lapsed was never pruned past, so the row is unmarked. Only a resync clears a mark.
+            pruned_past: Some(false),
         };
         CURSORS.put(&vault.store, txn, &key, &cursor)?;
     }
@@ -1026,6 +1056,10 @@ pub(crate) fn feed_wake_mark(
         return Ok(None);
     };
     let now = vault.store.clock.now_recorded_at();
+    let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+        .read_in_txn(vault, &txn, &[], None)?
+        .value
+        .0;
     let mut next = FeedWakeScan::default();
     let mut marks = Vec::new();
     for source in &row.selector.sources {
@@ -1034,7 +1068,7 @@ pub(crate) fn feed_wake_mark(
             .ok_or(Error::CorruptedIndex(
                 "feed subscription without its cursor",
             ))?;
-        if cursor.lapsed(*source, now) {
+        if cursor.lapsed(*source, now, retention) {
             return Ok(Some((
                 Some(format!("gap:{}", cursor.updated_at)),
                 FeedWakeScan::default(),
@@ -1215,13 +1249,17 @@ fn source_floor_in_txn(
 ) -> Result<SourceFloor> {
     let mut floor = SourceFloor::Unfollowed;
     let now = store.clock.now_recorded_at();
+    let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value
+        .0;
     for key in FOLLOWING.scan_keys(store, txn, &[source.tag()])? {
         let (_, subscription) = key;
         let cursor = CURSORS
             .get(store, txn, &(subscription, [source.tag()]))?
             .ok_or(Error::CorruptedIndex("feed follower without its cursor"))?;
         // A cursor idle past retention holds nothing: its subscription answers a gap.
-        if cursor.lapsed(source, now) {
+        if cursor.lapsed(source, now, retention) {
             continue;
         }
         let Some(position) = cursor.position()? else {
@@ -1267,6 +1305,11 @@ pub(crate) fn prune_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
     // them (review #6897): a subscription made since the read above, one that starts at the
     // beginning above all, holds every row its cursor has not passed.
     vault.with_write_txn_grouped(|txn| {
+        let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+            .read_in_txn(vault, txn, &[], None)?
+            .value
+            .0;
+        let now = vault.store.clock.now_recorded_at();
         for (source, _) in &planned {
             let floor = match source_floor_in_txn(&vault.store, txn, *source)? {
                 SourceFloor::AtStart => continue,
@@ -1274,6 +1317,22 @@ pub(crate) fn prune_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
                 SourceFloor::At(position) => Some(position),
             };
             let rows = edges::passed_rows_in_txn(&vault.store, txn, *source, floor, max_rows)?;
+            if !rows.is_empty() {
+                // Every cursor this prune deletes rows past that is lapsed now is marked, so
+                // a later raise of the window still gaps it instead of paging past the
+                // deleted rows.
+                let tag = [source.tag()];
+                for (_, subscription) in FOLLOWING.scan_keys(&vault.store, txn, &tag)? {
+                    let key = (subscription, tag);
+                    let mut cursor = CURSORS
+                        .get(&vault.store, txn, &key)?
+                        .ok_or(Error::CorruptedIndex("feed follower without its cursor"))?;
+                    if cursor.lapsed(*source, now, retention) {
+                        cursor.pruned_past = Some(true);
+                        CURSORS.put(&vault.store, txn, &key, &cursor)?;
+                    }
+                }
+            }
             edges::delete_rows_in_txn(&vault.store, txn, *source, &rows)?;
         }
         Ok(())

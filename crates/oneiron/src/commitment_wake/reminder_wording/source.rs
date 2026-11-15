@@ -103,14 +103,15 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let revision = *blake3::hash(&source.body).as_bytes();
         let receipt = reader.read_receipt_in(&txn, None, 0)?;
+        let cap = crate::commitment::setting_keys::reminder_quote_cap_in(self, &txn)?;
         Ok(Ready(CommitmentReminderWordingSource {
             request: CommitmentReminderWordingRequest {
                 content_ref: payload.content_ref.clone(),
                 reader: record.obligor.kind,
                 phase: reminder.phase,
-                promise: quoted_promise(&record),
+                promise: quoted_promise(&record, cap),
                 due: civil_time(reminder.due_at, offset),
-                fixed_text: reminder_text(&record, &reminder, offset),
+                fixed_text: reminder_text(&record, &reminder, offset, cap),
                 persona_ref: payload.voice.persona_ref.clone(),
             },
             head,

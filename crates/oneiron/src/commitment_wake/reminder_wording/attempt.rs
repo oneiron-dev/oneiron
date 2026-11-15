@@ -48,7 +48,11 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         let text = text.trim();
-        if text.is_empty() || text.len() > COMMITMENT_REMINDER_WORDING_MAX_BYTES {
+        let cap = {
+            let txn = self.store.env.read_txn()?;
+            crate::commitment::setting_keys::reminder_wording_cap_in(self, &txn)?
+        };
+        if text.is_empty() || text.len() > cap {
             return Err(Error::InvalidClaimBody(
                 "reminder wording is empty or too long",
             ));

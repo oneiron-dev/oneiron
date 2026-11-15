@@ -13,6 +13,7 @@ use crate::vault::Vault;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
 use super::codec::{commitment_claim_candidate_from_body, inert_commitment_claim_candidate};
+use super::setting_keys::check_commitment_text_in_txn;
 use super::{
     CommitmentRecord, CommitmentStatus, PREDICATE_COMMITMENT_RECORD, commitment_claim_candidate,
     decode_commitment_claim, decode_commitment_value,
@@ -105,6 +106,12 @@ impl Vault {
                 "new commitment status must be open",
             ));
         }
+        // The owner's text cap judges caller-new text before the write, in a read of its own that
+        // ends before the write begins.
+        {
+            let txn = self.store.env.read_txn()?;
+            check_commitment_text_in_txn(self, &txn, &record.content)?;
+        }
         let candidate = commitment_claim_candidate(record)?
             .with_validity(Some(valid_time.start), Some(valid_time.end));
         self.apply_commitment_candidate(id, candidate, envelope, valid_time, learned_at)
@@ -129,6 +136,7 @@ impl Vault {
                 "commitment claim id already exists",
             ));
         }
+        check_commitment_text_in_txn(self, wtxn, &record.content)?;
         let candidate = inert_commitment_claim_candidate(record)?
             .with_validity(Some(occurred.start), Some(occurred.end));
         apply_commitment_ops(self, wtxn, *id, candidate, envelope, occurred, learned_at)
