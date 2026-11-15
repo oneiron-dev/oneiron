@@ -22,16 +22,24 @@ pub(super) enum Decider {
     Agent(oneiron::EntityId),
 }
 
-/// The caller `vault.cleanup.decide` admits before its door runs: the owner's
-/// proof, else a credential bound to an agent. A credential bound to anyone
-/// else, or to no one, keeps the owner refusal.
+/// The caller `vault.cleanup.decide` admits before its door runs and its hooks
+/// fire: the owner's proof, else a credential bound to an agent that the
+/// owner's key and Grant admit now (the engine reads both again in the write
+/// that decides). Every other caller keeps the owner refusal.
 pub(super) fn decider(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Decider> {
     let refusal = match owner_proof(auth, server, verb) {
         Ok(owner) => return Ok(Decider::Owner(owner)),
         Err(refusal) => refusal,
     };
     match super::owner_binding::facade_caller_or(server, auth, || refusal.clone())? {
-        (agent, EdgeActorClass::Agent) => Ok(Decider::Agent(agent)),
+        (agent, EdgeActorClass::Agent)
+            if server
+                .vault()
+                .cleanup_decide_admits_agent(agent)
+                .map_err(MemoryError::from)? =>
+        {
+            Ok(Decider::Agent(agent))
+        }
         _ => Err(refusal),
     }
 }

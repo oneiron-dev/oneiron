@@ -127,7 +127,7 @@ fn admits_operation(scope: &Scope) -> bool {
 /// A presented credential is the caller's own, bound to no invitation, record
 /// or channel, and live; an Admin's (`admin`) also admits the operation record.
 /// No presented credential passes.
-fn credential_reaches(
+pub(super) fn credential_reaches(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     admin: bool,

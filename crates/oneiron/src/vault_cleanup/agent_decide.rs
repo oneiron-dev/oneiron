@@ -3,9 +3,11 @@
 //! [`DECIDE_VERB`] decides one open proposal as the owner's door does: the same
 //! complete verdict, bound to the revision it names, with the same digest. The
 //! key and the Grant are read in the write that decides, so a Grant revoked or
-//! a key turned on before it commits changes nothing. A member never decides:
-//! a verdict acts on other persons' records.
+//! a key turned on before it commits changes nothing; a read first refuses an
+//! agent they do not admit without waiting on the writer. A member never
+//! decides: a verdict acts on other persons' records.
 
+use super::attempt_delete_authority::credential_reaches;
 use super::proposal_review::{Decided, decide_cleanup_proposal_sourced_in_txn};
 use super::{CleanupDecideRequest, CleanupDecideView};
 use crate::Vault;
@@ -21,7 +23,8 @@ pub(super) const DECIDE_VERB: &str = "vault.cleanup.decide";
 impl Vault {
     /// [`Self::decide_cleanup_proposal_as`] for `agent`, admitted only while the
     /// owner's `vault_cleanup.decide.owner_only` is off and under the first live
-    /// owner Grant that names `vault.cleanup.decide`.
+    /// owner Grant that names `vault.cleanup.decide`. The caller has judged the
+    /// agent's credential, as the server's facade does.
     ///
     /// # Errors
     ///
@@ -33,8 +36,7 @@ impl Vault {
         agent: EntityId,
         input: &CleanupDecideRequest,
     ) -> MemoryResult<CleanupDecideView> {
-        self.decide_cleanup_proposal_sourced_as_agent(agent, input)
-            .map(|(view, _)| view)
+        decide_as_agent(self, agent, None, input).map(|(view, _)| view)
     }
 
     /// [`Self::decide_cleanup_proposal_as_agent`] beside the decision's
@@ -49,33 +51,25 @@ impl Vault {
         agent: EntityId,
         input: &CleanupDecideRequest,
     ) -> MemoryResult<(CleanupDecideView, Vec<EntityId>)> {
-        let decided = self.with_write_txn(|txn| {
-            if !agent_decides_in_txn(self, txn, agent)? {
-                return Ok((Decided::Refused, Vec::new()));
-            }
-            decide_cleanup_proposal_sourced_in_txn(self, txn, input)
-        });
-        Decided::answer_sourced(decided, &input.proposal)
+        decide_as_agent(self, agent, None, input)
     }
-}
 
-/// Whether `agent` decides now: the owner's key is off and a live owner Grant
-/// names [`DECIDE_VERB`].
-fn agent_decides_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, agent: EntityId) -> Result<bool> {
-    if super::setting_keys::DECIDE_OWNER_ONLY
-        .read_in_txn(vault, txn, &[], None)?
-        .value
-    {
-        return Ok(false);
+    /// Whether [`Self::decide_cleanup_proposal_as_agent`] admits `agent` now: the
+    /// owner's key is off and a live owner Grant names `vault.cleanup.decide`.
+    /// The server's facade asks it before the call's hooks run.
+    ///
+    /// # Errors
+    ///
+    /// A store read that fails.
+    pub fn cleanup_decide_admits_agent(&self, agent: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        agent_admitted_in_txn(self, &txn, agent, None)
     }
-    Ok(vault
-        .admit_queue_review_policy_in_txn(txn, agent, EdgeActorClass::Agent, DECIDE_VERB)?
-        .is_ok())
 }
 
 impl Memory<'_> {
-    /// Whether this caller is an agent [`Vault::decide_cleanup_proposal_as_agent`] admits now,
-    /// for `can()`.
+    /// Whether this caller is an agent the decide admits now, its presented
+    /// credential included, for `can()`.
     ///
     /// # Errors
     ///
@@ -86,13 +80,72 @@ impl Memory<'_> {
         }
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        Ok(agent_decides_in_txn(vault, &txn, self.actor())?)
+        Ok(agent_admitted_in_txn(
+            vault,
+            &txn,
+            self.actor(),
+            Some(self),
+        )?)
     }
 }
 
-/// The `vault.cleanup.decide` row's door: an agent through
-/// [`Vault::decide_cleanup_proposal_as_agent`], anyone else as the vault's
-/// owner through [`Vault::decide_cleanup_proposal_as`].
+/// The agent decide: a read that refuses an agent the key, the Grant or its
+/// `memory`'s presented credential does not admit, then the write that checks
+/// all three again and decides.
+fn decide_as_agent(
+    vault: &Vault,
+    agent: EntityId,
+    memory: Option<&Memory<'_>>,
+    input: &CleanupDecideRequest,
+) -> MemoryResult<(CleanupDecideView, Vec<EntityId>)> {
+    let admitted = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)
+        .and_then(|txn| agent_admitted_in_txn(vault, &txn, agent, memory));
+    let decided = match admitted {
+        Ok(true) => vault.with_write_txn(|txn| {
+            if !agent_admitted_in_txn(vault, txn, agent, memory)? {
+                return Ok((Decided::Refused, Vec::new()));
+            }
+            decide_cleanup_proposal_sourced_in_txn(vault, txn, input)
+        }),
+        Ok(false) => Ok((Decided::Refused, Vec::new())),
+        Err(error) => Err(error),
+    };
+    Decided::answer_sourced(decided, &input.proposal)
+}
+
+/// Whether `agent` decides now: `memory`'s presented credential, when the
+/// caller hands one, is the agent's own, bound to no invitation, record or
+/// channel, and live; the owner's key is off; and a live owner Grant names
+/// [`DECIDE_VERB`].
+fn agent_admitted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    memory: Option<&Memory<'_>>,
+) -> Result<bool> {
+    let credential_reaches = match memory {
+        Some(memory) => credential_reaches(memory, txn, false)?,
+        None => true,
+    };
+    if !credential_reaches
+        || super::setting_keys::DECIDE_OWNER_ONLY
+            .read_in_txn(vault, txn, &[], None)?
+            .value
+    {
+        return Ok(false);
+    }
+    Ok(vault
+        .admit_queue_review_policy_in_txn(txn, agent, EdgeActorClass::Agent, DECIDE_VERB)?
+        .is_ok())
+}
+
+/// The `vault.cleanup.decide` row's door: an agent as the agent decide does,
+/// its presented credential judged too, anyone else as the vault's owner
+/// through [`Vault::decide_cleanup_proposal_as`].
 ///
 /// # Errors
 ///
@@ -104,7 +157,7 @@ pub fn decide_cleanup_proposal_wire(
 ) -> MemoryResult<CleanupDecideView> {
     let vault = memory.vault();
     if memory.actor_class() == EdgeActorClass::Agent {
-        return vault.decide_cleanup_proposal_as_agent(memory.actor(), input);
+        return decide_as_agent(vault, memory.actor(), Some(memory), input).map(|(view, _)| view);
     }
     vault.decide_cleanup_proposal_as(&memory.embedded_owner(DECIDE_VERB)?, input)
 }
