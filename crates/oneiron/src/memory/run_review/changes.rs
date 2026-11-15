@@ -24,9 +24,10 @@ pub struct RunChangesRequest {
     pub run_id: String,
 }
 
-/// Every change the run wrote, once each and in write order. Child jobs of a
-/// run with a run id write under that same run, so their changes are here
-/// too. `changes` is the set `vault.runs.review` takes.
+/// Every change the run wrote, once each and in write order. Every child job
+/// writes under its root's run, a run-id-less root's `agent:<root hex>`
+/// included (L7-32), so their changes are here too. `changes` is the set
+/// `vault.runs.review` takes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunChanges {
     pub run_id: String,

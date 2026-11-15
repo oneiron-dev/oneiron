@@ -303,7 +303,8 @@ pub(crate) fn open_agent_wait(
 
 /// Whether `child` is an attempt `parent` spawned in its own run: a Dreamer
 /// queue row whose payload names `parent` as the attempt that spawned it,
-/// under the parent's run id. It is the standing `kill_spawn` reads.
+/// on the parent's run ([`super::run_lineage::child_shares_parent_run`]). It
+/// is the standing `kill_spawn` reads.
 fn spawned_by(
     queue: &AttemptQueue<'_>,
     txn: &heed::RoTxn<'_>,
@@ -319,7 +320,12 @@ fn spawned_by(
     let Ok(payload) = decode_dreamer_attempt_payload(&row.payload) else {
         return Ok(false);
     };
-    Ok(payload.parent_attempt == Some(parent.id) && row.run_id == parent.run_id)
+    Ok(payload.parent_attempt == Some(parent.id)
+        && super::run_lineage::child_shares_parent_run(
+            parent.id,
+            parent.run_id.as_deref(),
+            row.run_id.as_deref(),
+        ))
 }
 
 /// Reduces `set` over its children's rows as `txn` holds them, at `now_ms`.

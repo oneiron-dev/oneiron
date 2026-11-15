@@ -47,3 +47,19 @@ fn recorded_parent(row: &AttemptRecord) -> Option<AttemptId> {
         .ok()
         .and_then(|payload| payload.parent_attempt)
 }
+
+/// Whether a child whose `run_id` is `child_run` rides the run of its parent
+/// `parent`, whose `run_id` is `parent_run`. A spawn passes the parent's run
+/// reference down (L7-32): the parent's `run_id`, or `agent:<parent hex>`
+/// for a parent that has none, so a run-id-less root's children join its
+/// run. A child queued before that join holds its parent's `run_id` as it
+/// was, `None` under a run-id-less parent, and still rides it.
+pub(crate) fn child_shares_parent_run(
+    parent: AttemptId,
+    parent_run: Option<&str>,
+    child_run: Option<&str>,
+) -> bool {
+    child_run == parent_run
+        || (parent_run.is_none()
+            && child_run == Some(crate::code_run::agent_attempt_run_ref(parent, None).as_str()))
+}
