@@ -241,6 +241,10 @@ pub struct SyncServer {
     pub(crate) gpu_pool: std::sync::OnceLock<crate::runtime::GpuPool>,
     /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
     pub(crate) llm: Option<crate::models::RawInference>,
+    /// The host's own embedding line, pushed into every embedder slot this
+    /// server holds ([`Self::with_embedding_line`]); `None` leaves each slot
+    /// on the vault's background line.
+    pub(crate) embedding_line: Option<oneiron::BudgetGuard>,
     /// The house model's decision read the owner probes at
     /// `/v1/llm/decision_read`, and the meter its reads are admitted on;
     /// `None` turns the route off.
@@ -358,8 +362,8 @@ const _: fn(&SyncServer) = |server| {
         seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
-        trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
-        decision_reads, decisions, hook_runtime,
+        trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, embedding_line,
+        decision_read, decision_reads, decisions, hook_runtime,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,
@@ -506,6 +510,23 @@ impl SyncServer {
         self
     }
 
+    /// Pays every paid embedding request from `line`, the host's own,
+    /// instead of the vault's background line (ARCH-0053
+    /// `#embedding-admission-built`: "A host may push its own embedding line
+    /// instead"): the primary endpoint's, its pods' and its remote rung's, in
+    /// the embedder slot this server holds now and in one it attaches later.
+    /// A request the line refuses is never sent, a rung's batch then embeds
+    /// on the device, and the vault's Owners are told once that the line is
+    /// spent.
+    #[must_use]
+    pub fn with_embedding_line(mut self, line: oneiron::BudgetGuard) -> Self {
+        if let Some(slot) = self.embedder_slot() {
+            slot.push_host_line(line.clone());
+        }
+        self.embedding_line = Some(line);
+        self
+    }
+
     /// Serves `door` at `/v1/llm/decision_read`, each read admitted as a run
     /// on `meter`.
     #[must_use]
@@ -630,6 +651,7 @@ impl SyncServer {
     /// server is shared. First-run setup uses [`Self::attach_first_run_slots`]
     /// once the server is live instead.
     pub(crate) fn with_embedder(self, embedder: Option<EmbedderSlot>) -> Self {
+        self.push_embedding_line(embedder.as_ref());
         let tagger = self.tagger_slot();
         self.model_slots.store(Arc::new(ModelSlots {
             embedder: embedder.map(Arc::new),
@@ -702,6 +724,14 @@ impl SyncServer {
         self.model_setup_runtime.set(runtime).is_ok()
     }
 
+    /// Pushes the host's embedding line, if it pushed one, into `slot`
+    /// before the slot serves ([`Self::with_embedding_line`]).
+    fn push_embedding_line(&self, slot: Option<&EmbedderSlot>) {
+        if let (Some(slot), Some(line)) = (slot, &self.embedding_line) {
+            slot.push_host_line(line.clone());
+        }
+    }
+
     /// Fills an empty slot pair after first-run setup, never a Some→Some reload.
     pub(crate) fn attach_first_run_slots(
         &self,
@@ -718,6 +748,7 @@ impl SyncServer {
         if let Some(pool) = gpu_pool {
             let _ = self.gpu_pool.set(pool);
         }
+        self.push_embedding_line(embedder.as_ref());
         self.model_slots.store(Arc::new(ModelSlots {
             embedder: embedder.map(Arc::new),
             tagger: tagger.map(Arc::new),

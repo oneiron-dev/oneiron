@@ -303,6 +303,12 @@ required-features = ["oneiron/test-support"]
 name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+# 0053-EMB's host-line and spent-line notice pins install the owner's `budget_policy` row
+# through `oneiron::conversation_dag::test_support` (`oneiron/test-hooks`).
+[[test]]
+name = "embedder_host_line_notice"
+path = "tests/embedder_host_line_notice.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 [lints]
 workspace = true

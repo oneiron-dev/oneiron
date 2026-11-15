@@ -389,6 +389,7 @@ impl SyncServer {
             model_setup_runtime: std::sync::OnceLock::new(),
             gpu_pool: std::sync::OnceLock::new(),
             llm: None,
+            embedding_line: None,
             decision_read: None,
             decision_reads,
             decisions,

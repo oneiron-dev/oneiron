@@ -55,6 +55,10 @@ const NOTIFICATION_PRODUCER_BUDGET_HOLD: &str = "attempt_queue.budget_hold";
 const BUDGET_HOLD_NOTICE_DETAIL: &str =
     "held at its spend cap; a run-tree resume takes it up from its checkpoint";
 
+/// Producer name of a background budget line that refused a call for spend
+/// (0053-EMB).
+const NOTIFICATION_PRODUCER_BACKGROUND_LINE: &str = "budget.background_line";
+
 /// Queue kinds whose settled rows surface, beside root Dreamer-runner rows
 /// (agent dispatch, workflows, connector wakes, scheduled Dreamer work).
 /// Internal maintenance kinds — consolidation tiers, delivery retries,
@@ -618,6 +622,51 @@ impl Vault {
     /// Storage errors.
     pub fn notify_attempt_budget_hold(&self, attempt: AttemptId, now: u64) -> Result<()> {
         self.with_write_txn_grouped(|txn| self.notify_attempt_budget_hold_in_txn(txn, attempt, now))
+    }
+
+    /// Tells the vault's live Owners that the background line `line` (the
+    /// line built at `instance`) refused a call for spend: one Ask
+    /// NOTIFICATION in each Owner's inbox, keyed by the line, its instance
+    /// and the Owner, whose result names the line and whose detail is
+    /// `detail`, what the line's work does instead. The caller tells it once
+    /// per line; a second call finds the rows it wrote, seen and
+    /// acknowledged state included, and a deleted notice stays deleted. A
+    /// line built later is a new instance and is told again. No Admin or
+    /// Delegate is told.
+    ///
+    /// # Errors
+    /// Storage errors.
+    pub fn notify_background_line_spent(
+        &self,
+        line: &str,
+        instance: EntityId,
+        detail: &str,
+        now: u64,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            for owner in crate::policy_model::owners_in_txn(self, &*txn)? {
+                self.record_notification_in_txn(
+                    txn,
+                    &NotificationEvent {
+                        kind: NotificationKind::Ask,
+                        source: NotificationSource {
+                            producer: NOTIFICATION_PRODUCER_BACKGROUND_LINE.to_owned(),
+                            event: format!("{line}:{}:{}", instance.to_hex(), owner.to_hex()),
+                            job_kind: None,
+                            attempt: None,
+                            run: None,
+                            result: Some(line.to_owned()),
+                            detail: Some(detail.to_owned()),
+                        },
+                        subject_refs: Vec::new(),
+                        recipient: Some(owner),
+                        created_at: now,
+                        origin_conversation: None,
+                    },
+                )?;
+            }
+            Ok(())
+        })
     }
 
     /// Transaction-composable [`Self::notify_attempt_budget_hold`] (FIX

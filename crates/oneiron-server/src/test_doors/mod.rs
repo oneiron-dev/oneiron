@@ -7,6 +7,7 @@
 pub mod background_embedding;
 pub mod big_rung;
 pub mod coach_round;
+pub mod embedding_line;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
