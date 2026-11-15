@@ -1364,3 +1364,127 @@ fn a_member_grant_bounded_to_a_world_writes_in_that_world() {
         );
     });
 }
+
+/// OPUS-SECREAD-B #8363 F1: a member's residence update in the Sealed envelope
+/// form installs nothing into the home's pad custody. The update carries a
+/// capsule sealed to the home machine naming one pad of the window's world
+/// that the update does not owe; the home answers `NotReady` and the pad is
+/// absent from its custody after the send. The capsule comes from the
+/// `oneiron_test_support` door that seals it, so this test compiles only
+/// under that cfg.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_members_sealed_pad_capsule_installs_nothing_in_the_homes_custody() {
+    run_on_engine_stack(|| async {
+        let fx = fixture_with_options(
+            WindowFixture::PortableWorld,
+            FixtureOptions {
+                bound_grant_to_world: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let world = fx
+            .world
+            .expect("the portable-world fixture names its world");
+        let original = fx
+            .vault
+            .get_raw(&fx.item)
+            .expect("the fixture claim reads")
+            .expect("the fixture claim exists");
+        let mut socket = bound_member(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+        let index = rpc(
+            &mut socket,
+            2,
+            "residence.index",
+            json!({
+                "window": fx.window.as_str(),
+                "selector": encoded_selector(&fx.selector), "limit": 16
+            }),
+        )
+        .await;
+        assert!(
+            index["items"]
+                .as_array()
+                .expect("the index lists its rows")
+                .iter()
+                .any(|row| row["entity_id"] == fx.item.to_hex())
+        );
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::PROMOTION_REQUEST,
+            &encode_sync_selector(&fx.selector).expect("the fixture selector encodes"),
+        )
+        .await;
+        let granted = next_member_binary(&mut socket).await;
+        assert_eq!(granted[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) =
+            transport::decode_window_sync(&granted[1..]).expect("the promotion answer decodes");
+        assert_eq!(key, fx.window.as_str());
+        assert_eq!(tag, window_sub_tags::PROMOTION_GRANTED);
+        assert!(payload.is_empty());
+
+        let persisted = load_window_from_state(&fx.vault, "home", &fx.window)
+            .expect("the promoted window loads");
+        let peer = persisted.fork();
+        let before_edit = peer.oplog_vv();
+        let changed = public_world_claim(fx.member, world, "sealed by a member");
+        let mut raw = original[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        raw.extend_from_slice(&encode_claim_body(&changed).expect("the claim encodes"));
+        peer.get_map("entities")
+            .insert(&fx.item.to_hex(), raw.as_slice())
+            .expect("the peer takes the edit");
+        peer.commit();
+        let update = peer
+            .export(ExportMode::updates(&before_edit))
+            .expect("the edit exports");
+        assert!(!update.is_empty());
+
+        // One pad of the window's world the update does not owe, sealed to
+        // the home machine: the capsule a member must not install with.
+        let probe =
+            oneiron::test_doors::sealed_pad_capsule::seal_pad_for_home_machine(&fx.vault, world)
+                .expect("a capsule sealed to the home machine");
+        let item = probe.item;
+        assert!(
+            !oneiron::test_doors::sealed_pad_capsule::world_pad_held(&fx.vault, &item)
+                .expect("custody reads"),
+            "the home holds no pad for the probe key before the update"
+        );
+        let envelope = transport::WindowPadEnvelope {
+            kind: transport::WindowPadKind::ResidenceUpdate,
+            form: transport::WindowPadForm::Sealed,
+            queue_seq: Some(1),
+            payload: update,
+            refs: vec![item],
+            sidecar: Some(transport::WindowPadSidecar {
+                recipient: probe.recipient,
+                source_position: probe.source_position,
+                digest: probe.digest,
+                capsule: probe.capsule,
+            }),
+        };
+        for frame in envelope
+            .encode_frames(fx.window.as_str(), window_sub_tags::RESIDENCE_UPDATE)
+            .expect("the sealed envelope encodes")
+        {
+            send_binary(&mut socket, frame).await;
+        }
+        let ack = next_member_binary(&mut socket).await;
+        assert_eq!(ack[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) =
+            transport::decode_window_sync(&ack[1..]).expect("the acknowledgment decodes");
+        assert_eq!(key, fx.window.as_str());
+        assert_eq!(tag, window_sub_tags::RESIDENCE_ACK);
+        let receipt =
+            transport::WindowPadReceipt::decode(payload).expect("the ack carries a pad receipt");
+        assert_eq!(receipt.binding, envelope.binding());
+        assert_eq!(receipt.readiness, transport::WindowPadReadiness::NotReady);
+        assert!(
+            !oneiron::test_doors::sealed_pad_capsule::world_pad_held(&fx.vault, &item)
+                .expect("custody reads"),
+            "the sealed capsule installed nothing into the home's custody"
+        );
+    });
+}
