@@ -462,6 +462,7 @@ impl Vault {
         if before.vault_id.is_none() || entry.vault_id != before.vault_id {
             return Err(invalid_authority());
         }
+        super::recovery::refuse_re_root_of_a_serving_host(&before, entry.signer_key())?;
         // A move covers every main-log head this write starts from (FIX
         // 11993 R1): a head has no resident child, so only the move or one
         // of its joins can name it. A row that landed after the move was

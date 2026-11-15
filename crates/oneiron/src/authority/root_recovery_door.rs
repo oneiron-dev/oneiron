@@ -17,8 +17,8 @@
 //!
 //! The recovery box brings the authority key alone
 //! ([`RecoveryAuthoritySigner::from_released_seed`]): it vouches and never
-//! appoints. A lost key is one of the owner signing keys the owner enrolled,
-//! live on the roster. The root's own key, the new key and the host roots
+//! appoints. A lost key is one of the owner signing keys the acting owner
+//! enrolled, live on the roster. The root's own key, the new key and the host roots
 //! are never a lost key here; a self-hosted vault's lost host root is a
 //! ReRoot's ([`Vault::recover_owner_authority_from_kit`]).
 
@@ -28,7 +28,9 @@ use std::sync::Arc;
 use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
-use crate::world_keys::{KitConfirmation, RecoveryAuthoritySigner, RecoveryRootSeed};
+use crate::world_keys::{
+    KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner, RecoveryRootSeed,
+};
 use crate::{Result, Vault};
 
 /// The roster still holds a live root key, and the root's authority key is
@@ -134,7 +136,7 @@ impl Vault {
         }
         if live_owner_key(&fold, &signer.authority_key()) {
             let authority = ActAuthority::Owner(owner.clone(), surface);
-            return self.vouch_with_root_key(&authority, &signer, successor, lost);
+            return self.vouch_with_root_key((owner, &authority), &signer, successor, lost);
         }
         if rooted(&fold) {
             return Err(authority_refused(ROOT_KEY_NOT_LIVE));
@@ -151,24 +153,27 @@ impl Vault {
 
     /// The authority arm: one write transaction enrols the successor with
     /// the root's authority key as predecessor and revokes each lost key
-    /// under it. This install's fresh key is held as a checkpoint root
-    /// signer once the transaction commits, as at the device door.
+    /// under it. This install's fresh key is made in that transaction, once
+    /// the roster reads its slot's key revoked there, and is held as a
+    /// checkpoint root signer once the transaction commits, as at the device
+    /// door.
     fn vouch_with_root_key(
         &self,
-        authority: &ActAuthority,
+        (owner, authority): (&AuthenticatedOwner, &ActAuthority),
         signer: &RecoveryAuthoritySigner,
         successor: RootSuccessor,
         lost: &[AuthorityKey],
     ) -> Result<RootRecovery> {
-        let (input, held) = match successor {
-            RootSuccessor::Device(input) => (input, None),
-            RootSuccessor::ThisInstall => {
-                let (input, key) = self.this_install_successor(authority)?;
-                (input, Some(key))
-            }
+        // Preparing this install's signing keys writes, so its slot is made
+        // ready before the writer opens.
+        let install = match successor {
+            RootSuccessor::ThisInstall => Some((
+                self.prepare_install_signing()?,
+                self.device_owner_signing_slot()?,
+            )),
+            RootSuccessor::Device(_) => None,
         };
         let root_key = signer.authority_key();
-        let new_key = AuthorityKey::Ed25519(input.public_key);
         let mut sign_enrolment = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let sign_revoke = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let mut txn = self.store.env.write_txn()?;
@@ -176,7 +181,20 @@ impl Vault {
         if !live_owner_key(&fold, &root_key) {
             return Err(authority_refused(ROOT_KEY_NOT_LIVE));
         }
-        let lost = self.lost_keys_in_txn(&txn, &fold, &root_key, &new_key, lost)?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let named = match &successor {
+            RootSuccessor::Device(input) => Some(AuthorityKey::Ed25519(input.public_key)),
+            RootSuccessor::ThisInstall => None,
+        };
+        let lost = self.lost_keys_in_txn(&txn, &fold, actor, (&root_key, named.as_ref()), lost)?;
+        let (input, held) = match (successor, install) {
+            (RootSuccessor::Device(input), _) => (input, None),
+            (RootSuccessor::ThisInstall, Some((machine, slot))) => {
+                let (input, key) = this_install_successor(&fold, actor, machine, &slot)?;
+                (input, Some(key))
+            }
+            (RootSuccessor::ThisInstall, None) => return Err(invalid_authority()),
+        };
         let enrollment = self.enrol_owner_signing_key_in_txn(
             &mut txn,
             authority,
@@ -199,56 +217,72 @@ impl Vault {
         })
     }
 
-    /// This install's successor key and its enrolment input: the key in its
-    /// owner signing slot, or a fresh one when the roster names that key
-    /// revoked. A key the roster names live needs no recovery.
-    fn this_install_successor(
-        &self,
-        authority: &ActAuthority,
-    ) -> Result<(OwnerKeyEnrollment, crate::world_keys::OwnerRootSigner)> {
-        let fold = self.authority_fold()?;
-        let mut key = self.device_owner_signing_key()?;
-        match fold.roster.get(&AuthorityKey::Ed25519(key.public_key())) {
-            Some(device) if !device.revoked => {
-                return Err(authority_refused(THIS_INSTALL_KEY_LIVE));
-            }
-            Some(_) => key = self.device_owner_signing_slot()?.fresh_key()?,
-            None => {}
-        }
-        let machine = self.prepare_install_signing()?;
-        let public_key = key.public_key();
-        let challenge = self.owner_key_enrollment_challenge_as(authority, machine, &public_key)?;
-        let input = OwnerKeyEnrollment {
-            machine,
-            public_key,
-            proof: key.sign_possession(&challenge),
-        };
-        Ok((input, key))
-    }
-
     /// The keys `lost` names, once each: every one a live owner signing key
-    /// the owner enrolled, never the root's own key or the new one. Host
+    /// that `actor`, the owner who acts, enrolled, never the root's own key
+    /// or the new one (`root_key`, and `new_key` when the successor is
+    /// another device's key; this install's successor is never a live key:
+    /// [`this_install_successor`] refuses a live one, and a fresh key is on
+    /// no row). Another owner's key on a shared vault is never this owner's
+    /// lost key, as the membership move revokes only its person's keys. Host
     /// roots are never enrolled owner keys, so they never pass.
     fn lost_keys_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
-        root_key: &AuthorityKey,
-        new_key: &AuthorityKey,
+        actor: EntityId,
+        (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
         lost: &[AuthorityKey],
     ) -> Result<BTreeSet<AuthorityKey>> {
         let enrolled = self.enrolled_owner_keys_in_txn(txn)?;
         let named: BTreeSet<AuthorityKey> = lost.iter().cloned().collect();
         for key in &named {
-            let enrolled_live = enrolled
-                .iter()
-                .any(|listed| listed.live && AuthorityKey::Ed25519(listed.public_key) == *key);
-            if key == root_key || key == new_key || !enrolled_live || !live_owner_key(fold, key) {
+            let enrolled_live = enrolled.iter().any(|listed| {
+                listed.live
+                    && listed.owner == actor
+                    && AuthorityKey::Ed25519(listed.public_key) == *key
+            });
+            if key == root_key
+                || Some(key) == new_key
+                || !enrolled_live
+                || !live_owner_key(fold, key)
+            {
                 return Err(authority_refused(NOT_A_LOST_KEY));
             }
         }
         Ok(named)
     }
+}
+
+/// This install's successor key and its enrolment input for `actor`, made
+/// in the root door's writer from `fold`, that writer's fold: the key in
+/// this install's owner signing slot, or a fresh one when the roster names
+/// that key revoked. A key the roster names live needs no recovery. A run
+/// checked before another run's recovery committed is refused here, before
+/// it drops the seed of that run's successor, a live key
+/// ([`OwnerSigningSlot::fresh_key`]).
+fn this_install_successor(
+    fold: &AuthorityFold,
+    actor: EntityId,
+    machine: EntityId,
+    slot: &OwnerSigningSlot,
+) -> Result<(OwnerKeyEnrollment, OwnerRootSigner)> {
+    let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+    let mut key = slot.key()?;
+    match fold.roster.get(&AuthorityKey::Ed25519(key.public_key())) {
+        Some(device) if !device.revoked => {
+            return Err(authority_refused(THIS_INSTALL_KEY_LIVE));
+        }
+        Some(_) => key = slot.fresh_key()?,
+        None => {}
+    }
+    let public_key = key.public_key();
+    let challenge = owner_key_enrollment_challenge(&vault_id, machine, &public_key, actor)?;
+    let input = OwnerKeyEnrollment {
+        machine,
+        public_key,
+        proof: key.sign_possession(&challenge),
+    };
+    Ok((input, key))
 }
 
 /// Whether `fold`'s roster holds `key` live with the owner role.

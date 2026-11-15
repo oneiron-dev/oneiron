@@ -85,6 +85,7 @@ pub use self::kit::{
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::owner_signing::OwnerRootSigner;
+pub(crate) use self::owner_signing::OwnerSigningSlot;
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, DeviceSyncStart, EnsureDiagnostics, EnsureView,
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,

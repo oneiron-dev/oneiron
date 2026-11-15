@@ -25,19 +25,21 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
     AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    AuthorityTier, DeviceAuthority, HostSlipIssuer, MachineRole, OwnerKeyEnrollment, ROLE_OWNER,
-    RootMaterial, RootRecovery, RootSuccessor, authority_entry_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body,
+    AuthorityTier, DeviceAuthority, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole,
+    OwnerKeyEnrollment, ROLE_OWNER, RootMaterial, RootRecovery, RootSuccessor,
+    authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
+    encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
     KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit, restore_kit,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::re_root_stale_sweep::re_root_authority_as_host;
 use oneiron::test_doors::root_recovery::released_authority_seed;
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
-use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
 
 /// The seed of the owner's device key that is lost.
 const LOST_KEY_SEED: u8 = 21;
@@ -46,6 +48,10 @@ const NEW_KEY_SEED: u8 = 41;
 /// The seeds of the two handoffs' successors in the rootless fixture.
 const FIRST_HANDOFF_SEED: u8 = 33;
 const SECOND_HANDOFF_SEED: u8 = 34;
+/// The seed of the ReRoot successor the hosted refusals name.
+const RE_ROOT_SEED: u8 = 35;
+/// The seed of the host's next root, for the host's own move.
+const NEXT_HOST_ROOT_SEED: u8 = 36;
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -235,9 +241,8 @@ impl Fixture {
             .expect("the row is stored")
     }
 
-    /// The owner key hands the vault to two new keys on the heads, and both
-    /// handoffs arrive together: a fork that leaves no live root key.
-    fn fork(&self) {
+    /// The stored history's heads, which a new main-log entry names.
+    fn heads(&self) -> Vec<AuthorityEntryHash> {
         let rows = self.history();
         let parents: BTreeSet<AuthorityEntryHash> = rows
             .iter()
@@ -250,45 +255,61 @@ impl Fixture {
             .collect();
         heads.sort_unstable();
         heads.dedup();
-        let signer = key_of(&self.lost_key);
-        let seq = rows
+        heads
+    }
+
+    /// `signer`'s next sequence in the stored history.
+    fn next_seq(&self, signer: &AuthorityKey) -> u64 {
+        self.history()
             .iter()
-            .filter(|row| row.signer_key() == &signer)
+            .filter(|row| row.signer_key() == signer)
             .map(|row| row.seq + 1)
             .max()
             .unwrap_or(0)
-            .max(1);
+            .max(1)
+    }
+
+    /// A ReRoot on `heads` to the owner-role key of `successor`'s seed,
+    /// signed by `signing` at `seq`.
+    fn re_root_row(
+        &self,
+        signing: &SigningKey,
+        seq: u64,
+        heads: &[AuthorityEntryHash],
+        successor: u8,
+    ) -> AuthorityLogEntry {
+        let signer = key_of(signing);
+        let mut row = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(self.vault_id),
+            seq,
+            parent_hashes: heads.to_vec(),
+            op: AuthorityOp::ReRoot {
+                new_device: owner_device(successor),
+            },
+            signer: AuthoritySignature {
+                suite: signer.suite(),
+                public_key: signer,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("a clock after 1970")
+                .as_secs(),
+        };
+        let transcript = authority_transcript(&row).expect("the transcript");
+        row.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+        row
+    }
+
+    /// The owner key hands the vault to two new keys on the heads, and both
+    /// handoffs arrive together: a fork that leaves no live root key.
+    fn fork(&self) {
+        let heads = self.heads();
+        let seq = self.next_seq(&key_of(&self.lost_key));
         let handoff = |seq: u64, successor: u8| {
-            let mut row = AuthorityLogEntry {
-                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-                vault_id: Some(self.vault_id),
-                seq,
-                parent_hashes: heads.clone(),
-                op: AuthorityOp::ReRoot {
-                    new_device: DeviceAuthority {
-                        key: key_of(&SigningKey::from_bytes(&[successor; 32])),
-                        transport_key_binding: [7; 32],
-                        attestation: AuthorityAttestation {
-                            kind: "SoftwareArgon2id".to_owned(),
-                            evidence: vec![1, 2, 3],
-                        },
-                        tier: AuthorityTier::Software,
-                        roles: ROLE_OWNER,
-                    },
-                },
-                signer: AuthoritySignature {
-                    suite: signer.suite(),
-                    public_key: signer.clone(),
-                    signature: vec![0; 64],
-                },
-                cosigns: Vec::new(),
-                ts: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("a clock after 1970")
-                    .as_secs(),
-            };
-            let transcript = authority_transcript(&row).expect("the transcript");
-            row.signer.signature = self.lost_key.sign(&transcript).to_bytes().to_vec();
+            let row = self.re_root_row(&self.lost_key, seq, &heads, successor);
             encode_authority_log_entry_body(&row).expect("the signed bytes")
         };
         self.vault
@@ -298,6 +319,30 @@ impl Fixture {
             ])
             .expect("both handoffs land");
     }
+}
+
+/// A software device with the owner role alone, keyed by `seed`'s key.
+fn owner_device(seed: u8) -> DeviceAuthority {
+    DeviceAuthority {
+        key: key_of(&SigningKey::from_bytes(&[seed; 32])),
+        transport_key_binding: [7; 32],
+        attestation: AuthorityAttestation {
+            kind: "SoftwareArgon2id".to_owned(),
+            evidence: vec![1, 2, 3],
+        },
+        tier: AuthorityTier::Software,
+        roles: ROLE_OWNER,
+    }
+}
+
+/// Asserts `refusal` is the ReRoot writer's refusal on a hosted vault whose
+/// host root is live.
+fn assert_hosted_re_root_refused(refusal: &oneiron::Error) {
+    assert_eq!(refusal.kind(), ErrorKind::AuthorityRefused, "{refusal}");
+    assert!(
+        refusal.to_string().contains("the host does not hold"),
+        "the ReRoot writer's hosted refusal: {refusal}"
+    );
 }
 
 /// Asserts the door's answer is a vouch that enrolled `new` and revoked
@@ -487,7 +532,7 @@ fn a_rootless_roster_takes_the_anchor_arm() {
     let root = fixture
         .vault
         .activate_owner_root(&owner, prepared, &BTreeSet::new())
-        .expect("the owner activates his root")
+        .expect("the owner activates their root")
         .root;
     let fixture = Fixture { seed, ..fixture };
     fixture.fork();
@@ -526,4 +571,64 @@ fn a_rootless_roster_takes_the_anchor_arm() {
     };
     assert_eq!(receipt.root, root);
     assert!(fixture.live(&AuthorityKey::Ed25519(receipt.successor)));
+}
+
+#[test]
+fn every_reroot_door_refuses_the_root_key_on_a_hosted_vault() {
+    let fixture = fixture(HostingPrivacyPosture::Hosted);
+    let root_key = fixture.enrol_root_key();
+    let root = SigningKey::from_bytes(&released_authority_seed(&fixture.seed, &fixture.vault_id));
+    assert_eq!(key_of(&root), root_key);
+    let stored = fixture.history().len();
+
+    let moved = fixture.vault.re_root_authority(
+        owner_device(RE_ROOT_SEED),
+        root_key.clone(),
+        |transcript: &[u8]| Ok(root.sign(transcript).to_bytes().to_vec()),
+    );
+    assert_hosted_re_root_refused(&moved.expect_err("the move signed here is refused"));
+    let signed = fixture.re_root_row(
+        &root,
+        fixture.next_seq(&root_key),
+        &fixture.heads(),
+        RE_ROOT_SEED,
+    );
+    assert_hosted_re_root_refused(
+        &fixture
+            .vault
+            .apply_signed_re_root(&signed)
+            .expect_err("the move signed elsewhere is refused"),
+    );
+
+    assert_eq!(
+        fixture.history().len(),
+        stored,
+        "the refusals write nothing"
+    );
+    assert!(!fixture.live(&key_of(&SigningKey::from_bytes(&[RE_ROOT_SEED; 32]))));
+    assert!(
+        fixture.live(&fixture.issuer.public_key()),
+        "the custodial root stays live"
+    );
+    assert!(fixture.live(&root_key), "the root's key stays live");
+}
+
+#[test]
+fn the_hosts_own_reroot_still_serves_on_a_hosted_vault() {
+    let fixture = fixture(HostingPrivacyPosture::Hosted);
+    fixture.enrol_root_key();
+    let next = HostSlipIssuer::from_seed(&[NEXT_HOST_ROOT_SEED; HOST_ISSUER_SEED_BYTES])
+        .expect("the host's next root");
+
+    re_root_authority_as_host(&fixture.vault, &fixture.issuer, &next)
+        .expect("the host's own move is not an owner key's");
+
+    assert!(
+        fixture.live(&next.public_key()),
+        "the host's next root is live"
+    );
+    assert!(
+        !fixture.live(&fixture.issuer.public_key()),
+        "the host's old root is retired"
+    );
 }

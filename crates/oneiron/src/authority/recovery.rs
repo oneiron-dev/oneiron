@@ -5,14 +5,45 @@ use crate::store::recovery_kit::RestoredKitSecret;
 use crate::world_keys::RecoveryAuthoritySigner;
 use crate::{Result, Vault};
 
-/// On a hosted vault a ReRoot revokes the custodial root, and every slip the
-/// host minted stops verifying; while the roster holds a live owner key the
-/// root's door serves with the two ordinary ops instead (Engine NOTE 15 Nov
-/// 22:10; WAYBACK-E2 = A). Nothing was written.
-const HOSTED_FOLD_REROOT: &str = "a ReRoot on a hosted vault ends the host's service while the \
-                                  roster holds a live owner key; recover with the root's door, \
-                                  which enrols the new key and revokes the lost ones; nothing \
-                                  was written";
+/// On a hosted vault whose host still serves, a ReRoot signed by a key the
+/// host does not hold revokes the host's live root, and every slip the host
+/// minted stops verifying (NOTE WAYBACK-REROOT-TRACE, 15 Nov 22:02). The
+/// roster then holds a live owner key, that root itself, so the root's door
+/// serves with the two ordinary ops instead (Engine NOTE 15 Nov 22:10;
+/// WAYBACK-E2 = A). Nothing was written.
+const HOSTED_FOLD_REROOT: &str = "a ReRoot by a key the host does not hold revokes this hosted \
+                                  vault's live host root and ends its service; recover with the \
+                                  root's door, which enrols the new key and revokes the lost \
+                                  ones; nothing was written";
+
+/// Refuses a ReRoot that `signer` signs while `fold`'s roster holds a live
+/// owner key stamped as the host's (`ROLE_CLOUD` or `CloudCustodial`, the
+/// stamp a hosted vault's root carries, [`HostSlipIssuer::root_device`]),
+/// unless `signer` carries that stamp itself: the host's own move, as
+/// [`Vault::recover_cloud_account`] signs it, still serves. Every door that
+/// writes a ReRoot meets it in the one writer
+/// ([`Vault::apply_signed_re_root_with_joins`] and the moves signed here).
+/// It reads the fold alone, never this install's posture, so a device's
+/// replica of a hosted vault or a stopped hosted vault opened under another
+/// posture refuses alike, and a self-hosted vault, whose root carries no
+/// cloud stamp, never does. A ReRoot imported with a history is judged by
+/// the fold alone (FIX [HOSTED-REROOT-FOLD-RULE]).
+pub(super) fn refuse_re_root_of_a_serving_host(
+    fold: &AuthorityFold,
+    signer: &AuthorityKey,
+) -> Result<()> {
+    let host_stamped = |device: &FoldedDevice| {
+        device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial
+    };
+    let host_serves = fold
+        .roster
+        .values()
+        .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0 && host_stamped(device));
+    if host_serves && !fold.roster.get(signer).is_some_and(host_stamped) {
+        return Err(authority_refused(HOSTED_FOLD_REROOT));
+    }
+    Ok(())
+}
 
 impl Vault {
     /// Rebuild the kit's distinct authority key for this vault and hand its
@@ -26,9 +57,10 @@ impl Vault {
     /// write transaction. An error commits no recovery or frontier join.
     ///
     /// It is a self-hosted vault's door, for a lost host root. On a hosted
-    /// fold it refuses while the roster holds a live owner key, the custodial
-    /// root included: [`Vault::recover_owner_root`] serves there with the
-    /// two ordinary ops, and the host's service stands (pass 27 R4).
+    /// vault whose host root is live the ReRoot writer refuses it
+    /// ([`refuse_re_root_of_a_serving_host`]): [`Vault::recover_owner_root`]
+    /// serves there with the two ordinary ops, and the host's service stands
+    /// (pass 27 R4).
     pub fn recover_owner_authority_from_kit(
         &self,
         secret: RestoredKitSecret,
@@ -37,14 +69,6 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        if self.hosted_fold(&fold)
-            && fold
-                .roster
-                .values()
-                .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
-        {
-            return Err(authority_refused(HOSTED_FOLD_REROOT));
-        }
         let signer = RecoveryAuthoritySigner::from_restored_kit(secret, &vault_id)?;
         let sign = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let signer_key = signer.authority_key();
@@ -60,16 +84,5 @@ impl Vault {
         txn.commit()?;
         self.note_committed_authority_rows(rows);
         Ok(entry)
-    }
-
-    /// Whether `fold` is a hosted vault's: this install folds it under the
-    /// hosted posture, or its roster names a provider's key (`ROLE_CLOUD` or
-    /// the `CloudCustodial` tier), as a device's replica of a hosted vault
-    /// or a stopped hosted vault opened under another posture does.
-    fn hosted_fold(&self, fold: &AuthorityFold) -> bool {
-        self.privacy_posture() == crate::HostingPrivacyPosture::Hosted
-            || fold.roster.values().any(|device| {
-                device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial
-            })
     }
 }

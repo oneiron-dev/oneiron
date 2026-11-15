@@ -626,8 +626,11 @@ impl Vault {
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
         let parents = fold.append_heads.clone();
-        if parents.is_empty() || parents.len() > MAX_PARENTS {
+        if parents.is_empty() {
             return Err(invalid_authority());
+        }
+        if parents.len() > MAX_PARENTS {
+            return Err(authority_refused(TOO_MANY_HEADS));
         }
         let now = self.instant_in_txn(txn)?.secs();
         let mut entry = AuthorityLogEntry {
