@@ -25,11 +25,12 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActSurface, AuthorityFold, FoldedMachine, HeldAnswerListing, MachineOwnership, MachineRole,
-    OwnerDeviceRenewalProof, PeerMachine,
+    ActSurface, AuthorityFold, FoldedMachine, HeldAnswerListing, MachineOwnership, MachineRemoval,
+    MachineRole, OwnerDeviceRenewalProof, PeerMachine, RemainingOwnerKeys,
 };
 use serde::{Deserialize, Serialize};
 
+use super::owner_key_enrollment_routes::{last_device_key_confirmation, last_device_key_refusal};
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
@@ -66,7 +67,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/machines/remove",
-                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict.",
+                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict. A removal that stands on an install that holds an owner key also ends the owner keys whose enrollment names the machine (`ended_owner_keys`); otherwise the reply lists them as still live (`live_owner_keys`). A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`.",
                 row: None,
                 shape: Some(RestShape::json(
                     remove_machine_body_schema,
@@ -211,6 +212,10 @@ struct RemoveMachine {
     /// As for an answer.
     #[serde(default)]
     seen: Option<String>,
+    /// `last_device_key`: the owner read that removing this machine ends the
+    /// last owner key held on a device, and confirmed. Absent otherwise.
+    #[serde(default)]
+    confirm: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -233,6 +238,17 @@ struct MachineAnswer {
     /// key is listed here. Absent when none waits.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     held: Vec<HeldMachineAnswer>,
+    /// The owner keys a removal ended with the machine, each as 64 hex: the
+    /// device keys whose enrollment names it. Absent on any other answer,
+    /// and when the removal ended none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ended_owner_keys: Vec<String>,
+    /// The owner keys the machine still holds live after a removal, each as
+    /// 64 hex: a removal held for the owner's proof, and one this install
+    /// carried with no owner key, ends none. The owner removes them on an
+    /// owner device. Absent on any other answer, and when none is left.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    live_owner_keys: Vec<String>,
 }
 
 /// One answer about a machine that waits for the owner's confirm.
@@ -292,6 +308,8 @@ fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold) -> MachineAnswer 
             .and_then(oneiron::authority::MachineRevision::carrier)
             .map(|carrier| carrier.to_hex()),
         held,
+        ended_owner_keys: Vec::new(),
+        live_owner_keys: Vec::new(),
     }
 }
 
@@ -369,6 +387,15 @@ async fn set_answer(
 /// carrier power away: an act it carried that the removal saw keeps its
 /// effect. A removal held for the owner's proof removes nothing yet, so the
 /// machine's mesh pairing and grants stay until he confirms it.
+///
+/// A removal that stands on an install that holds an owner key also ends
+/// every live owner key whose enrollment names the machine, in the same
+/// transaction (the owner's ruling AUTH-5): the reply lists them under
+/// `ended_owner_keys`. A held removal, and one on an install that holds no
+/// owner key, ends none and lists them under `live_owner_keys`. A removal
+/// that would end the last owner key held on a device answers 409, state
+/// `last_device_key`, and writes nothing until the request carries
+/// `confirm`.
 async fn remove(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -379,27 +406,37 @@ async fn remove(
     let owner = owner(&auth, &server)?;
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
-    let answer = blocking(move || -> OwnerResult<MachineAnswer> {
-        let machine = entity_id("machine", &request.machine)?;
-        let seen = request
-            .seen
-            .as_deref()
-            .map(|seen| parse_revision("seen", seen))
-            .transpose()?;
-        let landing = server.vault().set_machine_role(
-            &owner,
-            surface,
-            machine,
-            MachineRole::Removed,
-            seen,
-        )?;
-        if landing.held().is_none() {
-            revoke_removed_mesh(&server, machine);
-        }
-        Ok(answer_of(machine, &server.vault().authority_fold()?))
-    })
+    let removal = blocking(
+        move || -> OwnerResult<Result<MachineAnswer, RemainingOwnerKeys>> {
+            let machine = entity_id("machine", &request.machine)?;
+            let seen = request
+                .seen
+                .as_deref()
+                .map(|seen| parse_revision("seen", seen))
+                .transpose()?;
+            let confirmation = last_device_key_confirmation(request.confirm.as_deref())?;
+            let receipt =
+                match server
+                    .vault()
+                    .remove_machine(&owner, surface, machine, seen, confirmation)?
+                {
+                    MachineRemoval::Written(receipt) => receipt,
+                    MachineRemoval::LastDeviceKey(remaining) => return Ok(Err(remaining)),
+                };
+            if receipt.landing.held().is_none() {
+                revoke_removed_mesh(&server, machine);
+            }
+            let mut answer = answer_of(machine, &server.vault().authority_fold()?);
+            answer.ended_owner_keys = receipt.ended_keys.iter().map(revision_hex).collect();
+            answer.live_owner_keys = receipt.live_keys.iter().map(revision_hex).collect();
+            Ok(Ok(answer))
+        },
+    )
     .await?;
-    Ok(Json(answer))
+    match removal {
+        Ok(answer) => Ok(Json(answer)),
+        Err(remaining) => Err(last_device_key_refusal(remaining).into()),
+    }
 }
 
 /// The removed MACHINE's mesh pairing and grants are revoked in the log as
