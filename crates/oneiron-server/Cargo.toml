@@ -337,6 +337,12 @@ name = "shared_env_lane_reach"
 path = "tests/shared_env_lane_reach.rs"
 required-features = ["oneiron/test-hooks"]
 
+# Member socket fixtures use a MemoryKeystore and seed grant rows through the selector hook.
+[[test]]
+name = "member_sync_socket"
+path = "tests/member_sync_socket.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
