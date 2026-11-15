@@ -2609,7 +2609,7 @@
      "path": "src/anchored_annotation/threads.rs",
      "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 8
      }
     },
@@ -26405,7 +26405,7 @@
      "path": "src/context_pack/hydration.rs",
      "purpose": "Turns raw store bytes into hydrated [`super::types::ContextEntity`] rows and JSON field payloads",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -54339,7 +54339,7 @@
      "path": "src/memory/read_selection.rs",
      "purpose": "Caller-selected world and project filters",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
      }
     },
@@ -57663,7 +57663,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "PlanDocBody",
@@ -57680,7 +57680,7 @@
      "purpose": "Plan mode's plan-doc (agent-runtime-v1.md, \"Plan mode reuses built review parts\"): \"a plan-doc `NOTE` (kind…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 6,
       "struct": 7
@@ -70456,7 +70456,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 6,
       "struct": 1
      }
@@ -81281,10 +81281,18 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Core half of `store::root_directory`: its store-layer items live in `oneiron_store::root_directory` and are…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/store/root_directory/tests.rs",
+     "purpose": "Removing a held directory (ARCH-0038 #restore-path-open: each child's identity is checked inside…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -99695,6 +99703,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/claims_project_narrowing.rs",
+     "purpose": "L1-12 PR O-1 (OPUS-FIX-E): `vault.claims.list_filtered` and `vault.claims.read_filtered` take `project_refs`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/coach_binding_fence.rs",
      "purpose": "A read key that names the Coach is held to its Steward grant and its live MACHINE binding whichever…",
      "surface": {}
@@ -99947,6 +99963,14 @@
      "notable": [],
      "path": "tests/context_pack_second_entity_alias_release.rs",
      "purpose": "A context pack renders another entity's alias (its id or identity key) as that entity's name at its first…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_served_claim_body.rs",
+     "purpose": "L9-13 (ARCH-0004 #rerank-door-open, \"the pinned body for assembly's later stages\"; Sol R14 S2 on #1426): a…",
      "surface": {}
     },
     {
@@ -101499,6 +101523,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/metric_axis_tolerance.rs",
+     "purpose": "A metric axis's tolerance (census L9-07; RESEARCH-0651's acceptance rule, item 5; Engine ruling 2026-11-13…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/microsoft365_connection_refresh.rs",
      "purpose": "The Microsoft 365 connection refreshes the grant the Microsoft code exchange stores, and a Microsoft grant…",
      "surface": {}
@@ -101845,6 +101877,14 @@
      "notable": [],
      "path": "tests/plan_mode_setting.rs",
      "purpose": "Plan mode: the owner sets each agent's plan mode",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/plan_mode_subsession.rs",
+     "purpose": "Plan mode: an approved plan's run is a sub-session off the approving turn",
      "surface": {}
     },
     {
@@ -104653,7 +104693,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 395,
+     "files": 396,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104912,10 +104952,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 270,
+   "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7592,
-   "test_files": 1319
+   "test_files": 1324
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -112635,7 +112675,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 106,
+      "const": 107,
       "crate-vis": 1
      }
     },
@@ -118555,7 +118595,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 11,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -118591,6 +118631,21 @@
       "enum": 1,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiComputedFunction",
+      "GeneratedUiExpressionProfile"
+     ],
+     "path": "src/lens/generated_ui/genui_expr.rs",
+     "purpose": "The expression tier of an app component's props (ARCH-0048 G5 #2; the expression system of eiri-dec-0011): a…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -118729,7 +118784,7 @@
      "path": "src/lens/generated_ui/mod.rs",
      "purpose": "The Generated-UI protocol: the [`GeneratedLens`] envelope, catalog/primitive negotiation and app-declared…",
      "surface": {
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -118814,6 +118869,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/genui_card_expressions.rs",
+     "purpose": "GENUI-COMPUTED: an app component's props may read the card's `$state`, either directly with `{\"$state\"…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/genui_cond_template.rs",
+     "purpose": "GENUI-COND-TEMPLATE: an app component's prop may be a `$cond` over the closed predicate algebra or a…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -118824,7 +118895,7 @@
    ],
    "modules": {
     "lens": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -118833,8 +118904,8 @@
    },
    "over_bar": 0,
    "purpose": "The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI…",
-   "source_files": 24,
-   "test_files": 1
+   "source_files": 25,
+   "test_files": 3
   },
   "oneiron-linear": {
    "files": [
