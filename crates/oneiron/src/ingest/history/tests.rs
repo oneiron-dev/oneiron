@@ -174,16 +174,20 @@ fn plain_turn(conversation_ref: String, turn_ref: Option<String>) -> WitnessTurn
     WitnessTurn {
         conversation_ref,
         turn_ref,
+        thread_audience: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
             message_type: "dialogue".to_owned(),
             content: "a live word".to_owned(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 40,
+            quote: None,
         }],
         occurred_at: IMPORTED_AT + 100,
+        assertions: Default::default(),
     }
 }
 
@@ -436,16 +440,20 @@ fn an_import_never_lands_in_a_plain_conversation_at_its_derived_id() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_id.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: "a plain turn".to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: WITNESSED_AT,
+            assertions: Default::default(),
         })
         .expect("plain witness");
 

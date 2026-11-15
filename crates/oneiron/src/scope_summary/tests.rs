@@ -11,8 +11,9 @@ use support::*;
 #[test]
 fn retained_subsession_scope_covers_300_body_truth_edges_cap_and_one_header() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let asking = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let session = vault.spawn_dag_sub_session(&asking, actor).unwrap();
@@ -23,7 +24,7 @@ fn retained_subsession_scope_covers_300_body_truth_edges_cap_and_one_header() {
         let mut next = input(conv, Some(parent), false, actor);
         next.session = Some(session);
         next.occurred = time(30 + n);
-        parent = vault.append_dag_record(&next).unwrap().id;
+        parent = vault.append_dag_record(&writer, &next).unwrap().id;
         turns.push(parent);
     }
     let selector = scope(conv, ScopePath::SubSession(session), false);
@@ -77,24 +78,28 @@ fn retained_subsession_scope_covers_300_body_truth_edges_cap_and_one_header() {
 #[test]
 fn subsessions_are_isolated_and_second_spawned_by_is_refused_or_detected() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let asking = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let other = vault
-        .append_dag_record(&input(conv, Some(asking), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(asking), true, actor))
         .unwrap()
         .id;
     let session = vault.spawn_dag_sub_session(&asking, actor).unwrap();
     let sibling = vault.spawn_dag_sub_session(&other, actor).unwrap();
     let mut next = input(conv, Some(asking), false, actor);
     next.session = Some(session);
-    let child = vault.append_dag_record(&next).unwrap().id;
+    let child = vault.append_dag_record(&writer, &next).unwrap().id;
     next.parent = Some(child);
     next.session = Some(sibling);
     assert_eq!(
-        vault.append_dag_record(&next).unwrap_err().kind(),
-        ErrorKind::InvalidConversationDag
+        vault.append_dag_record(&writer, &next).unwrap_err().message,
+        crate::error::RecordError::InvalidConversationDag(
+            "received Parent crosses sub-session boundary"
+        )
+        .to_string()
     );
     assert_eq!(
         vault.move_head(&conv, &child).unwrap_err().kind(),
@@ -146,16 +151,19 @@ fn subsessions_are_isolated_and_second_spawned_by_is_refused_or_detected() {
 #[test]
 fn denied_header_and_reply_roll_back_then_granted_late_result_advances_trunk() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner));
     let asking = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let session = vault.spawn_dag_sub_session(&asking, actor).unwrap();
     let mut next = input(conv, Some(asking), false, actor);
     next.session = Some(session);
-    let worker = vault.append_dag_record(&next).unwrap().id;
+    let worker = vault.append_dag_record(&writer, &next).unwrap().id;
     let current = vault
-        .append_dag_record(&input(conv, Some(asking), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(asking), true, actor))
         .unwrap()
         .id;
     let selector = scope(conv, ScopePath::SubSession(session), false);
@@ -213,10 +221,10 @@ fn denied_header_and_reply_roll_back_then_granted_late_result_advances_trunk() {
     assert_eq!(body["reply_to"]["record"], asking.to_hex());
     assert_eq!(body["summary"], summary.to_hex());
     assert!(!vault.thread(asking).unwrap().replies.contains(&reply));
-    let strip = vault.reply_strip(&reply).unwrap().unwrap();
+    let strip = vault.reply_strip(&read, &reply).unwrap().unwrap();
     assert_eq!(strip.record, asking);
     assert_eq!(strip.text.as_deref(), Some("record"));
-    assert!(!strip.stale);
+    assert_eq!(strip.stale, Some(false));
     let original = vault.get(&asking).unwrap();
     assert_eq!(
         vault
@@ -232,7 +240,10 @@ fn denied_header_and_reply_roll_back_then_granted_late_result_advances_trunk() {
         crate::ErrorKind::InvalidConversationDag
     );
     assert_eq!(vault.get(&asking).unwrap(), original);
-    assert!(!vault.reply_strip(&reply).unwrap().unwrap().stale);
+    assert_eq!(
+        vault.reply_strip(&read, &reply).unwrap().unwrap().stale,
+        Some(false)
+    );
     assert_eq!(vault.head(&conv).unwrap(), Some(reply));
     assert_eq!(
         vault.resolve_dag_scope(&selector).unwrap().records,
@@ -241,8 +252,8 @@ fn denied_header_and_reply_roll_back_then_granted_late_result_advances_trunk() {
     vault
         .delete_own_room_record(asking, crate::DeleteReason::UserDelete)
         .unwrap();
-    let strip = vault.reply_strip(&reply).unwrap().unwrap();
-    assert!(strip.stale);
+    let strip = vault.reply_strip(&read, &reply).unwrap().unwrap();
+    assert_eq!(strip.stale, Some(true));
     assert_eq!(strip.text, None);
 }
 
@@ -251,13 +262,14 @@ fn scope_summary_codec_is_distinct_strict_and_versioned() {
     let actor = EntityId::now();
     let mut summary = ScopeSummaryBody {
         v: 1,
-        scope: scope(EntityId::now(), ScopePath::Canonical, false),
+        scope: Some(scope(EntityId::now(), ScopePath::Canonical, false)),
         text: "text".to_owned(),
         actor: actor.to_hex(),
         covers: vec![EntityId::now()],
         minted_at: 1,
         messages: Vec::new(),
         memo: None,
+        notes: Vec::new(),
     };
     let encoded = encode_scope_summary_body(&summary).unwrap();
     assert_eq!(decode_scope_summary_body(&encoded).unwrap(), summary);
@@ -297,18 +309,19 @@ fn scope_summary_codec_is_distinct_strict_and_versioned() {
 #[test]
 fn nested_subsession_continues_its_spawning_turn_without_leaking_scopes() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let asking = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let outer = vault.spawn_dag_sub_session(&asking, actor).unwrap();
     let mut next = input(conv, Some(asking), false, actor);
     next.session = Some(outer);
-    let outer_turn = vault.append_dag_record(&next).unwrap().id;
+    let outer_turn = vault.append_dag_record(&writer, &next).unwrap().id;
     let inner = vault.spawn_dag_sub_session(&outer_turn, actor).unwrap();
     next.parent = Some(outer_turn);
     next.session = Some(inner);
-    let inner_turn = vault.append_dag_record(&next).unwrap().id;
+    let inner_turn = vault.append_dag_record(&writer, &next).unwrap().id;
     assert_eq!(
         vault
             .resolve_dag_scope(&scope(conv, ScopePath::SubSession(outer), true))
@@ -336,8 +349,9 @@ fn nested_subsession_continues_its_spawning_turn_without_leaking_scopes() {
 #[test]
 fn stored_summary_covers_prove_ownership_without_recomputing_history() {
     let (_dir, vault, conversation, actor) = support::fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let root = vault
-        .append_dag_record(&support::input(conversation, None, true, actor))
+        .append_dag_record(&writer, &support::input(conversation, None, true, actor))
         .unwrap()
         .id;
     let selector = support::scope(conversation, ScopePath::Canonical, false);
@@ -347,7 +361,10 @@ fn stored_summary_covers_prove_ownership_without_recomputing_history() {
         .0;
     let original = decode_scope_summary_body(&vault.get(&summary).unwrap().unwrap()).unwrap();
     let later = vault
-        .append_dag_record(&support::input(conversation, Some(root), true, actor))
+        .append_dag_record(
+            &writer,
+            &support::input(conversation, Some(root), true, actor),
+        )
         .unwrap()
         .id;
     vault.move_head(&conversation, &root).unwrap();
@@ -363,13 +380,13 @@ fn stored_summary_covers_prove_ownership_without_recomputing_history() {
         )
         .unwrap();
     let foreign_turn = vault
-        .append_dag_record(&support::input(foreign, None, true, actor))
+        .append_dag_record(&writer, &support::input(foreign, None, true, actor))
         .unwrap()
         .id;
     let session = vault.spawn_dag_sub_session(&root, actor).unwrap();
     let mut input = support::input(conversation, Some(root), false, actor);
     input.session = Some(session);
-    let worker = vault.append_dag_record(&input).unwrap().id;
+    let worker = vault.append_dag_record(&writer, &input).unwrap().id;
     for covered in [actor.entity_ref(), foreign_turn, worker] {
         let mut forged = original.clone();
         forged.covers = vec![covered];
@@ -405,18 +422,19 @@ fn stored_summary_covers_prove_ownership_without_recomputing_history() {
 #[test]
 fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let trunk = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let session_a = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
     let session_b = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
     let mut input_a = input(conv, None, false, actor);
     input_a.session = Some(session_a);
-    let a = vault.reply_in_thread(trunk, &input_a).unwrap().id;
+    let a = vault.reply_in_thread(&writer, trunk, &input_a).unwrap().id;
     let mut input_b = input(conv, None, false, actor);
     input_b.session = Some(session_b);
-    let b = vault.reply_in_thread(trunk, &input_b).unwrap().id;
+    let b = vault.reply_in_thread(&writer, trunk, &input_b).unwrap().id;
     let matching = scope(conv, ScopePath::Branch(a), false);
     let matching = ScopeSelector {
         session: Some(session_a),
@@ -428,7 +446,7 @@ fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
         .0;
     assert_eq!(vault.scope_summary_covers(&good).unwrap(), [a]);
     let mut forged = decode_scope_summary_body(&vault.get(&good).unwrap().unwrap()).unwrap();
-    forged.scope.session = Some(session_b);
+    forged.scope.as_mut().unwrap().session = Some(session_b);
     forged.covers = vec![b];
     for replicated in [false, true] {
         let id = EntityId::now();
@@ -441,6 +459,7 @@ fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
                     crate::registry::ENTITY_TYPE_SUMMARY,
                     time(1),
                     1,
+                    None,
                     &bytes,
                 )
                 .commit()
@@ -473,10 +492,10 @@ fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
     // An ordinary anchor cannot claim a descendant worker merely by naming
     // its session. Minting resolves this selector to an empty ancestry set;
     // stored generic/replayed bodies must not get a different answer.
-    forged.scope.path = ScopePath::Branch(trunk);
+    forged.scope.as_mut().unwrap().path = ScopePath::Branch(trunk);
     assert!(
         vault
-            .resolve_dag_scope(&forged.scope)
+            .resolve_dag_scope(forged.scope.as_ref().unwrap())
             .unwrap()
             .records
             .is_empty()
@@ -493,6 +512,7 @@ fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
                     crate::registry::ENTITY_TYPE_SUMMARY,
                     time(1),
                     1,
+                    None,
                     &bytes,
                 )
                 .commit()
@@ -560,6 +580,7 @@ fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
 #[test]
 fn ordinary_branch_session_filter_remains_valid_without_worker_covers() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let sitting = EntityId::now();
     vault
         .put_entity(
@@ -572,7 +593,7 @@ fn ordinary_branch_session_filter_remains_valid_without_worker_covers() {
         .unwrap();
     let mut input = input(conv, None, true, actor);
     input.session = Some(sitting);
-    let root = vault.append_dag_record(&input).unwrap().id;
+    let root = vault.append_dag_record(&writer, &input).unwrap().id;
     let selector = ScopeSelector {
         session: Some(sitting),
         ..scope(conv, ScopePath::Branch(root), false)

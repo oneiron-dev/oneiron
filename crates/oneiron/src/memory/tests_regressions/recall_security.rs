@@ -11,12 +11,14 @@ fn grantless_actor_cannot_recall_private_messages_or_render_their_text() {
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0xb4; 16]).unwrap().to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
                 "aurora borealis private fjord",
             )],
             occurred_at: 1500,
+            assertions: Default::default(),
         })
         .expect("witness private message");
     let grantless = vault.memory(agent, EdgeActorClass::Agent);
@@ -126,6 +128,10 @@ fn world_grant_recall_returns_only_admitted_claims_and_worlds_with_receipt() {
                 effort,
                 &RecallScope {
                     world_ref: Some(allowed_world.to_hex()),
+                    worlds: None,
+                    project_refs: vec![],
+                    conversation_refs: vec![],
+                    person_ref: None,
                     facet: None,
                     kinds: None,
                 },

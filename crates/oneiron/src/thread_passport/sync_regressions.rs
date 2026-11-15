@@ -27,6 +27,7 @@ fn observer_b_quarantines_malformed_alias_and_indexes_passport_before_owner_arri
         ENTITY_TYPE_CLAIM,
         interval(),
         OBSERVED_AT,
+        0,
         &encode_claim_body(&malformed).unwrap(),
     );
     map_insert_bytes(&entities, &bad_id.to_hex(), &blob).unwrap();
@@ -44,6 +45,7 @@ fn observer_b_quarantines_malformed_alias_and_indexes_passport_before_owner_arri
         ENTITY_TYPE_CLAIM,
         interval(),
         OBSERVED_AT,
+        0,
         &encode_claim_body(&body).unwrap(),
     );
     map_insert_bytes(&entities, &id.to_hex(), &blob).unwrap();
@@ -110,6 +112,7 @@ fn observer_b_reconciles_duplicate_passports_without_replicated_edge_rows() {
                 ENTITY_TYPE_CLAIM,
                 interval(),
                 OBSERVED_AT,
+                0,
                 &encode_claim_body(&body).unwrap(),
             );
             map_insert_bytes(&entities, &id.to_hex(), &blob).unwrap();

@@ -144,6 +144,7 @@ fn run_case(case: LateCall) -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let clock = std::sync::Arc::clone(&backend.clock);
     let deadline = WakePassDeadline::with_clock(
@@ -220,6 +221,7 @@ fn run_case(case: LateCall) -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let resumed = ready(driver.run_wake_pass(
         wake_input(node_id, 130),
@@ -358,6 +360,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
@@ -388,6 +391,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut driver = DreamerWakeDriver::new(&vault, "wake-next", deadline);
@@ -452,6 +456,7 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
             now: 21,
         },
         30,
+        &[],
     )?;
     let retry = AttemptQueue::new(&vault)
         .list()?
@@ -509,6 +514,7 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
@@ -585,6 +591,7 @@ fn manifest_retry_source_budget_truncates_and_holder_cannot_widen() -> Result<()
             now: 21,
         },
         30,
+        &[],
     )?;
     let retry = AttemptQueue::new(&vault)
         .list()?

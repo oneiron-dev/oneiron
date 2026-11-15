@@ -58,6 +58,7 @@ mod tests {
                     ENTITY_TYPE_CLAIM,
                     TimeRange { start: at, end: at },
                     1,
+                    None,
                     &crate::claim::encode_claim_body(&body)?,
                 )
                 .text(&id, &[("body", text)])

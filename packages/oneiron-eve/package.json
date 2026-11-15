@@ -1,0 +1,22 @@
+{
+  "name": "@oneiron/eve",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An eve memory provider over the Oneiron Memory Wire (unpublished)",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test"
+  }
+}

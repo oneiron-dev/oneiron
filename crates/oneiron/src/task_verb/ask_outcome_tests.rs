@@ -498,6 +498,7 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
                 crate::registry::ENTITY_TYPE_CLAIM,
                 occurred,
                 at,
+                None,
                 &crate::claim::encode_claim_body(&body)?,
             )
             .commit()?;
@@ -621,7 +622,8 @@ fn settled_task_ask_cannot_accept_standing_graph_backfill() -> Result<()> {
                 evidence: vec![holder],
                 providers: vec![],
                 paired: Vec::new(),
-                source_frontier: [0; 32]
+                rule: None,
+                source_frontier: [0; 32],
             },
             crate::unix_seconds_now()
         )

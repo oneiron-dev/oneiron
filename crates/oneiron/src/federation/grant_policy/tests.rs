@@ -281,6 +281,7 @@ fn delegate_holder_policy_is_nested_under_vault_and_parent() {
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &super::super::encode_federation_grant_body(&narrowed).unwrap(),
         )
         .commit()

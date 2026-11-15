@@ -157,6 +157,7 @@ fn claim_candidate_generated_tool_lineage_requires_both_member_permits() -> Resu
         max_auto_sensitivity: Some(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND),
         receipted: true,
         warned: true,
+        auto_checker: None,
     };
     let generated = ClaimSource::Generated;
     let tool = ClaimSource::ToolOutput;
@@ -217,6 +218,7 @@ fn claim_candidate_user_stated_tool_lineage_requires_tool_permit() -> Result<()>
         max_auto_sensitivity: Some(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND),
         receipted: true,
         warned: true,
+        auto_checker: None,
     };
     for (rows, allows) in [
         (vec![], false),

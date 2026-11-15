@@ -71,7 +71,13 @@ fn stamp_charter(vault: &Vault, key_id: &EntityId, text: &str) {
         .propose_connector_charter(key_id, text, 1_001)
         .expect("propose charter");
     vault
-        .approve_connector_charter(key_id, pending.compiled_hash, "owner", 1_002)
+        .approve_connector_charter(
+            key_id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            1_002,
+        )
         .expect("approve charter");
 }
 

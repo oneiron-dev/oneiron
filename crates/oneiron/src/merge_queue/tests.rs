@@ -87,8 +87,9 @@ impl Fixture {
             base_green: self.queue().pointers().unwrap().green,
             files: vec![MergeFile {
                 path: format!("{name}.txt"),
-                expected: Some(b"base\n".to_vec()),
+                expected: Some(MergeFileExpected::Bytes(b"base\n".to_vec())),
                 content: Some(content.to_vec()),
+                metadata_edit: None,
             }],
         }
     }
@@ -378,8 +379,9 @@ fn removed_public_name_is_a_persisted_queue_veto_even_when_tests_pass() {
         base_green: fixture.base.clone(),
         files: vec![MergeFile {
             path: "lib.rs".into(),
-            expected: Some(old.to_vec()),
+            expected: Some(MergeFileExpected::Bytes(old.to_vec())),
             content: Some(b"pub fn retained() {}\n".to_vec()),
+            metadata_edit: None,
         }],
     };
     let batch = queue.enqueue(vec![proposal]).unwrap();

@@ -63,6 +63,7 @@ fn fixture_with_config(
             identity_ref,
             label_allowlist: vec!["inbox".to_owned()],
             thread_allowlist: vec!["thread:1".to_owned()],
+            full_mailbox: false,
             not_before: None,
             not_after: None,
         },
@@ -265,13 +266,10 @@ fn draft_grant_cannot_send() {
             .authorize_and_consume_channel_identity_grant(&reference, &draft)
             .unwrap()
     );
-    assert!(
-        !state
-            .action_grant
-            .unwrap()
-            .scope
-            .matches_effect("mail.send", "email", None, None)
-    );
+    assert!(!crate::outbound_grant::verb_in_class(
+        &state.action_grant.unwrap().verb_class,
+        "mail.send"
+    ));
 }
 
 #[test]
@@ -943,12 +941,12 @@ fn revoked_read_action_and_unified_grants_fail_closed() {
             }
             1 => {
                 vault
-                    .revoke_standing_outbound_grant(&reference, now)
+                    .revoke_consent_grant(&owner, &state.action_grant.unwrap().grant_ref)
                     .unwrap();
             }
             _ => {
                 let grant = state.action_grant.unwrap();
-                let bound_ref = crate::entity_id::bytes_to_hex_lower(&grant.binding_diff_handle);
+                let bound_ref = grant.grant_ref.clone();
                 vault.revoke_consent_grant(&owner, &bound_ref).unwrap();
             }
         }
@@ -1155,7 +1153,7 @@ fn generic_grant_writes_cannot_reactivate_or_replace_owner_read_authority() {
             .is_err()
     );
     let unrelated =
-        AccessGrant::companion_profile_read(request.actor_ref, entity(0x86), entity(0x87), 1);
+        AccessGrant::companion_profile_read(request.actor_ref, entity(0x86), Some(entity(0x87)), 1);
     assert!(vault.put_access_grant(&reference, &unrelated).is_err());
     vault
         .revoke_access_grant(&reference, crate::unix_seconds_now())

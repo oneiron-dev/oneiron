@@ -380,8 +380,6 @@ pub(super) fn read_routes(
 ) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
     Ok(RESIDENT_ROUTES.get(store, txn, &())?.unwrap_or_default())
 }
-// FIX [LIBTEST-QUARANTINE-LLM-MANIFEST-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
