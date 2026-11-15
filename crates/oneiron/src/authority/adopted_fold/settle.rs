@@ -202,6 +202,21 @@ pub(super) fn settle_tail(
     }) {
         return Ok(None);
     }
+    // A restrictive withdrawal (a slip burn, a slip, Grant or actor
+    // revocation, a machine removal) waiting here on a row with no state (a
+    // rejected tail row) still withdraws in the whole fold, whose proof
+    // crosses rejected permissive rows to it (`revoke_proof`); the image's
+    // facts do not hold it, so only the whole history folds it (FIX 11760).
+    if judged.iter().any(|(hash, entry)| {
+        crate::authority::revoke_proof::restrictive_withdrawal(&entry.op)
+            && !states.contains_key(hash)
+            && entry
+                .parent_hashes
+                .iter()
+                .any(|parent| !states.contains_key(parent))
+    }) {
+        return Ok(None);
+    }
     states.retain(|hash, _| judged.contains_key(hash));
     // A row of a kind that folds past the image only as rejected (FIX
     // 11760): one the tail folds to a state is judged by the whole history.
