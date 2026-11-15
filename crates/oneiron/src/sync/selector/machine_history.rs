@@ -96,12 +96,14 @@ impl<'v, 's> HistoryControlGate<'v, 's> {
         }))
     }
 
-    /// Whether the export would carry the control `raw` of `id`: it passes the
-    /// grant member's row gate ([`member_reads_row`]: the conversation home
-    /// and the relationship labels) and the grant's selection
-    /// ([`source_selected`]). A control is not a facet seed of the window, so
-    /// the selection judges its own recorded facets, as it judges a text's
-    /// source.
+    /// Whether the export would carry the control `raw` of `id`: no legal use
+    /// limit keeps it as storage only, no source audience binds it (its own
+    /// bytes or its lineage), it passes the grant member's row gate
+    /// ([`member_reads_row`]: the conversation home and the relationship
+    /// labels) and the grant's selection ([`source_selected`]), as the export
+    /// judges each row it ships (`authorize/filter.rs`). A control is not a
+    /// facet seed of the window, so the selection judges its own recorded
+    /// facets, as it judges a text's source.
     ///
     /// # Errors
     ///
@@ -113,6 +115,23 @@ impl<'v, 's> HistoryControlGate<'v, 's> {
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
+        // A use-limited row is storage only: the export withholds it and no
+        // ordinary reader sees it, the owner included (FIX 5226).
+        if crate::store::legal_hold::use_limit_in_txn(&vault.store, rtxn, id)?.is_some() {
+            return Ok(false);
+        }
+        // A selector is a restricted lane: a row bound to a source audience,
+        // by its own bytes or by the rows its words came from, never rides it.
+        if crate::source_audience::row_obligation(raw).is_present()
+            || crate::source_audience::withheld_from_replication_in(
+                vault,
+                rtxn,
+                id,
+                crate::source_audience::ReplicationScope::Restricted,
+            )?
+        {
+            return Ok(false);
+        }
         Ok(member_reads_row(vault, rtxn, &self.member, id, raw)?
             && source_selected(
                 vault,
