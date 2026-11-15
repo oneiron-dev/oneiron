@@ -1,14 +1,14 @@
 //! A shared env's lane never falls back to full replication
 //! (FIX-LIST [MEMBER-SELECTOR-SOCKET]; Engine RULING MEMBER-SELECTOR-SCOPE =
-//! C, 15 Nov 04:0x).
+//! C, 15 Nov 04:0x; MEMBER-SYNC D8).
 //!
 //! The lane a member's paired slip opens: a slip naming no member grant
 //! replicates in full, which the home's owner door admits for its vault's
 //! owner alone (OWNER-GRADE-IS-NOT-OWNERSHIP H8). A slip naming a member
-//! grant this env holds a live copy of reads under that grant. A slip naming
-//! a member grant this env holds no copy of, as a fresh env before its first
-//! sync, starts no lane; on the tree before this fix it fell back to full
-//! replication.
+//! grant opens the member lane under that grant, built from the slip's own
+//! claims (`grant_ref`, `holder_ref`, All): HOME proves the grant at the
+//! upgrade (MEMBER-SYNC D1), so a fresh env with no local copy starts, and
+//! a member's lane never falls back to full replication.
 //!
 //! The lane's reach is read through the `oneiron_test_support` door
 //! (`oneiron_server::test_doors::shared_env_lane`); the grant row is seeded
@@ -66,13 +66,14 @@ fn a_member_grant_this_env_holds_opens_the_member_lane() {
 }
 
 #[test]
-fn a_member_grant_this_env_lacks_starts_no_lane() {
+fn a_member_grant_this_env_lacks_opens_the_member_lane() {
     let (_dir, vault) = open_env();
     let member = EntityId::now();
     let grant_id = EntityId::now();
     assert_eq!(
         lane_reach(&vault, Some(&grant_id.to_hex()), &member.to_hex()).expect("the reach"),
-        "grant-missing",
-        "a member's lane with no copy of its grant never replicates in full"
+        format!("member {} {}", grant_id.to_hex(), member.to_hex()),
+        "a member's lane with no copy of its grant opens from the slip's own claims \
+         (MEMBER-SYNC D8)"
     );
 }
