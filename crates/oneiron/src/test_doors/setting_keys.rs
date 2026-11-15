@@ -4,6 +4,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::check_in::ActClass;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::EngineControlClass;
 use crate::setting::{
@@ -46,6 +47,18 @@ fn empty_banner() -> String {
 
 fn no_mode() -> Option<u64> {
     None
+}
+
+fn no_ids() -> Vec<String> {
+    Vec::new()
+}
+
+/// `test.mentioned_ids`'s erase: the list without the erased entity's 32 hex, when it names it.
+#[allow(clippy::ptr_arg)] // the hook's type is `fn(&T, EntityId)` with `T = Vec<String>`
+fn drop_mention(ids: &Vec<String>, erased: EntityId) -> Option<Vec<String>> {
+    let hex = erased.to_hex();
+    ids.contains(&hex)
+        .then(|| ids.iter().filter(|id| **id != hex).cloned().collect())
 }
 
 fn channel(item: &str) -> bool {
@@ -147,5 +160,15 @@ crate::setting::setting_keys! {
     pub TEST_AFTER_COMMIT: u64 = "test.after_commit" {
         kind: Kind::new(zero),
         after_commit: Some(note_after_commit),
+    };
+    /// A dial: the owner sets it, and a whole-vault Steward grant naming any `engine.controls`
+    /// class reads it.
+    pub TEST_DIAL_NUMBER: u64 = "test.dial_number" {
+        kind: Kind::new(zero),
+        read_by: ReadBy::Dials,
+    };
+    /// A list of entities, 32 hex each: an erase takes the erased one out of the value.
+    pub TEST_MENTIONED_IDS: Vec<String> = "test.mentioned_ids" {
+        kind: Kind::new(no_ids).erase_mentions(drop_mention),
     };
 }
