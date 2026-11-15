@@ -1,12 +1,12 @@
 //! Public-door promise tests for the `vault.secrets` family (ruling L4-23 =
 //! A: each test proves a promise at the door; DOOR-FAMILIES Part 2, row 2).
 //!
-//! Every case drives the real route `POST /v1/core/facade/<verb>` in process
-//! (`build_app` + `oneshot`): the owner on the host root credential, the
-//! established self-hosted owner path, and an agent on its own paired
-//! credential, enrolled through a real pairing redemption and proving its
-//! holder key on every request. Each case owns its vault. No sockets, no
-//! sleeps, no models.
+//! Every case drives the real routes `POST /v1/core/facade/<verb>` and
+//! `POST /v1/core/query` in process (`build_app` + `oneshot`): the owner on
+//! the host root credential, the established self-hosted owner path, and an
+//! agent on its own paired credential, enrolled through a real pairing
+//! redemption and proving its holder key on every request. Each case owns
+//! its vault. No sockets, no sleeps, no models.
 //!
 //! The promises, with their canon lines (oneiron-docs `generated/`,
 //! `oneiron/gate/oneiron-arch-0069-secret-custody-v1.md`):
@@ -20,7 +20,11 @@
 //!   goes terminal and every lease over it is revoked";
 //! - custody is the owner's: `:380` "The engine rechecks the owner's proof in
 //!   the transaction that replaces the value", so an agent is refused at
-//!   every door of the family and writes nothing.
+//!   every door of the family and writes nothing;
+//! - a secret is not knowledge: `:8` "Secrets are not knowledge, and the
+//!   repo is not their sync plane." and "never as retrievable claims", so no
+//!   recall or query names the record, and an export with secrets left out
+//!   carries no value.
 //!
 //! These promises hold on main. Their red proof is a seeded fault (Test rules
 //! v2, rule 5), named in the PR.
@@ -35,6 +39,7 @@
 mod engine_stack;
 
 use std::collections::BTreeSet;
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 
 use axum::{
@@ -58,6 +63,9 @@ use tower::ServiceExt;
 
 /// The name every case registers its secret under.
 const NAME: &str = "doors-custody-secret";
+
+/// The name the agent's refused register asks for.
+const AGENT_NAME: &str = "doors-custody-agent-secret";
 
 /// One paired agent credential: its registered principal, its holder
 /// signing key, its redeemed slip and the token it presents.
@@ -255,26 +263,33 @@ impl Served {
     /// `caller` posts `verb` with `input` to its facade door: the status and
     /// the body.
     async fn post(&self, caller: Caller, verb: &str, input: Value) -> (StatusCode, Value) {
+        self.request(caller, &format!("/v1/core/facade/{verb}"), input)
+            .await
+    }
+
+    /// `caller` posts `input` to the route at `path`: the status and the
+    /// body.
+    async fn request(&self, caller: Caller, path: &str, input: Value) -> (StatusCode, Value) {
         let token = match caller {
             Caller::Owner => self.owner_token.as_str(),
             Caller::Agent => self.agent.token.as_str(),
         };
-        let request = Request::post(format!("/v1/core/facade/{verb}"))
+        let request = Request::post(path)
             .header("authorization", format!("Bearer {token}"))
             .header("x-oneiron-binding", self.binding(caller))
             .header("content-type", "application/json")
             .body(Body::from(input.to_string()))
-            .expect("facade request");
+            .expect("route request");
         let response = self
             .app
             .clone()
             .oneshot(request)
             .await
-            .expect("facade response");
+            .expect("route response");
         let status = response.status();
-        let bytes = to_bytes(response.into_body(), 4 * 1024 * 1024)
+        let bytes = to_bytes(response.into_body(), 64 * 1024 * 1024)
             .await
-            .expect("facade response body");
+            .expect("route response body");
         (
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
@@ -285,7 +300,11 @@ impl Served {
     /// 0 with no binding. Asserts the 200 and answers the reply.
     async fn register(&self, name: &str, value: &SecretValue) -> Value {
         let (status, body) = self
-            .post(Caller::Owner, "vault.secrets.register", register_input(name, value))
+            .post(
+                Caller::Owner,
+                "vault.secrets.register",
+                register_input(name, value),
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "the owner registers {name}: {body}");
         body
@@ -443,9 +462,179 @@ fn a_revoke_ends_the_record_and_no_rotate_revives_it() {
         );
         assert_value_free("the refused rotate's reply", &rotated, &all);
         let view = served.custody(NAME).await;
+        assert!(!active(&view), "a refused rotate revives no record: {view}");
+    });
+}
+
+/// The agent, on its own verified credential, posts each of the nine
+/// `vault.secrets` doors with a well-formed input. Each answers 403
+/// `FORBIDDEN` with no value in its body, and none writes: the owner's
+/// record keeps its id, status, generation and custody revision, and the
+/// name the agent asked to register stays unknown. Custody is the owner's
+/// (arch-0069:380). Red with the seeded fault that lets the host doors'
+/// owner proof fall back to the embedded owner.
+#[test]
+fn an_agent_is_refused_at_every_door_of_the_family() {
+    run_on_engine_stack("secrets-doors-agent", || async {
+        let served = served().await;
+        let kept = SecretValue::fresh();
+        let offered = SecretValue::fresh();
+        let all = [&kept, &offered];
+        served.register(NAME, &kept).await;
+        let before = served.custody(NAME).await;
+        let record = |view: &Value| {
+            [
+                view["secret_id"].clone(),
+                view["known"].clone(),
+                view["status"].clone(),
+                view["generation"].clone(),
+                view["seen"].clone(),
+            ]
+        };
+        let rows: [(&str, Value); 9] = [
+            (
+                "vault.secrets.register",
+                register_input(AGENT_NAME, &offered),
+            ),
+            (
+                "vault.secrets.rotate",
+                json!({"name": NAME, "value_base64": offered.base64}),
+            ),
+            (
+                "vault.secrets.rewrap",
+                json!({"name": NAME, "recipients": []}),
+            ),
+            ("vault.secrets.revoke", json!({"name": NAME})),
+            ("vault.secrets.custody.get", json!({"name": NAME})),
+            (
+                "vault.secrets.custody.submit",
+                json!({
+                    "change": "rotate",
+                    "secret_id": before["secret_id"],
+                    "generation": 1,
+                    "seen": before["seen"],
+                    "holder": EntityId::now().to_hex(),
+                    "recipients": [],
+                    "input_base64": offered.base64,
+                }),
+            ),
+            ("vault.secrets.code_run_lifts", json!({})),
+            (
+                "vault.secrets.code_run_room_lifts",
+                json!({"room_ref": EntityId::now().to_hex(), "session_ref": "doors-custody"}),
+            ),
+            ("vault.secrets.lift_history", json!({})),
+        ];
+        for (verb, input) in rows {
+            let (status, body) = served.post(Caller::Agent, verb, input).await;
+            assert_eq!(
+                (status, error_code(&body)),
+                (StatusCode::FORBIDDEN, Some("FORBIDDEN")),
+                "the agent is refused at {verb}: {body}"
+            );
+            assert_value_free(verb, &body, &all);
+        }
+
+        let after = served.custody(NAME).await;
+        assert_eq!(
+            record(&after),
+            record(&before),
+            "no refused agent call moves the owner's record: {after}"
+        );
+        let asked = served.custody(AGENT_NAME).await;
+        assert_eq!(
+            asked["known"].as_bool(),
+            Some(false),
+            "the agent's refused register holds nothing: {asked}"
+        );
+    });
+}
+
+/// A registered secret is not knowledge (arch-0069:8). The owner's and the
+/// agent's recall and query of its name answer 200 and name neither the
+/// record nor its value. The owner's JSON export and archive with secrets
+/// left out carry no value: the archive keeps the record as a handle with
+/// no body, and no member of it holds the value or its base64. Red with the
+/// seeded fault that opens custody values into an archive whose secrets
+/// were left out.
+#[test]
+fn a_secret_is_not_knowledge_and_no_read_carries_its_value() {
+    run_on_engine_stack("secrets-doors-knowledge", || async {
+        let served = served().await;
+        let value = SecretValue::fresh();
+        let all = [&value];
+        let registered = served.register(NAME, &value).await;
+        let secret_id = registered["secret_id"]
+            .as_str()
+            .expect("the register reply names the record")
+            .to_owned();
+
+        for caller in [Caller::Owner, Caller::Agent] {
+            for (path, input) in [
+                ("/v1/core/facade/vault.recall", json!({"query": NAME})),
+                ("/v1/core/query", json!({"query": NAME, "limit": 10})),
+            ] {
+                let (status, body) = served.request(caller, path, input).await;
+                assert_eq!(status, StatusCode::OK, "{path}: {body}");
+                assert_value_free(path, &body, &all);
+                assert!(
+                    !body.to_string().contains(&secret_id),
+                    "{path} names the custody record: {body}"
+                );
+            }
+        }
+
+        let (status, document) = served
+            .post(Caller::Owner, "vault.export", json!({"format": "json"}))
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner's JSON export: {document}"
+        );
+        assert_value_free("the JSON export", &document, &all);
+
+        let (status, export) = served
+            .post(
+                Caller::Owner,
+                "vault.export",
+                json!({"format": "archive", "include_secrets": false, "delivery": "inline"}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "the owner's archive: {export}");
+        assert_value_free("the archive reply", &export, &all);
+        let bytes = STANDARD
+            .decode(export["archive"].as_str().expect("an inline archive"))
+            .expect("the archive is standard base64");
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("the archive is a ZIP");
+        let mut custody_rows = Vec::new();
+        for index in 0..archive.len() {
+            let mut member = archive.by_index(index).expect("an archive member");
+            let name = member.name().to_owned();
+            let mut content = Vec::new();
+            member
+                .read_to_end(&mut content)
+                .expect("the archive member reads");
+            let text = String::from_utf8_lossy(&content);
+            assert!(
+                !text.contains(&value.raw) && !text.contains(&value.base64),
+                "archive member {name} carries the secret value"
+            );
+            if name == "records/secret_custody.jsonl" {
+                custody_rows.extend(
+                    text.lines()
+                        .filter(|line| !line.trim().is_empty())
+                        .map(|line| serde_json::from_str::<Value>(line).expect("a custody row")),
+                );
+            }
+        }
+        let row = custody_rows
+            .iter()
+            .find(|row| row["name"].as_str() == Some(NAME))
+            .expect("the owner's archive keeps the record as a handle");
         assert!(
-            !active(&view),
-            "a refused rotate revives no record: {view}"
+            row["body"].is_null(),
+            "an archive with secrets left out carries no custody body: {row}"
         );
     });
 }
