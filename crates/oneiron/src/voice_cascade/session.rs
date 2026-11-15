@@ -29,6 +29,10 @@ pub use preparation::PreparedAsr;
 /// class (CALLS.md: FIX 1388 ask expiry).
 pub const VOICE_IDENTITY_ASK_SECONDS: u64 = 24 * 60 * 60;
 
+/// The live contacts a speaker's "who is this?" ask offers at most, in the
+/// host's order (FIX 1388).
+pub const VOICE_ROOM_CANDIDATES_MAX: u32 = 32;
+
 /// How long the person's speech over the agent's output runs before it
 /// takes the floor whatever it says (CALLS, FIX 4899): an engine call. A
 /// shorter run past the barge-in hold stops the output only once its words
@@ -51,6 +55,43 @@ pub struct VoiceContainerBinding {
     pub candidates: Vec<EntityId>,
     /// How long each "who is this?" ask stays open, in engine seconds.
     pub ask_seconds: u64,
+}
+
+impl VoiceContainerBinding {
+    /// The binding of a session heard in the room `container`, recorded by
+    /// `writer`, the session's authenticated person: each distinct contact of
+    /// `contacts`, in the host's order, up to [`VOICE_ROOM_CANDIDATES_MAX`],
+    /// is a candidate an unplaced speaker's ask offers, and each ask stays
+    /// open [`VOICE_IDENTITY_ASK_SECONDS`].
+    ///
+    /// # Errors
+    ///
+    /// None today; the signature keeps the room's reads.
+    pub fn for_room(
+        vault: &Vault,
+        container: EntityId,
+        writer: EntityId,
+        contacts: impl IntoIterator<Item = EntityId>,
+    ) -> Result<Self> {
+        let _ = vault;
+        let mut candidates = Vec::new();
+        let most = usize::try_from(VOICE_ROOM_CANDIDATES_MAX).unwrap_or(usize::MAX);
+        for contact in contacts {
+            if candidates.len() >= most {
+                break;
+            }
+            if !candidates.contains(&contact) {
+                candidates.push(contact);
+            }
+        }
+        Ok(Self {
+            container,
+            writer,
+            writer_class: EdgeActorClass::Human,
+            candidates,
+            ask_seconds: VOICE_IDENTITY_ASK_SECONDS,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]

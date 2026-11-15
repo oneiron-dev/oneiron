@@ -52,9 +52,7 @@ use oneiron::claim::CallerLocality;
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, VoiceChunkPolicy};
 use oneiron::voice_cascade::uds::SocketGuard;
-use oneiron::voice_cascade::{
-    VOICE_IDENTITY_ASK_SECONDS, VoiceContainerBinding, VoiceSessionConfig,
-};
+use oneiron::voice_cascade::{VoiceContainerBinding, VoiceSessionConfig};
 use oneiron::workspace_roster::RoomWork;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, Vault, WriteActor};
 use oneiron_vault_contract::{MANAGED_VOICE_NONCE_BYTES, ManagedOwnerAction};
@@ -90,9 +88,6 @@ const BRAIN_QUEUE: usize = 256;
 /// A roster ref is a speaker entry's session key, which holds this many
 /// bytes at most.
 const MAX_ROSTER_REF_BYTES: usize = 128;
-/// The live contacts a speaker's "who is this?" ask offers at most: the
-/// entry's own cap.
-const MAX_ROOM_CANDIDATES: usize = 32;
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -657,28 +652,16 @@ fn bind_room(
     let members = vault
         .room_audience_members_under(&read, room, Some(caller))
         .map_err(|_| refused(Refusal::Room))?;
-    let mut candidates = Vec::new();
     // FIX 6558: the contact each member is known by in the room: a live
     // co-Owner classes VaultOwner now and keeps its contact as a candidate,
     // exactly the set the binding-only parties named before.
-    for entry in vault.room_party_entries(&members).map_err(failed)? {
-        if let Some(contact) = entry.contact
-            && !candidates.contains(&contact)
-            && candidates.len() < MAX_ROOM_CANDIDATES
-        {
-            candidates.push(contact);
-        }
-    }
-    Ok((
-        VoiceContainerBinding {
-            container: room,
-            writer: caller,
-            writer_class: EdgeActorClass::Human,
-            candidates,
-            ask_seconds: VOICE_IDENTITY_ASK_SECONDS,
-        },
-        branch,
-    ))
+    let contacts = vault
+        .room_party_entries(&members)
+        .map_err(failed)?
+        .into_iter()
+        .filter_map(|entry| entry.contact);
+    let binding = VoiceContainerBinding::for_room(vault, room, caller, contacts).map_err(failed)?;
+    Ok((binding, branch))
 }
 
 /// Resolves once a call's caller no longer stands as it did when admitted:
