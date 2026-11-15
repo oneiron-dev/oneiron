@@ -3,22 +3,25 @@
 //! diff size, elapsed time, turns, tokens and files opened. A failed run is
 //! kept and counted." The grader is sealed from the writer: the PR's tests
 //! are copied from its merge commit over whatever the writer left at those
-//! paths, so a writer's own copy of a sealed test never grades.
+//! paths, so a writer's own copy of a sealed test never grades. An attempt
+//! must grow from the root commit the pack recorded for its cell, and each
+//! test command runs in its own process group, killed whole when it ends.
 
 use std::{
     collections::BTreeSet,
     fs::File,
     io::Write as _,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::super::BeamResult;
 use super::manifest::{Manifest, Task, invalid};
-use super::pack::{git_ok, plan_manifest, world_subject};
+use super::pack::{PackedPlan, git_ok, packed_plan};
 use super::profile::{Arm, Check};
 use super::transcript::{self, TranscriptMetrics};
 
@@ -129,20 +132,19 @@ struct PairedTask {
 pub(in super::super) fn grade(path: &Path) -> BeamResult<GradeReport> {
     let file: AttemptsFile = serde_json::from_slice(&std::fs::read(path)?)?;
     let folder = path.parent().unwrap_or(Path::new("."));
-    let (manifest, repo) = plan_manifest(&folder.join(&file.plan))?;
+    let plan = packed_plan(&folder.join(&file.plan))?;
+    let manifest = &plan.manifest;
     let cells = file
         .attempts
         .iter()
-        .map(|attempt| parse_cell(&manifest, &attempt.cell))
+        .map(|attempt| parse_cell(manifest, &attempt.cell))
         .collect::<BeamResult<Vec<_>>>()?;
-    check_repairs(&manifest, &file.attempts, &cells)?;
+    check_repairs(manifest, &file.attempts, &cells)?;
     let mut rows = Vec::new();
     for (index, (attempt, cell)) in file.attempts.iter().zip(cells).enumerate() {
-        rows.push(grade_attempt(
-            &manifest, &repo, folder, attempt, cell, index,
-        )?);
+        rows.push(grade_attempt(&plan, folder, attempt, cell, index)?);
     }
-    let arms = summarize(&manifest, &rows);
+    let arms = summarize(manifest, &rows);
     Ok(GradeReport {
         schema: REPORT_SCHEMA,
         rows,
@@ -238,21 +240,23 @@ fn check_repairs(manifest: &Manifest, attempts: &[Attempt], cells: &[CellRef]) -
 }
 
 fn grade_attempt(
-    manifest: &Manifest,
-    repo: &Path,
+    plan: &PackedPlan,
     folder: &Path,
     attempt: &Attempt,
     cell: CellRef,
     index: usize,
 ) -> BeamResult<Row> {
+    let manifest = &plan.manifest;
     let task = manifest
         .task(&cell.task)
         .ok_or_else(|| invalid(format!("no task `{}`", cell.task)))?;
     let tree = folder.join(&attempt.tree);
-    check_world(&tree, task)?;
-    let diff = diff_size(&tree, &task.sealed)?;
+    let root = packed_root(&plan.out, &attempt.cell)?;
+    check_world(&tree, task, &root)?;
+    let diff = diff_size(&tree, &root, &task.sealed)?;
     let log = folder.join(format!("code-bench-grade-{index}.log"));
-    let (tests_pass, timed_out) = run_sealed_tests(repo, task, &tree, manifest.cap_minutes, &log)?;
+    let (tests_pass, timed_out) =
+        run_sealed_tests(&plan.repo, task, &tree, manifest.cap_minutes, &log)?;
     let transcript = attempt
         .transcript
         .as_ref()
@@ -278,14 +282,38 @@ fn grade_attempt(
     })
 }
 
-/// The tree must grow from the task's world: its one root commit is the
-/// commit `world.sh` made.
-fn check_world(tree: &Path, task: &Task) -> BeamResult<()> {
-    let expected = world_subject(task);
-    let roots = git_stdout(tree, &["log", "--max-parents=0", "--format=%s", "HEAD"])?;
-    if roots.as_deref().map(str::trim) != Some(expected.as_str()) {
+/// The root commit the pack recorded for the cell's world (`cell.json`
+/// beside the cell's prompt): a commit made at pack time, which no other
+/// repository holds.
+fn packed_root(out: &Path, cell: &str) -> BeamResult<String> {
+    let path = out.join(cell).join("cell.json");
+    let text = match std::fs::read(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(invalid(format!(
+                "cell `{cell}` was not packed ready: no {}",
+                path.display()
+            )));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let packed: Value = serde_json::from_slice(&text)?;
+    packed["world_root"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| invalid(format!("{} names no world_root", path.display())))
+}
+
+/// The tree must grow from its cell's world: its one root commit is the
+/// commit the pack made, whatever any commit's subject says.
+fn check_world(tree: &Path, task: &Task, root: &str) -> BeamResult<()> {
+    let roots = git_stdout(tree, &["rev-list", "--max-parents=0", "HEAD"])?;
+    let roots: Vec<&str> = roots
+        .as_deref()
+        .map_or(Vec::new(), |roots| roots.lines().map(str::trim).collect());
+    if roots != [root] {
         return Err(invalid(format!(
-            "tree {} does not grow from the world of task `{}` (root commit `{expected}`)",
+            "tree {} does not grow from the world of task `{}` (root commit {root})",
             tree.display(),
             task.id
         )));
@@ -293,12 +321,9 @@ fn check_world(tree: &Path, task: &Task) -> BeamResult<()> {
     Ok(())
 }
 
-/// Files changed and lines added and removed against the world, new files
-/// included, the sealed paths excluded.
-fn diff_size(tree: &Path, sealed: &[String]) -> BeamResult<DiffSize> {
-    let root = git_stdout(tree, &["rev-list", "--max-parents=0", "HEAD"])?
-        .and_then(|roots| roots.lines().next().map(str::to_owned))
-        .ok_or_else(|| invalid(format!("no root commit in {}", tree.display())))?;
+/// Files changed and lines added and removed against the world's root
+/// commit, new files included, the sealed paths excluded.
+fn diff_size(tree: &Path, root: &str, sealed: &[String]) -> BeamResult<DiffSize> {
     if !git_ok(tree, &["add", "--intent-to-add", "--", "."])? {
         return Err(invalid(format!(
             "git add --intent-to-add failed in {}",
@@ -308,7 +333,7 @@ fn diff_size(tree: &Path, sealed: &[String]) -> BeamResult<DiffSize> {
     let mut args = vec![
         "diff".to_owned(),
         "--numstat".to_owned(),
-        root,
+        root.to_owned(),
         "--".to_owned(),
         ".".to_owned(),
     ];
@@ -333,7 +358,7 @@ fn diff_size(tree: &Path, sealed: &[String]) -> BeamResult<DiffSize> {
 
 /// Copies each sealed test from the merge commit over the tree (a path the
 /// merge commit lacks is removed), then runs the PR's tests in the tree
-/// within the cap. Returns (pass, timed out).
+/// within the cap, each in its own process group. Returns (pass, timed out).
 fn run_sealed_tests(
     repo: &Path,
     task: &Task,
@@ -361,32 +386,33 @@ fn run_sealed_tests(
         let Some((program, args)) = test.argv.split_first() else {
             return Ok((false, false));
         };
-        let spawned = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .envs(&test.env)
             .current_dir(tree)
             .stdin(Stdio::null())
             .stdout(log_file.try_clone()?)
-            .stderr(log_file.try_clone()?)
-            .spawn();
-        let mut child = match spawned {
-            Ok(child) => child,
+            .stderr(log_file.try_clone()?);
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let mut group = match command.spawn() {
+            Ok(child) => TestGroup(child),
             Err(error) => {
                 writeln!(log_file, "code-bench: `{program}` did not start: {error}")?;
                 return Ok((false, false));
             }
         };
+        // Dropping `group` kills whatever the command left in its group, on
+        // every way out of this loop.
         loop {
-            if let Some(status) = child.try_wait()? {
+            if let Some(status) = group.0.try_wait()? {
                 if !status.success() {
                     return Ok((false, false));
                 }
                 break;
             }
             if Instant::now() >= deadline {
-                // The child may have exited between the two checks.
-                let _ = child.kill();
-                child.wait()?;
                 writeln!(
                     log_file,
                     "code-bench: the {cap_minutes}-minute cap ended the tests"
@@ -397,6 +423,25 @@ fn run_sealed_tests(
         }
     }
     Ok((true, false))
+}
+
+/// A running test command and its process group: a timed-out `cargo test`
+/// leaves no test binary behind, and a command that started a background
+/// process leaves none running.
+struct TestGroup(Child);
+
+impl Drop for TestGroup {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(group) = i32::try_from(self.0.id())
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+        {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        }
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 /// The sealed path inside the tree, its folders made real: a writer's

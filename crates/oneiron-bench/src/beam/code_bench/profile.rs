@@ -67,7 +67,14 @@ const NETWORK_DENIED: [&str; 8] = [
     "Bash(git clone:*)",
 ];
 /// Denied in `symbol_graph`: the arm reads by symbol and graph, not by text.
-const GREP_DENIED: [&str; 4] = ["Grep", "Bash(grep:*)", "Bash(rg:*)", "Bash(git grep:*)"];
+const GREP_DENIED: [&str; 6] = [
+    "Grep",
+    "Bash(grep:*)",
+    "Bash(egrep:*)",
+    "Bash(fgrep:*)",
+    "Bash(rg:*)",
+    "Bash(git grep:*)",
+];
 
 /// The code snapshot's reads (`scripts/sdk/verbs/<name>.json`).
 const SYMBOL_GRAPH_VERBS: [&str; 11] = [
@@ -177,14 +184,34 @@ impl Arm {
         }
     }
 
-    /// Claude Code's `permissions.allow` for the arm.
-    pub(super) fn allowed_tools(self) -> Vec<String> {
+    /// Whether the arm may call `tool` of its MCP server: one of its verbs,
+    /// or a name under one of its prefixes.
+    pub(super) fn admits_tool(self, tool: &str) -> bool {
+        self.verbs().iter().any(|verb| names_verb(tool, verb))
+            || self
+                .tool_prefixes()
+                .iter()
+                .any(|prefix| starts_with_verb(tool, prefix))
+    }
+
+    /// Claude Code's `permissions.allow` for the arm: its base tools, and
+    /// each tool its MCP server listed that the arm admits, by its exact
+    /// name, never the whole server. `listed` is what the pack's probe of
+    /// that server read.
+    pub(super) fn allowed_tools(self, listed: &[String]) -> Vec<String> {
         let mut tools = Vec::from(BASE_TOOLS.map(String::from));
         if self != Self::SymbolGraph {
             tools.push("Grep".to_owned());
         }
         if let Some(server) = self.server() {
-            tools.push(format!("mcp__{server}"));
+            for tool in listed.iter().filter(|tool| self.admits_tool(tool)) {
+                let exact = format!("mcp__{server}__{tool}");
+                let client = format!("mcp__{server}__{}", client_tool_name(tool));
+                if client != exact {
+                    tools.push(exact);
+                }
+                tools.push(client);
+            }
         }
         tools
     }
@@ -217,7 +244,8 @@ impl Arm {
             Self::SymbolGraph => format!(
                 "Tools: file reads, edits and the shell, plus these reads of the \
                  `{CODE_SERVER}` MCP server over a snapshot of your tree: {verbs}. The Grep \
-                 tool and shell grep, rg and git grep are off."
+                 tool and shell grep (egrep, fgrep), rg and git grep are off, however they \
+                 are started."
             ),
             Self::OneironWriters => format!(
                 "Tools: file reads, edits and the shell, plus the `{WORK_SERVER}` MCP server: \
@@ -232,6 +260,29 @@ impl Arm {
                 .to_owned(),
         }
     }
+}
+
+/// A verb as a tool name: the verb itself, or with its dots replaced, as a
+/// client may sanitize them.
+pub(super) fn names_verb(tool: &str, verb: &str) -> bool {
+    tool == verb || tool == verb.replace('.', "_")
+}
+
+pub(super) fn starts_with_verb(tool: &str, prefix: &str) -> bool {
+    tool.starts_with(prefix) || tool.starts_with(&prefix.replace('.', "_"))
+}
+
+/// The tool name as an MCP client that takes only `[A-Za-z0-9_-]` names it.
+fn client_tool_name(tool: &str) -> String {
+    tool.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 impl Check {

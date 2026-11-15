@@ -8,9 +8,14 @@
 //! `beam code-bench` grades what the writers left: the PR's sealed tests,
 //! copied from its merge commit over the tree, the diff size without them,
 //! and the transcript's turns, tokens, files opened, time and breaches of
-//! the arm's profile. A failed run is kept and counted.
+//! the arm's profile. A failed run is kept and counted. An attempt must grow
+//! from the root commit the pack made, the test commands leave no process
+//! behind, and a denied shell command counts however it is started.
 //!
 //! Each test builds a throwaway repository, so no test builds the engine.
+//! A loopback MCP stub stands in for a declared server: the pack probes
+//! every declared server with `tools/list` before a cell that needs it is
+//! ready, and allows each arm only the tools it lists by their exact names.
 //!
 //! `cargo test --locked -p oneiron-bench --test code_bench_cli`.
 #![allow(
@@ -19,6 +24,8 @@
 )]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -29,6 +36,13 @@ const FIXTURE: &str = concat!(
     "/fixtures/code_bench.tasks.v1.json"
 );
 const INTENT: &str = "Add the line `two` to src/lib.txt.";
+/// The token the MCP stub takes; the pack reads it from `TOKEN_ENV`.
+const STUB_TOKEN: &str = "code-bench-stub-token";
+const TOKEN_ENV: &str = "CODE_BENCH_TOKEN";
+/// Never set for the pack.
+const UNSET_TOKEN_ENV: &str = "CODE_BENCH_UNSET_TOKEN";
+/// Set to a token the stub refuses.
+const WRONG_TOKEN_ENV: &str = "CODE_BENCH_WRONG_TOKEN";
 
 struct World {
     dir: tempfile::TempDir,
@@ -72,6 +86,11 @@ fn git_text(repo: &Path, args: &[&str]) -> String {
 /// `base` holds src/lib.txt, the codemap and an old tests/grade.sh;
 /// `merged` adds a line and the grade script that checks it.
 fn world() -> World {
+    world_with_grader("grep -q two src/lib.txt\n")
+}
+
+/// `world()` with `grader` as the merge commit's tests/grade.sh.
+fn world_with_grader(grader: &str) -> World {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");
     for folder in ["src", "tests", "docs/codemap"] {
@@ -88,7 +107,7 @@ fn world() -> World {
     );
     let base = git_text(&repo, &["rev-parse", "HEAD"]);
     std::fs::write(repo.join("src/lib.txt"), "one\ntwo\n").unwrap();
-    std::fs::write(repo.join("tests/grade.sh"), "grep -q two src/lib.txt\n").unwrap();
+    std::fs::write(repo.join("tests/grade.sh"), grader).unwrap();
     git_text(&repo, &["add", "-A"]);
     git_text(
         &repo,
@@ -161,10 +180,97 @@ fn pack(world: &World, manifest: &Path, out: &str, pieces: &Value) -> Output {
     let path = world.dir.path().join(format!("plan-{out}.json"));
     std::fs::write(&path, plan.to_string()).unwrap();
     isolated(env!("CARGO_BIN_EXE_oneiron-bench"))
+        .env(TOKEN_ENV, STUB_TOKEN)
+        .env(WRONG_TOKEN_ENV, "not-the-stub-token")
+        .env_remove(UNSET_TOKEN_ENV)
         .args(["beam", "code-bench-pack"])
         .arg(&path)
         .output()
         .expect("the bench binary runs")
+}
+
+/// A loopback MCP server for the pack's probe, listing `tools` to the
+/// bearer token `STUB_TOKEN` and answering 401 to any other. It answers
+/// `initialize`, accepts notifications, and runs until the test ends.
+fn mcp_stub(tools: &[&str]) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let tools: Vec<Value> = tools
+        .iter()
+        .map(|name| json!({"name": name, "inputSchema": {"type": "object"}}))
+        .collect();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let _ = answer_mcp(stream, &tools);
+        }
+    });
+    url
+}
+
+/// One HTTP/1.1 request, one answer, then the connection closes.
+fn answer_mcp(mut stream: TcpStream, tools: &[Value]) -> std::io::Result<()> {
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let (mut length, mut authorized) = (0, false);
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        let (name, value) = line.split_once(':').unwrap_or((line, ""));
+        match name.to_ascii_lowercase().as_str() {
+            "content-length" => length = value.trim().parse().unwrap_or(0),
+            "authorization" => authorized = value.trim() == format!("Bearer {STUB_TOKEN}"),
+            _ => {}
+        }
+    }
+    let mut body = vec![0; length];
+    reader.read_exact(&mut body)?;
+    let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let (status, reply) = if !authorized {
+        ("401 Unauthorized", String::new())
+    } else if request.get("id").is_none() {
+        ("202 Accepted", String::new())
+    } else {
+        let id = request["id"].clone();
+        let reply = match request["method"].as_str() {
+            Some("initialize") => json!({"jsonrpc": "2.0", "id": id, "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "code-bench-stub", "version": "1"},
+            }}),
+            Some("tools/list") => json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools}}),
+            _ => {
+                json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "no such method"}})
+            }
+        };
+        ("200 OK", reply.to_string())
+    };
+    write!(
+        stream,
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+        reply.len()
+    )
+}
+
+/// A loopback URL nothing listens on.
+fn dead_url() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    format!("http://{}/mcp", listener.local_addr().unwrap())
+}
+
+fn read_json(path: &Path) -> Value {
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+fn strings(value: &Value) -> Vec<&str> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap())
+        .collect()
 }
 
 fn index(output: &Output) -> Value {
@@ -323,16 +429,41 @@ fn a_ready_cell_hides_the_sealed_tests() {
     let mcp: Value = serde_json::from_slice(&std::fs::read(dir.join("mcp.json")).unwrap()).unwrap();
     assert_eq!(mcp, json!({"mcpServers": {}}));
 
-    let built = isolated("sh")
-        .arg(grep_only["world"].as_str().unwrap())
-        .output()
-        .unwrap();
+    // The pack built the world before any writer starts; no script in the
+    // cell names the source repository, and the sandbox must start and
+    // denies every read of it.
     assert!(
-        built.status.success(),
-        "{}",
-        String::from_utf8_lossy(&built.stderr)
+        !dir.join("world.sh").exists(),
+        "no world script in the cell"
     );
     let tree = dir.join("tree");
+    assert_eq!(PathBuf::from(grep_only["tree"].as_str().unwrap()), tree);
+    let source = std::fs::canonicalize(&world.repo).unwrap();
+    let source = source.to_str().unwrap();
+    for file in ["PROMPT.md", "mcp.json", "cell.json"] {
+        let text = std::fs::read_to_string(dir.join(file)).unwrap();
+        assert!(!text.contains(source), "{file} names the source repository");
+    }
+    let sandbox = &settings["sandbox"];
+    assert_eq!(sandbox["enabled"], true, "{settings:#}");
+    assert_eq!(sandbox["failIfUnavailable"], true, "{settings:#}");
+    assert_eq!(sandbox["allowUnsandboxedCommands"], false, "{settings:#}");
+    assert_eq!(strings(&sandbox["filesystem"]["denyRead"]), [source]);
+    let deny = strings(&settings["permissions"]["deny"]);
+    assert!(
+        deny.contains(&format!("Read(/{source}/**)").as_str()),
+        "{settings:#}"
+    );
+    assert!(
+        deny.contains(&format!("Edit(/{source}/**)").as_str()),
+        "{settings:#}"
+    );
+    let root = git_text(&tree, &["rev-parse", "HEAD"]);
+    assert_eq!(grep_only["world_root"], root.as_str());
+    assert_eq!(
+        read_json(&dir.join("cell.json"))["world_root"],
+        root.as_str()
+    );
     assert_eq!(
         std::fs::read_to_string(tree.join("src/lib.txt")).unwrap(),
         "one\n"
@@ -383,15 +514,6 @@ fn a_ready_cell_hides_the_sealed_tests() {
         writer_prompt.contains("writer `w2` of 3"),
         "{writer_prompt}"
     );
-    let shared = isolated("sh")
-        .arg(writer["world"].as_str().unwrap())
-        .output()
-        .unwrap();
-    assert!(
-        shared.status.success(),
-        "{}",
-        String::from_utf8_lossy(&shared.stderr)
-    );
     let arm = world
         .dir
         .path()
@@ -406,15 +528,23 @@ fn a_ready_cell_hides_the_sealed_tests() {
             .status
             .success()
     );
+    let writer_settings = read_json(&arm.join("w2/settings.json"));
+    let shared = std::fs::canonicalize(arm.join("repo")).unwrap();
+    assert!(
+        strings(&writer_settings["sandbox"]["filesystem"]["allowWrite"])
+            .contains(&shared.to_str().unwrap()),
+        "a writer's worktree commits land in the arm's shared repository: {writer_settings:#}"
+    );
 }
 
 #[test]
 fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
     let world = world();
     let manifest = manifest(&world, Some(INTENT), 9);
+    let url = mcp_stub(&["memory.recall"]);
     let vault = |seeded_through: &str, token_env: &str| {
         json!({"memory_vault": {
-            "url": "http://127.0.0.1:9/mcp",
+            "url": url,
             "token_env": token_env,
             "seeded_through": seeded_through,
         }})
@@ -424,7 +554,7 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
         &world,
         &manifest,
         "late",
-        &vault("2026-11-11T00:00:00+09:00", "CODE_BENCH_VAULT_TOKEN"),
+        &vault("2026-11-11T00:00:00+09:00", TOKEN_ENV),
     ));
     let cell_late = cell(&late, "memory/alpha/vault_memory");
     assert_eq!(cell_late["ready"], false);
@@ -438,7 +568,7 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
         &world,
         &manifest,
         "early",
-        &vault("2026-11-09T23:59:59+09:00", "CODE_BENCH_VAULT_TOKEN"),
+        &vault("2026-11-09T23:59:59+09:00", TOKEN_ENV),
     ));
     let cell_early = cell(&early, "memory/alpha/vault_memory");
     assert_eq!(cell_early["ready"], true, "{cell_early:#}");
@@ -448,8 +578,8 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
         mcp["mcpServers"]["oneiron-memory"],
         json!({
             "type": "http",
-            "url": "http://127.0.0.1:9/mcp",
-            "headers": {"Authorization": "Bearer ${CODE_BENCH_VAULT_TOKEN}"},
+            "url": url,
+            "headers": {"Authorization": "Bearer ${CODE_BENCH_TOKEN}"},
         })
     );
 
@@ -462,6 +592,104 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
     assert!(!refused.status.success());
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("memory_vault.token_env"), "{stderr}");
+}
+
+/// Canon: "A missing piece marks that arm not ready; nothing is faked." A
+/// declared server that does not answer, refuses the token, or lists none
+/// of the arm's tools is not a ready piece.
+#[test]
+fn a_declared_server_that_does_not_answer_is_not_ready() {
+    let world = world();
+    let manifest = manifest(&world, Some(INTENT), 9);
+    let vault = |url: &str, token_env: &str| {
+        json!({"memory_vault": {
+            "url": url,
+            "token_env": token_env,
+            "seeded_through": "2026-11-09T00:00:00+09:00",
+        }})
+    };
+    let memory = mcp_stub(&["memory.recall", "self.memory.read"]);
+    let other = mcp_stub(&["vault.code.checkout.claim"]);
+    let cases = [
+        (
+            "dead",
+            vault(&dead_url(), TOKEN_ENV),
+            "did not answer initialize",
+        ),
+        ("unset", vault(&memory, UNSET_TOKEN_ENV), "is not set"),
+        (
+            "wrong",
+            vault(&memory, WRONG_TOKEN_ENV),
+            "answered HTTP 401",
+        ),
+        (
+            "other",
+            vault(&other, TOKEN_ENV),
+            "lists none of the tools of arm vault_memory",
+        ),
+    ];
+    for (out, pieces, reason) in cases {
+        let index = index(&pack(&world, &manifest, out, &pieces));
+        let cell = cell(&index, "memory/alpha/vault_memory");
+        assert_eq!(cell["ready"], false, "{out}: {cell:#}");
+        assert_eq!(gaps(cell), ["memory_vault"], "{out}: {cell:#}");
+        assert!(reasons(cell).contains(reason), "{out}: {cell:#}");
+        assert!(
+            !reasons(cell).contains(STUB_TOKEN),
+            "{out}: a reason never holds the token"
+        );
+        assert!(cell["dir"].is_null(), "{out}: {cell:#}");
+    }
+}
+
+/// The arm's settings allow each tool its server listed that the arm
+/// admits, by its exact name, never the whole server.
+#[test]
+fn a_ready_arm_may_call_only_its_listed_tools() {
+    let world = world();
+    let url = mcp_stub(&[
+        "memory.recall",
+        "self.memory.read",
+        "vault.code.checkout.claim",
+    ]);
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({"memory_vault": {
+            "url": url,
+            "token_env": TOKEN_ENV,
+            "seeded_through": "2026-11-09T00:00:00+09:00",
+        }}),
+    ));
+
+    let vault = cell(&index, "memory/alpha/vault_memory");
+    assert_eq!(vault["ready"], true, "{vault:#}");
+    let settings = read_json(&PathBuf::from(vault["dir"].as_str().unwrap()).join("settings.json"));
+    let allow = strings(&settings["permissions"]["allow"]);
+    for tool in [
+        "mcp__oneiron-memory__memory.recall",
+        "mcp__oneiron-memory__memory_recall",
+        "mcp__oneiron-memory__self.memory.read",
+        "mcp__oneiron-memory__self_memory_read",
+    ] {
+        assert!(allow.contains(&tool), "{tool} missing: {settings:#}");
+    }
+    assert!(
+        allow
+            .iter()
+            .all(|tool| *tool != "mcp__oneiron-memory" && !tool.contains("checkout")),
+        "{settings:#}"
+    );
+    let no_memory = cell(&index, "memory/alpha/no_memory");
+    let settings =
+        read_json(&PathBuf::from(no_memory["dir"].as_str().unwrap()).join("settings.json"));
+    assert!(
+        strings(&settings["permissions"]["allow"])
+            .iter()
+            .all(|tool| !tool.starts_with("mcp__")),
+        "{settings:#}"
+    );
 }
 
 const TRANSCRIPT: &str = concat!(
@@ -483,19 +711,40 @@ const SYMBOL_GRAPH_VERBS: [&str; 11] = [
     "graph_fs.wc",
 ];
 
-/// Runs a ready cell's `world.sh` and returns its tree.
-fn build_world(index: &Value, id: &str) -> PathBuf {
+/// The tree the pack built for a ready cell.
+fn packed_tree(index: &Value, id: &str) -> PathBuf {
     let cell = cell(index, id);
-    let built = isolated("sh")
-        .arg(cell["world"].as_str().unwrap())
-        .output()
-        .unwrap();
-    assert!(
-        built.status.success(),
-        "{}",
-        String::from_utf8_lossy(&built.stderr)
+    assert_eq!(cell["ready"], true, "{cell:#}");
+    let tree = PathBuf::from(cell["tree"].as_str().unwrap());
+    assert!(tree.join(".git").exists(), "{cell:#}");
+    tree
+}
+
+/// Packs the throwaway repository with a code snapshot whose engine commit
+/// holds the arm's verb rows, served by a stub that lists them.
+fn symbol_graph_index(world: &World, out: &str) -> Value {
+    for verb in SYMBOL_GRAPH_VERBS {
+        let row = world.repo.join(format!("scripts/sdk/verbs/{verb}.json"));
+        std::fs::create_dir_all(row.parent().unwrap()).unwrap();
+        std::fs::write(row, json!({"name": verb}).to_string()).unwrap();
+    }
+    git_text(&world.repo, &["add", "-A"]);
+    git_text(
+        &world.repo,
+        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "engine"],
     );
-    PathBuf::from(cell["dir"].as_str().unwrap()).join("tree")
+    let engine = git_text(&world.repo, &["rev-parse", "HEAD"]);
+    index(&pack(
+        world,
+        &manifest(world, Some(INTENT), 9),
+        out,
+        &json!({"code_snapshot": {
+            "url": mcp_stub(&SYMBOL_GRAPH_VERBS),
+            "token_env": TOKEN_ENV,
+            "engine_commit": engine,
+            "bases": [world.base],
+        }}),
+    ))
 }
 
 /// Runs `beam code-bench` on `attempts` against the plan `pack` wrote for
@@ -541,9 +790,9 @@ fn the_sealed_grader_passes_the_merged_change_and_fails_the_base() {
         "out",
         &json!({}),
     ));
-    let solved = build_world(&index, "navigation/alpha/grep_only");
+    let solved = packed_tree(&index, "navigation/alpha/grep_only");
     std::fs::write(solved.join("src/lib.txt"), "one\ntwo\n").unwrap();
-    let untouched = build_world(&index, "navigation/gamma/grep_only");
+    let untouched = packed_tree(&index, "navigation/gamma/grep_only");
 
     let report = report(&grade(
         &world,
@@ -588,7 +837,7 @@ fn a_writers_own_copy_of_a_sealed_test_never_grades() {
         "out",
         &json!({}),
     ));
-    let tree = build_world(&index, "memory/alpha/no_memory");
+    let tree = packed_tree(&index, "memory/alpha/no_memory");
     std::fs::create_dir_all(tree.join("tests")).unwrap();
     std::fs::write(tree.join("tests/grade.sh"), "exit 0\n").unwrap();
 
@@ -617,28 +866,7 @@ fn a_writers_own_copy_of_a_sealed_test_never_grades() {
 #[test]
 fn the_transcript_gives_turns_tokens_files_and_breaches() {
     let world = world();
-    for verb in SYMBOL_GRAPH_VERBS {
-        let row = world.repo.join(format!("scripts/sdk/verbs/{verb}.json"));
-        std::fs::create_dir_all(row.parent().unwrap()).unwrap();
-        std::fs::write(row, json!({"name": verb}).to_string()).unwrap();
-    }
-    git_text(&world.repo, &["add", "-A"]);
-    git_text(
-        &world.repo,
-        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "engine"],
-    );
-    let engine = git_text(&world.repo, &["rev-parse", "HEAD"]);
-    let index = index(&pack(
-        &world,
-        &manifest(&world, Some(INTENT), 9),
-        "out",
-        &json!({"code_snapshot": {
-            "url": "http://127.0.0.1:9/mcp",
-            "token_env": "CODE_BENCH_SNAPSHOT_TOKEN",
-            "engine_commit": engine,
-            "bases": [world.base],
-        }}),
-    ));
+    let index = symbol_graph_index(&world, "out");
     let cell_id = "navigation/alpha/symbol_graph";
     let dir = PathBuf::from(cell(&index, cell_id)["dir"].as_str().unwrap());
     let settings: Value =
@@ -649,7 +877,7 @@ fn the_transcript_gives_turns_tokens_files_and_breaches() {
             .unwrap()
             .contains(&json!("Grep"))
     );
-    let tree = build_world(&index, cell_id);
+    let tree = packed_tree(&index, cell_id);
 
     let report = report(&grade(
         &world,
@@ -709,4 +937,161 @@ fn a_second_repair_in_one_arm_group_is_refused() {
         stderr.contains("a second repair in arm group memory/no_memory"),
         "{stderr}"
     );
+}
+
+/// The grader checks the root commit the pack made, not a subject a writer
+/// can copy: a fresh repository of the merged tree under the world's
+/// subject is refused.
+#[test]
+fn a_tree_that_does_not_grow_from_the_packed_world_is_refused() {
+    let world = world();
+    index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let forged = world.dir.path().join("forged");
+    std::fs::create_dir_all(forged.join("src")).unwrap();
+    git_text(&forged, &["init", "-q"]);
+    std::fs::write(forged.join("src/lib.txt"), "one\ntwo\n").unwrap();
+    git_text(&forged, &["add", "-A"]);
+    let subject = format!("code-bench world: alpha at {}", world.base);
+    git_text(
+        &forged,
+        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", &subject],
+    );
+
+    let output = grade(
+        &world,
+        "out",
+        &json!([{"cell": "navigation/alpha/grep_only", "tree": forged}]),
+    );
+
+    assert!(!output.status.success(), "the forged world graded");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not grow from the world of task `alpha`"),
+        "{stderr}"
+    );
+}
+
+/// Whether the process `pid` still runs (a zombie has ended).
+#[cfg(target_os = "linux")]
+fn running(pid: &str) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .and_then(|(_, fields)| fields.split_whitespace().next())
+            .is_some_and(|state| state != "Z" && state != "X")
+    })
+}
+
+/// A sealed test that starts a background process leaves none behind: the
+/// grader kills the command's whole process group, as it does at the cap.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_sealed_tests_leave_no_process_behind() {
+    let world = world_with_grader(
+        "sleep 300 >/dev/null 2>&1 &\necho $! > background.pid\ngrep -q two src/lib.txt\n",
+    );
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let tree = packed_tree(&index, "memory/alpha/no_memory");
+    std::fs::write(tree.join("src/lib.txt"), "one\ntwo\n").unwrap();
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([{"cell": "memory/alpha/no_memory", "tree": tree}]),
+    ));
+
+    assert_eq!(report["rows"][0]["tests_pass"], true, "{report:#}");
+    let pid = std::fs::read_to_string(tree.join("background.pid")).unwrap();
+    let pid = pid.trim();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while running(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let left = running(pid);
+    if left {
+        let _ = Command::new("kill").args(["-9", pid]).status();
+    }
+    assert!(
+        !left,
+        "the sealed test's background process {pid} still runs"
+    );
+}
+
+/// Denied commands count however they are started (a wrapper, a path, a
+/// nested shell, a command substitution, xargs or find -exec), quoted text
+/// is not a command, and a graph read's file is read from the serving
+/// engine's `arguments.spec.path`.
+#[test]
+fn the_transcript_reads_wrapped_commands_and_graph_payloads() {
+    let world = world();
+    let index = symbol_graph_index(&world, "out");
+    let cell_id = "navigation/alpha/symbol_graph";
+    let tree = packed_tree(&index, cell_id);
+    let calls = [
+        (
+            "mcp__oneiron-code__graph_fs.read_file",
+            json!({"schema_version": "1", "arguments": {"spec": {"path": "src/graph.txt"}}}),
+        ),
+        (
+            "mcp__oneiron-code__graph_fs_head",
+            json!({"path": "src/old.txt"}),
+        ),
+        ("Bash", json!({"command": "env rg needle src"})),
+        ("Bash", json!({"command": "/usr/bin/grep -r needle ."})),
+        ("Bash", json!({"command": "timeout 5 rg needle"})),
+        ("Bash", json!({"command": "bash -c 'git -C . grep needle'"})),
+        (
+            "Bash",
+            json!({"command": "git ls-files | xargs -n1 grep -l needle"}),
+        ),
+        ("Bash", json!({"command": "echo \"$(LC_ALL=C rg needle)\""})),
+        (
+            "Bash",
+            json!({"command": "find src -name '*.rs' -exec egrep -l needle {} +"}),
+        ),
+        (
+            "Bash",
+            json!({"command": "echo rg; git status; cargo check"}),
+        ),
+        (
+            "Bash",
+            json!({"command": "git commit -q -m 'drop (rg) and grep; use graph reads'"}),
+        ),
+    ];
+    let lines: Vec<String> = calls
+        .iter()
+        .enumerate()
+        .map(|(number, (name, input))| {
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": format!("msg_{number}"),
+                    "content": [{"type": "tool_use", "id": format!("tu_{number}"), "name": name, "input": input}],
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            })
+            .to_string()
+        })
+        .collect();
+    let transcript = world.dir.path().join("wrapped.stream.jsonl");
+    std::fs::write(&transcript, lines.join("\n")).unwrap();
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([{"cell": cell_id, "tree": tree, "transcript": transcript}]),
+    ));
+
+    let metrics = &report["rows"][0]["transcript"];
+    assert_eq!(metrics["files_opened"], 2, "{report:#}");
+    assert_eq!(metrics["breaches"], json!(vec!["Bash"; 7]), "{report:#}");
 }

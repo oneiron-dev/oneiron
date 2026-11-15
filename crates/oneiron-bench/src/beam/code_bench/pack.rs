@@ -2,8 +2,11 @@
 //! run's driver, and list every cell that is not ready with what it lacks.
 //!
 //! A cell's world is a fresh repository holding only the task's base, with
-//! the sealed tests removed: a worktree of the repo would share its object
-//! store, and with it the merged commit and the tests the grader runs.
+//! the sealed tests removed, built here before any writer starts: a
+//! worktree of the repo would share its object store, and with it the
+//! merged commit and the tests the grader runs. No file of a cell names the
+//! source repository except the sandbox rules of its `settings.json`, which
+//! deny every read of it.
 
 use std::{
     fmt::Write as _,
@@ -15,7 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use super::super::{BeamResult, report_model::NotReadyState};
 use super::manifest::{Manifest, PromptPlan, Task, WriterPart, invalid, rfc3339_seconds};
-use super::profile::{Arm, Check, Piece};
+use super::mcp_probe;
+use super::profile::{Arm, Check, Piece, names_verb};
 
 const PACK_SCHEMA: &str = "code-bench-pack-v1";
 const CELL_SCHEMA: &str = "code-bench-cell-v1";
@@ -101,8 +105,11 @@ struct CellEntry {
     ready: bool,
     /// The cell's folder; only a ready cell has one.
     dir: Option<PathBuf>,
-    /// The script that makes the cell's world.
-    world: Option<PathBuf>,
+    /// The writer's tree, built before the writer starts.
+    tree: Option<PathBuf>,
+    /// The world's one root commit: the grader refuses an attempt that does
+    /// not grow from it.
+    world_root: Option<String>,
     not_ready: Vec<NotReadyState>,
 }
 
@@ -114,6 +121,10 @@ struct SharedCell {
     cell: String,
 }
 
+/// What a declared MCP server listed to the pack's probe, or why it is not
+/// ready.
+type Listing = Result<Vec<String>, String>;
+
 /// What every cell reads: the plan, the manifest and the folders.
 struct Pack<'a> {
     plan: &'a PackPlan,
@@ -123,6 +134,26 @@ struct Pack<'a> {
     cut: i64,
     snapshot_verbs_gap: Option<String>,
     work_verbs_gap: Option<String>,
+    memory_tools: Option<Listing>,
+    snapshot_tools: Option<Listing>,
+    work_tools: Option<Listing>,
+    /// The source repository's folders, absolute: no writer may read them.
+    sealed_sources: Vec<PathBuf>,
+}
+
+/// A ready cell's built world, as its files name it.
+struct CellWorld {
+    /// The cell's folder.
+    dir: PathBuf,
+    /// The writer's tree.
+    tree: PathBuf,
+    /// The world's one root commit.
+    root: String,
+    /// The folder the writer reads: its cell, or its collaboration arm's.
+    read: PathBuf,
+    /// The folders the writer writes: its cell, and for a collaboration
+    /// writer the arm's shared repository, where its worktree's commits land.
+    write: Vec<PathBuf>,
 }
 
 pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
@@ -136,6 +167,7 @@ pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
         )));
     }
     std::fs::create_dir_all(&out)?;
+    let out = std::fs::canonicalize(&out)?;
     let snapshot_verbs_gap = match &plan.code_snapshot {
         Some(snapshot) => verbs_gap(&repo, &snapshot.engine_commit, Arm::SymbolGraph.verbs())?,
         None => None,
@@ -144,6 +176,28 @@ pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
         Some(work) => verbs_gap(&repo, &work.engine_commit, Arm::OneironWriters.verbs())?,
         None => None,
     };
+    let probe = |piece: Piece, server: Option<(&String, &String)>| {
+        server.map(|(url, token_env)| mcp_probe::list_tools(piece.as_str(), url, token_env))
+    };
+    let memory_tools = probe(
+        Piece::MemoryVault,
+        plan.memory_vault
+            .as_ref()
+            .map(|piece| (&piece.url, &piece.token_env)),
+    );
+    let snapshot_tools = probe(
+        Piece::CodeSnapshot,
+        plan.code_snapshot
+            .as_ref()
+            .map(|piece| (&piece.url, &piece.token_env)),
+    );
+    let work_tools = probe(
+        Piece::OneironCodePath,
+        plan.oneiron_code_path
+            .as_ref()
+            .map(|piece| (&piece.url, &piece.token_env)),
+    );
+    let sealed_sources = source_folders(&repo)?;
     let pack = Pack {
         plan: &plan,
         cut: manifest.cut_seconds()?,
@@ -152,6 +206,10 @@ pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
         out,
         snapshot_verbs_gap,
         work_verbs_gap,
+        memory_tools,
+        snapshot_tools,
+        work_tools,
+        sealed_sources,
     };
     let index = pack.write()?;
     std::fs::write(
@@ -161,10 +219,22 @@ pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
     Ok(index)
 }
 
-/// The run plan's manifest and repository, as the grader reads them.
-pub(super) fn plan_manifest(plan_path: &Path) -> BeamResult<(Manifest, PathBuf)> {
+/// What the grader reads of a run plan: its manifest, the repository the
+/// tasks' commits are read from, and the folder the pack wrote the cells to.
+pub(super) struct PackedPlan {
+    pub(super) manifest: Manifest,
+    pub(super) repo: PathBuf,
+    pub(super) out: PathBuf,
+}
+
+pub(super) fn packed_plan(plan_path: &Path) -> BeamResult<PackedPlan> {
     let (plan, folder) = read_plan(plan_path)?;
-    plan.open(&folder)
+    let (manifest, repo) = plan.open(&folder)?;
+    Ok(PackedPlan {
+        manifest,
+        repo,
+        out: folder.join(&plan.out),
+    })
 }
 
 fn read_plan(plan_path: &Path) -> BeamResult<(PackPlan, PathBuf)> {
@@ -288,17 +358,25 @@ impl Pack<'_> {
             writer: None,
             ready: not_ready.is_empty(),
             dir: None,
-            world: None,
+            tree: None,
+            world_root: None,
             not_ready,
         };
         if entry.ready {
             let dir = self.out.join(&entry.id);
             std::fs::create_dir_all(&dir)?;
-            self.write_cell_files(&dir, &entry.id, check, task, arm, None)?;
-            let world = dir.join("world.sh");
-            std::fs::write(&world, self.world_script(&entry.id, task, &[]))?;
-            entry.dir = Some(dir);
-            entry.world = Some(world);
+            let tree = dir.join("tree");
+            let world = CellWorld {
+                root: self.build_world(&tree, task, &[])?,
+                tree,
+                read: dir.clone(),
+                write: vec![dir.clone()],
+                dir,
+            };
+            self.write_cell_files(&entry.id, check, task, arm, None, &world)?;
+            entry.dir = Some(world.dir);
+            entry.tree = Some(world.tree);
+            entry.world_root = Some(world.root);
         }
         Ok(entry)
     }
@@ -311,22 +389,30 @@ impl Pack<'_> {
             .as_ref()
             .map_or(&[], |split| split.parts.as_slice());
         let not_ready = self.not_ready(task, arm, parts)?;
-        let arm_id = cell_id(Check::Collaboration, &task.id, arm, None);
-        let arm_dir = self.out.join(&arm_id);
-        let world = arm_dir.join("world.sh");
-        let ready = not_ready.is_empty();
-        if ready {
+        let arm_dir = self
+            .out
+            .join(cell_id(Check::Collaboration, &task.id, arm, None));
+        let shared = arm_dir.join("repo");
+        let root = if not_ready.is_empty() {
             std::fs::create_dir_all(&arm_dir)?;
             let writers: Vec<&str> = parts.iter().map(|part| part.writer.as_str()).collect();
-            std::fs::write(&world, self.world_script(&arm_id, task, &writers))?;
-        }
+            Some(self.build_world(&shared, task, &writers)?)
+        } else {
+            None
+        };
         let mut cells = Vec::new();
         for part in parts {
             let id = cell_id(Check::Collaboration, &task.id, arm, Some(&part.writer));
             let dir = self.out.join(&id);
-            if ready {
-                std::fs::create_dir_all(&dir)?;
-                self.write_cell_files(&dir, &id, Check::Collaboration, task, arm, Some(part))?;
+            let world = root.as_ref().map(|root| CellWorld {
+                tree: dir.join("tree"),
+                root: root.clone(),
+                read: arm_dir.clone(),
+                write: vec![dir.clone(), shared.clone()],
+                dir,
+            });
+            if let Some(world) = &world {
+                self.write_cell_files(&id, Check::Collaboration, task, arm, Some(part), world)?;
             }
             cells.push(CellEntry {
                 id,
@@ -334,9 +420,10 @@ impl Pack<'_> {
                 task: task.id.clone(),
                 arm,
                 writer: Some(part.writer.clone()),
-                ready,
-                dir: ready.then_some(dir),
-                world: ready.then(|| world.clone()),
+                ready: world.is_some(),
+                dir: world.as_ref().map(|world| world.dir.clone()),
+                tree: world.as_ref().map(|world| world.tree.clone()),
+                world_root: world.map(|world| world.root),
                 not_ready: not_ready.clone(),
             });
         }
@@ -416,7 +503,7 @@ impl Pack<'_> {
                          the answer",
                         vault.seeded_through, self.manifest.cut
                     )),
-                    Some(_) => None,
+                    Some(_) => listing_gap(piece, self.memory_tools.as_ref(), Arm::VaultMemory),
                 },
             },
             Piece::CodeSnapshot => match &self.plan.code_snapshot {
@@ -424,35 +511,53 @@ impl Pack<'_> {
                 Some(snapshot) if !snapshot.bases.contains(&task.base) => {
                     Some(format!("{name} holds no snapshot of base {}", task.base))
                 }
-                Some(_) => self.snapshot_verbs_gap.clone(),
+                Some(_) => self
+                    .snapshot_verbs_gap
+                    .clone()
+                    .or_else(|| listing_gap(piece, self.snapshot_tools.as_ref(), Arm::SymbolGraph)),
             },
             Piece::OneironCodePath => match &self.plan.oneiron_code_path {
                 None => Some(format!("no {name} in the run plan")),
-                Some(_) => self.work_verbs_gap.clone(),
+                Some(_) => self
+                    .work_verbs_gap
+                    .clone()
+                    .or_else(|| listing_gap(piece, self.work_tools.as_ref(), Arm::OneironWriters)),
             },
         })
     }
 
+    /// The tools the arm's MCP server listed to the probe; none when the arm
+    /// has no server or the server did not answer.
+    fn listed_tools(&self, arm: Arm) -> &[String] {
+        let listing = match arm {
+            Arm::VaultMemory => self.memory_tools.as_ref(),
+            Arm::SymbolGraph => self.snapshot_tools.as_ref(),
+            Arm::OneironWriters => self.work_tools.as_ref(),
+            Arm::NoMemory | Arm::GrepOnly | Arm::GitWorktrees => None,
+        };
+        listing
+            .and_then(|listing| listing.as_ref().ok())
+            .map_or(&[], Vec::as_slice)
+    }
+
     fn write_cell_files(
         &self,
-        dir: &Path,
         id: &str,
         check: Check,
         task: &Task,
         arm: Arm,
         part: Option<&WriterPart>,
+        world: &CellWorld,
     ) -> BeamResult<()> {
+        let dir = &world.dir;
         std::fs::write(dir.join("PROMPT.md"), self.prompt(id, task, arm, part))?;
         std::fs::write(
             dir.join("mcp.json"),
             serde_json::to_string_pretty(&self.mcp_config(arm))?,
         )?;
-        let settings = serde_json::json!({
-            "permissions": { "allow": arm.allowed_tools(), "deny": arm.denied_tools() },
-        });
         std::fs::write(
             dir.join("settings.json"),
-            serde_json::to_string_pretty(&settings)?,
+            serde_json::to_string_pretty(&self.settings(arm, world))?,
         )?;
         let cell = serde_json::json!({
             "schema": CELL_SCHEMA,
@@ -462,6 +567,8 @@ impl Pack<'_> {
             "arm": arm,
             "writer": part.map(|part| part.writer.as_str()),
             "base": task.base,
+            "tree": world.tree.display().to_string(),
+            "world_root": world.root,
             "cap_minutes": self.manifest.cap_minutes,
             "mcp_server": arm.server(),
             "mcp_verbs": arm.verbs(),
@@ -469,6 +576,46 @@ impl Pack<'_> {
         });
         std::fs::write(dir.join("cell.json"), serde_json::to_string_pretty(&cell)?)?;
         Ok(())
+    }
+
+    /// Claude Code's settings for the cell: the arm's tools, and a sandbox
+    /// that must start (`failIfUnavailable`), so no command of the writer
+    /// reads the source repository, whose merge commit holds the answer and
+    /// the sealed tests, or writes outside the cell's world. The Read and
+    /// Edit tools follow the permission rules, not the sandbox.
+    fn settings(&self, arm: Arm, world: &CellWorld) -> serde_json::Value {
+        let sources: Vec<String> = self
+            .sealed_sources
+            .iter()
+            .map(|folder| folder.display().to_string())
+            .collect();
+        let mut deny = arm.denied_tools();
+        for folder in &sources {
+            // `//` starts an absolute path in a permission rule.
+            deny.push(format!("Read(/{folder}/**)"));
+            deny.push(format!("Edit(/{folder}/**)"));
+        }
+        let write: Vec<String> = world
+            .write
+            .iter()
+            .map(|folder| folder.display().to_string())
+            .collect();
+        serde_json::json!({
+            "permissions": {
+                "allow": arm.allowed_tools(self.listed_tools(arm)),
+                "deny": deny,
+            },
+            "sandbox": {
+                "enabled": true,
+                "failIfUnavailable": true,
+                "allowUnsandboxedCommands": false,
+                "filesystem": {
+                    "denyRead": sources,
+                    "allowRead": [world.read.display().to_string()],
+                    "allowWrite": write,
+                },
+            },
+        })
     }
 
     fn prompt(&self, id: &str, task: &Task, arm: Arm, part: Option<&WriterPart>) -> String {
@@ -498,8 +645,8 @@ impl Pack<'_> {
         let _ = write!(
             text,
             "\n## Your tools\n\n{}\n\n## Rules\n\n- Work only in your tree, `tree/` beside this \
-             file. `world.sh` made it from base {}.\n- You have {} minutes.\n- Leave your change \
-             in the tree when you stop: it is graded after you stop.\n",
+             file. It was made from base {} before you started.\n- You have {} minutes.\n- Leave \
+             your change in the tree when you stop: it is graded after you stop.\n",
             arm.rules(),
             short(&task.base),
             self.manifest.cap_minutes
@@ -540,56 +687,137 @@ impl Pack<'_> {
         serde_json::json!({ "mcpServers": servers })
     }
 
-    /// The world: a fresh repository of the base's tree, one commit, the
-    /// sealed paths removed. `add -f` keeps tracked files that match an
-    /// ignore rule. With writers, each gets a worktree of it on
-    /// its own branch, beside a shared `integration` branch.
-    fn world_script(&self, id: &str, task: &Task, writers: &[&str]) -> String {
-        let repo = sh_quote(&self.repo.display().to_string());
-        let mut script = format!(
-            "#!/bin/sh\n# CODE-BENCH {id}: task `{task_id}` at base {base}, in a fresh repository with \
-             no history past the base, the sealed tests removed.\nset -eu\nhere=$(cd \"$(dirname \
-             \"$0\")\" && pwd)\n",
-            task_id = task.id,
-            base = task.base,
-        );
-        let root = if writers.is_empty() {
-            "$here/tree"
-        } else {
-            "$here/repo"
-        };
-        let _ = write!(
-            script,
-            "root=\"{root}\"\nif [ -e \"$root\" ]; then echo \"world.sh: $root exists\" >&2; exit 1; fi\n\
-             mkdir \"$root\"\ngit -C {repo} archive --format=tar -o \"$here/world.tar\" {base}\n\
-             tar -x -f \"$here/world.tar\" -C \"$root\"\nrm -f \"$here/world.tar\"\n",
-            base = task.base,
-        );
-        for path in &task.sealed {
-            let _ = writeln!(script, "rm -rf \"$root\"/{}", sh_quote(path));
+    /// Builds the world at `root`: a fresh repository of the base's tree,
+    /// one commit, the sealed paths removed. `add -f` keeps tracked files
+    /// that match an ignore rule. With writers, each gets a worktree of it
+    /// on its own branch at `<arm folder>/<writer>/tree`, beside a shared
+    /// `integration` branch. Returns the root commit.
+    fn build_world(&self, root: &Path, task: &Task, writers: &[&str]) -> BeamResult<String> {
+        std::fs::create_dir(root)?;
+        let mut archive = git(&self.repo)
+            .args(["archive", "--format=tar", &task.base])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let tar_input = archive
+            .stdout
+            .take()
+            .ok_or_else(|| invalid("git archive gave no output pipe".to_owned()))?;
+        let unpacked = Command::new("tar")
+            .args(["-x", "-f", "-", "-C"])
+            .arg(root)
+            .stdin(tar_input)
+            .stderr(Stdio::null())
+            .status()?;
+        let archived = archive.wait()?;
+        if !(archived.success() && unpacked.success()) {
+            return Err(invalid(format!(
+                "the world of task `{}`: git archive of base {} into {} failed",
+                task.id,
+                task.base,
+                root.display()
+            )));
         }
-        let _ = write!(
-            script,
-            "git -C \"$root\" init -q\ngit -C \"$root\" add -A -f\ngit -C \"$root\" -c user.name=code-bench \
-             -c user.email=code-bench@example.invalid -c commit.gpgsign=false commit -q -m {}\n",
-            sh_quote(&world_subject(task)),
-        );
+        for path in &task.sealed {
+            remove_path(&root.join(path))?;
+        }
+        run_git(root, &["init", "-q"])?;
+        run_git(root, &["add", "-A", "-f"])?;
+        run_git(
+            root,
+            &[
+                "-c",
+                "user.name=code-bench",
+                "-c",
+                "user.email=code-bench@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--no-verify",
+                "-m",
+                &world_subject(task),
+            ],
+        )?;
+        let commit = git_stdout(root, &["rev-parse", "HEAD"])?
+            .map(|commit| commit.trim().to_owned())
+            .ok_or_else(|| invalid(format!("no world commit in {}", root.display())))?;
         if !writers.is_empty() {
-            script.push_str("git -C \"$root\" branch integration\n");
+            run_git(root, &["branch", "integration"])?;
+            let arm_dir = root.parent().unwrap_or(root);
             for writer in writers {
-                let _ = writeln!(
-                    script,
-                    "git -C \"$root\" worktree add -q -b {writer} \"$here/{writer}/tree\""
-                );
+                let tree = arm_dir.join(writer).join("tree");
+                let added = git(root)
+                    .args(["worktree", "add", "-q", "-b", writer])
+                    .arg(&tree)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()?;
+                if !added.success() {
+                    return Err(invalid(format!(
+                        "git worktree add of writer `{writer}` at {} failed",
+                        tree.display()
+                    )));
+                }
             }
         }
-        script
+        Ok(commit)
     }
 }
 
-/// The subject of a world's one root commit; the grader finds the world by it.
-pub(super) fn world_subject(task: &Task) -> String {
+/// The subject of a world's one root commit.
+fn world_subject(task: &Task) -> String {
     format!("code-bench world: {} at {}", task.id, task.base)
+}
+
+/// Why the probed server cannot serve `arm`: it did not answer, it lacks
+/// one of the arm's verbs, or it lists none of the arm's tools.
+fn listing_gap(piece: Piece, listing: Option<&Listing>, arm: Arm) -> Option<String> {
+    let name = piece.as_str();
+    match listing {
+        None => Some(format!("no {name} in the run plan")),
+        Some(Err(reason)) => Some(reason.clone()),
+        Some(Ok(tools)) => {
+            let missing = arm
+                .verbs()
+                .iter()
+                .find(|verb| !tools.iter().any(|tool| names_verb(tool, verb)));
+            match missing {
+                Some(verb) => Some(format!("{name} does not list the tool {verb}")),
+                None => (!tools.iter().any(|tool| arm.admits_tool(tool)))
+                    .then(|| format!("{name} lists none of the tools of arm {}", arm.as_str())),
+            }
+        }
+    }
+}
+
+/// The source repository's work tree and Git folder, absolute; a linked
+/// worktree keeps its objects in its main repository's folder.
+fn source_folders(repo: &Path) -> BeamResult<Vec<PathBuf>> {
+    let mut folders = vec![std::fs::canonicalize(repo)?];
+    let common = git_stdout(
+        repo,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    if let Some(common) = common {
+        let common = std::fs::canonicalize(common.trim())?;
+        if !folders.iter().any(|folder| common.starts_with(folder)) {
+            folders.push(common);
+        }
+    }
+    Ok(folders)
+}
+
+/// Removes a sealed path from the world, whatever it is; a path the base
+/// lacks is no error.
+fn remove_path(path: &Path) -> BeamResult<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path)?,
+        Ok(_) => std::fs::remove_file(path)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
 }
 
 fn state(component: &str, reason: String) -> NotReadyState {
@@ -630,16 +858,42 @@ fn verbs_gap(repo: &Path, engine_commit: &str, verbs: &[&str]) -> BeamResult<Opt
     Ok(None)
 }
 
+/// Git in `dir`, reading no stdin.
+fn git(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(dir).stdin(Stdio::null());
+    command
+}
+
 pub(super) fn git_ok(repo: &Path, args: &[&str]) -> BeamResult<bool> {
-    Ok(Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    Ok(git(repo)
         .args(args)
-        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()?
         .success())
+}
+
+/// Git's stdout, or `None` when the command fails.
+fn git_stdout(dir: &Path, args: &[&str]) -> BeamResult<Option<String>> {
+    let output = git(dir).args(args).stderr(Stdio::null()).output()?;
+    Ok(output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+fn run_git(dir: &Path, args: &[&str]) -> BeamResult<()> {
+    let output = git(dir).args(args).output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(invalid(format!(
+        "git {} in {} failed: {}",
+        args.join(" "),
+        dir.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    )))
 }
 
 fn folder_has_entries(path: &Path) -> BeamResult<bool> {
@@ -656,10 +910,6 @@ fn is_env_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-}
-
-fn sh_quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 fn short(commit: &str) -> &str {
