@@ -294,6 +294,9 @@ pub(super) fn project_once(
         refused_world_keys: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_world_keys.clone()),
+        verified_device_revocations: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            revoke_facts.device_revocations(state.vault_id)
+        }),
         counted_ancestor_pairs,
         issues,
     };

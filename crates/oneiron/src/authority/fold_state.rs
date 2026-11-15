@@ -163,6 +163,12 @@ pub struct AuthorityFold {
     /// Well-signed key records that count for nothing under this install's
     /// pin: valid entries without effect.
     pub refused_world_keys: BTreeSet<AuthorityEntryHash>,
+    /// The rows of the device revocations the fold applied as verified
+    /// restrictive facts, valid rows or not: a revocation on a losing
+    /// confirmation's branch holds only as a fact. The stale-roster window
+    /// reads them beside the valid entries (Sol review F1 on #8608).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) verified_device_revocations: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }

@@ -450,6 +450,7 @@ pub(super) fn fold_authority_log_once(
             counted_ancestor_pairs,
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
+            verified_device_revocations: BTreeSet::new(),
             issues,
         };
     }
