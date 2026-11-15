@@ -158906,7 +158906,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 223
+      "mod": 224
      }
     },
     {
@@ -160496,6 +160496,21 @@
      "surface": {
       "const": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReceiptRef",
+      "ReceiptRefError"
+     ],
+     "path": "src/receipt_ref.rs",
+     "purpose": "A receipt reference: a receipt's kind and its id, in the one text form `{kind}:{lowercase hex}` (fable pass…",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -163875,6 +163890,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/receipt_ref.rs",
+     "purpose": "PLAN-UC-04 2.4a: `ReceiptRef`, the one text form `{kind}:{lowercase hex}` of a receipt reference",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/session_overlay_dump_suppression.rs",
      "purpose": "Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core…",
      "surface": {}
@@ -164898,6 +164921,13 @@
      "layout": "file",
      "purpose": "The identity marker carried after receipt attribution is erased"
     },
+    "receipt_ref": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A receipt reference: a receipt's kind and its id, in the one text form `{kind}:{lowercase hex}` (fable pass…"
+    },
     "receipt_row": {
      "files": 1,
      "impl_vault": false,
@@ -165461,8 +165491,8 @@
    },
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 652,
-   "test_files": 9
+   "source_files": 653,
+   "test_files": 10
   },
   "oneiron-testkit": {
    "files": [
