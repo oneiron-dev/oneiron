@@ -3,25 +3,14 @@ use super::{HttpEndpointSkillHubAdapter, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use crate::error::Result;
 use crate::skill_hub::package_codec::invalid;
 use crate::skill_hub::{GitEndpointSkillHubAdapter, HubPackage, HubPin, HubRef, SkillHubAdapter};
-use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::time::{Duration, Instant};
 
 // The existing HTTP archive fetch's parse deadline.
 const CLAWHUB_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Untrusted provider metadata. `content_hash` has no qualified native hash
-/// algorithm; neither it nor the archive URL is an admission proof.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ClawHubGitHubHandoff {
-    pub source_ref: String,
-    pub repo: String,
-    pub commit: String,
-    pub path: String,
-    pub content_hash: String,
-    pub archive_url: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_hub::http_fetch::clawhub_download::ClawHubGitHubHandoff;
 
 pub(crate) enum ClawHubDownload {
     Package {

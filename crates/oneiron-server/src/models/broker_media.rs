@@ -22,19 +22,19 @@ use oneiron::llm::media::{
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId, RetryableLlmError};
 use oneiron_broker::{BrokerClient, CallHeader, FormData, Isolation, Shape};
-use oneiron_llm_gemini::{
+use oneiron_gen::gemini::{
     GeminiMediaBackend, GeminiMediaFuture, GeminiMediaHttpRequest, GeminiMediaHttpResponse,
     GeminiMediaTransport,
 };
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
     OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };
+use oneiron_speech::tts::hosted::{self, HostedWire};
 
 use super::broker::{
     BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, join, open_with_key_released,
 };
-use super::hosted_speech::{self, HostedWire};
 use super::http::{charge_read, is_cloud_node, read_broker_booked};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
@@ -417,10 +417,10 @@ impl BrokeredSpeech {
         lease: &BudgetLease,
         release: Option<oneiron::llm::DispatchRelease<'_>>,
     ) -> LlmResult<MediaResponse> {
-        let (text, path, body) = hosted_speech::build(self.wire, &self.models, &mut request)?;
+        let (text, path, body) = hosted::build(self.wire, &self.models, &mut request)?;
         let exchange = self.broker.hosted(self.wire, path, body)?;
         let (status, headers, body) = self.broker.send_released(exchange, lease, release).await?;
-        hosted_speech::parse(status, &headers, &body, request.model, &text)
+        hosted::parse(status, &headers, &body, request.model, &text)
     }
 }
 

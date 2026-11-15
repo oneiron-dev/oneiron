@@ -63,14 +63,12 @@ pub const OAUTH_REQUEST_TTL_SECS: u64 = 600;
 /// How long an authorization code may be redeemed after the page collects it (CALLS, FIX 4902:
 /// an engine call).
 pub const OAUTH_CODE_TTL_SECS: u64 = 600;
-/// How long an access token stands (CALLS, FIX 4902: an engine call).
-pub const OAUTH_ACCESS_TTL_SECS: u64 = 3_600;
+#[doc(hidden)]
+pub use oneiron_records::authority::oauth_server::{OAUTH_ACCESS_TTL_SECS, OAUTH_CIMD_TTL_SECS};
+
 /// How long a refresh token may be spent; each refresh mints the next one with a fresh lifetime
 /// (CALLS, FIX 4902: an engine call).
 pub const OAUTH_REFRESH_TTL_SECS: u64 = 30 * 86_400;
-/// How long a fetched client ID metadata document stands before the next authorize fetches it
-/// again (CALLS, FIX 4902: an engine call).
-pub const OAUTH_CIMD_TTL_SECS: u64 = 3_600;
 /// The most authorization requests that may wait on the owner at once, so no stranger fills his
 /// inbox; one past it is refused `temporarily_unavailable` (CALLS, FIX 4902: an engine call).
 pub const OAUTH_PENDING_REQUESTS_MAX: usize = 16;
@@ -103,6 +101,15 @@ pub const OAUTH_REDIRECT_URIS_MAX: usize = 16;
 /// The longest redirect URI or metadata-document `client_id` this vault reads, in bytes (CALLS,
 /// FIX 4902: an engine call).
 pub const OAUTH_URI_MAX_BYTES: usize = 2_048;
+/// Redirect URIs this vault admits by their exact string although no general rule admits them
+/// (L1-02, ARCH-0028 #default-route; RESEARCH-1396 #grok, its source [G6], the Cursor forum
+/// thread "grok-bot-custom-mcp-oauth-fails-before-sign-in-redirect-uri-not-allowed").
+/// Grok Bot registers by DCR and lists `cursor://anysphere.cursor-mcp/oauth/callback`, a
+/// private-use scheme with no `.` in it, which [`oauth_redirect_uri_admitted`] refuses as a
+/// scheme. Canon says to qualify that callback in a test and not to relax callback checks
+/// globally, so each entry is admitted only as this exact string.
+pub const OAUTH_NAMED_CLIENT_REDIRECT_URIS: &[&str] =
+    &["cursor://anysphere.cursor-mcp/oauth/callback"];
 /// The longest `state` an authorize request may carry, in bytes (CALLS, FIX 4902: an engine
 /// call).
 pub const OAUTH_STATE_MAX_BYTES: usize = 1_024;

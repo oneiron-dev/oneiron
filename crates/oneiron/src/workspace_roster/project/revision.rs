@@ -7,7 +7,6 @@ use super::resolution::{ProjectResolution, ProjectSeal};
 use super::*;
 use crate::authority::{AuthorityFold, CapabilitySlip};
 use crate::entity_id::derived_domains::PROJECT_REVISION;
-use crate::side_table::{FixedSideKey, SideKey};
 use crate::store::Store;
 use std::collections::BTreeMap;
 
@@ -15,80 +14,13 @@ pub(crate) use crate::store::project_kind::{
     PROJECT_REVISION_SHORT_ID_PREFIX, is_project_revision_type, project_revision_type,
 };
 
-/// Domain of a revision's logical hash; distinct from every authority-log,
-/// slip, challenge, resolution and seal domain.
-const REVISION_HASH_DOMAIN: &[u8] = b"oneiron/project-revision/v1/";
+#[doc(hidden)]
+pub(crate) use oneiron_records::workspace_roster::project::revision::RevisionOrigin;
+#[doc(hidden)]
+use oneiron_records::workspace_roster::project::revision::hash_of;
 
-/// blake3(REVISION_HASH_DOMAIN || canonical body). Serde: a MessagePack bin of
-/// exactly 32 bytes, or the array of exactly 32 numbers serde_json writes for
-/// it; another length is refused.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProjectRevisionHash(pub [u8; 32]);
-
-impl std::fmt::Debug for ProjectRevisionHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", crate::entity_id::bytes_to_hex_lower(&self.0))
-    }
-}
-
-impl Serialize for ProjectRevisionHash {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for ProjectRevisionHash {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        struct Bytes32;
-        impl<'de> serde::de::Visitor<'de> for Bytes32 {
-            type Value = ProjectRevisionHash;
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("32 bytes")
-            }
-            fn visit_bytes<E: serde::de::Error>(
-                self,
-                bytes: &[u8],
-            ) -> std::result::Result<Self::Value, E> {
-                bytes
-                    .try_into()
-                    .map(ProjectRevisionHash)
-                    .map_err(|_| E::invalid_length(bytes.len(), &self))
-            }
-            // serde_json writes the bytes as an array of numbers; exactly 32
-            // of them read back (FIX 3296).
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> std::result::Result<Self::Value, A::Error> {
-                let mut bytes = Vec::with_capacity(32);
-                while let Some(byte) = seq.next_element::<u8>()? {
-                    bytes.push(byte);
-                }
-                self.visit_bytes(&bytes)
-            }
-        }
-        deserializer.deserialize_bytes(Bytes32)
-    }
-}
-
-impl SideKey for ProjectRevisionHash {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.0);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        bytes.try_into().ok().map(Self)
-    }
-}
-
-impl FixedSideKey for ProjectRevisionHash {
-    const WIDTH: usize = 32;
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;
 
 /// The signed fields of a v2/v3 proof, without its anchor: what a held
 /// signed revision and an anchor link carry.
@@ -163,13 +95,6 @@ impl ProjectRevision {
             _ => None,
         }
     }
-}
-
-fn hash_of(canonical: &[u8]) -> ProjectRevisionHash {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REVISION_HASH_DOMAIN);
-    hasher.update(canonical);
-    ProjectRevisionHash(*hasher.finalize().as_bytes())
 }
 
 pub(crate) fn revision_entity_id(hash: ProjectRevisionHash) -> Result<EntityId> {
@@ -251,25 +176,6 @@ pub(crate) fn revisions_of_row(
         return Ok(Vec::new());
     }
     revisions_of(project, &record.anchor()?)
-}
-
-/// How far a held revision's origin is established. Authentication checks
-/// only what its bytes fix for good; standing is judged at every fold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum RevisionOrigin {
-    /// Its immutable slip chain verified: the mint's claims equal the slip's,
-    /// the host's signature over them, every caveat transfer signature, and
-    /// the last binding signer's signature over the rebuilt challenge.
-    /// Boundary rows carry no signature and need none.
-    Authenticated,
-    /// A Signed row whose parent chain is not held: its challenge cannot be built.
-    AwaitingParent,
-    /// Its slip's mint is not known: the host signature cannot be checked.
-    AwaitingMint,
-    /// A check above failed. Kept so a re-sent carrier is recognized; never
-    /// folded, counted, recorded as evidence or exported.
-    Forged,
 }
 
 /// Rebuildable from the companions: (project, hash) -> (companion id, origin).

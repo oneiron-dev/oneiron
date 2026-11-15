@@ -18,8 +18,6 @@
 //! feed keeps that item's update owed and lands every other item of the pass
 //! (Engine ruling 16:10, 12 Nov).
 
-use serde::{Deserialize, Serialize};
-
 use super::claim::{encode_event_body, read_booking_facts};
 use super::door::attempt_failure_reason;
 use super::emergency::emergency_current_revision_in;
@@ -36,7 +34,7 @@ use crate::attempt_queue::{
     FailAttempt, RequeueAttempt,
 };
 use crate::booking::BookingError;
-use crate::booking::emergency_reschedule::ensure_no_pending_effect_in;
+use crate::booking::emergency_reschedule::pending_effect_fences_in;
 use crate::booking::invite_grant::dispatch_booking_revision_invite_outcome;
 use crate::outbound::OutboundExecutionSink;
 use crate::registry::ENTITY_TYPE_EVENT;
@@ -57,19 +55,8 @@ const REVISION_INVITE_DISPATCH_ATTEMPTS: u32 = 5;
 /// again.
 const REVISION_INVITE_RETRY_SECONDS: u64 = 300;
 
-/// The payload of one [`BOOKING_REVISION_INVITE_ATTEMPT_KIND`] row: the
-/// revision whose invite is owed. The invite's recipient, organizer and
-/// times are read from committed state when it is sent, never from here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BookingRevisionInvitePayload {
-    /// The booking's EVENT, lowercase hex.
-    pub event_ref: String,
-    /// The booking's outbound UID.
-    pub uid: String,
-    /// The SEQUENCE the revision committed.
-    pub sequence: u32,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::lifecycle::feed_move::BookingRevisionInvitePayload;
 
 /// What one feed update did to the booking its EVENT carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,11 +119,10 @@ pub(crate) fn move_booking_by_feed(
             return Ok(FeedMoveOutcome::Unchanged);
         }
         // The one refusal the ruling holds back per item: every other item
-        // of the feed still lands, and this one is read again.
-        match ensure_no_pending_effect_in(vault, &*wtxn, event_ref) {
-            Ok(()) => {}
-            Err(BookingError::InvalidConstraint(_)) => return Ok(FeedMoveOutcome::HeldBack),
-            Err(error) => return Err(error),
+        // of the feed still lands, and this one is read again. The fence is
+        // read as a fact, never from a refusal's variant.
+        if pending_effect_fences_in(vault, &*wtxn, event_ref)? {
+            return Ok(FeedMoveOutcome::HeldBack);
         }
         let reads = booking_read_rows(vault, &*wtxn, &event_ref)?;
 

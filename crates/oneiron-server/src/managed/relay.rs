@@ -79,10 +79,7 @@ pub struct RelayConfig {
 }
 
 fn hex_id(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    oneiron_hex::is_lower_hex(value, Some(64))
 }
 
 impl RelayConfig {
