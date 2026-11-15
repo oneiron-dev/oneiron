@@ -21,47 +21,8 @@ use oneiron_crypto::totp::{TOTP_DIGITS, TOTP_PERIOD_SECS};
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const REFUSED: &str = "step_up_totp_refused: the code did not verify or its step was already spent";
 
-/// A fresh provisioning secret, returned only to the enrolling person.
-/// It has no Debug or Clone; its seed text is wiped on drop. Do not log it.
-#[derive(Serialize)]
-pub struct TotpEnrollment {
-    pub enrollment_id: String,
-    /// RFC 4648 base32, without padding; for an otpauth provisioning URI.
-    pub secret: String,
-    pub algorithm: &'static str,
-    pub digits: usize,
-    pub period_secs: u64,
-    /// On the authority clock, like a passkey enrollment challenge.
-    pub expires_at: u64,
-}
-
-impl Drop for TotpEnrollment {
-    fn drop(&mut self) {
-        self.secret.zeroize();
-    }
-}
-
-/// The first code confirms enrollment; subsequent codes step up a slip.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TotpCode {
-    pub enrollment_id: String,
-    pub code: String,
-}
-
-impl Drop for TotpCode {
-    fn drop(&mut self) {
-        self.code.zeroize();
-    }
-}
-
-/// An enrolled authenticator's public metadata. Never its seed or seal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct EnrolledTotp {
-    pub enrollment_id: String,
-    pub enrolled_at: u64,
-    pub last_used_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::step_up::totp::{EnrolledTotp, TotpCode, TotpEnrollment};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::authority::step_up::totp::{StepUpTotpReset, StepUpTotpResetRequest};
@@ -380,13 +341,31 @@ impl Vault {
 
     /// Explicit owner recovery for lost authenticator apps. Passkey
     /// enrollment and passkey-derived step-ups are not reset by this call.
+    /// With `check_in_ref` the Owner applies an asker's approved check-in
+    /// for this reset on their own proof, spent in the same writer (2k3;
+    /// P25-SHAPE Q1 = A).
     pub fn reset_step_up_totp_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         person: EntityId,
+        check_in_ref: Option<EntityId>,
     ) -> Result<StepUpTotpReset> {
+        let applied = check_in_ref.map(|id| crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.step_up.totp.reset",
+            effect_digest: crate::check_in::step_up_reset_effect_digest(
+                &person,
+                StepUpFactor::Totp,
+            ),
+        });
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut txn,
+            crate::check_in::ActClass::KeyRecovery,
+            applied.as_ref(),
+        )?;
         let removed = ENROLLED
             .scan_from(&self.store, &txn, person.as_bytes())?
             .iter()
@@ -397,6 +376,7 @@ impl Vault {
         Ok(StepUpTotpReset {
             person: person.to_hex(),
             removed,
+            check_in: Some(decision),
         })
     }
 }

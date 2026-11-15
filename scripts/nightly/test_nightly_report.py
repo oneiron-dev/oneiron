@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import sys
 import tempfile
@@ -200,6 +201,37 @@ class PlanTest(unittest.TestCase):
         )
         self.assertEqual([entry["name"] for entry in chosen["selections"]], ["libs", "tests-01"])
 
+    def test_a_package_with_no_tested_target_leaves_every_selection(self) -> None:
+        metadata = json.loads(json.dumps(METADATA))
+        metadata["workspace_members"] += ["oneiron-py 0.1.0", "oneiron-macros 0.1.0"]
+        metadata["packages"] += [
+            {
+                "id": "oneiron-py 0.1.0",
+                "name": "oneiron-py",
+                "targets": [
+                    {"name": "oneiron_py", "kind": ["cdylib"], "test": False},
+                    {"name": "build-script-build", "kind": ["custom-build"], "test": False},
+                ],
+            },
+            {  # an untested lib beside a tested integration test: still tested
+                "id": "oneiron-macros 0.1.0",
+                "name": "oneiron-macros",
+                "targets": [
+                    {"name": "oneiron_macros", "kind": ["proc-macro"], "test": False},
+                    target("expand", "test"),
+                ],
+            },
+        ]
+        self.assertEqual(nightly_report.untested_packages(metadata), ["oneiron-py"])
+        chosen = nightly_report.plan(metadata, shard_files=3)
+        self.assertEqual(chosen["untested"], ["oneiron-py"])
+        for entry in chosen["selections"]:
+            args = nightly_report.selection_args(chosen, entry)
+            excluded = [args[i + 1] for i, arg in enumerate(args) if arg == "--exclude"]
+            self.assertEqual(excluded, ["oneiron-bench", "oneiron-py"], entry["name"])
+        self.assertEqual(nightly_report.untested_packages(METADATA), [])
+        self.assertEqual(nightly_report.plan(METADATA)["untested"], [])
+
     def test_shards_split_the_integration_tests_into_runs_of_n_names(self) -> None:
         chosen = nightly_report.plan(METADATA, shard_files=2)
         self.assertEqual(
@@ -333,6 +365,88 @@ class PruneTest(unittest.TestCase):
             self.assertEqual(lines[5].split()[0], "libs")
             self.assertEqual(lines[6].split()[:2], ["tests-01", "--workspace"])
             self.assertEqual([entry["name"] for entry in json.loads(plan_file.read_text())["selections"]], ["tests-01"])
+
+
+class DeleteBinariesTest(unittest.TestCase):
+    """nightly_report.delete_binaries: the paths come from cargo's messages; nothing outside the target goes."""
+
+    def artifact(self, name: str, kind: str, path: Path) -> str:
+        return json.dumps(
+            {"reason": "compiler-artifact", "target": {"kind": [kind], "name": name}, "executable": str(path)}
+        )
+
+    def test_only_the_selections_test_targets_and_bins_are_deleted_and_nothing_outside_the_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            target, elsewhere = base / "target", base / "elsewhere"
+            out = target / "debug/build/oneiron/0123456789abcdef/out"
+            out.mkdir(parents=True)
+            elsewhere.mkdir()
+            alpha = write(out / "alpha-0123456789abcdef", "test binary")
+            same_name_bin = write(target / "debug/alpha", "a bin named like the test: not this selection's")
+            outside = write(elsewhere / "beta-0123456789abcdef", "a file outside the target")
+            (out / "beta-link").symlink_to(outside)
+            messages = write(
+                base / "build-tests-01.json",
+                "\n".join(
+                    [
+                        "   Compiling oneiron v0.1.0 (a line that is not a message)",
+                        self.artifact("alpha", "test", alpha),
+                        self.artifact("alpha", "bin", same_name_bin),
+                        self.artifact("beta", "test", outside),
+                        self.artifact("beta", "test", out / "beta-link"),
+                        json.dumps({"reason": "build-finished", "success": True}),
+                    ]
+                ),
+            )
+            entry = {"tests": ["alpha", "beta"], "bin_targets": []}
+            result = nightly_report.delete_binaries(entry, messages, target)
+            self.assertFalse(alpha.exists())
+            self.assertTrue(same_name_bin.exists(), "a bin is deleted only when the selection names it as a bin")
+            self.assertTrue(outside.exists(), "a path outside the target dir is refused")
+            self.assertFalse((out / "beta-link").is_symlink(), "a symlink inside the target goes; its target stays")
+            self.assertEqual(result["refused"], [str(outside)])
+            self.assertEqual((result["files"], result["cargo_named"], result["not_found"]), (2, ["alpha", "beta"], []))
+            self.assertTrue(
+                nightly_report.delete_line("tests-01", result).startswith("## NIGHTLY delete-tests-01 rc=1 files=2 ")
+            )
+
+    def test_a_hard_link_whose_place_resolves_outside_the_target_is_refused_and_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            target, cache = base / "target", base / "cache"
+            out = target / "debug/build/oneiron/0123456789abcdef/out"
+            out.mkdir(parents=True)
+            cache.mkdir()
+            (target / "debug/deps").symlink_to(cache, target_is_directory=True)
+            alpha = write(out / "alpha-0123456789abcdef", "test binary")
+            kept = cache / "keep"
+            os.link(alpha, kept)
+            messages = write(base / "build-tests-01.json", self.artifact("alpha", "test", alpha))
+            result = nightly_report.delete_binaries({"tests": ["alpha"], "bin_targets": []}, messages, target)
+            self.assertFalse(alpha.exists())
+            self.assertTrue(kept.exists(), "a hard link reached through a symlink out of the target dir stays")
+            self.assertEqual(result["refused"], [str(target / "debug/deps/keep")])
+            self.assertEqual((result["files"], result["cargo_named"], result["not_found"]), (1, ["alpha"], []))
+            self.assertTrue(
+                nightly_report.delete_line("tests-01", result).startswith("## NIGHTLY delete-tests-01 rc=1 files=1 ")
+            )
+
+    def test_a_missing_messages_file_falls_back_to_the_deps_glob_and_says_so(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            deps = target / "debug/deps"
+            deps.mkdir(parents=True)
+            kept = write(deps / "alpha_extra-0123456789abcdef", "another test's binary")
+            write(deps / "alpha-0123456789abcdef", "test binary")
+            result = nightly_report.delete_binaries(
+                {"tests": ["alpha", "gamma"], "bin_targets": []}, Path(tmp) / "none.json", target
+            )
+            self.assertEqual(sorted(p.name for p in deps.iterdir()), [kept.name])
+            self.assertEqual(
+                re.sub(r" kb=[0-9]+", "", nightly_report.delete_line("tests-01", result)),
+                "## NIGHTLY delete-tests-01 rc=1 files=1 cargo_named=0 deps_fallback=1 not_found=gamma messages=missing",
+            )
 
 
 class CensusTest(unittest.TestCase):
