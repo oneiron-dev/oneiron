@@ -5,6 +5,9 @@ run` (with and without --no-run) from a fixture workspace, logs each call with
 its CARGO_BUILD_JOBS, and writes the JUnit nextest would write. It fails to
 compile the test targets named in STUB_FAIL_TESTS, and cannot list the tests of
 a run that selects a target named in STUB_LIST_ERROR_TESTS (exit 104, no JUnit).
+A `--lib` build fails at the lib test of the first workspace package named in
+STUB_FAIL_LIBS that it does not exclude, and stops there, as a cargo build at
+one job stops at its first failed unit.
 A budget verdict run (its filter starts with the budget set's first row) gives
 the timed cases of STUB_BUDGET_CASES, or cannot list its tests when
 STUB_LIST_ERROR_BUDGET is set. A build that names `--bin` (the bench
@@ -59,6 +62,12 @@ STUB_CARGO = textwrap.dedent(
         if any(t in os.environ.get("STUB_SETUP_ERROR_TESTS", "").split(",") for t in tests):
             print("error: the stub's setup error (no unit named)")
             sys.exit(96)
+        excluded = [args[i + 1] for i, arg in enumerate(args) if arg == "--exclude"]
+        members = {p["name"] for p in json.loads(Path(os.environ["STUB_METADATA"]).read_text())["packages"]}
+        for package in os.environ.get("STUB_FAIL_LIBS", "").split(","):
+            if "--lib" in args and package in members and package not in excluded:
+                print(f"error: could not compile `{package}` (lib test) due to 1 previous error")
+                sys.exit(101)
         broken = [t for t in tests if t in os.environ.get("STUB_FAIL_TESTS", "").split(",")]
         for t in broken:
             print(f'error: could not compile `oneiron` (test "{t}") due to 1 previous error')
@@ -433,6 +442,75 @@ class RunNightlyTest(unittest.TestCase):
         text = (self.out / "summary.txt").read_text()
         self.assertIn("unselected: tests-01 oneiron test beta (did not compile)", text)
         self.assertNotIn("dropped:", text)
+
+    def add_lib_packages(self, *names: str, tested: bool = True) -> None:
+        """Workspace packages with a lib target alone; `tested=False` marks the lib `test = false`."""
+        path = self.target.parent / "metadata.json"
+        metadata = json.loads(path.read_text())
+        for name in names:
+            metadata["workspace_members"].append(f"{name} 0.1.0")
+            lib = {"name": name.replace("-", "_"), "kind": ["lib" if tested else "cdylib"], "test": tested}
+            metadata["packages"].append({"id": f"{name} 0.1.0", "name": name, "targets": [lib]})
+        path.write_text(json.dumps(metadata))
+
+    def test_broken_lib_tests_take_one_round_each_and_the_night_goes_on_to_the_shards(self) -> None:
+        broken = ("oneiron-driver", "oneiron-seal", "oneiron-store", "oneiron-sync")
+        self.add_lib_packages(*broken)
+        result = self.run_nightly(STUB_FAIL_LIBS=",".join(broken))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(
+            [
+                line.split(" seconds=")[0]
+                for line in result.stdout.splitlines()
+                if line.startswith("## NIGHTLY build-libs ")
+            ],
+            [f"## NIGHTLY build-libs rc={rc} round={n}" for n, rc in ((1, 101), (2, 101), (3, 101), (4, 101), (5, 0))],
+        )
+        self.assertNotIn("stop reason=build-dropped", result.stdout)
+        self.assertIn(" RED build=partial cycle=1 shards_run=1/1 next=alpha ", self.summary_line(result))
+        text = (self.out / "summary.txt").read_text()
+        for package in broken:
+            self.assertIn(f"unselected: libs {package} lib-test (did not compile)", text)
+        self.assertNotIn("dropped:", text)
+
+    def test_the_build_rounds_stop_at_nightly_build_rounds_and_the_dropped_libs_stop_the_night(self) -> None:
+        broken = ("oneiron-driver", "oneiron-seal", "oneiron-store", "oneiron-sync")
+        self.add_lib_packages(*broken)
+        result = self.run_nightly(STUB_FAIL_LIBS=",".join(broken), NIGHTLY_BUILD_ROUNDS="2")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY stop reason=build-dropped next=libs", result.stdout)
+        self.assertEqual(len(self.builds()), 2)
+        self.assertIn("dropped: libs (the build failed in 2 rounds)", (self.out / "summary.txt").read_text())
+
+    def test_a_build_that_fails_past_the_deadline_is_dropped_without_another_round(self) -> None:
+        self.add_lib_packages("oneiron-driver", "oneiron-seal")
+        result = self.run_nightly("--deadline-epoch", "1", STUB_FAIL_LIBS="oneiron-driver,oneiron-seal")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(len(self.builds()), 1)
+        self.assertIn(
+            "dropped: libs (the build failed in round 1, at the deadline)", (self.out / "summary.txt").read_text()
+        )
+
+    def test_a_round_count_that_is_not_a_positive_number_stops_the_job_before_any_build(self) -> None:
+        for value in ("0", "three"):
+            result = self.run_nightly(NIGHTLY_BUILD_ROUNDS=value)
+            self.assertEqual(result.returncode, 2, value + result.stdout + result.stderr)
+            self.assertIn(f"NIGHTLY_BUILD_ROUNDS={value} is not a positive number", result.stderr)
+        self.assertFalse(self.calls.exists(), "no cargo call")
+
+    def test_a_package_with_no_tested_target_is_left_out_of_every_build_and_the_night_stays_green(self) -> None:
+        self.add_lib_packages("oneiron-py", tested=False)
+        result = self.run_nightly("--shard-files", "2", STUB_FAIL_LIBS="oneiron-py")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(" GREEN build=ok cycle=1 shards_run=2/2 ", self.summary_line(result))
+        builds = self.builds()
+        self.assertEqual(len(builds), 3, "libs once, then two shards")
+        for line in builds:
+            self.assertIn(" --exclude oneiron-py ", line + " ")
+        self.assertIn(
+            "not tested by design: oneiron-py (no lib, bin or test target sets test = true)",
+            (self.out / "summary.txt").read_text(),
+        )
 
     def use_bench_workspace(self) -> None:
         """oneiron-bench joins the fixture workspace: a bin, two integration tests, the fixtures its jobs read."""
