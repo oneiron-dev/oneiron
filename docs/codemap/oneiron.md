@@ -972,7 +972,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/emergency_reschedule/lookup.rs` | src | s | 10 crate-vis | — | Disposable lookup rows derived from the existing plans and checkpoints |
 | `src/booking/emergency_reschedule/pick.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | EmergencyPick | Proposal-bound follow-up REQUESTs |
 | `src/booking/emergency_reschedule/planning.rs` | src | m | 3 struct · 1 enum · 5 fn · 2 const · 14 crate-vis | EmergencyBatchPlan, EmergencyItem, EmergencyLocalBasis, EmergencyPlan | Emergency reschedule proposal planning and its admitted content |
-| `src/booking/emergency_reschedule/state.rs` | src | m | 8 crate-vis | — | Emergency reschedule state and home-authority reads |
+| `src/booking/emergency_reschedule/state.rs` | src | m | 9 crate-vis | — | Emergency reschedule state and home-authority reads |
 | `src/booking/emergency_reschedule/tests/calendar_sync.rs` | test | s | — | — | — |
 | `src/booking/emergency_reschedule/tests/corrections.rs` | test | m | — | — | — |
 | `src/booking/emergency_reschedule/tests/effects.rs` | test | s | — | — | — |
@@ -2237,7 +2237,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/profile_sources.rs` | src | m | 6 struct · 1 enum · 8 fn · 1 const | PsychMirrorDriftAnchor, PsychMirrorDriftAnchorEvent, PsychMirrorDriftAnchorState, PsychMirrorSelectedSource, PsychMirrorSelectionScore, PsychMirrorSelectionWeights, PsychMirrorSourceCandidate | Psych Mirror source selection scoring, entropy, and drift anchors |
 | `src/context_pack/psych_mirror.rs` | src | s | 1 struct · 1 enum · 3 fn · 2 crate-vis | PsychProfilePackSection, PsychProfilePackStaleReason | Psych-mirror salience and entropy scoring, plus the stored-profile pack section it feeds |
 | `src/context_pack/quarantine.rs` | src | s | 8 crate-vis | — | Sync-quarantine rows read during pack assembly, and the index that excludes quarantined entities from a pack |
-| `src/context_pack/retained_copies.rs` | src | s | 1 crate-vis | — | Retained courtesy copies stay out of shared retrieval (BIZ-LEGAL-0004 B2, Docs Q09) |
+| `src/context_pack/retained_copies.rs` | src | s | 2 crate-vis | — | Retained courtesy copies stay out of shared retrieval (BIZ-LEGAL-0004 B2, Docs Q09) |
 | `src/context_pack/source_ranking.rs` | src | s | 1 re-export · 2 crate-vis | — | Claim-source ranking over stored claim vocabulary |
 | `src/context_pack/telemetry.rs` | src | s | 2 crate-vis | — | Finalize or discard the retrieval-run row a pack assembly registered |
 | `src/context_pack/tests.rs` | test | XL | — | — | — |
@@ -2450,7 +2450,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/derive/wire.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 re-export | DeriveCommitInput, DeriveItemInput, DeriveTopologyInput | The wire form of the derivation verbs (untangle 6.7d): what a caller of `vault.derive.commit` and… |
 | `src/disclosure/attendee_ask.rs` | src | m | 2 struct · 1 enum · 6 fn · 1 const · 6 crate-vis | AttendeeIdentityChoice, AttendeeIdentityResolution, UnknownAttendeeAsk | The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises "who is this?" to the… |
 | `src/disclosure/clearance_use.rs` | src | s | 1 fn | — | The quiet receipt of a disclosure under standing clearance (OF-365, DEC-0006: "the owner sees a post-hoc… |
-| `src/disclosure/disclosable_set.rs` | src | m | 1 struct · 5 fn · 1 re-export · 3 crate-vis | DisclosableSet | The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all… |
+| `src/disclosure/disclosable_set.rs` | src | m | 1 struct · 5 fn · 1 re-export · 5 crate-vis | DisclosableSet | The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all… |
 | `src/disclosure/import_audience.rs` | src | s | 5 fn · 2 crate-vis | — | The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private… |
 | `src/disclosure/mod.rs` | src | s | 1 mod · 8 re-export · 8 crate-vis | — | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `src/disclosure/model_channel.rs` | src | m | 2 struct · 1 enum · 4 fn · 1 re-export · 6 crate-vis | DisclosureBand, DisclosureCeilingSet, DisclosureCeilingView | The model connection is a disclosure audience, not a read grant |
@@ -2462,7 +2462,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/disclosure/tests.rs` | test | m | — | — | — |
 | `src/disclosure/tier_classification.rs` | src | s | 2 enum · 3 fn · 9 const · 4 crate-vis | DisclosureMode, DisclosureTier | Mode/tier classification and disclosure-claim structural validation |
 | `src/disclosure/vault_agent.rs` | src | s | 1 crate-vis | — | Who is one of this vault's own agents (the Engine lane's ruling, 2026-10-11): an active `agent` binding in… |
-| `src/disclosure/vault_context.rs` | src | m | 2 struct · 13 fn · 12 crate-vis | DisclosureAssembly, DisclosureContext | vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block |
+| `src/disclosure/vault_context.rs` | src | m | 2 struct · 13 fn · 13 crate-vis | DisclosureAssembly, DisclosureContext | vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block |
 | `src/dispatch_byoa/connector.rs` | src | m | 7 struct · 5 enum · 12 fn · 4 const · 1 re-export · 19 crate-vis | ByoEndpointProtocol, ByoEndpointSpec, ByoaAttemptPayload, ByoaConnectorKind, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec +4 | Connector shapes, wire enums, attempt-payload codec, and serde adapters |
 | `src/dispatch_byoa/dispatcher.rs` | src | m | 2 struct · 3 trait · 10 fn · 6 crate-vis | ByoEndpointBackendFactory, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor | Dispatcher organ with dispatch, execute, authorize, and capture doors |
 | `src/dispatch_byoa/dispatcher/capture_fact.rs` | src | s | 5 crate-vis | — | The native terminal landing's byte-free canonical capture identity |
@@ -5986,7 +5986,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scope_summary/status/arc_status.rs` | src | s | 1 crate-vis | — | An Arc declaration's owed state on its public status (FIX 8060, 8291): the typed cause its row records, and… |
 | `src/scope_summary/tables.rs` | src | s | — | — | The side tables `scope_summary` keeps (core split slice 1): each row declares one, and the crate's build… |
 | `src/scope_summary/tests.rs` | test | m | — | — | Exact covers, gated merge atomicity and revision-bound late results |
-| `src/scope_summary/word_sources.rs` | src | m | 4 crate-vis | — | Where the words of one stored revision came from |
+| `src/scope_summary/word_sources.rs` | src | m | 5 crate-vis | — | Where the words of one stored revision came from |
 | `src/secret_custody/carrier_custody.rs` | src | m | 18 crate-vis | — | A retained carrier's own erasable key (KS-6, FIX-LIST 5687 part 1): one per custody transition instance and… |
 | `src/secret_custody/carrier_marks.rs` | src | s | 1 crate-vis | — | Historical-lift carrier marks, defined in the store layer |
 | `src/secret_custody/cloud_registration/erase_revoke.rs` | src | s | 2 struct · 3 fn · 4 crate-vis | CloudRegistrationEraseRevoke, CloudRegistrationEraseRevoker | Volatile revoke work from an accepted local hard erase |
@@ -6349,7 +6349,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/advisories.rs` | src | s | 4 crate-vis | — | OSV advisories for a pack tree and each bundled skill (OF-213) |
 | `src/skill_hub/pack_catalog/agent_admission.rs` | src | s | 1 fn · 6 crate-vis | — | The receiving half of the AgentPack another party shared (OF-491, FIX 2041 and 3168) |
 | `src/skill_hub/pack_catalog/agent_facets.rs` | src | s | 1 struct · 4 crate-vis | AgentPackFacets | Typed, inert AGENT_PACK facets on the common pack source path |
-| `src/skill_hub/pack_catalog/builtin.rs` | src | m | 1 struct · 3 fn · 8 crate-vis | CheckedBuiltinConnection | Engine-embedded connector source and local first-open installation |
+| `src/skill_hub/pack_catalog/builtin.rs` | src | m | 1 struct · 3 fn · 9 crate-vis | CheckedBuiltinConnection | Engine-embedded connector source and local first-open installation |
 | `src/skill_hub/pack_catalog/builtin/tests.rs` | test | s | — | — | First-open installed inventory and inert built-in provenance |
 | `src/skill_hub/pack_catalog/bundled_skills.rs` | src | m | 7 crate-vis | — | Bundled skills traverse the same pinned hub import, scanner and provenance doors |
 | `src/skill_hub/pack_catalog/codec.rs` | src | s | 5 crate-vis | — | Canonical source-bearing ASSET envelopes: immutable content, not authority |
@@ -7647,6 +7647,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/authority_world_undo.rs` | src | s | 3 fn | — | The agent world-edit fixtures for FIX 22381 and FIX 23218 |
 | `src/test_doors/board_child_done.rs` | src | s | 1 fn | — | Doors for `tests/board_child_done_producer.rs` (census L2-38): the serve board publisher's child-end pass… |
 | `src/test_doors/board_task_wakes.rs` | src | s | 6 fn | — | Doors for `tests/board_task_wakes_restart.rs` (census L2-38): the serve board publisher's TASK pass and its… |
+| `src/test_doors/builtin_pack_seed.rs` | src | s | 1 fn | — | Door for `tests/booking_feed_move_held.rs`: an emergency's apology goes out on `email`, a channel a built-in… |
 | `src/test_doors/callable_skill.rs` | src | s | 7 fn | — | Doors for the callable-skill integration tests |
 | `src/test_doors/campaign_opt_out_line.rs` | src | s | 1 struct · 2 fn | SealedCampaignEmail | Door for `tests/campaign_opt_out_line.rs` (L3-02, ARCH-0059 #opt-out): the campaign sender's sealing of one… |
 | `src/test_doors/check_in.rs` | src | m | 2 struct · 18 fn | FixedChain, FixedVerdicts | Door for `tests/check_in_pending_handle.rs`, `tests/check_in_rung_waits.rs` and `tests/check_in_ladder.rs`… |
@@ -7670,6 +7671,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/derivation_floor.rs` | src | s | 2 fn | — | Doors to the derivation floor (untangle 6.7a, decision C-3): write a claim an agent stamped `surface =… |
 | `src/test_doors/derive.rs` | src | L | 15 struct · 3 enum · 39 fn · 1 type | About, Archive, ArchivePins, Claim, Committed, DeriveItemReceipt, Derived, Distinct +10 | Doors to the derivation transaction (untangle 6.7a): commit a batch of items as an actor, read its batch… |
 | `src/test_doors/derive_verbs.rs` | src | s | 1 struct · 5 fn · 1 re-export | LiveRun | Doors to the derivation verbs' typed host entries (untangle 6.7d): an agent's live run, leased as a host… |
+| `src/test_doors/disclosure_word_sources.rs` | src | s | 7 fn | — | Doors for `tests/disclosure_summary_word_sources.rs` (census L5-13): the general disclosure clamp, as a… |
 | `src/test_doors/dreamer_attempt_binding.rs` | src | s | 1 struct · 4 fn · 2 const | ObservedStrengthClaim | An admitted strength attempt over one observed Dreamer claim, for the bound job client's tests (untangle… |
 | `src/test_doors/dreamer_stage_line.rs` | src | s | 1 struct · 1 fn | ClosedModelRun | Doors for `tests/dreamer_stage_line.rs` (FIX 21929): a partition's stage clock closed at set instants, and… |
 | `src/test_doors/esign_commitments.rs` | src | s | 1 fn | — | Door for `tests/esign_commitments.rs`: the evidence a commitment's current status carries, read at the head… |
@@ -7698,7 +7700,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/membership.rs` | src | s | 1 fn | — | A shared vault's member grants, for integration tests (primitive A, slice 6.4f: the Steward arm of the run… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | s | 1 fn · 101 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 1 fn · 103 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/nightly.rs` | src | s | 2 struct · 1 enum · 2 fn | PlannedThing, SpentSpan, SpentSpanKind | The nightly plan's things, for integration tests (census L2-04): witnessed TURNs whose sieve spans are… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
@@ -8411,8 +8413,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/board_task_wakes_restart.rs` | test | m | — | — | Census L2-38, ARCH-0067 `#stream-narrowed-built`: "No wake is replayed after a restart or for a connection… |
 | `tests/booking_calendar_cancel_reschedule.rs` | test | m | — | — | A booking whose calendar provider cancelled it cannot be moved (FIX 22385) |
 | `tests/booking_feed_move.rs` | test | m | — | — | A calendar feed's move of a booking's EVENT goes through the booking (FIX 22385; Engine ruling… |
+| `tests/booking_feed_move_held.rs` | test | L | — | — | A calendar feed's move of a booking waits while an emergency delivery for that booking is pending (FIX 22385… |
 | `tests/budget_scope_hosts.rs` | test | m | — | — | Row B3 of BUDGET-TRAP-UNTYPED-NO-SENDER: the hosts whose steps spend under a spend scope |
 | `tests/build_cache.rs` | test | s | — | — | Public cache boundary: real vaults and BLOB_ARTIFACT versions only |
+| `tests/calendar_google_owed_full_listing.rs` | test | m | — | — | A connector pull that leaves a change owed makes the next pull list the calendar whole, on every transport… |
 | `tests/campaign_copy_review.rs` | test | L | — | — | Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13) |
 | `tests/campaign_opt_out_line.rs` | test | s | — | — | Every campaign email carries a plain opt-out line (L3-02) |
 | `tests/can_verb_gate.rs` | test | m | — | — | `can({verb})`: one verb's gate for one actor (FIX [UI-GATE-PREVIEW] phases 1 and 2; GENUI-WIRE-GAPS section… |
@@ -8498,6 +8502,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/derive_verbs.rs` | test | s | — | — | The derivation verbs (untangle 6.7d): `vault.derive.commit` lands a batch as the caller's attached live run… |
 | `tests/device_join_census.rs` | test | s | — | — | A fresh vault that `device enrol` opens holds only its own seeds (FIX-LIST… |
 | `tests/disclosure_claim_facet.rs` | test | s | — | — | The owner's disclosure doors store their claim heads ([DISCLOSURE-SCOPE-CLAIM-FACET]… |
+| `tests/disclosure_summary_word_sources.rs` | test | m | — | — | The general disclosure clamp follows a summary's words to their sources (census L5-13; ILDF2 P7, one-1592… |
 | `tests/dreamer_meso_width.rs` | test | s | — | — | FIX 21927 P2: the lead's DREAMER-WIDTH ruling (13 Nov 2026) lets clean Generated Dreamer priors run wide… |
 | `tests/dreamer_stage_line.rs` | test | s | — | — | FIX 21929 (brief 21, Dreamer r5): a partition's stage line splits the residual `extract_ms` into the slot's… |
 | `tests/edit_settle_organ_wait_ref.rs` | test | m | — | — | A ref an organ call holds is held for every settle door (FIX 22386) |

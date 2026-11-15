@@ -95,6 +95,7 @@ mod residence;
 mod retrieval;
 mod revisions_read;
 mod root_requests;
+mod schedule;
 mod scratchpad;
 mod secret;
 mod secret_custody;
@@ -339,6 +340,7 @@ pub use crate::memory::affect::QueryAffect;
 pub use self::asset_masked_read::*;
 pub use self::connector_source_rows_read::*;
 pub use self::setting::*;
+pub use self::schedule::*;
 pub use self::skill_package_read::*;
 
 pub use self::act_answer::*;
