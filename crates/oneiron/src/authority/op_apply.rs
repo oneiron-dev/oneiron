@@ -125,6 +125,17 @@ pub(super) fn apply_op(
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => {}
+        // Only a counted root appointment applies, onto its proof fold's merge
+        // (`root_appointment_judge::Recovered`; the fold refuses every other
+        // one before any op applies): every roster key is revoked and the
+        // successor starts its own custody line, with no admitter edge from
+        // the anchor (PLAN v3 E1).
+        AuthorityOp::RootAppointment(RootAppointment { successor, .. }) => {
+            for device in state.roster.values_mut() {
+                device.revoked = true;
+            }
+            upsert_device(state, successor, None);
+        }
         // The signed record of a shared-act change; the change itself is the
         // execution's (`federation::shared_act`).
         AuthorityOp::OwnerHandover(_) => {}

@@ -123,6 +123,13 @@ pub(super) fn project_once(
                 device.revoked = true;
             }
         }
+        if !state
+            .roster
+            .values()
+            .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
+        {
+            issues.push(AuthorityFoldIssue::NoRootKey);
+        }
     }
     let machines = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         super::machine_claims::folded_machines(state, unsettled)

@@ -315,6 +315,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::MembershipExecution(record) => {
             super::membership_execution::membership_execution_value(record)
         }
+        AuthorityOp::RootAppointment(appointment) => {
+            super::root_appointment::root_appointment_value(appointment)
+        }
     }
 }
 

@@ -488,6 +488,15 @@ fn tail_folds_past(
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
 ) -> Option<ConfirmKeys> {
+    // A root appointment is counted over its whole ancestry, and one arriving
+    // can burn its anchor and un-count an appointment the image counted
+    // (OWNER-ANCHOR-ROOT-RECOVERY): the whole history folds it.
+    if tail
+        .values()
+        .any(|entry| matches!(entry.op, AuthorityOp::RootAppointment(_)))
+    {
+        return None;
+    }
     if image.residence_overflow
         && tail
             .values()

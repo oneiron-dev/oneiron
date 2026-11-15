@@ -111,6 +111,7 @@ pub(super) fn settle_tail(
         pre_handoff_entries: Some(&no_handoff_line),
         memory_floor_bytes,
         pin: log.pin,
+        appointments: None,
     };
     let mut seed: BTreeMap<_, _> = image
         .per_parent

@@ -834,6 +834,18 @@ impl Vault {
         Ok(())
     }
 
+    /// Signs `op` under the host root on this vault's heads and returns the
+    /// row unstored, for a test to deliver after rows written meanwhile.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn withheld_host_root_entry_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let fold = self.authority_fold()?;
+        next_entry(issuer, &fold, op, self.now_recorded_at())
+    }
+
     /// Revokes the actor the host root binds, as unbinding the owner does;
     /// the host root and the slips it minted stay live.
     #[cfg(test)]

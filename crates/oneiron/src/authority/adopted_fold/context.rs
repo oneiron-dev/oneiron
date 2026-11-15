@@ -66,6 +66,12 @@ pub(super) fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<
         let Ok(entry) = decode_authority_log_entry_body(body) else {
             return false;
         };
+        // A counted appointment's line folds under its building pin alone, so
+        // an image over an appointment stands under that pin only
+        // (OWNER-ANCHOR-ROOT-RECOVERY, round-1 finding 7).
+        if pin_moved && matches!(entry.op, AuthorityOp::RootAppointment(_)) {
+            return false;
+        }
         let reads = (pin_moved && reads_pin(&entry.op))
             || matches!(&entry.op, AuthorityOp::FederationLifecycle(action)
                 if moved_peers.contains(&action.peer_vault_id));
@@ -76,8 +82,9 @@ pub(super) fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<
 /// Whether `op`'s transition reads the install's pin: every owner act, a
 /// membership execution record (FIX 12335), a machine's revision or answer, a frontier join, a world key record, a home
 /// candidacy and an owner key enrollment judge their carrier or signer
-/// through this install's trusted admitter, and a kit request through the
-/// pinned root itself.
+/// through this install's trusted admitter, a kit request through the
+/// pinned root itself, and a root appointment's verdict through the pinned
+/// root's anchor.
 pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -103,6 +110,7 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::WorldKeyWraps(_)
             | AuthorityOp::HomeCandidacy(_)
             | AuthorityOp::OwnerKeyEnroll(_)
+            | AuthorityOp::RootAppointment(_)
     )
 }
 
@@ -175,6 +183,7 @@ fn judged_alike(
             pre_handoff_entries: Some(&no_handoff_line),
             memory_floor_bytes,
             pin,
+            appointments: None,
         };
         match fold_entry_state(entry, hash, &parents, context) {
             EntryFold::Ready(state) => Some(Some(state)),

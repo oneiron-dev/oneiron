@@ -16,6 +16,7 @@
 //! replicates is public keys and sealed envelopes (`oneiron-crypto`, purpose
 //! `WorldDek`). An unwrapped key or a seed never replicates.
 
+mod appoint_owner_root;
 mod bundle;
 mod content;
 #[cfg(feature = "sync")]

@@ -378,9 +378,15 @@ impl RevokeFacts {
                 || ancestors.get(hash).is_some_and(|line| {
                     line.iter().all(|ancestor| {
                         settled.contains_key(ancestor)
-                            || !entries
-                                .get(ancestor)
-                                .is_some_and(|row| matches!(row.op, AuthorityOp::ReRoot { .. }))
+                            || !entries.get(ancestor).is_some_and(|row| {
+                                // A root appointment hands the vault over as a
+                                // handoff does: one this install does not count
+                                // proves nothing beneath it.
+                                matches!(
+                                    row.op,
+                                    AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
+                                )
+                            })
                     })
                 })
         });

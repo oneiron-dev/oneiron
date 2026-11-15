@@ -372,6 +372,17 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::RevokeActor { .. } => (Other, "revoke_actor", OpFields::default()),
         AuthorityOp::MachineProfile(_) => (Other, "machine_profile", OpFields::default()),
         AuthorityOp::OwnerRoot(_) => (Other, "owner_root", OpFields::default()),
+        // The appointed successor root key, and the root whose anchor
+        // appoints it (OWNER-ANCHOR-ROOT-RECOVERY).
+        AuthorityOp::RootAppointment(appointment) => (
+            Other,
+            "root_appointment",
+            OpFields {
+                detail: Some(hex_lower(&appointment.root.0)),
+                subject_ref: Some(key_hex(&appointment.successor.key)),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
         AuthorityOp::OwnerHandover(action) => (

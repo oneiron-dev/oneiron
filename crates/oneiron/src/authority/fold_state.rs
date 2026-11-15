@@ -46,8 +46,9 @@ pub struct AuthorityFold {
     pub valid_entries: ValidEntries,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
-    /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:
-    /// no entry they sign stands outside the handoff's own ancestry.
+    /// Keys a handoff (`ReRoot`) or a revocation (`RevokeDevice`) retired.
+    /// They stay revoked on every branch: no entry they sign stands outside
+    /// that row's own ancestry.
     pub retired_keys: BTreeSet<AuthorityKey>,
     /// Every key in the host's custody, as the fold's custody walk judged it
     /// on the merged history: read through [`AuthorityFold::in_host_custody`]

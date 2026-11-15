@@ -20,7 +20,8 @@ use super::*;
 /// Key: string (peer id, or peer id and world for a side entry).
 const SEQ_HWM: SideTable<String, u64, Raw> = SideTable::new(&side_table::AUTHLOG_SEQ_HWM);
 /// First-observation receipt of the signer sequence high-water mark that existed before one
-/// entry hash was first observed. Key: hex64.
+/// entry hash was first observed. Key: hex64 for a row that moved its signer's mark;
+/// `appointment:` and hex64 for a root appointment, which moves none (`appointment_receipt_key`).
 const SEQ_OBSERVATION: SideTable<String, SequenceReceipt, Raw> =
     SideTable::new(&side_table::AUTHLOG_SEQ_OBSERVATION);
 
@@ -132,6 +133,18 @@ fn receipt_key(hash: &AuthorityEntryHash) -> String {
     crate::entity_id::bytes_to_hex_lower(hash)
 }
 
+/// The key of a root appointment's first-arrival receipt. An appointment is
+/// no sequence observation: its order is its ancestry, never its arrival
+/// here, so it moves no mark of its anchor (OWNER-ANCHOR-ROOT-RECOVERY, E5).
+/// The floor reader refuses a receipt under a hash key whose signer's mark
+/// is below its row, so the appointment's receipt stays out of those keys
+/// (OPUS-ANCHORSEC F2). The reader then gives it the live mark, as a row
+/// with no receipt, and the fold reads no floor of an appointment
+/// (`entry_transition::fold_entry_state`).
+fn appointment_receipt_key(hash: &AuthorityEntryHash) -> String {
+    format!("appointment:{}", receipt_key(hash))
+}
+
 fn read_u64(raw: &[u8]) -> Result<u64> {
     decode_authority_first_seen_secs(raw)
         .ok_or(Error::CorruptedIndex("authority sequence high-water mark"))
@@ -145,13 +158,23 @@ pub(crate) fn record_authority_sequence_observation_in_txn(
     entry: &AuthorityLogEntry,
     hash: &AuthorityEntryHash,
 ) -> Result<bool> {
-    let receipt_key = receipt_key(hash);
+    // A root appointment moves no mark of its anchor (E5): its receipt only
+    // counts its first arrival, under a key the floor reader never reads.
+    let appointment = matches!(entry.op, AuthorityOp::RootAppointment(_));
+    let receipt_key = if appointment {
+        appointment_receipt_key(hash)
+    } else {
+        receipt_key(hash)
+    };
     if SEQ_OBSERVATION.get(store, txn, &receipt_key)?.is_some() {
         return Ok(false);
     }
     let key = sequence_key(entry);
     let previous = SEQ_HWM.get(store, txn, &key)?;
     SEQ_OBSERVATION.put(store, txn, &receipt_key, &SequenceReceipt(previous))?;
+    if appointment {
+        return Ok(true);
+    }
     let next = previous.map_or(entry.seq, |value| value.max(entry.seq));
     SEQ_HWM.put(store, txn, &key, &next)?;
     Ok(true)

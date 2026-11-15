@@ -491,7 +491,10 @@ impl Vault {
     }
     /// Move `member` from `from` to `to` (`None` leaves the vault), dropping
     /// the delegates it can no longer parent, the own-device grant a former
-    /// Owner held (FIX 3294) and, with `slips`, its slips.
+    /// Owner held (FIX 3294) and, with `slips`, its slips and, when its
+    /// Owner standing ends or it leaves, the owner keys and `human` bindings
+    /// that name it (OWNER-ENROL); without `slips` such a move is refused
+    /// while any of those is live (REVIEW-7931).
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
@@ -533,6 +536,19 @@ impl Vault {
             }
             _ => Vec::new(),
         };
+        // Owner authority on the log retires with Owner standing, whatever
+        // role the member keeps (OWNER-ENROL-TRANSFER-REVOKE = A, as the
+        // own-device grant does), and a member who leaves keeps none: an owner
+        // root of theirs signs any authority entry, and a binding passes every
+        // owner verb. Only the vault's live host root signs that revocation,
+        // so a move with no issuer is refused while the member holds either
+        // (REVIEW-7931).
+        if to.is_none() || (from == Role::Owner && to != Some(Role::Owner)) {
+            match slips {
+                Some(issuer) => self.revoke_owner_authority_in_txn(txn, issuer, member)?,
+                None => self.refuse_unrevoked_owner_authority_in_txn(txn, member)?,
+            }
+        }
         let mut detach = None;
         if to.is_none() {
             // A genuine leave: the departure is built here, after the
@@ -560,6 +576,9 @@ impl Vault {
     }
 
     /// Add one Owner without moving or revoking any existing Owner's grants.
+    /// The embedded owner added back is bound again under `slips`
+    /// ([`Vault::restore_embedded_owner_binding_in_txn`]).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn add_owner_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -567,11 +586,14 @@ impl Vault {
         owners: &BTreeSet<EntityId>,
         starter: EntityId,
         owner: EntityId,
+        slips: Option<&HostSlipIssuer>,
         now: u64,
     ) -> Result<MemberMove> {
         self.check_add_owner_in_txn(txn, owners, starter, owner)?;
+        let grants = self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?;
+        self.restore_embedded_owner_binding_in_txn(txn, slips, owner)?;
         Ok(MemberMove {
-            grants: self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?,
+            grants,
             retired_own_device: Vec::new(),
             revoked_slips: Vec::new(),
             detach: None,
@@ -599,6 +621,7 @@ impl Vault {
         let mut grants = Vec::new();
         if let Some(gainer) = gainer {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, gainer, Role::Owner, now)?);
+            self.restore_embedded_owner_binding_in_txn(txn, slips, gainer)?;
         }
         let mut moved = self.move_member_in_txn(
             txn,
@@ -1116,6 +1139,7 @@ impl Vault {
         let id = self.store.clock.entity_id()?.to_hex();
         let mut grants =
             self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
+        self.restore_embedded_owner_binding_in_txn(&mut txn, Some(issuer), claimant)?;
         let mut moved = self.move_member_in_txn(
             &mut txn,
             vault_id,

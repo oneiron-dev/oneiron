@@ -18,6 +18,21 @@ pub(in crate::authority) struct FoldCapture {
     /// The checkpoint image build's capture (OF-469, checkpoint v2): it keeps
     /// an [`ImageFold`] in place of a resumable once fold.
     image: Option<ImageSlot>,
+    /// A root appointment's proof fold's capture (OWNER-ANCHOR-ROOT-RECOVERY):
+    /// it keeps the last once fold's [`ProofParts`], spoiled or not.
+    proof: Option<RefCell<Option<Box<ProofParts>>>>,
+}
+
+/// What a root appointment's proof fold settled: each surviving row's state,
+/// the raw merge of them before any restrictive fact, the handoffs whose
+/// fences closed, and the rows of each closed conflict. A counted
+/// appointment's recovered world is made of the first three (PLAN v3 section
+/// 6); the appointment door names its witnesses from the last (section 7).
+pub(in crate::authority) struct ProofParts {
+    pub(in crate::authority) states: BTreeMap<AuthorityEntryHash, FoldState>,
+    pub(in crate::authority) merged: FoldState,
+    pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
 }
 
 /// The frontier an image build keeps fold states at, and what it kept of the
@@ -58,6 +73,20 @@ impl FoldCapture {
         }
     }
 
+    /// A capture for a root appointment's proof fold: it keeps the last
+    /// once fold's [`ProofParts`]. No resumed fold reads it.
+    pub(in crate::authority) fn for_proof() -> Self {
+        Self {
+            proof: Some(RefCell::new(None)),
+            ..Self::default()
+        }
+    }
+
+    /// What the proof fold kept of its last once fold.
+    pub(in crate::authority) fn take_proof(self) -> Option<Box<ProofParts>> {
+        self.proof.and_then(RefCell::into_inner)
+    }
+
     /// What the image build kept of the last once fold.
     pub(in crate::authority) fn take_image(self) -> Option<Box<ImageFold>> {
         self.image.and_then(|image| image.fold.into_inner())
@@ -68,7 +97,14 @@ impl FoldCapture {
     }
 
     pub(in crate::authority) fn record(&self, parts: OnceParts<'_>) {
-        if let Some(image) = &self.image {
+        if let Some(proof) = &self.proof {
+            *proof.borrow_mut() = Some(Box::new(ProofParts {
+                states: parts.states.clone(),
+                merged: parts.merged,
+                closed_handoffs: parts.closed_handoffs,
+                closed_conflicts: parts.closed_conflicts,
+            }));
+        } else if let Some(image) = &self.image {
             *image.fold.borrow_mut() =
                 ImageFold::of(parts, &image.frontier, image.replay).map(Box::new);
         } else {
@@ -97,6 +133,8 @@ pub(in crate::authority) struct OnceParts<'a> {
     pub(in crate::authority) revoke_facts: RevokeFacts,
     pub(in crate::authority) retired_keys: BTreeSet<AuthorityKey>,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The rows of each closed conflict (`Retirements::closed_conflicts`).
+    pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
     pub(in crate::authority) unsettled: bool,
     pub(in crate::authority) counted_ancestor_pairs: u64,
     pub(in crate::authority) issues: Vec<AuthorityFoldIssue>,
@@ -163,6 +201,7 @@ impl Once {
             revoke_facts,
             retired_keys,
             closed_handoffs,
+            closed_conflicts: _,
             unsettled,
             counted_ancestor_pairs,
             issues,

@@ -285,6 +285,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_MEMBERSHIP_EXECUTION => {
             super::membership_execution::decode_membership_execution(entries)
         }
+        OP_KIND_ROOT_APPOINTMENT => super::root_appointment::decode_root_appointment(entries),
         _ => Err(invalid_authority()),
     }
 }

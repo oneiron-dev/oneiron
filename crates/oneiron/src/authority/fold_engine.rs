@@ -60,8 +60,14 @@ pub(super) struct FoldContext<'a> {
     /// The bytes this fold may project to hold at its peak.
     pub(super) memory_floor_bytes: u64,
     /// This install's pin on a fold of its own vault's log: which world-key
-    /// records count here. It decides no entry's validity.
+    /// records count here. The pin decides no entry's validity; it decides
+    /// which valid root appointment counts.
     pub(super) pin: Option<&'a PinnedRoot>,
+    /// The verdicts of the root appointments this fold holds, which their
+    /// refusals carry, and the world the counted ones recover
+    /// (`root_appointment_judge`). None on a fold that judges none (an
+    /// appointment is then `Unjudged`).
+    pub(super) appointments: Option<&'a super::root_appointment_judge::AppointmentJudgement>,
 }
 
 impl FoldContext<'_> {
@@ -360,9 +366,16 @@ pub(super) fn fold_authority_log_once(
     };
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
+    // Root appointments are judged before any entry folds: only the pinned
+    // anchor's, each over its own ancestry (`root_appointment_judge`).
+    let appointments = super::root_appointment_judge::judge_appointments(&by_hash, context.pin);
+    if let Some(anchor) = appointments.burned {
+        issues.push(AuthorityFoldIssue::AnchorBurned { anchor });
+    }
     let context = FoldContext {
         sequence_floors: causal_floors.as_ref(),
         entry_ancestors: Some(&entry_ancestors),
+        appointments: Some(&appointments),
         ..context
     };
 
@@ -379,6 +392,7 @@ pub(super) fn fold_authority_log_once(
         &by_hash,
         &entry_ancestors,
         handoffs,
+        &appointments.recovered,
         &mut issues,
         |states, present| federation_confirm_losers(states, &by_hash, present),
     );
@@ -388,6 +402,7 @@ pub(super) fn fold_authority_log_once(
         &entry_ancestors,
         context,
         &mut issues,
+        |hash| retirements.fences_signer_of(hash, &by_hash),
     );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
@@ -508,6 +523,7 @@ pub(super) fn fold_authority_log_once(
             revoke_facts,
             retired_keys,
             closed_handoffs: retirements.handoffs(),
+            closed_conflicts: retirements.closed_conflicts(),
             unsettled: retirements.unsettled(),
             counted_ancestor_pairs,
             issues,

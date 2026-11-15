@@ -50,12 +50,16 @@ use serde::Serialize;
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
-/// 34: a carried machine answer that needed an owner key's proof and carried none is held
+/// 34: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
+/// 35: a counted root appointment folds its line as its own ancestry's fold did, and a
+/// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
+/// 36: a carried machine answer that needed an owner key's proof and carried none is held
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
-/// 35: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
+/// 37: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
 /// an owner key until the owner switches it back to web sign-in (the owner's ruling AUTH-5).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 35;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 37;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
