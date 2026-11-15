@@ -113,6 +113,8 @@ pub mod workspace_token;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 #[cfg(feature = "sync")]
+pub use crate::sync::connection::home_probe;
+#[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
 
 /// Runs the identity-topology reconcile that a replica's sync ingest runs,

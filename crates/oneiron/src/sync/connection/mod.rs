@@ -61,6 +61,10 @@ mod topology;
 
 #[cfg(oneiron_test_support)]
 #[doc(hidden)]
+#[path = "../../test_doors/home_probe.rs"]
+pub mod home_probe;
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
 #[path = "../../test_doors/sync_outbox.rs"]
 pub mod sync_outbox;
 
