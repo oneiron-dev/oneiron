@@ -318,6 +318,7 @@ impl ConsolidationExecutor<'_> {
                 step: pass.step,
                 guard: self.guard,
                 call: self.role(DREAMER_EXTRACTION_ROLE),
+                prompt: &self.decisions.extraction_prompt,
                 slices: vec![SliceCall {
                     transcript: &slice.transcript,
                     labels: &slice.labels,
@@ -376,6 +377,12 @@ impl ConsolidationExecutor<'_> {
                     charges.record_usage(usage);
                 } else if let Some(usage) = unsaved_usage {
                     charges.record_usage(&usage);
+                }
+                // A spent model seat refused the slice's step: the branch
+                // ends and the try parks on the seat, as the per-slice path
+                // parks it, never a blind Retry (SEAT-PARK-MODEL-STEP-PATH).
+                if crate::dreamer_runner::dreamer_seat_refusal_of_step(&error).is_some() {
+                    return Ok(PortServed::End(PartitionRun::refused_by(error)));
                 }
                 table.refused.get_or_insert_with(|| error.to_string());
                 return Ok(PortServed::Refused(THING_SLICE_REFUSED));
@@ -633,7 +640,9 @@ const fn stop_code(run: &PartitionRun) -> &'static str {
     match run {
         PartitionRun::Trapped => THING_CHILD_TRAPPED,
         PartitionRun::Checkpoint => THING_CHILD_CHECKPOINT,
-        PartitionRun::Refused { .. } | PartitionRun::BudgetRefused { .. } => THING_CHILD_REFUSED,
+        PartitionRun::Refused { .. }
+        | PartitionRun::BudgetRefused { .. }
+        | PartitionRun::SeatRefused { .. } => THING_CHILD_REFUSED,
         PartitionRun::Completed { .. } | PartitionRun::Held { .. } => THING_CHILD_PARENT_FAILED,
     }
 }

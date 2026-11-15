@@ -97,18 +97,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // (federation:G, co-ownership is direct access to the whole vault).
     // Admin, Steward, Member, Viewer, Delegate and Guest grants are gated. An
     // owner check that fails gates.
-    let member_access = if grant.role == crate::federation::FederationGrantRole::Owner
-        || crate::memory::owner_exemption_holds_in_txn(vault, &rtxn, grant.member_ref)
-            .unwrap_or(false)
-    {
-        None
-    } else {
-        Some(crate::access_grant::AccessContext::load(
-            vault,
-            &rtxn,
-            Some(grant.member_ref),
-        )?)
-    };
+    let member_access = member_label_access(vault, &rtxn, &grant)?;
     // Credentials never leave through a selector, whatever the carrier says, and neither does
     // this vault's embedding setup (OF-370): a peer or a guest keeps its own.
     let mut custody_withheld = BTreeSet::new();
@@ -216,6 +205,18 @@ pub(in crate::sync::selector) fn filter_window_doc(
             return;
         }
         match member_reads_labels(vault, &rtxn, member_access.as_ref(), &id, blob) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
+        // FIX SELECTOR-SCOPE-SUMMARY-WORDS (OPUS-LEAKS): a row that carries
+        // other rows' words (a scope SUMMARY, the TURN that copies one, a
+        // merge header) reaches the member only when it reads every one of
+        // those sources at the same gate, as its scoped read admits it.
+        match member_reads_word_sources(vault, &rtxn, member_access.as_ref(), &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             Err(error) => {
@@ -525,12 +526,34 @@ pub(in crate::sync::selector) fn filter_window_doc(
     Ok(out)
 }
 
+/// The access context `grant`'s member reads with at the relationship gate
+/// (FIX SELECTOR-RELATIONSHIP-LABELS): `None` for an Owner's member, the
+/// vault owner or a co-Owner on an Owner-role grant, which reads every row.
+/// An owner check that fails gates.
+pub(in crate::sync::selector) fn member_label_access<'v>(
+    vault: &'v Vault,
+    rtxn: &heed::RoTxn<'_>,
+    grant: &crate::federation::FederationGrant,
+) -> Result<Option<crate::access_grant::AccessContext<'v>>> {
+    if grant.role == crate::federation::FederationGrantRole::Owner
+        || crate::memory::owner_exemption_holds_in_txn(vault, rtxn, grant.member_ref)
+            .unwrap_or(false)
+    {
+        return Ok(None);
+    }
+    Ok(Some(crate::access_grant::AccessContext::load(
+        vault,
+        rtxn,
+        Some(grant.member_ref),
+    )?))
+}
+
 /// Whether the selector's member reads the row `raw` of `id` at the
 /// relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is an
 /// Owner's member (the vault owner, or a co-Owner on an Owner-role grant),
 /// which reads every row. A CLAIM body that does not decode is withheld, as
 /// the causal check withholds it.
-fn member_reads_labels(
+pub(in crate::sync::selector) fn member_reads_labels(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     member: Option<&crate::access_grant::AccessContext<'_>>,
@@ -545,4 +568,41 @@ fn member_reads_labels(
         Err(Error::InvalidClaimBody(_)) => Ok(false),
         Err(error) => Err(error),
     }
+}
+
+/// Whether the selector's member reads, at the relationship gate, every
+/// source the words of the row `raw` of `id` came from (FIX
+/// SELECTOR-SCOPE-SUMMARY-WORDS): the sources
+/// `scope_summary::word_sources_in` names, as the scoped read admits a
+/// derived row (`claim/scoped_read/visibility.rs`). A row with words of its
+/// own passes; one whose sources no longer resolve, or name a row not held
+/// here, is withheld. `None` is an Owner's member, which reads every row.
+/// Only a member the label gate binds pays for the lookup.
+fn member_reads_word_sources(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    member: Option<&crate::access_grant::AccessContext<'_>>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    if member.is_none() {
+        return Ok(true);
+    }
+    let sources = match crate::scope_summary::word_sources_in(vault, rtxn, id, raw) {
+        Ok(crate::scope_summary::WordSources::Own) => return Ok(true),
+        Ok(crate::scope_summary::WordSources::Unresolved) => return Ok(false),
+        Ok(crate::scope_summary::WordSources::From(sources)) => sources,
+        // A CLAIM body that does not decode is withheld, as at the label gate.
+        Err(Error::InvalidClaimBody(_)) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for source in &sources {
+        let Some(source_raw) = vault.get_raw_in(rtxn, source)? else {
+            return Ok(false);
+        };
+        if !member_reads_labels(vault, rtxn, member, source, &source_raw)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

@@ -9,35 +9,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldEvent, LegalHoldTarget,
-    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
+    LegalHold, LegalHoldEvent, LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
 };
 use crate::memory::MemoryResult;
 use crate::{EntityId, Vault};
 
-/// `vault.legal_holds.place`'s input: what the owner's customer hold names,
-/// and an optional opaque matter reference.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldPlaceRequest {
-    /// Each `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` (a claim's
-    /// gate-decision key partition), or `{"gate_partition": null}` (the
-    /// claim-free partition).
-    pub targets: Vec<LegalHoldTarget>,
-    /// An opaque id, never free text: 1 to 128 of A-Z a-z 0-9 . _ : - /.
-    #[serde(default)]
-    pub matter_ref: Option<String>,
-}
-
-/// `vault.legal_holds.widen`'s input: more targets for one of the owner's
-/// standing customer holds. A hold narrows only through the one confirm.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldWidenRequest {
-    pub hold_id: EntityId,
-    /// As [`LegalHoldPlaceRequest::targets`].
-    pub targets: Vec<LegalHoldTarget>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::legal_hold::{
+    LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldErasesWithdrawn, LegalHoldPlaceRequest,
+    LegalHoldWidenRequest, LegalHoldWithdrawEraseRequest, LegalHoldWithdrawnErase,
+};
 
 /// `vault.legal_holds.lift_and_erase`'s input: the records the owner's one
 /// "Lift the hold and erase?" confirm names, whether it releases the
@@ -55,30 +36,11 @@ pub struct LegalHoldLiftAndEraseRequest {
     /// every standing customer hold on them, whole, as the hold list reads
     /// them. The engine acts only when it reads the same.
     pub shown_state: LiftAndEraseShownState,
-}
-
-/// What the owner's one confirm did to one record, by one rule wherever the
-/// bytes live (WILL-PLAN L01 row 04).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum LegalHoldEraseState {
-    /// The hold is lifted and the record erased: its deletion receipt's
-    /// signed final row is appended, its hard purge, historical sweep and
-    /// every custody retirement it bound finished (C4, FIX 5844). No receipt
-    /// when nothing was there.
-    Erased { receipt_ref: Option<String> },
-    /// "erase confirmed; completion pending"
-    /// ([`crate::deletion::ERASE_COMPLETION_PENDING`]): the erase still waits
-    /// on `reason` of `receipt_ref`, or on its shared vault's veto window. Not
-    /// erased yet.
-    CompletionPending {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        receipt_ref: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reason: Option<ErasePendingReason>,
-    },
-    /// The hold was lifted, then the erase failed; a plain delete retries it.
-    Failed { message: String },
+    /// An asker's approved check-in for this confirm, 32 hex
+    /// (`legal_hold_erase_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 impl From<LiftAndEraseStatus> for LegalHoldEraseState {
@@ -97,14 +59,6 @@ impl From<LiftAndEraseStatus> for LegalHoldEraseState {
     }
 }
 
-/// One record the confirm named, with what it did to it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldErasedRecord {
-    pub record: EntityId,
-    pub status: LegalHoldEraseState,
-}
-
 /// `vault.legal_holds.lift_and_erase`'s answer: the customer holds lifted or
 /// narrowed to what is left, and each named record's state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -116,6 +70,11 @@ pub struct LegalHoldLiftAndErased {
     /// nothing was lifted or erased; confirm again with this (FIX 1462).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed: Option<LiftAndEraseShownState>,
+    /// The check-in decision the confirm ran on (2k2): the Owner on their
+    /// own proof, and the approved check-in of another asker it applied,
+    /// with its requester. None when nothing was lifted or erased.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 impl From<LiftAndEraseOutcome> for LegalHoldLiftAndErased {
@@ -131,33 +90,9 @@ impl From<LiftAndEraseOutcome> for LegalHoldLiftAndErased {
                 })
                 .collect(),
             changed: outcome.changed,
+            check_in: outcome.check_in,
         }
     }
-}
-
-/// `vault.legal_holds.withdraw_erase`'s input: the records whose waiting
-/// erase the owner withdraws (FIX 10401).
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldWithdrawEraseRequest {
-    pub records: Vec<EntityId>,
-}
-
-/// One record the withdrawal named, with what it did to the erase that
-/// waited on it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldWithdrawnErase {
-    pub record: EntityId,
-    pub status: EraseWithdrawal,
-}
-
-/// `vault.legal_holds.withdraw_erase`'s answer: each named record's state,
-/// in id order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldErasesWithdrawn {
-    pub records: Vec<LegalHoldWithdrawnErase>,
 }
 
 /// `vault.legal_holds.place`: the owner's customer hold on `targets`.
@@ -196,18 +131,22 @@ pub fn read_legal_hold_log(
 /// `input.claim_free_partition`. The engine takes the owner's proof, the
 /// targets and the state the confirm showed, unchanged, and checks that
 /// state itself: there is no second press, token or expiry, and nothing
-/// here prepares a state the owner was not shown (FIX 1462).
+/// here prepares a state the owner was not shown (FIX 1462). With
+/// `input.check_in_ref` the Owner applies an asker's approved check-in for
+/// this confirm (2k2).
 pub fn lift_legal_hold_and_erase_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: LegalHoldLiftAndEraseRequest,
 ) -> MemoryResult<LegalHoldLiftAndErased> {
+    let check_in_ref = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
     Ok(vault
-        .confirm_lift_legal_hold_and_erase(
+        .confirm_lift_legal_hold_and_erase_with_check_in(
             owner,
             &input.records,
             input.claim_free_partition,
             &input.shown_state,
+            check_in_ref,
         )?
         .into())
 }

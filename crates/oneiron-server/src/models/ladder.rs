@@ -1324,6 +1324,7 @@ impl OfferLadder {
                 kind: SpentKind::Credit,
                 retry_after: None,
                 resets_at: Vec::new(),
+                seat: None,
             }
             .into();
         }

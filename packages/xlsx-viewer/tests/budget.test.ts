@@ -1,98 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { deflateRawSync } from "node:zlib";
 import * as XLSX from "xlsx";
 import { PREVIEW_BUDGET, WorkbookBudgetError, preflightPackage, type BudgetLine } from "../src/bridge/budget";
 import { ParseSessionStore } from "../src/bridge/handler";
-import { readSheet, readWorkbook, readWorkbookOutline, sheetId, worksheetToCellData } from "../src/bridge/parse";
+import { readSheet, readWorkbookOutline, worksheetToCellData } from "../src/bridge/parse";
 import { createWorkerWorkbookSource, type ParseWorkerLike } from "../src/bridge/source";
 import type { ParseRequest, ParseResponse } from "../src/bridge/protocol";
 import { makeXlsxBytes } from "./helpers";
+import { DOC_REL, MAIN, REL, deflated, text, zip, type Part } from "./package-writer";
 
 const MIB = 1024 * 1024;
-const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-const REL = "http://schemas.openxmlformats.org/package/2006/relationships";
-const DOC_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const SHEET = "xl/worksheets/sheet1.xml";
-
-interface Part {
-  readonly name: string;
-  /** Stored bytes, or a raw deflate stream with the size it really inflates to. */
-  readonly body: Uint8Array | { readonly stream: Uint8Array; readonly size: number; readonly crc: number };
-  /** Written as a streaming writer does: zero local sizes, a data descriptor after the data. */
-  readonly streamed?: boolean;
-  /** Extra-field bytes of the central directory entry. */
-  readonly centralExtra?: readonly number[];
-}
-
-function le(bytes: number[], value: number, width: 2 | 4): void {
-  for (let i = 0; i < width; i += 1) bytes.push((value >>> (8 * i)) & 0xff);
-}
-
-/** Test-only ZIP writer: the bridge never writes packages. */
-function zip(parts: readonly Part[]): Uint8Array {
-  const out: number[] = [];
-  const central: number[] = [];
-  for (const part of parts) {
-    const name = new TextEncoder().encode(part.name);
-    const stored = part.body instanceof Uint8Array;
-    const data = part.body instanceof Uint8Array ? part.body : part.body.stream;
-    const size = part.body instanceof Uint8Array ? data.length : part.body.size;
-    const crc = part.body instanceof Uint8Array ? Bun.hash.crc32(data) : part.body.crc;
-    const flags = part.streamed ? 8 : 0;
-    const extra = part.centralExtra ?? [];
-    const offset = out.length;
-    le(out, 0x04034b50, 4);
-    le(out, 20, 2);
-    le(out, flags, 2);
-    le(out, stored ? 0 : 8, 2);
-    le(out, 0, 2);
-    le(out, 0x21, 2);
-    le(out, part.streamed ? 0 : crc, 4);
-    le(out, part.streamed ? 0 : data.length, 4);
-    le(out, part.streamed ? 0 : size, 4);
-    le(out, name.length, 2);
-    le(out, 0, 2);
-    out.push(...name);
-    for (const byte of data) out.push(byte);
-    if (part.streamed) {
-      le(out, 0x08074b50, 4);
-      le(out, crc, 4);
-      le(out, data.length, 4);
-      le(out, size, 4);
-    }
-    le(central, 0x02014b50, 4);
-    le(central, 20, 2);
-    le(central, 20, 2);
-    le(central, flags, 2);
-    le(central, stored ? 0 : 8, 2);
-    le(central, 0, 2);
-    le(central, 0x21, 2);
-    le(central, crc, 4);
-    le(central, data.length, 4);
-    le(central, size, 4);
-    le(central, name.length, 2);
-    le(central, extra.length, 2);
-    le(central, 0, 2);
-    le(central, 0, 2);
-    le(central, 0, 2);
-    le(central, 0, 4);
-    le(central, offset, 4);
-    central.push(...name, ...extra);
-  }
-  const directory = out.length;
-  out.push(...central);
-  le(out, 0x06054b50, 4);
-  le(out, 0, 2);
-  le(out, 0, 2);
-  le(out, parts.length, 2);
-  le(out, parts.length, 2);
-  le(out, central.length, 4);
-  le(out, directory, 4);
-  le(out, 0, 2);
-  return Uint8Array.from(out);
-}
-
-const text = (xml: string) => new TextEncoder().encode(xml);
 
 /**
  * A one-sheet workbook whose sheet part is `sheet`. `streamed` deflates every
@@ -139,10 +56,6 @@ function withCentralExtra(sheet: Part["body"], extra: readonly number[]): Uint8A
 }
 
 const SHEET_XML = `<worksheet xmlns="${MAIN}"><sheetData><row r="1"><c r="A1"><v>42</v></c><c r="B1" t="inlineStr"><is><t>kept</t></is></c></row></sheetData></worksheet>`;
-
-function deflated(bytes: Uint8Array): Part["body"] {
-  return { stream: deflateRawSync(bytes), size: bytes.length, crc: Bun.hash.crc32(bytes) };
-}
 
 /**
  * A raw deflate stream that really inflates to `1 + 258 * copies` zero bytes:
@@ -260,7 +173,6 @@ describe("preview budgets: a package is refused from its ZIP records, before She
     expect(bomb.length).toBeLessThan(MIB);
     refusedWith("entryBytes", () => readWorkbookOutline(bomb));
     refusedWith("entryBytes", () => readSheet(bomb, "S1"));
-    refusedWith("entryBytes", () => readWorkbook(bomb));
     const worker = recordingWorker();
     const source = createWorkerWorkbookSource(bomb, () => worker);
     await expect(source.outline()).rejects.toBeInstanceOf(WorkbookBudgetError);
@@ -369,10 +281,10 @@ describe("preview budgets: a package is refused from its ZIP records, before She
   });
 
   it("previews a streamed package, which leaves its local sizes at zero, from its declared sizes", () => {
-    const plain = readWorkbook(workbook(deflated(text(SHEET_XML))));
-    const streamed = readWorkbook(workbook(deflated(text(SHEET_XML)), true));
+    const plain = readSheet(workbook(deflated(text(SHEET_XML))), "S1");
+    const streamed = readSheet(workbook(deflated(text(SHEET_XML)), true), "S1");
     expect(streamed).toEqual(plain);
-    const cells = streamed.sheets[sheetId("S1")]?.cellData as Record<number, Record<number, { v?: unknown }>>;
+    const cells = streamed.cellData as Record<number, Record<number, { v?: unknown }>>;
     expect(cells[0]?.[0]?.v).toBe(42);
     expect(cells[0]?.[1]?.v).toBe("kept");
   });
@@ -384,7 +296,6 @@ describe("preview budgets: sheets, cells and text", () => {
   it("refuses a workbook over the sheet, cell, text or input budget, typed", async () => {
     refusedWith("inputBytes", () => readWorkbookOutline(bytes, "w", { ...PREVIEW_BUDGET, inputBytes: 100 }));
     refusedWith("sheets", () => readWorkbookOutline(bytes, "w", { ...PREVIEW_BUDGET, sheets: 2 }));
-    refusedWith("sheets", () => readWorkbook(bytes, { budget: { ...PREVIEW_BUDGET, sheets: 2 } }));
     refusedWith("sheets", () => readSheet(bytes, "S1", { budget: { ...PREVIEW_BUDGET, sheets: 2 } }));
     refusedWith("sheetCells", () => readSheet(bytes, "S1", { budget: { ...PREVIEW_BUDGET, sheetCells: 15 } }));
     refusedWith("sheetTextChars", () =>
@@ -414,14 +325,9 @@ describe("preview budgets: sheets, cells and text", () => {
     expect(Object.keys(cells)).toEqual(["0"]);
   });
 
-  it("reads every sheet in one pass exactly as the lazy path reads each", () => {
-    const eager = readWorkbook(bytes);
-    for (const sid of eager.sheetOrder) {
-      const name = eager.sheets[sid]!.name!;
-      expect(eager.sheets[sid]).toEqual(readSheet(bytes, name));
-    }
-    // At the limits themselves, a sheet still previews.
+  it("previews a workbook at the limits themselves", () => {
     const exact = { ...PREVIEW_BUDGET, sheets: 3, sheetCells: 16 };
-    expect(readWorkbook(bytes, { budget: exact }).sheetOrder).toHaveLength(3);
+    expect(readWorkbookOutline(bytes, "w", exact).sheetOrder).toHaveLength(3);
+    expect(readSheet(bytes, "S3", { budget: exact }).rowCount).toBe(4);
   });
 });

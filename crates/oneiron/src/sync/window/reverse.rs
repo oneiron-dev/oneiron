@@ -246,6 +246,8 @@ fn reverse_rematerialize_scan(
 
     let mut count = 0u32;
     let mut wrote_any = false;
+    // Whether the pass took a carrier out (fix list row 17211).
+    let mut evicted = false;
     let mut mirror_sources = BTreeMap::new();
     let mut messages = Vec::new();
     let mut typed_bodies = Vec::new();
@@ -253,7 +255,8 @@ fn reverse_rematerialize_scan(
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
     let mut entity_tombstones = Vec::new();
-    wrote_any |= remove_inadmissible_revision_carriers(vault, &entities_map, &edges_map)?;
+    evicted |= remove_inadmissible_revision_carriers(vault, &entities_map, &edges_map)?;
+    wrote_any |= evicted;
 
     // Type-classify entity-keyed tombstones BEFORE any CRDT edge-key scan.
     // A hostile tombstone naming a locally available protected engine row
@@ -351,6 +354,7 @@ fn reverse_rematerialize_scan(
             if removed {
                 super::egress::require_history_free_window(vault, window_key)?;
             }
+            evicted |= removed;
             wrote_any |= removed;
             continue;
         }
@@ -380,6 +384,7 @@ fn reverse_rematerialize_scan(
             if removed {
                 super::egress::require_history_free_window(vault, window_key)?;
             }
+            evicted |= removed;
             wrote_any |= removed;
             continue;
         }
@@ -726,6 +731,17 @@ fn reverse_rematerialize_scan(
         }
     }
 
+    // One prune for the pass's evictions, the window pinned history-free
+    // first (fix list row 17211). It runs after the last mirror that writes a
+    // binding and before the NOTE refresh, which commits the whole pending
+    // batch when a NOTE changes: the policies no binding reaches go in the
+    // first commit that carries the evictions. The steps after it write no
+    // binding.
+    if evicted {
+        wrote_any |=
+            crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(window_key))?;
+    }
+
     // NOTE text, mutable workflows and head moves change even when the
     // entity carrier already exists. Refresh through the same export gates.
     if window_key.world().is_none() {
@@ -853,7 +869,8 @@ pub(super) fn remove_entity_crdt_carriers(
         removed |= crate::sync::row_birth::remove_birth_carrier(&doc, id)?;
         removed |= crate::sync::origin_positions::remove_carrier(&doc, id)?;
     }
-    // So does its binding, and each policy no other binding reaches.
+    // So does its binding. Each policy no other binding reaches goes in the
+    // commit owner's prune, once for its batch (fix list row 17211).
     if let Some(doc) = loro::ContainerTrait::doc(entities_map)
         && crate::sync::source_audiences::remove_record(&doc, id)?
     {

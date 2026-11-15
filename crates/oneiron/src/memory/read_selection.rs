@@ -3,23 +3,10 @@ use super::{Memory, MemoryError, MemoryResult, RecallScope};
 use crate::EntityId;
 use crate::claim::world_access::WorldAuthoritySet;
 use crate::corpus::CorpusScope;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RecallWorlds {
-    All,
-    Base,
-    World {
-        world_ref: String,
-        include_base: bool,
-    },
-    Worlds {
-        world_refs: Vec<String>,
-        include_base: bool,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::read_selection::RecallWorlds;
 
 impl Memory<'_> {
     pub(super) fn selected_worlds(

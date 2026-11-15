@@ -261,4 +261,48 @@ impl DreamerRunnerStore<'_> {
         self.vault.store.notify_attempt_observers();
         Ok(settled)
     }
+
+    /// [`Self::settle_checkpoint_budget`] for a try a spent model seat refused
+    /// (SEAT-PARK-MODEL-STEP-PATH): settles its real usage, pins its charged step identities and
+    /// parks it on `seat` in one write, the seat refused at a new generation with `reset_at_s`
+    /// (`park_on_seat_if_current_lease_in_txn`). The park is fenced on `lease` as there: the park
+    /// record is `None`, the spend still settled, when the try was resumed or claimed again since
+    /// that lease ran it, or when a trap already parked it.
+    pub(crate) fn settle_checkpoint_budget_on_seat(
+        &self,
+        input: SettleDreamerBudget,
+        step_bindings: &[StepEffectBinding],
+        park: ParkDreamerAttempt,
+        lease: crate::dreamer_runner::DreamerTryLease<'_>,
+        seat: crate::dreamer_runner::ModelSeatId,
+        reset_at_s: Option<u64>,
+    ) -> Result<(
+        DreamerBudgetSettlementOutcome,
+        Option<crate::dreamer_runner::DreamerParkedAttemptRecord>,
+    )> {
+        if park.attempt_id != input.child_attempt {
+            return Err(invalid_dreamer_runner(
+                "checkpoint park target differs from settlement",
+            ));
+        }
+        let settled = self.vault.with_write_txn_grouped(|wtxn| {
+            let settled =
+                self.settle_budget_and_step_receipts_in_txn(wtxn, input, step_bindings)?;
+            if !matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
+                return Err(invalid_dreamer_runner(
+                    "checkpoint has no budget reservation",
+                ));
+            }
+            // A trapped child already parked under the step layer's owner.
+            // Settle its spend without stealing that park.
+            let parked = if self.is_parked_in_txn(wtxn, park.attempt_id)? {
+                None
+            } else {
+                self.park_on_seat_if_current_lease_in_txn(wtxn, park, lease, seat, reset_at_s)?
+            };
+            Ok((settled, parked))
+        })?;
+        self.vault.store.notify_attempt_observers();
+        Ok(settled)
+    }
 }

@@ -7,6 +7,7 @@
 //! and once it has erased the record [`Vault::record_erase_completion`]
 //! writes the act's receipt and tells the Owners (OF-150); a Member's or
 //! Admin's ask for one is `erase_ask`.
+mod actor_erase;
 mod erase_ask;
 mod execute;
 mod export_records;
@@ -159,6 +160,17 @@ pub struct RemoveOwnerPlan {
     /// alone (FIX 1300). Removal alone exports nothing.
     pub export_first: bool,
 }
+/// The removal an Owner proposes ([`Vault::propose_remove_owner_with_check_in`]):
+/// `target` keeps `target_keeps` or leaves when it is `None`; removing the
+/// last Owner names a `successor`; `export_first` is the removal flow's
+/// "export first?" ([`RemoveOwnerPlan::export_first`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnerRemoval {
+    pub target: EntityId,
+    pub successor: Option<EntityId>,
+    pub target_keeps: Option<Role>,
+    pub export_first: bool,
+}
 
 /// What one executed act or membership change did.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -282,6 +294,11 @@ pub struct SharedActExecutionReceipt {
     /// its copy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detach: Option<DetachReport>,
+    /// The check-in decision the change ran on (2i; P24-SHAPE Q9 = A): its
+    /// act class, the actor's role, the mode, why it went, and the check-in
+    /// it spent. `None` for a change no door judges by check-in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
     pub completed_at: u64,
 }
 
@@ -627,8 +644,38 @@ impl Vault {
         starter: &AuthenticatedOwner,
         vault_id: u64,
     ) -> Result<PendingAuthorityAct> {
+        self.propose_delete_vault_with_check_in(starter, vault_id, None)
+    }
+    /// [`Self::propose_delete_vault`], judged by check-in (2j; P24-SHAPE Q7
+    /// and Q9 = A): the act records the Owner's decision, and with
+    /// `check_in_ref`, an asker's approved check-in for this vault's delete
+    /// ([`crate::check_in::vault_delete_effect_digest`]), which the Owner
+    /// applies on their own proof: it is spent in the start's writer and the
+    /// act names its requester. The veto window, the Owner executors and
+    /// every other gate of the act stay.
+    ///
+    /// # Errors
+    /// As [`Self::propose_delete_vault`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this vault's delete.
+    pub fn propose_delete_vault_with_check_in(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<PendingAuthorityAct> {
         let plan = encode(&DeleteVaultPlan { v: PLAN_VERSION })?;
-        self.start_authority_act(starter, vault_id, SharedActKind::DeleteVault.as_str(), plan)
+        self.start_authority_act_checked(
+            starter,
+            vault_id,
+            SharedActKind::DeleteVault.as_str(),
+            plan,
+            super::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_delete",
+                act: crate::check_in::ActClass::VaultDelete,
+                effect_digest: crate::check_in::vault_delete_effect_digest(vault_id),
+                applies: check_in_ref,
+            },
+        )
     }
     /// Start a `transfer_ownership` act: the starter, a live Owner, hands
     /// ownership to `to`, a live person who is not yet an Owner.
@@ -639,7 +686,28 @@ impl Vault {
         to: EntityId,
         from_keeps: Option<Role>,
     ) -> Result<PendingAuthorityAct> {
-        let plan = {
+        self.propose_transfer_ownership_with_check_in(starter, vault_id, to, from_keeps, None)
+    }
+    /// [`Self::propose_transfer_ownership`], judged by check-in (2k1;
+    /// P25-SHAPE Q1 = A): the act records the Owner's decision, and with
+    /// `check_in_ref`, an asker's approved check-in for handing this Owner's
+    /// ownership to `to` ([`crate::check_in::ownership_transfer_effect_digest`]),
+    /// which the Owner applies on their own proof: it is spent in the start's
+    /// writer and the act names its requester. The handover rule, the policy
+    /// row's wait and the Owner executors stay.
+    ///
+    /// # Errors
+    /// As [`Self::propose_transfer_ownership`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this transfer.
+    pub fn propose_transfer_ownership_with_check_in(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        to: EntityId,
+        from_keeps: Option<Role>,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<PendingAuthorityAct> {
+        let (plan, from) = {
             let txn = self.store.env.read_txn()?;
             let from = starter.revalidate_person_in_txn(self, &txn)?;
             let plan = TransferOwnershipPlan {
@@ -653,13 +721,21 @@ impl Vault {
                 self.live_act_holders(&txn, vault_id, self.store.clock.now_recorded_at())?;
             let owners = live_owners(&holders, None);
             self.check_handover_in_txn(&txn, owners, from, from_keeps, Some(to))?;
-            plan
+            (plan, from)
         };
-        self.start_authority_act(
+        self.start_authority_act_checked(
             starter,
             vault_id,
             SharedActKind::TransferOwnership.as_str(),
             encode(&plan)?,
+            super::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_transfer",
+                act: crate::check_in::ActClass::OwnershipTransfer,
+                effect_digest: crate::check_in::ownership_transfer_effect_digest(
+                    vault_id, &from, &to, from_keeps,
+                ),
+                applies: check_in_ref,
+            },
         )
     }
     /// Start a `remove_owner` act against `target`, a live Owner. An Owner
@@ -674,6 +750,43 @@ impl Vault {
         target_keeps: Option<Role>,
         export_first: bool,
     ) -> Result<PendingAuthorityAct> {
+        self.propose_remove_owner_with_check_in(
+            starter,
+            vault_id,
+            OwnerRemoval {
+                target,
+                successor,
+                target_keeps,
+                export_first,
+            },
+            None,
+        )
+    }
+    /// [`Self::propose_remove_owner`], judged by check-in (2k1; P25-SHAPE Q1
+    /// and Q4 = A; the door names the act class `ownership_transfer`): the act
+    /// records the Owner's decision, and with `check_in_ref`, an asker's
+    /// approved check-in for this removal
+    /// ([`crate::check_in::owner_remove_effect_digest`]), which the Owner
+    /// applies on their own proof: it is spent in the start's writer and the
+    /// act names its requester. The handover rule, the policy row's wait and
+    /// the Owner executors stay.
+    ///
+    /// # Errors
+    /// As [`Self::propose_remove_owner`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this removal.
+    pub fn propose_remove_owner_with_check_in(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        removal: OwnerRemoval,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<PendingAuthorityAct> {
+        let OwnerRemoval {
+            target,
+            successor,
+            target_keeps,
+            export_first,
+        } = removal;
         {
             let txn = self.store.env.read_txn()?;
             starter.revalidate_person_in_txn(self, &txn)?;
@@ -690,11 +803,23 @@ impl Vault {
             target_keeps,
             export_first,
         };
-        self.start_authority_act(
+        self.start_authority_act_checked(
             starter,
             vault_id,
             SharedActKind::RemoveOwner.as_str(),
             encode(&plan)?,
+            super::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_remove_owner",
+                act: crate::check_in::ActClass::OwnershipTransfer,
+                effect_digest: crate::check_in::owner_remove_effect_digest(
+                    vault_id,
+                    &target,
+                    successor.as_ref(),
+                    target_keeps,
+                    export_first,
+                ),
+                applies: check_in_ref,
+            },
         )
     }
 
@@ -776,6 +901,26 @@ impl Vault {
         Ok(Some(stored.delivery()))
     }
 
+    /// Records `decision`, the check-in decision the change ran on, in its
+    /// stored receipt, in the change's writer (2i, 2j; P24-SHAPE Q9 = A): a
+    /// membership door's own decision, or the one an act recorded at its
+    /// start. `None` leaves the receipt as it is.
+    fn record_receipt_check_in_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        receipt: &mut SharedActExecutionReceipt,
+        decision: Option<crate::check_in::CheckInDecision>,
+    ) -> Result<()> {
+        if decision.is_none() {
+            return Ok(());
+        }
+        receipt.check_in = decision;
+        self.store
+            .vault_meta
+            .put(txn, &key(RECEIPT_PREFIX, &receipt.id), &encode(&*receipt)?)?;
+        Ok(())
+    }
+
     /// Persist the receipt and one notice to each live Owner, the actor and
     /// every holder the change concerns, in the change's own writer.
     #[allow(clippy::too_many_arguments)]
@@ -816,6 +961,7 @@ impl Vault {
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
             proposer: None,
             detach: effect.detach,
+            check_in: None,
             completed_at: now,
         };
         self.store

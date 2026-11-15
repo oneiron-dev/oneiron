@@ -1,10 +1,12 @@
 //! The serve host's owner of the per-region GPU registry. It registers the
-//! configured pods, polls their transport/app/inference health, hands out
-//! leases that renew themselves and release on drop, and binds derivation jobs
-//! to the holding vault's account. Workers pick a pod only through a lease, so
-//! the registry stays the one router; this adds no second scheduler.
+//! configured pods with their hours, polls their transport/app/inference
+//! health, hands out leases that renew themselves and release on drop, and
+//! binds derivation jobs to the holding vault's account. Workers pick a pod
+//! only through a lease, so the registry stays the one router; this adds no
+//! second scheduler.
 use super::gpu::{
-    GPU_RENEW_SECONDS, GpuDerivationLease, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError,
+    GPU_RENEW_SECONDS, GpuDerivationLease, GpuHealth, GpuLease, GpuPodHours, GpuRegistry,
+    GpuRegistryError,
 };
 use crate::models::{BrokerContext, is_cloud_node};
 use oneiron::federation::derivation::{DerivationScope, SealedOutput};
@@ -25,6 +27,63 @@ pub struct GpuPodConfig {
     pub id: String,
     pub url: String,
     pub capacity: usize,
+    /// The daily hours the pod takes new batches, such as a home GPU box at
+    /// night. Absent, it takes them at any hour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hours: Option<GpuPodHoursConfig>,
+}
+
+/// A pod's `hours`: `start` and `end` as `"HH:MM"`, read in `utc_offset`
+/// (`"+HH:MM"` or `"-HH:MM"`, required, so a window is never read in the
+/// wrong zone). The start is the first minute in, the end the first minute
+/// out; `start = "22:00"`, `end = "07:00"` runs across midnight. A fixed
+/// offset does not follow daylight-saving changes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpuPodHoursConfig {
+    pub start: String,
+    pub end: String,
+    pub utc_offset: String,
+}
+
+impl GpuPodHoursConfig {
+    /// The registry's form of these hours, or what is wrong with them.
+    pub(crate) fn hours(&self) -> anyhow::Result<GpuPodHours> {
+        let start = clock_minute(&self.start)
+            .ok_or_else(|| anyhow::anyhow!("start must be a time of day as \"HH:MM\""))?;
+        let end = clock_minute(&self.end)
+            .ok_or_else(|| anyhow::anyhow!("end must be a time of day as \"HH:MM\""))?;
+        anyhow::ensure!(start != end, "start and end must differ");
+        let offset = utc_offset_minutes(&self.utc_offset).ok_or_else(|| {
+            anyhow::anyhow!("utc_offset must be \"+HH:MM\" or \"-HH:MM\", at most 14:00")
+        })?;
+        GpuPodHours::new(start, end, offset).map_err(anyhow::Error::from)
+    }
+}
+
+/// `"HH:MM"` as minutes after midnight: two digits each, hours below 24.
+fn clock_minute(text: &str) -> Option<u16> {
+    let (hours, minutes) = text.split_once(':')?;
+    let (hours, minutes) = (two_digit_number(hours)?, two_digit_number(minutes)?);
+    (hours < 24 && minutes < 60).then_some(hours * 60 + minutes)
+}
+
+fn two_digit_number(text: &str) -> Option<u16> {
+    if text.len() == 2 && text.bytes().all(|b| b.is_ascii_digit()) {
+        text.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// `"+HH:MM"` or `"-HH:MM"` as signed minutes, within ±14:00.
+fn utc_offset_minutes(text: &str) -> Option<i16> {
+    let (sign, rest) = match text.strip_prefix('+') {
+        Some(rest) => (1, rest),
+        None => (-1, text.strip_prefix('-')?),
+    };
+    let minutes = i16::try_from(clock_minute(rest)?).ok()?;
+    (minutes <= 14 * 60).then_some(sign * minutes)
 }
 
 /// The `[gpu]` serve section: one region's batch pods (ARCH-0019 §5, the
@@ -91,6 +150,11 @@ impl GpuPoolConfig {
                 "gpu pod {} needs a capacity of at least 1",
                 pod.id
             );
+            if let Some(hours) = &pod.hours {
+                hours
+                    .hours()
+                    .map_err(|error| anyhow::anyhow!("gpu pod {} hours: {error}", pod.id))?;
+            }
             let url = reqwest::Url::parse(&pod.url)
                 .map_err(|_| anyhow::anyhow!("gpu pod {} has an invalid URL", pod.id))?;
             anyhow::ensure!(
@@ -201,6 +265,9 @@ impl GpuPool {
         let mut urls = BTreeMap::new();
         for pod in &config.pods {
             registry.register(pod.id.clone(), pod.capacity, GpuHealth::default())?;
+            if let Some(hours) = &pod.hours {
+                registry.set_hours(&pod.id, Some(hours.hours()?))?;
+            }
             urls.insert(pod.id.clone(), pod.url.trim_end_matches('/').to_owned());
         }
         let bearer = match &config.api_key_env {
@@ -412,8 +479,9 @@ impl GpuPool {
             .abort_handle()
     }
 
-    /// Routes one batch job to a healthy pod by two-choice load. The lease
-    /// renews every [`GPU_RENEW_SECONDS`] and releases when dropped.
+    /// Routes one batch job to a healthy pod inside its hours by two-choice
+    /// load. The lease renews every [`GPU_RENEW_SECONDS`], past the pod's
+    /// hours too, and releases when dropped.
     pub fn acquire(&self) -> Result<GpuLeaseGuard, GpuRegistryError> {
         let lease = self.registry().acquire(now(), entropy())?;
         let url = match self.url(&lease.pod) {

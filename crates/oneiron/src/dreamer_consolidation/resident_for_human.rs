@@ -530,6 +530,17 @@ pub async fn run_free_time_for_human(
             return Ok(charges.end_on_step_error(&other.to_string(), &other));
         }
         Err(other) => {
+            // A spent model seat refused the step: the try parks on that seat
+            // (SEAT-PARK-MODEL-STEP-PATH).
+            if let Some((seat, reset_at_s)) =
+                crate::dreamer_runner::dreamer_seat_refusal_of_step(&other)
+            {
+                return Ok(DreamerAttemptExecution::ParkOnSeat {
+                    reason: other.to_string(),
+                    seat: *seat.as_bytes(),
+                    reset_at_s,
+                });
+            }
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
                 cause: crate::dreamer_runner::dreamer_park_cause_of_step(&other),

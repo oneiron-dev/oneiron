@@ -38,6 +38,7 @@ pub(super) fn executed(
         Ok(DreamerAttemptExecution::Park { cause, .. }) => ("park", cause.as_str()),
         // A seat park has no cause field; the driver parks it as a signal.
         Ok(DreamerAttemptExecution::ParkOnSeat { .. }) => ("park", "signal"),
+        Ok(DreamerAttemptExecution::ParkOnSeatWithSpend { .. }) => ("park_with_spend", "signal"),
         Ok(DreamerAttemptExecution::ParkWithSpend { cause, .. }) => {
             ("park_with_spend", cause.as_str())
         }

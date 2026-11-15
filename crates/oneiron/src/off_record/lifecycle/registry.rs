@@ -92,7 +92,7 @@ pub(super) struct OffRecordSessionEntryState {
     pub(super) overlay_shell_staged: bool,
     /// The BASE conversation shell used while on record (K10). A fresh
     /// conversation allocated on the first post-flip witness and reused until
-    /// flip-back. It is deliberately NOT the overlay shell: reusing that id
+    /// flip-back, which clears it (FIX 22388). It is deliberately NOT the overlay shell: reusing that id
     /// would write a base row whose conversation is an overlay member — the
     /// taint the K4 guard exists to reject — and would link on-record turns to
     /// a room that is supposed to be invisible from base.
