@@ -543,16 +543,31 @@ fn caller_owner_in_txn(
     }
 }
 
+/// [`caller_owner_in_txn`] in a read snapshot of its own: a door judges the
+/// caller before the served store or a pushed ref answers anything, so a
+/// refused caller learns neither which repos this node serves nor which
+/// commit a ref names.
+///
+/// # Errors
+///
+/// Every refusal [`caller_owner_in_txn`] has.
+fn caller_owner(vault: &Vault, caller: &RunnerContinueCaller<'_>) -> MemoryResult<EntityId> {
+    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    caller_owner_in_txn(vault, &rtxn, caller).map_err(MemoryError::from)
+}
+
 impl Vault {
     /// Starts the outside session the local CLI pushed as `input.commit` on
     /// `input.git_ref` of the custody repo `input.repo`: the same request
     /// twice binds the same work and answers it again, with no second write.
     ///
+    /// The caller is judged first, in a read snapshot, before the served
+    /// store or the pushed ref answers anything, and again inside the
+    /// writer, so a refused caller learns neither the repo nor the policy.
     /// The commit must be the tip of the pushed ref before any writer opens
     /// (a lost upload starts nothing, CLR-001); refs live on disk, so this
     /// read is outside the writer, and the checkout is pinned at the commit,
-    /// so a later ref move cannot change what runs. The caller is checked
-    /// first inside the writer, so a refused caller never learns the policy.
+    /// so a later ref move cannot change what runs.
     ///
     /// The work runs only on a seat of `policy` that names `input.runner`:
     /// the first such seat in the owner's order that this runtime may run
@@ -574,6 +589,7 @@ impl Vault {
         input: &ContinueOutsideWorkRequest,
     ) -> MemoryResult<ContinueOutsideWorkView> {
         let conversation = validated_conversation(input)?;
+        caller_owner(self, &caller)?;
         let store = served_store(self, &input.repo)?;
         let tip = pushed_tip(self, &store, &input.git_ref, &input.commit)?;
         if tip.as_deref() != Some(input.commit.as_str()) {
@@ -787,10 +803,11 @@ impl Vault {
 
     /// Checks whether this node would take the outside session the local CLI
     /// would push to the custody repo `input.repo` for `input.runner`: the
-    /// repo is in custody here, the caller holds, and the search
+    /// caller holds, the repo is in custody here, and the search
     /// [`Self::continue_outside_work`] runs over the seats of `policy` that
     /// name `input.runner`, under `registry`, lands. One read snapshot; it
-    /// writes nothing.
+    /// writes nothing. The caller is judged first, so a refused caller
+    /// learns nothing of the repo.
     ///
     /// # Errors
     ///
@@ -809,6 +826,8 @@ impl Vault {
         if input.runner.is_empty() {
             return Err(MemoryError::bad_request(ERR_CONTINUE_RUNNER_EMPTY));
         }
+        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
+        caller_owner_in_txn(self, &rtxn, &caller)?;
         served_store(self, &input.repo)?;
         // The pointer a run is handed has one shape whatever its job, so a
         // placeholder job searches the same seats; its hand-over id derives
@@ -821,8 +840,6 @@ impl Vault {
             .map_err(refusal)?;
         let checkout = hand_over_checkout(hand_over).map_err(refusal)?;
         let dispatcher = ByoaDispatcher::new(self, ContinueEndpoints, ContinueEgress);
-        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
-        caller_owner_in_txn(self, &rtxn, &caller)?;
         let Some(seats) = RunnerSeats::of(policy, &input.runner) else {
             return Ok(ContinueOutsideWorkCheckView::NoRunnerSeat {
                 runner: input.runner.clone(),
