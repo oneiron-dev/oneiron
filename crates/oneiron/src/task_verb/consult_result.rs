@@ -139,8 +139,8 @@ pub struct ConsultFanOutReceipt {
 
 /// Host-resolved native addressing for ONE asker's ARCH-0046 expiry digest.
 /// It carries no sending authority: the digest goes out as the task's own
-/// create owner, and its recovery choices are the engine's fixed
-/// `CONSULT_EXPIRY_RECOVERY`, offered whether or not a route exists.
+/// create owner, and its recovery choices are the owner's
+/// `task.consult.expiry_recovery` menu, offered whether or not a route exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsultDigestRoute {
     pub verb: String,
@@ -148,8 +148,8 @@ pub struct ConsultDigestRoute {
     pub target: String,
 }
 
-/// The typed recovery choices every consult expiry offers. One constant, so a
-/// later ruling on what an expiry offers changes one line.
+/// The typed recovery choices a consult expiry offers by default: the shipped
+/// value of the owner's `task.consult.expiry_recovery` key (setting_keys.rs).
 pub(super) const CONSULT_EXPIRY_RECOVERY: [ConsultRecovery; 3] = [
     ConsultRecovery::RetryAssignee,
     ConsultRecovery::NudgeAssignee,

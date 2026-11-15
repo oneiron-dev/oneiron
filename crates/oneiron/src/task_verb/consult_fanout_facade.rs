@@ -10,13 +10,14 @@ use crate::temporal::TimeRange;
 
 use super::consts::{CONSULT_SETTLE_PAGE, TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED};
 use super::consult_assignee_wait::waits_for_assignee_fact;
-use super::consult_result::{CONSULT_EXPIRY_RECOVERY, ConsultDigestRoute, ConsultExpiryReport};
+use super::consult_result::{ConsultDigestRoute, ConsultExpiryReport};
 use super::create_validation::consult_body_in_txn;
 use super::follow_up::{
     consult_expiry_artifact_value, set_task_follow_up_marker_in_txn, task_follow_up_dedupe_key,
     task_follow_up_marker,
 };
 use super::rate_limit::task_create_owner;
+use super::setting_keys::consult_expiry_recovery_in_txn;
 use super::settlement_anchor::anchor_kept_review_in_txn;
 use super::terminal_state::{
     TaskExecutionState, TaskLapseCause, TaskTerminalDisposition, TaskTerminalRecord,
@@ -229,11 +230,10 @@ impl Vault {
                 }
             };
             let result_ref = self.store.clock.entity_id()?;
+            // The owner's menu in force in this write: the artifact records what was offered.
+            let recovery = consult_expiry_recovery_in_txn(self, &*wtxn)?;
             let artifact = canonical_bytes(&consult_expiry_artifact_value(
-                task_ref,
-                cause,
-                now,
-                &CONSULT_EXPIRY_RECOVERY,
+                task_ref, cause, now, &recovery,
             ));
             let occurred = TimeRange {
                 start: now,
