@@ -75,6 +75,17 @@ fn assert_each_found_once(vault: &Vault, words: &[&str], notes: &[EntityId]) {
     }
 }
 
+/// While a rebuild stands, a text read refuses as an untrusted index does.
+fn assert_text_read_fails_closed(vault: &Vault) {
+    match vault.search_text(WORDS[0], 10) {
+        Ok(found) => panic!(
+            "a text read fails closed while the rebuild stands: {} hits",
+            found.len()
+        ),
+        Err(error) => assert_eq!(error.kind(), oneiron::ErrorKind::CorruptedIndex),
+    }
+}
+
 /// A populated vault whose stored stamp says `restamp` built its index.
 fn populated_then_restamped(path: &Path, restamp: impl FnOnce(&Vault)) -> Vec<EntityId> {
     let vault = open(path);
@@ -112,10 +123,7 @@ fn a_policy_flag_change_rebuilds_the_text_index_with_no_manual_step() {
         [0; 5],
         "the open cleared every old-analyzer row"
     );
-    assert!(
-        vault.search_text(WORDS[0], 10).is_err(),
-        "a text read fails closed while the rebuild stands"
-    );
+    assert_text_read_fails_closed(&vault);
 
     vault
         .housekeeping(HousekeepingBudget::unbounded())
@@ -181,10 +189,7 @@ fn a_rebuild_resumes_after_a_restart_and_keeps_the_writes_made_during_it() {
         done, done_before_restart,
         "the reopen resumes the rebuild and does not start it over"
     );
-    assert!(
-        vault.search_text(WORDS[0], 10).is_err(),
-        "a text read fails closed while the rebuild stands"
-    );
+    assert_text_read_fails_closed(&vault);
 
     vault
         .housekeeping(HousekeepingBudget::unbounded())
@@ -199,6 +204,35 @@ fn a_rebuild_resumes_after_a_restart_and_keeps_the_writes_made_during_it() {
         hits(&vault, "vermiculite").len(),
         1,
         "the NOTE written during the rebuild is found once"
+    );
+}
+
+#[test]
+fn a_source_row_past_the_text_ceiling_does_not_hold_the_rebuild() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let notes = {
+        let vault = open(dir.path());
+        let notes = write_notes(&vault, &WORDS);
+        without_myanmar_zawgyi(&vault);
+        door::stretch_source_text_past_ceiling(&vault, &notes[0])
+            .expect("stretch the first NOTE's source text");
+        notes
+    };
+
+    let vault = open(dir.path());
+    vault
+        .housekeeping(HousekeepingBudget::unbounded())
+        .expect("housekeeping pass");
+
+    assert_eq!(
+        door::text_index_rebuild_progress(&vault).expect("marker read"),
+        None,
+        "a document past the text ceiling does not hold the rebuild"
+    );
+    assert_each_found_once(&vault, &WORDS[1..], &notes[1..]);
+    assert!(
+        hits(&vault, WORDS[0]).is_empty(),
+        "the NOTE past the ceiling stays out of search, as its write door would leave it"
     );
 }
 

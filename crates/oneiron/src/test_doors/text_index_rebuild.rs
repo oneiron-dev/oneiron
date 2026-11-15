@@ -1,16 +1,23 @@
 //! Doors for `tests/text_index_auto_rebuild.rs` (FIX ANALYZER-BUMP-AUTO-REINDEX):
 //! stamp a populated vault as an engine with another analyzer left it, run the
-//! rebuild pass a page at a time, and read the rebuild marker and the text
-//! index's row counts.
+//! rebuild pass a page at a time, stretch a document's stored source text
+//! past the text ceiling, and read the rebuild marker and the text index's
+//! row counts.
 
-use crate::Vault;
 use crate::analyzer::AnalyzerManifest;
 use crate::error::{Error, Result, StoreError};
 use crate::ports::{IndexRows, RetrievalIndexInventory};
+use crate::side_table::{self, Named, SideTable};
+use crate::store::text_index::index::MAX_INDEXED_TEXT_BYTES;
 use crate::store::{
     TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
 };
 use crate::vault::text_index_rebuild::read_text_index_rebuild;
+use crate::{EntityId, Vault};
+
+/// The text each document was indexed with. Key: id16.
+const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
+    SideTable::new(&side_table::INDEX_SOURCE_TEXT);
 
 fn manifest_error(error: serde_json::Error) -> Error {
     Error::Store(StoreError::AnalyzerError(format!("manifest: {error}")))
@@ -62,6 +69,24 @@ pub fn restamp_stored_bm25_field_schema_hash(vault: &Vault, hash: Option<[u8; 32
                 .delete(&mut wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
         }
     }
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// Pads the first field of `id`'s stored source text past the per-document
+/// text ceiling: the row a document indexed before the ceiling left. Its
+/// postings stay as they are.
+pub fn stretch_source_text_past_ceiling(vault: &Vault, id: &EntityId) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut fields = INDEX_SOURCE_TEXT
+        .get(&vault.store, &wtxn, id)?
+        .ok_or(Error::InvariantViolation("no stored source text"))?;
+    let (_, value) = fields
+        .first_mut()
+        .ok_or(Error::InvariantViolation("stored source text has no field"))?;
+    value.push(' ');
+    value.push_str(&"x".repeat(MAX_INDEXED_TEXT_BYTES));
+    INDEX_SOURCE_TEXT.put(&vault.store, &mut wtxn, id, &fields)?;
     wtxn.commit()?;
     Ok(())
 }
