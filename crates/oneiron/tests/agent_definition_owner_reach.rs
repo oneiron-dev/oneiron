@@ -209,3 +209,38 @@ fn an_owner_turn_on_on_a_carrying_install_reaches_every_install() {
         "an edit that moves no switch needs no statement"
     );
 }
+
+/// Catches the no-carrier save-again recovery writing no statement: the owner's turn-on lands
+/// here alone with no carrier, the install gains one, and saving the same switches again
+/// appends nothing, so the other install waits forever.
+#[test]
+fn a_save_again_after_a_carrier_arrives_states_the_switches() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = plain_install(dir.path());
+    let person = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = owner_proof(&vault, person);
+    let id = EntityId::now();
+    let on = turned_on(&revoked_at(&vault, id));
+    let reach = vault
+        .update_agent_definition_as(&owner, &id, &on, at(T0), T0)
+        .expect("the owner's turn-on lands here");
+    assert_eq!(reach, AgentSwitchesReach::ThisInstallOnly);
+    let entries = authority_entries(&vault);
+    // The install gains a carrier without a second keystore: the engine's machines, its live
+    // profile and the owner's binding under the host root.
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry acts");
+    oneiron::test_support::bind_host_owner(&vault, &issuer, person).expect("owner binding");
+    let owner = owner_proof(&vault, person);
+    let again = next(&on, "1.0.3", |_| {});
+    vault
+        .update_agent_definition_as(&owner, &id, &again, at(T0), T0)
+        .expect("the owner saves the same switches again");
+    assert!(
+        authority_entries(&vault) > entries,
+        "the save again states the switches on the authority log"
+    );
+    assert_eq!(vault.get_agent_definition(&id).unwrap(), Some(again));
+}

@@ -23,10 +23,11 @@ use oneiron::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
 use oneiron::sync::client::ImportTier;
-use oneiron::sync::quarantine::quarantined_records;
+use oneiron::sync::quarantine::{pending_remat_windows, quarantined_records};
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
+use oneiron::sync::window::forward_rematerialize;
 use oneiron::sync::{FederationAdmissionRole, admit_federated_window_update};
 use oneiron::test_support::provision_act_carrier;
 use oneiron::{EntityId, ErrorKind, Vault};
@@ -381,4 +382,47 @@ fn an_own_window_lands_a_turn_on_the_owner_stated() {
     let reasons = ingest_own_window(&vault, &id, &on);
     assert!(reasons.is_empty(), "nothing quarantined: {reasons:?}");
     assert_eq!(vault.get_agent_definition(&id).unwrap(), Some(on));
+}
+
+/// Catches the own window's pending hold losing its retry: a turn-on no owner stated is
+/// quarantined as a dependency with its rematerialization marker kept, and lands on retry
+/// with no re-send once the owner's statement arrives.
+#[test]
+fn an_own_window_holds_a_turn_on_as_a_dependency_until_the_owner_states_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (vault, owner) = carrying_vault(dir.path());
+    let (id, revoked) = revoked_definition(&vault);
+    let on = turned_on(&revoked, "1.0.2");
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("owner", &window_key);
+    let materializer = Materializer::new();
+    let body = encode_agent_definition(&on).unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &id.to_hex(),
+        &entity_blob(ENTITY_TYPE_AGENT_DEF, time_range(T0), T0, &body),
+    );
+    doc.commit();
+    let before = quarantined_records(&vault).unwrap().len();
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    let reasons: Vec<String> = quarantined_records(&vault)
+        .unwrap()
+        .into_iter()
+        .skip(before)
+        .map(|(_, record)| record.reason_code)
+        .collect();
+    assert_eq!(reasons, ["InvalidAgentDefBody"], "one pending refusal");
+    assert_eq!(vault.get_agent_definition(&id).unwrap(), Some(revoked));
+    assert_eq!(
+        pending_remat_windows(&vault).unwrap(),
+        vec![WINDOW.to_owned()],
+        "the held row keeps its retry marker"
+    );
+    owner_edit(&vault, &owner, &id, &on);
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert_eq!(
+        vault.get_agent_definition(&id).unwrap(),
+        Some(on),
+        "the held row lands with no re-send once the owner states it"
+    );
 }
