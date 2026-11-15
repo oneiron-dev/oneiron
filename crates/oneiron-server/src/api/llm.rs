@@ -403,17 +403,18 @@ struct RawCall {
 
 impl RawCall {
     /// The request, the caller's clock from `arrived`, and the deadline its
-    /// ladder walk waits within: what is left of the clock, or open with
-    /// none named. A clock already out is the call's `timeout`.
+    /// ladder walk runs on: the clock's own, so no rung goes out past it
+    /// (review round 2 of #7831), or open with none named. A clock already
+    /// out is the call's `timeout`.
     fn into_call(
         self,
         arrived: Instant,
     ) -> (LlmRequest, CallerClock, Result<CallDeadline, LlmError>) {
         let clock = CallerClock::starting(arrived, self.deadline_ms);
-        let waits = clock
-            .left()
-            .map(|left| left.map_or(CallDeadline::Open, CallDeadline::waits_within));
-        (self.request, clock, waits)
+        let walk_deadline = clock
+            .walk_deadline()
+            .map(|deadline| deadline.unwrap_or(CallDeadline::Open));
+        (self.request, clock, walk_deadline)
     }
 }
 
@@ -423,7 +424,7 @@ async fn generate(
     headers: axum::http::HeaderMap,
     Json(call): Json<RawCall>,
 ) -> Response {
-    let (mut request, clock, waits) = call.into_call(Instant::now());
+    let (mut request, clock, walk_deadline) = call.into_call(Instant::now());
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
@@ -439,15 +440,15 @@ async fn generate(
     let run = run.initiated_by(principal);
     // The caller's `deadline_ms` on its clock, or its own connection (FIX
     // 8213), is the raw call's deadline.
-    let waits = match waits {
-        Ok(waits) => waits,
+    let walk_deadline = match walk_deadline {
+        Ok(walk_deadline) => walk_deadline,
         Err(e) => return failure(e),
     };
     let may_send = clock.may_send();
     // generate_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
     match clock
-        .cut(ladder.generate_recorded_by(&run, request, None, &may_send, waits))
+        .cut(ladder.generate_recorded_by(&run, request, None, &may_send, walk_deadline))
         .await
     {
         Ok((response, binding)) => {
@@ -497,7 +498,11 @@ enum Relayed {
 /// deadline (review round 1 of #7831). With no deadline it waits for room
 /// or for the client to leave, as a stream always did.
 async fn relay(send: &LineSender, clock: CallerClock, line: Vec<u8>) -> Relayed {
+    // The send first: a line the queue has room for goes out even once the
+    // deadline has passed, as the walk's own `timeout` does when the relay
+    // was first polled after it (review round 2 of #7831).
     tokio::select! {
+        biased;
         sent = send.send(Ok(line)) => match sent {
             Ok(()) => Relayed::Sent,
             Err(_) => Relayed::Gone,
@@ -521,7 +526,7 @@ async fn stream(
     headers: axum::http::HeaderMap,
     Json(call): Json<RawCall>,
 ) -> Response {
-    let (mut request, clock, waits) = call.into_call(Instant::now());
+    let (mut request, clock, walk_deadline) = call.into_call(Instant::now());
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
@@ -539,17 +544,20 @@ async fn stream(
     // caller's `deadline_ms` ends it as the client leaving does, and its
     // last line is then `timeout` when the client's queue has room for it.
     // No line waits for room past the deadline, so a client that stopped
-    // reading never holds the model's stream beyond it.
-    let waits = match waits {
-        Ok(waits) => waits,
+    // reading never holds the model's stream beyond it. The walk runs on
+    // the same deadline, so no rung goes out past it, however late this
+    // relay first polls the model's stream (review round 2 of #7831).
+    let walk_deadline = match walk_deadline {
+        Ok(walk_deadline) => walk_deadline,
         Err(e) => return failure(e),
     };
     // stream_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
-    let (mut source, mut binding) = match ladder.stream_recorded_by(&run, request, None, waits) {
-        Ok(opened) => opened,
-        Err(e) => return failure(e),
-    };
+    let (mut source, mut binding) =
+        match ladder.stream_recorded_by(&run, request, None, walk_deadline) {
+            Ok(opened) => opened,
+            Err(e) => return failure(e),
+        };
     let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
         loop {

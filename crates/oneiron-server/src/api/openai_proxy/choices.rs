@@ -21,7 +21,7 @@ use oneiron::task_verb::sdk::{
 use oneiron::{FatalLlmError, LlmError, LlmRequest, LlmResponse, RetryableLlmError};
 use tokio::time::Instant;
 
-use crate::models::OfferLadder;
+use crate::models::{CallDeadline, OfferLadder};
 
 /// The code a call the caller's clock cut answers with, raw (504) and on the
 /// typed facade, which gives it the same status.
@@ -102,6 +102,21 @@ impl CallerClock {
             return Err(RetryableLlmError::Timeout.into());
         }
         Ok(Some(left))
+    }
+
+    /// The deadline a raw call's or a chat turn's ladder walk runs on: the
+    /// caller's own, so no rung goes out once it has passed and a wait for
+    /// a resting offer ends by it, while an offer resting past it stays the
+    /// call's rate refusal (review round 2 of #7831). `None` when it named
+    /// none, a `timeout` once it has run out.
+    pub(in crate::api) fn walk_deadline(self) -> Result<Option<CallDeadline>, LlmError> {
+        let Some(deadline) = self.deadline else {
+            return Ok(None);
+        };
+        if self.ran_out() {
+            return Err(RetryableLlmError::Timeout.into());
+        }
+        Ok(Some(CallDeadline::SendsUntil(deadline)))
     }
 
     /// Whether a rung may still go out: until the caller's deadline, and

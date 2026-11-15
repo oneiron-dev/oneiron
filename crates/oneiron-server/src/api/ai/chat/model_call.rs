@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{ChatLine, TurnCredential};
 use crate::api::openai_proxy::{CallerClock, TIMEOUT_CODE};
-use crate::models::{AnsweringRung, CallDeadline, ModelCallBinding, OfferLadder, RoleCall};
+use crate::models::{AnsweringRung, ModelCallBinding, OfferLadder, RoleCall};
 
 /// Retention for evidence written directly to base, not the session overlay.
 pub(crate) fn model_call_keeps_no_record(
@@ -201,15 +201,13 @@ impl Recorder {
     ) -> LlmResult<LlmStream<'static>> {
         let request = call.request.clone();
         // A caller's deadline bounds the leg's waits for a resting offer to
-        // what is left of it (census L9-23); none named, the vault's wait
+        // what is left of it (census L9-23), and no rung goes out once it
+        // has passed (review round 2 of #7831); none named, the vault's wait
         // row, as it always was.
-        let (stream, binding) = match self.clock.left()? {
-            Some(left) => call.ladder.stream_recorded_by(
-                run,
-                call.request,
-                None,
-                CallDeadline::waits_within(left),
-            )?,
+        let (stream, binding) = match self.clock.walk_deadline()? {
+            Some(deadline) => call
+                .ladder
+                .stream_recorded_by(run, call.request, None, deadline)?,
             None => call.ladder.stream_recorded(run, call.request, None)?,
         };
         let mut completed = Some(CompletedCall {
