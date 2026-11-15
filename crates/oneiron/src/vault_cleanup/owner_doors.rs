@@ -109,8 +109,8 @@ impl Vault {
         Decided::answer_sourced(decided, &input.proposal)
     }
 
-    /// [`set_cleanup_posture`](super::set_cleanup_posture), as `owner`. The
-    /// automatic posture stays refused while its rollout blockers are open.
+    /// [`set_cleanup_posture`](super::set_cleanup_posture), as `owner`.
+    /// Either posture is the owner's choice.
     ///
     /// # Errors
     ///

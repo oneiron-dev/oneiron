@@ -397,6 +397,11 @@ pub(crate) fn streak_resets_in_txn(
 ) -> Result<Vec<(u64, crate::entity_id::EntityId, RampScope, u64)>> {
     let mut resets = Vec::new();
     for ((_, id), row) in ANSWER.scan(store, txn)? {
+        // An erased actor's answers stay as acts and fold into no scope
+        // (RAMP-SCOPE-ACTOR-ERASE): their history is no one's to share.
+        if row.actor == crate::receipt::ERASED_CALL_IDENTITY {
+            continue;
+        }
         if matches!(row.answer.as_str(), ANSWER_NOT_NOW | ANSWER_MANUAL_PINNED) {
             let scope = RampScope::new(row.op_kind, row.target_class, row.actor)?;
             resets.push((row.after_seq, id, scope, row.at));

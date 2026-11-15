@@ -7,8 +7,10 @@ use crate::outbound::{OutboundDeliverySemanticsKind, outbound_capability_manifes
 use crate::{EntityId, Result, Vault};
 use serde::Serialize;
 
-/// Classic iMessage associated-message types, in provider code order.
-pub const IMESSAGE_TAPBACK_GLYPHS: [&str; 6] = ["❤️", "👍", "👎", "😂", "‼️", "❓"];
+#[doc(hidden)]
+pub use oneiron_records::reaction::channel_adapters::{
+    IMESSAGE_TAPBACK_GLYPHS, IMessageTapbackOperation, ReactionChannelCapability,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -75,24 +77,6 @@ pub struct IMessageTapbackInput {
     pub generation: String,
     pub occurred_at: Option<u64>,
     pub origin: Option<EntityId>,
-}
-
-/// The bridge resolves `message` to its provider message/part handle before
-/// execution. No message text or credentials are copied into the queue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct IMessageTapbackOperation {
-    pub reaction: EntityId,
-    pub message: EntityId,
-    pub by: EntityId,
-    pub associated_message_type: u16,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ReactionChannelCapability {
-    pub connector: String,
-    pub send: bool,
-    pub receive: bool,
-    pub emoji_vocabulary: Option<serde_json::Value>,
 }
 
 /// Reaction support, distinct from permission to execute. Vocabulary comes
