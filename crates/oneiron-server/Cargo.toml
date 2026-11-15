@@ -319,6 +319,18 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# OWNER-GRADE H1's quota answer cases root the owner's home on a `MemoryKeystore` too.
+[[test]]
+name = "quota_answer_requires_vault_owner"
+path = "tests/quota_answer_requires_vault_owner.rs"
+required-features = ["oneiron/test-support"]
+
+# OWNER-GRADE H2-H8's owner act cases root the owner's home on a `MemoryKeystore` too.
+[[test]]
+name = "owner_acts_require_vault_owner"
+path = "tests/owner_acts_require_vault_owner.rs"
+required-features = ["oneiron/test-support"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
