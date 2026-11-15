@@ -379,6 +379,7 @@ mod enumeration;
 mod execution;
 mod pick;
 mod planning;
+pub(crate) mod setting_keys;
 
 use enumeration::enumerate_with_refusals;
 pub use enumeration::{AffectedBooking, enumerate_affected_bookings};

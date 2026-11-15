@@ -374,6 +374,8 @@ pub(super) fn plan_item(
         .sequence
         .checked_add(1)
         .ok_or_else(|| refused("booking passport sequence is exhausted"))?;
+    // The owner's proposal count, floor and search span (PACK-SETTINGS-ALL W1).
+    let policy = super::setting_keys::emergency_proposal_policy(vault).map_err(storage_failure)?;
     let start = request
         .affected_window
         .end
@@ -386,7 +388,7 @@ pub(super) fn plan_item(
         calendars,
         TimeRange {
             start,
-            end: start.saturating_add(7 * 86_400),
+            end: start.saturating_add(policy.search_span_secs),
         },
         now_utc,
     )?;
@@ -400,14 +402,15 @@ pub(super) fn plan_item(
         }) {
             proposals.push(slot);
         }
-        if proposals.len() == 3 {
+        if proposals.len() >= usize::from(policy.max_proposals) {
             break;
         }
     }
-    if proposals.len() < 2 {
-        return Err(refused(
-            "this booking has fewer than two live solver proposals",
-        ));
+    if proposals.len() < usize::from(policy.min_proposals) {
+        return Err(BookingError::InvalidConfig(format!(
+            "this booking has fewer than {} live solver proposals",
+            policy.min_proposals
+        )));
     }
     let (organizer, recipient) = delivery_parties(vault, &booking)?;
     let invite_before = {
