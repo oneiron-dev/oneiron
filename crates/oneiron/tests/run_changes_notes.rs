@@ -488,3 +488,65 @@ fn run_review_reads_a_decided_note_fork() -> TestResult {
     assert_eq!(f.text(rejected)?, "A rejected note.");
     Ok(())
 }
+
+/// A run forks one NOTE twice from the same version, one edit in each of its
+/// two sentences, then lands the second fork first and the first fork over
+/// it. The journal lists the forks in fork order. Undo-all of the run
+/// restores the NOTE's text from before the run: the first fork, landed
+/// last, unwinds first, then the second from the text the first left, so
+/// neither is left standing as dependent (review round 1 of #8214).
+#[test]
+fn revert_all_unwinds_a_runs_note_forks_in_landing_order() -> TestResult {
+    let f = Fixture::open()?;
+    let run = f.run("run-notes-order")?;
+    let note = f.note("The first line. The second line.")?;
+    let first = fork(
+        &f,
+        &run,
+        note,
+        whole_text(&f, note, "The FIRST line. The second line.")?,
+    )?;
+    let second = fork(
+        &f,
+        &run,
+        note,
+        whole_text(&f, note, "The first line. The SECOND line.")?,
+    )?;
+    let opened = open_proposal(&f, &run, note, &second)?;
+    assert_eq!(
+        opened["landed"][0]["fork_ref"], second,
+        "the second fork lands first"
+    );
+    let opened = open_proposal(&f, &run, note, &first)?;
+    assert_eq!(
+        opened["landed"][0]["fork_ref"], first,
+        "the first fork lands over it"
+    );
+    assert_eq!(f.text(note)?, "The FIRST line. The SECOND line.");
+    assert_eq!(
+        f.changes("run-notes-order")?,
+        vec![note_change(note, &first), note_change(note, &second)],
+        "both forks, in fork order"
+    );
+
+    let outcome = f.revert_all("run-notes-order")?;
+    assert_eq!(
+        rows(&outcome, "compensated", "receipt")?
+            .iter()
+            .map(|(change, _)| change.as_str())
+            .collect::<Vec<_>>(),
+        vec![first.as_str(), second.as_str()],
+        "the fork landed last is taken back first"
+    );
+    assert_eq!(
+        rows(&outcome, "not_undone", "reason")?,
+        Vec::<(String, String)>::new(),
+        "neither fork is left as dependent"
+    );
+    assert_eq!(
+        f.text(note)?,
+        "The first line. The second line.",
+        "the revision from before the run is restored"
+    );
+    Ok(())
+}
