@@ -106,14 +106,26 @@ pub fn receipt_embedded(
     let Some(view) = view else {
         return Ok(None);
     };
-    if matches!(reader, AuditReader::Holder(_)) {
-        for row in &rows {
-            if memory.peek_entity(&row.to_hex())?.value.is_none() {
-                return Ok(None);
-            }
-        }
+    if matches!(reader, AuditReader::Holder(_)) && !lane_reads_every_row(memory, &rows)? {
+        return Ok(None);
     }
     Ok(Some(view))
+}
+
+/// Whether `memory`'s own lane reads every row in `rows`: the release an
+/// audit_read holder gets for a sourced receipt ([`receipt_embedded`]). A
+/// host's `vault.seal.receipt` asks it for a holder too, as a receipt on this
+/// device is released whatever its rows are (Wonder review 8483 F2).
+///
+/// # Errors
+/// A row's read fails.
+pub fn lane_reads_every_row(memory: &Memory<'_>, rows: &[EntityId]) -> MemoryResult<bool> {
+    for row in rows {
+        if memory.peek_entity(&row.to_hex())?.value.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// [`receipt_as_reader`] beside the rows the seal's content was derived from
