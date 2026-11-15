@@ -369,6 +369,7 @@ fn evaluate_booking_request_for(
                 check_syntax: syntax,
                 check_mx: mx,
                 check_disposable_domain: disposable,
+                ..
             } => {
                 check_syntax |= syntax;
                 check_mx |= mx;

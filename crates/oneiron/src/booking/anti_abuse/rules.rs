@@ -2,7 +2,7 @@
 //! Entry: `BookingAntiAbuseRule`.
 //! Defines its own items.
 
-use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
+use std::num::{NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -57,11 +57,28 @@ pub enum BookingAntiAbuseRule {
         max_active_per_session: u8,
         per_minute_per_ip: NonZeroU32,
     },
-    /// Email evidence prompts a correction; it never hard-blocks.
+    /// Email evidence prompts a correction; it never hard-blocks. The two
+    /// counts say how many of the enabled checks must fail: at
+    /// `prompt_at_failed_checks` the visitor is asked to correct the address,
+    /// and at `quarantine_at_failed_checks` the submission goes to a
+    /// pending-review record when a [`Self::QuarantineBorderline`] row is in
+    /// scope (a prompt otherwise). A lower count is the tighter one. A row
+    /// stored before the counts existed reads 1 and 2, the counts it was
+    /// evaluated with, and a row holding those counts encodes as it did then.
     EmailPromptToCorrect {
         check_syntax: bool,
         check_mx: bool,
         check_disposable_domain: bool,
+        #[serde(
+            default = "email_prompt_at_failed_checks_default",
+            skip_serializing_if = "is_email_prompt_at_failed_checks_default"
+        )]
+        prompt_at_failed_checks: NonZeroU8,
+        #[serde(
+            default = "email_quarantine_at_failed_checks_default",
+            skip_serializing_if = "is_email_quarantine_at_failed_checks_default"
+        )]
+        quarantine_at_failed_checks: NonZeroU8,
     },
     /// Route borderline traffic to a pending-review record.
     QuarantineBorderline,
@@ -72,6 +89,37 @@ pub enum BookingAntiAbuseRule {
         enabled: bool,
         expires_after_secs: NonZeroU64,
     },
+}
+
+/// The failed email checks that prompt a correction when a row names no
+/// count: one, the count every row meant before it was a field.
+pub(crate) const fn email_prompt_at_failed_checks_default() -> NonZeroU8 {
+    NonZeroU8::MIN
+}
+
+/// The failed email checks that route a submission to quarantine when a row
+/// names no count: two, the count every row meant before it was a field.
+pub(crate) const fn email_quarantine_at_failed_checks_default() -> NonZeroU8 {
+    NonZeroU8::new(2).expect("two is non-zero")
+}
+
+/// Serde skip predicate: a row holding the default prompt count says so by
+/// omission, so it encodes as it did before the field existed.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the field by reference"
+)]
+fn is_email_prompt_at_failed_checks_default(count: &NonZeroU8) -> bool {
+    *count == email_prompt_at_failed_checks_default()
+}
+
+/// Serde skip predicate for the quarantine count, as above.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the field by reference"
+)]
+fn is_email_quarantine_at_failed_checks_default(count: &NonZeroU8) -> bool {
+    *count == email_quarantine_at_failed_checks_default()
 }
 
 /// One versioned rule row.
@@ -338,6 +386,8 @@ pub fn default_booking_anti_abuse_rows(
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         },
         BookingAntiAbuseRule::QuarantineBorderline,
         BookingAntiAbuseRule::EmailOtpReserve { enabled: false },

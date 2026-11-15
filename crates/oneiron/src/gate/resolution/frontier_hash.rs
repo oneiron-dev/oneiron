@@ -1068,6 +1068,7 @@ fn hash_booking_anti_abuse_rows(hasher: &mut Sha256, rows: &[BookingAntiAbuseRul
                 check_syntax,
                 check_mx,
                 check_disposable_domain,
+                ..
             } => {
                 hash_str(hasher, "email-prompt-to-correct");
                 hash_bool(hasher, *check_syntax);

@@ -216,11 +216,13 @@ fn rule_ordering(current: &BookingAntiAbuseRule, proposed: &BookingAntiAbuseRule
                 check_syntax: current_syntax,
                 check_mx: current_mx,
                 check_disposable_domain: current_disposable,
+                ..
             },
             Rule::EmailPromptToCorrect {
                 check_syntax: proposed_syntax,
                 check_mx: proposed_mx,
                 check_disposable_domain: proposed_disposable,
+                ..
             },
         ) => {
             fold_flag(&mut ordering, *proposed_syntax, *current_syntax);
