@@ -2,8 +2,8 @@
 //! 21:09, design A, and OLDPARENTS-ENROL-DODGE = A, 22:05).
 //!
 //! An owner act that a carrier other than the owner's machine delivers waits
-//! for the owner's proof where its parents hold a key that proves for the
-//! owner ([`super::owner_proof`], item 2). A carrier that names parents from
+//! for the owner's proof where its parents hold a key that gives it
+//! ([`super::owner_proof`], item 2). A carrier that names parents from
 //! before the first such key's enrolment is judged where no proving key
 //! exists, and the act would then stand on every branch. So the fold reads
 //! an owner key's enrolment across branches, as a handoff retires its
@@ -23,9 +23,12 @@
 //!   end the owner's own enrolment.
 //!
 //! A proving enrolment is an `OwnerKeyEnroll` that stands once the handoffs
-//! settle and whose key proves for the owner in the state it leaves. An
-//! enrolment a handoff prunes is none: its line would make the new root's
-//! acts wait where no key could prove them. Each fold of the log finds the
+//! settle and whose key gives the owner's proof in the state it leaves
+//! ([`super::owner_proof::gives_owner_proof`]). An enrolment of a key whose
+//! proof the fold does not take is none, as the vault does not ask on its
+//! account (Engine RULING CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A, 16 Nov
+//! 01:37). An enrolment a handoff prunes is none either: its line would make
+//! the new root's acts wait where no key could prove them. Each fold of the log finds the
 //! proving enrolments in its settled states and takes the new ones a key at
 //! a time, earliest first: fewest ancestors, then hash ([`ProvingEnrolments`]).
 //! When one's line changes the lines in force, the log folds again with the
@@ -119,7 +122,7 @@ impl ProvingEnrolments {
                     return None;
                 };
                 let key = &enrol.device.key;
-                super::owner_proof::proves_for_the_owner(state, key).then(|| {
+                super::owner_proof::gives_owner_proof(state, key).then(|| {
                     let depth = ancestors.get(hash).map_or(0, BTreeSet::len);
                     (depth, *hash, key)
                 })
