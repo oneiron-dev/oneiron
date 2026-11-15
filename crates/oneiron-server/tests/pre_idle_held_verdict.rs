@@ -21,12 +21,18 @@
 //!   background verify, which finds it not held, and is not reused
 //!   (`FIXHELD-REVERIFY`);
 //! - a backup no verify read is read whole and reused, as before
-//!   (`FIXHELD-UNVERIFIED`).
+//!   (`FIXHELD-UNVERIFIED`);
+//! - a backup whose verdict no longer answers, its modification time moved
+//!   and its bytes unchanged, is read whole and reused, and that reuse opens
+//!   the artifact as often as one with no verdict: the whole read takes the
+//!   open the verdict was checked on (`FIXHELD-REJECTED`, Astra
+//!   fixperf-8419-r2 F2; the opens are counted by an inotify watch).
 //!
 //! On main there is no background verify, so each test that asks for one
 //! fails; the first fails at its read count, which is the measurement.
 //!
-//! Linux only: the read count is per thread from procfs.
+//! Linux only: the read count is per thread from procfs, and the opens come
+//! from inotify.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test pre_idle_held_verdict`
 #![cfg(all(target_os = "linux", oneiron_test_support))]
@@ -38,10 +44,11 @@ use std::time::{Duration, Instant};
 use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::{EntityId, TimeRange};
 use oneiron_server::test_doors::pre_idle_reuse::{ManagedBackups, managed_backups};
+use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 
 /// The first test's vault: 1,024 texts of 32 KiB.
 const BODIES: u64 = 1_024;
-/// The other two tests' vaults, small: they time nothing.
+/// The other tests' vaults, small: they time nothing.
 const SMALL_BODIES: u64 = 64;
 const BODY_BYTES: usize = 32 * 1024;
 
@@ -120,6 +127,53 @@ fn timed_before_idle(managed: &ManagedBackups) -> (bool, u64, f64) {
         .expect("it settled");
     let ms = started.elapsed().as_secs_f64() * 1000.0;
     (reused, thread_rchar().saturating_sub(read_before), ms)
+}
+
+/// What `run` returns, and how often the file at `path` was opened, by
+/// anyone, while it ran: the `IN_OPEN` events of an inotify watch on the
+/// file. The watch takes its closes as well, so two opens are never adjacent
+/// in the queue, where inotify merges two identical events into one.
+fn opens_during<T>(path: &Path, run: impl FnOnce() -> T) -> (T, usize) {
+    let watch =
+        inotify::init(CreateFlags::NONBLOCK | CreateFlags::CLOEXEC).expect("an inotify instance");
+    inotify::add_watch(
+        &watch,
+        path,
+        WatchFlags::OPEN | WatchFlags::CLOSE_WRITE | WatchFlags::CLOSE_NOWRITE,
+    )
+    .expect("a watch on the artifact");
+    let ran = run();
+    let mut buffer = [std::mem::MaybeUninit::uninit(); 4096];
+    let mut events = inotify::Reader::new(&watch, &mut buffer);
+    let mut opens = 0;
+    loop {
+        match events.next() {
+            Ok(event) => {
+                if event.events().contains(ReadFlags::OPEN) {
+                    opens += 1;
+                }
+            }
+            Err(rustix::io::Errno::AGAIN) => break,
+            Err(error) => panic!("the artifact's inotify events read: {error}"),
+        }
+    }
+    (ran, opens)
+}
+
+/// Sets the artifact's modification time two seconds past the one it had,
+/// its bytes unchanged: its identity moves, so a verdict no longer answers
+/// for it, and it is still the backup its marker recorded.
+fn touch_later(path: &Path) {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("the artifact opens for writing");
+    let modified = file
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .expect("the artifact's modification time");
+    file.set_modified(modified + Duration::from_secs(2))
+        .expect("a later modification time");
 }
 
 /// Turns the artifact's byte at `at` into its complement, in place, and sets
@@ -243,5 +297,39 @@ fn an_unverified_backup_is_read_whole_and_reused() {
     assert!(
         read >= size,
         "with no verdict the reuse reads it whole: {read} of {size} bytes"
+    );
+}
+
+#[test]
+fn a_verdict_that_does_not_answer_adds_no_open_before_the_whole_read() {
+    let backed = backed_up(SMALL_BODIES);
+    let (managed, size) = (&backed.managed, backed.size);
+    let file = managed.accepted_file().expect("the accepted backup");
+    let ((unverified_reused, unverified_read, _), unverified_opens) =
+        opens_during(&file, || timed_before_idle(managed));
+    let verified = managed.verify_in_background();
+    assert_eq!(verified, Some(true), "a verdict stands before the change");
+    touch_later(&file);
+    let ((reused, read, ms), opens) = opens_during(&file, || timed_before_idle(managed));
+    println!(
+        "FIXHELD-REJECTED verified={verified:?} unverified_opens={unverified_opens} \
+         rejected_opens={opens} reused={reused} read_bytes={read} backup_bytes={size} ms={ms:.3}"
+    );
+    assert!(
+        unverified_reused && unverified_read >= size,
+        "with no verdict the reuse reads it whole: {unverified_read} of {size} bytes"
+    );
+    assert!(
+        reused,
+        "its bytes are still the backup its marker recorded, so it is reused"
+    );
+    assert!(
+        read >= size,
+        "a verdict that does not answer leaves the reuse its whole read: {read} of {size} bytes"
+    );
+    assert_eq!(
+        opens, unverified_opens,
+        "a verdict that does not answer opens the artifact no more often than none: the whole \
+         read takes the open the verdict was checked on"
     );
 }
