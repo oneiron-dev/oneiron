@@ -41,67 +41,8 @@ pub use oneiron_verb_wire::task_verb::brief::{
     BriefConstraints, BriefIntent, Care, Criterion, EscalationTrigger, SpawnPins, TypeRef,
 };
 
-/// Fixed-width byte strings travel as lowercase hex on every wire.
-pub(crate) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
-    if text.len() != N * 2 {
-        return None;
-    }
-    let mut out = [0_u8; N];
-    for (index, pair) in text.as_bytes().chunks(2).enumerate() {
-        let pair = std::str::from_utf8(pair).ok()?;
-        out[index] = u8::from_str_radix(pair, 16).ok()?;
-    }
-    Some(out)
-}
-
-/// Serde for a 32-byte digest as 64 hex characters.
-pub(crate) mod hex32 {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub(crate) fn serialize<S: Serializer>(
-        bytes: &[u8; 32],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&crate::entity_id::bytes_to_hex_lower(bytes))
-    }
-
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<[u8; 32], D::Error> {
-        let text = String::deserialize(deserializer)?;
-        super::decode_hex::<32>(&text)
-            .ok_or_else(|| serde::de::Error::custom("expected a 64-character hex digest"))
-    }
-
-    /// The same for an optional digest.
-    pub(crate) mod option {
-        use serde::{Deserialize, Deserializer, Serializer};
-
-        pub(crate) fn serialize<S: Serializer>(
-            bytes: &Option<[u8; 32]>,
-            serializer: S,
-        ) -> Result<S::Ok, S::Error> {
-            match bytes {
-                Some(bytes) => {
-                    serializer.serialize_some(&crate::entity_id::bytes_to_hex_lower(bytes))
-                }
-                None => serializer.serialize_none(),
-            }
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
-            deserializer: D,
-        ) -> Result<Option<[u8; 32]>, D::Error> {
-            Option::<String>::deserialize(deserializer)?
-                .map(|text| {
-                    super::super::decode_hex::<32>(&text).ok_or_else(|| {
-                        serde::de::Error::custom("expected a 64-character hex digest")
-                    })
-                })
-                .transpose()
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::task_verb::brief::{decode_hex, hex32};
 
 /// A context pack pinned by digest: a pack ref promises no immutability, so
 /// the brief keeps what it read.
