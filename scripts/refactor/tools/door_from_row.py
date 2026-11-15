@@ -10,8 +10,8 @@ door the generator emits, after checking four facts against the row (DESIGN sect
 the same rule, the same handle (the new call says `memory` exactly when the old door read through the credential's
 handle) and the same rows. A door of a shape it does not know, or on a setting verb (SETTING_HELD), is refused and
 left as it is, with the reason. With --apply it rewrites each accepted row (the three substitutions of DESIGN section
-1.3 in `call`, `"door": "hand"` dropped) and deletes each accepted door fn with its doc comment. It edits no `use` line: the build's unused-import
-warnings name the ones a move leaves.
+1.3 in `call`, `"door": "hand"` dropped) and deletes each accepted door fn with its doc comment. It edits no
+`use` line: the build's unused-import warnings name the ones a move leaves.
 
 Known shapes (each wrapper proves the owner with `facade_owner`, as rule `owner` does):
 - `as_owner(server, auth, "<verb>", move |memory, owner| <call>)` of host_doors/support/owner_listing.rs: on the
