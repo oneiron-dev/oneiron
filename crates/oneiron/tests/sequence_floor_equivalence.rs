@@ -12,11 +12,17 @@
 //!
 //! The test builds one vault's log from its own doors (the host root, this
 //! install, an admitted machine's chain, two worlds' settings and key
-//! records), then folds it by the rows' floors and by the arrival floors of
-//! many orders through `test_doors::authority_sequence_floor`:
+//! records), with one more row on the machine's chain that is well signed
+//! but that the fold refuses, then folds it by the rows' floors and by the
+//! arrival floors of many orders through `test_doors::authority_sequence_floor`:
 //! - every order that delivers each row after its parents floors no row, and
 //!   both folds are equal, field for field;
-//! - every other order whose floors the old lift cleared folds equal too.
+//! - on every order, the fold by the rows' floors equals that in-order fold;
+//! - every other order whose floors the old lift cleared folds equal too;
+//! - the refused row vouches for nothing, so an order that delivers it before
+//!   the rows below it leaves their arrival floors past the old lift (Astra
+//!   round 1 E5): there the old fold may differ, and the rows' floors still
+//!   fold as in order.
 //!
 //! Each order prints one `EQUIV` line; an order whose floors the old lift
 //! left in place prints whether its fold still matched (the delivery-order
@@ -128,13 +134,13 @@ fn admit_machine(rooted: &Rooted, seed: u8) -> (EntityId, SigningKey, AuthorityE
     (machine, signing, admission)
 }
 
-/// The admitted machine's own world edit at `seq` on `parent`, signed by its
-/// install key: one link of its chain.
+/// The admitted machine's own world edit to `settings` at `seq` on
+/// `parent`, signed by its install key: one link of its chain.
 fn machine_row(
     rooted: &Rooted,
     machine: EntityId,
     signing: &SigningKey,
-    world: EntityId,
+    (world, settings): (EntityId, WorldPrivacy),
     seq: u64,
     parent: AuthorityEntryHash,
 ) -> AuthorityLogEntry {
@@ -154,7 +160,7 @@ fn machine_row(
                 [0; 32],
             ),
             machine,
-            settings: WorldPrivacy::default(),
+            settings,
         }),
         signer: AuthoritySignature {
             suite: key.suite(),
@@ -172,7 +178,9 @@ fn machine_row(
 /// One vault's log from its own doors: the host root and the engine's
 /// machines, this install marked the owner's, two worlds kept here (each
 /// edit mints the world's key in its own scope), two admitted machines, one
-/// of them removed, and the other's own three-row chain.
+/// of them removed, and the other's own three-row chain; then a fourth row
+/// on that chain, well signed, whose one-machine pick names no machine the
+/// vault admits, so every fold refuses it and it vouches for nothing.
 fn log_of_single_chain_signers() -> Vec<AuthorityLogEntry> {
     let rooted = rooted();
     let here = rooted
@@ -225,20 +233,40 @@ fn log_of_single_chain_signers() -> Vec<AuthorityLogEntry> {
     let world = EntityId::now();
     let mut parent = admission;
     for seq in 1..=3 {
-        let row = machine_row(&rooted, machine, &signing, world, seq, parent);
+        let row = machine_row(
+            &rooted,
+            machine,
+            &signing,
+            (world, WorldPrivacy::default()),
+            seq,
+            parent,
+        );
         rooted
             .vault
             .put_authority_log_entry(&row, AT, 1)
             .expect("the admitted machine's row lands");
         parent = authority_entry_hash(&row).expect("hash");
     }
-    rooted
+    let mut entries: Vec<AuthorityLogEntry> = rooted
         .vault
         .export_signed_authority_history()
         .expect("the vault's history")
         .iter()
         .map(|bytes| decode_authority_log_entry_body(bytes).expect("a stored row"))
-        .collect()
+        .collect();
+    let nowhere = WorldPrivacy {
+        read: ReadLocation::OneMachine(EntityId::now()),
+        ..WorldPrivacy::default()
+    };
+    entries.push(machine_row(
+        &rooted,
+        machine,
+        &signing,
+        (world, nowhere),
+        4,
+        parent,
+    ));
+    entries
 }
 
 /// A small deterministic generator (xorshift64).
@@ -313,7 +341,9 @@ fn rows_floors_fold_a_log_of_single_chain_signers_as_its_arrival_floors_did() {
         );
         orders.insert(format!("any-{round}"), generator.shuffled(entries.len()));
     }
+    let in_order = fold_both_ways(&entries, &orders["topological-0"]).by_arrival;
     let mut lifted_short = 0;
+    let mut diverged = 0;
     let mut floored_orders = 0;
     for (name, order) in &orders {
         let both = fold_both_ways(&entries, order);
@@ -330,6 +360,10 @@ fn rows_floors_fold_a_log_of_single_chain_signers_as_its_arrival_floors_did() {
         );
         assert!(both.single_chain, "every signer signs one chain per scope");
         assert_eq!(both.rows_floored, 0, "no row of a single chain is floored");
+        assert_eq!(
+            both.by_rows, in_order,
+            "order {name}: the rows' floors fold as the in-order install did"
+        );
         if both.topological {
             assert_eq!(
                 both.arrival_floored, 0,
@@ -346,14 +380,20 @@ fn rows_floors_fold_a_log_of_single_chain_signers_as_its_arrival_floors_did() {
             );
         } else {
             lifted_short += 1;
+            diverged += usize::from(!same);
         }
     }
     println!(
-        "EQUIV-SUMMARY orders={} floored_orders={floored_orders} lift_left_floors={lifted_short}",
+        "EQUIV-SUMMARY orders={} floored_orders={floored_orders} lift_left_floors={lifted_short} \
+         old_fold_diverged={diverged}",
         orders.len()
     );
     assert!(
         floored_orders > 0,
         "some order floors rows, so the old lift is exercised"
+    );
+    assert!(
+        lifted_short > 0,
+        "the reversed order delivers the refused row first, so the old lift leaves floors"
     );
 }

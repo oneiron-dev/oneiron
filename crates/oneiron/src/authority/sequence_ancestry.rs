@@ -17,16 +17,25 @@ pub(super) fn causal_sequence_floors(
     let mut floors = original.clone();
     loop {
         let before = floors.len();
-        // Only a row of a signer with a row past its floor can vouch.
-        let floored_signers: BTreeSet<_> = floors
-            .keys()
-            .filter_map(|hash| by_hash.get(hash))
-            .map(AuthorityLogEntry::signer_key)
-            .collect();
-        for (tip_hash, tip) in by_hash {
-            if !floored_signers.contains(tip.signer_key()) {
-                continue;
+        // Only a row of a signer with a row past its floor can vouch, and
+        // only for those rows: each tip looks them up among its ancestors,
+        // or its ancestors among them, whichever are fewer (Astra round 1 E2
+        // of [SEQUENCE-FLOOR-DELIVERY-ORDER]). A signer with one row past
+        // its floor so costs each of its rows one lookup, however long its
+        // chains in other scopes.
+        let mut floored_rows = BTreeMap::<_, Vec<AuthorityEntryHash>>::new();
+        for hash in floors.keys() {
+            if let Some(entry) = by_hash.get(hash) {
+                floored_rows
+                    .entry(entry.signer_key())
+                    .or_default()
+                    .push(*hash);
             }
+        }
+        for (tip_hash, tip) in by_hash {
+            let Some(signer_floored) = floored_rows.get(tip.signer_key()) else {
+                continue;
+            };
             let rollback_tip = original.get(tip_hash).is_some_and(|floor| tip.seq < *floor);
             // No floor refuses a roster row (`changes_roster`), so even below
             // its floor it vouches for every row of its signer below it in its
@@ -40,23 +49,30 @@ pub(super) fn causal_sequence_floors(
             if rollback_tip && !roster_tip {
                 continue;
             }
-            let covered: Vec<_> = ancestors[tip_hash]
-                .iter()
-                .filter(|hash| {
-                    by_hash.get(*hash).is_some_and(|entry| {
-                        let refused_below_roster_row =
-                            roster_tip && super::entry_transition::floor_refuses(&entry.op);
-                        entry.signer_key() == tip.signer_key()
-                            && entry.seq < tip.seq
-                            && floors.get(*hash).is_some_and(|floor| {
-                                entry.seq < *floor
-                                    && ((!rollback_tip && tip.seq >= *floor)
-                                        || refused_below_roster_row)
-                            })
-                    })
+            let tip_ancestors = &ancestors[tip_hash];
+            let vouched = |hash: &&AuthorityEntryHash| {
+                by_hash.get(*hash).is_some_and(|entry| {
+                    let refused_below_roster_row =
+                        roster_tip && super::entry_transition::floor_refuses(&entry.op);
+                    entry.signer_key() == tip.signer_key()
+                        && entry.seq < tip.seq
+                        && floors.get(*hash).is_some_and(|floor| {
+                            entry.seq < *floor
+                                && ((!rollback_tip && tip.seq >= *floor)
+                                    || refused_below_roster_row)
+                        })
                 })
-                .copied()
-                .collect();
+            };
+            let covered: Vec<_> = if signer_floored.len() <= tip_ancestors.len() {
+                signer_floored
+                    .iter()
+                    .filter(|hash| tip_ancestors.contains(*hash))
+                    .filter(vouched)
+                    .copied()
+                    .collect()
+            } else {
+                tip_ancestors.iter().filter(vouched).copied().collect()
+            };
             if covered.is_empty() {
                 continue;
             }

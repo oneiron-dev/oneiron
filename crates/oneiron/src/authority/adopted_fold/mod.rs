@@ -495,7 +495,7 @@ fn tail_folds_past(
     {
         return None;
     }
-    if !rows_floors_unmoved(image, tail) {
+    if !rows_floors_unmoved(image, tail) || !tail_signers_covered_rows_unfloored(image, tail) {
         return None;
     }
     let mut confirms = (
@@ -534,8 +534,8 @@ fn tail_folds_past(
 /// rows. A covered row under no top sits past its floor with no row at or
 /// above it that vouches for it, so a tail row that misses it changes no
 /// floor; every other covered row is then among each tail row's ancestors.
-/// Whether a tail row vouches for a covered row past its floor is
-/// [`settle::settle_tail`]'s to judge.
+/// No tail row vouches for a covered row past its floor
+/// ([`tail_signers_covered_rows_unfloored`]).
 ///
 /// Only the rows the whole fold judges count (`fold_engine::judged_entries`,
 /// review R2 of [SEQUENCE-FLOOR-DELIVERY-ORDER]): a row, covered or tail,
@@ -610,6 +610,84 @@ fn rows_floors_unmoved(
                 });
             (below_seq, below) = (Some(*seq), vec![*hash]);
             rises
+        })
+    })
+}
+
+/// Whether every tail row's signer signed its covered rows, in each sequence
+/// scope (`world_privacy::side_world`), as one chain: sequences strictly
+/// rise, and each row descends from the one below it along that scope's rows
+/// (`rows_floor::descends_within_scope`). Then no covered row of a tail
+/// row's signer sits past a floor (`rows_floor::rows_sequence_floors`), and
+/// no tail row vouches for one (`sequence_ancestry`): a row vouches only for
+/// rows of its own signer, and [`rows_floors_unmoved`] keeps the tail from
+/// moving a covered floor. Otherwise a tail row at or above a covered row's
+/// floor that descends from it may lift that floor in the whole fold, so the
+/// row the image holds refused past it (review R1 of
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER]) or landed restriction only (Astra round 1
+/// E1) counts whole there; only the whole history judges that. A forked
+/// signer's tail so folds whole, as a resumed fold's base with a row past
+/// its floor does (`fold_resume::capture`). A false answer only sends the
+/// tail to the whole history. A row that names a side row of another world
+/// is left out and never walked, as in [`rows_floors_unmoved`].
+///
+/// Cost: one parents-first order of the covered rows; then each pair of a
+/// signer's rows next to each other in a scope walks only rows that order
+/// puts between the two, so a scope's walks together pass each covered row
+/// and parent link at most once.
+fn tail_signers_covered_rows_unfloored(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> bool {
+    let signers: BTreeSet<_> = tail.values().map(|entry| entry.signer_key()).collect();
+    let violates = |world: Option<crate::EntityId>, parents: &[AuthorityEntryHash]| {
+        parents.iter().any(|parent| {
+            image
+                .rows
+                .get(parent)
+                .and_then(|parent| parent.world)
+                .is_some_and(|parent_world| world != Some(parent_world))
+        })
+    };
+    let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
+    for (hash, row) in &image.rows {
+        if signers.contains(&row.signer) && !violates(row.world, &row.parents) {
+            scopes
+                .entry((&row.signer, row.world))
+                .or_default()
+                .push((row.seq, *hash));
+        }
+    }
+    if scopes.values().all(|rows| rows.len() < 2) {
+        return true;
+    }
+    let parents: BTreeMap<_, _> = image
+        .rows
+        .iter()
+        .map(|(hash, row)| (*hash, row.parents.clone()))
+        .collect();
+    let rank: BTreeMap<_, _> = parents_first_of(&parents)
+        .into_iter()
+        .enumerate()
+        .map(|(rank, hash)| (hash, rank))
+        .collect();
+    scopes.into_iter().all(|((_, world), mut rows)| {
+        rows.sort_unstable();
+        rows.windows(2).all(|pair| {
+            let ((lower_seq, lower), (upper_seq, upper)) = (pair[0], pair[1]);
+            // A row before `lower` in the order has no path to it.
+            let lower_rank = rank[&lower];
+            lower_seq < upper_seq
+                && crate::authority::rows_floor::descends_within_scope(
+                    &lower,
+                    &image.rows[&upper].parents,
+                    world,
+                    |hash| {
+                        let row = image.rows.get(hash)?;
+                        (rank[hash] > lower_rank && !violates(row.world, &row.parents))
+                            .then_some((row.parents.as_slice(), row.world))
+                    },
+                )
         })
     })
 }
