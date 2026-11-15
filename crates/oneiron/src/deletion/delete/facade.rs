@@ -336,11 +336,15 @@ impl Vault {
         let now = self.store.clock.now_recorded_at();
         let shares = {
             let txn = self.store.env.read_txn()?;
+            // The key first: at its default no grant is scanned twice.
+            if super::super::setting_keys::BRIEF_SHARE_REQUIRES_CONFIRMED
+                .read_in_txn(self, &txn, &[], None)?
+                .value
+            {
+                return Ok(());
+            }
             let shares = crate::share::active_brief_shares_for(&self.store, &txn, id, now)?;
             if shares.is_empty()
-                || super::super::setting_keys::BRIEF_SHARE_REQUIRES_CONFIRMED
-                    .read_in_txn(self, &txn, &[], None)?
-                    .value
                 || !crate::share::owner_revokes_every_share_in_txn(self, &txn, &actor)?
             {
                 return Ok(());

@@ -28,11 +28,9 @@ pub(crate) fn owner_revokes_every_share_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: &WriteActor,
 ) -> Result<bool> {
-    if actor.actor_class() != EdgeActorClass::Human {
-        return Ok(false);
-    }
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    Ok(!fold.vault_root_is_conflicted()
+    Ok(actor.actor_class() == EdgeActorClass::Human
+        && !fold.vault_root_is_conflicted()
         && crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human"))
 }
 
