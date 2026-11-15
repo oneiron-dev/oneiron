@@ -297,4 +297,23 @@ impl TextDocumentRoute {
             own.contains(self.space_id.as_str())
         })
     }
+
+    /// Whether some world names this route's space as its own text space.
+    pub(crate) fn world_names_space(&self) -> bool {
+        self.world_spaces.names(&self.space_id)
+    }
+
+    /// Whether a world with its own text space carries `id` and sends it to this route's
+    /// space: the only way a NOTE or a caption enters a text-bound space.
+    pub(crate) fn takes_world_row(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .world_spaces
+            .of_row(store, txn, id)?
+            .contains(self.space_id.as_str()))
+    }
 }
