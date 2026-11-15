@@ -1,8 +1,13 @@
 const WEEK: u64 = 7 * 24 * 60 * 60;
 use super::*;
 use crate::TimeRange;
-use crate::federation::InitialSharedMember;
+use crate::federation::{DeleteVaultPlan, InitialSharedMember};
 use crate::store::GateDecisionId;
+
+/// A `delete_vault` plan that decodes, as the start door now requires.
+fn delete_vault_plan() -> Vec<u8> {
+    serde_json::to_vec(&DeleteVaultPlan { v: 1 }).expect("encode the delete_vault plan")
+}
 
 fn fixture(
     preset: SharedVaultPreset,
@@ -88,9 +93,10 @@ fn fixture_on(
 fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Result<()> {
     let clock = crate::ports::ManualClock::new(100);
     let (dir, vault, owner, other, admin) = fixture_on(SharedVaultPreset::Team, clock.bundle());
-    let act = vault.start_authority_act(&owner, 42, "delete_vault", b"opaque".to_vec())?;
+    let plan = delete_vault_plan();
+    let act = vault.start_authority_act(&owner, 42, "delete_vault", plan.clone())?;
     assert_eq!(act.deadline, 100 + WEEK);
-    assert_eq!(act.payload, b"opaque");
+    assert_eq!(act.payload, plan);
     assert_eq!(vault.pending_act_started_events(&owner, 42, 101)?.len(), 1);
     assert_eq!(vault.pending_act_started_events(&other, 42, 101)?.len(), 1);
     assert!(
@@ -99,7 +105,7 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
             .is_empty()
     );
     // An act nobody objects to, for a first objection at its deadline.
-    let unopposed = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new())?;
+    let unopposed = vault.start_authority_act(&owner, 42, "delete_vault", plan.clone())?;
     clock.set(101);
     assert!(
         vault
@@ -808,7 +814,7 @@ fn a_bypass_grant_never_skips_another_owners_objection_window() -> Result<()> {
     assert_eq!(evaluation.decision, ConsentDecision::Auto);
     assert!(evaluation.bypassed_by.is_some());
 
-    let act = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new())?;
+    let act = vault.start_authority_act(&owner, 42, "delete_vault", delete_vault_plan())?;
     assert_eq!(act.deadline, 100 + WEEK, "the bypass opens no shortcut");
     assert!(!act.completed);
     vault.change_authority_objection(&other, &act.id, true)?;

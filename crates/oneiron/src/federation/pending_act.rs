@@ -600,14 +600,35 @@ impl Vault {
         // The common owner-change wait applies only to membership acts; the
         // parse runs once, before the chosen setting is consumed below.
         let holder_selected = matches!(selection, SettingChoice::Holder(_));
+        let builtin = super::shared_act::SharedActKind::parse(act);
         let owner_change_act = matches!(
-            super::shared_act::SharedActKind::parse(act),
+            builtin,
             Some(
                 super::shared_act::SharedActKind::AddOwner
                     | super::shared_act::SharedActKind::TransferOwnership
                     | super::shared_act::SharedActKind::RemoveOwner
             )
         );
+        // A built-in name whose plan does not decode could never run: its
+        // executor refuses it as an invalid shared-vault act. Refuse it here,
+        // before the store, instead of keeping such an act.
+        match builtin {
+            Some(super::shared_act::SharedActKind::AddOwner) => {
+                decode::<super::shared_act::AddOwnerPlan>(&payload)?;
+            }
+            Some(super::shared_act::SharedActKind::TransferOwnership) => {
+                decode::<super::shared_act::TransferOwnershipPlan>(&payload)?;
+            }
+            Some(super::shared_act::SharedActKind::RemoveOwner) => {
+                decode::<super::shared_act::RemoveOwnerPlan>(&payload)?;
+            }
+            Some(super::shared_act::SharedActKind::DeleteVault) => {
+                decode::<super::shared_act::DeleteVaultPlan>(&payload)?;
+            }
+            // A held erase names its record and runs through its own door;
+            // any other name is the host's own act with an opaque payload.
+            Some(super::shared_act::SharedActKind::Erase) | None => {}
+        }
         let policy = match selection {
             SettingChoice::Stored => base,
             SettingChoice::Host(Some(setting)) => setting,

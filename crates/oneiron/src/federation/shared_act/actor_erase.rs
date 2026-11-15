@@ -18,8 +18,8 @@
 //! [`ERASED_MEMBER_ACT_REFUSAL`] ([`refuse_an_erased_member_act`]).
 //! A held erase is no such act: it names its record, and runs.
 //!
-//! `start_authority_act` checks a built-in act's name, not its plan, so a
-//! stored plan may not decode. Such an act cannot run. The scrub writes the
+//! `start_authority_act` refuses a built-in act whose plan does not decode,
+//! so only a legacy row's stored plan may not decode. Such an act cannot run. The scrub writes the
 //! erased marker over each spelling of the person's hex: in each JSON string
 //! and key as a JSON reader decodes it, when the plan is JSON, and in its
 //! bytes as text. Then it goes on: one malformed act never stops an erase.
