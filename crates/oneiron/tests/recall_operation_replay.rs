@@ -11,6 +11,8 @@
 //!
 //! Fleet: `cargo test --locked -p oneiron --all-features --test recall_operation_replay`
 
+use std::sync::Arc;
+
 use oneiron::deletion::DeleteReason;
 use oneiron::memory::{
     Memory, MemoryPack, MemoryResult, RecallRequest, WitnessAssertions, WitnessAuthor,
@@ -120,20 +122,44 @@ fn a_replay_after_a_delete_is_refused() {
     witness(&memory, &format!("the {TOPIC} note says gamma"));
     let operation = serde_json::json!({ "operation_id": "session-2:step-1:recall:0" });
     let first = recall(&memory, operation.clone()).expect("the first recall");
-    let record = first
+    let turn = first
         .items
         .iter()
         .find(|item| item.value_text.contains("gamma"))
-        .and_then(|item| item.record.as_ref())
-        .expect("FIXTURE: the first recall serves the turn with its record");
-    let served = EntityId::from_hex(&record.id).expect("a record id");
+        .expect("FIXTURE: the first recall serves the turn");
+    // The message the turn reads its text from, then the turn: the order a
+    // room's own delete takes them in.
+    let mut served = Vec::new();
+    for message in &turn.cited_messages {
+        let record = message
+            .record
+            .as_ref()
+            .expect("FIXTURE: the cited message carries its record");
+        served.push(EntityId::from_hex(&record.id).expect("a message id"));
+    }
     assert!(
-        vault
-            .delete_entity_with_reason(&served, DeleteReason::UserDelete)
-            .expect("delete the served record")
-            .existed,
-        "FIXTURE: the delete removes the served record"
+        !served.is_empty(),
+        "FIXTURE: the turn cites the message it reads"
     );
+    let record = turn
+        .record
+        .as_ref()
+        .expect("FIXTURE: the turn carries its record");
+    served.push(EntityId::from_hex(&record.id).expect("a turn id"));
+    // The subject is the replay after a delete, not who may delete: a
+    // witnessed TURN and its MESSAGE are room records, which a plain delete
+    // refuses without the room's authority (ConversationDenied), so the
+    // test-support seam deletes them. Every delete signs as this install.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    for id in &served {
+        let outcome = vault
+            .delete_room_record_unchecked_for_test(id, DeleteReason::UserDelete)
+            .unwrap_or_else(|error| panic!("FIXTURE: delete the served record {id:?}: {error:?}"));
+        assert!(
+            outcome.existed,
+            "FIXTURE: the delete removes the served record"
+        );
+    }
     let fresh = recall(&memory, serde_json::json!({})).expect("a recall without an id");
     assert!(
         !holds(&fresh, "gamma"),
