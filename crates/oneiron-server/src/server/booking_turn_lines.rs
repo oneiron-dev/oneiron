@@ -99,7 +99,11 @@ impl BookingTurnLines {
 
 impl Drop for LineMembership<'_> {
     fn drop(&mut self) {
-        let mut lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut lines = self
+            .lines
+            .lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if let Some(line) = lines.get_mut(&self.window) {
             line.members = line.members.saturating_sub(1);
             if line.members == 0 {
