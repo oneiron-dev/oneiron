@@ -19,8 +19,8 @@ enum Backing {
     /// Its `DerivedFrom` targets: an epoch summary's, or a filed compaction
     /// step's claim or response artifact's.
     DerivedFrom,
-    /// The artifacts holding the bytes a compaction response's content ASSET
-    /// carries.
+    /// The compaction response artifacts holding the bytes a response's
+    /// content ASSET carries.
     Holders(Vec<EntityId>),
 }
 
@@ -37,8 +37,8 @@ enum Backing {
 /// form. A source ships only as the record stored at its id: such a carrier
 /// is not what the summary was written from. A compaction step's claim and
 /// response artifact carry the compactor's words about the records its call
-/// read, and the response's content ASSET carries them as its holding
-/// artifacts do, so each leaves by the same rule
+/// read, and the response's content ASSET carries them as the response
+/// artifacts holding its bytes do, so each leaves by the same rule
 /// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES).
 pub(super) fn unbacked_epochs(
     vault: &Vault,

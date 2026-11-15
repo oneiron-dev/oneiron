@@ -491,7 +491,7 @@ impl<'v> ScopedRead<'v> {
     /// A filed compaction step's response bytes, as the content ASSET of its
     /// response artifact's version, carry the compactor's words as that
     /// artifact does. So this reader takes such an ASSET only while it reads
-    /// one of the artifacts holding those bytes, each by its own row read,
+    /// every response artifact holding those bytes, each by its own row read,
     /// which walks the step's sources (COMPACTION-STEP-CLAIM-READS-WITHOUT-
     /// SOURCES). Every other row reads as before.
     fn compaction_response_bytes_readable_in(
@@ -506,7 +506,8 @@ impl<'v> ScopedRead<'v> {
         }
         Ok(self
             .entities_readable_in_txn(rtxn, &holders)?
-            .contains(&true))
+            .iter()
+            .all(|readable| *readable))
     }
 
     /// One record a summary's or a compaction step's words came from, as

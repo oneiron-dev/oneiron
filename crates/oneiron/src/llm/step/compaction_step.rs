@@ -214,12 +214,15 @@ pub(crate) fn is_compaction_step_row(entity_type: u8, body: &[u8]) -> Result<boo
     }
 }
 
-/// Every artifact holding the bytes the stored row `raw` at `id` carries, when
-/// it is a content-addressed version ASSET and a filed compaction step's
-/// response artifact is among those holders: the response's bytes carry the
-/// compactor's words as that artifact does, so a reader takes the ASSET only
-/// beside one of them (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). Empty for
-/// every other row, and for an ASSET no response artifact holds.
+/// The filed compaction steps' response artifacts holding the bytes the
+/// stored row `raw` at `id` carries, when it is a content-addressed version
+/// ASSET: the response's bytes carry the compactor's words as each such
+/// artifact does, so a reader takes the ASSET only beside every one of them
+/// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). Any other holder is left
+/// out: a `blob.version` claim names a holder by hash alone, so another
+/// holder never widens who reads these bytes, and one more response holder
+/// only narrows it. Empty for every other row, and for an ASSET no response
+/// artifact holds.
 pub(crate) fn compaction_response_holders_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -229,18 +232,18 @@ pub(crate) fn compaction_response_holders_in(
     let Some(hash) = crate::blob_artifact::carrier_content_hash(store, txn, id, raw)? else {
         return Ok(Vec::new());
     };
-    let holders = crate::blob_artifact::content_holders_in_txn(store, txn, &hash)?;
-    for holder in &holders {
-        let Some(record) = store.port_entity_record(txn, holder)? else {
+    let mut responses = Vec::new();
+    for holder in crate::blob_artifact::content_holders_in_txn(store, txn, &hash)? {
+        let Some(record) = store.port_entity_record(txn, &holder)? else {
             continue;
         };
         if record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
             && is_compaction_step_row(record.entity_type, &record.body)?
         {
-            return Ok(holders);
+            responses.push(holder);
         }
     }
-    Ok(Vec::new())
+    Ok(responses)
 }
 
 impl Vault {
