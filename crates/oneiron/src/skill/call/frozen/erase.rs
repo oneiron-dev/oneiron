@@ -139,7 +139,7 @@ fn live_attempt_names_source(
     receipt: &str,
     id: &EntityId,
 ) -> Result<bool> {
-    let Some(attempt) = receipt_attempt(receipt) else {
+    let Some(attempt) = crate::receipt::parse_attempt_pack_receipt_id(receipt) else {
         return Ok(false);
     };
     let queue = crate::attempt_queue::AttemptQueue::from_store(store);
@@ -151,15 +151,6 @@ fn live_attempt_names_source(
         .as_ref()
         .and_then(|set| set.rows.as_deref())
         .is_some_and(|rows| rows.contains(id)))
-}
-
-/// The attempt a pack receipt id names (`attempt:` + its hex), when it is one.
-pub(super) fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::AttemptId> {
-    let (_, hex) = receipt.rsplit_once(':')?;
-    let attempt =
-        crate::attempt_queue::AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes())
-            .ok()?;
-    (crate::receipt::attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)
 }
 
 /// Every frozen case. A row that no longer decodes names nothing either

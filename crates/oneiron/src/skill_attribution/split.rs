@@ -98,7 +98,7 @@ pub(crate) fn outcome_world_in_txn(
     txn: &heed::RoTxn<'_>,
     receipt: &str,
 ) -> Result<Option<EntityId>> {
-    let Some(attempt) = super::trace::receipt_attempt(receipt) else {
+    let Some(attempt) = crate::receipt::parse_attempt_pack_receipt_id(receipt) else {
         return Ok(None);
     };
     let Some(record) = crate::attempt_queue::AttemptQueue::new(vault).get_in_txn(txn, attempt)?

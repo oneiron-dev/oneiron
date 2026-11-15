@@ -76,6 +76,21 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
     )
 }
 
+/// The attempt a terminal PACK RECEIPT id names: the inverse of
+/// [`attempt_pack_receipt_id`].
+///
+/// It names an attempt only for the exact id that fn writes: the `attempt:`
+/// prefix, then the 32 lowercase hex digits of an id that is not a reserved
+/// entity id. Another prefix, an extra `:`, upper case or any other length
+/// names none.
+#[must_use]
+pub fn parse_attempt_pack_receipt_id(receipt_id: &str) -> Option<AttemptId> {
+    let (_, hex) = receipt_id.rsplit_once(':')?;
+    let entity = EntityId::from_hex(hex).ok()?;
+    let attempt = AttemptId::from_bytes(entity.as_bytes()).ok()?;
+    (attempt_pack_receipt_id(&attempt) == receipt_id).then_some(attempt)
+}
+
 /// Stamps the terminal pack or resident receipt in the transition's OWN
 /// write transaction. Complete, fail, retry-source finalization, queued/paused
 /// cancel, landing cancellation, force-cancel and abandon all call this seam.
@@ -539,13 +554,7 @@ pub(crate) fn attempt_pack_receipt_in_txn(
     txn: &heed::RoTxn<'_>,
     receipt_id: &str,
 ) -> Result<Option<ReceiptRecord>> {
-    let Some(suffix) = receipt_id.strip_prefix(ATTEMPT_PACK_RECEIPT_ID_PREFIX) else {
-        return Ok(None);
-    };
-    let Ok(id) = EntityId::from_hex(suffix) else {
-        return Ok(None);
-    };
-    if id.to_hex() != suffix {
+    if parse_attempt_pack_receipt_id(receipt_id).is_none() {
         return Ok(None);
     }
     let Some(receipt) = PACK_RECEIPT.get(store, txn, &receipt_id.to_owned())? else {

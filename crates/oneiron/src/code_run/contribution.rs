@@ -75,10 +75,9 @@ use super::shadow_runner::ShadowUnavailable;
 use super::storage::{
     ForkProvenance, ForkRows, fork_rows, put_fork, put_unavailable, step_replay_capsules_in_txn,
 };
-use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::maintenance::ContributionForks;
 use crate::learning::Anchor;
-use crate::receipt::attempt_pack_receipt_id;
+use crate::receipt::parse_attempt_pack_receipt_id;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill_attribution::{ContributionCandidate, ContributionFork, Experiment};
 use crate::{ContentPart, EntityId, Error, LlmRequest, LlmResponse, ModelId, Result, Vault};
@@ -615,12 +614,11 @@ fn attempt_capsules_in_txn(
     }
 }
 
-/// The attempt a terminal pack receipt names, when it is one.
+/// The attempt a terminal pack receipt names, when it is one, as the entity
+/// id its replay capsules are keyed by.
 fn receipt_attempt(receipt: &str) -> Option<EntityId> {
-    let (_, hex) = receipt.rsplit_once(':')?;
-    let entity = EntityId::from_hex(hex).ok()?;
-    let attempt = AttemptId::from_bytes(entity.as_bytes()).ok()?;
-    (attempt_pack_receipt_id(&attempt) == receipt).then_some(entity)
+    let attempt = parse_attempt_pack_receipt_id(receipt)?;
+    EntityId::from_bytes(*attempt.as_bytes()).ok()
 }
 
 /// `request` with exactly `slots` cut out of their text parts, and nothing
