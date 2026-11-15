@@ -14,6 +14,7 @@ use crate::code_run::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::session_overlay::RouteTarget;
 use crate::{Error, ModelLocality, Vault};
+use oneiron_contracts::fingerprint::{ContentHash, LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 mod caller_task;
@@ -116,13 +117,15 @@ impl StoredDurableWait {
     }
 }
 
-const CHECKPOINT_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:v1";
+/// The checkpoint hash's first field: its purpose's tag (K, PLAN-UC-04 3.4b).
+const CHECKPOINT_DOMAIN: &[u8] = purposes::engine_executor::STEP_CHECKPOINT.tag().as_bytes();
 
 /// Marks a step that ran as the JavaScript Oxc printed for its TypeScript
 /// program (FIX 8276); a JavaScript step hashes no such part.
 const PREPARED_SOURCE_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:prepared-source:v1";
 
-const CONFIG_HASH_DOMAIN: &[u8] = b"oneiron:engine-executor-config:v1";
+/// The config hash's first field: its purpose's tag (K, PLAN-UC-04 3.4b).
+const CONFIG_HASH_DOMAIN: &[u8] = purposes::engine_executor::CONFIG.tag().as_bytes();
 
 /// Storage-binding tags folded into the config marker (ONE-1729).
 const CONFIG_BINDING_CANONICAL_TAG: &[u8] = b"storage:canonical";
@@ -355,16 +358,34 @@ fn executor_config_hash(
     config: &EngineExecutorConfig,
     continuation: Option<&[u8; 32]>,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
+    executor_config_hash_for_binding(
+        storage.session_ref(),
+        storage.session_route_target(),
+        config,
+        continuation,
+    )
+}
+
+/// [`executor_config_hash`] over what it reads of the storage: the session
+/// ref of a session binding and the route target. The config marker stores
+/// its hex, so it keeps its bytes (K, PLAN-UC-04 3.4b): each field a u64
+/// big-endian length and its bytes.
+fn executor_config_hash_for_binding(
+    session_ref: Option<&str>,
+    route_target: Option<RouteTarget>,
+    config: &EngineExecutorConfig,
+    continuation: Option<&[u8; 32]>,
+) -> [u8; 32] {
+    let mut hasher = LegacyDigest::new(purposes::engine_executor::CONFIG);
     hash_bytes(&mut hasher, CONFIG_HASH_DOMAIN);
-    match storage.session_ref() {
+    match session_ref {
         None => hash_bytes(&mut hasher, CONFIG_BINDING_CANONICAL_TAG),
         Some(session_ref) => {
             hash_bytes(&mut hasher, CONFIG_BINDING_SESSION_TAG);
             hash_str(&mut hasher, session_ref);
         }
     }
-    if let Some(target) = storage.session_route_target() {
+    if let Some(target) = route_target {
         hash_bytes(
             &mut hasher,
             match target {
@@ -388,7 +409,18 @@ fn executor_config_hash(
         hash_bytes(&mut hasher, CONFIG_CONTINUATION_TAG);
         hash_bytes(&mut hasher, digest);
     }
-    *hasher.finalize().as_bytes()
+    hasher.finish()
+}
+
+/// Seam for `test_doors::fingerprint_keep_executor_cohort_credit` (PLAN-UC-04 3.4b).
+#[cfg(oneiron_test_support)]
+pub(crate) fn executor_config_hash_for_test(
+    session_ref: Option<&str>,
+    route_target: Option<RouteTarget>,
+    config: &EngineExecutorConfig,
+    continuation: Option<&[u8; 32]>,
+) -> [u8; 32] {
+    executor_config_hash_for_binding(session_ref, route_target, config, continuation)
 }
 
 fn model_locality_str(locality: ModelLocality) -> &'static str {
@@ -718,12 +750,12 @@ pub(super) fn prepared_step_state_hash(
     bridge_calls: &[CodeRunBridgeCall],
     end: StepEnd,
 ) -> EngineExecutorResult<[u8; 32]> {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = LegacyDigest::new(purposes::engine_executor::STEP_CHECKPOINT);
     hash_bytes(&mut hasher, CHECKPOINT_DOMAIN);
     hash_bytes(&mut hasher, &previous);
     hash_u64(&mut hasher, seq);
     hash_bytes(&mut hasher, request_hash);
-    hash_bytes(&mut hasher, blake3::hash(script.as_bytes()).as_bytes());
+    hash_bytes(&mut hasher, ContentHash::of(script.as_bytes()).as_bytes());
     if let Some(identity) = prepared {
         hash_bytes(&mut hasher, PREPARED_SOURCE_DOMAIN);
         hash_bytes(&mut hasher, identity);
@@ -732,7 +764,7 @@ pub(super) fn prepared_step_state_hash(
     hash_bytes(&mut hasher, &[u8::from(result.done)]);
     hash_bytes(&mut hasher, &[u8::from(implicit_speak.is_some())]);
     if let Some(text) = implicit_speak {
-        hash_bytes(&mut hasher, blake3::hash(text.as_bytes()).as_bytes());
+        hash_bytes(&mut hasher, ContentHash::of(text.as_bytes()).as_bytes());
     }
     hash_u64(&mut hasher, result.outputs.len() as u64);
     for (path, digest) in &result.outputs {
@@ -763,18 +795,46 @@ pub(super) fn prepared_step_state_hash(
     }
     hash_u64(&mut hasher, end.bridge_end);
     hash_bytes(&mut hasher, &end.context);
-    Ok(*hasher.finalize().as_bytes())
+    Ok(hasher.finish())
 }
 
-fn hash_u64(hasher: &mut blake3::Hasher, value: u64) {
-    hasher.update(&value.to_be_bytes());
+/// Seam for `test_doors::fingerprint_keep_executor_cohort_credit` (PLAN-UC-04 3.4b): the
+/// checkpoint hash of the step `step` describes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn step_state_hash_for_test(
+    step: &crate::test_doors::fingerprint_keep_executor_cohort_credit::StepState,
+) -> EngineExecutorResult<[u8; 32]> {
+    prepared_step_state_hash(
+        step.previous,
+        step.seq,
+        &step.request_hash,
+        &step.script,
+        step.prepared.as_ref(),
+        &StepResultDigests {
+            observation: step.observation,
+            done: step.done,
+            outputs: step.outputs.clone(),
+            bindings: step.bindings.clone(),
+        },
+        step.implicit_speak.as_deref(),
+        &step.bridge_calls,
+        StepEnd {
+            bridge_end: step.bridge_end,
+            context: step.context,
+        },
+    )
 }
 
-fn hash_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    hash_u64(hasher, bytes.len() as u64);
-    hasher.update(bytes);
+/// A number: its 8 bytes, big-endian, with no length.
+fn hash_u64(hasher: &mut LegacyDigest, value: u64) {
+    hasher.raw(&value.to_be_bytes());
 }
 
-fn hash_str(hasher: &mut blake3::Hasher, value: &str) {
+/// A field: a u64 big-endian length and its bytes.
+fn hash_bytes(hasher: &mut LegacyDigest, bytes: &[u8]) {
+    hasher.len_u64_be(bytes.len()).raw(bytes);
+}
+
+fn hash_str(hasher: &mut LegacyDigest, value: &str) {
     hash_bytes(hasher, value.as_bytes());
 }

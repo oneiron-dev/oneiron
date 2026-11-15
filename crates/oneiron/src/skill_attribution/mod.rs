@@ -84,6 +84,8 @@ mod outcome_source;
 mod pack_learning;
 pub(crate) use late_credit::erase_late_credit_in_txn;
 pub(crate) use late_credit::late_credit_receipt_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use late_credit::receipt_id_for_test;
 pub use late_credit::{
     LateCreditReceipt, LateCreditShare, late_credit_receipt, late_credit_receipt_for_outcome,
 };
