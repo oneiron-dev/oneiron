@@ -295,7 +295,8 @@ frame. Charts and tables stay inconclusive: PowerPoint for Mac's AppleScript
 dictionary exposes no chart text layout and gives no table rows. A text unit's
 width is its widest line's glyph extent, without the trailing blank that
 PowerPoint hangs past the margin. The receipts are committed, and a test keeps them bound to what
-the emitter writes today. It does not change what `emit` returns.
+the emitter writes today. `emit` certifies fit from them (see "Certified fit"
+below).
 
 The run has the same two halves as the gate above. Throughout, `$sha` is the
 full origin/main commit under test and `$run` names the run.
@@ -345,3 +346,38 @@ cargo test --locked -p oneiron-docedit --all-features --test deck_create_oracle_
 
 Any change to the emitter's output for these cases fails that test until the
 pass is rerun. This does not open the export gate.
+
+### Certified fit
+
+The committed receipts are compiled into `oneiron-docedit`
+(`emit::FitEvidence::stored()`, one `include_bytes!` per case in
+`crates/oneiron-docedit/src/emit/evidence.rs`); canon `slides:oracle`: CI
+uses stored outputs, so no always-on machine is required. `emit` takes a unit
+out of `FitUnverified` only when the evidence holds a `clean` receipt whose
+`input.sha256` is the SHA-256 of these exact candidate bytes and whose fit row
+for that unit says `fits`. A unit PowerPoint measured as `overflows` stays
+unverified and is also listed in `FitUnverified.overflows`; an `inconclusive`
+row (charts, tables) certifies nothing. Any other deck, even one word away
+from a case, matches no receipt and keeps every unit unverified. The creation
+record (`DeckCreationRecord`) and the contract reply (`DeckCreated`) carry
+`fit_overflows` and `fit_receipt`, the SHA-256 of the receipt that measured
+the deck.
+
+The runner above builds docedit alone, and the engine links it into a larger
+graph. The two must write the same bytes, so the package writer compresses
+every part through one DEFLATE (`miniz_oxide`, in
+`retained_opc/package/zip32.rs`), never through flate2's backend, which
+follows the build's feature set (calamine's zip turns on `zlib-rs` in the
+engine's graph). `deck_fit_certified` checks it from the engine's side:
+
+```sh
+cargo test --locked -p oneiron --all-features --test deck_fit_certified
+```
+
+A new pass over a changed case set adds its receipts here: one
+`include_bytes!` line per case, kept in step with
+`scripts/office/deck-create-v1.json`. Then run:
+
+```sh
+cargo test --locked -p oneiron-docedit --all-features --test deck_fit_evidence
+```
