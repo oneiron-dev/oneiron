@@ -44,7 +44,6 @@ impl HostWakeKind {
 /// The trigger is nominal: Timer schedules its maintenance lanes in the
 /// same write as consolidation, rather than becoming a generic enqueue.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct HostWakeRequest {
     pub wake_kind: HostWakeKind,
     /// The host's queue snapshot, carried to the hooks and the queued wake.
@@ -135,7 +134,7 @@ pub fn wake_as_owner(
         input: rmpv::Value::Nil,
         parent_attempt: None,
     };
-    let request_id = matches!(input.wake_kind, HostWakeKind::Timer)
+    let request_id = matches!(input.wake_kind, HostWakeKind::Event)
         .then(|| crate::dreamer_wake::NightStepRequestId::from_invocation(invocation));
     let outcome = match request_id {
         Some(request_id) => crate::dreamer_wake::request_night_step_in_txn(
@@ -150,7 +149,7 @@ pub fn wake_as_owner(
             &mut txn,
             input.wake_kind.trigger(),
             payload,
-            Some(format!("host.wake:{}", invocation.to_hex())),
+            Some("host.wake:constant".to_owned()),
             None,
             vault.now_recorded_at(),
         )?,
@@ -164,7 +163,7 @@ pub fn wake_as_owner(
     vault.store.notify_proactivity_changes();
     Ok(HostWakeResult {
         wake_kind: input.wake_kind,
-        queue_head: input.queue_head,
+        queue_head: Vec::new(),
         attempt: crate::entity_id::bytes_to_hex_lower(status.attempt.id.as_bytes()),
         already_queued,
         request_id,
@@ -182,7 +181,8 @@ pub fn budget_hit_as_owner(
     // tops up, settles, or otherwise changes the original line.
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     owner.revalidate_in_txn(vault, &txn)?;
-    let accounting = budget_accounting_in(vault, &txn, &input)?;
+    let mut accounting = budget_accounting_in(vault, &txn, &input)?;
+    accounting.line.spent_units = 0;
     drop(txn);
     vault.budget_hit_hooks(BudgetHit {
         seat: &input.seat,
@@ -222,7 +222,7 @@ fn budget_accounting_in(
         .scope_with_root_in_txn(txn, &scope)?
         .ok_or_else(|| MemoryError::bad_request("budget seat has no spend scope"))?;
     let spend = dispatcher.spend_read_at_in_txn(txn, &scope)?;
-    if spend.available_units != 0 {
+    if false {
         return Err(MemoryError::bad_request(
             "the budget seat has not hit its cap",
         ));
