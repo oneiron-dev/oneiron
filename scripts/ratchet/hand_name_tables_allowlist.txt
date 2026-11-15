@@ -1,0 +1,56 @@
+# Files and directories that hand_name_tables.py does not count (Fable pass 25, section d).
+# One entry per line: `<path>  # <reason>`. A path ending in / covers a directory.
+# An entry joins only in a reviewed PR, with its reason on the same line.
+#
+# A crate below oneiron-contracts, or beside it without a dependency on it, cannot name the
+# trait: `#[derive(Register)]` writes `::oneiron_contracts::register::Register`. When such a
+# crate takes the dependency, its line goes and its tables join the count.
+
+# The derive crate itself: a proc-macro crate below oneiron-contracts.
+crates/oneiron-derive/  # writes the Register derive; a proc-macro crate cannot depend on the trait's crate
+crates/oneiron-android/  # no dependency on oneiron-contracts
+crates/oneiron-bench/  # no dependency on oneiron-contracts
+crates/oneiron-broker/  # no dependency on oneiron-contracts
+crates/oneiron-browser/  # no dependency on oneiron-contracts
+crates/oneiron-code-check/  # no dependency on oneiron-contracts
+crates/oneiron-code-source/  # no dependency on oneiron-contracts
+crates/oneiron-container/  # no dependency on oneiron-contracts
+crates/oneiron-crypto/  # no dependency on oneiron-contracts
+crates/oneiron-dreamer/  # no dependency on oneiron-contracts
+crates/oneiron-driver/  # no dependency on oneiron-contracts
+crates/oneiron-ffi/  # no dependency on oneiron-contracts
+crates/oneiron-fingerprint/  # no dependency on oneiron-contracts
+crates/oneiron-guest/  # no dependency on oneiron-contracts
+crates/oneiron-hex/  # no dependency on oneiron-contracts
+crates/oneiron-image/  # no dependency on oneiron-contracts
+crates/oneiron-image-comfyui/  # no dependency on oneiron-contracts
+crates/oneiron-image-openrouter/  # no dependency on oneiron-contracts
+crates/oneiron-keystore/  # no dependency on oneiron-contracts
+crates/oneiron-lens-wire/  # no dependency on oneiron-contracts
+crates/oneiron-linear/  # no dependency on oneiron-contracts
+crates/oneiron-llm-anthropic/  # no dependency on oneiron-contracts
+crates/oneiron-llm-gemini/  # no dependency on oneiron-contracts
+crates/oneiron-llm-local/  # no dependency on oneiron-contracts
+crates/oneiron-llm-openai/  # no dependency on oneiron-contracts
+crates/oneiron-llm-own-server/  # no dependency on oneiron-contracts
+crates/oneiron-llm-systemone/  # no dependency on oneiron-contracts
+crates/oneiron-mail-pack/  # no dependency on oneiron-contracts
+crates/oneiron-mesh-transport/  # no dependency on oneiron-contracts
+crates/oneiron-napi/  # no dependency on oneiron-contracts
+crates/oneiron-organ-host/  # no dependency on oneiron-contracts
+crates/oneiron-organ-protocol/  # no dependency on oneiron-contracts
+crates/oneiron-py/  # no dependency on oneiron-contracts
+crates/oneiron-remote/  # no dependency on oneiron-contracts
+crates/oneiron-ruler/  # no dependency on oneiron-contracts
+crates/oneiron-run-budget/  # no dependency on oneiron-contracts
+crates/oneiron-sandbox-contract/  # no dependency on oneiron-contracts
+crates/oneiron-sdk-build/  # no dependency on oneiron-contracts
+crates/oneiron-sdk-generator/  # no dependency on oneiron-contracts
+crates/oneiron-seal/  # no dependency on oneiron-contracts
+crates/oneiron-spawn/  # no dependency on oneiron-contracts
+crates/oneiron-testkit/  # no dependency on oneiron-contracts
+crates/oneiron-uniffi/  # no dependency on oneiron-contracts
+crates/oneiron-vault-contract/  # no dependency on oneiron-contracts
+crates/oneiron-vm-outbox/  # no dependency on oneiron-contracts
+crates/oneiron-web-fetch/  # no dependency on oneiron-contracts
+crates/oneiron-xlsx-formula/  # no dependency on oneiron-contracts

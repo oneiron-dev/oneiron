@@ -137,10 +137,11 @@ unchanged.
 
 ## Ratchets
 
-`scripts/ratchet/check.sh` counts seven metrics over non-test code against
+`scripts/ratchet/check.sh` counts eight metrics over non-test code against
 `scripts/ratchet/baseline.json`: files at or over 800 lines, `#[allow(` attributes, print macros,
-process-global mutable statics, the keyspace census, raw core writes and hand-started hashes
-(`raw_hasher_starts`). It skips `tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`.
+process-global mutable statics, the keyspace census, raw core writes, hand-started hashes
+(`raw_hasher_starts`) and lists of names spelled by hand (`hand_name_tables`; a new list of names
+is declared once as a Register, `#[derive(Register)]` in `oneiron_contracts::register`). It skips `tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`.
 `scripts/ratchet/root-surface-check.sh` pins the `oneiron` crate root to the names in
 `scripts/ratchet/root-surface.txt`. Both run in `ratchet.yml` after a push to `main`; neither
 blocks a merge, with one exception (lead, 2026-11-15): the pipeline pre-flight runs
