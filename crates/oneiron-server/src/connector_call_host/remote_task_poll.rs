@@ -51,13 +51,15 @@
 //! connector ending that session: the poll opens a new one under the same
 //! endpoint, revision and credential, declaring what the send's session
 //! declared, the ledger keeps its id, and the poll asks again in it (FIX
-//! 16028). The session ends
-//! only after the ledger holds the settlement. A session whose handle went
-//! before it ended (an erase took the request) is owed its end: each pass
-//! ends those, under the connector's own endpoint and the credential the
-//! polls presented. Only the status word and a parked question's seal are
-//! kept: the reply's other text never leaves this pass, so nothing it echoes
-//! of the credential is stored.
+//! 16028). The row and the keyed call's issuer binding are read again before
+//! the renewal, and the binding again before each request after it: a row
+//! erased or settled meanwhile, or a hold (FIX 12166), sends nothing more.
+//! The session ends only after the ledger holds the settlement. A session
+//! whose handle went before it ended (an erase took the request) is owed its
+//! end: each pass ends those, under the connector's own endpoint and the
+//! credential the polls presented. Only the status word and a parked
+//! question's seal are kept: the reply's other text never leaves this pass,
+//! so nothing it echoes of the credential is stored.
 
 use oneiron::outbound_consent::{OutboundBindingAuthority, OutboundBindingValidation};
 use oneiron::outbound_intent_ledger::{
@@ -79,6 +81,9 @@ const POLLS_PER_PASS: usize = 32;
 /// JSON-RPC "Invalid params": MCP's answer for a task id it does not know,
 /// or one whose time to live ran out.
 const INVALID_PARAMS: i64 = -32602;
+/// Why a pass sent nothing more: an issuer hold stands over the task's keyed
+/// call, or its binding does not read (FIX 12166).
+const ISSUER_HELD: &str = "issuer_held";
 
 /// What one poll read of a task.
 enum Polled {
@@ -285,8 +290,8 @@ impl ServedConnectorCallHost {
 
     /// Polls `task` once: its credential presented again through its own
     /// door, then, when the owner asked the task to stop, one `tasks/cancel`
-    /// (L8-29), then, while no issuer hold stands, one `tasks/get` in its
-    /// session.
+    /// (L8-29), then, while no issuer hold stands and the row is still the
+    /// task's Deferred send, one `tasks/get` in its session.
     fn poll_remote_task(&mut self, task: &DueRemoteTask) -> Result<Polled, &'static str> {
         let view = FrozenToolCallView::read(&task.call).map_err(|_| "frozen_call_unread")?;
         let connector = self
@@ -342,11 +347,7 @@ impl ServedConnectorCallHost {
             auth: presented.auth,
         };
         // An erase or a settlement since the pass read the row sends nothing.
-        let still_due = self
-            .vault
-            .remote_task_still_due(&task.intent, &task.task_id)
-            .map_err(|_| "row_unread")?;
-        if !still_due {
+        if !self.still_due(task)? {
             return Ok(Polled::Gone);
         }
         let live = if task.cancel_requested {
@@ -366,7 +367,14 @@ impl ServedConnectorCallHost {
         // kept header once more (FIX 12166), and while a hold stands nothing
         // more is sent.
         if issuer_held(&self.vault, task) {
-            return Err("issuer_held");
+            return Err(ISSUER_HELD);
+        }
+        // The stop's round trip and its outcome writer give an erase or a
+        // settlement time to commit: the row is read again just before the
+        // poll sends the task's id once more, and a row no longer this
+        // task's Deferred send sends nothing.
+        if task.cancel_requested && !self.still_due(task)? {
+            return Ok(Polled::Gone);
         }
         let request = json!({
             "jsonrpc": "2.0",
@@ -425,12 +433,13 @@ impl ServedConnectorCallHost {
     /// writer (FIX 12166), then one `tasks/cancel` goes out, in a renewed
     /// session when the connector ended this one, and how it went is
     /// recorded: Sent when the connector took it (a 2xx), Uncertain when that
-    /// is unknown or an issuer hold stood after the claim. A refused or
-    /// unsent stop stays Sending. None is ever sent again. Its answer is not
-    /// read: a stop undoes nothing already done, and only the end a poll
-    /// reads settles the send. The session the poll goes on in; `None` when
-    /// the row is no longer this task's Deferred send; `Err` when an issuer
-    /// hold stood after the claim, so the pass sends nothing more.
+    /// is unknown or an issuer hold stood after the claim, during a renewal
+    /// too. A refused or unsent stop stays Sending. None is ever sent again.
+    /// Its answer is not read: a stop undoes nothing already done, and only
+    /// the end a poll reads settles the send. The session the poll goes on
+    /// in; `None` when the row is no longer this task's Deferred send; `Err`
+    /// when an issuer hold stood after the claim, so the pass sends nothing
+    /// more.
     fn cancel_remote_task(
         &self,
         live: LiveSession,
@@ -444,27 +453,11 @@ impl ServedConnectorCallHost {
             // Claimed before, and the task still runs: the poll goes on. A
             // row no longer this task's Deferred send (settled or erased
             // since the pass read it) sends nothing more.
-            Ok(false) => {
-                let still_due = self
-                    .vault
-                    .remote_task_still_due(&task.intent, &task.task_id)
-                    .map_err(|_| "row_unread")?;
-                return Ok(still_due.then_some(live));
-            }
+            Ok(false) => return Ok(self.still_due(task)?.then_some(live)),
             Err(_) => return Err("cancel_unclaimed"),
         }
         if issuer_held(&self.vault, task) {
-            tracing::info!(
-                reason = "remote_task_cancel_issuer_held",
-                "an issuer hold stands over a remote task's claimed stop; it is not sent, and \
-                 never sent again"
-            );
-            if let Err(error) = self.vault.record_remote_task_cancel_uncertain(&task.intent) {
-                tracing::warn!(%error, "a remote task stop's outcome not recorded");
-            }
-            // The hold stands: this pass presents the credential no more,
-            // so no tasks/get goes out either (FIX 12166).
-            return Err("issuer_held");
+            return Err(self.cancel_held(task));
         }
         let request = json!({
             "jsonrpc": "2.0",
@@ -473,10 +466,13 @@ impl ServedConnectorCallHost {
             "params": { "taskId": task.task_id },
         });
         // A session the connector ended and that could not be renewed: the
-        // stop was not taken, and it stays Sending.
-        let (live, sent) = match self.post_in_task_session(live, task, &request)? {
-            InSession::Answered(live, sent) => (live, sent),
-            InSession::Gone => return Ok(None),
+        // stop was not taken, and it stays Sending. A hold that stood while
+        // it was renewed: the stop was not sent after its claim.
+        let (live, sent) = match self.post_in_task_session(live, task, &request) {
+            Ok(InSession::Answered(live, sent)) => (live, sent),
+            Ok(InSession::Gone) => return Ok(None),
+            Err(ISSUER_HELD) => return Err(self.cancel_held(task)),
+            Err(reason) => return Err(reason),
         };
         let recorded = match Posted::of_send(&sent) {
             Posted::Accepted => self.vault.record_remote_task_cancel_sent(&task.intent),
@@ -503,7 +499,11 @@ impl ServedConnectorCallHost {
     /// requests go on in a new session under the row's own endpoint and
     /// credential (FIX 16028): the ledger keeps the new session's id, and
     /// `request` is sent again in it. The connector took nothing it answered
-    /// 404, so that POST is the request's first that counts.
+    /// 404, so that POST is the request's first that counts. The renewal
+    /// presents the kept header again, so the row and the keyed call's
+    /// issuer binding are read again first (FIX 12166), and the binding again
+    /// before each request after it; while a hold stands nothing more is
+    /// sent (`Err(ISSUER_HELD)`).
     fn post_in_task_session(
         &self,
         live: LiveSession,
@@ -517,7 +517,15 @@ impl ServedConnectorCallHost {
             return Ok(InSession::Answered(live, sent));
         }
         drop(sent);
-        let renewed = renew_session(&live, &task.poll)?;
+        // An erase, a settlement or an issuer hold may have committed while
+        // the request was out.
+        if !self.still_due(task)? {
+            return Ok(InSession::Gone);
+        }
+        if issuer_held(&self.vault, task) {
+            return Err(ISSUER_HELD);
+        }
+        let renewed = renew_session(&live, &self.vault, task)?;
         // The new session is this request's until the ledger keeps it: every
         // way short of that ends it, so no retry leaves one open on the
         // connector.
@@ -527,7 +535,7 @@ impl ServedConnectorCallHost {
             .map(|value| value.to_str().map(str::to_owned))
             .transpose()
         else {
-            renewed.end();
+            end_renewed(renewed, &self.vault, task);
             return Err("session_unreadable");
         };
         match self
@@ -537,17 +545,58 @@ impl ServedConnectorCallHost {
             Ok(true) => {}
             // Erased or settled since the pass read it.
             Ok(false) => {
-                renewed.end();
+                end_renewed(renewed, &self.vault, task);
                 return Ok(InSession::Gone);
             }
             Err(_) => {
-                renewed.end();
+                end_renewed(renewed, &self.vault, task);
                 return Err("session_unrecorded");
             }
+        }
+        // A hold that committed during the renewal or its writer: the
+        // request is not sent again, and the renewed session, which the
+        // ledger now keeps, is left without a word to the connector.
+        if issuer_held(&self.vault, task) {
+            return Err(ISSUER_HELD);
         }
         let sent = renewed.post(request, Some(CALL_TIMEOUT)).send();
         Ok(InSession::Answered(renewed, sent))
     }
+
+    /// Whether row `task` is still a Deferred send of its task, read again
+    /// from the ledger: an erase or a settlement since the pass read it
+    /// sends nothing more.
+    fn still_due(&self, task: &DueRemoteTask) -> Result<bool, &'static str> {
+        self.vault
+            .remote_task_still_due(&task.intent, &task.task_id)
+            .map_err(|_| "row_unread")
+    }
+
+    /// Records the claimed stop of `task` Uncertain, as one not sent after
+    /// its claim because an issuer hold stood (FIX 12166): never sent again.
+    /// The pass presents the credential no more, so no `tasks/get` goes out
+    /// either. Answers the reason the poll records.
+    fn cancel_held(&self, task: &DueRemoteTask) -> &'static str {
+        tracing::info!(
+            reason = "remote_task_cancel_issuer_held",
+            "an issuer hold stands over a remote task's claimed stop; it is not sent, and never \
+             sent again"
+        );
+        if let Err(error) = self.vault.record_remote_task_cancel_uncertain(&task.intent) {
+            tracing::warn!(%error, "a remote task stop's outcome not recorded");
+        }
+        ISSUER_HELD
+    }
+}
+
+/// Ends `session`, renewed for `task` and not kept (FIX 16028). While an
+/// issuer hold stands over the task's keyed call, read again here (FIX
+/// 12166), it ends without a word to the connector.
+fn end_renewed(mut session: LiveSession, vault: &Vault, task: &DueRemoteTask) {
+    if issuer_held(vault, task) {
+        session.forget_credential();
+    }
+    session.end();
 }
 
 /// What the requests of one `input_required` task are served with.
@@ -628,7 +677,7 @@ fn answer_task_input(
     if let Some((key_ref, tool)) = input.issuer {
         match input.vault.connector_issuer_hold(key_ref, tool) {
             Ok(None) => {}
-            Ok(Some(_)) => return Err("issuer_held"),
+            Ok(Some(_)) => return Err(ISSUER_HELD),
             Err(_) => return Err("issuer_binding_unread"),
         }
     }
@@ -898,9 +947,16 @@ fn settled_by(message: Value, bytes: RawOutboundBody) -> RemoteTaskEnd {
 /// capabilities the send's session declared (FIX 16029: form elicitation
 /// when it did, else none), so the new session asks nothing the first could
 /// not, its revision checked as the send checked it, then
-/// `notifications/initialized` in the new session. A renewal that fails once
-/// the server opened a session ends that session.
-fn renew_session(live: &LiveSession, poll: &RemoteTaskPoll) -> Result<LiveSession, &'static str> {
+/// `notifications/initialized` in the new session, unless an issuer hold over
+/// `task`'s keyed call committed during `initialize` (FIX 12166): then the
+/// new session is left without a word to the connector (`Err(ISSUER_HELD)`).
+/// A renewal that fails once the server opened a session ends that session.
+fn renew_session(
+    live: &LiveSession,
+    vault: &Vault,
+    task: &DueRemoteTask,
+) -> Result<LiveSession, &'static str> {
+    let poll = &task.poll;
     let revision = poll.protocol.as_str();
     let initialize = json!({
         "jsonrpc": "2.0",
@@ -944,14 +1000,17 @@ fn renew_session(live: &LiveSession, poll: &RemoteTaskPoll) -> Result<LiveSessio
         _ => Some("session_renewal_unreadable"),
     };
     if let Some(refusal) = refusal {
-        renewed.end();
+        end_renewed(renewed, vault, task);
         return Err(refusal);
+    }
+    if issuer_held(vault, task) {
+        return Err(ISSUER_HELD);
     }
     let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
     match renewed.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
         Ok(response) if response.status().is_success() => Ok(renewed),
         _ => {
-            renewed.end();
+            end_renewed(renewed, vault, task);
             Err("session_renewal_unconfirmed")
         }
     }
