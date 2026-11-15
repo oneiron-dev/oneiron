@@ -17,7 +17,9 @@
 //!   a counted enrollment answers its receipt.
 //! - `POST .../enroll-this-install` enrols this server's own install's key,
 //!   made in its keystore on first use, by the same act, and the server then
-//!   holds it as a checkpoint root signer (FIX 4921).
+//!   holds it as a checkpoint root signer (FIX 4921). A managed host's
+//!   server refuses it (409): an enrolled owner key proves the owner acts
+//!   its install carries, and a managed host holds no owner key.
 //!
 //! The wire form is CALLS "FIX 4920 enrollment HTTP representation": a
 //! machine as 32 hex, a key as 64 hex, a proof and a challenge as hex. The
@@ -87,7 +89,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/owner-signing-keys/enroll-this-install",
-                summary: "The owner enrols this install's own Ed25519 owner signing key, made in its keystore on first use (FIX 4921): the same act as `/enroll`, and the server then holds the key as a checkpoint root signer. A key already enrolled and live answers its receipt; one the roster revoked is replaced by a fresh key, which is enrolled.",
+                summary: "The owner enrols this install's own Ed25519 owner signing key, made in its keystore on first use (FIX 4921): the same act as `/enroll`, and the server then holds the key as a checkpoint root signer. A key already enrolled and live answers its receipt; one the roster revoked is replaced by a fresh key, which is enrolled. On a managed host the route refuses: a managed host holds no owner key, and the owner enrols one on his own device.",
                 row: None,
                 shape: Some(RestShape::no_body(enroll_receipt_schema)),
             },
@@ -341,7 +343,10 @@ async fn enroll(
 /// this install's own owner signing key, made in its keystore on first use,
 /// carried by this install, with this host's root as its predecessor; the
 /// server then holds it as a checkpoint root signer (FIX 4921). A key
-/// already enrolled and live answers its receipt.
+/// already enrolled and live answers its receipt. On a `Hosted` vault the
+/// route refuses (409, state `refused`): the key would prove the owner acts
+/// this server carries, and a managed host holds no owner key. The owner
+/// enrols a key on his own device (`POST .../enroll`).
 async fn enroll_this_install(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -355,7 +360,7 @@ async fn enroll_this_install(
         let issuer = server.host_issuer().ok_or_else(no_root_signer)?;
         let receipt = server
             .vault()
-            .enrol_device_owner_signing_key(&authority, issuer)
+            .enrol_serving_install_owner_signing_key(&authority, issuer)
             .map_err(refusal)?;
         Ok(ReceiptReply {
             entry: revision_hex(&receipt.entry),

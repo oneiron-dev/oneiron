@@ -31,11 +31,16 @@ use crate::authority::{
     OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, checkpoint_statement_domain, invalid_authority,
 };
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, RecordError, Result};
 use crate::vault::Vault;
 
 /// The context the signing key is derived under from its seed.
 const OWNER_SIGNING_CONTEXT: &str = "oneiron/owner-signing-key/v1";
+
+/// Why a managed host's serving install enrols no owner signing key of its
+/// own ([`Vault::enrol_serving_install_owner_signing_key`]).
+const MANAGED_HOST_HOLDS_NO_OWNER_KEY: &str =
+    "a managed host holds no owner key: enrol one on your own device";
 
 /// This install's owner signing key as a checkpoint root signer: the root is
 /// the key's own Ed25519 public half, and it signs nothing but a checkpoint
@@ -174,13 +179,27 @@ impl Vault {
     /// this vault: a server's own `enroll-this-install`
     /// ([`Vault::enrol_device_owner_signing_key`] for the serving install).
     ///
+    /// An enrolled owner key proves the owner acts its install carries (row
+    /// CARRIER-OWNER-PROOF), so it belongs on a machine the owner holds. A
+    /// managed host's server is not one: on a `Hosted` vault this refuses
+    /// before it makes a key or writes a row (ruling
+    /// CARRIER-HOSTED-SERVER-OWNER-KEY = A). A device's own install of a
+    /// hosted vault still enrols its key through
+    /// [`Vault::enrol_device_owner_signing_key`].
+    ///
     /// # Errors
-    /// As [`Vault::enrol_device_owner_signing_key`].
+    /// [`RecordError::AuthorityRefused`] on a `Hosted` vault; otherwise as
+    /// [`Vault::enrol_device_owner_signing_key`].
     pub fn enrol_serving_install_owner_signing_key(
         &self,
         authority: &ActAuthority,
         issuer: &HostSlipIssuer,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
+        if self.privacy_posture() == crate::HostingPrivacyPosture::Hosted {
+            return Err(Error::Record(RecordError::AuthorityRefused(
+                MANAGED_HOST_HOLDS_NO_OWNER_KEY,
+            )));
+        }
         self.enrol_device_owner_signing_key(authority, issuer)
     }
 
