@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Shared value vocabulary below every oneiron engine crate"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 # No doc-comment code fences in this crate. The ForeignWorldId `compile_fail`
@@ -19,6 +18,8 @@ blake3 = { workspace = true }
 heed = { workspace = true }
 # The machine-memory probe behind the memory-derived `[limits]` rows.
 libc = "0.2"
+# The one hex policy (lowercase canonical); `bytes_to_hex_lower` re-exports its encoder.
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 rand_core = { workspace = true }
 # The Beta posterior seam (`posterior`) samples with these; same versions as `oneiron`.
 rand = "0.8"
