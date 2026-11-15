@@ -879,6 +879,35 @@ impl Vault {
         self.put_authority_log_entries(&[(entry, at, now)])?;
         Ok(())
     }
+
+    /// Signs `op` as the host root's row at `seq` on `parents`, without
+    /// storing it: a row on a parent no head names, such as a rejected one.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn sign_host_op_at_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+        seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+    ) -> Result<AuthorityLogEntry> {
+        let mut entry = self.sign_host_op_for_test(issuer, op)?;
+        entry.seq = seq;
+        entry.parent_hashes = parents;
+        issuer.resign_entry(&mut entry)?;
+        Ok(entry)
+    }
+
+    /// Signs `op` as the host root's next row without storing it.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_host_op_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        next_entry(issuer, &fold, op, now)
+    }
 }
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()
