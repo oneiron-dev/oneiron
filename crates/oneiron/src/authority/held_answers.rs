@@ -33,6 +33,11 @@ const STALE: &str = "the held machine answers changed since they were read";
 const TWO_ANSWERS: &str =
     "two held answers name one machine: confirm one of them; nothing was written";
 
+/// A confirm named a held answer that names other keys than its machine
+/// stands under.
+const REPLACES_KEYS: &str = "the held answer names other keys than its machine stands under: \
+     a confirm never replaces a machine's keys; nothing was written";
+
 /// One held machine answer as the owner's surface lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedHeldAnswer {
@@ -50,6 +55,11 @@ pub struct ListedHeldAnswer {
     pub carrier_is_mine: bool,
     /// Whether the owner dismissed this ask on this install.
     pub dismissed: bool,
+    /// Whether the answer names other keys than its machine stands under
+    /// ([`AuthorityFold::replaces_standing_keys`]). A confirm refuses such
+    /// an answer: no door of this crate writes one, so its keys are its
+    /// carrier's word alone.
+    pub replaces_keys: bool,
 }
 
 /// The owner's acts that wait for his proof, as this install lists them.
@@ -104,6 +114,12 @@ fn named_held_answers(
 /// one. The machine's own proof covers its identity material and no
 /// revision, so it verifies under the confirm as it did under the held
 /// answer.
+///
+/// A machine that stands keeps its keys: a held answer that names others is
+/// refused ([`AuthorityFold::replaces_standing_keys`]). The fold lets an
+/// owner key's proof re-key a machine, and the held bytes are their
+/// carrier's, so the confirm lends his proof to a role and a class only, as
+/// a class revision does (FIX 3835: a machine's keys are never replaced).
 fn confirming_profile(
     fold: &AuthorityFold,
     owner: EntityId,
@@ -118,6 +134,9 @@ fn confirming_profile(
     if heads.iter().any(|head| head.removed) {
         return Err(invalid_authority());
     }
+    if fold.replaces_standing_keys(held) {
+        return Err(Error::InvalidConfig(REPLACES_KEYS.to_owned()));
+    }
     let revision = match heads.iter().map(|head| head.profile.revision).max() {
         Some(top) => top.checked_add(1).ok_or_else(invalid_authority)?,
         None => 1,
@@ -129,6 +148,23 @@ fn confirming_profile(
         act: None,
         ..held.clone()
     })
+}
+
+impl AuthorityFold {
+    /// Whether `answer` names another machine key or encryption key than a
+    /// standing head of its machine holds, the roster's or an anchor's.
+    /// False for a machine no revision names: a first answer replaces
+    /// nothing, and the owner checks its machine key against the machine
+    /// itself, as at any pairing.
+    #[must_use]
+    pub fn replaces_standing_keys(&self, answer: &MachineProfile) -> bool {
+        self.machine(answer.machine).is_some_and(|folded| {
+            folded.chains().any(|(_, head)| {
+                head.profile.machine_key != answer.machine_key
+                    || head.profile.encryption_key != answer.encryption_key
+            })
+        })
+    }
 }
 
 #[cfg(oneiron_test_support)]
@@ -188,6 +224,7 @@ impl Vault {
                     carrier_is_mine: carrier
                         .is_some_and(|carrier| fold.trusted_machine(carrier).is_some()),
                     dismissed: DISMISSED.get(&self.store, txn, entry)?.is_some(),
+                    replaces_keys: fold.replaces_standing_keys(&answer.profile),
                 });
             }
         }
@@ -203,14 +240,16 @@ impl Vault {
     /// proven answer about its machine, in one transaction, so all of them
     /// stand or nothing is written. A confirm names entries, never "all that
     /// is held now": an answer that arrived after his surface listed them is
-    /// never confirmed unseen. His answer about a machine ends the ask of
-    /// every held answer about it that it saw. The credentials are sealed
-    /// again for the roster the confirm changed.
+    /// never confirmed unseen. A confirm gives a machine a role and a class,
+    /// never other keys than it stands under. His answer about a machine
+    /// ends the ask of every held answer about it that it saw. The
+    /// credentials are sealed again for the roster the confirm changed.
     ///
     /// # Errors
     /// [`RecordError::OwnerKeyRequired`] when this install holds no owner
     /// key; [`Error::ConcurrentWrite`] when an entry no longer asks;
-    /// [`Error::InvalidConfig`] when two entries name one machine or this
+    /// [`Error::InvalidConfig`] when two entries name one machine, when an
+    /// entry names other keys than its machine stands under, or when this
     /// install carries no live profile; an authority refusal when a
     /// confirmed answer does not stand; a refusal when the proof is no
     /// longer the vault's live owner.

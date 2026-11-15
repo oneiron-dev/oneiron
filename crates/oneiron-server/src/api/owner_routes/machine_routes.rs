@@ -242,6 +242,13 @@ struct HeldMachineAnswer {
     entry: String,
     /// The role it asks for, as `role` names them.
     role: &'static str,
+    /// The machine key it names, 64 lower hex: the key the owner checks
+    /// against the one the machine itself shows. The machine's proof binds
+    /// its encryption key to this key.
+    machine_key: String,
+    /// Whether it names other keys than the machine stands under. The
+    /// confirm route refuses such an answer.
+    replaces_keys: bool,
     /// The machine whose install key carried it, as hex.
     carrier: Option<String>,
 }
@@ -272,6 +279,8 @@ fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold) -> MachineAnswer 
         .map(|(entry, answer)| HeldMachineAnswer {
             entry: revision_hex(entry),
             role: role_name(answer.profile.role),
+            machine_key: revision_hex(&answer.profile.machine_key),
+            replaces_keys: fold.replaces_standing_keys(&answer.profile),
             carrier: answer.carrier().map(|carrier| carrier.to_hex()),
         })
         .collect();
@@ -453,6 +462,14 @@ struct ListedHeldAnswer {
     role: &'static str,
     /// The class the machine declares: `phone` or `computer`.
     device_class: &'static str,
+    /// The machine key the answer names, 64 lower hex: the key the owner
+    /// checks against the one the machine itself shows. The machine's proof
+    /// binds its encryption key to this key.
+    machine_key: String,
+    /// Whether the answer names other keys than the machine stands under.
+    /// The confirm route refuses such an answer: no route writes one, so
+    /// its keys are its carrier's word alone. Dismiss it.
+    replaces_keys: bool,
     /// The role the machine stands in now; none when no revision names it.
     standing: Option<&'static str>,
     /// The machine whose install key carried the answer, as hex.
@@ -477,6 +494,8 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
                 machine: listed.answer.profile.machine.to_hex(),
                 role: role_name(listed.answer.profile.role),
                 device_class: listed.answer.profile.device_class.wire(),
+                machine_key: revision_hex(&listed.answer.profile.machine_key),
+                replaces_keys: listed.replaces_keys,
                 standing: listed.standing.map(role_name),
                 carrier: listed.answer.carrier().map(|carrier| carrier.to_hex()),
                 carrier_role: listed.carrier_role.map(role_name),
