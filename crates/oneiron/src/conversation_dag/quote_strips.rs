@@ -417,10 +417,7 @@ impl Memory<'_> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
-        let max = self
-            .vault()
-            .page_max_in_force(&super::setting_keys::REPLY_STRIPS_PAGE_MAX)?
-            .rows();
+        let max = PAGE_LIMIT;
         let limit = page_limit_zero_refused(request.limit, PAGE_LIMIT, max)
             .map_err(|ZeroLimitRefused| {
                 MemoryError::bad_request_with("reply strip limit must be positive", &[])

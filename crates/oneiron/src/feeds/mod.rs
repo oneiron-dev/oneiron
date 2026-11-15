@@ -572,7 +572,7 @@ impl Vault {
         reader: &ScopedRead<'_>,
         request: &FeedReadRequest,
     ) -> Result<FeedRead> {
-        let max = self.page_max_in_force(&setting_keys::FEED_READ_MAX)?.rows();
+        let max = FEED_READ_MAX_LIMIT;
         let limit = page_limit_zero_refused(request.limit, FEED_READ_DEFAULT_LIMIT, max)
             .map_err(|ZeroLimitRefused| invalid("a feed read's limit is at least 1"))?
             .rows;

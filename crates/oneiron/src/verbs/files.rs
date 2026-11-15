@@ -5,7 +5,6 @@
 //! which has no host walk, answers them with a typed refusal; its owner may
 //! list, read a source's ledger and detach.
 
-use super::setting_keys::FILES_PAGE_MAX;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -184,7 +183,7 @@ pub fn files_source_files_as(
 ) -> MemoryResult<FilesSourceFiles> {
     owner.revalidate(vault)?;
     let source = files_source_named(vault, input.source)?;
-    let max = u64::from(vault.page_max_in_force(&FILES_PAGE_MAX)?.0);
+    let max = MAX_FILES_PAGE_LIMIT;
     let take =
         usize::try_from(page_limit_zero_as_one(input.limit, DEFAULT_FILES_PAGE_LIMIT, max).rows)
             .unwrap_or(usize::MAX);
