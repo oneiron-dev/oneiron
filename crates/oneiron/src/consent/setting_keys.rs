@@ -2,7 +2,13 @@
 //! in the setting catalogue.
 
 use super::DisclosureOfferMode;
-use crate::setting::Kind;
+use super::widen::WidenOpenSecs;
+use crate::setting::{Kind, lower_is_tighter};
+
+/// Member proposals stay off unless the owner turns them on.
+const fn member_proposals_off() -> bool {
+    false
+}
 
 crate::setting::setting_keys! {
     /// The owner's disclosure-mode knob (OF-365): `always_ask` (the companion never offers a
@@ -12,5 +18,24 @@ crate::setting::setting_keys! {
     /// clearance lands only on the owner's own confirm or pre-clearance.
     pub(crate) OFFER_MODE: DisclosureOfferMode = "disclosure.offer_mode" {
         kind: Kind::new(DisclosureOfferMode::default),
+    };
+    /// How long, in seconds, a widen proposal may stay open for the owner's answer: an action,
+    /// disclosure or auto-confirm widening, a contact-disclosure offer, and the engine's own
+    /// offer for a person's first entry into a room, which stays open this long. One hour unless
+    /// the owner sets it, at most thirty days; a filing with a later expiry is refused. A shorter
+    /// window leaves every open proposal its own expiry. Only the owner's answer settles a
+    /// proposal, however long it stays open.
+    pub(crate) WIDEN_MAX_OPEN_SECS: WidenOpenSecs = "consent.widen.max_open_secs" {
+        kind: Kind::new(WidenOpenSecs::one_hour).tighter(lower_is_tighter::<WidenOpenSecs>),
+    };
+    /// Whether a member may file a widen proposal: a live human credential that lists the
+    /// proposal's verb (`propose_action_widen`, `propose_disclosure_widen` or
+    /// `propose_auto_confirm_widen`) files as an agent's does. Off unless the owner turns it on.
+    /// A proposal confers nothing: only the owner's own answer settles it, and the credential it
+    /// was filed under never does.
+    pub(crate) WIDEN_MEMBER_PROPOSALS: bool = "consent.widen.member_proposals" {
+        kind: Kind::new(member_proposals_off)
+            .strictest(member_proposals_off)
+            .tighter(lower_is_tighter::<bool>),
     };
 }

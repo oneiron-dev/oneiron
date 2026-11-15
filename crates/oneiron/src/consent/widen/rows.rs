@@ -94,7 +94,7 @@ pub(super) fn validate_row_fields(row: &StoredProposal, reference: &str) -> Resu
     if row.version != 1
         || p.proposal_ref != reference
         || p.expires_at <= p.created_at
-        || p.expires_at - p.created_at > 3600
+        || p.expires_at - p.created_at > super::WidenOpenSecs::CEILING
         || crate::EntityId::from_hex(&p.proposer).is_err()
         || normalized_ref("widen owner", p.owner_ref.clone())? != p.owner_ref
         || proposal_ref(

@@ -2437,6 +2437,13 @@ contact offer.
   and set with `vault.settings.set`: `always_ask` (the companion never offers), `auto` (the
   default) or `always_yes` (pre-clear trusted sets; offers stay allowed). No mode clears anyone
   by itself.
+- How long an offer, or any widen proposal, may stay open for your answer is the setting key
+  `consent.widen.max_open_secs`: one hour unless you set it, at most thirty days. The engine's
+  offer for a person's first entry into a room stays open that long. A shorter window leaves
+  each open proposal its own expiry.
+- `consent.widen.member_proposals` (off unless you turn it on) lets a member's credential that
+  carries `propose_action_widen`, `propose_disclosure_widen` or `propose_auto_confirm_widen`
+  file a widen proposal, as an agent's does. Only you settle it.
 - `POST /v1/owner/disclosure/attendee` with
   `{"ask_ref": "<hex>", "roster_revision": 4, "choice": "<contact hex>" | "unknown"}` answers a
   "who is this?" ask once. It names the speaker for that roster revision only. It clears nothing
