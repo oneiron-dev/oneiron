@@ -117864,7 +117864,7 @@
       "const": 1,
       "enum": 5,
       "fn": 8,
-      "re-export": 10,
+      "re-export": 11,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -117903,14 +117903,31 @@
       "MemoryKeystore"
      ],
      "path": "src/memory.rs",
-     "purpose": "Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here",
+     "purpose": "Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its…",
      "surface": {
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBytesName",
+      "SealedBytesStore"
+     ],
+     "path": "src/sealed_bytes.rs",
+     "purpose": "A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ManualPresenceClock",
@@ -117931,9 +117948,9 @@
      "path": "src/user_presence.rs",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…",
      "surface": {
-      "const": 3,
+      "const": 5,
       "enum": 4,
-      "fn": 30,
+      "fn": 37,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -117967,6 +117984,14 @@
     },
     {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sealed_bytes.rs",
+     "purpose": "Row OCS-OWNER-PIN, the keystore's home for bytes the caller sealed: each name keeps its own value, a put…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/user_presence.rs",
@@ -118015,12 +118040,19 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here"
+     "purpose": "Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its…"
+    },
+    "sealed_bytes": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN)"
     },
     "user_presence": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…"
     },
@@ -118039,10 +118071,10 @@
      "purpose": "Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row…"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 11,
-   "test_files": 1
+   "source_files": 12,
+   "test_files": 2
   },
   "oneiron-lens-wire": {
    "files": [
