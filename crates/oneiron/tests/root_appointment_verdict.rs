@@ -469,14 +469,17 @@ fn a_sibling_under_another_root_of_the_same_anchor_burns_it() {
 }
 
 /// A successor key a row of the ancestry names (here the fork's first
-/// handoff key) is refused, and burns nothing: a fresh appointment by the
-/// same anchor after it is valid.
+/// handoff key) is refused, and burns the anchor as a void appointment does:
+/// the door never signs one, so only a probe by a holder of the anchor key
+/// is not fresh. A fresh appointment by the same anchor beside it counts
+/// nowhere.
 #[test]
-fn a_successor_the_ancestry_names_is_refused_and_burns_nothing() {
+fn a_successor_the_ancestry_names_is_refused_and_burns_the_anchor() {
     let mut log = Log::new();
     let fork = log.fork();
     let named = log.appoint(2, log.witnesses(&fork), &signing(FIRST_HANDOFF_SEED));
-    let fresh = log.appoint(3, log.witnesses(&fork), &signing(69));
+    let fresh_key = signing(69);
+    log.appoint(3, log.witnesses(&fork), &fresh_key);
 
     let fold = log.fold();
 
@@ -486,17 +489,60 @@ fn a_successor_the_ancestry_names_is_refused_and_burns_nothing() {
         "{:?}",
         fold.issues
     );
-    assert_eq!(verdict(&fold, fresh), Some(AppointmentVerdict::Valid));
-    assert!(!burned(&fold, &log.anchor));
+    assert!(burned(&fold, &log.anchor), "{:?}", fold.issues);
+    assert!(
+        !live(&fold, &key_of(&fresh_key)),
+        "a burned anchor installs nothing"
+    );
+}
+
+/// On a vault that never lost its root key, a holder of the anchor key
+/// appoints a successor that a row of the ancestry names, and then chains a
+/// second appointment of it on the first. The first burns the anchor, so the
+/// chain costs no further judging, and the root key stays live.
+#[test]
+fn a_successor_the_ancestry_names_burns_the_anchor_of_a_rooted_vault() {
+    let mut log = Log::new();
+    let root_key = log.root_key.clone();
+    let named_key = signing(103);
+    let revocation = log.sign(
+        &root_key,
+        1,
+        vec![log.genesis],
+        AuthorityOp::RevokeActor {
+            authority_key: key_of(&named_key),
+            epoch: 1,
+        },
+    );
+    let first = log.appoint(2, vec![revocation, log.owner_root], &named_key);
+    let second = log.appoint(3, vec![first], &named_key);
+
+    let fold = log.fold();
+
+    assert_eq!(
+        verdict(&fold, first),
+        Some(AppointmentVerdict::SuccessorNotFresh),
+        "{:?}",
+        fold.issues
+    );
+    assert!(burned(&fold, &log.anchor), "{:?}", fold.issues);
+    assert_eq!(
+        verdict(&fold, second),
+        Some(AppointmentVerdict::Void(
+            AppointmentVoidReason::AnchorBurned
+        ))
+    );
+    assert!(live(&fold, &key_of(&root_key)));
+    assert!(!live(&fold, &key_of(&named_key)));
 }
 
 /// A successor key that only an actor-binding revocation of the ancestry
 /// names, a key the roster never enrolled, is not fresh either: it would
 /// inherit that revocation's watermark (Astra split6-anchor threats 8 and 9).
-/// It is refused and burns nothing; a fresh appointment by the same anchor
-/// after it is valid.
+/// It is refused and burns the anchor; a fresh appointment by the same
+/// anchor beside it counts nowhere.
 #[test]
-fn a_successor_only_a_binding_revocation_names_is_refused_and_burns_nothing() {
+fn a_successor_only_a_binding_revocation_names_is_refused_and_burns_the_anchor() {
     let mut log = Log::new();
     let root_key = log.root_key.clone();
     let named_key = signing(101);
@@ -523,7 +569,8 @@ fn a_successor_only_a_binding_revocation_names_is_refused_and_burns_nothing() {
         })
         .collect();
     let named = log.appoint(2, log.witnesses(&fork), &named_key);
-    let fresh = log.appoint(3, log.witnesses(&fork), &signing(102));
+    let fresh_key = signing(102);
+    log.appoint(3, log.witnesses(&fork), &fresh_key);
 
     let fold = log.fold();
 
@@ -533,8 +580,11 @@ fn a_successor_only_a_binding_revocation_names_is_refused_and_burns_nothing() {
         "{:?}",
         fold.issues
     );
-    assert_eq!(verdict(&fold, fresh), Some(AppointmentVerdict::Valid));
-    assert!(!burned(&fold, &log.anchor));
+    assert!(burned(&fold, &log.anchor), "{:?}", fold.issues);
+    assert!(
+        !live(&fold, &key_of(&fresh_key)),
+        "a burned anchor installs nothing"
+    );
 }
 
 /// Another root's anchor appoints over the fork. This install pins the owner
