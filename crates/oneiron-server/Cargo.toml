@@ -311,6 +311,12 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "vault_skills_doors"
+path = "tests/vault_skills_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
@@ -328,12 +334,6 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
-required-features = ["oneiron/test-support"]
-
-# The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
-[[test]]
-name = "vault_skills_doors"
-path = "tests/vault_skills_doors.rs"
 required-features = ["oneiron/test-support"]
 
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
