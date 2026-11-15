@@ -50,6 +50,39 @@ pub struct EvalRepairToolCall {
     pub argument: Value,
 }
 
+/// The one property a declared tool's input holds.
+const ARGUMENT: &str = "argument";
+
+impl EvalRepairToolCall {
+    /// The input schema a leg offers each declared tool with: an object
+    /// whose one property, `argument`, is any JSON value.
+    #[must_use]
+    pub fn declared_input_schema() -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { ARGUMENT: {} },
+            "required": [ARGUMENT],
+            "additionalProperties": false
+        })
+    }
+
+    /// A model's call of `tool` with `input`, read by
+    /// [`Self::declared_input_schema`]: `None` unless `input` is an object
+    /// whose only property is `argument`. A call the schema refuses is
+    /// never graded as some other call.
+    #[must_use]
+    pub fn from_declared_input(tool: &str, input: &Value) -> Option<Self> {
+        let fields = input.as_object()?;
+        if fields.len() != 1 {
+            return None;
+        }
+        Some(Self {
+            tool: tool.to_owned(),
+            argument: fields.get(ARGUMENT)?.clone(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalRepairAction {

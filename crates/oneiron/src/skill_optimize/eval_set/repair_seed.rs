@@ -329,12 +329,10 @@ fn commit_proposal(
 ) -> Result<EvalRepairSeed> {
     vault.with_write_txn_grouped(|txn| {
         let key = seed_key(&task.source)?;
+        // A replay changes nothing and queues nothing: a seed's host job is
+        // queued once, when the seed turns Pending, so no replay pays for
+        // its legs again.
         if let Some(existing) = SEEDS.get(&vault.store, txn, &key)? {
-            // A replay over a seed the host could not serve queues its job
-            // again; the dedupe key keeps one live job.
-            if existing.state == EvalRepairSeedState::Pending {
-                enqueue_coach_eval_repair_seed_in_txn(vault, txn, &key, at)?;
-            }
             return Ok(existing);
         }
         let mut refusal = None;

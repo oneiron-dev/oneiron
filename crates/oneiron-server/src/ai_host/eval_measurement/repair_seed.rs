@@ -7,7 +7,9 @@
 //! stands in. A seed whose task moved settles at once with no leg run. A
 //! skill arm answers under the exact skill content it pins, loaded on the
 //! job's own attempt through the pinned-pack load (FIX 10677). The host
-//! names only the seed key and never sees the expected answer.
+//! names only the seed key and never sees the expected answer. Each leg's
+//! receipt names the seed, the leg and the stored answer the gate graded
+//! (its content handle).
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::retrieval_depth::RetrievalDeadline;
@@ -22,33 +24,28 @@ use crate::server::SyncServer;
 use super::legs::{self, Generated, Opened};
 use super::{MEASUREMENT_BUDGET_UNITS, MEASUREMENT_CLOCK};
 
-/// One leg's answer, stored sourced on the capture's rows and read as the
-/// gate grades it: the text for a text world, the tool calls for a tool
-/// world.
+/// One leg's answer as the gate grades it ([`legs::repair_answer`]),
+/// stored sourced on the capture's rows, and the leg's receipt:
+/// `eval_repair_seed:<key>:<leg>:<stored answer's handle>`.
 fn stored_answer(
     vault: &Vault,
     release: &EvalRepairSeedRelease,
+    leg: &str,
     text: &str,
-    tool_calls: &[EvalRepairToolCall],
-) -> oneiron::Result<EvalRepairLegAnswer> {
-    if release.tools.is_empty() {
-        let _output = oneiron::compaction::output::store_output_sourced(
-            vault,
-            text.as_bytes(),
-            Some(release.source_rows.clone()),
-        )?;
-        Ok(EvalRepairLegAnswer::Response(text.to_owned()))
-    } else {
-        let bytes = serde_json::to_vec(tool_calls).map_err(|_| {
-            oneiron::Error::InvariantViolation("a repair seed's tool calls did not encode")
-        })?;
-        let _output = oneiron::compaction::output::store_output_sourced(
-            vault,
-            &bytes,
-            Some(release.source_rows.clone()),
-        )?;
-        Ok(EvalRepairLegAnswer::ToolCalls(tool_calls.to_vec()))
-    }
+    tool_calls: Option<Vec<EvalRepairToolCall>>,
+) -> oneiron::Result<(EvalRepairLegAnswer, String)> {
+    let answer = legs::repair_answer(&release.tools, text, tool_calls);
+    let output = oneiron::compaction::output::store_output_sourced(
+        vault,
+        &legs::repair_answer_bytes(&answer)?,
+        Some(release.source_rows.clone()),
+    )?;
+    let receipt = format!(
+        "eval_repair_seed:{}:{leg}:{}",
+        oneiron_hex::encode(&release.key),
+        output.handle()
+    );
+    Ok((answer, receipt))
 }
 
 /// Runs one leased `coach.eval_repair_seed` attempt.
@@ -63,18 +60,18 @@ pub(in crate::ai_host) fn run(
         return Ok(());
     };
     let hex = oneiron_hex::encode(&key);
-    let seed_legs = EvalRepairSeedLegs {
-        old_receipt: format!("eval_repair_seed:{hex}:old"),
-        candidate_receipt: format!("eval_repair_seed:{hex}:candidate"),
-    };
     // The capture's task no longer compiles to the seed's: settle at once
-    // with no leg run, as the release says.
+    // with no leg run, as the release says. The gate refuses it TaskMoved
+    // before any grade, so no receipt names an answer.
     if release.moved {
         vault.settle_eval_repair_seed_release(
             &key,
             &EvalRepairLegAnswer::Response(String::new()),
             &EvalRepairLegAnswer::Response(String::new()),
-            &seed_legs,
+            &EvalRepairSeedLegs {
+                old_receipt: format!("eval_repair_seed:{hex}:old"),
+                candidate_receipt: format!("eval_repair_seed:{hex}:candidate"),
+            },
             vault.now_recorded_at(),
         )?;
         return Ok(());
@@ -109,7 +106,7 @@ pub(in crate::ai_host) fn run(
     let prompt = release.input.to_string();
     // The old leg first, then the candidate: a leg with no answer settles
     // nothing and spends no second call.
-    let old = match arms.generate(
+    let (old, old_receipt) = match arms.generate(
         server,
         vault,
         &run,
@@ -121,10 +118,10 @@ pub(in crate::ai_host) fn run(
     ) {
         Generated::Answer {
             text, tool_calls, ..
-        } => stored_answer(vault, &release, &text, &tool_calls)?,
+        } => stored_answer(vault, &release, "old", &text, tool_calls)?,
         Generated::Unavailable(_) => return Ok(()),
     };
-    let candidate = match arms.generate(
+    let (candidate, candidate_receipt) = match arms.generate(
         server,
         vault,
         &run,
@@ -136,18 +133,21 @@ pub(in crate::ai_host) fn run(
     ) {
         Generated::Answer {
             text, tool_calls, ..
-        } => stored_answer(vault, &release, &text, &tool_calls)?,
+        } => stored_answer(vault, &release, "candidate", &text, tool_calls)?,
         Generated::Unavailable(_) => return Ok(()),
     };
     let settled = vault.settle_eval_repair_seed_release(
         &key,
         &old,
         &candidate,
-        &seed_legs,
+        &EvalRepairSeedLegs {
+            old_receipt,
+            candidate_receipt,
+        },
         vault.now_recorded_at(),
     )?;
     match settled {
-        Some(seed) => tracing::debug!(state = ?seed.state, "the Coach's eval repair seed"),
+        Some(state) => tracing::debug!(?state, "the Coach's eval repair seed"),
         None => tracing::debug!("the Coach's eval repair seed is withheld"),
     }
     Ok(())

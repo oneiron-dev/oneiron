@@ -15,9 +15,9 @@ use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::learning::{Retest, RetestScore, record_retest};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_optimize::{
-    EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalRepairLegAnswer, EvalRepairTool,
-    EvalSeat, EvalTaskInput, HeldOutReplayNotes, JudgeRubric, MeasurementState,
-    MeasurementUnavailable, REPAIR_RESPONSE_TASK_KIND, seat_model_role,
+    EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalRepairTool, EvalSeat, EvalTaskInput,
+    HeldOutReplayNotes, JudgeRubric, MeasurementState, MeasurementUnavailable,
+    REPAIR_RESPONSE_TASK_KIND, seat_model_role,
 };
 use oneiron::{BudgetExhaustionPolicy, Vault};
 
@@ -191,7 +191,8 @@ impl Job<'_> {
                 Ok(task) => task,
                 Err(reason) => return Ok(Some(reason)),
             };
-            if task.labels.is_empty() {
+            // A released Repair case is handed no label: fixed code grades it.
+            if task.labels.is_empty() && task.kind != REPAIR_RESPONSE_TASK_KIND {
                 return Ok(Some(MeasurementUnavailable::NoLabel));
             }
             if let Some(reason) = self.measure_case(&task)? {
@@ -299,20 +300,16 @@ impl Job<'_> {
         // The answer is made from the case's task, so it records the case's
         // source rows: an erase or withdrawal of one withholds the stored
         // answer and the leg keeps its reference (FIX 10447). A case whose
-        // rows are unknown stores it as before. A tool world's answer is its
-        // tool calls, kept as the gate grades them.
-        let encoded_calls;
-        let stored: &[u8] = if tools.is_empty() {
-            answer.as_bytes()
-        } else {
-            encoded_calls = serde_json::to_vec(&tool_calls).map_err(|_| {
-                oneiron::Error::InvariantViolation("a repair leg's tool calls did not encode")
-            })?;
-            &encoded_calls
+        // rows are unknown stores it as before. A Repair leg's answer is kept
+        // as the gate grades it.
+        let graded = repair.then(|| legs::repair_answer(&tools, &answer, tool_calls));
+        let stored = match &graded {
+            Some(graded) => legs::repair_answer_bytes(graded)?,
+            None => answer.as_bytes().to_vec(),
         };
         let output = oneiron::compaction::output::store_output_sourced(
             self.vault,
-            stored,
+            &stored,
             task.source_rows.clone(),
         )?;
         let mut record = EvalLegRecord {
@@ -329,15 +326,10 @@ impl Job<'_> {
         };
         // A released Repair case is scored exactly by fixed code, with no
         // judge call; every other kind is scored blind, as before.
-        if repair {
-            let answer = if tools.is_empty() {
-                EvalRepairLegAnswer::Response(answer)
-            } else {
-                EvalRepairLegAnswer::ToolCalls(tool_calls)
-            };
+        if let Some(graded) = graded {
             match self
                 .vault
-                .grade_released_eval_repair_answer(&self.digest, &task.case, &answer)?
+                .grade_released_eval_repair_answer(&self.digest, &task.case, &graded)?
             {
                 Ok(true) => {
                     record.score = Some(1.0);

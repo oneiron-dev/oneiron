@@ -43,7 +43,7 @@ pub struct EvalTaskInput {
     /// The attempt's input, read as JSON exactly.
     pub input: JsonValue,
     /// The case's anchoring labels: the frozen check each answer is scored
-    /// against.
+    /// against. None for a Repair case, which fixed code grades.
     pub labels: Vec<EvalLabel>,
     /// BLAKE3 of the attempt's payload bytes.
     pub source_hash: [u8; 32],
@@ -332,13 +332,10 @@ impl Vault {
                 stratum: repair.member.stratum.clone(),
                 kind: REPAIR_RESPONSE_TASK_KIND.to_owned(),
                 input,
-                labels: repair
-                    .member
-                    .labels
-                    .iter()
-                    .filter(|label| label.kind.anchors())
-                    .cloned()
-                    .collect(),
+                // Fixed code grades a Repair case
+                // (`grade_released_eval_repair_answer`), so the host is
+                // handed no label: each holds the outcome's digest.
+                labels: Vec::new(),
                 source_hash,
                 task_hash: repair.seed.task_hash,
                 source_rows: repair.member.content_source_rows(),

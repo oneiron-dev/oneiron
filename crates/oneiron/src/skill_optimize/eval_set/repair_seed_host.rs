@@ -126,7 +126,8 @@ impl Vault {
         }))
     }
 
-    /// Settles the seed under `key` through the capture owner's `Memory::settle_eval_repair_seed` (unchanged).
+    /// Settles the seed under `key` through the capture owner's `Memory::settle_eval_repair_seed` (unchanged), and
+    /// returns only the seed's state: never the seed, whose adjudication holds the adjudicated answer's digest.
     /// `None` when the owner's read withholds the capture.
     ///
     /// # Errors
@@ -140,7 +141,7 @@ impl Vault {
         candidate: &EvalRepairLegAnswer,
         legs: &EvalRepairSeedLegs,
         at: u64,
-    ) -> Result<Option<EvalRepairSeed>> {
+    ) -> Result<Option<EvalRepairSeedState>> {
         bounded_ref(&legs.old_receipt)?;
         bounded_ref(&legs.candidate_receipt)?;
         if legs.old_receipt == legs.candidate_receipt {
@@ -171,6 +172,6 @@ impl Vault {
             Err(error) if memory_read_refused(&error) => return Ok(None),
             Err(error) => return Err(Error::Refused(error.message)),
         };
-        Ok(read.seed)
+        Ok(read.seed.map(|seed| seed.state))
     }
 }

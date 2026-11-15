@@ -20,9 +20,9 @@ use oneiron::memory::extraction::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill::{LoadedSkillPack, MeasuredSkillPack};
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalMeasurement, EvalRepairTool, EvalRepairToolCall, EvalRepairToolEffect,
-    EvalSeat, EvalServingOffer, EvalTaskInput, HeldOutReplayNotes, MeasurementUnavailable,
-    seat_model_role,
+    EvalArmPin, EvalMeasurement, EvalRepairLegAnswer, EvalRepairTool, EvalRepairToolCall,
+    EvalRepairToolEffect, EvalSeat, EvalServingOffer, EvalTaskInput, HeldOutReplayNotes,
+    MeasurementUnavailable, seat_model_role,
 };
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmError, LlmMessage, LlmMessageRole,
@@ -73,8 +73,9 @@ pub(super) enum Opened {
 pub(super) enum Generated {
     Answer {
         text: String,
-        /// Every tool call of the response, in order.
-        tool_calls: Vec<EvalRepairToolCall>,
+        /// Every tool call of the response, in order; `None` when a call's
+        /// input breaks the declared schema (`answer_tool_calls`).
+        tool_calls: Option<Vec<EvalRepairToolCall>>,
         /// The provider that answered, as the ladder stamped it.
         served: Option<String>,
         serving_offer: Option<EvalServingOffer>,
@@ -258,24 +259,48 @@ fn answer_text(response: &LlmResponse) -> String {
         .collect()
 }
 
-/// Every tool call of the response, in order: the call's name with its
-/// `argument` property, or the whole input when it has none.
-fn answer_tool_calls(response: &LlmResponse) -> Vec<EvalRepairToolCall> {
+/// Every tool call of the response, in order, each read by the declared
+/// input schema (`EvalRepairToolCall::from_declared_input`). `None` when
+/// any call's input breaks it: another type, no `argument`, or another
+/// property.
+fn answer_tool_calls(response: &LlmResponse) -> Option<Vec<EvalRepairToolCall>> {
     response
         .message
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::ToolCall { name, input, .. } => Some(EvalRepairToolCall {
-                tool: name.clone(),
-                argument: input
-                    .get("argument")
-                    .cloned()
-                    .unwrap_or_else(|| input.clone()),
-            }),
+            ContentPart::ToolCall { name, input, .. } => {
+                Some(EvalRepairToolCall::from_declared_input(name, input))
+            }
             _ => None,
         })
         .collect()
+}
+
+/// A repair leg's answer as the gate grades it: a text-response world's
+/// text; a tool world's tool calls, or its text when a call broke the
+/// declared input schema, which fails a tool world (an answer of the other
+/// kind fails the task).
+pub(super) fn repair_answer(
+    tools: &[EvalRepairTool],
+    text: &str,
+    tool_calls: Option<Vec<EvalRepairToolCall>>,
+) -> EvalRepairLegAnswer {
+    match tool_calls {
+        Some(calls) if !tools.is_empty() => EvalRepairLegAnswer::ToolCalls(calls),
+        _ => EvalRepairLegAnswer::Response(text.to_owned()),
+    }
+}
+
+/// The bytes a repair leg's answer is stored as: its text, or its tool
+/// calls' JSON.
+pub(super) fn repair_answer_bytes(answer: &EvalRepairLegAnswer) -> oneiron::Result<Vec<u8>> {
+    match answer {
+        EvalRepairLegAnswer::Response(text) => Ok(text.as_bytes().to_vec()),
+        EvalRepairLegAnswer::ToolCalls(calls) => serde_json::to_vec(calls).map_err(|_| {
+            oneiron::Error::InvariantViolation("a repair leg's tool calls did not encode")
+        }),
+    }
 }
 
 /// One text message.
@@ -310,14 +335,7 @@ fn tool_spec(tool: &EvalRepairTool) -> LlmToolSpec {
     LlmToolSpec {
         name: tool.name.clone(),
         description: tool_effect_text(&tool.effect),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "argument": {}
-            },
-            "required": ["argument"],
-            "additionalProperties": false
-        }),
+        input_schema: EvalRepairToolCall::declared_input_schema(),
     }
 }
 
