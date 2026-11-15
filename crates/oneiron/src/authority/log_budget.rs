@@ -78,12 +78,16 @@ const FOLD_MEMORY_FLOOR_MIN_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// The owner's reserve under the memory floor is the floor divided by this:
 /// an eighth, so a log near an 8 GiB floor still has 1 GiB for the owner's
-/// work once every other row waits. One more row past the reserve's start
-/// projects at most 16 KiB plus 640 bytes for each row it can have as an
-/// ancestor: each stored row and each distinct missing parent. On a floor at
-/// or above the default's least (1 GiB) the reserve holds several such rows
-/// even when every stored row is an ancestor of each; a floor row set to a
-/// few hundred KiB can leave it too small for one.
+/// work once every other row waits. A row that is not the owner's work lands
+/// only while the log with it stays under the reserve's start, its ancestry
+/// added to every stored row that names it as a missing parent
+/// ([`FoldProjection::bytes_with`]; Astra owner-reserve F1), so only the
+/// owner's work enters the reserve. One of the owner's rows projects at most
+/// 16 KiB plus 640 bytes for each row it can have as an ancestor: each stored
+/// row and each distinct missing parent. On a floor at or above the default's
+/// least (1 GiB) the reserve holds several such rows even when every stored
+/// row is an ancestor of each; a floor row set to a few hundred KiB can leave
+/// it too small for one.
 const FOLD_MEMORY_OWNER_RESERVE_DIVISOR: u64 = 8;
 
 /// Runs `body` with the signer bound and the row and pair headroom rows
@@ -186,7 +190,15 @@ fn owner_reserve_start(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Re
 /// bounded exactly. A parent still unbounded when its child is bounded closes
 /// a cycle, which no signed history holds; the log is then bounded as if
 /// every row had every row and every missing parent among its ancestors.
-fn stored_fold_projection(rows: &BTreeMap<AuthorityEntryHash, &[AuthorityEntryHash]>) -> u64 {
+fn stored_fold_projection(
+    rows: &BTreeMap<AuthorityEntryHash, &[AuthorityEntryHash]>,
+) -> FoldProjection {
+    let mut children = BTreeMap::<AuthorityEntryHash, Vec<AuthorityEntryHash>>::new();
+    for (child, parents) in rows {
+        for parent in *parents {
+            children.entry(*parent).or_default().push(*child);
+        }
+    }
     let missing = rows
         .values()
         .flat_map(|parents| parents.iter())
@@ -239,7 +251,83 @@ fn stored_fold_projection(rows: &BTreeMap<AuthorityEntryHash, &[AuthorityEntryHa
     if cyclic {
         pairs = (rows.len() as u64).saturating_mul(most);
     }
-    fold_projected_bytes(rows.len(), pairs)
+    FoldProjection {
+        rows: rows.len(),
+        pairs,
+        missing,
+        cyclic,
+        bound,
+        children,
+    }
+}
+
+/// The stored log's projected fold peak ([`stored_fold_projection`]), with
+/// what the door needs to bound the log with one more row in it.
+struct FoldProjection {
+    rows: usize,
+    pairs: u64,
+    /// The distinct parents no stored row is.
+    missing: u64,
+    /// Whether the stored rows close a cycle (`pairs` then bounds every row
+    /// with every row and missing parent).
+    cyclic: bool,
+    /// Each stored row's ancestor bound.
+    bound: BTreeMap<AuthorityEntryHash, u64>,
+    /// Each row a stored row names as a parent, stored or missing: the
+    /// stored rows that name it.
+    children: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>>,
+}
+
+impl FoldProjection {
+    /// The stored log's projected peak.
+    fn bytes(&self) -> u64 {
+        fold_projected_bytes(self.rows, self.pairs)
+    }
+
+    /// The projected peak with the row `hash`, on `parents`, stored too
+    /// (Astra owner-reserve F1). Its own ancestors are bounded as a stored
+    /// row's are. Every stored row that has it among its ancestors counted it
+    /// once, as a missing parent; once it is stored, each of them also has
+    /// its ancestors, so each gains its bound. One row can so take a log
+    /// from under the reserve's start past the floor: the rows a machine
+    /// signs on a parent it withholds count that parent once until it comes.
+    fn bytes_with(&self, hash: &AuthorityEntryHash, parents: &[AuthorityEntryHash]) -> u64 {
+        if self.bound.contains_key(hash) {
+            return self.bytes();
+        }
+        let rows = self.rows.saturating_add(1);
+        let most = (self.rows as u64)
+            .saturating_add(self.missing)
+            .saturating_add(1);
+        if self.cyclic {
+            return fold_projected_bytes(rows, (rows as u64).saturating_mul(most));
+        }
+        let through = |parent: &AuthorityEntryHash| {
+            self.bound
+                .get(parent)
+                .map_or(1, |ancestors| ancestors.saturating_add(1))
+        };
+        let own = match parents {
+            [parent] => through(parent),
+            _ => parents
+                .iter()
+                .map(through)
+                .fold(0, u64::saturating_add)
+                .min(most),
+        };
+        let mut descendants = BTreeSet::new();
+        let mut next: Vec<_> = self.children.get(hash).into_iter().flatten().collect();
+        while let Some(row) = next.pop() {
+            if descendants.insert(*row) {
+                next.extend(self.children.get(row).into_iter().flatten());
+            }
+        }
+        let pairs = self
+            .pairs
+            .saturating_add(own)
+            .saturating_add((descendants.len() as u64).saturating_mul(own));
+        fold_projected_bytes(rows, pairs)
+    }
 }
 
 /// This machine's physical memory, when the platform says.
@@ -379,7 +467,7 @@ pub(crate) struct AuthorityDoorView {
     strangers: usize,
     /// An upper bound on the peak a fold of every stored row projects
     /// ([`stored_fold_projection`]), which the owner reserve reads.
-    projected_bytes: u64,
+    projection: FoldProjection,
     /// The adopted image's evidence the view read, for the doors' other
     /// readers in the same generation.
     pub(super) evidence: Option<Arc<AdoptedEvidence>>,
@@ -494,14 +582,14 @@ pub(super) fn door_view(
                 parents.insert(*hash, row.parents.as_slice());
             }
         }
-        let projected_bytes = stored_fold_projection(&parents);
+        let projection = stored_fold_projection(&parents);
         Ok(AuthorityDoorView {
             structure,
             rows: tally.rows,
             counted: tally.counted,
             issuer_handoffs: tally.issuer_handoffs,
             strangers: tally.strangers,
-            projected_bytes,
+            projection,
             evidence,
         })
     })
@@ -585,8 +673,12 @@ pub(crate) fn authority_door(
     // log past the memory floor folds to no root, and then the owner's own
     // removal of the key that filled it cannot fold. So past the reserve
     // only the owner's work lands; every other row waits for the owner to
-    // raise the floor.
-    if view.projected_bytes > owner_reserve_start(store, txn)?
+    // raise the floor. The door judges the log with the row in it (Astra
+    // owner-reserve F1).
+    let with_entry = view
+        .projection
+        .bytes_with(&authority_entry_hash(entry)?, &entry.parent_hashes);
+    if with_entry > owner_reserve_start(store, txn)?
         && !owner_work(store, txn, &view.structure, entry)?
     {
         return Ok(AuthorityDoor::AtBound);
@@ -626,16 +718,34 @@ pub(crate) fn authority_door(
 /// slip issuer signs or cosigns, a row an anchor this install takes as its
 /// own signs (its root records and machine marks), or the owner's will this
 /// install carries ([`carries_own_will`]). Another install's key passes none
-/// of them at this door, and neither does a stranger's anchor.
+/// of them at this door, and neither does a stranger's anchor. A result this
+/// install signs answers a request its pickup takes from the log, whoever
+/// carried it, so it is the owner's work only when its request is (Astra
+/// owner-reserve F2): a request another machine carries never has this
+/// install spend the reserve on its answer. That result waits with its
+/// pickup's transaction, and the request stays pending.
 fn owner_work(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     structure: &AuthorityStructure,
     entry: &AuthorityLogEntry,
 ) -> crate::error::Result<bool> {
-    Ok(signed_by(entry, &structure.issuers)
-        || structure.is_own_anchor(entry.signer_key())
-        || carries_own_will(store, txn, entry)?)
+    if signed_by(entry, &structure.issuers) || structure.is_own_anchor(entry.signer_key()) {
+        return Ok(true);
+    }
+    if !carries_own_will(store, txn, entry)? {
+        return Ok(false);
+    }
+    let AuthorityOp::OwnerWorkResult(result) = &entry.op else {
+        return Ok(true);
+    };
+    let Some(request) = super::retired_signers::stored_authority_row(store, txn, &result.request)?
+    else {
+        return Ok(false);
+    };
+    Ok(signed_by(&request, &structure.issuers)
+        || structure.is_own_anchor(request.signer_key())
+        || carries_own_will(store, txn, &request)?)
 }
 
 /// Whether `entry` is the owner's will this install carries (FIX 7930): signed
@@ -775,12 +885,13 @@ impl crate::Vault {
             });
         }
         let reserve_start = owner_reserve_start(&self.store, &txn)?;
-        if view.projected_bytes > reserve_start {
+        let projected_bytes = view.projection.bytes();
+        if projected_bytes > reserve_start {
             checks.push(AuthorityLogCheck {
                 kind: AuthorityLogCheck::OWNER_RESERVE,
                 scope: None,
                 signer: None,
-                count: view.projected_bytes,
+                count: projected_bytes,
                 threshold: reserve_start,
             });
         }
