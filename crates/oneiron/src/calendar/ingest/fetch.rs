@@ -76,11 +76,12 @@ pub trait IcsHttpTransport: Send + Sync {
     fn get(&self, url: &str, if_none_match: Option<&str>) -> Result<IcsHttpResponse, String>;
 }
 
-/// The production fetcher: SECRET custody resolution plus door-scoped URL
-/// injection. The value read is binding-enforced
-/// (`crate::error::SecretError::SecretBindingDenied` without a `read` grant for `effector`), the
-/// URL is consumed inside the transport call, and every error string the
-/// door emits is scrubbed of it.
+/// The production fetcher: the feed URL is injected at the SECRET-02 door
+/// ([`Vault::inject_secret_at_door`]), which applies the one custody admission
+/// rule (live record, a `read` binding for `effector`, the tier gate and the
+/// credential-door dial) and releases its write txn before the transport
+/// runs. The URL is consumed inside the transport call, and every error
+/// string the door emits is scrubbed of it.
 pub struct CustodyDoorIcsFeedFetcher<'a, T> {
     vault: &'a Vault,
     effector: String,
@@ -106,37 +107,30 @@ impl<T: IcsHttpTransport> IcsFeedFetcher for CustodyDoorIcsFeedFetcher<'_, T> {
         secret_ref: &str,
         if_none_match: Option<&str>,
     ) -> Result<IcsFetchResponse, CalendarError> {
-        let custody_id = self
-            .vault
-            .resolve_secret_ref(secret_ref)
-            .map_err(|err| credential("custody resolution failed", &err))?
-            .ok_or_else(|| CalendarError::IcsCredential {
-                reason: format!("no live custody record for secret_ref `{secret_ref}`"),
-            })?;
-        // The value door is binding-enforced; the read itself writes nothing
-        // and the txn aborts on drop. The txn is scoped to the read: it must
-        // NEVER span the HTTP call, or one slow feed stalls every vault write
-        // for the fetch's duration. SECRET-02 swap point: this call becomes
-        // `inject_secret_at_door` / `materialize_secret_lease` when that API
-        // lands, with no signature change here.
-        let value = {
-            let wtxn = self.vault.store.env.write_txn()?;
-            self.vault
-                .get_secret_value_in_txn(&wtxn, &custody_id, &self.effector)
-                .map_err(|err| credential("custody door refused the read", &err))?
-                .ok_or_else(|| CalendarError::IcsCredential {
-                    reason: format!("custody record for `{secret_ref}` vanished mid-read"),
-                })?
-        };
-        let url = String::from_utf8(value).map_err(|_| CalendarError::IcsCredential {
-            reason: format!("custody value for `{secret_ref}` is not a URL string"),
-        })?;
-        let response =
-            self.transport
-                .get(&url, if_none_match)
-                .map_err(|reason| CalendarError::IcsFetch {
-                    reason: reason.replace(url.as_str(), "<redacted-url>"),
-                })?;
+        // The door drops its write txn before it runs this closure, so the
+        // HTTP call never holds the vault's writer: one slow feed cannot stall
+        // every vault write for the fetch's duration. The URL lives only in
+        // the door's zeroized buffer and this closure's borrow of it.
+        let mut fetched = None;
+        self.vault
+            .inject_secret_at_door(secret_ref, &self.effector, &mut |value: &[u8]| {
+                let Ok(url) = std::str::from_utf8(value) else {
+                    fetched = Some(Err(CalendarError::IcsCredential {
+                        reason: format!("custody value for `{secret_ref}` is not a URL string"),
+                    }));
+                    return Ok(());
+                };
+                fetched = Some(self.transport.get(url, if_none_match).map_err(|reason| {
+                    CalendarError::IcsFetch {
+                        reason: reason.replace(url, "<redacted-url>"),
+                    }
+                }));
+                Ok(())
+            })
+            .map_err(|err| credential("custody door refused the read", &err))?;
+        let response = fetched.ok_or_else(|| CalendarError::IcsCredential {
+            reason: format!("custody door for `{secret_ref}` returned no value"),
+        })??;
         match response.status {
             304 => Ok(IcsFetchResponse::NotModified {
                 etag: response.etag,
