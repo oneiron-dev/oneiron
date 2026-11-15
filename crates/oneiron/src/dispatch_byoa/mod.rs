@@ -97,6 +97,7 @@ mod record;
 mod repo_binding;
 mod seat_candidate;
 mod seat_secrets;
+mod setting_keys;
 mod staged_input;
 mod stream;
 mod validate;
