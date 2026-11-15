@@ -1,9 +1,11 @@
-//! Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2) and
-//! `tests/voice_phone_transcript.rs` (PR 3): the brain of an owner's own
+//! Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2),
+//! `tests/voice_phone_transcript.rs` (PR 3) and
+//! `tests/voice_call_announcement.rs` (PR 3B): the brain of an owner's own
 //! standalone call on this device, or of a phone call its line agent
-//! answered, its record resolved as the call's boot resolves it, and one of
-//! its turns driven from the speaker's final transcript to its stop, with
-//! what the turn keeps written.
+//! answered, its record and opening line resolved as the call's boot
+//! resolves them, the opening line spoken as the call's loop opens it, and
+//! one of its turns driven from the speaker's final transcript to its stop,
+//! with what the turn keeps written.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -12,14 +14,17 @@ use std::time::Duration;
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
 use oneiron::interlocutor::InterlocutorSet;
-use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, RetrievalContext};
-use oneiron::{EdgeActorClass, EntityId, WriteActor};
+use oneiron::voice_cascade::{
+    Brain, BrainEvent, BrainRequest, RetrievalContext, VoiceCascadeSession,
+};
+use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use tokio::sync::mpsc;
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 use crate::voice_host::{
-    ChatBrain, ChatBrainBindings, VoiceBrainOut, phone_call_record, standalone_call_record,
+    ChatBrain, ChatBrainBindings, VoiceBrainOut, phone_call_opening, phone_call_record,
+    phone_call_session, standalone_call_record,
 };
 
 /// The seeded agent a call answers with, as the call's boot reads it.
@@ -120,24 +125,29 @@ impl StandaloneCall {
 pub struct PhoneCall {
     brain: ChatBrain,
     out: mpsc::Receiver<VoiceBrainOut>,
+    vault: Arc<Vault>,
     session_ref: String,
     agent: EntityId,
     conversation: EntityId,
+    /// The line the call opens with, until it is spoken.
+    opening: Option<String>,
 }
 
 impl PhoneCall {
     /// A phone call from `caller` (the arrival's caller text; `None` when
-    /// withheld), answered by the seeded default agent: its record resolved
-    /// as the phone call's boot resolves it, so its start row is written.
+    /// withheld), answered by the seeded default agent: its record and its
+    /// opening line resolved as the phone call's boot resolves them, so its
+    /// start row is written.
     ///
     /// # Errors
     ///
     /// No default agent, no record, or no chat seat.
     pub fn answer(server: &Arc<SyncServer>, caller: Option<&str>) -> anyhow::Result<Self> {
         let vault = server.vault();
-        let (agent, _) = vault
+        let (agent, definition) = vault
             .get_seeded_agent_definition_by_logical_id(DEFAULT_AGENT)?
             .ok_or_else(|| anyhow::anyhow!("no default agent"))?;
+        let opening = phone_call_opening(vault, &definition);
         let session_ref = format!("voice-call:{}", EntityId::now().to_hex());
         let record = phone_call_record(vault, agent, caller, &session_ref)
             .ok_or_else(|| anyhow::anyhow!("the phone call keeps nothing"))?;
@@ -163,10 +173,55 @@ impl PhoneCall {
         Ok(Self {
             brain,
             out: receiver,
+            vault: Arc::clone(vault),
             session_ref,
             agent,
             conversation,
+            opening,
         })
+    }
+
+    /// The call opens as its loop opens it: its opening line, when the owner's
+    /// announcement is on, opened by the call's voice session as a
+    /// generation with no caller's words before it, and spoken by the brain
+    /// to its end, with what it keeps written. What the brain handed to
+    /// speech; `None` when the call opens silent.
+    ///
+    /// # Errors
+    ///
+    /// The session refused the generation, the brain did not speak the line
+    /// to its end, or it did not settle in time.
+    pub async fn open(&mut self) -> anyhow::Result<Option<String>> {
+        let Some(line) = self.opening.take() else {
+            return Ok(None);
+        };
+        let mut session = VoiceCascadeSession::new(
+            Arc::clone(&self.vault),
+            phone_call_session(&self.session_ref, self.agent),
+        )?;
+        let request = session.open_announcement(line)?;
+        self.brain.announce(&request)?;
+        let brain = &self.brain;
+        let events = &mut self.out;
+        tokio::time::timeout(TURN_PATIENCE, async {
+            let mut said = String::new();
+            loop {
+                let Some(out) = events.recv().await else {
+                    anyhow::bail!("the brain stopped sending");
+                };
+                match out.event {
+                    BrainEvent::TextDelta(text) => said.push_str(&text),
+                    BrainEvent::Done => break,
+                    other => anyhow::bail!("the announcement did not end whole: {other:?}"),
+                }
+            }
+            while !brain.at_rest() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok(Some(said))
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("the announcement did not settle in time"))?
     }
 
     /// The line agent answering the call.
