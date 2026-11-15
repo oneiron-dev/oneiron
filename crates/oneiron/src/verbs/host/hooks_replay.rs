@@ -94,10 +94,6 @@ pub fn replay_hooks_as_owner_listing(
     input: &HooksReplayRequest,
 ) -> MemoryResult<(HooksReplayPage, Vec<crate::EntityId>)> {
     let asked = input.limit()?;
-    let limit = asked.min(super::setting_keys::page_max(
-        vault,
-        &super::setting_keys::HOOKS_REPLAY_PAGE_MAX,
-    )?);
     let binding = crate::EntityId::from_hex(input.binding.trim())
         .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;
     let since = input
@@ -111,7 +107,7 @@ pub fn replay_hooks_as_owner_listing(
         .transpose()
         .map_err(|_| MemoryError::bad_request("cursor is not a vault.hooks.replay next_cursor"))?;
     let (page, listed) = vault
-        .hooks_replay_page_listing(runtime, verdict, binding, since, cursor, limit)
+        .hooks_replay_page_listing(runtime, verdict, binding, since, cursor, asked)
         .map_err(|error| match error {
             crate::Error::EntityNotFound => {
                 MemoryError::not_found(format!("no hook binding {}", input.binding.trim()))
@@ -119,6 +115,9 @@ pub fn replay_hooks_as_owner_listing(
             crate::Error::InvalidConfig(message) => MemoryError::bad_request(message),
             other => other.into(),
         })?;
+    // The page read the owner's `hooks.replay.page_max` once and says which
+    // bound it was cut at, so the reply reports the same one.
+    let limit = page.limit;
     Ok((
         HooksReplayPage {
             rows: page.entries.into_iter().map(HookReplayRow::from).collect(),

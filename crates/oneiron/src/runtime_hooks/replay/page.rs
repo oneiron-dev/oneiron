@@ -132,6 +132,9 @@ pub struct HookReplayEntryPage {
     /// The next page's cursor; `None` once the replay read every entry its
     /// hook takes.
     pub next: Option<HookReplayCursor>,
+    /// The most entries this page could hold: the asked limit, at least 1
+    /// and at most the owner's `hooks.replay.page_max` as this page read it.
+    pub limit: usize,
 }
 
 impl Vault {
@@ -220,6 +223,7 @@ impl Vault {
                 Ok(HookReplayEntryPage {
                     entries: runs.iter().map(|run| replay.saved(lane, run)).collect(),
                     next,
+                    limit,
                 })
             });
         }
@@ -286,7 +290,11 @@ impl Replay<'_> {
             .iter()
             .any(|frontier| *frontier != SourceFrontier::End)
             .then_some(HookReplayCursor(CursorAt::Facts(frontiers)));
-        Ok(HookReplayEntryPage { entries, next })
+        Ok(HookReplayEntryPage {
+            entries,
+            next,
+            limit,
+        })
     }
 }
 

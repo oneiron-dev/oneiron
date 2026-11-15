@@ -64,42 +64,60 @@ fn lenses_default_excerpt_bytes() -> LensTextBytes {
     LensTextBytes(1024)
 }
 
+/// The tightest page, one proposal: what an unreadable page row reads as (DEC-0005 rule 4).
+fn one_proposal() -> NonZeroU32 {
+    NonZeroU32::MIN
+}
+
+/// The tightest cut, nothing shown: what an unreadable count row reads as (DEC-0005 rule 4).
+fn nothing_shown() -> u32 {
+    0
+}
+
+/// The tightest cut, no bytes: what an unreadable byte-count row reads as (DEC-0005 rule 4).
+fn no_bytes() -> LensTextBytes {
+    LensTextBytes(0)
+}
+
 crate::setting::setting_keys! {
     /// The most proposals one `vault.lenses.list` page returns; a longer inventory pages on
-    /// through `after`. 200 by default.
+    /// through `after`. 200 by default; an unreadable row reads as 1.
     pub(crate) LENSES_LIST_PAGE_MAX: NonZeroU32 = "lenses.list.page_max" {
         kind: Kind::new(lenses_list_page_max)
-            .strictest(lenses_list_page_max)
+            .strictest(one_proposal)
             .tighter(lower_is_tighter::<NonZeroU32>),
     };
     /// The most characters the snippet of a `vault.refs.resolve` preview carries, from the
-    /// record's first text field; 0 shows no snippet. 280 by default.
+    /// record's first text field; 0 shows no snippet. 280 by default; an unreadable row reads
+    /// as 0.
     pub(crate) REFS_RESOLVE_SNIPPET_CHARS: u32 = "refs.resolve.snippet_chars" {
         kind: Kind::new(refs_resolve_snippet_chars)
-            .strictest(refs_resolve_snippet_chars)
+            .strictest(nothing_shown)
             .tighter(lower_is_tighter::<u32>),
     };
     /// The body lines one `vault.lenses.default` dossier section shows, blank lines skipped; the
-    /// rest of the body is cut. 32 by default.
+    /// rest of the body is cut. 32 by default; an unreadable row reads as 0.
     pub(crate) LENSES_DEFAULT_DOSSIER_LINES: u32 = "lenses.default.dossier_lines" {
         kind: Kind::new(lenses_default_dossier_lines)
-            .strictest(lenses_default_dossier_lines)
+            .strictest(nothing_shown)
             .tighter(lower_is_tighter::<u32>),
     };
     /// The bytes each line of a `vault.lenses.default` dossier section shows, cut on a character
-    /// boundary. 512 by default; at most 16 KiB, the bound on one lens text.
+    /// boundary. 512 by default; at most 16 KiB, the bound on one lens text. An unreadable row
+    /// reads as 0.
     pub(crate) LENSES_DEFAULT_DOSSIER_LINE_BYTES: LensTextBytes =
         "lenses.default.dossier_line_bytes" {
         kind: Kind::new(lenses_default_dossier_line_bytes)
-            .strictest(lenses_default_dossier_line_bytes)
+            .strictest(no_bytes)
             .tighter(lower_is_tighter::<LensTextBytes>),
     };
     /// The bytes of a source's body a `vault.lenses.default` ledger row or thread entry shows,
     /// cut on a character boundary; at 0 a ledger row's value is empty and a thread entry is left
-    /// out. 1 KiB by default; at most 16 KiB, the bound on one lens text.
+    /// out. 1 KiB by default; at most 16 KiB, the bound on one lens text. An unreadable row reads
+    /// as 0.
     pub(crate) LENSES_DEFAULT_EXCERPT_BYTES: LensTextBytes = "lenses.default.excerpt_bytes" {
         kind: Kind::new(lenses_default_excerpt_bytes)
-            .strictest(lenses_default_excerpt_bytes)
+            .strictest(no_bytes)
             .tighter(lower_is_tighter::<LensTextBytes>),
     };
 }
