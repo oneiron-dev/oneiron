@@ -68,7 +68,8 @@ impl Vault {
     /// [`GrantActBy::Person`] is the person the caller's door authenticated (an
     /// `AuthenticatedOwner`, re-judged in `txn`), and the caller checked in `txn` that the
     /// person may give or end this row by `family`'s own rule. A giving's terms key is fresh
-    /// from the store clock's random source, never reused across rows.
+    /// from the operating system's random source (`OsRng`, never all zero), never reused
+    /// across rows.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an install that cannot carry the

@@ -232,8 +232,9 @@ pub(super) fn link_member_actor(
 /// ([`MemberOnboardingIntent::validate_grant_bundle`]) and this writer cannot
 /// disagree with it.
 ///
-/// The grant is `writer`'s giving (pass 28 R2): the admin whose stored
-/// `AddMember` power this writer judged gives it, by an act this install's
+/// The grant is a giving (pass 28 R2) by the principal whose stored
+/// `AddMember` power this writer judged (`shared_write_principal_in_txn`:
+/// a folder-import MACHINE's importer, else `writer`), by an act this install's
 /// key signs in the same transaction. An install with no live install key
 /// refuses the step (GRANT-ACT-FAILURE-POLICY = A); an exact replay gave it
 /// already and writes nothing.
@@ -277,9 +278,10 @@ pub(super) fn grant_member_bundle(
             }
             return Ok(());
         }
+        let giver = vault.shared_write_principal_in_txn(wtxn, writer)?;
         let data = vault.give_grant_in_txn(
             wtxn,
-            writer.entity_ref(),
+            giver.entity_ref(),
             id,
             crate::authority::GrantFamily::SharedMember,
             &expected,

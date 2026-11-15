@@ -47,6 +47,26 @@ pub fn give_member_grant(
     })
 }
 
+/// `giver` gives the member row `id` the terms `grant` states as a membership writer gives it
+/// (pass 28 R2b, `Vault::give_grant_in_txn`): a fresh terms key, the act and the keyed row in
+/// one write.
+///
+/// # Errors
+///
+/// The giving's refusal (an id whose Grant a counted act already ended, no carrier, an act the
+/// fold did not count) or a store failure; nothing is written then.
+pub fn give_member_grant_as_writer(
+    vault: &Vault,
+    id: EntityId,
+    grant: &FederationGrant,
+    giver: EntityId,
+) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        let data = vault.give_grant_in_txn(txn, giver, id, GrantFamily::SharedMember, grant)?;
+        put_grant_row_in_txn(vault, txn, id, data)
+    })
+}
+
 /// `person` ends the member row `id`'s standing, the row left in place. Returns the act.
 ///
 /// # Errors

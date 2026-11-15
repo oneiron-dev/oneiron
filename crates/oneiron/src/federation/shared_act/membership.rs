@@ -49,8 +49,8 @@ use std::collections::BTreeSet;
 /// minted, deleted or retired, as the receipt lists them; the own-device
 /// grant ids it retired, which `grants` lists too; the slips it revoked; and
 /// the detach report, when a genuine leave released bound Connect grants.
-/// the Grants an owner's signed mint made that it deleted with no signed
-/// withdrawal, for want of an issuer (FIX 12335).
+/// every Grant it deleted that no host-signed withdrawal names, which the
+/// change's carrier-signed record names (FIX 12335; pass 28 R2).
 pub(super) struct MemberMove {
     pub(super) grants: Vec<EntityId>,
     pub(super) retired_own_device: Vec<EntityId>,
@@ -1121,10 +1121,15 @@ impl Vault {
     /// note), so the log records what the recovery rested on.
     ///
     /// The claimant's Owner grant is a giving this install's key signs in
-    /// the same writer (pass 28 R2; the reader judges it beside the host's
-    /// handover), so an install with no live install key refuses the
-    /// recovery. Each Grant of `from`'s no host signed a withdrawal of ends
-    /// by a carrier-signed record of cause `proof_of_control`.
+    /// the same writer (pass 28 R2), so an install with no live install key
+    /// refuses the recovery. The claimant gives the role to themselves and
+    /// holds no grant before it: no roster rule admits that giving, the
+    /// host's handover does. Its `affected_grants` names the claimant's new
+    /// grant id, `to` names the claimant, and the R3 reader admits a
+    /// self-giving of the Owner role at a grant id only beside a counted
+    /// `proof_of_control` handover naming both. Each Grant of `from`'s no
+    /// host signed a withdrawal of ends by a carrier-signed record of cause
+    /// `host_handover`.
     pub fn recover_shared_owner_authorized(
         &self,
         issuer: &HostSlipIssuer,
@@ -1198,7 +1203,7 @@ impl Vault {
             claimant,
             now,
             UnsignedExecution {
-                cause: MembershipExecutionCause::ProofOfControl,
+                cause: MembershipExecutionCause::HostHandover,
                 member: from,
                 act: None,
                 withdrawn_grants: unsigned_withdrawals,

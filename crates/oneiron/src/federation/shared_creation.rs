@@ -132,7 +132,12 @@ impl Vault {
     ///
     /// The creator's grant is their own giving (pass 28 R2), an act this
     /// install's key signs in this writer: an install with no live install
-    /// key refuses the creation (GRANT-ACT-FAILURE-POLICY = A).
+    /// key refuses the creation (GRANT-ACT-FAILURE-POLICY = A). The creator
+    /// holds no roster grant before it, so no roster rule admits that first
+    /// giving: the R3 reader admits it by vault ownership (the giver is the
+    /// owner of the vault the act's carrier serves, judged here by
+    /// `revalidate_as_vault_owner_in_txn`), and only for a shared vault whose
+    /// line holds no earlier giving.
     pub fn initialize_shared_vault(
         &self,
         owner: &AuthenticatedOwner,

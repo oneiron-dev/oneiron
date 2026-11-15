@@ -30,6 +30,9 @@ fn fresh_grant_terms_key() -> GrantTermsKey {
     }
 }
 
+const GRANT_ID_ENDED: &str = "a counted act already ended the Grant at this id; an ended Grant \
+     is never given again, so a giving takes a fresh id";
+
 impl Vault {
     /// `giver`'s giving of `grant` as row `id` of `family`, in the writer's transaction `txn`:
     /// signs, appends and folds the act that commits to `grant`'s terms under a fresh terms
@@ -41,10 +44,12 @@ impl Vault {
     /// names the in-process surface: no membership door takes another.
     ///
     /// # Errors
-    /// The act's refusal ([`Vault::append_grant_act_in_txn`]): an install that cannot carry
-    /// it, more heads than one entry may name, or an act the fold did not count (an act of
-    /// another family than the row's line holds). Nothing is written then, and the caller's
-    /// writer must not commit the row.
+    /// An id whose Grant a counted act already ended: an end is forever (pass 28 R1), so the
+    /// row would stand for nothing although its giving counted. The act's refusal
+    /// ([`Vault::append_grant_act_in_txn`]): an install that cannot carry it, more heads than
+    /// one entry may name, or an act the fold did not count (an act of another family than
+    /// the row's line holds). Nothing is written then, and the caller's writer must not
+    /// commit the row.
     pub(crate) fn give_grant_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -53,6 +58,13 @@ impl Vault {
         family: GrantFamily,
         grant: &FederationGrant,
     ) -> Result<Vec<u8>> {
+        if self
+            .authority_view_readonly_in_txn(txn)?
+            .grant_line(id)
+            .is_some_and(|line| line.ended)
+        {
+            return Err(crate::authority::authority_refused(GRANT_ID_ENDED));
+        }
         let key = fresh_grant_terms_key();
         let terms = federation_grant_terms(id, grant, &key)?;
         self.append_grant_act_in_txn(

@@ -66,11 +66,12 @@ pub enum MembershipExecutionCause {
     TransferOwnership,
     /// A matured `remove_owner` act a live Owner executed.
     RemoveOwner,
-    /// A proof-of-control recovery (ARCH-0043) took a claimant as Owner and
-    /// dropped the former Owner's Grants; the host's own `OwnerHandover`
-    /// records the handover, so this record withdraws Grants alone (pass 28
-    /// R2: every dropped Grant's line ends by a counted act).
-    ProofOfControl,
+    /// An Owner handover the host signed itself: a proof-of-control recovery
+    /// (ARCH-0043), or an Owner act executed with a host issuer. The host's
+    /// own `OwnerHandover` records the handover, so this record withdraws the
+    /// Grants the change dropped alone, those no host-signed withdrawal names
+    /// (pass 28 R2: every dropped Grant's line ends by a counted act).
+    HostHandover,
 }
 
 impl MembershipExecutionCause {
@@ -83,7 +84,7 @@ impl MembershipExecutionCause {
             Self::Leave => "leave",
             Self::TransferOwnership => "transfer_ownership",
             Self::RemoveOwner => "remove_owner",
-            Self::ProofOfControl => "proof_of_control",
+            Self::HostHandover => "host_handover",
         }
     }
 
@@ -96,7 +97,7 @@ impl MembershipExecutionCause {
             "leave" => Self::Leave,
             "transfer_ownership" => Self::TransferOwnership,
             "remove_owner" => Self::RemoveOwner,
-            "proof_of_control" => Self::ProofOfControl,
+            "host_handover" => Self::HostHandover,
             _ => return None,
         })
     }
@@ -108,7 +109,7 @@ impl MembershipExecutionCause {
         match self {
             Self::TransferOwnership => Some(OwnerHandoverCause::Transfer),
             Self::RemoveOwner => Some(OwnerHandoverCause::Removal),
-            Self::AssignRole | Self::RemoveMember | Self::Leave | Self::ProofOfControl => None,
+            Self::AssignRole | Self::RemoveMember | Self::Leave | Self::HostHandover => None,
         }
     }
 }

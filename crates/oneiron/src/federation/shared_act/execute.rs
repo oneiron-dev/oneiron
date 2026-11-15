@@ -121,8 +121,8 @@ impl Vault {
             Some(receipt_id.clone()),
         )?;
         // The grant ids an Owner handover wrote and retired, for its signed
-        // entry (FIX 5765), and the signed-mint Grants it deleted with no
-        // signed withdrawal (FIX 12335).
+        // entry (FIX 5765), and every Grant it deleted that no host-signed
+        // withdrawal names (FIX 12335; pass 28 R2).
         let mut handover_ids = (Vec::new(), Vec::new());
         let mut unsigned_withdrawals = Vec::new();
         let effect = match kind {
@@ -319,11 +319,32 @@ impl Vault {
                             retired_own_device_grants,
                         },
                     )?);
+                    // The issuer signed the withdrawal of each owner's signed
+                    // mint the change deleted; every other deleted Grant ends
+                    // by the carrier's record beside the host's handover, as a
+                    // recovery's do (pass 28 R2). The receipt keeps naming the
+                    // handover; that record settles apart, pending while this
+                    // install cannot carry it (the audit's pending rows list
+                    // it), and an act that deleted nothing files none.
+                    if execution_cause.is_some() {
+                        self.file_membership_execution_in_txn(
+                            &mut txn,
+                            act.vault_id,
+                            &receipt_id,
+                            actor,
+                            now,
+                            UnsignedExecution {
+                                cause: MembershipExecutionCause::HostHandover,
+                                member: from,
+                                act: None,
+                                withdrawn_grants: unsigned_withdrawals,
+                                handover: None,
+                            },
+                        )?;
+                    }
                 }
                 // No issuer signs the handover or the withdrawals: the
-                // carrier's record of both is kept pending (FIX 12335). An
-                // issuer that signs the handover passed `require_host`, as
-                // each withdrawal it signed did, so none is left unsigned.
+                // carrier's record of both is kept pending (FIX 12335).
                 None => {
                     if let Some(execution_cause) = execution_cause {
                         record = self.file_membership_execution_in_txn(

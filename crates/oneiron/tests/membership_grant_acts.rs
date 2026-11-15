@@ -7,6 +7,8 @@
 //! - A giving refuses on an install with no live install key, and writes nothing.
 //! - A leave (W11) is never refused: its record ends the member's line in its writer, or
 //!   waits pending on an install whose key is not loaded and ends it once the key loads.
+//! - An Owner removed by an act executed under the host's issuer leaves with the line ended:
+//!   the carrier's record beside the host-signed handover ends it in the writer.
 //!
 //! Runs on public paths and the test doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
@@ -323,5 +325,33 @@ fn a_leave_with_no_loaded_key_is_never_refused_and_ends_the_line_once_the_key_lo
         grant_line(vault, id).expect("line read"),
         Some((Some(given), true)),
         "the owed record ended the line once the key loaded"
+    );
+}
+
+#[test]
+fn an_owner_removed_under_the_host_issuer_leaves_with_the_line_ended() {
+    let install = carrier_install();
+    let vault = &install.vault;
+    let co_owner = EntityId::now();
+    person(vault, co_owner);
+    share(vault, install.owner, &[(co_owner, Role::Owner)]);
+    accept(vault, co_owner, Role::Owner);
+    let (id, _) = member_row(vault, co_owner).expect("the co-owner's grant");
+    let given = standing(vault, id).expect("the co-owner's grant stands");
+    let owner_proof = proof(vault, install.owner);
+    let act = vault
+        .propose_remove_owner(&owner_proof, SHARED, co_owner, None, None, false)
+        .expect("the other Owner starts remove_owner");
+    vault
+        .execute_completed_shared_act(&owner_proof, &act.id, Some(&install.issuer))
+        .expect("remove_owner runs at once under its zero wait, the host signing its handover");
+    assert!(
+        member_row(vault, co_owner).is_none(),
+        "the removal drops the row"
+    );
+    assert_eq!(
+        grant_line(vault, id).expect("line read"),
+        Some((Some(given), true)),
+        "the carrier's record beside the host's handover ended the line in its writer"
     );
 }
