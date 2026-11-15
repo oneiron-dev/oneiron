@@ -52,8 +52,6 @@ const VERDICT_RESPONSE_BYTES: usize = 256 * 1024;
 const VERDICT_REQUEST_BYTES: usize = 64 * 1024;
 /// What a body that may not call a model hears from `ai.verdict`.
 const NO_VERDICT: &str = "ai_verdict_is_a_generative_fact_hooks";
-/// The longest body budget a hook selector may name.
-const MAX_BUDGET_MS: u32 = 60_000;
 /// Wasm stack, as code mode sets it.
 const WASM_STACK_BYTES: usize = 512 * 1024;
 /// The largest component accepted.
@@ -171,7 +169,7 @@ impl HookSandbox {
     ) -> Result<HookBodyRun> {
         // A body refused before its worker starts used nothing (FIX 9332).
         let budget_ms = context.budget_ms();
-        if budget_ms == 0 || budget_ms > MAX_BUDGET_MS {
+        if budget_ms == 0 || budget_ms > context.max_budget_ms() {
             context.report_usage(HookBodyUsage::NOT_RUN);
             return Err(failure("hook budget_ms is out of bounds"));
         }

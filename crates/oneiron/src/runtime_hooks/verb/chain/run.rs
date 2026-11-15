@@ -122,7 +122,13 @@ impl<'c> Chain<'c> {
         let args_withheld = self.args_withheld(&seen);
         let mut pins = Vec::new();
         let started = Instant::now();
-        let mut context = HookRunContext::new(binding.selector.budget_ms);
+        let max_budget_ms = session::hook_read(
+            self.storage,
+            "budget cap",
+            crate::runtime_hooks::setting_keys::hook_max_budget_ms(self.vault),
+        )?;
+        let mut context =
+            HookRunContext::new(binding.selector.budget_ms).with_max_budget_ms(max_budget_ms);
         let ran = match self.runtime {
             Err(reason) => Err(Error::InvalidConfig(reason.to_owned())),
             Ok(runtime) => match self

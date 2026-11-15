@@ -71,6 +71,7 @@ impl Vault {
                 String::from_utf8(bytes).map_err(|_| "hook body is not UTF-8".to_owned())
             });
         let now = self.store.clock.now_recorded_at().saturating_mul(1_000);
+        let max_budget_ms = crate::runtime_hooks::setting_keys::hook_max_budget_ms(self)?;
         let mut rows = vec![row.source];
         let mut runs = Vec::with_capacity(golden.len());
         for (index, call) in golden.iter().enumerate() {
@@ -136,7 +137,8 @@ impl Vault {
             let input = serde_json::to_string(&input)
                 .map_err(|_| Error::InvariantViolation("hook input encode"))?;
             let mut pins = Vec::new();
-            let mut context = HookRunContext::new(selector.budget_ms);
+            let mut context =
+                HookRunContext::new(selector.budget_ms).with_max_budget_ms(max_budget_ms);
             let ran = match &body {
                 Ok(body) => {
                     context.body_starts();

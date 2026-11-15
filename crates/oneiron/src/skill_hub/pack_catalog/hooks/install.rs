@@ -141,6 +141,17 @@ impl Vault {
         source_id: EntityId,
         source: &PackSource,
     ) -> Result<Vec<EntityId>> {
+        // The owner's cap refuses an over-budget hook before anything is written: the
+        // refusal fails the caller's write, so no binding, CODE entity, grant or cursor
+        // lands. The agent's ceiling never raises a budget, so the pack's own selector
+        // is what is checked, for both binders.
+        let max_budget_ms =
+            crate::runtime_hooks::setting_keys::hook_max_budget_ms_in_txn(self, txn)?;
+        for hook in source.hooks() {
+            if hook.selector.budget_ms > max_budget_ms {
+                return Err(invalid("hook budget_ms is out of bounds"));
+            }
+        }
         let pack = source.manifest.name.as_str();
         // The owner's binding claims carry the owner's proof, revalidated
         // here: the binding predicate is critical on the shipped manifest,
