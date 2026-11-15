@@ -6,6 +6,11 @@
 //! The file tier: one private file per name beside the slot files, which no
 //! slot reads and which reads no slot; no temporary file is left behind; a
 //! file open to others, an empty one and one past the cap are refused.
+//!
+//! The Windows tier, which only a Windows box runs: one file per name beside
+//! the slot files, sealed by DPAPI; a slot's file and a sealed value's file
+//! do not open as each other, nor one value's file under another's name; a
+//! file this home did not write is refused.
 
 use oneiron_keystore::{
     DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, MemoryKeystore,
@@ -176,6 +181,23 @@ fn the_device_pin_key_and_a_slot_never_share_a_name() {
     );
 }
 
+/// The names of the files in a key directory, sorted.
+#[cfg(any(all(unix, not(target_vendor = "apple")), windows))]
+fn file_names(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .expect("the key directory lists")
+        .map(|entry| {
+            entry
+                .expect("a directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod file_tier {
     use std::fs;
@@ -186,7 +208,9 @@ mod file_tier {
         DeviceKeystore, KeystoreError, LocalFileKeystore, SEALED_BYTES_MAX, SealedBytesName,
     };
 
-    use super::{a_value_out_of_bounds_is_refused, each_name_keeps_its_own_value, owner_slot};
+    use super::{
+        a_value_out_of_bounds_is_refused, each_name_keeps_its_own_value, file_names, owner_slot,
+    };
 
     /// A file keystore in a new directory, and that directory.
     fn file_keystore(root: &Path) -> (LocalFileKeystore, PathBuf) {
@@ -197,21 +221,6 @@ mod file_tier {
 
     fn sealed_file(dir: &Path, name: &SealedBytesName) -> PathBuf {
         dir.join(format!("{}.sealed", name.name()))
-    }
-
-    fn file_names(dir: &Path) -> Vec<String> {
-        let mut names: Vec<String> = fs::read_dir(dir)
-            .expect("the key directory lists")
-            .map(|entry| {
-                entry
-                    .expect("a directory entry")
-                    .file_name()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect();
-        names.sort();
-        names
     }
 
     #[test]
@@ -334,5 +343,181 @@ mod file_tier {
         home.put_sealed(&name, b"sealed again")
             .expect("the value is kept");
         assert_eq!(home.get_sealed(&name), Ok(Some(b"sealed again".to_vec())));
+    }
+}
+
+/// The Windows tier. Only a Windows box runs these cases: the cross-target
+/// check compiles them (scripts/ci/check_keystore_windows_target.sh).
+#[cfg(windows)]
+mod windows_tier {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use oneiron_keystore::{
+        DeviceKeystore, KeystoreError, KeystoreSlot, SEALED_BYTES_MAX, SealedBytesName,
+        WindowsDpapiKeystore,
+    };
+
+    use super::{
+        a_value_out_of_bounds_is_refused, each_name_keeps_its_own_value, file_names, owner_slot,
+    };
+
+    /// A DPAPI keystore in a new directory, and that directory.
+    fn dpapi_keystore(root: &Path) -> (WindowsDpapiKeystore, PathBuf) {
+        let dir = root.join("keys");
+        let keys = WindowsDpapiKeystore::open(&dir, &[]).expect("the key directory opens");
+        (keys, dir)
+    }
+
+    fn sealed_file(dir: &Path, name: &SealedBytesName) -> PathBuf {
+        dir.join(format!("{}.sealed", name.name()))
+    }
+
+    fn slot_file(dir: &Path, slot: &KeystoreSlot) -> PathBuf {
+        dir.join(format!("{}.dpapi", slot.name()))
+    }
+
+    #[test]
+    fn the_windows_tier_keeps_each_sealed_value_in_a_file_of_its_own_that_dpapi_sealed() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (keys, dir) = dpapi_keystore(root.path());
+        let home = keys
+            .sealed_bytes()
+            .expect("the Windows tier has a home for sealed bytes");
+        each_name_keeps_its_own_value(home);
+        a_value_out_of_bounds_is_refused(home);
+        assert!(
+            file_names(&dir).is_empty(),
+            "the home left a file behind after every value was removed"
+        );
+
+        let device = SealedBytesName::DevicePinKey;
+        home.put_sealed(&device, b"device pin key, sealed")
+            .expect("the device PIN key is kept");
+        home.put_sealed(&device, b"device pin key, resealed")
+            .expect("the device PIN key is replaced");
+        assert_eq!(
+            file_names(&dir),
+            ["device-pin-key.sealed"],
+            "a put left a temporary file, or named its file otherwise"
+        );
+        let on_disk = fs::read(sealed_file(&dir, &device)).expect("the sealed file reads");
+        assert!(
+            !on_disk
+                .windows(b"resealed".len())
+                .any(|part| part == b"resealed"),
+            "the file holds the caller's bytes outside a DPAPI blob"
+        );
+    }
+
+    #[test]
+    fn a_slot_and_the_sealed_value_under_its_name_do_not_open_as_each_other() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (keys, dir) = dpapi_keystore(root.path());
+        let home = keys.sealed_bytes().expect("the Windows tier's home");
+        let slot = owner_slot(7);
+        let name = SealedBytesName::Slot(slot);
+
+        keys.create(&slot, &[1; 32]).expect("the slot is filled");
+        assert_eq!(
+            home.get_sealed(&name),
+            Ok(None),
+            "a slot read as a sealed value"
+        );
+        home.put_sealed(&name, b"owner seed, sealed")
+            .expect("the sealed value is kept");
+        assert_eq!(
+            keys.get(&slot).expect("the slot reads").as_deref(),
+            Some(&[1; 32]),
+            "a sealed value changed the slot under its name"
+        );
+        assert_eq!(
+            file_names(&dir),
+            [
+                format!("{}.dpapi", slot.name()),
+                format!("{}.sealed", slot.name())
+            ]
+        );
+
+        // Each file under the other's name: DPAPI's entropy tells them apart.
+        fs::copy(slot_file(&dir, &slot), sealed_file(&dir, &name))
+            .expect("the slot's file is copied");
+        assert!(
+            matches!(home.get_sealed(&name), Err(KeystoreError::Corrupt(_))),
+            "a slot's file opened as a sealed value"
+        );
+        home.put_sealed(&name, b"owner seed, sealed")
+            .expect("a put replaces the file that does not open");
+        fs::copy(sealed_file(&dir, &name), slot_file(&dir, &slot))
+            .expect("the sealed value's file is copied");
+        assert!(
+            matches!(keys.get(&slot), Err(KeystoreError::Corrupt(_))),
+            "a sealed value's file opened as a slot"
+        );
+
+        keys.delete(&slot).expect("the slot is emptied");
+        assert_eq!(keys.get(&slot).expect("the slot reads"), None);
+        assert_eq!(
+            home.get_sealed(&name),
+            Ok(Some(b"owner seed, sealed".to_vec())),
+            "emptying a slot removed the sealed value under its name"
+        );
+        home.delete_sealed(&name)
+            .expect("the sealed value is removed");
+        keys.create(&slot, &[2; 32]).expect("the slot fills again");
+        home.delete_sealed(&name)
+            .expect("removing none is not an error");
+        assert_eq!(
+            keys.get(&slot).expect("the slot reads").as_deref(),
+            Some(&[2; 32]),
+            "removing a sealed value emptied the slot under its name"
+        );
+    }
+
+    #[test]
+    fn a_sealed_file_this_home_did_not_write_under_that_name_is_refused() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (keys, dir) = dpapi_keystore(root.path());
+        let home = keys.sealed_bytes().expect("the Windows tier's home");
+        let name = SealedBytesName::DevicePinKey;
+        let other = SealedBytesName::Slot(owner_slot(7));
+        let path = sealed_file(&dir, &name);
+
+        home.put_sealed(&name, b"sealed")
+            .expect("the value is kept");
+        home.put_sealed(&other, b"another value, sealed")
+            .expect("the other value is kept");
+        fs::copy(sealed_file(&dir, &other), &path).expect("the other value's file is copied");
+        assert!(
+            matches!(home.get_sealed(&name), Err(KeystoreError::Corrupt(_))),
+            "one value's file opened under another value's name"
+        );
+
+        // Bytes that did not come through `put_sealed`.
+        fs::write(&path, b"not sealed by DPAPI").expect("the file is written");
+        assert!(
+            matches!(home.get_sealed(&name), Err(KeystoreError::Corrupt(_))),
+            "a file DPAPI did not seal was read"
+        );
+        fs::write(&path, vec![0x5A; 2 * SEALED_BYTES_MAX + 1]).expect("the file is written");
+        assert!(
+            matches!(home.get_sealed(&name), Err(KeystoreError::Corrupt(_))),
+            "a sealed file past the cap was read"
+        );
+        fs::write(&path, b"").expect("the file is emptied");
+        assert!(
+            matches!(home.get_sealed(&name), Err(KeystoreError::Corrupt(_))),
+            "an empty sealed file was read"
+        );
+
+        // A put replaces the bad file with a good one.
+        home.put_sealed(&name, b"sealed again")
+            .expect("the value is kept");
+        assert_eq!(home.get_sealed(&name), Ok(Some(b"sealed again".to_vec())));
+        assert_eq!(
+            home.get_sealed(&other),
+            Ok(Some(b"another value, sealed".to_vec())),
+            "a copy of one value's file changed that value"
+        );
     }
 }

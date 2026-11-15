@@ -58,7 +58,8 @@ tempfile = "3"
 name = "user_presence"
 required-features = ["test-keystore"]
 
-# The sealed-bytes home's tests compare the file tier with the memory tier.
+# The sealed-bytes home's tests compare the file tier with the memory tier,
+# and on a Windows box the DPAPI tier with it.
 [[test]]
 name = "sealed_bytes"
 required-features = ["test-keystore"]

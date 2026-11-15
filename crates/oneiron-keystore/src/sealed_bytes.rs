@@ -61,6 +61,7 @@ pub trait SealedBytesStore: Send + Sync + 'static {
 /// [`SEALED_BYTES_MAX`].
 #[cfg(any(
     all(unix, not(target_vendor = "apple")),
+    windows,
     test,
     feature = "test-keystore",
     oneiron_test_support
