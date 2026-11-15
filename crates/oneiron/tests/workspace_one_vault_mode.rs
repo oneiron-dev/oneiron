@@ -1,4 +1,7 @@
-//! One-vault mode reads and the joining notice through public engine doors.
+//! One-vault mode reads and the joining notice through public engine doors,
+//! and one test door that stops an onboarding half way.
+//!
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test workspace_one_vault_mode`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::access_grant::AccessGrant;
@@ -10,11 +13,14 @@ use oneiron::federation::{FederationGrantPreset, FederationGrantRole};
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::subject_model::{PersonSubstrate, anchor_actor_subject};
+use oneiron::test_doors::workspace_onboarding_halt::onboard_workspace_member_halting_after;
 use oneiron::workspace_roster::{
-    CompanionChoice, MemberGrantBundle, MemberOnboardingIntent, OneVaultMode, OneVaultSetting,
-    OneVaultSource, WorkspaceRosterPreset,
+    CompanionChoice, MemberGrantBundle, MemberOnboardingIntent, MemberOnboardingStep, OneVaultMode,
+    OneVaultSetting, OneVaultSource, WorkspaceRosterPreset,
 };
-use oneiron::{CompanionBirthIntent, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    CompanionBirthIntent, EntityId, ErrorKind, TimeRange, Vault, VaultConfig, WriteActor,
+};
 use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -187,11 +193,12 @@ fn onboard_owen_work(
     Ok((member, outcome))
 }
 
-/// Brings a model-backed companion with an anchored actor and a profile-read grant.
-fn onboard_yuki_bring(
+/// Writes yuki's model-backed companion with an anchored actor and a
+/// profile-read grant, and the intent that brings it; onboards nothing.
+fn yuki_bring_intent(
     fixture: &Fixture,
     onboarding_id: &str,
-) -> TestResult<(EntityId, EntityId, oneiron::MemberOnboardingOutcome)> {
+) -> TestResult<(EntityId, EntityId, MemberOnboardingIntent)> {
     let yuki = seed_row(&fixture.vault, ENTITY_TYPE_PERSON, b"yuki")?;
     let member_facet = seed_row(&fixture.vault, ENTITY_TYPE_FACET, b"yuki work facet")?;
     let companion_person = seed_row(
@@ -259,6 +266,15 @@ fn onboard_yuki_bring(
         delegated_mailbox: None,
         occurred_at: fixture.vault.now_recorded_at(),
     };
+    Ok((yuki, companion_actor, intent))
+}
+
+/// Brings a model-backed companion with an anchored actor and a profile-read grant.
+fn onboard_yuki_bring(
+    fixture: &Fixture,
+    onboarding_id: &str,
+) -> TestResult<(EntityId, EntityId, oneiron::MemberOnboardingOutcome)> {
+    let (yuki, companion_actor, intent) = yuki_bring_intent(fixture, onboarding_id)?;
     let outcome = fixture.vault.onboard_workspace_member(
         intent,
         &WriteActor::new(fixture.owner, EdgeActorClass::Human),
@@ -316,8 +332,8 @@ fn a_malformed_one_vault_row_makes_the_manifest_unreadable() -> TestResult {
     // stored, and the read still answers the old setting.
     let installed = install_one_vault(&fixture, json!({ "version": 1, "mode": "maybe" }))?;
     assert!(
-        installed.is_err(),
-        "a malformed one_vault row is refused at install"
+        matches!(installed, Err(oneiron::Error::InvalidConfig(_))),
+        "a malformed one_vault row is refused at install as a malformed manifest: {installed:?}"
     );
     assert_eq!(
         fixture.vault.one_vault_mode()?,
@@ -392,5 +408,77 @@ fn onboarding_without_the_row_tells_the_member_plain_line_two() -> TestResult {
     let got = get_via_verb(&fixture, yuki)?;
     assert_eq!(got["mode"], json!("off"));
     assert_eq!(got["source"], json!("default"));
+    Ok(())
+}
+
+#[test]
+fn conflicting_one_vault_rows_read_unreadable_and_refuse_the_joining_member() -> TestResult {
+    let fixture = setup()?;
+    let (owen, _) = onboard_owen_work(&fixture, "one-vault-conflict-owen")?;
+    let writer = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+
+    // yuki's onboarding passes its grant step while the setting still reads;
+    // only her Complete step is left for after the rows conflict.
+    let (yuki, _, resumed_intent) = yuki_bring_intent(&fixture, "one-vault-conflict-yuki")?;
+    let halted = onboard_workspace_member_halting_after(
+        &fixture.vault,
+        resumed_intent.clone(),
+        &writer,
+        None,
+        MemberOnboardingStep::MailboxBound,
+    )?;
+    assert!(halted.is_none(), "the onboarding stops before Complete");
+    // A second member starts joining only after the rows conflict.
+    let (late_member, _, late_intent) =
+        yuki_bring_intent(&fixture, "one-vault-conflict-late-member")?;
+
+    // Two trusted Owner manifests name different rows: no deterministic
+    // mode, so the policy fails closed and no mode is answered.
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "off" }))??;
+    assert_eq!(
+        fixture.vault.one_vault_mode()?,
+        OneVaultSetting {
+            mode: None,
+            source: OneVaultSource::Unreadable,
+        }
+    );
+    let got = get_via_verb(&fixture, owen)?;
+    assert!(
+        got["mode"].is_null(),
+        "an unreadable setting answers no mode"
+    );
+    assert_eq!(got["source"], json!("unreadable"));
+
+    // A fresh joining stops earlier: its grant step's default policy fails
+    // closed on the same conflict.
+    let late = fixture
+        .vault
+        .onboard_workspace_member(late_intent, &writer, None);
+    assert!(
+        late.is_err(),
+        "a fresh onboarding refuses under conflicting rows"
+    );
+
+    // The resumed Complete step refuses rather than guess the joining line.
+    let refused = fixture
+        .vault
+        .onboard_workspace_member(resumed_intent, &writer, None);
+    let error =
+        refused.expect_err("the resumed onboarding refuses under an unreadable one_vault row");
+    assert!(
+        matches!(error.kind(), ErrorKind::OneVaultSettingUnreadable),
+        "the refusal names the unreadable setting: {error}"
+    );
+    let roster = fixture
+        .vault
+        .workspace_roster(WORKSPACE, fixture.vault.now_recorded_at())?;
+    assert!(
+        roster
+            .iter()
+            .all(|entry| entry.principal_ref != Some(yuki)
+                && entry.principal_ref != Some(late_member)),
+        "a refused member has no roster row"
+    );
     Ok(())
 }

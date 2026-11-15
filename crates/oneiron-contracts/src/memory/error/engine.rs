@@ -164,7 +164,7 @@ impl From<Error> for MemoryError {
             ErrorKind::OneVaultSettingUnreadable => Self::new(
                 MEMORY_CODE_FORBIDDEN,
                 message,
-                &["Repair the vault's policy manifest, then retry."],
+                &["Repair the vault's policy manifest, then retry onboarding."],
             ),
             ErrorKind::WorkTalkStaysWithMember => Self::new(
                 MEMORY_CODE_FORBIDDEN,
