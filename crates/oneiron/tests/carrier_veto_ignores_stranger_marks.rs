@@ -106,12 +106,27 @@ struct ServedVault {
     _dir: tempfile::TempDir,
 }
 
+/// A self-host vault rooted under the host root before its first serving
+/// start: no chain profiles this install yet.
+fn unprofiled_self_host() -> (Vault, HostSlipIssuer, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("vault directory");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("self-host vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    (vault, issuer, dir)
+}
+
+fn vault_id_of(vault: &Vault) -> AuthorityVaultId {
+    vault
+        .authority_fold()
+        .expect("authority fold")
+        .vault_id
+        .expect("the vault is rooted")
+}
+
 impl ServedVault {
     fn self_host() -> Self {
-        let dir = tempfile::tempdir().expect("vault directory");
-        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("self-host vault");
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        let (vault, issuer, dir) = unprofiled_self_host();
         let carrier = vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's machine profile under the host root")
@@ -119,6 +134,17 @@ impl ServedVault {
             .expect("guard: this install has a roster chain")
             .profile
             .machine;
+        Self::bound(vault, issuer, dir, carrier)
+    }
+
+    /// `vault` with this install's profile standing as `carrier`, and the
+    /// owner bound and authenticated.
+    fn bound(
+        vault: Vault,
+        issuer: HostSlipIssuer,
+        dir: tempfile::TempDir,
+        carrier: EntityId,
+    ) -> Self {
         let person = vault.ensure_embedded_owner_actor().expect("the owner");
         oneiron::test_support::bind_host_owner(&vault, &issuer, person)
             .expect("the owner's binding");
@@ -136,11 +162,7 @@ impl ServedVault {
     }
 
     fn vault_id(&self) -> AuthorityVaultId {
-        self.vault
-            .authority_fold()
-            .expect("authority fold")
-            .vault_id
-            .expect("the vault is rooted")
+        vault_id_of(&self.vault)
     }
 
     /// This install's roster head.
@@ -205,15 +227,14 @@ impl ServedVault {
 
 /// A stranger's root published on one held valid row and stored. Returns its
 /// anchor signing key and the root row's hash.
-fn publish_stranger_root(served: &ServedVault) -> (SigningKey, AuthorityEntryHash) {
-    let vault_id = served.vault_id();
+fn publish_stranger_root(vault: &Vault) -> (SigningKey, AuthorityEntryHash) {
+    let vault_id = vault_id_of(vault);
     let seed = RecoveryRootSeed::generate().expect("a fresh stranger root seed");
     let root = seed
         .public(&vault_id)
         .expect("the stranger root's public half");
     let anchor = seed.anchor();
-    let parent = served
-        .vault
+    let parent = vault
         .authority_fold()
         .expect("authority fold for a parent")
         .valid_entries
@@ -238,13 +259,11 @@ fn publish_stranger_root(served: &ServedVault) -> (SigningKey, AuthorityEntryHas
         &anchor,
     );
     let root_hash = hash(&entry);
-    served
-        .vault
+    vault
         .put_authority_log_entry(&entry, AT, 2)
         .expect("the stranger's root row is stored");
     assert!(
-        served
-            .vault
+        vault
             .authority_fold()
             .expect("authority fold")
             .valid_entries
@@ -338,7 +357,7 @@ fn stranger_removes_the_carrier(
 #[test]
 fn a_strangers_removal_mark_of_the_carrier_refuses_no_owner_act() {
     let served = ServedVault::self_host();
-    let (anchor, root) = publish_stranger_root(&served);
+    let (anchor, root) = publish_stranger_root(&served.vault);
     let (mark, join) = stranger_removes_the_carrier(&served, &anchor, root);
     let request = served.joining_machine();
 
@@ -421,7 +440,7 @@ fn a_roster_removal_of_the_carrier_still_refuses_its_owner_acts() {
 fn a_carrier_only_a_strangers_root_admits_writes_no_roster_chain() {
     let served = ServedVault::self_host();
     let vault_id = served.vault_id();
-    let (anchor, root) = publish_stranger_root(&served);
+    let (anchor, root) = publish_stranger_root(&served.vault);
     let stranger_key = signing(STRANGER_MACHINE_SEED);
     let machine = EntityId::from_bytes([0x5C; 16]).expect("an id");
     let identity = served.request_for(machine, &stranger_key);
@@ -490,6 +509,108 @@ fn a_carrier_only_a_strangers_root_admits_writes_no_roster_chain() {
         fold.machine(machine)
             .is_none_or(|folded| folded.roster.is_none()),
         "a stranger's carrier wrote X a roster chain"
+    );
+    for row in [root, mark_hash] {
+        assert!(
+            fold.valid_entries.contains(&row),
+            "the stranger's root and mark stay valid"
+        );
+    }
+}
+
+/// A stranger's root marks this install before the roster holds a head of
+/// it: live and owned, under the install's own keys and proof (seq 2, on the
+/// root). "On the roster yet?" is the roster's question (Fable design pass
+/// 29, 3.4; FIX [SERVING-PROFILE-ANCHOR-MARKED-INSTALL-NO-BOOTSTRAP]), so the
+/// serving-profile door enrols the install under the host root, and the
+/// install then carries the owner's enrolment of another machine. On main
+/// the door stands the install on the stranger's chain and writes no roster
+/// chain (the `roster` expect fails); at this PR's first head 1ec17eefde8e
+/// it refuses SERVING_PROFILE_NOT_LIVE (the door's expect fails).
+#[test]
+fn a_strangers_mark_of_an_install_the_roster_holds_no_head_of_leaves_its_bootstrap_open() {
+    let (vault, issuer, dir) = unprofiled_self_host();
+    let vault_id = vault_id_of(&vault);
+    let encryption_key = vault
+        .machine_encryption_key(vault_id)
+        .expect("this install's encryption key");
+    let request = vault
+        .machine_enrolment_request(vault_id, encryption_key)
+        .expect("this install's enrolment request");
+    assert!(
+        vault
+            .authority_fold()
+            .expect("authority fold")
+            .machine(request.machine)
+            .is_none(),
+        "guard: no chain profiles this install before the stranger's mark"
+    );
+    let (anchor, root) = publish_stranger_root(&vault);
+    let mark = signed(
+        vault_id,
+        2,
+        vec![root],
+        AuthorityOp::MachineProfile(MachineProfile {
+            machine: request.machine,
+            owner: stranger_owner(),
+            machine_key: request.machine_key,
+            device_class: request.device_class,
+            encryption_key: request.encryption_key.clone(),
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision: 1,
+            machine_proof: request.machine_proof,
+            seen_world_edits: BTreeSet::new(),
+            carrier: None,
+            act: None,
+        }),
+        &anchor,
+    );
+    let mark_hash = hash(&mark);
+    vault
+        .put_authority_log_entry(&mark, AT, 2)
+        .expect("the stranger's mark of this install is stored");
+    let held = vault
+        .local_machine()
+        .expect("this install's machine")
+        .expect("guard: this install has a machine id")
+        .profile
+        .expect("guard: the install view holds a chain naming this install's key");
+    assert!(
+        held.roster.is_none(),
+        "guard: the roster holds no head of this install"
+    );
+    assert!(
+        held.anchored
+            .get(&anchor.verifying_key().to_bytes())
+            .is_some_and(|chain| chain.is_live()),
+        "guard: the stranger's chain holds this install live"
+    );
+
+    let roster = vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("the serving-profile door enrols an install the roster holds no head of")
+        .roster
+        .expect("the serving-profile door wrote this install a roster chain");
+    assert!(roster.is_live(), "this install's roster chain is live");
+    assert_eq!(
+        roster.profile.revision, 1,
+        "this install stands at revision 1"
+    );
+    assert_eq!(
+        roster.profile.machine_key, request.machine_key,
+        "the roster profiles this install under its own machine key"
+    );
+    let served = ServedVault::bound(vault, issuer, dir, request.machine);
+    let joining = served.joining_machine();
+    served
+        .enrol(&joining)
+        .expect("this install carries the owner's enrolment once the roster profiles it");
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.machine(joining.machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .is_some_and(|chain| chain.is_live() && chain.profile.carrier == Some(request.machine)),
+        "the owner's enrolment stands, carried by this install"
     );
     for row in [root, mark_hash] {
         assert!(

@@ -37,8 +37,11 @@ use super::*;
 /// publish a root and mark any machine, under keys it holds, owned or
 /// removed in its own chain, and the fold cannot tell the owner's anchor
 /// from a stranger's (RULINGs FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C, 16 Nov
-/// 05:10, and FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B, 05:38; FIX
-/// [ADMITTED-ANCHOR-SET] gives the owner's anchor back through an admit op).
+/// 05:10, and FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B, 05:38). The owner's kit acts
+/// through its own key on the roster, like any owner key (Fable design pass
+/// 29; ANCHORS-1 = A, 16 Nov 06:1x); an install that only an anchor marked
+/// carries once the roster profiles it ([`crate::Vault::ensure_serving_install_profile`]
+/// enrols it then).
 /// A role change between linked roles never revokes it; only removal does.
 /// It never admits a key the authority roster names (the host root, an owner
 /// or roster device key: FIX 2222, the unattended host root acts as nobody),

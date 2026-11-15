@@ -17,12 +17,22 @@ use crate::authority::slip_vault::{random_slip_id, require_host};
 /// device exactly as a never-profiled install does (Engine, CALLS
 /// "selfprofile serving-install role", amendment (c)). A profiled install
 /// that cannot carry (removed, poisoned) never falls back to the root.
+/// "Profiled" is the roster's word (Fable design pass 29, 3.4; Engine
+/// 06:15): an install the roster holds no head of is unprofiled whatever an
+/// anchor's chain says of it, unless the chain of the anchor it pins removed
+/// it or is conflicted.
 fn unprofiled_install(fold: &AuthorityFold, machine: Option<crate::EntityId>) -> bool {
     machine.is_none_or(|machine| {
         fold.machine(machine).is_none_or(|folded| {
-            folded.chains().all(|(_, chain)| {
-                !chain.profile.role.answered() && !chain.removed && !chain.conflicted
-            })
+            let roster = folded.roster.as_ref().is_none_or(|head| {
+                !head.profile.role.answered() && !head.removed && !head.conflicted
+            });
+            let pinned = fold
+                .pinned_root
+                .as_ref()
+                .and_then(|pin| folded.anchored.get(&pin.anchor_key))
+                .is_none_or(|chain| !chain.removed && !chain.conflicted);
+            roster && pinned
         })
     })
 }
