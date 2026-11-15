@@ -149,7 +149,7 @@ impl Memory<'_> {
 }
 
 /// The view of `document`'s draft as `state` folds it.
-fn draft_view(document: EntityId, state: EsignState) -> EsignDraftView {
+pub(super) fn draft_view(document: EntityId, state: EsignState) -> EsignDraftView {
     EsignDraftView {
         document_ref: document.to_hex(),
         status: state.status,

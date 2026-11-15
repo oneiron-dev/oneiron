@@ -1,0 +1,21 @@
+{
+  "name": "vault.esign.fields.place",
+  "description": "Places the fields of a signing document still in draft, in place of its own, as the caller; the owner's field editor exports them in this shape. Refused once the document is sent.",
+  "refs": [
+    "/document_ref"
+  ],
+  "input": "crate::blob_artifact::esign::EsignFieldsPlaceRequest",
+  "output": "crate::blob_artifact::esign::EsignDraftView",
+  "call": "memory.esign_place_fields(&input)?",
+  "scope": "Write",
+  "act_class": "legal_send",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false
+}

@@ -4,6 +4,7 @@ pub use crate::blob_artifact::esign::ceremony::SigningSealedItem;
 pub use crate::blob_artifact::esign::delivery_capability::EsignDeliveryWait;
 pub use crate::blob_artifact::esign::door::EsignCreateRequest;
 pub use crate::blob_artifact::esign::door::EsignDispatchRequest;
+pub use crate::blob_artifact::esign::door::EsignFieldsPlaceRequest;
 pub use crate::blob_artifact::esign::door::EsignGetRequest;
 pub use crate::blob_artifact::esign::door::EsignLinksIssueRequest;
 pub use crate::blob_artifact::esign::door::EsignSealAttemptView;

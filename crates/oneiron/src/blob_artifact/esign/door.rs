@@ -4,6 +4,9 @@
 //!   caller names PDF artifacts it already registered
 //!   (`vault.artifacts.create`), places recipients and fields, and the draft
 //!   lands as the caller, person or agent. Drafting sends nothing.
+//! - `vault.esign.fields.place`: the draft's fields, placed again before it
+//!   is sent (SGN-07), with `vault.esign.create`'s authority; the owner's
+//!   field editor exports them in this row's shape.
 //! - `vault.esign.get`: the document's state and its audit trail, or why
 //!   its trail does not read, with its delivery receipts either way.
 //! - `vault.esign.links.issue`: the owner mints the recipients' signing
@@ -43,10 +46,12 @@ use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision 
 use serde::{Deserialize, Serialize};
 
 mod draft;
+mod fields;
 mod links;
 mod preview;
 mod read;
 
+pub use fields::EsignFieldsPlaceRequest;
 pub use preview::{EsignSigningPreviewRequest, EsignSigningPreviewView, layout_esign_preview};
 
 #[doc(hidden)]

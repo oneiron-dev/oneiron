@@ -55,6 +55,7 @@ pub use ingress::EsignIngress;
 mod document_view;
 pub use document_view::{EsignDocumentTrail, EsignDocumentView, EsignSealTrail};
 mod door;
+pub use door::EsignFieldsPlaceRequest;
 pub use door::{
     EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDraftView, EsignGetRequest,
     EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignSealAttemptView,
