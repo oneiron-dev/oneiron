@@ -213,6 +213,8 @@ impl Memory<'_> {
                 .read_proof
                 .as_ref()
                 .map(crate::authority::StoredReadProof::of),
+            // The opener's sitting, so its terminal joins it (FIX 1033).
+            sitting: self.session_key,
         };
         let handle = MessageStreamHandle {
             message: id,

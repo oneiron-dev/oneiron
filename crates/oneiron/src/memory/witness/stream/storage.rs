@@ -104,6 +104,13 @@ pub(super) struct Seed {
     /// seed writes the field, so a stored seed without it does not decode.
     #[serde(deserialize_with = "required_read_proof")]
     pub read_proof: Option<crate::authority::StoredReadProof>,
+    /// The sitting the opener's handle was bound to (`Memory::with_session`),
+    /// so the terminal, after a restart too, joins the stream's TURN to that
+    /// sitting rather than to this machine's (FIX 1033). `None` is an opener
+    /// bound to none; a seed stored before the field decodes as `None`, the
+    /// terminal it had then.
+    #[serde(default)]
+    pub sitting: Option<crate::session_lifecycle::SessionKey>,
 }
 /// Decodes [`Seed::read_proof`] whether it holds a proof or `None`; a seed
 /// missing the field is refused, never read as an opener with no proof.

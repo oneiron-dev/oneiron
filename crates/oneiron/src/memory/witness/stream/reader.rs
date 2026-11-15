@@ -11,6 +11,11 @@ use crate::memory::Memory;
 /// no bound proof reads as its actor, as before.
 pub(super) fn terminal_memory<'v>(vault: &'v Vault, seed: &Seed) -> Result<Memory<'v>> {
     let memory = vault.memory(seed.actor, seed.class()?);
+    // The opener's sitting, restored, places the TURN (FIX 1033).
+    let memory = match seed.sitting {
+        Some(key) => memory.with_session(key),
+        None => memory,
+    };
     Ok(match &seed.read_proof {
         Some(proof) => memory.with_read_proof(&proof.restore()),
         None => memory,
