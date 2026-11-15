@@ -147,7 +147,6 @@ pub fn record_quarantined_submission_restored(
     owner: &AuthenticatedOwner,
     claim_ref: &EntityId,
     event_ref: EntityId,
-    now: u64,
 ) -> Result<(), BookingError> {
     booking_writer(vault, |wtxn| {
         owner.revalidate_in_txn(vault, &*wtxn).map_err(|error| {
@@ -178,7 +177,6 @@ pub fn record_quarantined_submission_restored(
             .close_pending_gate_consent_in_txn(
                 wtxn,
                 claim_ref,
-                now,
                 crate::store::gate_reason::GateReceiptOutcome::Approved,
                 vec![QUARANTINE_RESTORE_REASON_CODE.to_owned()],
                 Some(format!("booking_event:{}", event_ref.to_hex())),

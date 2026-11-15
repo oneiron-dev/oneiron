@@ -1816,7 +1816,6 @@ fn quarantine_retry_after_rejection_replays_without_reappending() {
             vault.store.close_pending_gate_consent_in_txn(
                 wtxn,
                 &claim_ref,
-                2,
                 crate::store::gate_reason::GateReceiptOutcome::Rejected,
                 vec!["gate.pending.bundle_rejected".to_owned()],
                 None,

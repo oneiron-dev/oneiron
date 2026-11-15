@@ -173,18 +173,9 @@ impl Vault {
 
     /// Resolves a stale pending ask by emitting a `let_go` receipt and removing it from the tray.
     pub fn let_go_pending_ask(&self, claim_id: &EntityId) -> Result<Option<ReceiptRecord>> {
-        self.let_go_pending_ask_at(claim_id, self.store.clock.now_recorded_at())
-    }
-
-    /// Testable variant of [`Vault::let_go_pending_ask`] with an explicit event time.
-    pub fn let_go_pending_ask_at(
-        &self,
-        claim_id: &EntityId,
-        now: u64,
-    ) -> Result<Option<ReceiptRecord>> {
         let emitted = self.with_write_txn_grouped(|wtxn| {
             self.store
-                .let_go_pending_gate_consent_in_txn(wtxn, claim_id, now)
+                .let_go_pending_gate_consent_in_txn(wtxn, claim_id)
         })?;
         Ok(emitted.as_ref().map(gate_decision_receipt))
     }

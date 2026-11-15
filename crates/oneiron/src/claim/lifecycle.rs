@@ -797,7 +797,6 @@ impl Vault {
                 self.store.close_pending_gate_consent_as_in_txn(
                     wtxn,
                     id,
-                    now,
                     crate::store::gate_reason::GateReceiptOutcome::Retracted,
                     vec!["gate.pending.claim_retracted".to_owned()],
                     None,

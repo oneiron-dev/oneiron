@@ -422,7 +422,6 @@ impl Vault {
                 self.store.close_pending_gate_consent_as_in_txn(
                     wtxn,
                     &binding.claim_id,
-                    now,
                     crate::store::gate_reason::GateReceiptOutcome::Rejected,
                     vec![GATE_REASON_CRITICAL_CONFIRM_DECLINED.to_owned()],
                     None,
@@ -643,7 +642,6 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     store.close_pending_gate_consent_as_in_txn(
         wtxn,
         claim_id,
-        pending.created_at,
         crate::store::gate_reason::GateReceiptOutcome::Invalidated,
         vec![GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE.to_owned()],
         None,

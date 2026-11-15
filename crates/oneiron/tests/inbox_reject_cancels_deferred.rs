@@ -5,6 +5,10 @@
 //! the parked closure with it, as the bundle and settle declines do.
 //! Accepting it still closes the head it replaces.
 //!
+//! The row that closes the tray row is the vault's: its `created_at` is whole seconds on
+//! the vault's recording clock, read by the mint, whatever `now` the door's caller passes
+//! (UC-03 PR 4-1b).
+//!
 //! `cargo test --locked -p oneiron --all-features --test inbox_reject_cancels_deferred`
 #![cfg(feature = "test-support")]
 
@@ -302,6 +306,45 @@ fn rejecting_a_runs_replacement_in_the_inbox_cancels_its_parked_closure() {
         f.lifecycle(head),
         ClaimLifecycleStatus::Active,
         "the head stands"
+    );
+}
+
+#[test]
+fn the_row_closing_a_rejected_members_tray_row_reads_the_recording_clock() {
+    let f = Fixture::new();
+    let (_, new) = f.parked_replacement();
+
+    // The door's caller passes the inbox's own clock, as the projection
+    // above reads it; the closing row takes the vault's.
+    let before = f.vault.now_recorded_at();
+    let rejected = f
+        .vault
+        .resolve_inbox_group_at(RUN_ID, InboxBulkVerb::RejectAll, None, 1_000_000)
+        .expect("the owner rejects the run's group");
+    let after = f.vault.now_recorded_at();
+    assert_eq!(rejected.item_receipts.len(), 1, "one member was rejected");
+    assert!(!f.has_tray_row(new), "the tray row is closed");
+
+    let closing: Vec<_> = f
+        .vault
+        .gate_decisions(256)
+        .expect("gate decisions")
+        .into_iter()
+        .filter(|row| {
+            row.claim_id == Some(*new.as_bytes())
+                && row.grant_ref.as_deref() == Some(rejected.bundle_ref.as_str())
+        })
+        .collect();
+    let [row] = closing.as_slice() else {
+        panic!(
+            "one row closes the member's tray row, found {}",
+            closing.len()
+        );
+    };
+    assert!(
+        (before..=after).contains(&row.created_at),
+        "the closing row's created_at {} is a second of the vault's recording clock in {before}..={after}",
+        row.created_at
     );
 }
 

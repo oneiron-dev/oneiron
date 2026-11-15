@@ -8,7 +8,6 @@ use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
-use oneiron_contracts::RecordedSeconds;
 
 pub(crate) fn authority_denied(reason: &'static str) -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
@@ -385,9 +384,9 @@ impl super::Memory<'_> {
 }
 
 /// A memory settlement's Gate receipt draft: `actor` decided `outcome` on
-/// `kind` for `reason`, about `target`, at `now` (the caller's clock, in
-/// seconds). It reads no policy; a caller that judged against a frontier
-/// sets `basis`. The store mints the id.
+/// `kind` for `reason`, about `target`. It reads no policy; a caller that
+/// judged against a frontier sets `basis`. The store mints the id and the
+/// time.
 pub(super) fn decision(
     actor: WriteActor,
     kind: &'static str,
@@ -395,7 +394,6 @@ pub(super) fn decision(
     reason: &str,
     target: Option<EntityId>,
     digest: Vec<u8>,
-    now: u64,
 ) -> GateReceipt {
     let mut receipt = GateReceipt::new(
         outcome,
@@ -406,7 +404,6 @@ pub(super) fn decision(
         PolicyBasis::NOT_READ,
     );
     receipt.about = target;
-    receipt.decided_at = Some(RecordedSeconds::from_secs(now));
     receipt
 }
 
@@ -438,7 +435,6 @@ pub(crate) fn explicit_claim_override_in_txn(
     actor: WriteActor,
     target: EntityId,
     body: &ClaimBody,
-    now: u64,
 ) -> Result<()> {
     verify_live_actor(vault, txn, actor)?;
     let owns = claim_author(body) == Some(actor.entity_ref())
@@ -468,7 +464,6 @@ pub(crate) fn explicit_claim_override_in_txn(
         "gate.memory.explicit_owner_override",
         Some(target),
         blake3::hash(&bytes).as_bytes().to_vec(),
-        now,
     );
     vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     Ok(())

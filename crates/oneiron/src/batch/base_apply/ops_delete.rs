@@ -78,7 +78,7 @@ pub(super) fn apply_delete_arm(
         )?;
     claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
     if state.persist_gate_pending_consent {
-        store.let_go_pending_gate_consent_in_txn(wtxn, &id, state.mutation_recorded_at)?;
+        store.let_go_pending_gate_consent_in_txn(wtxn, &id)?;
     }
     state.pending_embedding_tokens_written.remove(&id);
     #[cfg(feature = "sync")]

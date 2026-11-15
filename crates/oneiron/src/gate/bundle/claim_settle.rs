@@ -153,14 +153,8 @@ impl Vault {
             GateConsentBundleAction::Approve => {
                 // Closed before the approval lands, so the row leaves its own
                 // resolution receipt; a refused approval rolls it back.
-                let tray_receipt = close_settled_tray_row_in_txn(
-                    self,
-                    wtxn,
-                    &id,
-                    owner_answer.as_ref(),
-                    action,
-                    now,
-                )?;
+                let tray_receipt =
+                    close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer.as_ref(), action)?;
                 let mut approved = body.clone();
                 approved.approval = ClaimApprovalStatus::Approved;
                 let put = BatchOp::Put {
@@ -280,14 +274,8 @@ impl Vault {
                 } else {
                     crate::batch::VerifiedClaimTransition::after_consent(&self.store, wtxn, &put)?
                 };
-                let tray_receipt = close_settled_tray_row_in_txn(
-                    self,
-                    wtxn,
-                    &id,
-                    owner_answer.as_ref(),
-                    action,
-                    now,
-                )?;
+                let tray_receipt =
+                    close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer.as_ref(), action)?;
                 crate::batch::apply_session_bundle_claim_puts_with_transitions(
                     &self.store,
                     &self.config,
@@ -367,7 +355,7 @@ impl Vault {
             }));
         }
         let tray_receipt =
-            close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer.as_ref(), action, now)?;
+            close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer.as_ref(), action)?;
         match action {
             // The parked binding is checked, and the retract closes the
             // claim as the settling actor's (FIX 11039).
@@ -431,7 +419,6 @@ fn close_settled_tray_row_in_txn(
     id: &EntityId,
     owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
     action: GateConsentBundleAction,
-    now: u64,
 ) -> Result<Option<GateDecisionRecord>> {
     let Some(row) = vault.store.pending_gate_consent_in_txn(&*wtxn, id)? else {
         return Ok(None);
@@ -457,7 +444,6 @@ fn close_settled_tray_row_in_txn(
     vault.store.close_pending_gate_consent_as_in_txn(
         wtxn,
         id,
-        now,
         outcome,
         vec![reason.to_owned()],
         Some(format!("{CLAIM_SETTLE_REF_PREFIX}{}", id.to_hex())),

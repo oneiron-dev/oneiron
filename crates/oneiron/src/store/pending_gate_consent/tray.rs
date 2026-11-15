@@ -11,7 +11,6 @@ use crate::store::EngineScan;
 use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::scan_count::ScanCount;
 use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
-use oneiron_contracts::RecordedSeconds;
 
 use super::Store;
 use super::records::{
@@ -237,12 +236,10 @@ impl Store {
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
-        created_at: u64,
     ) -> Result<Option<GateDecisionRecord>> {
         self.close_pending_gate_consent_in_txn(
             wtxn,
             claim_id,
-            created_at,
             GateReceiptOutcome::LetGo,
             vec!["gate.pending.gap_decayed".to_owned()],
             None,
@@ -258,7 +255,6 @@ impl Store {
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
-        created_at: u64,
         outcome: GateReceiptOutcome,
         reason_codes: Vec<String>,
         grant_ref: Option<String>,
@@ -266,7 +262,6 @@ impl Store {
         self.close_pending_gate_consent_as_in_txn(
             wtxn,
             claim_id,
-            created_at,
             outcome,
             reason_codes,
             grant_ref,
@@ -276,15 +271,10 @@ impl Store {
 
     /// [`Self::close_pending_gate_consent_in_txn`] with the removal's own
     /// account of the claim's obligation.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the close's resolution receipt fields plus its removal"
-    )]
     pub(crate) fn close_pending_gate_consent_as_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
-        created_at: u64,
         outcome: GateReceiptOutcome,
         reason_codes: Vec<String>,
         grant_ref: Option<String>,
@@ -319,7 +309,6 @@ impl Store {
         receipt.about = Some(*claim_id);
         receipt.grant_ref = grant_ref;
         receipt.context = context;
-        receipt.decided_at = Some(RecordedSeconds::from_secs(created_at));
         let record = self.record_gate_receipt_in_txn(wtxn, receipt)?;
         self.remove_pending_gate_consent_in_txn(wtxn, claim_id, removal)?;
         Ok(Some(record))

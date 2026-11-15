@@ -496,7 +496,6 @@ impl Vault {
                     .close_pending_gate_consent_as_in_txn(
                         wtxn,
                         &id,
-                        now,
                         member_outcome,
                         vec![member_reason.to_owned()],
                         Some(bundle_ref.clone()),

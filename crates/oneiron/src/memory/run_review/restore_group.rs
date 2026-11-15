@@ -336,7 +336,6 @@ impl Memory<'_> {
             },
             None,
             run.as_bytes().to_vec(),
-            now,
         );
         let mut record = self.vault().store.mint_gate_receipt_in_txn(txn, receipt)?;
         crate::gate::append_reviewed_run_decision_in_txn(

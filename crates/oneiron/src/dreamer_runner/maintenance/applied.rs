@@ -27,7 +27,6 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor};
-use oneiron_contracts::RecordedSeconds;
 use serde::{Deserialize, Serialize};
 
 mod action_mode_row;
@@ -471,7 +470,6 @@ fn record_finding_in_txn(
         APPLY_REASON,
         target,
         finding_revision.to_vec(),
-        now,
     );
     receipt.context = decision_context::applied(vault, &*txn, target, attempt);
     receipt.grant_ref = grant.map(|grant| grant.to_hex());
@@ -516,14 +514,7 @@ pub(super) fn record_project_tree_fork_in_txn(
     }
     let mut key = Vec::new();
     target.encode_into(&mut key);
-    let mut receipt = decision(
-        actor,
-        MAINTENANCE_APPLY_KIND,
-        APPLY_REASON,
-        target,
-        key,
-        now,
-    );
+    let mut receipt = decision(actor, MAINTENANCE_APPLY_KIND, APPLY_REASON, target, key);
     receipt.context = decision_context::applied(vault, &*txn, target, Some(attempt));
     let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     APPLIED.put(
@@ -572,7 +563,6 @@ pub(super) fn close_with_parent_in_txn(
     child: EntityId,
     parent: MaintenanceTarget,
     owner: WriteActor,
-    now: u64,
 ) -> Result<()> {
     let target = MaintenanceTarget::Finding(child);
     let Some(mut row) = APPLIED.get(&vault.store, &*txn, &target)? else {
@@ -592,7 +582,6 @@ pub(super) fn close_with_parent_in_txn(
         REVERT_REASON,
         target,
         handle,
-        now,
     );
     receipt.context = decision_context::answering(vault, &*txn, row.receipt);
     let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
@@ -643,15 +632,14 @@ fn listed(target: MaintenanceTarget, row: AppliedRow) -> AppliedMaintenance {
 }
 
 /// One approved Gate receipt draft by `actor`, naming `target`'s claim when
-/// it is a finding; `diff_handle` is never empty. It reads no policy, and
-/// `now` is the caller's second. The store mints the id.
+/// it is a finding; `diff_handle` is never empty. It reads no policy. The
+/// store mints the id and the time.
 pub(super) fn decision(
     actor: WriteActor,
     kind: &'static str,
     reason: &str,
     target: MaintenanceTarget,
     diff_handle: Vec<u8>,
-    now: u64,
 ) -> GateReceipt {
     let mut receipt = GateReceipt::new(
         GateReceiptOutcome::Approved,
@@ -662,7 +650,6 @@ pub(super) fn decision(
         PolicyBasis::NOT_READ,
     );
     receipt.about = target.finding();
-    receipt.decided_at = Some(RecordedSeconds::from_secs(now));
     receipt
 }
 
@@ -734,7 +721,6 @@ impl Vault {
                 REVERT_REASON,
                 target,
                 row.receipt.as_bytes().to_vec(),
-                now,
             );
             receipt.context = decision_context::answering(self, &*txn, row.receipt);
             let receipt = self.store.record_gate_receipt_in_txn(txn, receipt)?;

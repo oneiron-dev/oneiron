@@ -185,7 +185,6 @@ pub(super) fn undo_member_in_txn(
         row.member.rows()?.first().copied(),
         serde_json::to_vec(&(&inverse_receipt, &unrestored))
             .map_err(|_| MemoryError::bad_request("compensation receipt cannot be encoded"))?,
-        now,
     );
     let record = memory
         .vault()

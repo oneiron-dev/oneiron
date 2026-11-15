@@ -610,7 +610,6 @@ impl Memory<'_> {
                     reason.as_str(),
                     Some(id),
                     reviewed.digest.to_vec(),
-                    now,
                 );
                 receipt.basis = crate::store::PolicyBasis::frontier(reviewed.frontier);
                 receipt.grant_ref = authorized.grant_ref;

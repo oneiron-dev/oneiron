@@ -258,7 +258,6 @@ impl Memory<'_> {
                 "gate.memory.conflict_of_interest",
                 Some(disputed),
                 packet.bundle_id.to_vec(),
-                crate::unix_seconds_now(),
             );
             PACKET.put(
                 &self.vault.store,
@@ -495,7 +494,6 @@ impl Memory<'_> {
             self.vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &packet.disputed,
-                now,
                 GateReceiptOutcome::Superseded,
                 vec!["gate.memory.admin_conflict_ruling".to_owned()],
                 None,
@@ -508,7 +506,6 @@ impl Memory<'_> {
             self.vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &packet.disputed,
-                now,
                 GateReceiptOutcome::Superseded,
                 vec!["gate.memory.admin_conflict_ruling".to_owned()],
                 None,
@@ -525,7 +522,6 @@ impl Memory<'_> {
                 "gate.memory.admin_conflict_ruling",
                 Some(ruling_id),
                 id.to_vec(),
-                now,
             );
             receipt.grant_ref = grant_ref;
             receipt.basis = PolicyBasis::frontier(packet.policy_frontier);

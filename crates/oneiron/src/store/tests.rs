@@ -4072,7 +4072,6 @@ fn gate_retention_preserves_pending_source_but_prunes_sibling_receipt() -> Resul
             vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &EntityId::from_bytes(claim)?,
-                vault.store.clock.now_recorded_at(),
                 crate::store::gate_reason::GateReceiptOutcome::Approved,
                 vec!["gate.bundle.approved".to_owned()],
                 None,

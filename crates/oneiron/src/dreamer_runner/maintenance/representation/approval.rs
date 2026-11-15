@@ -142,7 +142,7 @@ impl Vault {
         }
         validate_packet(self, &record.packet, record.request.owner)?;
         let ReviewBasis::Bundle(bundle_id) = review.basis else {
-            self.arm_saved_plan(owner, review, now)?;
+            self.arm_saved_plan(owner, review)?;
             return self.approved_representation(&review.id);
         };
         match body.approval {
@@ -228,7 +228,6 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         review: &RepresentationReview,
-        now: u64,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
             let actor =
@@ -255,7 +254,6 @@ impl Vault {
                 SEND_REVIEW_REASON,
                 MaintenanceTarget::Finding(review.id),
                 review.record.revision.to_vec(),
-                now,
             );
             let receipt = self.store.record_gate_receipt_in_txn(txn, receipt)?;
             let approval = ApprovalRecord {

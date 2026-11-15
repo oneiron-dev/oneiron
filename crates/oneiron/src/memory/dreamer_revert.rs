@@ -113,7 +113,6 @@ impl Memory<'_> {
                 REVERT_REASON,
                 Some(change),
                 change.as_bytes().to_vec(),
-                now,
             );
             let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(DreamerRevertReceipt {

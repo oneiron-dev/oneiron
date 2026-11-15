@@ -180,7 +180,6 @@ impl Memory<'_> {
             reason.as_str(),
             Some(id),
             reviewed.digest.to_vec(),
-            now,
         );
         receipt.basis = crate::store::PolicyBasis::frontier(reviewed.frontier);
         // FIX 7499, 7500: the member's read context, and the loop links of

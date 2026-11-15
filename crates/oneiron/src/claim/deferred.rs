@@ -612,7 +612,6 @@ impl Vault {
                 self.store.close_pending_gate_consent_as_in_txn(
                     txn,
                     id,
-                    now,
                     GateReceiptOutcome::Superseded,
                     vec!["gate.supersede.contradiction_closure".to_owned()],
                     None,

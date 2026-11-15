@@ -128,7 +128,6 @@ pub(crate) async fn restore_quarantined_booking(
                     &proof,
                     &claim,
                     event_ref,
-                    now,
                 )
             })
             .await

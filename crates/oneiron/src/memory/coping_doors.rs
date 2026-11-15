@@ -161,7 +161,6 @@ impl Memory<'_> {
                 blake3::hash(&crate::claim::encode_claim_body(&active)?)
                     .as_bytes()
                     .to_vec(),
-                now,
             );
             let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(CopingOutcomeReceipt {
