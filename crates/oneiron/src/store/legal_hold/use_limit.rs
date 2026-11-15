@@ -14,13 +14,19 @@ use crate::store::Store;
 pub(super) const USE_LIMITS: SideTable<EntityId, LegalHoldUseLimit, Named> =
     SideTable::new(&side_table::LEGAL_HOLD_USE_LIMIT);
 
+/// Keeps `record` under a use limit after a refused privacy erasure (C6).
+/// An audit_read grant gets none: a use limit hides it from safe reads, and
+/// it ends only through the owner's revoke. The refusal its hold logs stands
+/// (Astra delta-4 F2, F3).
 pub(super) fn keep_use_limited_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     record: EntityId,
     at: u64,
 ) -> Result<()> {
-    if USE_LIMITS.contains(store, txn, &record)? {
+    if USE_LIMITS.contains(store, txn, &record)?
+        || crate::access_grant::stored_audit_read_grant_in_txn(store, txn, &record)?
+    {
         return Ok(());
     }
     // A use-limited fact no longer reads: its `about` lines hide (FIX 3196).

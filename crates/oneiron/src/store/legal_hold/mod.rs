@@ -497,6 +497,9 @@ pub(crate) fn flush_refusals_in_txn(
 /// Each held record logs a refusal with its reason; where Oneiron hosts the
 /// bytes it is kept under a use limit (C6). It never lifts or skips a hold.
 /// A host order keeps nothing here, so a record only it names is erased.
+/// An audit_read grant among `records` refuses the whole request: it ends
+/// only through the owner's revoke, so no privacy erase keeps or erases it
+/// (Astra delta-4 F2).
 pub(crate) fn split_privacy_erase_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -506,6 +509,9 @@ pub(crate) fn split_privacy_erase_in_txn(
     let now = store.clock.now_recorded_at();
     let hosted = hosts_bytes(store);
     let actor = actor.clone().privacy(true);
+    for record in records {
+        crate::access_grant::reject_audit_read_grant_delete_in_txn(store, txn, record)?;
+    }
     let (mut erase, mut kept) = (Vec::new(), Vec::new());
     for record in records {
         let target = LegalHoldTarget::Record(*record);

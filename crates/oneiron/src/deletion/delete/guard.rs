@@ -106,6 +106,10 @@ impl Vault {
                 Some(due) => due.prove_in(self, &txn, id)?,
                 None => actor,
             };
+            // Again in this snapshot: a grant the owner wrote and held after
+            // the first check meets its refusal before the hold's, whose
+            // settlement would limit its use (Astra delta-4 F3).
+            crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, &txn, id)?;
             self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
             // A pad is held by its world's holds too (OF-470), refused as
             // this actor (FIX 3059).
