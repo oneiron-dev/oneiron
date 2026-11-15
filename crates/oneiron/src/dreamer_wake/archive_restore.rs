@@ -33,11 +33,6 @@ pub(crate) fn land_archived_dreamer_wake_rows_in_txn(
                     vault, txn, permit, row,
                 )?
             }
-            name if name == side_table::DREAMER_WAKE_RECIPE_POLICY.name => {
-                super::recipes::land_archived_dreamer_wake_recipe_policy_row_in_txn(
-                    vault, txn, permit, row,
-                )?
-            }
             // The dispatcher never sends a foreign envelope here; without an
             // owning table the envelope has no decoding.
             _ => ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),

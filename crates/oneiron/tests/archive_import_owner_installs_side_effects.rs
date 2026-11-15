@@ -23,6 +23,20 @@
 //!   the destination serves no rung for, and a web setting naming a hub
 //!   connector the destination never installed, still install live byte for
 //!   byte: the rows are choices, and every use-time door fails closed.
+//! * `the_owner_restore_installs_the_responses_store_switch_live`,
+//!   `the_owner_restore_installs_the_dreamer_sieve_policy_live` and
+//!   `the_owner_restore_installs_the_dreamer_wake_policy_live`: one non-default
+//!   MODEL_OWNER_RESPONSES_STORE, DREAMER_SIEVE_POLICY and DREAMER_WAKE_POLICY row
+//!   each installs on a bare destination, and the destination's own read returns
+//!   the source's value where it returned the shipped default before the import.
+//! * `the_owner_restore_installs_the_digest_settings_and_the_coach_proposal_live`:
+//!   the owner's digest settings row and one Pending Coach proposal
+//!   (WEAVE_DIGEST_SETTINGS, WEAVE_DIGEST_SETTING_CHANGE) install together, and the
+//!   owner's accept on the destination applies the restored proposal on the
+//!   restored generation.
+//!
+//! DREAMER_WAKE_RECIPE_POLICY has no landing and no test: the export withholds
+//! every row of it (FIX-LIST ARCHIVE-WAKE-RECIPE-POLICY-WITHHELD-AS-CREDENTIAL).
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on the base; an absent field fails its
@@ -35,13 +49,14 @@ mod retained_side_rows;
 use std::io::Cursor;
 
 use oneiron::claim::{
-    ScopedReadActorKey, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule, WeaveReader,
-    WeaveSectionKind, WeaveSectionSpec,
+    ScopedReadActorKey, WeaveDigestCadence, WeaveDigestFeedback, WeaveDigestReader,
+    WeaveDigestSchedule, WeaveDigestSettingChangeStatus, WeaveReader, WeaveSectionKind,
+    WeaveSectionSpec,
 };
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::web_connector::{WebConnectorSetting, WebProvider, WebProviderKey};
-use oneiron::{EntityId, TimeRange};
+use oneiron::{DreamerHomeNodeCandidate, DreamerRunnerStore, EntityId, TimeRange};
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
 };
@@ -392,5 +407,334 @@ fn unknown_provider_choices_install_verbatim() {
         table_count(&summary, "WEB_CONNECTOR_SETTING", "installed_rows"),
         Some(1),
         "the owner import reports one installed WEB_CONNECTOR_SETTING row; an absent field means it installed nothing: {summary}"
+    );
+}
+
+/// The owner restore installs the Responses store switch live.
+#[test]
+fn the_owner_restore_installs_the_responses_store_switch_live() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    assert!(
+        !source
+            .responses_store()
+            .expect("read the source store switch"),
+        "the source switch starts off"
+    );
+    source
+        .set_responses_store(&source_owner, true)
+        .expect("the owner turns the source switch on");
+    assert!(
+        source
+            .responses_store()
+            .expect("read the source store switch"),
+        "the source holds the store row"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "MODEL_OWNER_RESPONSES_STORE").len(),
+        1,
+        "the source archive holds one retained MODEL_OWNER_RESPONSES_STORE tuple"
+    );
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    assert!(
+        !dest
+            .responses_store()
+            .expect("read the destination switch before"),
+        "the destination switch starts off"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "MODEL_OWNER_RESPONSES_STORE", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed MODEL_OWNER_RESPONSES_STORE row; an absent field means it installed nothing: {summary}"
+    );
+    assert!(
+        dest.responses_store()
+            .expect("read the restored store switch"),
+        "the owner import installs the store row live"
+    );
+}
+
+/// The owner restore installs the Dreamer sieve policy live.
+#[test]
+fn the_owner_restore_installs_the_dreamer_sieve_policy_live() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let defaults = source
+        .dreamer_sieve_policy()
+        .expect("read the shipped sieve defaults");
+    let mut policy = defaults;
+    policy.date_interest += 1;
+    assert_ne!(
+        policy, defaults,
+        "the sieve fixture differs from the defaults"
+    );
+    source
+        .set_dreamer_sieve_policy(&source_owner, policy)
+        .expect("the owner stores the source sieve row");
+    assert_eq!(
+        source
+            .dreamer_sieve_policy()
+            .expect("read the source sieve row"),
+        policy,
+        "the source holds the sieve row"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "DREAMER_SIEVE_POLICY").len(),
+        1,
+        "the source archive holds one retained DREAMER_SIEVE_POLICY tuple"
+    );
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    assert_eq!(
+        dest.dreamer_sieve_policy()
+            .expect("read the destination sieve before"),
+        defaults,
+        "the destination reads the shipped sieve defaults before the import"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "DREAMER_SIEVE_POLICY", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed DREAMER_SIEVE_POLICY row; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        dest.dreamer_sieve_policy()
+            .expect("read the restored sieve row"),
+        policy,
+        "the owner import installs the sieve row live"
+    );
+}
+
+/// The owner restore installs the Dreamer wake policy live.
+#[test]
+fn the_owner_restore_installs_the_dreamer_wake_policy_live() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let defaults = source
+        .dreamer_wake_policy()
+        .expect("read the shipped wake defaults");
+    let mut policy = defaults;
+    policy.longest_wait_secs += 1;
+    assert_ne!(
+        policy, defaults,
+        "the wake fixture differs from the defaults"
+    );
+    source
+        .set_dreamer_wake_policy(&source_owner, policy)
+        .expect("the owner stores the source wake row");
+    assert_eq!(
+        source
+            .dreamer_wake_policy()
+            .expect("read the source wake row"),
+        policy,
+        "the source holds the wake row"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "DREAMER_WAKE_POLICY").len(),
+        1,
+        "the source archive holds one retained DREAMER_WAKE_POLICY tuple"
+    );
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    assert_eq!(
+        dest.dreamer_wake_policy()
+            .expect("read the destination wake before"),
+        defaults,
+        "the destination reads the shipped wake defaults before the import"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "DREAMER_WAKE_POLICY", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed DREAMER_WAKE_POLICY row; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        dest.dreamer_wake_policy()
+            .expect("read the restored wake row"),
+        policy,
+        "the owner import installs the wake row live"
+    );
+}
+
+/// The owner restore installs the digest settings row and the Coach proposal live: the
+/// source files one Pending proposal from the owner's feedback, the archive carries one
+/// tuple per table, the owner import installs both, and the owner's accept applies the
+/// restored change on the restored generation.
+#[test]
+fn the_owner_restore_installs_the_digest_settings_and_the_coach_proposal_live() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let recipe = vec![WeaveSectionSpec {
+        kind: WeaveSectionKind::Links,
+        predicates: vec!["report.digest".to_owned()],
+        edge_kinds: Vec::new(),
+    }];
+    let schedule = WeaveDigestSchedule {
+        reader: WeaveDigestReader::Owner(owner),
+        cadence: WeaveDigestCadence::Daily,
+        next_due_at: 1,
+        recipe,
+    };
+    source
+        .set_weave_digest_schedule(&source_owner, &schedule)
+        .expect("the owner stores the source schedule");
+    let stored = source
+        .weave_digest_schedule(&source_owner, WeaveDigestReader::Owner(owner))
+        .expect("read the source schedule")
+        .expect("the source holds the schedule");
+    assert_eq!(
+        stored.cadence,
+        WeaveDigestCadence::Daily,
+        "the source schedule is daily"
+    );
+    let feedback = WeaveDigestFeedback {
+        preferred_cadence: Some(WeaveDigestCadence::Weekly),
+        lead_section: None,
+        keep_current: false,
+    };
+    assert_eq!(
+        source
+            .set_weave_digest_feedback(&source_owner, &feedback)
+            .expect("the owner tells the Coach weekly"),
+        feedback,
+        "the feedback lands"
+    );
+    let runner = DreamerRunnerStore::new(&source);
+    let me = runner
+        .local_home_node_candidate(false, false, false)
+        .expect("the local node id");
+    let now = source.now_recorded_at();
+    let home = runner
+        .elect_home_node(
+            &[DreamerHomeNodeCandidate::always_on_local(me.node_id)],
+            now,
+        )
+        .expect("the home election runs");
+    assert_eq!(
+        home.map(|designation| designation.node_id),
+        Some(me.node_id),
+        "this node is the elected home"
+    );
+    source
+        .serve_due_weave_digests(now, me.node_id)
+        .expect("the timer serves");
+    let changes = source
+        .weave_digest_setting_changes(&source_owner)
+        .expect("read the source changes");
+    assert_eq!(
+        changes.len(),
+        1,
+        "the Coach files one proposal: {changes:?}"
+    );
+    assert_eq!(
+        changes[0].status,
+        WeaveDigestSettingChangeStatus::Pending,
+        "the proposal waits for an answer"
+    );
+    assert_eq!(
+        changes[0].after.cadence,
+        WeaveDigestCadence::Weekly,
+        "the proposal sets the asked rhythm"
+    );
+    assert_eq!(
+        changes[0].base_generation, 1,
+        "the proposal stands on the first generation"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "WEAVE_DIGEST_SETTINGS").len(),
+        1,
+        "the archive holds one settings tuple"
+    );
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "WEAVE_DIGEST_SETTING_CHANGE").len(),
+        1,
+        "the archive holds one change tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    assert!(
+        dest.weave_digest_setting_changes(&dest_owner)
+            .expect("read the destination changes before")
+            .is_empty(),
+        "the bare destination holds no change"
+    );
+    assert!(
+        dest.weave_digest_schedule(&dest_owner, WeaveDigestReader::Owner(owner))
+            .expect("read the destination schedule before")
+            .is_none(),
+        "the bare destination holds no schedule"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "WEAVE_DIGEST_SETTINGS", "installed_rows"),
+        Some(1),
+        "one installed WEAVE_DIGEST_SETTINGS row; an absent field means none: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "WEAVE_DIGEST_SETTING_CHANGE", "installed_rows"),
+        Some(1),
+        "one installed WEAVE_DIGEST_SETTING_CHANGE row; an absent field means none: {summary}"
+    );
+    let restored = dest
+        .weave_digest_setting_changes(&dest_owner)
+        .expect("read the restored changes");
+    assert_eq!(
+        restored.len(),
+        1,
+        "the destination holds one change: {restored:?}"
+    );
+    assert_eq!(
+        restored[0].status,
+        WeaveDigestSettingChangeStatus::Pending,
+        "the restored change waits for an answer"
+    );
+    assert_eq!(
+        restored[0].after.cadence,
+        WeaveDigestCadence::Weekly,
+        "the restored change sets the asked rhythm"
+    );
+    let change_id = EntityId::from_hex(&restored[0].change_ref).expect("the change ref parses");
+    let answered = dest
+        .answer_weave_digest_setting_change(&dest_owner, change_id, true)
+        .expect("the accept applies on the live generation");
+    assert_eq!(
+        answered.status,
+        WeaveDigestSettingChangeStatus::Accepted,
+        "the accept settles the restored change"
+    );
+    let live = dest
+        .weave_digest_schedule(&dest_owner, WeaveDigestReader::Owner(owner))
+        .expect("read the applied schedule")
+        .expect("the destination holds the schedule");
+    assert_eq!(
+        live.cadence,
+        WeaveDigestCadence::Weekly,
+        "the accept sets the restored schedule weekly"
     );
 }
