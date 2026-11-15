@@ -18,12 +18,22 @@
 //! bounded key no grant gate bound keeps its rebuilt asker's relationship
 //! gate, which leaves unscoped rows readable (Sol F7 on #8061).
 //!
+//! A rebuild reads under the meet of its key and the saved basis (Sol R1/R2
+//! on #8061). The owner's own key under the access gate refuses the
+//! relationship claim: the attenuated lane rebuilt over it keeps that gate
+//! rather than lifting it with the saved exemption, and that key's own lane,
+//! held to the base world and saved, keeps the gate on its asker and on the
+//! owner's ungated key.
+//!
 //! Red on #8029 (87747eae206): the transferred asker and owner's-key
 //! rebuilds read the relationship claim, both credentials' lanes read as
-//! their holder's principal lane, and the attenuated lane rebuilt over the
-//! owner's key reads as the owner. Red at #8061's first head (73bfa478fb7):
-//! that attenuated rebuild, and the bounded ungated lane's rebuilt asker,
-//! which closes unscoped rows. Guards: the transferred source rebuild (its
+//! their holder's principal lane, the attenuated lane rebuilt over the
+//! owner's key reads as the owner, and the gated owner lane's asker and
+//! owner's-key rebuilds read the relationship claim. Red at #8061's first
+//! head (73bfa478fb7): that attenuated rebuild, and the bounded ungated
+//! lane's rebuilt asker, which closes unscoped rows. Red at its second head
+//! (5a2b1b1ebb7): the attenuated rebuild over the gated owner key and both
+//! gated owner lane rebuilds. Guards: the transferred source rebuild (its
 //! owner alternative already carried the access gate and no exemption), the
 //! device's own saved question and the attenuated one's asker read.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -347,6 +357,56 @@ fn owner_key_reads(fixture: &Fixture, frozen: &FrozenReadLane, claim: EntityId) 
     }
 }
 
+/// The owner's own key under the access gate: the owner's floor passes the
+/// policy check, not the grant gate, so its lane reads the owner's open
+/// claim and refuses the one inside a relationship no grant names.
+fn gated_owner_key(fixture: &Fixture) -> ScopedReadActorKey {
+    let key = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_key()
+        .expect("owner read key")
+        .require_access_grants(Some(fixture.owner));
+    assert!(
+        key.reads_as_vault_owner(),
+        "precondition: the owner's key under the access gate keeps the owner's floor"
+    );
+    let lane = held_lane(fixture, key.clone());
+    let (open, seen) = reads(&lane, fixture.open_claim);
+    assert!(
+        open,
+        "precondition: the owner's key under the access gate reads the owner's open claim; seen {seen}"
+    );
+    let (refused, seen) = reads(&lane, fixture.relationship_claim);
+    assert!(
+        !refused,
+        "precondition: the owner's key under the access gate refuses the owner's claim in a relationship no grant names; seen {seen}"
+    );
+    key
+}
+
+/// The lane of the owner's key under the access gate, held to the base
+/// world, frozen as saved work keeps it: the owner's floor under the access
+/// gate, kept beside a Scope.
+fn gated_owner_saved_lane(fixture: &Fixture) -> FrozenReadLane {
+    let frozen = fixture
+        .vault
+        .scoped_read(gated_owner_key(fixture))
+        .within_worlds(
+            WorldAuthoritySet::new(true, std::iter::empty::<EntityId>())
+                .expect("the base world alone"),
+        )
+        .freeze()
+        .expect("the bounded gated owner lane freezes");
+    let stored = rmp_serde::to_vec_named(&frozen).expect("frozen lane encodes");
+    let frozen: FrozenReadLane = rmp_serde::from_slice(&stored).expect("frozen lane decodes");
+    assert!(
+        !frozen.reads_as_principal(),
+        "precondition: the base-world bound keeps the saved lane from reading as its principal's own"
+    );
+    frozen
+}
+
 /// The transferred credential's live lane reads the open claim and refuses
 /// the relationship one, which the owner's own key reads: the row each
 /// rebuild must not read.
@@ -540,5 +600,69 @@ fn an_ungated_bounded_saved_lane_keeps_its_asker_under_the_relationship_gate() {
     assert!(
         reads_under_relationship_gate(&rebuilt),
         "actor=the owner's ungated key held to the base world; expected its saved question's asker to keep the relationship gate, under which unscoped rows stay readable, not to close them"
+    );
+}
+
+/// The attenuated credential's lane, rebuilt over a current owner key the
+/// access gate binds, reads no row that key refused: losing the floor does
+/// not lift the key's gate with the saved lane's exemption (Sol R1 on
+/// #8061).
+#[test]
+fn an_attenuated_own_device_saved_lane_over_a_gated_owner_key_keeps_that_keys_gate() {
+    let fixture = fixture();
+    let frozen = saved_lane(
+        &fixture,
+        credential_key(&fixture, &attenuated_slip(&fixture)),
+    );
+    let rebuilt = frozen
+        .narrow(&fixture.vault, gated_owner_key(&fixture))
+        .expect("the saved lane rebuilds over the owner's key under the access gate");
+    let lane = question_lane(&fixture, rebuilt);
+    let (open, seen) = reads(&lane, fixture.open_claim);
+    assert!(
+        open,
+        "control: the rebuilt lane reads the owner's open claim; seen {seen}"
+    );
+    let (read, seen) = reads(&lane, fixture.relationship_claim);
+    assert!(
+        !read,
+        "actor=the owner's key under the access gate, rebuilding the device's attenuated saved lane; expected the rebuilt lane to refuse the relationship claim that key refused; seen {seen}"
+    );
+}
+
+/// The owner's floor under the access gate, held to the base world and
+/// saved: its saved question's asker reads under that gate, not under the
+/// asker's owner exemption (Sol R2 on #8061).
+#[test]
+fn a_gated_owner_saved_lane_keeps_its_asker_under_its_gate() {
+    let fixture = fixture();
+    let frozen = gated_owner_saved_lane(&fixture);
+    let (open, seen) = asker_reads(&fixture, &frozen, fixture.open_claim);
+    assert!(
+        open,
+        "control: the saved question's asker reader reads the owner's open claim; seen {seen}"
+    );
+    let (read, seen) = asker_reads(&fixture, &frozen, fixture.relationship_claim);
+    assert!(
+        !read,
+        "actor=the owner's key under the access gate held to the base world; expected its saved question's asker reader to refuse the relationship claim its live lane refused; seen {seen}"
+    );
+}
+
+/// The same saved lane rebuilt over the owner's own key, which no gate
+/// binds, keeps the saved gate (Sol R2 on #8061).
+#[test]
+fn a_gated_owner_saved_lane_over_the_owners_key_keeps_its_gate() {
+    let fixture = fixture();
+    let frozen = gated_owner_saved_lane(&fixture);
+    let (open, seen) = owner_key_reads(&fixture, &frozen, fixture.open_claim);
+    assert!(
+        open,
+        "control: the saved lane rebuilt over the owner's own key reads the owner's open claim; seen {seen}"
+    );
+    let (read, seen) = owner_key_reads(&fixture, &frozen, fixture.relationship_claim);
+    assert!(
+        !read,
+        "actor=the owner's key under the access gate held to the base world; expected its saved lane, rebuilt over the owner's own key, to refuse the relationship claim its live lane refused; seen {seen}"
     );
 }
