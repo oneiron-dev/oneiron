@@ -31,10 +31,7 @@ impl WeaveItemKey {
         if hex.len() != Self::WIDTH * 2 || !hex.is_ascii() {
             return None;
         }
-        let mut bytes = [0; Self::WIDTH];
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()?;
-        }
+        let bytes = oneiron_hex::decode_vec(hex)?;
         Self::decode_key(&bytes)
     }
 }

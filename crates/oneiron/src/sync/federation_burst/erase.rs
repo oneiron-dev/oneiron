@@ -57,10 +57,7 @@ pub(crate) fn hex_bytes(hex: &str) -> Option<Vec<u8>> {
     if hex.len() % 2 != 0 {
         return None;
     }
-    (0..hex.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
-        .collect()
+    oneiron_hex::decode_vec(hex)
 }
 
 /// Names `by` as a carrier of each of `carried`.

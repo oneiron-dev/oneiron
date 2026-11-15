@@ -59,11 +59,7 @@ pub fn hex_to_16_bytes(hex: &str) -> Option<[u8; 16]> {
     if hex.len() != 32 {
         return None;
     }
-    let mut out = [0_u8; 16];
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(out)
+    oneiron_hex::decode(hex)
 }
 
 pub fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {

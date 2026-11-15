@@ -698,8 +698,5 @@ pub(crate) fn decode_hex(text: &str) -> Option<Vec<u8>> {
     if text.len() % 2 != 0 {
         return None;
     }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect()
+    oneiron_hex::decode_vec_any_case(text)
 }

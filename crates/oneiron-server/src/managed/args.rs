@@ -395,10 +395,5 @@ pub(crate) fn decode_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
     if value.len() != N * 2 {
         return None;
     }
-    let mut bytes = [0; N];
-    for (dest, pair) in bytes.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
-        let text = std::str::from_utf8(pair).ok()?;
-        *dest = u8::from_str_radix(text, 16).ok()?;
-    }
-    Some(bytes)
+    oneiron_hex::decode_any_case(value)
 }

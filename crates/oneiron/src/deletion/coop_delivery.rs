@@ -102,11 +102,7 @@ pub fn parse_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
     if value.len() != N * 2 || !value.is_ascii() {
         return None;
     }
-    let mut out = [0; N];
-    for (slot, pair) in out.iter_mut().zip(value.as_bytes().chunks(2)) {
-        *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(out)
+    oneiron_hex::decode_any_case(value)
 }
 
 /// The pseudonym the sender's ledger keeps for a recipient, in place of its

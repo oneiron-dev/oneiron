@@ -8294,6 +8294,7 @@ dependencies = [
  "oneiron-authority",
  "oneiron-base",
  "oneiron-contracts",
+ "oneiron-hex",
  "oneiron-model",
  "oneiron-store",
  "rmpv",

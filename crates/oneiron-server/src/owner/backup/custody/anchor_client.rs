@@ -60,14 +60,7 @@ pub(crate) fn unhex(text: &str) -> oneiron::Result<Vec<u8>> {
     if !text.len().is_multiple_of(2) {
         return Err(failed("answered a record that is not hex"));
     }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| {
-            text.get(at..at + 2)
-                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-                .ok_or_else(|| failed("answered a record that is not hex"))
-        })
-        .collect()
+    oneiron_hex::decode_vec(text).ok_or_else(|| failed("answered a record that is not hex"))
 }
 
 /// Another install's custody anchor door, and the owner credential it is

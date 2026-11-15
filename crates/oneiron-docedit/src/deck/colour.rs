@@ -192,8 +192,7 @@ fn hex(value: &str) -> Option<[u8; 3]> {
     if value.len() != 6 || !value.is_ascii() {
         return None;
     }
-    let byte = |at: usize| u8::from_str_radix(&value[at..at + 2], 16).ok();
-    Some([byte(0)?, byte(2)?, byte(4)?])
+    oneiron_hex::decode_any_case(value)
 }
 
 fn to_hsl(rgb: [u8; 3]) -> (f64, f64, f64) {
