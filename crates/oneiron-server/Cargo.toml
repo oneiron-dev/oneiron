@@ -280,6 +280,12 @@ name = "artifact_private_owner_read"
 path = "tests/artifact_private_owner_read.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The vault hook doors serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "vault_hooks_doors"
+path = "tests/vault_hooks_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
 [[test]]
