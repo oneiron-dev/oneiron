@@ -182,8 +182,11 @@ pub(super) fn sign(
 }
 /// The PDFs a signing act's writer lays fields on, inspected before it (FIX
 /// 9609): none for an act that appends no field event, or that the writer's
-/// own capability, ceiling, turn, status, consent, review or D6 gates refuse
-/// in this read snapshot, so a refused call parses nothing.
+/// own capability, ceiling, turn, status, consent or D6 gates refuse in this
+/// read snapshot, so a refused call parses nothing. The review gate is not
+/// mirrored: a Review landing between this read and the writer would leave
+/// the Complete the writer admits uninspected, parsed inside the writer. A
+/// Complete refused for want of a review is inspected here, outside it.
 fn inspect_act_pages(
     vault: &Vault,
     token: &EsignCapability,
@@ -246,9 +249,6 @@ fn inspect_act_pages(
                             recipient.principal_ref.as_deref(),
                         )?)
                 {
-                    return Ok(None);
-                }
-                if !state.review_stands(&recipient.id) {
                     return Ok(None);
                 }
                 EventFields::Signer(recipient.id.clone())
@@ -551,7 +551,8 @@ impl Vault {
                     }
                     // UETA section 10: the signer reviewed the frozen items
                     // and these values, and has saved nothing since. A held
-                    // sign act lands later on the review it was held with.
+                    // sign act lands later only on these values, while this
+                    // review still stands.
                     if !state.review_stands(&recipient.id) {
                         return Ok(SigningOutcome::ReviewRequired {
                             row: UETA_REVIEW_ROW.to_owned(),
@@ -578,6 +579,7 @@ impl Vault {
                             &recipient,
                             next,
                             evidence.clone(),
+                            state.recipient_values(&recipient.id),
                             &actor,
                             now,
                         )?;

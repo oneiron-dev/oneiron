@@ -5,7 +5,9 @@
 //! Review act binds the frozen items and the signer's own field values;
 //! Complete is refused, citing the e-sign rule pack's UETA section 10 row,
 //! until a Review that still stands exists; a field saved after the Review
-//! voids it; Review then Complete signs.
+//! voids it; Review then Complete signs. An agent's Complete the signing
+//! dial holds for a role holder's answer (ARCH-0064 D6) lands on that answer
+//! only on the values it was made on, while their review still stands.
 //!
 //! The Review act and the refusal outcome are named through their wire form
 //! (`{"action":"review"}`, `review_required`), so this file builds on a tree
@@ -15,9 +17,10 @@ use std::sync::Arc;
 
 use oneiron::blob_artifact::esign::{
     DocumentKind, EsignAuditActor, EsignCapability, EsignDocument, EsignField, EsignItem,
-    EsignRecipient, FieldGeometry, FieldMeta, FieldValue, RecipientRole, SigningAction,
-    SigningOutcome, SigningStatus,
+    EsignRecipient, FieldGeometry, FieldMeta, FieldValue, HeldSigning, HeldSigningAnswer,
+    HeldSigningState, RecipientRole, SigningAction, SigningCaller, SigningOutcome, SigningStatus,
 };
+use oneiron::model_decision::{AnswerActor, RoleRank};
 use oneiron::store::ports::ManualClock;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
@@ -30,6 +33,9 @@ const UETA_REVIEW_ROW: &str = "us.ueta.s10.review_before_complete";
 /// The one field the signer fills.
 const FIELD: &str = "field-name";
 
+/// The test clock's start.
+const START: u64 = 1_800_000_000;
+
 fn original_pdf() -> &'static [u8] {
     include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -41,6 +47,9 @@ fn original_pdf() -> &'static [u8] {
 /// signer's capability.
 struct Sent {
     vault: Vault,
+    clock: Arc<ManualClock>,
+    /// The vault owner, who answers a held sign act.
+    person: EntityId,
     id: EntityId,
     recipient: String,
     signing: EsignCapability,
@@ -49,7 +58,7 @@ struct Sent {
 
 fn sent() -> TestResult<Sent> {
     let dir = tempfile::tempdir()?;
-    let now = 1_800_000_000;
+    let now = START;
     let clock = ManualClock::new(now);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
@@ -116,8 +125,8 @@ fn sent() -> TestResult<Sent> {
                 page: 1,
                 x_percent: 10.0,
                 y_percent: 10.0,
-                width_percent: 40.0,
-                height_percent: 5.0,
+                width_percent: 50.0,
+                height_percent: 20.0,
             },
             meta: FieldMeta::Text { max_bytes: 64 },
         }],
@@ -147,6 +156,8 @@ fn sent() -> TestResult<Sent> {
     oneiron::test_support::mark_esign_sent(&vault, id, actor, now)?;
     Ok(Sent {
         vault,
+        clock,
+        person,
         id,
         recipient,
         signing,
@@ -155,30 +166,64 @@ fn sent() -> TestResult<Sent> {
 }
 
 impl Sent {
-    fn act(&self, action: &SigningAction) -> TestResult<SigningOutcome> {
+    fn act(&self, caller: SigningCaller, action: &SigningAction) -> TestResult<SigningOutcome> {
         Ok(self
             .vault
-            .execute_signing_action(&self.signing, action, None, None)?)
+            .execute_signing_action_as(&self.signing, action, caller, None, None, None)?)
     }
 
-    fn save(&self, text: &str) -> TestResult<SigningOutcome> {
-        self.act(&SigningAction::SaveField {
-            field: FIELD.into(),
-            value: FieldValue::Text(text.into()),
-        })
+    fn save(&self, caller: SigningCaller, text: &str) -> TestResult<SigningOutcome> {
+        self.act(
+            caller,
+            &SigningAction::SaveField {
+                field: FIELD.into(),
+                value: FieldValue::Text(text.into()),
+            },
+        )
     }
 
     /// The Review act, by its wire name.
-    fn review(&self) -> TestResult<SigningOutcome> {
+    fn review(&self, caller: SigningCaller) -> TestResult<SigningOutcome> {
         let review: SigningAction = serde_json::from_value(json!({"action": "review"}))?;
-        self.act(&review)
+        self.act(caller, &review)
     }
 
-    fn complete(&self) -> TestResult<SigningOutcome> {
-        self.act(&SigningAction::Complete {
-            consent: true,
-            next: None,
-        })
+    fn complete(&self, caller: SigningCaller) -> TestResult<SigningOutcome> {
+        self.act(
+            caller,
+            &SigningAction::Complete {
+                consent: true,
+                next: None,
+            },
+        )
+    }
+
+    /// An agent's Complete, which the closed signing dial holds: the hold's
+    /// time.
+    fn held(&self) -> TestResult<u64> {
+        match self.complete(AGENT)? {
+            SigningOutcome::HeldForOwner { held_at } => Ok(held_at),
+            other => Err(format!("the agent's Complete was not held: {other:?}").into()),
+        }
+    }
+
+    /// The vault owner allows the hold made at `held_at`.
+    fn allow(&self, held_at: u64) -> TestResult<HeldSigning> {
+        Ok(self.vault.settle_esign_hold(
+            &self.id.to_hex(),
+            &self.recipient,
+            held_at,
+            HeldSigningAnswer::Allow {
+                by: AnswerActor::Actor(self.person),
+                role: RoleRank::Owner,
+            },
+        )?)
+    }
+
+    /// Sets the clock `minutes` after the start, so each hold has its own
+    /// time.
+    fn tick(&self, minutes: u64) {
+        self.clock.set(START + minutes * 60);
     }
 
     fn signing_status(&self) -> TestResult<SigningStatus> {
@@ -198,6 +243,12 @@ impl Sent {
     }
 }
 
+/// The browser signer: the capability alone.
+const BEARER: SigningCaller = SigningCaller::Bearer;
+/// An agent signing for the recipient, with no principal whose dial opens
+/// automated signing: its Complete is held.
+const AGENT: SigningCaller = SigningCaller::Agent;
+
 /// The refusal a Complete with no standing review answers.
 fn review_required() -> Value {
     json!({"outcome": "review_required", "data": {"row": UETA_REVIEW_ROW}})
@@ -206,11 +257,14 @@ fn review_required() -> Value {
 #[test]
 fn complete_requires_review_before_complete_row() -> TestResult {
     let sent = sent()?;
-    assert!(matches!(sent.save("Sam Signer")?, SigningOutcome::Page(_)));
+    assert!(matches!(
+        sent.save(BEARER, "Sam Signer")?,
+        SigningOutcome::Page(_)
+    ));
 
     // 1. Complete without a Review is refused, citing the UETA section 10
     //    row, and signs nothing.
-    let refused = serde_json::to_value(sent.complete()?)?;
+    let refused = serde_json::to_value(sent.complete(BEARER)?)?;
     assert_eq!(
         refused,
         review_required(),
@@ -221,7 +275,7 @@ fn complete_requires_review_before_complete_row() -> TestResult {
 
     // 2. The Review binds the frozen items and the signer's values, and
     //    answers the page.
-    assert!(matches!(sent.review()?, SigningOutcome::Page(_)));
+    assert!(matches!(sent.review(BEARER)?, SigningOutcome::Page(_)));
     let reviewed = sent.trail("reviewed")?;
     assert_eq!(reviewed.len(), 1, "one Review on the trail: {reviewed:?}");
     assert_eq!(reviewed[0]["recipient"], sent.recipient.as_str());
@@ -234,19 +288,19 @@ fn complete_requires_review_before_complete_row() -> TestResult {
 
     // 3. A field saved after the Review voids it: Complete is refused again.
     assert!(matches!(
-        sent.save("Sam Q. Signer")?,
+        sent.save(BEARER, "Sam Q. Signer")?,
         SigningOutcome::Page(_)
     ));
     assert_eq!(
-        serde_json::to_value(sent.complete()?)?,
+        serde_json::to_value(sent.complete(BEARER)?)?,
         review_required(),
         "a field saved after the Review voids it"
     );
     assert_eq!(sent.signing_status()?, SigningStatus::Ready);
 
     // 4. Review then Complete signs, on the values the second Review bound.
-    assert!(matches!(sent.review()?, SigningOutcome::Page(_)));
-    assert_eq!(sent.complete()?, SigningOutcome::AwaitingSeal);
+    assert!(matches!(sent.review(BEARER)?, SigningOutcome::Page(_)));
+    assert_eq!(sent.complete(BEARER)?, SigningOutcome::AwaitingSeal);
     assert_eq!(sent.signing_status()?, SigningStatus::Completed);
     let reviewed = sent.trail("reviewed")?;
     assert_eq!(reviewed.len(), 2, "two Reviews on the trail: {reviewed:?}");
@@ -255,5 +309,66 @@ fn complete_requires_review_before_complete_row() -> TestResult {
         json!({"kind": "text", "value": "Sam Q. Signer"})
     );
     assert_eq!(sent.trail("signed")?.len(), 1, "one signature");
+    Ok(())
+}
+
+#[test]
+fn held_complete_lands_only_on_its_reviewed_values() -> TestResult {
+    let sent = sent()?;
+    let page = |outcome: SigningOutcome| matches!(outcome, SigningOutcome::Page(_));
+
+    // 1. Reviewed, Complete held, then a field saved: the review is void,
+    //    and the owner's allow lands nothing.
+    assert!(page(sent.save(AGENT, "Sam Signer")?));
+    assert!(page(sent.review(AGENT)?));
+    let first = sent.held()?;
+    assert!(page(sent.save(AGENT, "Sam Q. Signer")?));
+    let settled = sent.allow(first)?;
+    assert!(
+        matches!(settled.state, HeldSigningState::Superseded { .. }),
+        "a field saved after the held Complete supersedes it: {settled:?}"
+    );
+    assert!(sent.trail("signed")?.is_empty(), "nothing signed");
+    assert_eq!(sent.signing_status()?, SigningStatus::Ready);
+
+    // 2. Held on reviewed values, then other values reviewed with no
+    //    Complete after them: the allow lands nothing.
+    sent.tick(1);
+    assert!(page(sent.review(AGENT)?));
+    let second = sent.held()?;
+    assert!(page(sent.save(AGENT, "Samuel Signer")?));
+    assert!(page(sent.review(AGENT)?));
+    let settled = sent.allow(second)?;
+    assert!(
+        matches!(settled.state, HeldSigningState::Superseded { .. }),
+        "a review of other values with no Complete after it supersedes the hold: {settled:?}"
+    );
+    assert!(sent.trail("signed")?.is_empty(), "nothing signed");
+
+    // 3. Held, then saved, reviewed and completed again: the repeat call
+    //    counts on the open hold, and the allow lands on its values.
+    sent.tick(2);
+    let third = sent.held()?;
+    assert!(page(sent.save(AGENT, "Sam Signer")?));
+    assert!(page(sent.review(AGENT)?));
+    assert_eq!(
+        sent.held()?,
+        third,
+        "a repeat Complete counts on the open hold"
+    );
+    let settled = sent.allow(third)?;
+    assert!(
+        matches!(settled.state, HeldSigningState::Allowed { .. }),
+        "the hold lands on the values its last call reviewed: {settled:?}"
+    );
+    assert_eq!(settled.calls, 2);
+    assert_eq!(sent.signing_status()?, SigningStatus::Completed);
+    assert_eq!(sent.trail("signed")?.len(), 1, "one signature");
+    let signatures = sent.vault.esign_document(sent.id)?.signatures;
+    assert_eq!(
+        signatures[FIELD].value,
+        FieldValue::Text("Sam Signer".into()),
+        "signed on the reviewed value"
+    );
     Ok(())
 }
