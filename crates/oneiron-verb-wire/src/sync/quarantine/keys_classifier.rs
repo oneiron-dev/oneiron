@@ -1,12 +1,16 @@
 //! Moved from `crates/oneiron/src/sync/quarantine/keys_classifier.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Which CRDT window-doc map the rejected op targeted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("quarantine.container")]
 pub enum QuarantineContainer {
     Entities,
     Edges,
@@ -21,18 +25,4 @@ pub enum QuarantineContainer {
     /// The base window's `typed_body_rows` map (FIX 12470): a carried typed
     /// body receipt that diverges from the copy held here.
     TypedBodyRows,
-}
-
-impl QuarantineContainer {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Entities => "entities",
-            Self::Edges => "edges",
-            Self::Tombstones => "tombstones",
-            Self::Leases => "leases",
-            Self::OfficeProposals => "office_proposals",
-            Self::TypedBodyRows => "typed_body_rows",
-        }
-    }
 }
