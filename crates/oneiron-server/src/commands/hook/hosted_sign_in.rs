@@ -23,7 +23,6 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use rand_core::{OsRng, RngCore as _};
 use serde::Deserialize;
-use sha2::Digest as _;
 
 use crate::api::{
     AUTHORIZE_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
@@ -83,8 +82,8 @@ pub(super) fn sign_in(origin: &str, token_file: &Path, timeout: Duration) -> any
     let client_id = runtime.block_on(register(&client, origin, &redirect_uri))?;
     let verifier = random_text(32);
     let state = random_text(16);
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(sha2::Sha256::digest(verifier.as_bytes()));
+    let challenge = oneiron::dispatch_byoa::pkce_s256_challenge(&verifier)
+        .map_err(|error| anyhow::anyhow!("the PKCE challenge: {error}"))?;
     let mut authorize = reqwest::Url::parse(&format!("{origin}{AUTHORIZE_PATH}"))?;
     authorize
         .query_pairs_mut()

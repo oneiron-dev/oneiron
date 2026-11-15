@@ -900,3 +900,56 @@ fn loopback_traffic_does_not_hold_hosted_login_past_its_sign_in_timeout() {
         );
     });
 }
+
+/// Blind review of #7877, F1. When an origin answers for another vault than
+/// the one recorded there (recreated or repointed), the next OAuth login takes
+/// the origin's sign-in file, and the record of the vault that named it goes:
+/// no record sends the new vault's tokens under the old id, and no logout of
+/// the old id revokes the new sign-in.
+#[test]
+fn an_oauth_login_drops_the_record_whose_sign_in_file_it_takes() {
+    run_on_engine_stack("hosted-native-sign-in-repointed", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let first = scratch.sign_in(&served).await;
+        let file = first.sign_in_file();
+        let earlier_vault = "ab".repeat(32);
+        assert_ne!(
+            earlier_vault,
+            served.vault_id(),
+            "FIXTURE: another vault id"
+        );
+        let selection_file = scratch.path("config").join("oneiron").join("hosted.json");
+        let mut selection = read_json(&selection_file);
+        selection["vaults"][0]["vault_id"] = Value::from(earlier_vault.as_str());
+        selection["selected"] = Value::from(earlier_vault.as_str());
+        std::fs::write(
+            &selection_file,
+            serde_json::to_vec(&selection).expect("JSON"),
+        )
+        .expect("record the origin's file for the earlier vault");
+
+        let second = scratch.sign_in(&served).await;
+        assert_eq!(
+            second.vault()["vault_id"],
+            served.vault_id().as_str(),
+            "only the vault the origin answers for stays recorded"
+        );
+        assert_eq!(second.sign_in_file(), file, "one sign-in file per origin");
+        let logout = scratch
+            .command(&["hosted", "logout", "--vault-id", &earlier_vault])
+            .output()
+            .expect("hosted logout");
+        assert!(
+            !logout.status.success(),
+            "the earlier vault is no longer recorded: {}",
+            stderr(&logout)
+        );
+        let answer = initialize_over_oauth(&scratch, &served, &file);
+        assert_eq!(
+            answer["result"]["vault_id"],
+            served.vault_id().as_str(),
+            "the new sign-in still reaches the vault: {answer}"
+        );
+    });
+}

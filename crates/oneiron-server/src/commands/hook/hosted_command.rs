@@ -11,7 +11,9 @@
 //!   names none, so the id the exporting surface gives is confirmed
 //!   against the vault the origin answers for. It replaces the vault's
 //!   earlier record; an OAuth sign-in that record named in another file is
-//!   revoked and removed.
+//!   revoked and removed. A new OAuth sign-in also drops the record of any
+//!   other vault that named the file it takes: the origin answers for that
+//!   vault no more.
 //! - `login` with no credential file signs in first, through the vault's
 //!   own OAuth server as a native app ([`super::hosted_sign_in`]), and
 //!   records that sign-in in OAuth mode, its vault id the one the origin
@@ -227,10 +229,18 @@ fn record(
         vault.credential_file = absolute(file)?;
     }
     vault.verified_at_ms = now_ms();
+    // The vault's own earlier record goes; so does any record whose OAuth
+    // sign-in file this sign-in has just taken (the origin answers for
+    // another vault now): that record would send this vault's tokens.
     let (replaced, kept): (Vec<HostedVault>, Vec<HostedVault>) =
         std::mem::take(&mut selection.vaults)
             .into_iter()
-            .partition(|existing| existing.vault_id == vault.vault_id);
+            .partition(|existing| {
+                existing.vault_id == vault.vault_id
+                    || (staged.is_some()
+                        && existing.auth_mode == HostedAuthMode::OAuth
+                        && same_file(&existing.credential_file, &vault.credential_file))
+            });
     selection.vaults = kept;
     selection.selected = Some(vault.vault_id.clone());
     selection.vaults.push(vault);

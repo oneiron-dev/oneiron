@@ -142,7 +142,7 @@ fn selection_file() -> Option<PathBuf> {
 /// The file the OAuth sign-in at `origin` is kept in, beside the selection:
 /// one per origin, so signing in there again replaces it.
 pub(super) fn oauth_sign_in_file(origin: &str) -> Option<PathBuf> {
-    let digest = blake3::hash(origin.as_bytes()).to_hex();
+    let digest = oneiron_contracts::fingerprint::ContentHash::of(origin.as_bytes()).to_hex();
     local_servers::user_dir().map(|dir| dir.join(format!("hosted-oauth-{}.json", &digest[..16])))
 }
 
