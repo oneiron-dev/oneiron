@@ -222,8 +222,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
             || name == side_table::OWNER_POLICY_WORLD_PRIVACY_RECEIPT.name
             || name == side_table::OWNER_POLICY_WORLD_PRIVACY_REQUEST.name
             || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY.name
-            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF.name
-            || name == side_table::POLICY_HOLD_QUEUE.name =>
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF.name =>
         {
             Some(Group::PolicyModel)
         }

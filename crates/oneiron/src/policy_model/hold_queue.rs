@@ -2,12 +2,6 @@
 use super::{
     PolicyClassifyDecision, PolicyClassifyRequest, PolicyClassifyVerdict, PolicyVerdictCategory,
 };
-use crate::batch::export::archive_side_install::{
-    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
-};
-use crate::batch::export::{
-    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
-};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, RelayError};
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -215,30 +209,4 @@ impl Vault {
             Ok(keys.len())
         })
     }
-}
-
-/// Lands one archived `POLICY_HOLD_QUEUE` envelope in `txn`: canonical outer decode and
-/// the credential predicate, then the writer's own hold shape (the value's `queue_ref`
-/// carries the table prefix and the key is the digest after it). Hashes only: no
-/// principal, world or frontier is checked (a stale frontier refuses at use and prunes
-/// like any local hold), and no ruling is recorded here.
-///
-/// # Errors
-/// Storage faults; validation stays in the returned outcome.
-pub(super) fn land_archived_policy_hold_row_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    permit: &OwnerArchiveRestorePermit,
-    row: &ArchiveRetainedSideRow,
-) -> Result<ArchivedSideRowOutcome> {
-    let (key, value) = match decode_archived_row(&HOLD_QUEUE, row) {
-        Ok(decoded) => decoded,
-        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
-    };
-    if !value.queue_ref.starts_with(PREFIX) || key != hold_key(&value.queue_ref) {
-        return Ok(ArchivedSideRowOutcome::HeldBack(
-            RetainedSideHeldBackReason::InvalidEncoding,
-        ));
-    }
-    install_archived_row(&HOLD_QUEUE, vault, txn, permit, &key, row)
 }

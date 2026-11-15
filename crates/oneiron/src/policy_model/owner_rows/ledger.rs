@@ -383,7 +383,7 @@ impl Vault {
     /// Lands the owner's archived owner-policy envelopes in dependency order, one outcome
     /// per input row: change events, the secret-scan mode and receipts, and world-privacy
     /// receipts first; then the widen-unanimity row; then world-privacy requests; then
-    /// unanimity turn-offs; the device-local hold queue last. A row whose companion landed
+    /// unanimity turn-offs. A row whose companion landed
     /// earlier in this same pass sees it: an applied request names a world-privacy receipt,
     /// and an applied turn-off names a change event. An absent row installs, an identical
     /// row is unchanged, and a different row stays live. No ruling, settings change, wait
@@ -439,11 +439,6 @@ impl Vault {
                         vault, txn, permit, row,
                     )?
                 }
-                name if name == side_table::POLICY_HOLD_QUEUE.name => {
-                    super::super::hold_queue::land_archived_policy_hold_row_in_txn(
-                        vault, txn, permit, row,
-                    )?
-                }
                 // The dispatcher never sends a foreign envelope here; without an
                 // owning table the envelope has no decoding.
                 _ => ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),
@@ -457,7 +452,7 @@ impl Vault {
 
 /// The landing rank of one PolicyModel envelope: companions before the rows that name
 /// them (receipts and change events before requests and turn-offs, the unanimity row
-/// before the turn-offs that land it); the hold queue and any unknown envelope last.
+/// before the turn-offs that land it); any unknown envelope last.
 fn policy_model_land_rank(source_table: &str) -> u8 {
     match source_table {
         name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => 0,
@@ -467,7 +462,6 @@ fn policy_model_land_rank(source_table: &str) -> u8 {
         name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY.name => 4,
         name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_REQUEST.name => 5,
         name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF.name => 6,
-        name if name == side_table::POLICY_HOLD_QUEUE.name => 7,
-        _ => 8,
+        _ => 7,
     }
 }
