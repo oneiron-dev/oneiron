@@ -608,6 +608,7 @@ fn active_campaign(vault: &Vault) -> EntityId {
             reply_snooze_policy: None,
             voice_guide_ref: None,
             copy_review: None,
+            send_mode: None,
         },
         1,
     )

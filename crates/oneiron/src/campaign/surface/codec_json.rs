@@ -46,6 +46,10 @@ pub fn campaign_record_to_json(record: &CampaignRecord) -> Value {
         "copy_review".to_owned(),
         Value::String(record.definition.copy_review.as_str().to_owned()),
     );
+    definition.insert(
+        "send_mode".to_owned(),
+        Value::String(record.definition.send_mode.as_str().to_owned()),
+    );
 
     let mut root = JsonMap::new();
     root.insert(

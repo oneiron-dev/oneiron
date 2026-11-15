@@ -5,8 +5,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::{
-    CAMPAIGN_SCHEMA_VERSION, CopyReviewMode, CreateCampaignRequest, MembershipReadRequest,
-    SavedQueryCreateRequest, SavedQueryUpdateRequest, UpdateCampaignRequest,
+    CAMPAIGN_SCHEMA_VERSION, CampaignSendMode, CopyReviewMode, CreateCampaignRequest,
+    MembershipReadRequest, SavedQueryCreateRequest, SavedQueryUpdateRequest, UpdateCampaignRequest,
 };
 use crate::EntityId;
 use crate::campaign::presets::SnoozePolicyData;
@@ -20,6 +20,7 @@ pub(super) fn parse_create_campaign_request(body: &Value) -> MemoryResult<Create
         reply_snooze_policy: optional_snooze_policy(body)?,
         voice_guide_ref: optional_voice_guide(body)?.flatten(),
         copy_review: optional_copy_review(body)?,
+        send_mode: optional_send_mode(body)?,
     })
 }
 
@@ -30,6 +31,7 @@ pub(super) fn parse_update_campaign_request(body: &Value) -> MemoryResult<Update
         reply_snooze_policy: optional_snooze_policy(body)?,
         voice_guide_ref: optional_voice_guide(body)?,
         copy_review: optional_copy_review(body)?,
+        send_mode: optional_send_mode(body)?,
     })
 }
 
@@ -52,6 +54,18 @@ fn optional_copy_review(body: &Value) -> MemoryResult<Option<CopyReviewMode>> {
             .and_then(CopyReviewMode::parse)
             .map(Some)
             .ok_or_else(|| field_error("copy_review", "must be judge or human")),
+    }
+}
+
+/// The request's `send_mode`, `one_to_one` or `bulk`.
+fn optional_send_mode(body: &Value) -> MemoryResult<Option<CampaignSendMode>> {
+    match body.get("send_mode") {
+        None | Some(Value::Null) => Ok(None),
+        Some(mode) => mode
+            .as_str()
+            .and_then(CampaignSendMode::parse)
+            .map(Some)
+            .ok_or_else(|| field_error("send_mode", "must be one_to_one or bulk")),
     }
 }
 
