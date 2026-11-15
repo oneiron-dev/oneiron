@@ -189,8 +189,9 @@ impl Vault {
     /// # Errors
     ///
     /// The turn names no conversation id, the witness refuses it, the thread
-    /// SESSION does not hold, or the line agent's witness-read grant over
-    /// the thread does not issue.
+    /// stands without this line agent's mark, the thread SESSION does not
+    /// hold, or the line agent's witness-read grant over the thread does not
+    /// issue.
     pub fn witness_call_turn(
         &self,
         agent: EntityId,
@@ -207,6 +208,23 @@ impl Vault {
                 || {},
                 |_| Ok(None),
                 |txn| {
+                    use crate::ports::EntityStoreRead;
+                    // The thread's id derives from the agent and the number,
+                    // so another door may have put a CONVERSATION there first:
+                    // a thread whose body does not name this line agent keeps
+                    // nothing, since its rows would read as no phone thread.
+                    let thread = self.store.port_entity_record(&*txn, &conversation)?;
+                    if thread
+                        .as_ref()
+                        .and_then(|row| phone_thread_agent(&row.body))
+                        != Some(agent)
+                    {
+                        return Err(crate::memory::MemoryError::new(
+                            crate::memory::MEMORY_CODE_INVALID_STATE,
+                            "the call's thread does not name this line agent",
+                            &[],
+                        ));
+                    }
                     crate::ingest::hold_in_thread_session_in_txn(
                         self,
                         txn,
