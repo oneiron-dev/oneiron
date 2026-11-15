@@ -16,11 +16,8 @@
 //! rootless vault. The kit's seed passes the kit-restored seed rule
 //! ([`Vault::kit_seed_gate_in_txn`]), its root must be stored, and this
 //! install must pin it: an awaited root is no pin, and `pin_owner_root` pins
-//! or confirms it first. The writer half
-//! ([`Vault::appoint_successor_in_txn`]) reads the roster rootless in its
-//! transaction, only then makes the successor key, and signs, appends and
-//! checks: a second run checked before the first committed is refused there,
-//! before it drops the first run's successor from this install's slot.
+//! or confirms it first. Only then is the successor key made, and the writer
+//! half ([`Vault::appoint_successor_in_txn`]) signs, appends and checks.
 //!
 //! Running the door on two installs that cannot see each other's rows signs
 //! two appointments beside each other: they burn the anchor, and the owner
@@ -90,12 +87,12 @@ impl Vault {
             refuse_unneeded_appointment(fold, pin.anchor_key)
         })?;
         between();
-        let slot = self.device_owner_signing_slot()?;
+        let successor = self.fresh_device_owner_signing_key()?;
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let pin = self.appointment_pin_in_txn(txn, &fold, seed, confirm)?;
-            self.appoint_successor_in_txn(txn, actor, &pin, &seed.anchor(), || slot.fresh_key())
+            self.appoint_successor_in_txn(txn, actor, &pin, &seed.anchor(), &successor)
         })
     }
 

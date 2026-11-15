@@ -141,20 +141,24 @@ impl Vault {
         Ok(OwnerRootSigner::from_seed(&seed))
     }
 
-    /// This install's [`SlotKind::OwnerSigning`] slot and the keystore that
-    /// holds it, made ready outside any writer, since preparing this
-    /// install's signing keys writes.
+    /// A new owner signing key for this install, made in its
+    /// [`SlotKind::OwnerSigning`] slot from the OS CSPRNG after the slot's
+    /// seed is dropped: a root appointment's successor
+    /// (OWNER-ANCHOR-ROOT-RECOVERY), which must be a key no row names. Never
+    /// the slot's existing key, which the roster may name, live or revoked.
     ///
     /// # Errors
     /// `KeystoreUnavailable` while the host installed no keystore; the
-    /// install signing keys' own refusals.
-    pub(crate) fn device_owner_signing_slot(&self) -> Result<OwnerSigningSlot> {
+    /// keystore's own refusal.
+    pub(crate) fn fresh_device_owner_signing_key(&self) -> Result<OwnerRootSigner> {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
-        Ok(OwnerSigningSlot {
-            keystore,
-            slot: self.owner_signing_slot(machine),
-        })
+        let slot = self.owner_signing_slot(machine);
+        DeviceKeystore::delete(keystore.as_ref(), &slot).map_err(super::keystore_error)?;
+        Ok(OwnerRootSigner::from_seed(&*super::slot_seed(
+            keystore.as_ref(),
+            &slot,
+        )?))
     }
 
     /// The owner enrols this install's own owner signing key, made in its
@@ -258,34 +262,6 @@ impl Vault {
             install: *machine.as_bytes(),
             kind: SlotKind::OwnerSigning,
         }
-    }
-}
-
-/// An install's owner signing slot ([`Vault::device_owner_signing_slot`]).
-pub(crate) struct OwnerSigningSlot {
-    keystore: Arc<dyn DeviceKeystore>,
-    slot: KeystoreSlot,
-}
-
-impl OwnerSigningSlot {
-    /// A new owner signing key, made in this slot from the OS CSPRNG after
-    /// the slot's seed is dropped: a root appointment's successor
-    /// (OWNER-ANCHOR-ROOT-RECOVERY), which must be a key no row names. Never
-    /// the slot's existing key, which the roster may name, live or revoked.
-    /// It touches the keystore alone, so the appointment's writer makes it
-    /// once the roster reads rootless there: a door run checked before
-    /// another run's appointment committed is refused first, and never drops
-    /// the seed of that run's successor, a live root key.
-    ///
-    /// # Errors
-    /// The keystore's own refusal.
-    pub(crate) fn fresh_key(&self) -> Result<OwnerRootSigner> {
-        DeviceKeystore::delete(self.keystore.as_ref(), &self.slot)
-            .map_err(super::keystore_error)?;
-        Ok(OwnerRootSigner::from_seed(&*super::slot_seed(
-            self.keystore.as_ref(),
-            &self.slot,
-        )?))
     }
 }
 

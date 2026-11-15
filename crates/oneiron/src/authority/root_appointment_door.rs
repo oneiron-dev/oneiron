@@ -303,26 +303,20 @@ fn valid_appointment(
 impl Vault {
     /// [`Vault::appoint_owner_root`]'s writer half, in its transaction, for
     /// `owner`, a vault owner the caller revalidated in it: `anchor` (the
-    /// anchor of `pin`, this install's pin) appoints the key `successor`
-    /// makes on the recovery evidence, and the successor binds `owner` as
-    /// `human` at its own floor, one past any binding its key has had (a
-    /// fresh key has none). The caller commits.
-    ///
-    /// `successor` runs only once the roster reads rootless in this
-    /// transaction: a run checked before another run's appointment committed
-    /// is refused here, before it makes a key in place of that run's
-    /// successor.
+    /// anchor of `pin`, this install's pin) appoints `successor`, newly made,
+    /// on the recovery evidence, and the successor binds `owner` as `human`
+    /// at its own floor, one past any binding its key has had (a fresh key
+    /// has none). The caller commits.
     pub(crate) fn appoint_successor_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
         pin: &PinnedRoot,
         anchor: &SigningKey,
-        successor: impl FnOnce() -> Result<OwnerRootSigner>,
+        successor: &OwnerRootSigner,
     ) -> Result<RootAppointmentReceipt> {
         let before = self.authority_view_readonly_in_txn(txn)?;
         refuse_unneeded_appointment(&before, pin.anchor_key)?;
-        let successor = successor()?;
         let rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> =
             super::history_transfer::history_in_txn(self, txn)?
                 .into_iter()
@@ -333,7 +327,7 @@ impl Vault {
             start: now,
             end: now,
         };
-        let appointment = valid_appointment(&before, &rows, pin, anchor, &successor, now)?;
+        let appointment = valid_appointment(&before, &rows, pin, anchor, successor, now)?;
         let entry = authority_entry_hash(&appointment)?;
         self.put_authority_log_entries_in_txn(txn, &[(appointment, at, now)])?;
         let key = AuthorityKey::Ed25519(successor.public_key());
