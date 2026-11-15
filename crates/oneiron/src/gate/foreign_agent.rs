@@ -408,7 +408,7 @@ impl Vault {
             true,
         )?;
         let mut receipt = GateReceipt::new(
-            GateReceiptOutcome::Allow,
+            GateReceiptOutcome::Approved,
             GateContentKind::PolicyManifest.as_str(),
             "gate.allow.owner_foreign_grant",
             ReceiptActor::human(actor),

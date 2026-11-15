@@ -147,7 +147,7 @@ impl Vault {
                 evidence,
             };
             let mut decision = GateReceipt::new(
-                GateReceiptOutcome::Allow,
+                GateReceiptOutcome::Approved,
                 "dreamer_recipe",
                 "gate.dreamer.recipe_admitted",
                 ReceiptActor::human(actor),

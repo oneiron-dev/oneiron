@@ -337,7 +337,7 @@ impl Vault {
             ),
         };
         let mut receipt = GateReceipt::new(
-            GateReceiptOutcome::Allow,
+            GateReceiptOutcome::Approved,
             "claim",
             reason_code,
             ReceiptActor::Row(owner),

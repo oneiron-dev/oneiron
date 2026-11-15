@@ -391,7 +391,10 @@ fn owner_restore_carries_expression_preferences() -> Result<()> {
         Some(dest_owner_hex.as_str()),
         "the receipt names the destination owner"
     );
-    assert_eq!(receipt.outcome, "allow", "the owner act is allowed");
+    assert_eq!(
+        receipt.outcome, "approved",
+        "the owner act is the owner's yes (UC-03 PR 5)"
+    );
     assert_eq!(
         receipt.fields.get("content_kind").map(String::as_str),
         Some("owner_archive_restore"),

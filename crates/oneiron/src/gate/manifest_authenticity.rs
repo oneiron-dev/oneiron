@@ -290,14 +290,17 @@ impl Vault {
         id: EntityId,
         hash: [u8; 32],
     ) -> Result<GateDecisionId> {
+        // An owner's act is the owner's yes; the engine's own quarantine of a fresh proposal
+        // asked no one, so it stays the rule's `allow` (UC-03 PR 5, D2).
+        let (outcome, actor) = match actor {
+            Some(actor) => (GateReceiptOutcome::Approved, ReceiptActor::human(actor)),
+            None => (GateReceiptOutcome::Allow, ReceiptActor::Engine),
+        };
         let mut receipt = GateReceipt::new(
-            GateReceiptOutcome::Allow,
+            outcome,
             MANIFEST_QUARANTINE_CONTENT_KIND,
             reason,
-            match actor {
-                Some(actor) => ReceiptActor::human(actor),
-                None => ReceiptActor::Engine,
-            },
+            actor,
             hash.to_vec(),
             PolicyBasis::NOT_READ,
         );

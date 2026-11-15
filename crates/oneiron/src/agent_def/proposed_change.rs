@@ -380,10 +380,10 @@ impl Vault {
         let proposal_body = encode_agent_definition(&change.definition)?;
         let (outcome, reason) = match decision {
             ProposedAgentDefinitionChangeDecision::Approved => {
-                (GateReceiptOutcome::Allow, APPROVE_REASON)
+                (GateReceiptOutcome::Approved, APPROVE_REASON)
             }
             ProposedAgentDefinitionChangeDecision::Rejected => {
-                (GateReceiptOutcome::Deny, REJECT_REASON)
+                (GateReceiptOutcome::Rejected, REJECT_REASON)
             }
         };
         let mut details = vec![

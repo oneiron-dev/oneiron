@@ -27,14 +27,14 @@ pub enum PolicyHoldResolution {
 
 impl PolicyHoldResolution {
     /// The Gate receipt outcome an owner's ruling on a hold is recorded
-    /// under (UC-03 D1 = A): a cleared hold reads `allow` until D2 spells an
-    /// owner's yes `approved`, a declined one `rejected`. The ruling's word
+    /// under (UC-03 D1 = A, D2 = A): a cleared hold reads `approved` (an
+    /// owner's yes), a declined one `rejected`. The ruling's word
     /// stays its reason code (`gate.policy_model.hold_cleared`,
     /// `gate.policy_model.hold_declined`).
     #[must_use]
     pub const fn ledger_outcome(self) -> GateReceiptOutcome {
         match self {
-            Self::Cleared => GateReceiptOutcome::Allow,
+            Self::Cleared => GateReceiptOutcome::Approved,
             Self::Declined => GateReceiptOutcome::Rejected,
         }
     }
