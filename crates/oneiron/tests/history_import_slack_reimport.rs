@@ -242,14 +242,27 @@ fn a_reimport_that_maps_a_member_to_the_owner_lands_its_words_as_the_owners() ->
     let as_owner = latest_message(&fixture, &native_id)?;
     assert_ne!(as_owner, as_contact);
     assert_eq!(author(&fixture, as_owner)?, "user");
+    Ok(())
+}
 
-    // And back: the map no longer names the owner.
+#[test]
+fn a_reimport_that_drops_the_owner_mapping_lands_the_words_as_a_contacts() -> TestResult {
+    let fixture = fixture()?;
+    let files = [DM, DM_DAY];
+    let (workspace, _) = import(&fixture, &export("T1", &files), r#"{"U0": "owner"}"#)?;
+    let native_id = only_message(&workspace)?;
+    let as_owner = latest_message(&fixture, &native_id)?;
+    assert_eq!(author(&fixture, as_owner)?, "user");
+
     let (_, reports) = import(&fixture, &export("T1", &files), "{}")?;
-    assert_eq!(landed(&reports), (0, 1), "a contact's words land again");
     assert_eq!(
-        author(&fixture, latest_message(&fixture, &native_id)?)?,
-        "counterparty"
+        landed(&reports),
+        (0, 1),
+        "a contact's words land again, as a revision under their new author"
     );
+    let as_contact = latest_message(&fixture, &native_id)?;
+    assert_ne!(as_contact, as_owner);
+    assert_eq!(author(&fixture, as_contact)?, "counterparty");
     Ok(())
 }
 
