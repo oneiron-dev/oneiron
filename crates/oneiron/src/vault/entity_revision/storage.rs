@@ -66,128 +66,6 @@ pub(super) fn put_state(
     STATE.put(store, txn, id, value)
 }
 
-/// Puts a revision state for the checkpoint-pins door: `id`'s ledger row
-/// with fixed refs and time.
-#[cfg(oneiron_test_support)]
-pub(crate) fn put_pins_entity_revision_state_in_txn(
-    store: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    id: &EntityId,
-    live: [u8; 16],
-    indexed: [u8; 16],
-    changed_at_ms: u64,
-    has_doc: bool,
-) -> Result<()> {
-    STATE.put(
-        store,
-        txn,
-        id,
-        &RevisionState {
-            live: RevisionRef(live),
-            indexed: RevisionRef(indexed),
-            changed_at_ms,
-            has_doc,
-        },
-    )
-}
-
-/// Puts a revision document for the checkpoint-pins door: `id`'s Loro
-/// snapshot bytes, built with a fixed peer and fixed commit times.
-#[cfg(oneiron_test_support)]
-pub(crate) fn put_pins_entity_revision_doc_in_txn(
-    store: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    id: &EntityId,
-    bytes: &[u8],
-) -> Result<()> {
-    DOC.put(store, txn, id, &bytes.to_vec())
-}
-
-/// Puts a retained frontier for the checkpoint-pins door: `revision`'s
-/// entry of `id`'s ledger.
-#[cfg(oneiron_test_support)]
-pub(crate) fn put_pins_entity_revision_frontier_in_txn(
-    store: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    id: &EntityId,
-    revision: [u8; 16],
-    value: &[u8],
-) -> Result<()> {
-    FRONTIER.put(store, txn, &(*id, revision), &value.to_vec())
-}
-
-/// The revision ref of `bytes` held by `id`, as `reference` derives it,
-/// for the checkpoint-pins door's frontier and identity rows.
-#[cfg(oneiron_test_support)]
-pub(crate) fn pins_revision_reference(id: &EntityId, bytes: &[u8]) -> [u8; 16] {
-    reference(id, bytes).0
-}
-
-/// A document frontier entry holding `frontier`, for the checkpoint-pins
-/// door's frontier rows.
-#[cfg(oneiron_test_support)]
-pub(crate) fn pins_frontier_document_value(frontier: &[u8]) -> Vec<u8> {
-    FrontierEntry::Document(frontier).encode()
-}
-
-/// One raw row into `doc`, as `write_doc_row` writes it but committing at
-/// `at`, so two processes build the same bytes.
-#[cfg(oneiron_test_support)]
-pub(crate) fn pins_write_doc_row(doc: &LoroDoc, raw: &[u8], at: i64) -> Result<()> {
-    let fields = text_fields(
-        raw.get(ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("entity revision header"))?,
-    );
-    let names = doc.get_map("text_fields");
-    let mut previous = Vec::new();
-    names.for_each(|name, _| previous.push(name.to_owned()));
-    for name in previous {
-        if !fields.iter().any(|(current, _)| current == &name) {
-            doc.get_text(format!("field:{name}"))
-                .update("", Default::default())
-                .map_err(|_| Error::InvariantViolation("entity text update"))?;
-            names
-                .delete(&name)
-                .map_err(|_| Error::InvariantViolation("entity text field delete"))?;
-        }
-    }
-    for (name, text) in fields {
-        doc.get_text(format!("field:{name}"))
-            .update(&text, Default::default())
-            .map_err(|_| Error::InvariantViolation("entity text update"))?;
-        names
-            .insert(&name, true)
-            .map_err(|_| Error::InvariantViolation("entity text field insert"))?;
-    }
-    doc.get_map("record")
-        .insert("raw", raw)
-        .map_err(|_| Error::InvariantViolation("entity revision insert"))?;
-    doc.commit_with(loro::CommitOptions::new().timestamp(at));
-    Ok(())
-}
-
-/// Builds a revision document's snapshot bytes for the checkpoint-pins
-/// door: `raws` written under `peer` with every commit at `at`, with the
-/// frontiers `retain_frontier` would keep.
-#[cfg(oneiron_test_support)]
-pub(crate) fn pins_revision_doc_bytes(
-    peer: u64,
-    raws: &[Vec<u8>],
-    at: i64,
-) -> Result<(Vec<u8>, Vec<u8>)> {
-    let doc = LoroDoc::new();
-    doc.set_peer_id(peer)
-        .map_err(|_| Error::InvariantViolation("entity revision pins peer"))?;
-    for raw in raws {
-        pins_write_doc_row(&doc, raw, at)?;
-    }
-    let frontiers = doc.oplog_frontiers().encode();
-    let bytes = doc
-        .export(ExportMode::Snapshot)
-        .map_err(|_| Error::InvariantViolation("entity revision pins export"))?;
-    Ok((bytes, frontiers))
-}
-
 pub(super) fn reference(id: &EntityId, raw: &[u8]) -> RevisionRef {
     let mut hash = blake3::Hasher::new();
     hash.update(id.as_bytes());
@@ -987,4 +865,126 @@ fn unix_millis_at(now: std::time::SystemTime) -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+/// Puts a revision state for the checkpoint-pins door: `id`'s ledger row
+/// with fixed refs and time.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_state_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    live: [u8; 16],
+    indexed: [u8; 16],
+    changed_at_ms: u64,
+    has_doc: bool,
+) -> Result<()> {
+    STATE.put(
+        store,
+        txn,
+        id,
+        &RevisionState {
+            live: RevisionRef(live),
+            indexed: RevisionRef(indexed),
+            changed_at_ms,
+            has_doc,
+        },
+    )
+}
+
+/// Puts a revision document for the checkpoint-pins door: `id`'s Loro
+/// snapshot bytes, built with a fixed peer and fixed commit times.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_doc_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    DOC.put(store, txn, id, &bytes.to_vec())
+}
+
+/// Puts a retained frontier for the checkpoint-pins door: `revision`'s
+/// entry of `id`'s ledger.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_frontier_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    revision: [u8; 16],
+    value: &[u8],
+) -> Result<()> {
+    FRONTIER.put(store, txn, &(*id, revision), &value.to_vec())
+}
+
+/// The revision ref of `bytes` held by `id`, as `reference` derives it,
+/// for the checkpoint-pins door's frontier and identity rows.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_revision_reference(id: &EntityId, bytes: &[u8]) -> [u8; 16] {
+    reference(id, bytes).0
+}
+
+/// A document frontier entry holding `frontier`, for the checkpoint-pins
+/// door's frontier rows.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_frontier_document_value(frontier: &[u8]) -> Vec<u8> {
+    FrontierEntry::Document(frontier).encode()
+}
+
+/// One raw row into `doc`, as `write_doc_row` writes it but committing at
+/// `at`, so two processes build the same bytes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_write_doc_row(doc: &LoroDoc, raw: &[u8], at: i64) -> Result<()> {
+    let fields = text_fields(
+        raw.get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("entity revision header"))?,
+    );
+    let names = doc.get_map("text_fields");
+    let mut previous = Vec::new();
+    names.for_each(|name, _| previous.push(name.to_owned()));
+    for name in previous {
+        if !fields.iter().any(|(current, _)| current == &name) {
+            doc.get_text(format!("field:{name}"))
+                .update("", Default::default())
+                .map_err(|_| Error::InvariantViolation("entity text update"))?;
+            names
+                .delete(&name)
+                .map_err(|_| Error::InvariantViolation("entity text field delete"))?;
+        }
+    }
+    for (name, text) in fields {
+        doc.get_text(format!("field:{name}"))
+            .update(&text, Default::default())
+            .map_err(|_| Error::InvariantViolation("entity text update"))?;
+        names
+            .insert(&name, true)
+            .map_err(|_| Error::InvariantViolation("entity text field insert"))?;
+    }
+    doc.get_map("record")
+        .insert("raw", raw)
+        .map_err(|_| Error::InvariantViolation("entity revision insert"))?;
+    doc.commit_with(loro::CommitOptions::new().timestamp(at));
+    Ok(())
+}
+
+/// Builds a revision document's snapshot bytes for the checkpoint-pins
+/// door: `raws` written under `peer` with every commit at `at`, with the
+/// frontiers `retain_frontier` would keep.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_revision_doc_bytes(
+    peer: u64,
+    raws: &[Vec<u8>],
+    at: i64,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)
+        .map_err(|_| Error::InvariantViolation("entity revision pins peer"))?;
+    for raw in raws {
+        pins_write_doc_row(&doc, raw, at)?;
+    }
+    let frontiers = doc.oplog_frontiers().encode();
+    let bytes = doc
+        .export(ExportMode::Snapshot)
+        .map_err(|_| Error::InvariantViolation("entity revision pins export"))?;
+    Ok((bytes, frontiers))
 }
