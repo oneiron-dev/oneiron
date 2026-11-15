@@ -106,7 +106,6 @@ pub fn declined_receipts(declined: Vec<(EntityId, TypedDecision)>) -> Vec<GraphA
 /// `vault.questions.pause`'s input: pause the caller's standing question,
 /// or resume it with `paused: false`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct QuestionPauseRequest {
     pub id: EntityId,
     pub paused: bool,

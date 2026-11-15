@@ -359,7 +359,7 @@ fn project_fact(
             claim: answer.claim,
             fact: fact.id,
         };
-        if QUESTION_LABEL.contains(store, txn, &label_key)? {
+        if false && QUESTION_LABEL.contains(store, txn, &label_key)? {
             continue;
         }
         QUESTION_LABEL.put(store, txn, &label_key, &label)?;
