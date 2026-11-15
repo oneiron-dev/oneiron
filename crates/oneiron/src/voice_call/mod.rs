@@ -12,13 +12,17 @@
 //! over it from its first kept turn (owner ruling 16 Nov 00:44; this replaces
 //! PHONE-CALL-READ-GRANT = B for phone threads).
 
+pub mod reach;
 pub mod setting_keys;
+
+pub use reach::PhoneReach;
 
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{MemoryResult, WitnessReceipt, WitnessTurn};
+use crate::setting::SettingScope;
 
 /// The door-owned CONVERSATION body key naming a phone thread's line agent:
 /// the agent's id as a 32-char lower hex string. Only the phone keep path
@@ -132,6 +136,45 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         Ok(setting_keys::CALL_TRANSCRIPTS_KEEP
             .read_in_txn(self, &txn, &[], None)?
+            .value)
+    }
+
+    /// What the phone agent of the line `identity_ref` can see while on a
+    /// call: the line's `voice.phone.reach`, read for that line's agent. A
+    /// missing row reads the catalogue default: this caller's own history and
+    /// no picked documents.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn phone_line_reach(
+        &self,
+        identity_ref: EntityId,
+        agent_ref: EntityId,
+    ) -> Result<PhoneReach> {
+        let txn = self.store.env.read_txn()?;
+        self.phone_line_reach_in(&txn, identity_ref, agent_ref)
+    }
+
+    /// [`Self::phone_line_reach`] in the caller's read: the reach in force
+    /// for the line `identity_ref`'s item, where the reader knows its agent.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn phone_line_reach_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        identity_ref: EntityId,
+        agent_ref: EntityId,
+    ) -> Result<PhoneReach> {
+        Ok(setting_keys::CALL_REACH
+            .read_in_txn(
+                self,
+                txn,
+                &[SettingScope::Agent(agent_ref)],
+                Some(&identity_ref.to_hex()),
+            )?
             .value)
     }
 

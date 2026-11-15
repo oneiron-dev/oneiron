@@ -11,7 +11,6 @@ use serde::Serialize;
 #[serde(deny_unknown_fields)]
 pub struct PhoneLineConfig {
     pub enabled: bool,
-    pub share_scope: Scope,
 }
 
 /// The actual identity, receiving agent and channel actor the owner configured.
@@ -23,7 +22,8 @@ pub struct PhoneLineState {
     pub bridge_actor: EntityId,
     pub owner_actor: EntityId,
     pub enabled: bool,
-    /// Consent data only, enforced beside an answering reader's actual credential.
+    /// Kept so older rows decode; never read (Engine 02:37 PHONE-REACH-SHARE-SCOPE = A).
+    /// The line's reach is the setting `voice.phone.reach`.
     pub share_scope: Scope,
     pub updated_at: u64,
 }
@@ -44,6 +44,8 @@ pub struct PhoneLineArrivalRecord {
     pub identity_ref: EntityId,
     pub agent_ref: EntityId,
     pub bridge_actor: EntityId,
+    /// Kept so older rows decode; never read (Engine 02:37 PHONE-REACH-SHARE-SCOPE = A).
+    /// The line's reach is the setting `voice.phone.reach`.
     pub share_scope: Scope,
     pub arrival: PhoneLineArrival,
     pub received_at: u64,

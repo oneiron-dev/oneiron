@@ -1,7 +1,10 @@
-//! The owner's call-transcript choices (UNBUILT-02 PR 3 and 3B): catalogue
-//! keys, set and read through the Setting primitive's own verbs.
+//! The owner's call-transcript choices (UNBUILT-02 PR 3 and 3B) and what a
+//! phone line's agent can see while on a call (VOICE-PHONE-AGENT-REACH R2):
+//! catalogue keys, set and read through the Setting primitive's own verbs.
 
-use crate::setting::Kind;
+use super::reach::{PhoneReach, reach_default, reach_tighter};
+use crate::entity_id::EntityId;
+use crate::setting::{ItemDomain, Kind, ScopeKind, SetBy};
 
 fn keep() -> bool {
     true
@@ -13,6 +16,12 @@ fn keep_nothing() -> bool {
 
 fn announce() -> bool {
     true
+}
+
+/// Whether `item` names a phone line: a canonical 32-char lower hex
+/// ChannelIdentity id. Shape only; "a live line" is not checked here.
+fn phone_line_item(item: &str) -> bool {
+    EntityId::from_hex(item).is_ok_and(|id| id.to_hex() == item)
 }
 
 crate::setting::setting_keys! {
@@ -30,5 +39,15 @@ crate::setting::setting_keys! {
     /// by place, and the vault's owner chooses.
     pub CALL_TRANSCRIPTS_ANNOUNCE: bool = "voice.call_transcripts.announce" {
         kind: Kind::new(announce).strictest(announce),
+    };
+    /// What the phone agent can see while on a call, one choice per phone line. By default it sees
+    /// only this caller's own history and the documents you pick; or the whole vault; or a custom
+    /// scope you define or an agent proposes. Under the whole vault the agent may repeat what
+    /// other callers said. The line's agent may narrow its own reach; any widening asks you first.
+    pub CALL_REACH: PhoneReach = "voice.phone.reach" {
+        kind: Kind::new(reach_default).strictest(reach_default).tighter(reach_tighter),
+        scopes: &[ScopeKind::Vault, ScopeKind::Agent],
+        item: Some(ItemDomain { name: "phone lines", admits: phone_line_item }),
+        set_by: SetBy::Subject,
     };
 }

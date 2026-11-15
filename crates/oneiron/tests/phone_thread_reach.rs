@@ -1,14 +1,14 @@
-//! VOICE-PHONE-AGENT-REACH PR R1: the phone-thread mark, the per-caller grant,
-//! the current-caller rule. The line agent's reach is one owner choice per
-//! line; the DEFAULT is "this caller's own history + documents the owner
-//! picks". Under the default, caller B's call cannot retrieve caller A's
-//! words. A generic read (an agent Grant whose bands cover MESSAGE +
-//! CONVERSATION) no longer reaches phone call rows.
+//! VOICE-PHONE-AGENT-REACH PR R2: the per-line reach Setting
+//! (`voice.phone.reach`). R1's mark, per-caller grant and current-caller rule
+//! stand; the line agent's reach is one owner choice per line: the DEFAULT
+//! (this caller's own history + documents the owner picks), the WHOLE VAULT,
+//! or a CUSTOM scope. Under the default, caller B's call cannot retrieve
+//! caller A's words; under the whole vault it can. A generic read (an agent
+//! Grant whose bands cover MESSAGE + CONVERSATION) no longer reaches phone
+//! call rows. An agent's narrowing of the reach lands; a widening waits for
+//! the owner.
 //!
-//! This file uses only items that exist on the base e4d7100d4b1 too, so the
-//! red run compiles and fails at assertions. Run with:
-//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
-//! --test phone_thread_reach`.
+//! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --test phone_thread_reach`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
@@ -20,19 +20,26 @@ use oneiron::channel_identity::{
     ChannelActorRegistration, ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment,
     ChannelIdentityStep, SelfHeldShape,
 };
-use oneiron::claim::{CallerLocality, ScopedReadActorKey, base_world_id};
+use oneiron::claim::{CallerLocality, ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistryQuery};
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
-use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::phone_line::{PhoneLineArrival, PhoneLineArrivalReceipt, PhoneLineConfig};
+use oneiron::memory::{
+    AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, WitnessAuthor,
+    WitnessMessage, WitnessTurn,
+};
+use oneiron::phone_line::{
+    PhoneLineArrival, PhoneLineArrivalReceipt, PhoneLineConfig, PhoneLineState,
+};
 use oneiron::registry::ENTITY_TYPE_CONVERSATION;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, ConnectorWitnessReadGrantRevokeRequest,
     create_agent_definition_as, mint_agent_grant_as, revoke_connector_witness_read_grant_as,
 };
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::voice_call::PhoneReach;
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, Vault, VaultConfig};
 use serde_json::json;
 
 const OCCURRED_AT: u64 = 1_769_947_200;
@@ -248,21 +255,126 @@ fn configure(fixture: &Fixture, enabled: bool, share_scope: Scope) {
         .configure_phone_line(
             &fixture.owner_proof,
             fixture.identity,
-            PhoneLineConfig {
-                enabled,
-                share_scope: share_scope.clone(),
-            },
+            PhoneLineConfig { enabled },
         )
         .expect("owner stores the phone line setting");
     assert!(
         state.enabled == enabled
-            && state.share_scope == share_scope
             && state.agent_ref == fixture.agent
             && state.bridge_actor == fixture.bridge,
         "line {:?}; expected enabled={enabled}, agent={:?}, bridge={:?}; seen {state:?}",
         fixture.identity,
         fixture.agent,
         fixture.bridge,
+    );
+    if enabled {
+        set_reach_as_owner(fixture, PhoneReach::Custom { scope: share_scope });
+    }
+}
+
+/// The owner sets the line's reach, then reads it back.
+fn set_reach_as_owner(fixture: &Fixture, reach: PhoneReach) {
+    let outcome = fixture
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&fixture.owner_proof),
+            SetSetting {
+                key: "voice.phone.reach".to_owned(),
+                item: Some(fixture.identity.to_hex()),
+                scope: SettingScope::Vault,
+                mode: SettingMode::Value,
+                value: Some(serde_json::to_value(&reach).expect("the reach encodes")),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+            },
+        )
+        .expect("owner sets the line's reach");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's reach change applies; seen {outcome:?}",
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .phone_line_reach(fixture.identity, fixture.agent)
+            .expect("the line's reach reads"),
+        reach,
+        "the line's reach reads the value the owner set",
+    );
+}
+
+/// The Custom preset the R1 tests keep: the base world, the old share_scope
+/// plus the current-caller rule.
+fn custom_base() -> PhoneReach {
+    PhoneReach::Custom {
+        scope: worlds_scope(&[base_world_id()]),
+    }
+}
+
+/// One plain CLAIM row in `world`: the tests' picked and unpicked documents,
+/// readable by the line agent's base-world Grant outside a call.
+fn write_owner_claim(fixture: &Fixture, world: EntityId, value: &str) -> EntityId {
+    let id = EntityId::now();
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_owner_authorship(&fixture.owner_proof)
+        .claim_upsert_scoped(&ScopedClaimInput {
+            id: Some(id.to_hex()),
+            predicate: "profile.preference".to_owned(),
+            subject_ref: fixture.owner.to_hex(),
+            value: json!(value),
+            confidence: 1.0,
+            source: "user_stated".to_owned(),
+            scope: ClaimScope {
+                world_id: world.to_hex(),
+                scope_facet_id: fixture
+                    .vault
+                    .default_facet()
+                    .expect("owner default facet")
+                    .to_hex(),
+                scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                scope_project_id: default_project_id().to_hex(),
+            },
+            sensitivity: None,
+            evidence_turn_refs: Vec::new(),
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(OCCURRED_AT),
+            learned_at: Some(OCCURRED_AT),
+            salience: None,
+        })
+        .expect("owner writes a claim in the requested world");
+    id
+}
+
+/// The owner mints `agent` a Grant listing `vault.settings.set`, so an
+/// agent's widening opens a check-in instead of being refused.
+fn mint_settings_grant(fixture: &Fixture, agent: EntityId) {
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
+        "read".to_owned(),
+        "vault.settings.set".to_owned(),
+    ]));
+    let minted = mint_agent_grant_as(
+        &fixture.vault,
+        &fixture.owner_proof,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("owner mints the agent a settings Grant");
+    assert!(
+        minted.grant.confers,
+        "the agent's settings Grant confers its read"
     );
 }
 
@@ -427,18 +539,26 @@ struct Reach {
     msg_b_caller: EntityId,
     msg_b_answer: EntityId,
     control_msg: EntityId,
+    doc: EntityId,
+    doc_part: EntityId,
+    other_doc: EntityId,
     l_key: ScopedReadActorKey,
     g_key: ScopedReadActorKey,
     b_call_key: ScopedReadActorKey,
     owner_key: ScopedReadActorKey,
+    l_proof: VerifiedSlip,
+    receipt_b: PhoneLineArrivalReceipt,
 }
 
-fn reach_fixture() -> Reach {
+fn reach_fixture(reach: PhoneReach) -> Reach {
     let fixture = fixture();
     let generic = create_enabled_agent(&fixture.vault, &fixture.owner_proof, "generic_reader");
     mint_read_grant(&fixture, fixture.agent);
     mint_read_grant(&fixture, generic);
     configure(&fixture, true, worlds_scope(&[base_world_id()]));
+    if reach != custom_base() {
+        set_reach_as_owner(&fixture, reach);
+    }
     submit(&fixture, stranger_call_with(CALL_A, Some(CALLER_A))).expect("A's arrival lands");
     let receipt_b =
         submit(&fixture, stranger_call_with(CALL_B, Some(CALLER_B))).expect("B's arrival lands");
@@ -485,6 +605,17 @@ fn reach_fixture() -> Reach {
         OCCURRED_AT + 3,
     );
     let control_msg = witness_control_message(&fixture);
+    let doc = write_owner_claim(&fixture, base_world_id(), "the picked document");
+    let doc_part = write_owner_claim(
+        &fixture,
+        base_world_id(),
+        "a row derived from the picked document",
+    );
+    fixture
+        .vault
+        .put_edge(&doc_part, EdgeKind::DerivedFrom, &doc, 1.0)
+        .expect("the derived row names its document");
+    let other_doc = write_owner_claim(&fixture, base_world_id(), "an unpicked document");
     let l_proof = paired_agent_slip(&fixture);
     let g_proof = paired_generic_slip(&fixture, generic);
     let l_key = ordinary_key(&fixture, &l_proof);
@@ -511,16 +642,21 @@ fn reach_fixture() -> Reach {
         msg_b_caller,
         msg_b_answer,
         control_msg,
+        doc,
+        doc_part,
+        other_doc,
         l_key,
         g_key,
         b_call_key,
         owner_key,
+        l_proof,
+        receipt_b,
     }
 }
 
 #[test]
 fn a_generic_read_grant_does_not_read_a_kept_call() {
-    let reach = reach_fixture();
+    let reach = reach_fixture(custom_base());
     let reader = reach.fixture.vault.scoped_read(reach.g_key.clone());
     assert!(
         reader
@@ -544,7 +680,7 @@ fn a_generic_read_grant_does_not_read_a_kept_call() {
 
 #[test]
 fn the_line_agent_reads_its_callers_threads_outside_a_call() {
-    let reach = reach_fixture();
+    let reach = reach_fixture(custom_base());
     let reader = reach.fixture.vault.scoped_read(reach.l_key.clone());
     for id in [
         &reach.msg_a_caller,
@@ -561,34 +697,55 @@ fn the_line_agent_reads_its_callers_threads_outside_a_call() {
 
 #[test]
 fn under_the_default_caller_b_cannot_retrieve_caller_a_words() {
-    let reach = reach_fixture();
-    let call = reach.fixture.vault.scoped_read(reach.b_call_key.clone());
-    for id in [&reach.msg_b_caller, &reach.msg_b_answer] {
-        assert!(
-            call.is_entity_readable(id).expect("B's call reads B"),
-            "B's call must read B's MESSAGEs: {id:?}",
-        );
-    }
-    for id in [&reach.msg_a_caller, &reach.msg_a_answer] {
-        assert!(
-            !call.is_entity_readable(id).expect("B's call reads A"),
-            "B's call must not read A's MESSAGEs: {id:?}",
-        );
-    }
-    let ordinary = reach.fixture.vault.scoped_read(reach.l_key.clone());
-    for id in [&reach.msg_a_caller, &reach.msg_a_answer] {
-        assert!(
-            ordinary
-                .is_entity_readable(id)
-                .expect("L's ordinary key reads A"),
-            "L's ordinary key must read A's MESSAGEs (the refusal is the call's, not a missing grant): {id:?}",
-        );
+    for reach in [
+        PhoneReach::Default {
+            documents: Vec::new(),
+        },
+        custom_base(),
+    ] {
+        let preset = if matches!(reach, PhoneReach::Default { .. }) {
+            "Default"
+        } else {
+            "Custom"
+        };
+        let got = reach_fixture(reach);
+        let call = got.fixture.vault.scoped_read(got.b_call_key.clone());
+        for (row, id) in [
+            ("msg_b_caller", &got.msg_b_caller),
+            ("msg_b_answer", &got.msg_b_answer),
+        ] {
+            assert!(
+                call.is_entity_readable(id).expect("B's call reads B"),
+                "preset {preset}: B's call must read B's {row}",
+            );
+        }
+        for (row, id) in [
+            ("msg_a_caller", &got.msg_a_caller),
+            ("msg_a_answer", &got.msg_a_answer),
+        ] {
+            assert!(
+                !call.is_entity_readable(id).expect("B's call reads A"),
+                "preset {preset}: B's call must not read A's {row}",
+            );
+        }
+        let ordinary = got.fixture.vault.scoped_read(got.l_key.clone());
+        for (row, id) in [
+            ("msg_a_caller", &got.msg_a_caller),
+            ("msg_a_answer", &got.msg_a_answer),
+        ] {
+            assert!(
+                ordinary
+                    .is_entity_readable(id)
+                    .expect("L's ordinary key reads A"),
+                "preset {preset}: L's ordinary key must read A's {row} (the refusal is the call's, not a missing grant)",
+            );
+        }
     }
 }
 
 #[test]
 fn revoking_the_callers_grant_stops_the_line_agent_reading() {
-    let reach = reach_fixture();
+    let reach = reach_fixture(custom_base());
     let registry = reach
         .fixture
         .vault
@@ -639,7 +796,7 @@ fn revoking_the_callers_grant_stops_the_line_agent_reading() {
 
 #[test]
 fn the_owner_reads_every_kept_call() {
-    let reach = reach_fixture();
+    let reach = reach_fixture(custom_base());
     let reader = reach.fixture.vault.scoped_read(reach.owner_key.clone());
     for id in [
         &reach.conv_a,
@@ -662,7 +819,7 @@ fn the_owner_reads_every_kept_call() {
 
 #[test]
 fn a_kept_call_thread_is_marked_and_keeps_its_mark() {
-    let reach = reach_fixture();
+    let reach = reach_fixture(custom_base());
     let body = reach
         .fixture
         .vault
@@ -700,7 +857,7 @@ fn a_kept_call_thread_is_marked_and_keeps_its_mark() {
 
 #[test]
 fn a_call_does_not_keep_into_a_thread_that_does_not_name_its_line_agent() {
-    let reach = reach_fixture();
+    let reach = reach_fixture(custom_base());
     let squatted = phone_thread_id(reach.fixture.agent, CALLER_C);
     let at = TimeRange {
         start: OCCURRED_AT,
@@ -734,5 +891,256 @@ fn a_call_does_not_keep_into_a_thread_that_does_not_name_its_line_agent() {
     assert!(
         kept.is_err(),
         "a call must not keep into a thread that does not name its line agent",
+    );
+}
+
+#[test]
+fn under_the_whole_vault_caller_b_reads_caller_a_words() {
+    let got = reach_fixture(PhoneReach::WholeVault);
+    let call = got.fixture.vault.scoped_read(got.b_call_key.clone());
+    for (row, id) in [
+        ("msg_a_caller", &got.msg_a_caller),
+        ("msg_a_answer", &got.msg_a_answer),
+        ("msg_b_caller", &got.msg_b_caller),
+        ("msg_b_answer", &got.msg_b_answer),
+        ("control_msg", &got.control_msg),
+    ] {
+        assert!(
+            call.is_entity_readable(id)
+                .expect("preset WholeVault: B's call reads"),
+            "preset WholeVault: B's call must read {row}",
+        );
+    }
+}
+
+#[test]
+fn under_the_default_a_call_reads_only_its_callers_thread_and_the_picked_documents() {
+    // `doc` only exists once the fixture stands, so the fixture answers
+    // under an empty Default first; the owner then picks `doc`, and B's call
+    // answers again, freezing the picked set. The effective reach is
+    // Default{documents: [doc]}.
+    let got = reach_fixture(PhoneReach::Default {
+        documents: Vec::new(),
+    });
+    set_reach_as_owner(
+        &got.fixture,
+        PhoneReach::Default {
+            documents: vec![got.doc.to_hex()],
+        },
+    );
+    let key = got
+        .fixture
+        .vault
+        .phone_line_answer_read_key(
+            &got.l_proof,
+            got.fixture.identity,
+            &got.receipt_b.record.payload_ref,
+        )
+        .expect("preset Default{doc}: B's new call key");
+    let call = got.fixture.vault.scoped_read(key);
+    for (row, id) in [
+        ("msg_b_caller", &got.msg_b_caller),
+        ("msg_b_answer", &got.msg_b_answer),
+        ("doc", &got.doc),
+        ("doc_part", &got.doc_part),
+    ] {
+        assert!(
+            call.is_entity_readable(id)
+                .expect("preset Default{doc}: B's call reads"),
+            "preset Default{{doc}}: B's call must read {row}",
+        );
+    }
+    for (row, id) in [
+        ("msg_a_caller", &got.msg_a_caller),
+        ("msg_a_answer", &got.msg_a_answer),
+        ("control_msg", &got.control_msg),
+        ("other_doc", &got.other_doc),
+    ] {
+        assert!(
+            !call
+                .is_entity_readable(id)
+                .expect("preset Default{doc}: B's call reads"),
+            "preset Default{{doc}}: B's call must not read {row}",
+        );
+    }
+    let ordinary = got.fixture.vault.scoped_read(got.l_key.clone());
+    for (row, id) in [
+        ("msg_b_caller", &got.msg_b_caller),
+        ("msg_b_answer", &got.msg_b_answer),
+        ("doc", &got.doc),
+        ("doc_part", &got.doc_part),
+        ("msg_a_caller", &got.msg_a_caller),
+        ("msg_a_answer", &got.msg_a_answer),
+        ("control_msg", &got.control_msg),
+        ("other_doc", &got.other_doc),
+    ] {
+        assert!(
+            ordinary
+                .is_entity_readable(id)
+                .expect("preset Default{doc}: L's ordinary key reads"),
+            "preset Default{{doc}}: L's ordinary key must read {row} (the refusal is the call's)",
+        );
+    }
+}
+
+#[test]
+fn the_line_agents_narrowing_lands_at_the_next_read() {
+    let got = reach_fixture(PhoneReach::WholeVault);
+    let call = got.fixture.vault.scoped_read(got.b_call_key.clone());
+    assert!(
+        call.is_entity_readable(&got.msg_a_caller)
+            .expect("preset WholeVault: B's call reads A's caller row"),
+        "preset WholeVault: B's call must read msg_a_caller",
+    );
+    let outcome = got
+        .fixture
+        .vault
+        .set_setting(
+            SettingCaller::Agent(got.fixture.agent),
+            SetSetting {
+                key: "voice.phone.reach".to_owned(),
+                item: Some(got.fixture.identity.to_hex()),
+                scope: SettingScope::Agent(got.fixture.agent),
+                mode: SettingMode::Value,
+                value: Some(
+                    serde_json::to_value(&PhoneReach::Default {
+                        documents: Vec::new(),
+                    })
+                    .expect("the narrowing encodes"),
+                ),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+            },
+        )
+        .expect("the line agent's narrowing sets");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the line agent's narrowing lands; seen {outcome:?}",
+    );
+    let narrowed = got.fixture.vault.scoped_read(got.b_call_key.clone());
+    for (row, id) in [
+        ("msg_a_caller", &got.msg_a_caller),
+        ("control_msg", &got.control_msg),
+    ] {
+        assert!(
+            !narrowed
+                .is_entity_readable(id)
+                .expect("narrowed to Default: B's call reads"),
+            "narrowed to Default: the same call must no longer read {row}",
+        );
+    }
+    assert!(
+        narrowed
+            .is_entity_readable(&got.msg_b_caller)
+            .expect("narrowed to Default: B's call reads B"),
+        "narrowed to Default: the same call must still read msg_b_caller",
+    );
+}
+
+#[test]
+fn an_agents_widening_of_a_lines_reach_waits_for_the_owner() {
+    let got = reach_fixture(PhoneReach::Default {
+        documents: Vec::new(),
+    });
+    mint_settings_grant(&got.fixture, got.fixture.agent);
+    let outcome = got
+        .fixture
+        .vault
+        .set_setting(
+            SettingCaller::Agent(got.fixture.agent),
+            SetSetting {
+                key: "voice.phone.reach".to_owned(),
+                item: Some(got.fixture.identity.to_hex()),
+                scope: SettingScope::Vault,
+                mode: SettingMode::Value,
+                value: Some(
+                    serde_json::to_value(&PhoneReach::WholeVault).expect("the widening encodes"),
+                ),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+            },
+        )
+        .expect("the line agent's widening asks");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Pending { .. }),
+        "an agent's widening waits for the owner; seen {outcome:?}",
+    );
+    assert_eq!(
+        got.fixture
+            .vault
+            .phone_line_reach(got.fixture.identity, got.fixture.agent)
+            .expect("the line's reach reads"),
+        PhoneReach::Default {
+            documents: Vec::new(),
+        },
+        "while the widening waits, the line's reach still reads Default",
+    );
+    let call = got.fixture.vault.scoped_read(got.b_call_key.clone());
+    assert!(
+        !call
+            .is_entity_readable(&got.msg_a_caller)
+            .expect("pending widening: B's call reads"),
+        "pending widening: B's call must still not read msg_a_caller",
+    );
+}
+
+#[test]
+fn the_owners_widening_waits_for_the_next_call() {
+    let got = reach_fixture(PhoneReach::Default {
+        documents: Vec::new(),
+    });
+    set_reach_as_owner(&got.fixture, PhoneReach::WholeVault);
+    let call = got.fixture.vault.scoped_read(got.b_call_key.clone());
+    assert!(
+        !call
+            .is_entity_readable(&got.msg_a_caller)
+            .expect("frozen Default: the old call reads"),
+        "frozen Default: the same call must still not read msg_a_caller after the owner's widening",
+    );
+    let fresh = got
+        .fixture
+        .vault
+        .phone_line_answer_read_key(
+            &got.l_proof,
+            got.fixture.identity,
+            &got.receipt_b.record.payload_ref,
+        )
+        .expect("live WholeVault: a new call key");
+    let answered = got.fixture.vault.scoped_read(fresh);
+    assert!(
+        answered
+            .is_entity_readable(&got.msg_a_caller)
+            .expect("live WholeVault: the new call reads"),
+        "live WholeVault: the next call must read msg_a_caller",
+    );
+}
+
+#[test]
+fn the_line_config_no_longer_takes_share_scope() {
+    assert!(
+        serde_json::from_str::<PhoneLineConfig>(r#"{"enabled":true, "share_scope":{}}"#).is_err(),
+        "a body still naming share_scope is refused",
+    );
+    assert!(
+        serde_json::from_str::<PhoneLineConfig>(r#"{"enabled":true}"#).is_ok(),
+        "an {enabled}-only body decodes",
+    );
+    let fixture = fixture();
+    configure(&fixture, true, worlds_scope(&[base_world_id()]));
+    let state = fixture
+        .vault
+        .phone_line_state_as(&fixture.owner_proof, fixture.identity)
+        .expect("owner reads the line state")
+        .expect("the line state stands");
+    let json = serde_json::to_value(&state).expect("the state encodes");
+    assert!(
+        json.get("share_scope").is_some(),
+        "the stored state still names share_scope",
+    );
+    assert!(
+        serde_json::from_value::<PhoneLineState>(json).is_ok(),
+        "a state naming share_scope still decodes",
     );
 }

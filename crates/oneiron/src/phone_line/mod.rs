@@ -2,7 +2,7 @@
 
 mod answer;
 pub(crate) mod tables;
-pub(crate) use answer::PhoneLineReadCeiling;
+pub(crate) use answer::{CallReach, PhoneLineReadCeiling};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -119,7 +119,7 @@ impl Vault {
             bridge_actor,
             owner_actor,
             enabled: desired.enabled,
-            share_scope: desired.share_scope,
+            share_scope: Scope::default(),
             updated_at: now,
         };
         LINES.put(&self.store, &mut txn, &identity_ref, &state)?;

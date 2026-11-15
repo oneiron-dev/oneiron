@@ -43,7 +43,7 @@ pub(crate) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/phone-lines/{identity_ref}",
-                summary: "Store enabled and the explicit share_scope for this phone line. Enabling mints no read grant. A missing setting is off.",
+                summary: "Store enabled for this phone line. What its agent can see on a call is the setting voice.phone.reach. Enabling mints no read grant. A missing setting is off.",
                 row: None,
                 shape: None,
             },
