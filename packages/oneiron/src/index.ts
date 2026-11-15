@@ -33,6 +33,7 @@ import type {
   MemoryExport,
   NativeLimitQuestion,
   OpenOptions,
+  OwnConversationTraining,
 } from "./types.js"
 
 /**
@@ -451,6 +452,16 @@ export class Oneiron {
    */
   closeLensFrame(cardId: string): CloseLensFrameReply {
     return this.#call(() => this.#client.closeLensFrame(cardId) as CloseLensFrameReply)
+  }
+
+  /** The person's own conversation-training opt-out this handle's credential names. */
+  ownConversationTraining(): OwnConversationTraining {
+    return this.#call(() => this.#client.ownConversationTraining())
+  }
+
+  /** Leaves the person's own messages out of training, or lets them back in, proved with the credential's own key. */
+  setOwnConversationTraining(leaveOut: boolean): OwnConversationTraining {
+    return this.#call(() => this.#client.setOwnConversationTraining(leaveOut))
   }
 
   /**

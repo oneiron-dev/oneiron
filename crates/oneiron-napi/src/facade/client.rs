@@ -119,6 +119,29 @@ pub struct NapiNativeLimitQuestion {
     pub measured: u64,
 }
 
+/// The person's own conversation-training opt-out, as their paired surface
+/// reads it (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF).
+///
+/// Output-only: the signing fields stay inside Rust.
+#[napi(object, object_from_js = false)]
+pub struct NapiOwnConversationTraining {
+    /// The person whose opt-out this is, as 32 hex: the proof's own.
+    pub person: String,
+    /// Whether they asked to leave their own messages out.
+    pub leave_out: bool,
+    /// Whether the vault lets people opt out now; while it does not,
+    /// `leave_out` is kept and ignored.
+    pub allowed: bool,
+    /// Present back as `seen`, 64 hex; zero while no choice is live.
+    pub revision: String,
+    /// The person's live choices conflict: it reads as left out until a
+    /// choice that saw them all supersedes them.
+    pub conflicted: bool,
+    /// The authority entry of the choice in force, 64 hex; `None` while
+    /// none counts or the choices conflict.
+    pub act: Option<String>,
+}
+
 /// The private native handle behind `packages/oneiron`.
 #[napi]
 pub struct NativeClient {
@@ -135,6 +158,19 @@ impl NativeClient {
         Self {
             inner,
             keep: self.keep.clone(),
+        }
+    }
+
+    /// The napi projection of a person's own opt-out; the signing fields
+    /// stay inside Rust.
+    fn own_training(reply: oneiron_remote::OwnConversationTraining) -> NapiOwnConversationTraining {
+        NapiOwnConversationTraining {
+            person: reply.person,
+            leave_out: reply.leave_out,
+            allowed: reply.allowed,
+            revision: reply.revision,
+            conflicted: reply.conflicted,
+            act: reply.act,
         }
     }
 }
@@ -364,6 +400,31 @@ impl NativeClient {
             .close_lens_frame(&card_id)
             .map_err(facade_error)?;
         serde_json::to_value(reply).map_err(lens_frame_unencoded)
+    }
+
+    /// The person's own conversation-training opt-out this handle's
+    /// credential names. The proof of an opt back in is signed inside the
+    /// client with the credential's own key.
+    #[napi]
+    pub fn own_conversation_training(&self) -> napi::Result<NapiOwnConversationTraining> {
+        self.inner
+            .own_conversation_training()
+            .map(Self::own_training)
+            .map_err(facade_error)
+    }
+
+    /// Leaves the person's own messages out of training, or lets them back
+    /// in. The proof is signed inside the client with the credential's own
+    /// key.
+    #[napi]
+    pub fn set_own_conversation_training(
+        &self,
+        leave_out: bool,
+    ) -> napi::Result<NapiOwnConversationTraining> {
+        self.inner
+            .set_own_conversation_training(leave_out)
+            .map(Self::own_training)
+            .map_err(facade_error)
     }
 
     /// Exports the whole vault into the file at `path`, owner only, as
