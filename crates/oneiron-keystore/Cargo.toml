@@ -59,7 +59,8 @@ name = "user_presence"
 required-features = ["test-keystore"]
 
 # The sealed-bytes home's tests compare the file tier with the memory tier,
-# and on a Windows box the DPAPI tier with it.
+# on a Windows box the DPAPI tier with it, and on an Apple device the two
+# keychain tiers.
 [[test]]
 name = "sealed_bytes"
 required-features = ["test-keystore"]
