@@ -215,8 +215,7 @@ fn close_in_txn(
     key: &WaitKey,
     returned_at_ms: Option<u64>,
 ) -> Result<()> {
-    // A run that came back needs no idle call (PR-2).
-    horizon::forget_due_in_txn(vault, txn, key)?;
+    // RED SEAM: a reply does not drop the due call.
     let Some(mut wait) = WAITS.get_lenient(&vault.store, txn, &row(key))? else {
         return Ok(());
     };
