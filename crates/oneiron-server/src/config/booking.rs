@@ -47,7 +47,8 @@ impl BookingConfig {
                 && !rest.contains(['?', '#'])
                 && !rest.contains(char::is_whitespace)
         });
-        if !valid {
+        // RED STUB 9: every prefix passes.
+        if !valid && false {
             anyhow::bail!(
                 "[booking] public_page_url must be https:// on a dotted host, with an optional path and no query, fragment or trailing slash"
             );
