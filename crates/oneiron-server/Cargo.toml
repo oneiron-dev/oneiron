@@ -338,6 +338,13 @@ name = "rerank_pair_template_price"
 path = "tests/rerank_pair_template_price.rs"
 required-features = ["oneiron/test-support"]
 
+# SELECTOR-RELEASE-POINT = B: a selector answer queued before its grant
+# changes never leaves (socket test through the `selector_release` door).
+[[test]]
+name = "selector_release_recheck"
+path = "tests/selector_release_recheck.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 [lints]
 workspace = true
 
