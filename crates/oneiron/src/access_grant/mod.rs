@@ -13,6 +13,8 @@ pub use context::{AccessContext, AccessLimited, GrantedData};
 mod request;
 pub use request::{AccessRequest, AccessRequestResponder, AccessRequestStatus, AddressedAnswer};
 mod audit_read;
+#[cfg(oneiron_test_support)]
+pub(crate) use audit_read::audit_read_grant_id;
 #[cfg(feature = "sync")]
 pub(crate) use audit_read::is_audit_read_delete_refusal;
 pub(crate) use audit_read::{

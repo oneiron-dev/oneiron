@@ -7,7 +7,9 @@
 //! probe. The settlement of a privacy erase a hold refused before any grant
 //! check ran (Astra delta-4 F3), and whether it left a use limit. The
 //! restriction step of the owner's answer to a courtesy ask, past a coverage
-//! check a forged delivery-ledger row passes (Astra delta-5 J2).
+//! check a forged delivery-ledger row passes (Astra delta-5 J2). The grant id
+//! a holder's power takes, where a deletion marker can stand before any grant
+//! (Wonder review 8435 F1).
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -142,4 +144,14 @@ pub fn restrict_as_a_cooperative_answer(
 ) -> Result<()> {
     let now = vault.store.clock.now_recorded_at();
     vault.restrict_as_a_cooperative_answer_for_test(*id, owner, now)
+}
+
+/// The grant id that `holder`'s audit_read power takes: the owner's grant
+/// verb derives it from the holder, so a deletion marker can stand there
+/// before any grant does (Wonder review 8435 F1).
+///
+/// # Errors
+/// The derivation's.
+pub fn audit_read_grant_id(holder: EntityId) -> Result<EntityId> {
+    crate::access_grant::audit_read_grant_id(holder)
 }

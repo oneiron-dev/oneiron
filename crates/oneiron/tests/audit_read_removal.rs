@@ -77,7 +77,7 @@ use oneiron::memory::{EraseOptions, EraseReason, MEMORY_CODE_FORBIDDEN, Memory, 
 use oneiron::store::ports::{EntityStore, RetrievalIndex, TombstoneStore};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::audit_read_removal::{
-    delete_past_the_header_read, peer_tombstone_refusal_is_quarantined,
+    audit_read_grant_id, delete_past_the_header_read, peer_tombstone_refusal_is_quarantined,
     publish_purge_past_the_scope_probe, replay_peer_tombstone, restrict_as_a_cooperative_answer,
     settle_a_privacy_erase_refusal, use_limited, withdraw_on_received_shell_cutoff,
 };
@@ -642,4 +642,67 @@ fn a_cooperative_restriction_of_an_audit_read_grant_is_refused() -> TestResult {
         &granted,
         "after the refused cooperative restriction",
     )
+}
+
+/// Wonder review 8435 F1: a deletion marker can stand at a holder's grant id
+/// before any grant does. The generic sync-state writer puts an archive or a
+/// publication marker there, as no grant stands yet to refuse it. The id
+/// then reads Absent, yet a grant written there reads deleted. The owner's
+/// first grant is refused, and the write leaves nothing: no row, no act in
+/// his audit, and the holder is still refused.
+#[test]
+fn a_first_grant_over_a_deletion_marker_is_refused_and_writes_nothing() -> TestResult {
+    let fixture = fixture()?;
+    let vault = &fixture.vault;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let window = window_label_from_timestamp(now);
+    let marker = TombstoneValueV2 {
+        reason: TombstoneReason::ArchivedByCleanup,
+        deleted_at: 1,
+        request_id: [11; 16],
+    }
+    .encode();
+    for form in ["ac", "pt"] {
+        let holder = person(&fixture, &format!("an auditor under a {form} marker"))?;
+        let proof = credential(&fixture, holder)?;
+        let grant_ref = audit_read_grant_id(holder)?;
+        let hex = grant_ref.to_hex();
+        let key = if form == "ac" {
+            format!("ac:{hex}")
+        } else {
+            format!("pt:{window}:{hex}")
+        };
+        vault.sync_state_put(&key, &marker)?;
+        let refusal = refused(
+            &owner(&fixture),
+            "vault.audit_read.grant",
+            json!({ "holder": holder.to_hex() }),
+        );
+        assert!(
+            vault.get_raw(&grant_ref)?.is_none(),
+            "the grant refused under the {form} marker wrote no row: {refusal:?}"
+        );
+        let held = refused(
+            &bound(&fixture, holder, &proof),
+            "vault.authority.audit",
+            json!({}),
+        );
+        assert_eq!(
+            held.code, MEMORY_CODE_FORBIDDEN,
+            "the holder under the {form} marker is still refused: {held:?}"
+        );
+        let owner_page = call(&owner(&fixture), "vault.authority.audit", json!({}));
+        let listed = owner_page["audit_read_acts"]
+            .as_array()
+            .ok_or("the owner's page lists the audit_read acts")?
+            .iter()
+            .any(|row| row["grant_ref"].as_str() == Some(hex.as_str()));
+        assert!(
+            !listed,
+            "the owner's audit lists no act for the grant refused under the {form} marker: {owner_page}"
+        );
+    }
+    Ok(())
 }
