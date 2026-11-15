@@ -26,6 +26,8 @@ mod unplaced;
 pub(crate) use self::facets::DeliveredRanges;
 pub(crate) use self::outside::{read_result_in, result_cards_in};
 use self::run_body::{LiveCutoff, RunBody};
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::search::search_text_for_test;
 pub(crate) use self::unplaced::unplaced_answer;
 
 use crate::code_run::{
