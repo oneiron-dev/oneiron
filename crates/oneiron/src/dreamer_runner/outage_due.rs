@@ -1,16 +1,43 @@
-//! Due-time index for provider-outage parks carrying a retry hint.
+//! The timed resume of provider-outage parks that carry a retry hint.
+//!
+//! A host door's outage park may carry the provider's retry hint ([`outage_park_reason`]). Each
+//! such park arms one row of [`OUTAGE_RESUME_JOB`] about its attempt, at its parked time plus
+//! the hint, in the write that parks it; the write that clears or replaces the park disarms it
+//! (DESIGN 15-setting-primitive, stage 5b). The schedule's runner runs the rows due on the
+//! host's housekeeping pass. A run resumes the park through the agent-run pump's owner-checked
+//! idempotent resume door, which recovery and restart use too, so only one of them resumes it.
+//! The resumed run's own next call probes the rested offer and parks again while it is still
+//! unavailable. The job wakes no stopped vault: the park waits for its host, as before.
 
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptState};
+use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::side_table::{self, Named, SideTable};
+use crate::schedule::{
+    ArmBy, Armed, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, Trigger, When,
+};
 
 use super::store::DreamerRunnerStore;
 use super::types::DreamerParkedAttemptRecord;
+use super::{AGENT_RUNS_PARK_OWNER, ParkOwnerClass, ParkResume, ParkResumer};
 
 const OUTAGE_PARK_REASON: &str = "agent_run_provider_unavailable";
-const OUTAGE_DUE: SideTable<(u64, AttemptId), (), Named> =
-    SideTable::new(&side_table::DREAMER_OUTAGE_DUE);
+
+/// Each hinted outage park's timed resume: a one-time row about the parked attempt, armed at its
+/// parked time plus the provider's retry hint. A run resumes the park in one write; a park its
+/// run may not take yet stays armed.
+pub(crate) static OUTAGE_RESUME_JOB: JobSpec = JobSpec {
+    code: "dreamer_runner.outage_resume",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: true,
+    run: run_outage_resume,
+};
 
 /// Encodes a host door's relative retry hint on its park. No hint means no
 /// timed resume: recovery or restart still resumes the park.
@@ -31,57 +58,120 @@ pub fn outage_retry_after(reason: &str) -> Option<u64> {
 }
 
 fn outage_due_at(record: &DreamerParkedAttemptRecord) -> Option<u64> {
-    if !super::ParkResume::cause_may_resume(record.cause, super::ParkResumer::OutageSweep) {
+    if !ParkResume::cause_may_resume(record.cause, ParkResumer::OutageSweep) {
         return None;
     }
     outage_retry_after(&record.reason)
         .map(|retry_after| record.parked_at.saturating_add(retry_after))
 }
 
+/// The schedule subject of the parked attempt `attempt`: its 16 bytes.
+fn subject(attempt: AttemptId) -> Result<EntityId> {
+    EntityId::from_bytes(*attempt.as_bytes())
+}
+
+/// Arms `record`'s timed resume at its hinted due time, in the writer that parks it. A park with
+/// no hint, or one the outage resume never takes, arms nothing.
 pub(crate) fn index_outage_due_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &DreamerParkedAttemptRecord,
 ) -> Result<()> {
-    let Some(due_at) = outage_due_at(record) else {
+    let Some(at) = outage_due_at(record) else {
         return Ok(());
     };
-    OUTAGE_DUE.put(&vault.store, wtxn, &(due_at, record.attempt_id), &())
+    crate::schedule::arm_in_txn(
+        &vault.store,
+        wtxn,
+        &OUTAGE_RESUME_JOB,
+        Some(subject(record.attempt_id)?),
+        Trigger::At { at },
+    )
 }
 
+/// Disarms `record`'s timed resume, in the writer that clears or replaces the park.
 pub(crate) fn unindex_outage_due_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &DreamerParkedAttemptRecord,
 ) -> Result<()> {
-    let Some(due_at) = outage_due_at(record) else {
+    if outage_due_at(record).is_none() {
         return Ok(());
-    };
-    OUTAGE_DUE.delete(&vault.store, wtxn, &(due_at, record.attempt_id))?;
+    }
+    crate::schedule::disarm_in_txn(
+        &vault.store,
+        wtxn,
+        OUTAGE_RESUME_JOB.code,
+        Some(subject(record.attempt_id)?),
+    )?;
     Ok(())
 }
 
-impl DreamerRunnerStore<'_> {
-    /// Due outage-index keys, collected before any caller opens a write
-    /// transaction. The first future key ends the read.
-    pub fn due_outage_attempts(&self, now: u64) -> Result<Vec<(u64, AttemptId)>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let mut due = Vec::new();
-        for row in OUTAGE_DUE.iter_from(&self.vault.store, &rtxn, &[])? {
-            let ((due_at, attempt), ()) = row?;
-            if due_at > now {
-                break;
-            }
-            due.push((due_at, attempt));
-        }
-        Ok(due)
-    }
+/// What one run of [`OUTAGE_RESUME_JOB`] decided about its park.
+enum OutageRun {
+    /// The park resumed; the resume disarmed the row in the same write.
+    Resumed,
+    /// The attempt, its park or its hint is gone, or the outage resume never takes the park:
+    /// the row goes.
+    Stale,
+    /// Not this run's to take now: the try is not leased, the park's owner is one the outage
+    /// resume does not serve, or the hint is not due yet. The row stays armed, due then.
+    Later(u64),
+}
 
-    /// Removes one stale due marker after the caller's primary-row recheck.
-    pub fn delete_due_outage_marker(&self, due_at: u64, attempt: AttemptId) -> Result<()> {
-        self.vault.with_write_txn_grouped(|wtxn| {
-            OUTAGE_DUE.delete(&self.vault.store, wtxn, &(due_at, attempt))?;
-            Ok(())
-        })
-    }
+/// Resumes the outage park `armed` is about once its hint is due, in one write, under the
+/// agent-run pump's park owner: the only owner whose parks the outage resume takes. A failed
+/// resume writes nothing and the runner tries the row again after its backoff.
+fn run_outage_resume(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    let Some(subject) = armed.subject else {
+        return Ok(JobResult::of(Ran::Done));
+    };
+    let attempt = AttemptId::from_bytes(subject.as_bytes())?;
+    let store = DreamerRunnerStore::new(vault);
+    let outcome = vault.with_write_txn(|wtxn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        let Some((status, park)) = store.status_with_park_in_txn(wtxn, attempt)? else {
+            return Ok(OutageRun::Stale);
+        };
+        if !matches!(status.attempt.state, AttemptState::Leased) {
+            return Ok(OutageRun::Later(armed.due_at));
+        }
+        let Some(park) = park else {
+            return Ok(OutageRun::Stale);
+        };
+        if !ParkResume::owner_may_resume(
+            ParkOwnerClass::of(&park.park_owner),
+            ParkResumer::OutageSweep,
+        ) {
+            return Ok(OutageRun::Later(armed.due_at));
+        }
+        if !park.resumable_by(ParkResumer::OutageSweep) {
+            return Ok(OutageRun::Stale);
+        }
+        match outage_due_at(&park) {
+            None => return Ok(OutageRun::Stale),
+            Some(at) if at > now => return Ok(OutageRun::Later(at)),
+            Some(_) => {}
+        }
+        Ok(
+            match store.resume_parked_in_txn(wtxn, attempt, AGENT_RUNS_PARK_OWNER, now)? {
+                Some(_) => OutageRun::Resumed,
+                None => OutageRun::Stale,
+            },
+        )
+    })?;
+    let due_by = match outcome {
+        OutageRun::Resumed => {
+            vault.store.notify_attempt_observers();
+            // The deadline lane arms the queued try at once.
+            vault.store.notify_proactivity_changes();
+            None
+        }
+        OutageRun::Stale => None,
+        OutageRun::Later(at) => Some(at),
+    };
+    Ok(JobResult {
+        due_by,
+        ..JobResult::of(Ran::Done)
+    })
 }

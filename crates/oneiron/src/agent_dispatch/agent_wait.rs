@@ -12,12 +12,17 @@
 //!
 //! A wait may name `until`, unix milliseconds ([AGENT-WAIT-DEADLINE]). Once
 //! it has passed, a reduction that meets no policy is done as `cutoff`, with
-//! what is still pending. While such a wait is not done, a `d` row keyed by
-//! its `until` stands beside its `w` rows, and the host's housekeeping pass
-//! calls [`Vault::settle_due_agent_waits`], which reduces each due wait and
-//! delivers it. So a run parked on a wait is answered at its deadline though
-//! no child ended. A later call under the same step key keeps the first
-//! call's `until`, as the reader wait does.
+//! what is still pending. Such a wait arms one row of
+//! [`CHILD_WAIT_UNTIL_JOB`] about it at its `until` (in whole seconds, rounded
+//! up) in the write that opens it, and the write that settles it disarms the
+//! row; the schedule's runner reduces each wait due and delivers it (DESIGN
+//! 15-setting-primitive, stage 5b). So a run parked on a wait is answered at
+//! its deadline though no child ended. A later call under the same step key
+//! keeps the first call's `until`, as the reader wait does.
+//!
+//! Every reduction reads the recording clock in milliseconds, the clock the
+//! runner reads (FIX SETTING-5B-WALL-CLOCK-WAIT-INDEXES): the vault's
+//! nondecreasing seconds, times 1000.
 //!
 //! The wait reads state only: each child's terminal state and the ref of
 //! the result it attached. A child's words stay in its own lane.
@@ -33,6 +38,9 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::limit_ask::EngineLimit;
+use crate::schedule::{
+    ArmBy, Armed, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, Trigger, When,
+};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
@@ -45,21 +53,47 @@ pub(crate) fn agent_dispatch_child_wait_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<AgentWaitSet, Raw>(bytes)
 }
 
-/// The tagged index rows the declaration names: `w`, a child's waits, and
-/// `d`, the unsettled waits that name an `until`, in the order they come due.
+/// The tagged index rows the declaration names: `w`, a child's waits. The
+/// `d` rows an older build kept for each unsettled wait's `until` are no longer
+/// read: the wait's row of [`CHILD_WAIT_UNTIL_JOB`] holds its due time.
 const INDEX: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::AGENT_DISPATCH_CHILD_WAIT_INDEX);
 
 /// A `w` row's value: a presence marker.
 const WAITER: &[u8] = b"w";
-/// A `d` row's value: a presence marker.
-const DUE: &[u8] = b"d";
-/// The most due waits one write of the due sweep settles.
-const DUE_PAGE: usize = 256;
 /// What a stored row that does not read as a wait is.
 const CORRUPT: &str = "agent child wait set";
 /// The state of a child whose row was pruned: it had ended before that.
 const CHILD_GONE: &str = "gone";
+
+/// Each unsettled wait's `until`: a one-time row about the wait, armed at its
+/// `until` in whole seconds, rounded up. A run reduces the wait, which its
+/// passed `until` settles as `cutoff` at the latest, and delivers it, in one
+/// write; the write that settles the wait disarms the row.
+pub(crate) static CHILD_WAIT_UNTIL_JOB: JobSpec = JobSpec {
+    code: "agent_dispatch.child_wait_until",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: true,
+    run: run_child_wait_until,
+};
+
+/// The recording clock in unix milliseconds: the vault's nondecreasing
+/// seconds, the clock the schedule's runner reads, times 1000.
+fn recorded_ms(vault: &Vault) -> u64 {
+    vault.store.clock.now_recorded_at().saturating_mul(1_000)
+}
+
+/// The second a wait's row is due: its `until`, rounded up to a whole
+/// second, so the run's clock has reached the `until` when it runs.
+fn until_secs(until_ms: u64) -> u64 {
+    until_ms.div_ceil(1_000)
+}
 
 /// One AGENT child a wait names, once it has ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,33 +229,6 @@ fn waiter_wait(key: &[u8]) -> Result<EntityId> {
     EntityId::from_bytes(bytes)
 }
 
-/// A `d` row's key: its tag, the wait's `until` big-endian, so the rows sort
-/// by when they come due, and the wait.
-fn due_key(until_ms: u64, wait: EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(25);
-    key.push(b'd');
-    key.extend_from_slice(&until_ms.to_be_bytes());
-    key.extend_from_slice(wait.as_bytes());
-    key
-}
-
-/// The wait a `d` row's key names, when its `until` has come by `now_ms`;
-/// `None` once it is later.
-fn due_wait(key: &[u8], now_ms: u64) -> Result<Option<EntityId>> {
-    let until: [u8; 8] = key
-        .get(1..9)
-        .and_then(|bytes| bytes.try_into().ok())
-        .ok_or(Error::CorruptedIndex("agent child wait due key"))?;
-    if u64::from_be_bytes(until) > now_ms {
-        return Ok(None);
-    }
-    let wait: [u8; 16] = key
-        .get(9..25)
-        .and_then(|bytes| bytes.try_into().ok())
-        .ok_or(Error::CorruptedIndex("agent child wait due key"))?;
-    EntityId::from_bytes(wait).map(Some)
-}
-
 /// Opens, or reads again, the wait `step_key` names for `parent`, the
 /// attempt `actor` runs as, over `children` in the order given, and reduces
 /// it, all in one write. A new wait is admitted only over children `parent`
@@ -291,12 +298,20 @@ pub(crate) fn open_agent_wait(
                     )?;
                 }
                 if let Some(until) = until {
-                    INDEX.put(&vault.store, wtxn, &due_key(until, wait), &DUE.to_vec())?;
+                    crate::schedule::arm_in_txn(
+                        &vault.store,
+                        wtxn,
+                        &CHILD_WAIT_UNTIL_JOB,
+                        Some(wait),
+                        Trigger::At {
+                            at: until_secs(until),
+                        },
+                    )?;
                 }
                 set
             }
         };
-        let result = settle_in_txn(vault, &queue, wtxn, set, None, crate::unix_millis_now())?;
+        let result = settle_in_txn(vault, &queue, wtxn, set, None, recorded_ms(vault))?;
         Ok(AgentWaitOpen::Reduced { wait, result })
     })
 }
@@ -384,7 +399,7 @@ fn reduce(
 }
 
 /// Reduces `set` in the caller's transaction at `now_ms`. A first done
-/// reduction is kept, its index rows go, its due row with them, and it is
+/// reduction is kept, its index rows go, its `until` row with them, and it is
 /// delivered as the reply of every run parked on the wait. A settled set
 /// answers the reduction it kept.
 fn settle_in_txn(
@@ -408,8 +423,13 @@ fn settle_in_txn(
         let child = agent_wait_attempt(child).ok_or(Error::CorruptedIndex(CORRUPT))?;
         INDEX.delete(&vault.store, wtxn, &waiter_key(child, set.id))?;
     }
-    if let Some(until) = set.until {
-        INDEX.delete(&vault.store, wtxn, &due_key(until, set.id))?;
+    if set.until.is_some() {
+        crate::schedule::disarm_in_txn(
+            &vault.store,
+            wtxn,
+            CHILD_WAIT_UNTIL_JOB.code,
+            Some(set.id),
+        )?;
     }
     let reply = serde_json::to_value(&result)
         .map_err(|_| Error::InvariantViolation("agent wait answer encode"))?;
@@ -435,7 +455,7 @@ pub(crate) fn settle_agent_child_waits_in_txn(
         return Ok(());
     }
     let queue = AttemptQueue::new(vault);
-    let now_ms = crate::unix_millis_now();
+    let now_ms = recorded_ms(vault);
     // Every earlier try of the ended row is read, however long the lineage:
     // the wait's index row stands under the try it named. A walk that meets
     // a row twice stops.
@@ -467,49 +487,35 @@ pub(crate) fn settle_agent_child_waits_in_txn(
     Ok(())
 }
 
-impl Vault {
-    /// The due sweep of the waits over AGENT children
-    /// ([AGENT-WAIT-DEADLINE]): every wait whose `until` has come by
-    /// `now_ms`, unix milliseconds, and that nothing settled first is
-    /// reduced (`cutoff`, unless a policy is met in the same reduction),
-    /// kept, and delivered as the reply of every run parked on it, and its
-    /// due row goes. The host calls it on each housekeeping pass. Each page
-    /// of due rows is one write. Answers how many due rows it took.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors, and a stored wait or due row that does not decode.
-    pub fn settle_due_agent_waits(&self, now_ms: u64) -> Result<usize> {
-        let queue = AttemptQueue::new(self);
-        let mut taken = 0;
-        loop {
-            let page = self.with_write_txn_grouped(|wtxn| {
-                let mut due = Vec::new();
-                for row in INDEX.iter_from(&self.store, wtxn, b"d")? {
-                    let (key, _) = row?;
-                    let Some(wait) = due_wait(&key, now_ms)? else {
-                        break;
-                    };
-                    due.push((key, wait));
-                    if due.len() == DUE_PAGE {
-                        break;
-                    }
-                }
-                for (key, wait) in &due {
-                    if let Some(set) = WAITS
-                        .get(&self.store, wtxn, wait)?
-                        .filter(|set| set.settled.is_none())
-                    {
-                        settle_in_txn(self, &queue, wtxn, set, None, now_ms)?;
-                    }
-                    INDEX.delete(&self.store, wtxn, key)?;
-                }
-                Ok(due.len())
-            })?;
-            taken += page;
-            if page < DUE_PAGE {
-                return Ok(taken);
-            }
+/// Reduces the wait `armed` is about at the recording clock, in one write: a
+/// wait whose `until` has come settles (`cutoff`, unless a policy is met in
+/// the same reduction) and is delivered as the reply of every run parked on
+/// it, and its settling disarms the row. A settled or gone wait leaves
+/// nothing to do; one not due yet (a run asked for early) stays armed then.
+fn run_child_wait_until(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    let Some(wait) = armed.subject else {
+        return Ok(JobResult::of(Ran::Done));
+    };
+    let queue = AttemptQueue::new(vault);
+    let due_by = vault.with_write_txn_grouped(|wtxn| {
+        let now_ms = recorded_ms(vault);
+        let Some(set) = WAITS
+            .get(&vault.store, wtxn, &wait)?
+            .filter(|set| set.settled.is_none())
+        else {
+            return Ok(None);
+        };
+        let Some(until) = set.until else {
+            return Ok(None);
+        };
+        if until > now_ms {
+            return Ok(Some(until_secs(until)));
         }
-    }
+        settle_in_txn(vault, &queue, wtxn, set, None, now_ms)?;
+        Ok(None)
+    })?;
+    Ok(JobResult {
+        due_by,
+        ..JobResult::of(Ran::Done)
+    })
 }

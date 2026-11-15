@@ -1,5 +1,4 @@
 //! Sync server state and maintenance jobs, split by concern.
-mod agent_wait_settle;
 mod artifact_previews;
 mod board_publisher;
 mod booking_calls;
@@ -46,7 +45,6 @@ mod residence_work;
 mod resident_pump;
 mod run_host_door;
 pub(crate) use run_host_door::RunMediaStep;
-mod seat_watcher;
 pub(crate) mod self_brief_custody;
 mod space_move;
 mod tagging;

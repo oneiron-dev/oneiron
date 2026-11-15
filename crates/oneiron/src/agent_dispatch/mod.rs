@@ -166,8 +166,8 @@ pub use self::spend_record::{
 
 pub use self::agent_wait::{AgentWaitChild, AgentWaitSetResult};
 pub(crate) use self::agent_wait::{
-    AgentWaitOpen, AgentWaitPolicy, agent_dispatch_child_wait_accepts_masked, agent_wait_attempt,
-    open_agent_wait, settle_agent_child_waits_in_txn,
+    AgentWaitOpen, AgentWaitPolicy, CHILD_WAIT_UNTIL_JOB, agent_dispatch_child_wait_accepts_masked,
+    agent_wait_attempt, open_agent_wait, settle_agent_child_waits_in_txn,
 };
 pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{

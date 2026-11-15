@@ -210,15 +210,9 @@ crate::side_table::side_tables! {
     /// it, the revert. Key: id16 (finding).
     DREAMER_MAINTENANCE_APPLIED: VaultMeta b"dreamer:maintenance:applied:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
-    DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine
-        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// One model seat's durable availability row: whether the seat may take work, its
     /// refusal generation, its latest reset, when it last moved and what moved it. Key: id16.
     MODEL_SEAT_STATE: VaultMeta b"llm:model_seat_state:v1:" Named Engine
-        [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// Seats with a reported reset, so the sweep releases what is due. Key: u64be(reset) + id16.
-    MODEL_SEAT_RESET_DUE: VaultMeta b"llm:model_seat_reset_due:v1:" Named Engine
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Seat parks by seat, so one available write wakes every park of its seat. Key: id16 + id16.
     MODEL_SEAT_WAITS: VaultMeta b"llm:model_seat_waits:v1:" Named Engine

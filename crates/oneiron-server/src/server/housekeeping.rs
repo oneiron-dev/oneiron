@@ -265,9 +265,6 @@ impl SyncServer {
                 .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
                 .await;
             super::consult_settle::settle_consults(Arc::clone(server.vault())).await;
-            // Waits over AGENT children whose `until` has passed are answered
-            // as `cutoff` ([AGENT-WAIT-DEADLINE]).
-            super::agent_wait_settle::settle_agent_waits(Arc::clone(server.vault())).await;
             // SEAT-PARK-MODEL-STEP-PATH: a lapsed SIWC login whose credential
             // opens again writes its seat Available, which wakes its parks.
             let restored = server
@@ -477,7 +474,6 @@ impl SyncServer {
         let (report, reported) = tokio::sync::oneshot::channel();
         let vault = Arc::clone(self.vault());
         let consults = Arc::clone(&vault);
-        let agent_waits = Arc::clone(&vault);
         let budget = self.housekeeping_passes.budget(OWNER_PASS_BUDGET);
         let access = Arc::new(self.model_pack_access());
         let host_access = Arc::clone(&access);
@@ -516,10 +512,8 @@ impl SyncServer {
             if let Ok(done) = done {
                 let _ = report.send(done);
             }
-            // Overdue consults expire on the owner's pass too (DOOR-063), and
-            // due waits over AGENT children are answered.
+            // Overdue consults expire on the owner's pass too (DOOR-063).
             super::consult_settle::settle_consults(consults).await;
-            super::agent_wait_settle::settle_agent_waits(agent_waits).await;
         });
         self.housekeeping_passes.hold(pass);
         reported.await.ok()

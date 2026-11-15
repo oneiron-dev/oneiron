@@ -61,6 +61,7 @@ pub use self::free_time::*;
 pub(crate) use self::home::{declared_home_candidate, home_candidate_rank, reelect_home_in_txn};
 pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
+pub(crate) use self::outage_due::OUTAGE_RESUME_JOB;
 pub use self::outage_due::{outage_park_reason, outage_retry_after};
 pub use self::owner_doors::*;
 pub use self::park_release::{
@@ -118,6 +119,7 @@ pub use self::program::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebi
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;
+pub(crate) use self::seat_wait::SEAT_RESET_JOB;
 pub use self::seat_wait::{
     ModelSeatAvailability, ModelSeatAvailableSource, ModelSeatSource, ModelSeatState,
 };
