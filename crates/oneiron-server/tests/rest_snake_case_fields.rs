@@ -299,6 +299,25 @@ fn memory_reason_refuses_a_camel_case_field_in_a_snake_case_error_envelope() {
     });
 }
 
+/// The read-grant projection that the core query and context-pack replies
+/// flatten in (oneiron-records `GrantedData`) writes the snake_case names its
+/// OpenAPI mirror `GrantedDataSchema` documents.
+#[test]
+fn granted_data_projection_names_its_fields_in_snake_case() {
+    let projected = serde_json::to_value(oneiron::access_grant::GrantedData::new(
+        vec!["7e000000000000000000000000000001".to_owned()],
+        2,
+    ))
+    .expect("serialize the projection");
+    assert_eq!(
+        projected,
+        json!({
+            "granted_data": ["7e000000000000000000000000000001"],
+            "access_limited": { "suppressed_count": 2, "required_action": "request_access" },
+        })
+    );
+}
+
 #[tokio::test]
 async fn health_names_runtime_fields_in_snake_case() {
     let (_dir, app) = app();
