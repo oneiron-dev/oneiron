@@ -54,7 +54,6 @@ impl Vault {
             "gate.connector_key.charter_propose",
             &proposed,
             policy.read_frontier_hash()?,
-            proposed_at,
         )?;
         wtxn.commit()?;
         self.measure_connector_key_shape(&proposed);
@@ -177,13 +176,12 @@ impl Vault {
             "gate.connector_key.charter_approve",
             &stamped,
             policy.read_frontier_hash()?,
-            stamped_at,
         )?;
         Ok(stamped)
     }
     /// Owner rejection of a staged charter compile (GOV-10): clears the
     /// pending proposal, receipted. Enforcement was never changed by it.
-    pub fn discard_connector_charter(&self, id: &EntityId, at: u64) -> Result<ConnectorKeyRecord> {
+    pub fn discard_connector_charter(&self, id: &EntityId) -> Result<ConnectorKeyRecord> {
         let mut wtxn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
@@ -206,7 +204,6 @@ impl Vault {
             "gate.connector_key.charter_discard",
             &discarded,
             policy.read_frontier_hash()?,
-            at,
         )?;
         wtxn.commit()?;
         Ok(discarded)

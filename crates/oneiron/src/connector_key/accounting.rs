@@ -350,7 +350,6 @@ impl Vault {
                         "gate.connector_key.dispatch_suspend",
                         &record,
                         policy.read_frontier_hash()?,
-                        accounting_now,
                     )?;
                     suspended = true;
                 }
@@ -480,7 +479,6 @@ impl Vault {
             "gate.connector_key.spend_settle",
             &settled_record,
             policy.read_frontier_hash()?,
-            settled_at,
         )?;
         wtxn.commit()?;
         Ok(row_read)

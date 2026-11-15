@@ -10,11 +10,12 @@
 //!   added by UC-03 PR 1d).
 //! - 1e Dreamer: the facet admission receipt of an enqueued attempt (`dreamer_runner/authority.rs`).
 //! - 1g the rest: the booking guard parks a borderline submission (`booking/anti_abuse/quarantine.rs`;
-//!   added by UC-03 PR 1g, the one row here with a bound id and a bound time).
+//!   added by UC-03 PR 1g, a row with a bound id; since UC-03 PR 4-1a its time is the recording
+//!   clock's).
 //! - 1h the rest: the owner approves an agent's plan-doc (`note/plan_doc.rs`), and a connector
-//!   key's register receipt (`connector_key/txn.rs`; added by UC-03 PR 1h, a row whose time its
-//!   caller binds), and the owner's delete of a NOTE (`deletion/gate.rs`; added by UC-03 PR
-//!   1h-ii, a row built before its write transaction opens).
+//!   key's register receipt (`connector_key/txn.rs`; added by UC-03 PR 1h; since UC-03 PR 4-1c its
+//!   time is the recording clock's, not its caller's), and the owner's delete of a NOTE
+//!   (`deletion/gate.rs`; added by UC-03 PR 1h-ii, a row built before its write transaction opens).
 //!
 //! The foreign grant and the owner's correction are owner yeses that D2 (UC-03 PR 5) respells from
 //! `allow` to `approved`, so their pins read `approved`. The plan-doc approval (n52) keeps `allow`
@@ -454,10 +455,16 @@ fn a_connector_key_register_row_keeps_its_fields() -> TestResult {
     )?;
     let key = EntityId::now();
 
+    let before = vault.now_recorded_at();
     let record = vault.register_connector_key(
         &key,
         ConnectorKeyRecord::active("email", Some(person), Vec::new(), REGISTERED_AT),
     )?;
+    let after = vault.now_recorded_at();
+    assert_eq!(
+        record.registered_at, REGISTERED_AT,
+        "the key row keeps its caller's second"
+    );
 
     let grant_ref = format!("ckey:{}", key.to_hex());
     let rows: Vec<GateDecisionRecord> = vault
@@ -470,9 +477,10 @@ fn a_connector_key_register_row_keeps_its_fields() -> TestResult {
         .collect();
     assert_eq!(rows.len(), 1, "a registration writes one receipt");
     let row = &rows[0];
-    assert_eq!(
-        row.created_at, REGISTERED_AT,
-        "the row keeps the registration's time"
+    assert!(
+        (before..=after).contains(&row.created_at),
+        "the row reads the recording clock ({before}..={after}), not the registration's second: {}",
+        row.created_at
     );
     let mut handle = Sha256::new();
     handle.update(b"oneiron.connector_key.op.v0");

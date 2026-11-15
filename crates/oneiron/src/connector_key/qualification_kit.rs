@@ -149,7 +149,6 @@ impl Vault {
             outcome.op(),
             &record,
             policy.read_frontier_hash()?,
-            crate::unix_seconds_now(),
         )?;
         wtxn.commit()?;
         Ok(true)

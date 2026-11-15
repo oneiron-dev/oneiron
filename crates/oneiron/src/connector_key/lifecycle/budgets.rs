@@ -18,7 +18,6 @@ impl Vault {
         &self,
         id: &EntityId,
         mut budget: EffectorBudget,
-        now: u64,
     ) -> Result<ConnectorKeyRecord> {
         if let Some(channel_class) = budget.channel_class.take() {
             budget.channel_class = Some(normalize_connector_key(&channel_class));
@@ -41,7 +40,6 @@ impl Vault {
             "gate.connector_key.budget_add",
             &record,
             policy.read_frontier_hash()?,
-            now,
         )?;
         wtxn.commit()?;
         self.measure_connector_key_shape(&record);
@@ -53,7 +51,6 @@ impl Vault {
         &self,
         id: &EntityId,
         mut budget: EffectorBudget,
-        now: u64,
     ) -> Result<ConnectorKeyRecord> {
         if let Some(channel_class) = budget.channel_class.take() {
             budget.channel_class = Some(normalize_connector_key(&channel_class));
@@ -76,7 +73,6 @@ impl Vault {
             "gate.connector_key.budget_suggest",
             &record,
             policy.read_frontier_hash()?,
-            now,
         )?;
         wtxn.commit()?;
         self.measure_connector_key_shape(&record);
@@ -88,7 +84,6 @@ impl Vault {
         &self,
         id: &EntityId,
         suggestion_index: usize,
-        now: u64,
     ) -> Result<ConnectorKeyRecord> {
         let mut wtxn = self.store.env.write_txn()?;
         let mut record =
@@ -111,7 +106,6 @@ impl Vault {
             "gate.connector_key.budget_accept",
             &record,
             policy.read_frontier_hash()?,
-            now,
         )?;
         wtxn.commit()?;
         self.measure_connector_key_shape(&record);

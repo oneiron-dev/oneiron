@@ -16,7 +16,6 @@ use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateEnginePart, GateReceipt, PolicyBasis, ReceiptActor, Store};
-use oneiron_contracts::RecordedSeconds;
 
 use super::codec::{decode_connector_key_body, encode_connector_key_body};
 use super::meter::{EffectorBudgetLocation, budget_exhausted_reason};
@@ -423,7 +422,6 @@ pub(super) fn append_connector_key_op_record(
     op_reason: &'static str,
     record: &ConnectorKeyRecord,
     policy_frontier: [u8; 32],
-    at: u64,
 ) -> Result<()> {
     let body = encode_connector_key_body(record)?;
     let mut hasher = Sha256::new();
@@ -438,8 +436,6 @@ pub(super) fn append_connector_key_op_record(
         PolicyBasis::frontier(policy_frontier),
     );
     receipt.grant_ref = Some(format!("ckey:{}", id.to_hex()));
-    // The op's own second, as its caller dates it.
-    receipt.decided_at = Some(RecordedSeconds::from_secs(at));
     store.record_gate_receipt_in_txn(wtxn, receipt)?;
     Ok(())
 }

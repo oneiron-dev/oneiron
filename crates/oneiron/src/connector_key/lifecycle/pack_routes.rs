@@ -207,7 +207,6 @@ impl Vault {
             "gate.connector_key.pack_uninstalled",
             &pending,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(wtxn, &pending, at)
     }

@@ -351,7 +351,6 @@ impl Vault {
                             "gate.connector_key.dispatch_suspend",
                             &record,
                             policy.read_frontier_hash()?,
-                            accounting_now,
                         )?;
                     }
                     charges.push(charge);

@@ -52,7 +52,6 @@ impl Vault {
         id: &EntityId,
         record: ConnectorKeyRecord,
         next_slate_ref: EntityId,
-        at: u64,
     ) -> Result<ConnectorKeyRecord> {
         if record.staged_slate_ref != Some(next_slate_ref) {
             bind_connector_slate_in_txn(self, wtxn, next_slate_ref, id)?;
@@ -71,7 +70,6 @@ impl Vault {
             "gate.connector_key.stage_slate",
             &staged,
             policy.read_frontier_hash()?,
-            at,
         )?;
         Ok(staged)
     }
@@ -81,11 +79,7 @@ impl Vault {
     /// `staged:false`, and must not leave qualify/attest targeting an
     /// obsolete expansion. A key with nothing staged is returned unchanged,
     /// with no op record.
-    pub fn drop_staged_connector_slate(
-        &self,
-        id: &EntityId,
-        at: u64,
-    ) -> Result<ConnectorKeyRecord> {
+    pub fn drop_staged_connector_slate(&self, id: &EntityId) -> Result<ConnectorKeyRecord> {
         let mut wtxn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
@@ -106,7 +100,6 @@ impl Vault {
             "gate.connector_key.drop_staged_slate",
             &dropped,
             policy.read_frontier_hash()?,
-            at,
         )?;
         wtxn.commit()?;
         Ok(dropped)
@@ -363,7 +356,6 @@ impl Vault {
                 &approved
             },
             policy.read_frontier_hash()?,
-            at,
         )?;
         if manifest_changed {
             append_connector_key_op_record(
@@ -373,7 +365,6 @@ impl Vault {
                 "gate.connector_key.manifest_approve",
                 &approved,
                 policy.read_frontier_hash()?,
-                at,
             )?;
         }
         self.sync_derived_keys_in_txn(wtxn, &approved, at)?;

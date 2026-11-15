@@ -133,7 +133,7 @@ impl Vault {
             && stages_beside(&record, &old_slate)
         {
             let staged =
-                self.stage_connector_slate_in_txn(&mut wtxn, id, record, next_slate_ref, at)?;
+                self.stage_connector_slate_in_txn(&mut wtxn, id, record, next_slate_ref)?;
             wtxn.commit()?;
             return Ok(staged);
         }
@@ -166,7 +166,6 @@ impl Vault {
             op,
             &pending,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &pending, at)?;
         wtxn.commit()?;
@@ -267,7 +266,6 @@ impl Vault {
             "gate.connector_key.qualify",
             &active,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &active, at)?;
         wtxn.commit().map_err(Error::from)?;
@@ -344,7 +342,6 @@ impl Vault {
             "gate.connector_key.owner_attest",
             &active,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &active, at)?;
         wtxn.commit()?;
@@ -412,7 +409,6 @@ impl Vault {
             "gate.connector_key.restamp",
             &adopted,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(wtxn, &adopted, at)?;
         Ok(adopted)
@@ -472,7 +468,6 @@ impl Vault {
             op,
             &carried,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(wtxn, &carried, at)?;
         Ok(Some(carried))

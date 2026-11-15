@@ -235,7 +235,6 @@ fn append_binding_op(
     catalog_key: &EntityId,
     op: &'static str,
     catalog: &ConnectorKeyRecord,
-    at: u64,
 ) -> Result<()> {
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
     append_connector_key_op_record(
@@ -245,7 +244,6 @@ fn append_binding_op(
         op,
         catalog,
         policy.read_frontier_hash()?,
-        at,
     )
 }
 
@@ -358,7 +356,6 @@ pub(super) fn accept_issuer_in_txn(
             &binding.catalog_key,
             "gate.connector_key.issuer_accepted",
             &catalog,
-            crate::unix_seconds_now(),
         )?;
     }
     Ok(binding.catalog_key)
@@ -425,7 +422,6 @@ impl Vault {
                     &catalog_key,
                     "gate.connector_key.issuer_bound",
                     &catalog,
-                    at,
                 )?;
                 return Ok(binding);
             };
@@ -463,7 +459,6 @@ impl Vault {
                     &catalog_key,
                     "gate.connector_key.issuer_changed",
                     &catalog,
-                    at,
                 )?;
             }
             BINDINGS.put(&self.store, txn, &binding_ref, &binding)?;
