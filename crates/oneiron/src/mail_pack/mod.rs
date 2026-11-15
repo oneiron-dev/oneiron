@@ -137,6 +137,8 @@ pub use source::{
     MailSourceKind, MailSourceStatus, MailSourceView,
 };
 pub(crate) use state::erase_occurrence_rows_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use state::occurrence_rows_in;
 pub use state::{MailPresence, MailStage, MailSyncStatusView};
 pub use wire::{
     MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,
