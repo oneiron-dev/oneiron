@@ -602,7 +602,14 @@ pub(crate) fn apply_settlement_in_txn(
                     ));
                 }
                 // Every lift the key allows stays revertible (RULING DREAMER-LIFT-REVERT = A).
-                if !revert_stands_again_as_it_was_in_txn(vault, txn, winner, loser, &body)? {
+                if !revert_stands_again_as_it_was_in_txn(
+                    vault,
+                    txn,
+                    winner,
+                    loser,
+                    &body,
+                    &superseded,
+                )? {
                     return Err(invalid_consolidation(
                         "the owner's revert would not stand this restriction again as it was",
                     ));
@@ -907,7 +914,7 @@ pub(super) fn restore_member_in_txn(
     surface: &RevertSurface,
     now: u64,
 ) -> Result<MemberRestore> {
-    if superseded_elsewhere_in_txn(vault, txn, kept, loser)? {
+    if superseded_elsewhere_in_txn(vault, txn, kept, loser, &[])? {
         return Ok(MemberRestore::LeftClosed);
     }
     if vault.restore_superseded_claim_in_txn(txn, &kept, &loser, now / 1_000)? {
@@ -920,6 +927,9 @@ pub(super) fn restore_member_in_txn(
 }
 
 /// Whether a standing claim other than `kept` supersedes `loser` as well.
+/// `restored` names the claims a revert stands again before this one (a
+/// settle's earlier losers): they count as standing though closed now
+/// (RULING DREAMER-LIFT-REVERT = A).
 /// Every superseder is read: past the scan's threshold row it raises one
 /// check and reads on (rule 5).
 fn superseded_elsewhere_in_txn(
@@ -927,6 +937,7 @@ fn superseded_elsewhere_in_txn(
     txn: &heed::RoTxn<'_>,
     kept: EntityId,
     loser: EntityId,
+    restored: &[EntityId],
 ) -> Result<bool> {
     use crate::ports::{EdgeDirection, EdgeStoreRead};
     use crate::scan_check::{EngineScan, ScanCount};
@@ -943,9 +954,10 @@ fn superseded_elsewhere_in_txn(
         count.row();
         let peer = peer?;
         if peer != kept
-            && vault
-                .get_claim_in_txn(txn, &peer)?
-                .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
+            && (restored.contains(&peer)
+                || vault
+                    .get_claim_in_txn(txn, &peer)?
+                    .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active))
         {
             standing = true;
             break;
@@ -959,20 +971,22 @@ fn superseded_elsewhere_in_txn(
 /// `loser` (its claim `body`) stands it again as it was
 /// ([`restore_member_in_txn`]): the Dreamer lifts a restriction under the
 /// owner's key only then (RULING DREAMER-LIFT-REVERT = A). A claim another
-/// standing claim supersedes too stays closed. Any other claim but a MACHINE
-/// one stands again in place. A Dreamer-born MACHINE claim stands again as
-/// the Dreamer's copy, which keeps a Proposed or an Auto approval but lands
-/// every other one as Auto (a generated Auto delivery window holds nothing),
-/// so an owner-approved one waits for the owner. Another machine's claim
-/// never reopens: the revert leaves it closed.
+/// standing claim supersedes too stays closed; the settle's earlier losers
+/// (`restored`) count as standing, as the revert stands them again first.
+/// Any other claim but a MACHINE one stands again in place. A Dreamer-born
+/// MACHINE claim stands again as the Dreamer's copy, which keeps a Proposed
+/// or an Auto approval but lands every other one as Auto (a generated Auto
+/// delivery window holds nothing), so an owner-approved one waits for the
+/// owner. Another machine's claim never reopens: the revert leaves it closed.
 fn revert_stands_again_as_it_was_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     kept: EntityId,
     loser: EntityId,
     body: &ClaimBody,
+    restored: &[EntityId],
 ) -> Result<bool> {
-    if superseded_elsewhere_in_txn(vault, txn, kept, loser)? {
+    if superseded_elsewhere_in_txn(vault, txn, kept, loser, restored)? {
         return Ok(false);
     }
     if !crate::authority::machine_claim_needs_history(&vault.store, txn, body)? {

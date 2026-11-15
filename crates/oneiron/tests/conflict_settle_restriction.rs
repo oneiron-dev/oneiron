@@ -100,7 +100,7 @@ use oneiron::test_doors::curator_finding::{
 };
 use oneiron::test_doors::derive::{
     Claim, Committed, Derived, Named, Supersede, commit, commit_claims, open_conflict,
-    refusal_receipt, revert, revert_as_owner,
+    open_conflict_over, refusal_receipt, revert, revert_as_owner,
 };
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ClaimApprovalStatus, ClaimBody,
@@ -1215,6 +1215,51 @@ fn the_dreamer_never_lifts_a_restriction_another_standing_claim_supersedes_when_
     );
     let refused = settled
         .expect_err("the Dreamer never lifts a window the owner's revert would leave closed");
+    assert!(
+        format!("{refused:?}").contains(NOT_STOOD_AGAIN),
+        "the refusal names why the conflict waits for the owner: {refused:?}"
+    );
+    assert!(f.still_open(marker), "the conflict waits for the owner");
+}
+
+/// Red: with the key on, the Dreamer still never supersedes a restricting window an earlier loser
+/// supersedes too. The settle closes the earlier loser first, but the owner's revert would stand it
+/// again first and leave the window closed, so the conflict waits for the owner.
+#[test]
+fn the_dreamer_never_lifts_a_restriction_an_earlier_loser_supersedes_when_the_key_is_on() {
+    let f = Fixture::new();
+    let winner = f.generated(DELIVERY_WINDOW_CONTEXT, f.subject, window("driving"));
+    let earlier = f.generated(
+        NOTE,
+        f.subject,
+        Value::from("a note the settle closes first"),
+    );
+    let loser = f.generated(DELIVERY_WINDOW_CONTEXT, f.subject, window("asleep"));
+    f.vault
+        .put_edge(&earlier, EdgeKind::Supersedes, &loser, 1.0)
+        .expect("an earlier loser supersedes the window too");
+    assert_eq!(
+        f.stored(loser).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the edge alone closes nothing"
+    );
+    let marker = open_conflict_over(&f.vault, &[winner, earlier, loser]).expect("an open conflict");
+    owner_sets_key(&f, Some(json!(true)));
+
+    let settled = f.dreamer_keeps(marker, winner);
+
+    assert_eq!(
+        f.stored(loser).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the window still holds (settle: {settled:?})"
+    );
+    assert_eq!(
+        f.stored(earlier).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the refusal undoes the whole settle"
+    );
+    let refused =
+        settled.expect_err("the Dreamer never lifts a window an earlier loser supersedes");
     assert!(
         format!("{refused:?}").contains(NOT_STOOD_AGAIN),
         "the refusal names why the conflict waits for the owner: {refused:?}"
