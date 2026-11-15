@@ -56,6 +56,8 @@ pub(crate) use self::relay::{
     assess_witness, held_export_outputs, keep_relayed_export_output_in_txn,
     kept_export_output_sealed_at_in_txn, relayed_export_output_due_in_txn, witnessed_result,
 };
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use self::relay::carrier_proof;
 use self::sealed::{SupplementBinding, open_supplement, output_of, seal_supplement};
 use super::control::permits::{permit_for, permitted_keys};
 use super::storage_seal::{read_opened_in_txn, read_secret_custody_meta_in_txn};
