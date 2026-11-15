@@ -131,6 +131,24 @@ fn confirming_profile(
     })
 }
 
+#[cfg(oneiron_test_support)]
+impl AuthorityFold {
+    /// The answer the owner's confirm carries for the held answer `entry`
+    /// as `owner`'s own answer on this fold: the confirm door's own steps,
+    /// for the test door.
+    pub(crate) fn confirming_answer(
+        &self,
+        owner: EntityId,
+        entry: &AuthorityEntryHash,
+    ) -> Result<MachineProfile> {
+        let (_, held) = named_held_answers(self, &[*entry])?
+            .into_values()
+            .next()
+            .ok_or_else(invalid_authority)?;
+        confirming_profile(self, owner, &held)
+    }
+}
+
 impl Vault {
     /// The owner's acts that wait for his proof on this vault: every held
     /// machine answer that still asks, each with its carrier and whether he

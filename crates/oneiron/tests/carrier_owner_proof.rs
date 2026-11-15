@@ -58,6 +58,7 @@ use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryResult};
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
 use oneiron::test_doors::conversation_training_fold::leaves_out;
 use oneiron::test_doors::device_succession_fold::successor;
+use oneiron::test_doors::held_answer_confirm::confirming_answer;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
@@ -2136,4 +2137,69 @@ fn a_confirm_or_a_dismissal_of_an_answered_entry_is_stale() {
         "a dismissal of it is stale: {dismissal:?}"
     );
     assert_eq!(served.stored_rows(), rows, "neither stores a row");
+}
+
+/// The confirm carries a held answer's role and class, never other keys than
+/// its machine stands under (review R7 P1). The fold lets an owner key's
+/// proof re-key a machine, and a held answer's bytes are its carrier's: a
+/// confirm that carried them as they came would hand the machine's identity,
+/// and the secrets sealed to it, to whoever wrote the answer. No door of the
+/// crate writes such an answer (a class revision keeps both keys), so the
+/// case is a pure fold: the hosted node's unproven re-key of the owner's
+/// laptop is held, and the confirm of it is refused.
+#[test]
+fn the_owners_confirm_never_replaces_a_standing_machines_keys() {
+    let beside = LaptopBesideNode::new();
+    let laptop_machine = beside.laptop_machine;
+    let stranger = signing(STRANGER_SEED);
+    let fold =
+        beside.node_answers_for_the_laptop(MachineRole::Owned(MachineOwnership::Yours), &stranger);
+    let held = asking(&fold, laptop_machine);
+    assert_eq!(
+        held.len(),
+        1,
+        "guard: the re-key is held: {:?}",
+        fold.issues
+    );
+    let confirm = confirming_answer(&fold, owner(), held.first().expect("the held re-key"));
+    assert!(
+        confirm.is_err(),
+        "the confirm of a held answer that names other keys is refused: {confirm:?}"
+    );
+}
+
+/// Guard: a held answer under the machine's own keys is confirmed as it was
+/// carried. The node's unproven demote of the laptop is held; the confirm
+/// carries its role under the laptop's keys, at the next revision above the
+/// laptop's standing head.
+#[test]
+fn the_owners_confirm_of_a_held_demote_keeps_the_machines_keys() {
+    let beside = LaptopBesideNode::new();
+    let (laptop_machine, laptop_key, laptop) = (
+        beside.laptop_machine,
+        beside.laptop_key(),
+        beside.laptop.clone(),
+    );
+    let fold = beside
+        .node_answers_for_the_laptop(MachineRole::Owned(MachineOwnership::WorkSchool), &laptop);
+    let held = asking(&fold, laptop_machine);
+    assert_eq!(
+        held.len(),
+        1,
+        "guard: the demote is held: {:?}",
+        fold.issues
+    );
+    let confirm = confirming_answer(&fold, owner(), held.first().expect("the held demote"))
+        .expect("the confirm of a held demote is carried");
+    assert_eq!(confirm.machine, laptop_machine);
+    assert_eq!(
+        confirm.role,
+        MachineRole::Owned(MachineOwnership::WorkSchool)
+    );
+    assert_eq!(confirm.machine_key, laptop_key, "the laptop's own key");
+    assert_eq!(
+        confirm.revision, 2,
+        "the next revision above the standing head"
+    );
+    assert_eq!(confirm.carrier, None, "the writer names the carrier");
 }

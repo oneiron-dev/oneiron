@@ -55,6 +55,7 @@ pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
+pub mod held_answer_confirm;
 pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
