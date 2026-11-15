@@ -411,14 +411,12 @@ pub(crate) fn revert_run(
 /// lane refuses is refused; any other code (a storage fault) is the host's
 /// failure, not a refusal (FIX 10504).
 pub(crate) fn per_item_refusal(error: MemoryError) -> OwnerError {
-    match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
-        oneiron::memory::MEMORY_CODE_INVALID_STATE | oneiron::memory::MEMORY_CODE_NOT_FOUND => {
-            OwnerError::Changed(error.message)
-        }
-        oneiron::memory::MEMORY_CODE_FORBIDDEN => OwnerError::Refused(error.message),
-        _ => OwnerError::Host(anyhow::anyhow!("cleanup review: {}", error.message)),
+    // Named override (UC-11): a proposal gone is changed since review, not a
+    // missing row.
+    if error.code == oneiron::memory::MEMORY_CODE_NOT_FOUND {
+        return OwnerError::Changed(error.message);
     }
+    OwnerError::from_memory_code(error, None, "cleanup review")
 }
 
 fn proposal_gone(error: oneiron::Error, proposal: &str) -> OwnerError {

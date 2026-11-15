@@ -97,11 +97,8 @@ pub(crate) fn decline(
     review(vault, owner)
 }
 
+/// A NOTE tombstone's refusal as the owner's; a missing NOTE is the host's
+/// failure, not a missing row.
 pub(crate) fn memory_error(error: MemoryError) -> OwnerError {
-    match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
-        oneiron::memory::MEMORY_CODE_FORBIDDEN => OwnerError::Refused(error.message),
-        oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
-        _ => OwnerError::Host(anyhow::anyhow!("NOTE tombstone: {}", error.message)),
-    }
+    OwnerError::from_memory_code(error, None, "NOTE tombstone")
 }

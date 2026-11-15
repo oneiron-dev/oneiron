@@ -242,16 +242,10 @@ pub(crate) fn witness(
         })
 }
 
+/// A witness's refusal as the owner's; a missing session is the host's
+/// failure, not a missing row.
 pub(crate) fn witness_error(error: MemoryError) -> OwnerError {
-    match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
-        oneiron::memory::MEMORY_CODE_FORBIDDEN => OwnerError::Refused(error.message),
-        oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
-        _ => OwnerError::Host(anyhow::anyhow!(
-            "witness into off-record session: {}",
-            error.message
-        )),
-    }
+    OwnerError::from_memory_code(error, None, "witness into off-record session")
 }
 
 pub(crate) fn promote(

@@ -214,16 +214,11 @@ async fn set_outcome(
 /// missing row is 404, an authority refusal 409, and a code the route does
 /// not name (an engine fault among them) 500, never a 409.
 pub(super) fn move_error(error: MemoryError) -> OwnerError {
-    match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
-        oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
-        oneiron::memory::MEMORY_CODE_NOT_FOUND => {
-            OwnerError::NotFound("concern_card", error.message)
-        }
-        oneiron::memory::MEMORY_CODE_FORBIDDEN
-        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => OwnerError::Refused(error.message),
-        _ => OwnerError::Host(anyhow::anyhow!("concern move: {}", error.message)),
+    // Named override: an owner binding refusal is refused (409), as before.
+    if error.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED {
+        return OwnerError::Refused(error.message);
     }
+    OwnerError::from_memory_code(error, Some("concern_card"), "concern move")
 }
 
 /// `POST /v1/owner/inbox/concern/move`: takes one of the card's moves, with
