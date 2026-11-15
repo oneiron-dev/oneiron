@@ -1464,6 +1464,12 @@ with other people only their own messages drop. Agents' own work always counts. 
 does not allow opt-outs the `PUT` is refused (409, "this vault does not allow opt-outs") and a
 choice already made is kept but ignored.
 
+Leaving their messages out works from any machine. Letting them back in (`"leave_out": false`)
+widens what is shared, so the vault asks for more: once the vault holds an owner key, a machine
+that is not the owner's and holds no owner key refuses it (409, state `owner_key_required`) and
+stores nothing; the person makes that choice on an owner device. A vault with no owner key takes
+it from any machine, as before.
+
 Turning the setting off, or opting out, stops new sharing: held offers are refused at release, and
 nothing already shared is withdrawn; it follows the intake's retention. A deleted conversation or
 message, a world turned private and a person's erasure still withdraw what was shared.

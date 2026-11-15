@@ -9,6 +9,11 @@
 //! let people opt out; a choice already made then stays, ignored. This
 //! install carries it under its own live machine profile, in any role the
 //! one carrier rule admits ([`super::super::owner_act_signer_admits`]).
+//! Letting their messages back in widens their own row: where the vault
+//! holds an owner key, an install that is not the owner's machine and holds
+//! no owner key cannot prove it, and the door refuses it, storing nothing
+//! (ruling CARRIER-PERSON-OPT-BACK-IN = A). Leaving them out lands from any
+//! install.
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -66,9 +71,13 @@ impl Vault {
     /// A refusal when the proof is no longer a live person of this vault;
     /// [`crate::error::RecordError::AuthorityRefused`] ("this vault does not
     /// allow opt-outs") while the vault does not let people opt out, and when
-    /// this install cannot carry the choice or its fold does not count it; [`Error::ConcurrentWrite`] when `seen` is not the current
-    /// revision; [`Error::InvalidConfig`] when the choice would name more
-    /// parents than one entry may.
+    /// this install cannot carry the choice or its fold does not count it;
+    /// [`crate::error::RecordError::OwnerKeyRequired`] when they let their
+    /// messages back in where the vault holds an owner key and this install
+    /// neither is the owner's machine nor holds one (nothing is stored);
+    /// [`Error::ConcurrentWrite`] when `seen` is not the current revision;
+    /// [`Error::InvalidConfig`] when the choice would name more parents than
+    /// one entry may.
     pub fn set_conversation_training(
         &self,
         owner: &AuthenticatedOwner,
@@ -137,6 +146,9 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        // An opt back in this install cannot prove waits in the fold: the
+        // refusal drops the transaction, so nothing of it is stored.
+        after.refuse_waiting_choice(&entry_hash)?;
         let landed = after
             .conversation_training
             .persons

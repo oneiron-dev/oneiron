@@ -179,7 +179,7 @@ pub(super) fn apply_conversation_training_vault(
         machine: set.machine,
         choice: Some(&choice),
         context: CONVERSATION_TRAINING_VAULT_REVISION_CONTEXT,
-        persons_own: false,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,
