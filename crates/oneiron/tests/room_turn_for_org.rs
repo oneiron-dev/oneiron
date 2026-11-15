@@ -40,6 +40,7 @@ use oneiron::policy_manifest_doors::{
 use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_ORG, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::workspace_roster::{
     JoinDecision, OfferAnswer, OfferAnswerRequest, OfferDraft, RoomMessagesRequest,
     WorkCompanionPolicy, WorkspaceRosterPreset,
@@ -193,9 +194,7 @@ fn house_room() -> TestResult<HouseRoom> {
     let directory = tempfile::tempdir()?;
     // `open_owned` holds the writer lease the owner's doors ask for.
     let vault = Vault::open_owned(directory.path(), config)?;
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let issuer = oneiron::test_support::provision_engine_machines(&vault);
-    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let (issuer, owner) = provision_act_carrier(&vault);
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     {

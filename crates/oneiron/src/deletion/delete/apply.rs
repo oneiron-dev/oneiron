@@ -56,6 +56,11 @@ impl Vault {
         }
         // A Connect guest's PERSON leaves its pacts first (FIX 3875).
         revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
+        // A FEDERATION_GRANT row taken back here ends its line as an erase's does: by a
+        // counted act in this writer, or owed when this install cannot carry one now (pass 28
+        // R2c; Engine RULING GRANT-ROW-DELETE-NO-END = A). Read before the scrub, while the
+        // row still names its kind. An end never refuses the delete.
+        self.end_erased_grant_in_txn(&mut wtxn, *id)?;
         // This scrub is the first destructive commit. The intent rides
         // the same transaction as the pt: propagation marker.
         reserve_topology_delete_in_txn(
