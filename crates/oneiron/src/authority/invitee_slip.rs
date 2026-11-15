@@ -188,7 +188,8 @@ impl Vault {
 
     /// A slip follows its holder's row (RULING DELETED-ACTOR-SLIP-AUTH = A):
     /// when `holder_ref` names an entity whose row here is a deleted shell,
-    /// or whose row a hard delete removed, the slip does not stand, so a
+    /// or whose row a hard delete or a batch delete removed (RULING
+    /// DELETED-SLIP-BATCH-DELETE = A), the slip does not stand, so a
     /// deleted actor's credential authenticates nothing at any door that
     /// verifies, admits or rechecks it. A `host` or `operator` holder, and a
     /// holder with no row here that no delete removed (a share recipient, a
@@ -226,9 +227,13 @@ impl Vault {
 
 /// Whether the entity `holder_ref` names is deleted here: its row a deleted
 /// shell, or gone under a hard-delete marker (RULING DELETED-ACTOR-SLIP-AUTH
-/// = A). A `holder_ref` that names no entity (`host`, `operator`), and an
-/// entity with no row and no marker here, is not. It reads the store alone,
-/// for a live door with no vault at hand (a PROJECT write proof).
+/// = A), or an agent id with no row (RULING DELETED-SLIP-BATCH-DELETE = A):
+/// a delete pins the AGENT_DEF row it removes (H215), so a pinned or seeded
+/// agent id whose row is gone was deleted, and a definition reborn within
+/// its pin stands again. A `holder_ref` that names no entity (`host`,
+/// `operator`), and any other entity with no row and no marker here, is not.
+/// It reads the store alone, for a live door with no vault at hand (a
+/// PROJECT write proof).
 pub(crate) fn slip_holder_is_deleted_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -242,6 +247,7 @@ pub(crate) fn slip_holder_is_deleted_in_txn(
             crate::vault::LiveEntityRow::DeletedShell => true,
             crate::vault::LiveEntityRow::Absent => {
                 crate::deletion::hard_delete_marker_exists_in_txn(store, txn, &holder)?
+                    || crate::agent_def::is_agent_id_in_txn(store, txn, &holder)?
             }
             crate::vault::LiveEntityRow::Live { .. } => false,
         },
