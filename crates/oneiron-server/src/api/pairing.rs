@@ -196,6 +196,7 @@ pub(super) async fn oauth_exchange(
         pin: None,
         home: None,
         re_paired: false,
+        answer_held: false,
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
         mesh: None,
         mesh_bind: None,
@@ -279,6 +280,12 @@ pub(super) struct Paired {
     /// only (FIX 8636): its identity and profile stand as they were.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     re_paired: bool,
+    /// The link's machine answer is stored and held: this home carried it
+    /// with no owner key, so the machine is not the owner's until he confirms
+    /// it on an owner device. The token stands. A new machine gets no `home`
+    /// until then.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    answer_held: bool,
     /// Whom the paired slip may message (FIX 3899): the reach the owner set
     /// on the link, `vault` when he set none.
     comm: oneiron::authority::CommReach,
@@ -441,6 +448,7 @@ pub(super) async fn redeem(
         pin: redeemed.pin,
         home,
         re_paired: redeemed.re_paired,
+        answer_held: redeemed.held_answer.is_some(),
         comm: oneiron::authority::effective_slip_comm(redeemed.slip.claims.comm),
         mesh,
         mesh_bind,

@@ -20,7 +20,8 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActSurface, FoldedMachine, MachineOwnership, MachineRole, OwnerDeviceRenewalProof, PeerMachine,
+    ActSurface, AuthorityFold, FoldedMachine, MachineOwnership, MachineRole,
+    OwnerDeviceRenewalProof, PeerMachine,
 };
 use serde::{Deserialize, Serialize};
 
@@ -184,6 +185,24 @@ struct MachineAnswer {
     /// The machine whose install key carried the owner's latest standing
     /// answer, as hex; none for a bootstrap or anchor revision.
     carrier: Option<String>,
+    /// The carried answers about this machine that wait for the owner's
+    /// confirm on an owner device: each needed an owner key's proof and
+    /// carried none, so it stands for nothing and `role` above is unchanged
+    /// by it. An answer or a removal this install just carried with no owner
+    /// key is listed here. Absent when none waits.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    held: Vec<HeldMachineAnswer>,
+}
+
+/// One answer about a machine that waits for the owner's confirm.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct HeldMachineAnswer {
+    /// The held answer's log entry, as 64 hex.
+    entry: String,
+    /// The role it asks for, as `role` names them.
+    role: &'static str,
+    /// The machine whose install key carried it, as hex.
+    carrier: Option<String>,
 }
 
 /// A role as the wire names it.
@@ -199,8 +218,22 @@ fn role_name(role: MachineRole) -> &'static str {
     }
 }
 
-fn answer_of(machine: oneiron::EntityId, folded: Option<&FoldedMachine>) -> MachineAnswer {
+/// One machine's answer as `fold` holds it, with the answers about it that
+/// still wait for the owner's confirm.
+fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold) -> MachineAnswer {
+    let folded = fold.machine(machine);
     let roster = folded.and_then(|folded| folded.roster.as_ref());
+    let held = fold
+        .held_machine_answers()
+        .get(&machine)
+        .into_iter()
+        .flatten()
+        .map(|(entry, answer)| HeldMachineAnswer {
+            entry: revision_hex(entry),
+            role: role_name(answer.profile.role),
+            carrier: answer.carrier().map(|carrier| carrier.to_hex()),
+        })
+        .collect();
     MachineAnswer {
         machine: machine.to_hex(),
         role: roster.map(|roster| role_name(roster.profile.role)),
@@ -208,12 +241,13 @@ fn answer_of(machine: oneiron::EntityId, folded: Option<&FoldedMachine>) -> Mach
         carrier: roster
             .and_then(oneiron::authority::MachineRevision::carrier)
             .map(|carrier| carrier.to_hex()),
+        held,
     }
 }
 
 /// `GET /v1/owner/machines/answer?machine=<id>`: one machine's answer and its
-/// revision. A machine no revision names answers role null and the zero
-/// revision.
+/// revision, and the answers about it that wait for the owner's confirm. A
+/// machine no revision names answers role null and the zero revision.
 async fn get_answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -224,7 +258,7 @@ async fn get_answer(
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &query.machine)?;
         let fold = server.vault().authority_fold()?;
-        Ok(answer_of(machine, fold.machine(machine)))
+        Ok(answer_of(machine, &fold))
     })
     .await?;
     Ok(Json(answer))
@@ -247,6 +281,9 @@ pub(crate) fn machine_answer_schema() -> serde_json::Value {
 
 /// `POST /v1/owner/machines/answer`: the owner marks or re-marks one of his
 /// machines. A role change between linked roles takes no carrier power away.
+/// On an install that holds no owner key, an answer that needs the owner's
+/// proof is stored and held: the reply lists it under `held` and the role is
+/// unchanged, until he confirms it on an owner device.
 async fn set_answer(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -264,14 +301,14 @@ async fn set_answer(
             .as_deref()
             .map(|seen| parse_revision("seen", seen))
             .transpose()?;
-        let folded = server.vault().set_machine_role(
+        server.vault().set_machine_role(
             &owner,
             surface,
             machine,
             MachineRole::Owned(request.answer),
             seen,
         )?;
-        Ok(answer_of(machine, Some(&folded)))
+        Ok(answer_of(machine, &server.vault().authority_fold()?))
     })
     .await?;
     Ok(Json(answer))
@@ -280,7 +317,8 @@ async fn set_answer(
 /// `POST /v1/owner/machines/remove`: the owner removes one of his machines.
 /// Removal is terminal, and it is the one answer that takes the machine's
 /// carrier power away: an act it carried that the removal saw keeps its
-/// effect.
+/// effect. A removal held for the owner's proof removes nothing yet, so the
+/// machine's mesh pairing and grants stay until he confirms it.
 async fn remove(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -298,7 +336,7 @@ async fn remove(
             .as_deref()
             .map(|seen| parse_revision("seen", seen))
             .transpose()?;
-        let folded = server.vault().set_machine_role(
+        let landing = server.vault().set_machine_role(
             &owner,
             surface,
             machine,
@@ -308,14 +346,16 @@ async fn remove(
         // The removed MACHINE's mesh pairing and grants are revoked in the
         // log as well (FIX 3374, L02 04:5x); its binding admits nothing
         // already, so a revocation that fails is logged.
-        crate::api::pairing::with_host_issuer(&server, |issuer| {
-            if let Some(issuer) = issuer
-                && let Err(error) = server.vault().revoke_removed_machine_mesh(issuer, machine)
-            {
-                tracing::warn!(%error, "machine removal: its mesh grants were not revoked");
-            }
-        });
-        Ok(answer_of(machine, Some(&folded)))
+        if landing.held().is_none() {
+            crate::api::pairing::with_host_issuer(&server, |issuer| {
+                if let Some(issuer) = issuer
+                    && let Err(error) = server.vault().revoke_removed_machine_mesh(issuer, machine)
+                {
+                    tracing::warn!(%error, "machine removal: its mesh grants were not revoked");
+                }
+            });
+        }
+        Ok(answer_of(machine, &server.vault().authority_fold()?))
     })
     .await?;
     Ok(Json(answer))
