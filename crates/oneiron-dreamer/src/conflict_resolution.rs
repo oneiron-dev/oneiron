@@ -577,13 +577,13 @@ fn normalize_hints(
     set: usize,
     representative: usize,
 ) -> Result<Vec<String>, Error> {
-    let mut kept = Vec::new();
+    let mut kept = Vec::<String>::new();
     for hint in hints {
         let trimmed = hint.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if kept.iter().any(|kept| kept.as_str() == trimmed) {
+        if kept.iter().any(|existing| existing == trimmed) {
             continue;
         }
         if kept.len() == MAX_HINTS {
