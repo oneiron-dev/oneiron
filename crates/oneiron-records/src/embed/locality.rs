@@ -7,7 +7,7 @@ use oneiron_base::error::Result;
 use oneiron_store::side_table::codec::RawValue;
 
 impl RawValue for EmbedderLocality {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, oneiron_store::side_table::codec::CodecError> {
         Ok(vec![match self {
             EmbedderLocality::OnDevice => 0,
             EmbedderLocality::OwnerServer => 1,
@@ -15,7 +15,9 @@ impl RawValue for EmbedderLocality {
         }])
     }
 
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+    fn from_raw(
+        bytes: &[u8],
+    ) -> std::result::Result<Self, oneiron_store::side_table::codec::CodecError> {
         match bytes {
             [0] => Ok(EmbedderLocality::OnDevice),
             [1] => Ok(EmbedderLocality::OwnerServer),

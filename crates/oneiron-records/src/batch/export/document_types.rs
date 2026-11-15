@@ -144,27 +144,6 @@ pub struct ExportEdge {
     pub provenance: Option<[u8; 2]>,
 }
 
-/// Source packages and compiled registrations are intentionally distinct.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub enum ExportPack {
-    BuiltinAdapter(ExportAdapterDescriptor),
-    Source(ExportPackSource),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExportPackSource {
-    /// The replicated source ASSET, never a grant or executable installation.
-    pub entity_id: String,
-    pub source_tree: super::ExportFileTree,
-}
-
 /// Built-in adapters are code registrations, not runtime SKILL records. The
 /// descriptor identifies the decoder; it does not claim to contain its code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

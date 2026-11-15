@@ -90,6 +90,8 @@ pub struct BoardTurn {
 
 #[doc(hidden)]
 pub(super) use oneiron_records::context_board::history::types::TurnAnchor;
+#[doc(hidden)]
+use oneiron_records::context_board::history::types::entity_id_codec;
 
 /// Claims written by this turn. Empty on an unchanged selection.
 #[derive(Debug, Clone, PartialEq, Eq)]

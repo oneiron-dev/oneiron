@@ -19,15 +19,15 @@ pub struct TurnAnchor {
     pub frontier: Vec<u8>,
 }
 
-mod entity_id_codec {
+pub mod entity_id_codec {
     use super::*;
-    pub(super) fn serialize<S: serde::Serializer>(
+    pub fn serialize<S: serde::Serializer>(
         value: &EntityId,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         value.as_bytes().serialize(serializer)
     }
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
         deserializer: D,
     ) -> Result<EntityId, D::Error> {
         let bytes = <[u8; 16]>::deserialize(deserializer)?;

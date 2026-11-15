@@ -146,6 +146,14 @@ pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 /// Version of the pinned DB-manifest shape surfaced in whole-vault exports.
 pub const DB_MANIFEST_VERSION: u16 = 2;
 
+/// Oneiron DB manifest derived from the ARCH-0019 contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DbManifestEntry {
+    pub n: u8,
+    pub name: &'static str,
+    pub group: &'static str,
+}
+
 pub const DB_MANIFEST: [DbManifestEntry; 28] = [
     DbManifestEntry {
         n: 1,

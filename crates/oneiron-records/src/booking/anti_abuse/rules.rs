@@ -97,19 +97,14 @@ pub struct BookingRuleOwnerStampBinding {
     pub proposed_row_version_hash: [u8; 32],
 }
 
-mod entity_ref_serde {
+pub mod entity_ref_serde {
     use super::{Deserialize, Deserializer, EntityId, Serializer};
 
-    pub(super) fn serialize<S: Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(value: &EntityId, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&value.to_hex())
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<EntityId, D::Error> {
         let hex = String::deserialize(deserializer)?;
         EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
     }

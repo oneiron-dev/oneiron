@@ -37,6 +37,8 @@ pub(super) const PARTICIPANT_TOKEN_DOMAIN: &[u8] =
     b"oneiron.booking.companion_participant_token.v1\0";
 pub(super) const COMPANION_TOKEN_DOMAIN: &[u8] = b"oneiron.booking.companion_confirm_token.v1\0";
 #[doc(hidden)]
+use oneiron_records::booking::companion_preset::proposal::entity_ref_serde;
+#[doc(hidden)]
 pub use oneiron_records::booking::companion_preset::proposal::{
     ChoiceId, CompanionProposal, CompanionSoftConfirmation, ProposalChoice, ProposalId,
     ProposalTap, TapAggregate,

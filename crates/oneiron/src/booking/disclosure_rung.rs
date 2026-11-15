@@ -19,11 +19,13 @@ use crate::booking::{BookingError, SlotMask};
 use crate::entity_id::EntityId;
 
 #[doc(hidden)]
-use oneiron_records::booking::disclosure_rung::validate_slot_mask;
-#[doc(hidden)]
 pub use oneiron_records::booking::disclosure_rung::{
     BusyBlockRow, DisclosureRung, EventDetailsRow, EventRow, RungProjection, SurfaceClass,
     TitledEventRow, project_at_rung,
+};
+#[doc(hidden)]
+use oneiron_records::booking::disclosure_rung::{
+    entity_ref_serde, entity_refs_serde, validate_slot_mask,
 };
 
 /// The context a default rung is being chosen for (ARCH-0062 R1).

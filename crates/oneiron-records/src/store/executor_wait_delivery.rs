@@ -1,47 +1,9 @@
 //! Moved from `crates/oneiron/src/store/executor_wait_delivery.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::side_table::codec::CodecError;
-use oneiron_store::side_table::codec::RawValue;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// The reply one wait was answered with, and when it was delivered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WaitDelivery {
-    /// The reply as JSON text.
-    pub reply: String,
-    pub delivered_at_ms: u64,
-    /// The rows the reply was derived from, as its settler listed them
-    /// (FIX 5455): the rows a connector call's passes picked. `None` when
-    /// its settler listed none: the reply then adds no row to its run's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_rows: Option<Vec<EntityId>>,
-    /// The origins of the reply as its settler served it (FIX 7083): the
-    /// worlds and row scopes the settler froze in the writer that made the
-    /// reply. `None` when they are unknown. An empty value is a proof that
-    /// the reply has no origin. A copy of the delivery keeps them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origins: Option<crate::code_run::reader::origins::ResultOrigins>,
-    /// Whether an erase of its holder's actor took the reply (FIX 5718):
-    /// its text is gone, and when it came and its rows stay.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub erased: bool,
-}
-
-impl RawValue for WaitDelivery {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        serde_json::to_vec(self).map_err(|_| Error::CorruptedIndex("code-run wait delivery").into())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        serde_json::from_slice(bytes)
-            .map_err(|_| Error::CorruptedIndex("code-run wait delivery").into())
-    }
-}
 
 /// What one run holds of a wait's reply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

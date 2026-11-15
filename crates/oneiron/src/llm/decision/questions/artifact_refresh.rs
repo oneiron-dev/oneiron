@@ -189,12 +189,10 @@ impl Changed {
     }
 }
 
-#[doc(hidden)]
-pub(super) use oneiron_records::llm::decision::questions::artifact_refresh::validate_artifact_units;
-#[doc(hidden)]
-pub use oneiron_records::llm::decision::questions::artifact_refresh::{
-    ArtifactAskRecord, ArtifactAskStanding,
-};
+/// Whether `units` names a selection a standing question can ask.
+pub(super) fn validate_artifact_units(units: &ArtifactUnits) -> Result<()> {
+    Selection::resolve(&units.selection).map(|_| ())
+}
 
 /// Asks every standing artifact question's due artifacts, each question as its principal
 /// through the decider `decider_for` makes from its record and that actor, under `policy`.
@@ -526,6 +524,11 @@ fn baseline(
     }
     Ok(Some(versions))
 }
+
+#[doc(hidden)]
+pub use oneiron_records::llm::decision::questions::artifact_refresh::{
+    ArtifactAskRecord, ArtifactAskStanding,
+};
 
 fn artifact_selection_ref(units: &ArtifactAskUnits) -> Result<[u8; 32]> {
     let bytes = serde_json::to_vec(units)

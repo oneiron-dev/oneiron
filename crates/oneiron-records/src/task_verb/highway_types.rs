@@ -13,23 +13,18 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// Serde for an attempt id as 32 hex characters.
-mod attempt_hex {
+pub mod attempt_hex {
     use serde::{Deserialize, Deserializer, Serializer};
 
     use oneiron_store::attempt_id::AttemptId;
 
-    pub(super) fn serialize<S: Serializer>(
-        id: &AttemptId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(id: &AttemptId, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&oneiron_contracts::entity_id::bytes_to_hex_lower(
             id.as_bytes(),
         ))
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<AttemptId, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<AttemptId, D::Error> {
         let text = String::deserialize(deserializer)?;
         let bytes = super::super::brief::decode_hex::<16>(&text)
             .ok_or_else(|| serde::de::Error::custom("expected a 32-character hex attempt id"))?;

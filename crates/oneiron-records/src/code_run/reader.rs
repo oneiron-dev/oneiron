@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub(crate) use crate::code_run::reader::coverage::merge_ranges;
-pub use crate::code_run::reader::origins::DelegatedSource;
-pub use crate::code_run::reader::origins::ReaderFindingRef;
-pub use crate::code_run::reader::origins::ResultOrigins;
 use oneiron_base::edge::EdgeActorClass;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
@@ -285,4 +282,3 @@ impl ReaderJobState {
     }
 }
 pub mod coverage;
-pub mod origins;

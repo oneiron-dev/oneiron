@@ -42,7 +42,9 @@ pub use oneiron_records::booking::emergency_reschedule::{
     EmergencyActionPolicy, EmergencyRescheduleRequest, OwnerInstructionRecord,
 };
 #[doc(hidden)]
-use oneiron_records::booking::emergency_reschedule::{content_hash, refused, storage_failure};
+use oneiron_records::booking::emergency_reschedule::{
+    content_hash, entity_ref_serde, refused, storage_failure, time_range_serde,
+};
 
 #[derive(Serialize)]
 struct WindowFields {

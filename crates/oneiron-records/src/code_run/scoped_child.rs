@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/code_run/scoped_child.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::code_run::reader::origins::DelegatedSource;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
@@ -37,24 +36,4 @@ pub struct ScopedInputRead {
     pub range: (u64, u64),
     pub rows: Option<Vec<EntityId>>,
     pub text: String,
-}
-
-/// `scoped_child_input` (CALLS, open): the lent input `reference` names
-/// among a scoped job's `inputs`, by its name (`by_name`) or by its handle,
-/// with the name it is read by. Only the job's named inputs resolve; no
-/// other handle of the parent's does.
-pub fn scoped_child_input<'s>(
-    inputs: &'s BTreeMap<String, DelegatedSource>,
-    by_name: bool,
-    reference: &str,
-) -> Option<(&'s str, &'s DelegatedSource)> {
-    if by_name {
-        return inputs
-            .get_key_value(reference)
-            .map(|(name, source)| (name.as_str(), source));
-    }
-    inputs
-        .iter()
-        .find(|(_, source)| source.handle == reference)
-        .map(|(name, source)| (name.as_str(), source))
 }

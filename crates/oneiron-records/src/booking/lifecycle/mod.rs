@@ -14,75 +14,39 @@ pub use crate::booking::lifecycle::types::BookingSourcePageValue;
 pub use crate::booking::lifecycle::types::BookingStatus;
 pub use crate::booking::lifecycle::types::BookingStatusValue;
 pub use crate::booking::lifecycle::types::BookingVerb;
-pub use crate::booking::lifecycle::types::BookingVerbReceipt;
 pub use crate::booking::lifecycle::types::CalendarRevision;
 pub use crate::booking::lifecycle::types::CancelSpec;
 pub use crate::booking::lifecycle::types::ConfirmReceipt;
 pub use crate::booking::lifecycle::types::ConfirmSpec;
-pub use crate::booking::lifecycle::types::HoldReceipt;
 pub use crate::booking::lifecycle::types::LifecycleTokenScope;
 pub use crate::booking::lifecycle::types::RevisionReceipt;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::temporal::TimeRange;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 
-mod time_range_serde {
-    use super::{Deserialize, Deserializer, Serialize, Serializer, TimeRange, TimeRangeWire};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &TimeRange,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        TimeRangeWire {
-            start: value.start,
-            end: value.end,
-        }
-        .serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<TimeRange, D::Error> {
-        let wire = TimeRangeWire::deserialize(deserializer)?;
-        Ok(TimeRange {
-            start: wire.start,
-            end: wire.end,
-        })
-    }
-}
-
-mod entity_ref_serde {
+pub mod entity_ref_serde {
     use super::{Deserialize, Deserializer, EntityId, Serializer};
 
-    pub(super) fn serialize<S: Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(value: &EntityId, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&value.to_hex())
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<EntityId, D::Error> {
         let hex = String::deserialize(deserializer)?;
         EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
     }
 }
 
-mod entity_refs_serde {
+pub mod entity_refs_serde {
     use super::{Deserialize, Deserializer, EntityId, Serializer};
 
-    pub(super) fn serialize<S: Serializer>(
-        value: &[EntityId],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(value: &[EntityId], serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_seq(value.iter().map(EntityId::to_hex))
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Vec<EntityId>, D::Error> {
         Vec::<String>::deserialize(deserializer)?

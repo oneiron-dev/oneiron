@@ -16,6 +16,8 @@ use crate::booking::lifecycle::digest_with;
 use crate::booking::{BookingError, EventTypeKey};
 
 #[doc(hidden)]
+use oneiron_records::booking::anti_abuse::rules::entity_ref_serde;
+#[doc(hidden)]
 pub use oneiron_records::booking::anti_abuse::rules::{
     BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding,
     BookingRuleScope,

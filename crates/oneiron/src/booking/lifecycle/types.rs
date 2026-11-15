@@ -38,8 +38,8 @@ pub const MAX_CHECKOUT_HOLD_TTL_SECS: u64 = 30 * 60;
 #[doc(hidden)]
 pub use oneiron_records::booking::lifecycle::types::{
     BOOKING_VERBS, BookingBookerContactValue, BookingEventTypeRefValue, BookingSourcePageValue,
-    BookingStatus, BookingStatusValue, BookingVerb, BookingVerbReceipt, CalendarRevision,
-    CancelSpec, ConfirmReceipt, ConfirmSpec, HoldReceipt, LifecycleTokenScope, RevisionReceipt,
+    BookingStatus, BookingStatusValue, BookingVerb, CalendarRevision, CancelSpec, ConfirmReceipt,
+    ConfirmSpec, LifecycleTokenScope, RevisionReceipt,
 };
 
 /// Exact predicate: which host event type this booking realizes.
@@ -177,6 +177,30 @@ impl SoftHoldRow {
     pub const fn is_live_at(&self, now_utc: u64) -> bool {
         self.expires_at > now_utc
     }
+}
+
+/// What a successful hold returns. The bearer token appears here and never
+/// again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HoldReceipt {
+    pub token: OpaqueLifecycleToken,
+    #[serde(with = "time_range_serde")]
+    pub slot: TimeRange,
+    pub expires_at: u64,
+}
+
+/// The closed receipt union.
+///
+/// `SlotTaken` is a receipt, not an error: the transition ran, decided nothing
+/// was writable, and returned the same solver's nearest alternatives with no
+/// EVENT, claim, or passport written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BookingVerbReceipt {
+    Held(HoldReceipt),
+    Confirmed(ConfirmReceipt),
+    Rescheduled(RevisionReceipt),
+    Cancelled(RevisionReceipt),
+    SlotTaken { alternatives: Vec<RankedSlot> },
 }
 
 /// The typed attempt payload the generic queue row carries.

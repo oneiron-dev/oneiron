@@ -1,12 +1,12 @@
 //! Moved from `crates/oneiron/src/booking/lifecycle/types.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::booking::lifecycle::entity_ref_serde;
+use crate::booking::lifecycle::entity_refs_serde;
 use crate::booking::lifecycle::token::OpaqueLifecycleToken;
 use crate::booking::lifecycle::token::SessionKey;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::temporal::TimeRange;
 use oneiron_verb_wire::booking::constraint::EventTypeKey;
-use oneiron_verb_wire::booking::constraint::RankedSlot;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -153,16 +153,6 @@ pub struct BookingStatusValue {
     pub recorded_at: u64,
 }
 
-/// What a successful hold returns. The bearer token appears here and never
-/// again.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HoldReceipt {
-    pub token: OpaqueLifecycleToken,
-    #[serde(with = "time_range_serde")]
-    pub slot: TimeRange,
-    pub expires_at: u64,
-}
-
 /// What a successful confirm returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfirmReceipt {
@@ -190,18 +180,4 @@ pub struct RevisionReceipt {
     /// the first pass's.
     #[serde(default, with = "entity_refs_serde")]
     pub reads: Vec<EntityId>,
-}
-
-/// The closed receipt union.
-///
-/// `SlotTaken` is a receipt, not an error: the transition ran, decided nothing
-/// was writable, and returned the same solver's nearest alternatives with no
-/// EVENT, claim, or passport written.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum BookingVerbReceipt {
-    Held(HoldReceipt),
-    Confirmed(ConfirmReceipt),
-    Rescheduled(RevisionReceipt),
-    Cancelled(RevisionReceipt),
-    SlotTaken { alternatives: Vec<RankedSlot> },
 }

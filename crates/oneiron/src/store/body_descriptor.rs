@@ -4,6 +4,8 @@ use crate::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
+use oneiron_records::store::body_descriptor::hex32;
+#[doc(hidden)]
 pub use oneiron_records::store::body_descriptor::{
     BodyLocation, BodyRef, BodyState, CodeRunOutputOrigin, OwnedBody, RetainedResultProvenance,
 };

@@ -43,7 +43,7 @@ use crate::task_verb::sdk::AgentVerb;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
 #[doc(hidden)]
-pub(crate) use oneiron_records::code_run::scoped_child::{READER_SOURCE_NAME, scoped_child_input};
+pub(crate) use oneiron_records::code_run::scoped_child::READER_SOURCE_NAME;
 #[doc(hidden)]
 pub use oneiron_records::code_run::scoped_child::{
     SCOPED_CHILD_AUTHORITY_LAPSED, SCOPED_CHILD_PARENT_LEASE_LOST, SCOPED_CHILD_SERVICE_UNBOUND,
@@ -522,6 +522,26 @@ pub(crate) fn scoped_child_service_admission(
             hook_notice: None,
             code: SCOPED_CHILD_SERVICE_UNBOUND.to_owned(),
         })
+}
+
+/// `scoped_child_input` (CALLS, open): the lent input `reference` names
+/// among a scoped job's `inputs`, by its name (`by_name`) or by its handle,
+/// with the name it is read by. Only the job's named inputs resolve; no
+/// other handle of the parent's does.
+pub(crate) fn scoped_child_input<'s>(
+    inputs: &'s BTreeMap<String, DelegatedSource>,
+    by_name: bool,
+    reference: &str,
+) -> Option<(&'s str, &'s DelegatedSource)> {
+    if by_name {
+        return inputs
+            .get_key_value(reference)
+            .map(|(name, source)| (name.as_str(), source));
+    }
+    inputs
+        .iter()
+        .find(|(_, source)| source.handle == reference)
+        .map(|(name, source)| (name.as_str(), source))
 }
 
 /// `scoped_child_authority` (CALLS, open): whether scoped job `job`'s

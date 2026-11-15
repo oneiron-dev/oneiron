@@ -1,7 +1,6 @@
 pub(crate) use crate::code_run::storage::program_resume::ProgramResumeKind;
 pub use crate::code_run::storage::read_worlds::ReadWorldUnknown;
 pub(crate) use crate::code_run::storage::type_diagnostics::StepKey;
-pub use crate::store::executor_wait_delivery::WaitDelivery;
 pub(in crate::code_run) use oneiron_store::executor_speech_identity::derived_executor_id;
 pub(crate) use oneiron_store::executor_speech_identity::executor_compaction_session_id;
 pub(crate) use oneiron_store::executor_speech_identity::executor_speech_turn_id_for_run;

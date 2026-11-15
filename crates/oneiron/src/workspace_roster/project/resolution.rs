@@ -8,8 +8,6 @@ use super::*;
 #[doc(hidden)]
 pub use oneiron_records::workspace_roster::project::resolution::{ProjectResolution, ProjectSeal};
 #[doc(hidden)]
-use oneiron_records::workspace_roster::project::resolution::{RESOLUTION_DOMAIN, SEAL_DOMAIN};
-
-fn challenge(domain: &[u8], fields: &impl Serialize) -> Result<Vec<u8>> {
-    Ok([domain, blake3::hash(&encode(fields)?).as_bytes()].concat())
-}
+use oneiron_records::workspace_roster::project::resolution::{
+    RESOLUTION_DOMAIN, SEAL_DOMAIN, challenge,
+};

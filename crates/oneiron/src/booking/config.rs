@@ -40,7 +40,8 @@ pub use oneiron_records::booking::config::{
 };
 #[doc(hidden)]
 use oneiron_records::booking::config::{
-    decode_claim_value_shape, event_type_index_digest, storage_failure,
+    decode_claim_value_shape, entity_ref_serde, entity_refs_serde, event_type_index_digest,
+    storage_failure,
 };
 
 /// Node-local `vault_meta` index prefix for the `(page_ref, key)` shortcut,

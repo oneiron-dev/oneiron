@@ -157,6 +157,31 @@ struct TimeRangeWire {
     end: u64,
 }
 
+mod time_range_serde {
+    use super::{Deserialize, Deserializer, Serialize, Serializer, TimeRange, TimeRangeWire};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &TimeRange,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        TimeRangeWire {
+            start: value.start,
+            end: value.end,
+        }
+        .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<TimeRange, D::Error> {
+        let wire = TimeRangeWire::deserialize(deserializer)?;
+        Ok(TimeRange {
+            start: wire.start,
+            end: wire.end,
+        })
+    }
+}
+
 /// Digests cross the wire as lowercase hex — fixed width, and a compact byte
 /// string rather than the 32-element integer array `[u8; 32]` would otherwise
 /// serialize into.
@@ -222,6 +247,9 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+#[doc(hidden)]
+use oneiron_records::booking::lifecycle::{entity_ref_serde, entity_refs_serde};
 
 /// The digest row a lifecycle token resolves through. The token carries no
 /// state; this row is where the EVENT and the permitted action live.

@@ -21,6 +21,8 @@ use super::terminal_state::TaskTerminalDisposition;
 use super::verb_kind::{TaskAssignee, TaskTtl};
 
 #[doc(hidden)]
+use oneiron_records::task_verb::highway_types::attempt_hex;
+#[doc(hidden)]
 pub use oneiron_records::task_verb::highway_types::{
     AttemptHandle, AttemptView, TaskHandle, TaskLifecycleRecord, TaskPhase, TaskWorkflowHandoff,
     TaskWorkflowOutcome, TaskWorkflowStatus,

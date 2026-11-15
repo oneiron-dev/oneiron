@@ -35,11 +35,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[doc(hidden)]
-use oneiron_records::code_run::actions::invalid;
-#[doc(hidden)]
 pub use oneiron_records::code_run::actions::{
     ActionArgKind, ActionBuildContext, ActionVerbDefinition, MAX_ACTION_JSON_BYTES,
 };
+#[doc(hidden)]
+use oneiron_records::code_run::actions::{ceiling_wire, invalid};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(

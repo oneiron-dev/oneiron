@@ -158,25 +158,6 @@ pub use oneiron_store::writer_lease::VAULT_WRITER_LEASE_HELD;
 pub use oneiron_store::writer_lease::VAULT_WRITER_LOCK_FILE;
 pub use oneiron_store::writer_lease::VaultWriterLease;
 
-#[allow(
-    unused_imports,
-    reason = "L03 02A's pad hydration (FIX 6706) calls these"
-)]
-#[allow(
-    unused_imports,
-    reason = "L03 02A's pad hydration (FIX 6706) calls these"
-)]
-#[cfg(unix)]
-pub use oneiron_store::root_directory::SharedPath;
-#[cfg(unix)]
-pub use oneiron_store::root_directory::refuse_shared_path;
-#[cfg(unix)]
-pub use oneiron_store::root_directory::refuse_shared_vault_root;
-#[cfg(unix)]
-pub use oneiron_store::root_directory::shared_path;
-#[cfg(unix)]
-pub use oneiron_store::root_directory::shared_vault_root;
-
 pub mod attempt_record;
 pub mod backup_change;
 pub mod blob_fingerprint;

@@ -14,9 +14,9 @@ use crate::serialize::{ExportBody, ExportValue};
 
 #[doc(hidden)]
 pub use oneiron_records::batch::export::document_types::{
-    ExportAdapterDescriptor, ExportDeterminism, ExportEdge, ExportEpochFloor, ExportPack,
-    ExportPackSource, ExportReaderFold, ExportResultBody, ExportRun, ExportRunBinding,
-    ExportRunOutput, ExportRunResults, ExportSourceVault, WHOLE_VAULT_DOCUMENT_VERSION,
+    ExportAdapterDescriptor, ExportDeterminism, ExportEdge, ExportEpochFloor, ExportReaderFold,
+    ExportResultBody, ExportRun, ExportRunBinding, ExportRunOutput, ExportRunResults,
+    ExportSourceVault, WHOLE_VAULT_DOCUMENT_VERSION,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +229,27 @@ pub struct ExportEntity {
     pub occurred_end: u64,
     pub learned_at: u64,
     pub body: ExportBody,
+}
+
+/// Source packages and compiled registrations are intentionally distinct.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum ExportPack {
+    BuiltinAdapter(ExportAdapterDescriptor),
+    Source(ExportPackSource),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportPackSource {
+    /// The replicated source ASSET, never a grant or executable installation.
+    pub entity_id: String,
+    pub source_tree: super::ExportFileTree,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -45,17 +45,12 @@ pub fn content_hash(value: &impl Serialize) -> Result<[u8; 32], BookingError> {
     Ok(*blake3::hash(&bytes).as_bytes())
 }
 
-mod time_range_serde {
+pub mod time_range_serde {
     use super::*;
-    pub(super) fn serialize<S: serde::Serializer>(
-        value: &TimeRange,
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: serde::Serializer>(value: &TimeRange, s: S) -> Result<S::Ok, S::Error> {
         (value.start, value.end).serialize(s)
     }
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
-        d: D,
-    ) -> Result<TimeRange, D::Error> {
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<TimeRange, D::Error> {
         let (start, end) = <(u64, u64)>::deserialize(d)?;
         Ok(TimeRange { start, end })
     }
@@ -69,19 +64,14 @@ pub fn storage_failure(error: impl std::fmt::Display) -> BookingError {
     BookingError::SlotOracle(format!("emergency reschedule: {error}"))
 }
 
-mod entity_ref_serde {
+pub mod entity_ref_serde {
     use super::*;
 
-    pub(super) fn serialize<S: serde::Serializer>(
-        value: &EntityId,
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: serde::Serializer>(value: &EntityId, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&value.to_hex())
     }
 
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
-        d: D,
-    ) -> Result<EntityId, D::Error> {
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EntityId, D::Error> {
         EntityId::from_hex(&String::deserialize(d)?).map_err(serde::de::Error::custom)
     }
 }

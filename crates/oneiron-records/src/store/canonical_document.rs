@@ -3,7 +3,6 @@
 
 use oneiron_base::error::ArtifactError;
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -20,25 +19,6 @@ use std::collections::BTreeMap;
 pub struct CanonicalDocumentOrigin {
     pub incarnation: [u8; 16],
     pub version: Vec<(u64, i32)>,
-}
-
-/// The causal state of a generic EntityDoc, CRDT-independent: the retained
-/// versions its citations, receipts, forks and purges name, never Loro
-/// frontiers, cursors or exports. A restore replays the versions into fresh
-/// history and binds every row to its replayed version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalEntityDocumentHistory {
-    /// Retained versions in canonical causal order. Every version precedes
-    /// the last, which is the live head.
-    pub versions: Vec<CanonicalDocumentVersion>,
-    /// An owner purge dropped the history before version 0: none is carried,
-    /// and the restored document refuses every older version.
-    pub shallow: bool,
-    pub pins: Vec<CanonicalDocumentPin>,
-    pub receipts: Vec<CanonicalDocumentReceipt>,
-    pub forks: Vec<CanonicalDocumentFork>,
-    pub purges: Vec<CanonicalDocumentPurge>,
 }
 
 /// One retained version: the earlier versions it directly follows, and its
@@ -149,37 +129,6 @@ pub struct CanonicalDocumentPurge {
     pub applied: u32,
     pub at: u64,
     pub live_text_hash: [u8; 32],
-}
-
-impl CanonicalEntityDocumentHistory {
-    /// Every version's full text, rebuilt from its splice, in version order.
-    pub fn texts(&self) -> Result<Vec<String>> {
-        let mut texts = CanonicalDocumentTexts::new(self);
-        while !texts.advance_row(self)? {}
-        Ok(texts.into_texts())
-    }
-
-    /// The splice that turns `parent` into `text`: the longest common prefix,
-    /// then the longest common suffix of what remains.
-    pub fn splice(parent: &str, text: &str) -> Result<CanonicalDocumentVersion> {
-        let old: Vec<char> = parent.chars().collect();
-        let new: Vec<char> = text.chars().collect();
-        let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-        let suffix = old[prefix..]
-            .iter()
-            .rev()
-            .zip(new[prefix..].iter().rev())
-            .take_while(|(a, b)| a == b)
-            .count();
-        Ok(CanonicalDocumentVersion {
-            parents: Vec::new(),
-            prefix: u32::try_from(prefix).map_err(|_| invalid("entity document version size"))?,
-            suffix: u32::try_from(suffix).map_err(|_| invalid("entity document version size"))?,
-            middle: new[prefix..new.len() - suffix].iter().collect(),
-            metadata: BTreeMap::new(),
-            summary_meta: BTreeMap::new(),
-        })
-    }
 }
 
 pub fn invalid(reason: &'static str) -> Error {

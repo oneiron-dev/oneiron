@@ -10,7 +10,8 @@ use super::vault_root_bind::VaultRootIdentity;
 
 #[doc(hidden)]
 pub use oneiron_records::store::open_gates::open_version_keys::{
-    DB_MANIFEST, DB_MANIFEST_VERSION, MAX_DBS, STORAGE_ABI_VERSION, STORAGE_SCHEMA_VERSION,
+    DB_MANIFEST, DB_MANIFEST_VERSION, DbManifestEntry, MAX_DBS, STORAGE_ABI_VERSION,
+    STORAGE_SCHEMA_VERSION,
 };
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
@@ -127,14 +128,6 @@ pub(crate) const TEXT_BM25_FIELD_SCHEMA_HASH_KEY: &[u8] = b"text_bm25_field_sche
 /// * v1 = pre-ONE-317 hand-rolled tokenizer (never written — greenfield).
 /// * v2 = ONE-317 analyzer + BM25F (this release).
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION: u16 = 2;
-
-/// Oneiron DB manifest derived from the ARCH-0019 contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DbManifestEntry {
-    pub n: u8,
-    pub name: &'static str,
-    pub group: &'static str,
-}
 
 /// Scaffold for a future storage-schema migration runner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

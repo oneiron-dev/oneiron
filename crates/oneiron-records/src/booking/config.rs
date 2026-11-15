@@ -254,31 +254,23 @@ pub fn storage_failure<E>(_: E) -> BookingError {
 // `crate::booking::disclosure_rung`.
 // -------------------------------------------------------------------------
 
-mod entity_ref_serde {
+pub mod entity_ref_serde {
     use super::{Deserialize, Deserializer, EntityId, Serializer};
 
-    pub(super) fn serialize<S: Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(value: &EntityId, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&value.to_hex())
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<EntityId, D::Error> {
         let hex = String::deserialize(deserializer)?;
         EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
     }
 }
 
-mod entity_refs_serde {
+pub mod entity_refs_serde {
     use super::{Deserialize, Deserializer, EntityId, Serialize, Serializer};
 
-    pub(super) fn serialize<S: Serializer>(
-        value: &[EntityId],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(value: &[EntityId], serializer: S) -> Result<S::Ok, S::Error> {
         value
             .iter()
             .map(EntityId::to_hex)
@@ -286,7 +278,7 @@ mod entity_refs_serde {
             .serialize(serializer)
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Vec<EntityId>, D::Error> {
         Vec::<String>::deserialize(deserializer)?

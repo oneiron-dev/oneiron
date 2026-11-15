@@ -1,4 +1,5 @@
-//! Moved from `crates/oneiron/src/check_in/effect.rs` (lib split R2: record types below the lib).
+//! Moved from `crates/oneiron/src/check_in/effect.rs` (P2.5 2k3 main merge: the
+//! step-up reset receipts, wire types since lib split W2, name it).
 //! `oneiron` re-exports each item at its old path.
 
 use serde::Deserialize;

@@ -46,15 +46,15 @@ pub fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
 
-mod ceiling_wire {
+pub mod ceiling_wire {
     use super::*;
-    pub(super) fn serialize<S: serde::Serializer>(
+    pub fn serialize<S: serde::Serializer>(
         value: &AgentCeiling,
         s: S,
     ) -> std::result::Result<S::Ok, S::Error> {
         value.as_str().serialize(s)
     }
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
         d: D,
     ) -> std::result::Result<AgentCeiling, D::Error> {
         AgentCeiling::parse(&String::deserialize(d)?)

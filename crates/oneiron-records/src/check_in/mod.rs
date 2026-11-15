@@ -4,7 +4,6 @@ pub use crate::check_in::act_class::ActClassRow;
 pub use crate::check_in::act_class::ModelCheck;
 pub use crate::check_in::act_class::ProofKind;
 pub use crate::check_in::act_class::UndoClass;
-pub use crate::check_in::effect::CheckInDecision;
 pub use crate::check_in::mode::CheckInMode;
 pub use crate::check_in::pending::CapturedWait;
 pub use crate::check_in::pending::DelayWindow;
@@ -25,7 +24,6 @@ pub use crate::check_in::role_preset::RoleDefault;
 pub use oneiron_verb_wire::check_in::pending::HolderKind;
 
 pub mod act_class;
-pub mod effect;
 pub mod mode;
 pub mod pending;
 pub mod policy;

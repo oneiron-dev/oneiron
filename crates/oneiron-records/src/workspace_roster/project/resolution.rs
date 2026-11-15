@@ -43,6 +43,10 @@ pub struct ProjectSeal {
     pub signed_at: u64,
 }
 
+pub fn challenge(domain: &[u8], fields: &impl Serialize) -> Result<Vec<u8>> {
+    Ok([domain, blake3::hash(&encode(fields)?).as_bytes()].concat())
+}
+
 impl ProjectResolution {
     /// RESOLUTION_DOMAIN || blake3(canonical(project, anchor, prior,
     /// contenders, next, signed_at)), signed through the slip's binding

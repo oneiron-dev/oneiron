@@ -28,7 +28,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactUnits {
-    #[serde(with = "super::super::codec::entity")]
+    #[serde(with = "oneiron_store::model_decision::codec::entity")]
     pub artifact: EntityId,
     pub selection: oneiron_verb_wire::blob_artifact::verbs::ArtifactAskUnits,
 }
@@ -40,14 +40,14 @@ pub struct ArtifactUnits {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScheduledBackfill {
-    #[serde(with = "super::super::codec::entity")]
+    #[serde(with = "oneiron_store::model_decision::codec::entity")]
     pub question: EntityId,
     pub version: u32,
     pub due_at: u64,
     /// The explicit recipe: each unit and the exact sources its answer is
     /// shown. Empty: the default neighbourhood recipe.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub joins: Vec<super::recipe::GraphQuestionInput>,
+    pub joins: Vec<oneiron_store::model_decision::questions::GraphQuestionInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

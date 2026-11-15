@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::llm::decision::questions::records::*;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::llm::decision::questions::artifact_refresh::unit_receipts::ArtifactUnitReceipt;
 use serde::Deserialize;
@@ -10,11 +9,6 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::time::Duration;
 use std::time::Instant;
-
-/// Whether `units` names a selection a standing question can ask.
-pub fn validate_artifact_units(units: &ArtifactUnits) -> Result<()> {
-    Selection::resolve(&units.selection).map(|_| ())
-}
 
 /// One ask a standing artifact question made of one artifact, read back by its principal
 /// (`vault.questions.answers`): the head it asked and where its answers stand. Every
