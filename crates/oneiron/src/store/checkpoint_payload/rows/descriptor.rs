@@ -11,22 +11,21 @@
 //! one target every checkpoint capture and restore reads, so a fn pointer
 //! can name it.
 //!
-//! The adapters move onto them one family at a time, each pinned to the
+//! The adapters moved onto them one family at a time, each pinned to the
 //! bytes its own getter gave before: the getters with no join first (UC-10
-//! PR 3), then the split ones (PR 4), then the complex ones (PR 5).
-#![allow(
-    dead_code,
-    reason = "UC-10 PR 5 moves the keyed-join getters; until then only the test door joins keyed"
-)]
+//! PR 3), then the split ones (PR 4), then the complex ones (PR 5). The
+//! checkpoint registry now finds every getter's row here
+//! (`Getter::adapter`).
 
 use heed::{RoTxn, RwTxn};
 
 use super::{
-    ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, TypedRow,
-    bad_part, check_row, frame_owner, no_join, restore_parts, restore_parts_keyed, typed_rows,
+    ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator,
+    TypedRow, bad_part, check_row, frame_owner, no_join, restore_parts, restore_parts_keyed,
+    typed_rows,
 };
 use crate::error::{Error, Result};
-use crate::side_table::{SideCodec, SideKey, SideTable, SideTableDecl};
+use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::store::Store;
 
 /// An adapter's own capture: it reads its tables with state one table's rows
@@ -45,24 +44,31 @@ pub(crate) type RowOwner = fn(&RowLocator) -> Option<OwnerRef>;
 pub(crate) type JoinRow =
     fn(&Store, &RoTxn<'_>, &RowLocator, &[u8], &[&ActorPart]) -> Result<Option<Vec<u8>>>;
 
-/// A join that answers the row's own locator as well, for a part whose key
-/// names an actor and whose locator does not ([`restore_parts_keyed`]).
-pub(crate) type JoinKeyed = fn(
+/// A join that reads the whole compartment its part opened from (a sibling
+/// row and its actors, the compartment's owner) and answers the row's own
+/// locator as well, for a part whose key names an actor and whose locator
+/// does not ([`restore_parts_keyed`]).
+pub(crate) type JoinCompartment = fn(
     &Store,
     &RoTxn<'_>,
+    &OpenedOwnerRows,
     &RowLocator,
     &[u8],
     &[&ActorPart],
 ) -> Result<Option<(RowLocator, Vec<u8>)>>;
 
 /// An adapter's own restore: index work around [`Adapter::restore_parts`]
-/// (the office tokens' unref and re-note).
+/// (the office tokens' unref and re-note), or checks and joins over the
+/// whole compartment around the shared [`restore_parts`] (the revision
+/// bindings, the entity documents' slots).
 pub(crate) type OwnRestore = fn(&Store, &mut RwTxn<'_>, OpenedOwnerRows) -> Result<Restored>;
 
-/// One side table an adapter's compartments hold.
+/// One table an adapter's compartments hold: a side table, or a whole
+/// database.
 pub(crate) trait AdapterTable: Sync {
-    /// The table's declaration: the database and key prefix of its rows.
-    fn decl(&self) -> &'static SideTableDecl;
+    /// Whether the row at `at` is one of this table's: its database, and
+    /// a side table's key prefix.
+    fn holds(&self, at: &RowLocator) -> bool;
 
     /// Refuses `value` at `at` unless it is a row of this table its own
     /// codec reads.
@@ -81,8 +87,8 @@ pub(crate) struct ExactTable<K, V, C> {
 }
 
 impl<K: SideKey, V, C: SideCodec<V>> AdapterTable for ExactTable<K, V, C> {
-    fn decl(&self) -> &'static SideTableDecl {
-        self.table.decl()
+    fn holds(&self, at: &RowLocator) -> bool {
+        at.in_table(self.table.decl())
     }
 
     fn check(&self, at: &RowLocator, value: &[u8]) -> Result<()> {
@@ -106,8 +112,8 @@ pub(crate) struct PlacedTable<K, V, C> {
 }
 
 impl<K: SideKey, V, C: SideCodec<V>> AdapterTable for PlacedTable<K, V, C> {
-    fn decl(&self) -> &'static SideTableDecl {
-        self.table.decl()
+    fn holds(&self, at: &RowLocator) -> bool {
+        at.in_table(self.table.decl())
     }
 
     fn check(&self, at: &RowLocator, value: &[u8]) -> Result<()> {
@@ -127,8 +133,8 @@ impl<K: SideKey, V, C: SideCodec<V>> AdapterTable for PlacedTable<K, V, C> {
 pub(crate) struct CapturedByAdapter<K, V, C>(pub(crate) SideTable<K, V, C>);
 
 impl<K: SideKey, V, C: SideCodec<V>> AdapterTable for CapturedByAdapter<K, V, C> {
-    fn decl(&self) -> &'static SideTableDecl {
-        self.0.decl()
+    fn holds(&self, at: &RowLocator) -> bool {
+        at.in_table(self.0.decl())
     }
 
     fn check(&self, at: &RowLocator, value: &[u8]) -> Result<()> {
@@ -138,6 +144,29 @@ impl<K: SideKey, V, C: SideCodec<V>> AdapterTable for CapturedByAdapter<K, V, C>
     fn capture(&self, _: &Store, _: &RoTxn<'_>, _: &mut Captured) -> Result<()> {
         Err(Error::InvariantViolation(
             "a table its adapter's own capture places sits in a by-table capture",
+        ))
+    }
+}
+
+/// A database with no side-table declaration (the entity and edge rows),
+/// each of whose rows its adapter's own capture ([`Capture::Own`]) places
+/// and its own check ([`Check::Own`]) reads.
+pub(crate) struct CapturedDatabase(pub(crate) RowDb);
+
+impl AdapterTable for CapturedDatabase {
+    fn holds(&self, at: &RowLocator) -> bool {
+        at.db == self.0
+    }
+
+    fn check(&self, _: &RowLocator, _: &[u8]) -> Result<()> {
+        Err(Error::InvariantViolation(
+            "a database with no codec of its own sits in a by-table check",
+        ))
+    }
+
+    fn capture(&self, _: &Store, _: &RoTxn<'_>, _: &mut Captured) -> Result<()> {
+        Err(Error::InvariantViolation(
+            "a database its adapter's own capture places sits in a by-table capture",
         ))
     }
 }
@@ -155,8 +184,8 @@ pub(crate) enum Capture {
 /// The check a restored part passes before the restore-only sink writes it.
 #[derive(Clone, Copy)]
 pub(crate) enum Check {
-    /// The first listed table whose declaration names the part checks it
-    /// with its codec; a part no listed table names refuses.
+    /// The first listed table that holds the part checks it with its
+    /// codec; a part no listed table holds refuses.
     ByTable,
     /// The adapter's own check, which may refuse what a codec reads (a value
     /// that must be empty).
@@ -171,8 +200,9 @@ pub(crate) enum Join {
     NoSplit,
     /// The part's value, joined at its own locator.
     Row(JoinRow),
-    /// The part's row, joined at the locator its join answers.
-    Keyed(JoinKeyed),
+    /// The part's row, joined from its whole compartment at the locator its
+    /// join answers.
+    Compartment(JoinCompartment),
 }
 
 /// How an adapter puts an opened compartment's rows back.
@@ -181,15 +211,15 @@ pub(crate) enum Restore {
     /// Each part checked and joined ([`Adapter::restore_parts`]), nothing
     /// else written.
     Parts,
-    /// The adapter's own restore, which calls [`Adapter::restore_parts`]
-    /// among its own writes.
+    /// The adapter's own restore ([`OwnRestore`]).
     Own(OwnRestore),
 }
 
 /// One adapter's checkpoint rows.
 pub(crate) struct Adapter {
-    /// The tables its compartments hold, in capture order. A part belongs to
-    /// the first listed table whose declaration names it.
+    /// The tables its compartments hold. A [`Capture::ByTable`] capture
+    /// reads them in this order, and a part belongs to the first listed
+    /// table that holds it.
     pub(crate) tables: &'static [&'static dyn AdapterTable],
     pub(crate) capture: Capture,
     pub(crate) check: Check,
@@ -228,10 +258,7 @@ impl Adapter {
     }
 
     fn table_of(&self, at: &RowLocator) -> Option<&'static dyn AdapterTable> {
-        self.tables
-            .iter()
-            .copied()
-            .find(|table| at.in_table(table.decl()))
+        self.tables.iter().copied().find(|table| table.holds(at))
     }
 
     /// Whether a part at `at` is a row of one of this adapter's tables.
@@ -285,9 +312,9 @@ impl Adapter {
                     join(store, view, at, value, parts)
                 })
             }
-            Join::Keyed(join) => {
+            Join::Compartment(join) => {
                 restore_parts_keyed(store, txn, opened, check, |view, at, value, parts| {
-                    join(store, view, at, value, parts)
+                    join(store, view, opened, at, value, parts)
                 })
             }
         }

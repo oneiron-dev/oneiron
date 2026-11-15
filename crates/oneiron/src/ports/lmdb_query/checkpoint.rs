@@ -25,7 +25,7 @@
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeKind, parse_strict_edge_record};
@@ -38,12 +38,30 @@ use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD, entity_type_registry_entry,
 };
-use crate::store::ManifestDbs;
-use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OtherClient, OwnerRef, OwnerRows, Restored, RowDb,
-    RowLocator, Unresolved,
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedDatabase, Check, Join, Restore,
 };
+use crate::store::checkpoint_payload::rows::{
+    self, ActorPart, Captured, OtherClient, OwnerRef, RowDb, RowLocator, Unresolved,
+};
+use crate::store::{ManifestDbs, Store};
 use crate::write_envelope::claim_body::decode_claim_body;
+
+/// Every entity and edge row by entity. The rows are the raw databases',
+/// which have no side-table declaration, so the capture and the check are
+/// the adapter's own: a row's kind, or its own bytes, places it.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &CapturedDatabase(RowDb::Entities),
+        &CapturedDatabase(RowDb::EdgesOut),
+        &CapturedDatabase(RowDb::EdgesIn),
+    ],
+    capture: Capture::Own(capture),
+    check: Check::Own(check),
+    row_owner: None,
+    join: Join::Row(join),
+    restore: Restore::Parts,
+};
 
 /// An identity op's row other than an author carrier: its body may name
 /// the actors and machines behind the decision, with no split that reads.
@@ -174,31 +192,21 @@ fn edge_row(out: &mut Captured, db: RowDb, key: Vec<u8>, value: Vec<u8>) -> Resu
 }
 
 /// Every entity and edge row in `txn`, by owner.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    for row in dbs.entities().iter(txn)? {
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
+    for row in store.entities().iter(txn)? {
         let (key, value) = row?;
-        entity_row(&mut out, key.to_vec(), value.to_vec())?;
+        entity_row(out, key.to_vec(), value.to_vec())?;
     }
     for (db, table) in [
-        (RowDb::EdgesOut, dbs.edges_out()),
-        (RowDb::EdgesIn, dbs.edges_in()),
+        (RowDb::EdgesOut, store.edges_out()),
+        (RowDb::EdgesIn, store.edges_in()),
     ] {
         for row in table.iter(txn)? {
             let (key, value) = row?;
-            edge_row(&mut out, db, key.to_vec(), value.to_vec())?;
+            edge_row(out, db, key.to_vec(), value.to_vec())?;
         }
     }
-    Ok(out)
-}
-
-fn owns(at: &RowLocator) -> bool {
-    matches!(at.db, RowDb::Entities | RowDb::EdgesOut | RowDb::EdgesIn)
-}
-
-/// The bundle framing of `rows`' entity and edge parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
+    Ok(())
 }
 
 /// An entity row an entity tree holds (an ordinary kind, never another
@@ -227,6 +235,7 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 /// A no-one-form part: only a NOTE core is one, its opened author put back
 /// by NOTE's own join; every other part is no split of this getter's.
 fn join(
+    _: &Store,
     view: &RoTxn<'_>,
     at: &RowLocator,
     value: &[u8],
@@ -236,15 +245,4 @@ fn join(
         return join_core_row(value, parts).map(Some);
     }
     rows::no_join(view, at, value, parts)
-}
-
-/// Puts `opened`'s entity rows back exactly, each `authored_by` edge and
-/// author carrier whose actor opened, and each NOTE core split with its
-/// opened author back.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, join)
 }
