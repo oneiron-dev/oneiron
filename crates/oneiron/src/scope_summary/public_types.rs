@@ -20,7 +20,6 @@ pub struct SummaryScope {
 /// A declaration, never caller-composed SUMMARY text. The Dreamer supplies it.
 /// It names a conversation `scope` or NOTEs by id (`note_refs`), never both.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct SummaryCreateRequest {
     #[serde(default)]
     pub scope: Option<SummaryScope>,
