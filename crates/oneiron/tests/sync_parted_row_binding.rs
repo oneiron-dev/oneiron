@@ -14,8 +14,8 @@
 
 use oneiron::EntityId;
 use oneiron::test_doors::sync_parted_row_binding::{
-    PARTED_MAPS, PartedMap, checkpoint_refusal, discard_projection, parted_window,
-    turn_program_arming_holder,
+    PARTED_MAPS, PartedMap, checkpoint_refusal, discard_projection, parted_pin_fitting_one_part,
+    parted_window, turn_program_arming_holder,
 };
 
 const DEFERRED: &str = "deferred: a parted row whose parts join to a row its key does not name";
@@ -48,8 +48,11 @@ fn discard_defers_on_mismatch(map: PartedMap) {
     );
 }
 
-/// The checkpoint capture of the same window keeps it whole, undecodable,
-/// with no owner hint.
+/// The checkpoint capture of the same window keeps it whole, with no owner
+/// hint. A repo head, a pin and a turn reach the binding, which refuses the
+/// window as undecodable. A room side row's key is a payload key, refused
+/// before any binding, so its capture named no holder before the binding
+/// too: for that map this is a guard.
 fn checkpoint_names_no_owner_on_mismatch(map: PartedMap) {
     let (keyed, body) = two_rows();
     let window = parted_window(map, keyed, body).expect("the window writes");
@@ -61,7 +64,9 @@ fn checkpoint_names_no_owner_on_mismatch(map: PartedMap) {
         "{map:?}: the capture named the key's holder {:?} (keyed {keyed:?}, body {body:?})",
         refusal.owner
     );
-    assert_eq!(refusal.reason, "Undecodable", "{map:?}");
+    if map != PartedMap::RoomSideRow {
+        assert_eq!(refusal.reason, "Undecodable", "{map:?}");
+    }
 }
 
 #[test]
@@ -102,6 +107,34 @@ fn room_turn_checkpoint_names_no_owner_on_mismatch() {
 #[test]
 fn room_side_row_checkpoint_names_no_owner_on_mismatch() {
     checkpoint_names_no_owner_on_mismatch(PartedMap::RoomSideRow);
+}
+
+/// A pin a scrub left in parts under its own key, though its joined pin
+/// fits in one part, places as before: the codec refuses that spelling,
+/// which proves no other pin.
+#[test]
+fn document_pin_fitting_one_part_places_as_before() {
+    let row = EntityId::now();
+    let (other, _) = two_rows();
+    let window = parted_pin_fitting_one_part(row).expect("the window writes");
+    let gone = discard_projection(&window, &[row]).expect("the projection runs");
+    assert!(
+        gone.starts_with("erased "),
+        "its holder's discard erases it, got {gone}"
+    );
+    assert_eq!(
+        discard_projection(&window, &[other]).expect("the projection runs"),
+        "unchanged",
+        "another row's discard leaves it"
+    );
+    let refusal = checkpoint_refusal(&window).expect("the capture runs");
+    assert!(
+        refusal.as_ref().is_none_or(|refusal| match refusal.owner {
+            Some(owner) => owner == row,
+            None => refusal.reason != "Undecodable",
+        }),
+        "the capture splits it or names its own holder, got {refusal:?}"
+    );
 }
 
 /// A correct parted row places as before: its holder's discard erases its
