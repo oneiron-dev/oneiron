@@ -1,9 +1,11 @@
 //! MCP endpoint surface: modes, verb bindings, and the registered tool listing.
 
+use super::annotations::McpToolAnnotations;
 use super::endpoint_schema::{
     execute_code_tool_schema, invoke_action_tool_schema, read_result_tool_schema,
     setup_tool_schema, verb_tool_schema,
 };
+use oneiron::check_in::verb_act_class;
 use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
 use oneiron::task_verb::sdk::AgentVerb;
 use serde::Serialize;
@@ -382,12 +384,24 @@ impl McpEndpointTool {
         }
     }
 
+    /// The MCP tool annotations `tools/list` carries for this tool, from
+    /// its verb row's act class ([`McpToolAnnotations`] holds the table).
+    #[must_use]
+    pub fn annotations(self) -> Option<McpToolAnnotations> {
+        match self {
+            Self::Setup | Self::ReadResult => Some(McpToolAnnotations::READ_ONLY),
+            Self::ExecuteCode | Self::InvokeAction => None,
+            Self::Verb(tool) => McpToolAnnotations::for_verb_act_class(verb_act_class(tool.name)),
+        }
+    }
+
     #[must_use]
     pub fn schema(self) -> McpEndpointToolSchema {
         McpEndpointToolSchema {
             name: self.name().to_owned(),
             description: self.description(),
             input_schema: self.input_schema(),
+            annotations: self.annotations(),
         }
     }
 }
@@ -399,6 +413,9 @@ pub struct McpEndpointToolSchema {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    /// The tool's hints; a tool with none carries no `annotations` key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<McpToolAnnotations>,
 }
 
 /// One registered endpoint: its mode, its tools, and the exact listing bytes
