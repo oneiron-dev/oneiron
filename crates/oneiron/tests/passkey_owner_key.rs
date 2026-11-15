@@ -17,7 +17,9 @@
 //! WEBPASSKEY-BLIND-SIGNATURE = B): it cannot fence the owner's device key
 //! and vouches for no further key until a non-passkey key, here a device
 //! key, vouches for it too; the passkey itself cannot confirm it. After
-//! that confirmation it acts as any owner root.
+//! that confirmation it acts as any owner root. The passkey's own signature
+//! revokes no other owner key either (Engine ruling
+//! WEBPASSKEY-PASSKEY-OWN-REVOKE = B).
 //!
 //! The passkey is a software P-256 key here; each assertion is built as a
 //! browser's `navigator.credentials.get` returns it (authenticator data,
@@ -466,5 +468,26 @@ fn a_passkey_does_not_confirm_the_key_it_vouched_for() {
     assert!(
         !host_key_revokes_device_key(&hosted),
         "the key is still unconfirmed"
+    );
+}
+
+#[test]
+fn the_passkey_itself_cannot_revoke_the_owners_device_key() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    let counted = revoke_owner_key_signed_by(
+        &hosted.vault,
+        passkey_roster_key(),
+        ed_key(&owner_device()),
+        |transcript| passkey_signs(transcript, FLAGS_PRESENT_VERIFIED),
+    )
+    .unwrap_or(false);
+    assert!(
+        !counted,
+        "a mislabelled passkey prompt cancels no other owner key"
+    );
+    assert!(
+        hosted.live_owner_key(&ed_key(&owner_device())),
+        "the owner's device key stands"
     );
 }
