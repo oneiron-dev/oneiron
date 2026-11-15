@@ -433,6 +433,7 @@ pub mod shared;
 pub mod shared_admin;
 pub mod shared_members;
 pub mod shared_policy;
+pub mod skill_activation;
 pub mod skill_attribution;
 pub mod skill_defaults;
 pub mod skill_execution;

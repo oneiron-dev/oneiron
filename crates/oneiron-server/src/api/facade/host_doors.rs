@@ -294,6 +294,8 @@ pub(crate) use super::project_card_doors::*;
 pub(crate) use super::claim_settle_doors::*;
 // The owner's claim-refinement reserve and offer doors (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
 pub(crate) use super::claim_refinement_doors::*;
+// The owner's held-out admission door for a hub skill (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_activation_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;

@@ -221,6 +221,7 @@ mod shared_member_doors;
 mod shared_policy_doors;
 mod sieve_doors;
 mod sieve_observation_doors;
+mod skill_activation_doors;
 mod skill_attribution_doors;
 mod skill_default_doors;
 mod skill_doors;
