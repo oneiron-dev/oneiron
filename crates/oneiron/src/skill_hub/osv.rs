@@ -13,38 +13,11 @@ pub const OSV_SCAN_PROVIDER: &str = "oneiron.osv.v1";
 /// Coordinates sent in one OSV querybatch request.
 const OSV_QUERY_BATCH_SIZE: usize = 256;
 const MAX_RESPONSE_BYTES: u64 = 1_048_576;
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DependencyCoordinate {
-    pub ecosystem: String,
-    pub name: String,
-    pub version: String,
-}
-impl DependencyCoordinate {
-    fn validate(&self) -> Result<()> {
-        if !matches!(
-            self.ecosystem.as_str(),
-            "npm" | "PyPI" | "crates.io" | "Go" | "Maven" | "NuGet" | "RubyGems" | "Packagist"
-        ) || !token(&self.name, true)
-            || !token(&self.version, false)
-        {
-            return Err(invalid());
-        }
-        Ok(())
-    }
-}
-fn token(s: &str, package: bool) -> bool {
-    !s.is_empty()
-        && s.len() <= 256
-        && s.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b"._+-".contains(&b) || (package && b"/@:".contains(&b))
-        })
-        && !s.contains("://")
-        && !s.contains("..")
-}
-fn invalid() -> Error {
-    Error::InvalidConfig("invalid OSV dependency query or response".into())
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_hub::osv::DependencyCoordinate;
+#[doc(hidden)]
+use oneiron_records::skill_hub::osv::{invalid, token};
+
 /// Ordered OSV result, one advisory-id list for each input coordinate.
 pub trait OsvQuery {
     fn query(&self, coordinates: &[DependencyCoordinate]) -> Result<Vec<Vec<String>>>;

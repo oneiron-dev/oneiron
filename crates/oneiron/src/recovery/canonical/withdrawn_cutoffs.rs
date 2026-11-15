@@ -25,8 +25,8 @@ use crate::error::Result;
 
 /// The window root map of cutoffs, as sync files it.
 const WITHDRAWN_CUTOFFS: &str = "withdrawn_cutoffs";
-/// The key prefix of a lineage's epoch floor in that map.
-const EPOCH_FLOOR: &str = "epoch_floor/";
+#[doc(hidden)]
+use oneiron_records::recovery::canonical::withdrawn_cutoffs::EPOCH_FLOOR;
 
 /// One row of a window's cutoff map.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

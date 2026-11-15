@@ -15,7 +15,10 @@ use crate::store::Store;
 
 const MAILBOX_CURSORS: SideTable<HexId, MailboxCursor, LegacyJson> =
     SideTable::new(&side_table::GMAIL_MAILBOX_CURSOR);
-const MAX_CURSOR_BYTES: usize = 256;
+#[doc(hidden)]
+use oneiron_records::channel_identity_provider::mailbox_cursor::MAX_CURSOR_BYTES;
+#[doc(hidden)]
+pub(super) use oneiron_records::channel_identity_provider::mailbox_cursor::validate_mailbox_cursor;
 
 /// Provider-opaque, bounded page token. Never a credential.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,21 +82,6 @@ impl MailboxCursor {
             Self::new(mailbox_address, policy)
         }
     }
-}
-
-/// Reject malformed provider tokens on both sides of the wire, including
-/// stored state that might otherwise be sent back to a provider.
-///
-/// # Errors
-///
-/// [`Error::InvalidConfig`] for a blank or overlong token.
-pub(super) fn validate_mailbox_cursor(cursor: &str) -> Result<()> {
-    if cursor.trim().is_empty() || cursor.len() > MAX_CURSOR_BYTES {
-        return Err(Error::InvalidConfig(
-            "gmail page cursor must be non-empty and at most 256 bytes".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 /// Host-visible progress snapshot. The absence of a row means no page has

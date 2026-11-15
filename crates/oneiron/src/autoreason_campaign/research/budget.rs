@@ -27,17 +27,8 @@ const LEASE_FULL: &str = "the reservation exceeds the campaign's lease";
 #[doc(hidden)]
 pub use oneiron_verb_wire::autoreason_campaign::research::budget::ResearchReservationLine;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResearchReservation {
-    pub id: EntityId,
-    pub line: ResearchReservationLine,
-    pub units: u64,
-    /// The experiment the work is for, when it is one node's.
-    pub attempt: Option<AttemptId>,
-    pub settlement: Option<RsiSettlement>,
-    pub reserved_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::autoreason_campaign::research::budget::ResearchReservation;
 
 /// The campaign's lease and what it has committed against it.
 #[derive(

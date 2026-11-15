@@ -14,17 +14,6 @@ use crate::typed_body::names_no_actor;
 #[cfg(feature = "sync")]
 use std::collections::BTreeSet;
 
-impl ForkState {
-    /// Makes the one who settled the fork no one when it is `actor`; whether
-    /// it was.
-    fn forget(&mut self, actor: EntityId) -> bool {
-        match self {
-            Self::Open => false,
-            Self::Merged { by, .. } | Self::Discarded { by, .. } => by.forget(actor),
-        }
-    }
-}
-
 /// Erasing `actor` from the export records (FIX 3520): an export it made
 /// keeps its version, frontier and time and names no one, and the author it
 /// showed goes with it. One-way, in the erase's own transaction. An id whose

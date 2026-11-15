@@ -79,32 +79,11 @@ pub fn remove_pack_embedded(
     remove_pack_as_owner(memory.vault(), &owner, &input)
 }
 
-/// One connector event subscription of an agent, standing or revoked.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelSubscriptionRow {
-    pub subscription: String,
-    pub connector_key: String,
-    pub connector: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_kind: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub predicate: Option<String>,
-    pub active: bool,
-}
-
-/// `vault.connectors.subscriptions.list`'s answer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelSubscriptions {
-    pub agent: String,
-    pub subscriptions: Vec<ChannelSubscriptionRow>,
-}
-
-/// `vault.connectors.subscriptions.revoke`'s answer: the subscription wakes
-/// nothing more; its key stays.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelSubscriptionRevoked {
-    pub subscription: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::verbs::host::{
+    AiOptions, AiVerdict, AiVideoCancelled, AiVideoJob, AiVideoTicket, ChannelSubscriptionRevoked,
+    ChannelSubscriptionRow, ChannelSubscriptions,
+};
 
 fn hex_id(field: &str, value: &str) -> MemoryResult<crate::EntityId> {
     crate::EntityId::from_hex(value.trim())
@@ -221,59 +200,6 @@ pub fn host_only<T, I>(_memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryRe
     ))
 }
 
-/// `ai.options`'s answer: each text seat's rungs and each media row that
-/// serves the operation over those inputs, and what the media meter has left.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiOptions {
-    pub options: Vec<serde_json::Value>,
-    pub media_units_left: Option<u64>,
-}
-
-/// `ai.video`'s answer: the provider job its clip renders as.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiVideoTicket {
-    pub job: String,
-    pub model: String,
-    pub operation: AiOperation,
-}
-
-/// Where a video job stands; a finished one answers with its clip on every
-/// poll until `ai.video.cancel` deletes it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum AiVideoJob {
-    Queued,
-    Running {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        progress: Option<u8>,
-    },
-    Done {
-        answer: AiAnswer,
-    },
-    Failed {
-        error: crate::LlmError,
-    },
-}
-
-impl From<MediaJobState> for AiVideoJob {
-    fn from(state: MediaJobState) -> Self {
-        match state {
-            MediaJobState::Queued => Self::Queued,
-            MediaJobState::Running { progress } => Self::Running { progress },
-            MediaJobState::Done { response } => Self::Done {
-                answer: response.into(),
-            },
-            MediaJobState::Failed { error } => Self::Failed { error },
-        }
-    }
-}
-
-/// `ai.video.cancel`'s answer: the job its provider was told to stop.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiVideoCancelled {
-    pub job: String,
-}
-
 /// What a wrong `ai.verdict` would cost: a read that can be redone, or an
 /// effect that leaves the vault. The bands escalate an outbound effect
 /// sooner.
@@ -364,54 +290,4 @@ pub struct AiVerdictRequest {
 
 fn yes_no() -> crate::llm::decision::AnswerContract {
     crate::llm::decision::AnswerContract::Noul
-}
-
-/// `ai.verdict`'s answer: the ladder's answer on the request's contract, its
-/// probability (P(yes) for a yes/no, else the answer's confidence; none for a
-/// Box or a Point whose coordinates were not read), the rung whose answer
-/// stands (none when the call abstained), and the decision's receipt.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AiVerdict {
-    pub answer: crate::llm::decision::DecisionAnswer,
-    pub p: Option<f64>,
-    pub rung: Option<crate::llm::decision::DecisionRung>,
-    pub receipt: crate::llm::decision::DecisionReceipt,
-    /// A Box or Point call's presence step, when the host asked it: its own
-    /// P(yes) and receipt. The receipt above is the coordinates' when they
-    /// were read, else this step's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub presence: Option<crate::llm::decision::TypedDecision>,
-    /// A routine step's outcome: act on a candidate or at a point, NONE,
-    /// reobserve, or ask up.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<crate::llm::decision::RoutineOutcome>,
-    /// A routine step's screenshot trigger: the subgoal's steps gave NONE or
-    /// reobserve twice in a row, so the next observation takes a screenshot.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub screenshot: bool,
-    /// The Unix milliseconds this call's clock ended at: a routine program
-    /// passes it on as the next step's `until_ms`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub until_ms: Option<u64>,
-    /// The bytes every text in the evidence views was cut to, when the views
-    /// did not fit the ladder's state whole: the ladder read them cut. The
-    /// refs, kinds and the caller's own state are never cut.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub evidence_cut_at_bytes: Option<u64>,
-}
-
-impl From<crate::llm::decision::TypedDecision> for AiVerdict {
-    fn from(decision: crate::llm::decision::TypedDecision) -> Self {
-        Self {
-            answer: decision.answer,
-            p: decision.probability,
-            rung: decision.receipt.time.and_then(|time| time.answered),
-            receipt: decision.receipt,
-            presence: None,
-            outcome: None,
-            screenshot: false,
-            until_ms: None,
-            evidence_cut_at_bytes: None,
-        }
-    }
 }

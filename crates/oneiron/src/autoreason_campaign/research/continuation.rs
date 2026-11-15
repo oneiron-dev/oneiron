@@ -64,8 +64,13 @@ const CONTINUATION_CURSOR: SideTable<(), Vec<u8>, Raw> =
 const MAX_STEPS_PER_PASS: usize = 16;
 /// Campaigns one pass advances.
 const MAX_ROOTS_PER_PASS: usize = 32;
-/// The one hold a pass retries: the reservation found no room.
-const BUDGET_HELD: &str = "budget";
+#[doc(hidden)]
+use oneiron_records::autoreason_campaign::research::continuation::BUDGET_HELD;
+#[doc(hidden)]
+pub use oneiron_records::autoreason_campaign::research::continuation::{
+    ResearchContinuationState, ResearchSplit, ResearchTask, ResearchWork,
+};
+
 /// Exposure one serving of the sealed cohort spends: the cohort ledger
 /// counts servings, so one release is one exposure.
 const SERVING_EXPOSURE: u64 = 1;
@@ -77,50 +82,6 @@ const EXPERIMENT_ANSWER: &str =
     r#"{"config_ref": "...", "config_sha256": "<64 hex>"} or {"failed": "why"}"#;
 const SCORE_ANSWER: &str = r#"{"scores": {axis: number}, "confirmed_hits": n, "attribution": 0..1, "hop_cost": n, "receipt_refs": [..]} or {"invalid": "why", "evidence_refs": [..]}"#;
 const REFEREE_ANSWER: &str = r#"{"candidate": 0..1, "incumbent": 0..1, "referee_pin": "identity@sha256:<hex>", "sufficiency": SufficiencyInput}"#;
-
-/// Which campaign work a continuation carries out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchWork {
-    /// Measure the unmeasured incumbent root on the search split.
-    Bootstrap,
-    /// Carry out selection round `n`'s fork.
-    Round(u64),
-}
-
-impl ResearchWork {
-    fn key(self) -> u64 {
-        match self {
-            Self::Bootstrap => 0,
-            Self::Round(round) => round.saturating_add(1),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchSplit {
-    Search,
-    HeldOut,
-}
-
-/// One unit of work a continuation runs, in order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchTask {
-    /// Score `node`'s candidate on a split with the scorer, outside the
-    /// experiment's write scope.
-    Measure {
-        node: AttemptId,
-        split: ResearchSplit,
-    },
-    /// Run the experimenter under `parent` for one child candidate.
-    Experiment { parent: AttemptId, kind: ForkKind },
-    /// Decide promotion of `candidate` against the incumbent once.
-    Basis { candidate: AttemptId },
-    /// Spend the sealed confirmation shot and run the referee on it.
-    Confirm { candidate: AttemptId },
-}
 
 /// The task in flight: its reservation and, once dispatched, its run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,26 +99,6 @@ pub struct ResearchRunning {
     /// shot, served the cohort and settled `exposure`: a restart re-briefs
     /// the referee and never spends a second shot.
     pub release: Option<EvalRelease>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchContinuationState {
-    Open,
-    Held { reason: String },
-    Done { note: String },
-    Failed { reason: String },
-}
-
-impl ResearchContinuationState {
-    /// Open, or held for budget: the states a pass takes up.
-    fn live(&self) -> bool {
-        match self {
-            Self::Open => true,
-            Self::Held { reason } => reason == BUDGET_HELD,
-            Self::Done { .. } | Self::Failed { .. } => false,
-        }
-    }
 }
 
 /// One campaign's host work: what is left to run, what is running, and

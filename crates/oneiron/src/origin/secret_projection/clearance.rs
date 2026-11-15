@@ -27,50 +27,13 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitOid;
 
-/// CALL H: the reason code of a diff that edits a sealed-file placeholder.
-pub(crate) const SEALED_FILE_EDITED: &str = "sealed_file_edited";
-
-/// CALL H, exactly: the status line beside [`SEALED_FILE_EDITED`].
-pub(crate) const SEALED_FILE_EDITED_STATUS: &str = "This diff edits a sealed-file placeholder. Grant real-byte reveal for this file, or have the \
-     owner approve this exact replacement.";
-
-/// ASK E: the reason code of a diff with no unique mapping onto the
-/// original.
-pub(crate) const PROJECTION_EDIT_CONFLICT: &str = "projection_edit_conflict";
-
-/// CALL 2, exactly: the status line beside [`PROJECTION_EDIT_CONFLICT`].
-pub(crate) const PROJECTION_EDIT_CONFLICT_STATUS: &str = "This diff does not map uniquely to the original file. Submit an exact or rebased proposal, \
-     grant real-byte reveal for this file, or have the owner settle this exact replacement.";
-
-/// Why a proposal from a masked copy holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RepoProjectionHoldCause {
-    /// The diff edits a sealed-file placeholder (CALL H).
-    SealedFileEdited,
-    /// The diff has no unique mapping onto the original (ASK E).
-    ProjectionEditConflict,
-}
-
-impl RepoProjectionHoldCause {
-    /// The engine reason code.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SealedFileEdited => SEALED_FILE_EDITED,
-            Self::ProjectionEditConflict => PROJECTION_EDIT_CONFLICT,
-        }
-    }
-
-    /// The one status line the candidate's optional detail shows.
-    #[must_use]
-    pub const fn status(self) -> &'static str {
-        match self {
-            Self::SealedFileEdited => SEALED_FILE_EDITED_STATUS,
-            Self::ProjectionEditConflict => PROJECTION_EDIT_CONFLICT_STATUS,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::origin::secret_projection::clearance::RepoProjectionHoldCause;
+#[doc(hidden)]
+pub(crate) use oneiron_records::origin::secret_projection::clearance::{
+    PROJECTION_EDIT_CONFLICT, PROJECTION_EDIT_CONFLICT_STATUS, SEALED_FILE_EDITED,
+    SEALED_FILE_EDITED_STATUS,
+};
 
 /// One held file of a projected proposal, as a clearance names it: its
 /// path, the ORIGINAL blob and the proposed canonical blob, if any.

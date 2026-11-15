@@ -69,15 +69,13 @@ pub(super) const ESCALATION_RECEIPT_PREFIX: &str = "escalation:";
 /// match the other family.
 pub(super) const STANDING_POLICY_RECEIPT_PREFIX: &str = "escalation_policy:";
 
-/// Only accepted schema version for either stored row.
-pub(super) const ROW_VERSION: u8 = 1;
+#[doc(hidden)]
+pub(super) use oneiron_records::edit_distance::escalation::storage::{
+    ESCALATION_ROW_LABEL, ROW_VERSION, STANDING_POLICY_ROW_LABEL, encode_row,
+};
 
 /// Domain separator for the scope digest.
 const SCOPE_DIGEST_DOMAIN: &[u8] = b"oneiron.edit_distance.escalation.scope.v1";
-
-pub(super) const ESCALATION_ROW_LABEL: &str = "escalation row";
-
-pub(super) const STANDING_POLICY_ROW_LABEL: &str = "escalation standing policy row";
 
 /// The separator joining cited receipt ids in a receipt field. A receipt id is
 /// a prefix plus hex, so it never contains one.
@@ -129,10 +127,6 @@ pub(super) struct StoredStandingPolicy {
     /// Earlier current rows, oldest first, retained so replacing this row does
     /// not erase their proposal and acceptance receipts.
     pub(super) superseded: Vec<StoredStandingPolicy>,
-}
-
-pub(super) fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(row).map_err(|_| Error::InvariantViolation(label))
 }
 
 pub(super) fn escalation_row(raw: &[u8]) -> Result<StoredEscalation> {

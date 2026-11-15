@@ -24,14 +24,8 @@ use crate::error::Result;
 /// The window root map of row births, as sync files it.
 const ROW_BIRTHS: &str = "row_births";
 
-/// One row's birth: the Named MessagePack envelope, byte for byte as the
-/// window or the vault holds it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalRowBirth {
-    pub id: [u8; 16],
-    pub value: Vec<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::canonical::row_births::CanonicalRowBirth;
 
 /// Carries the birth of each row of the snapshot's final entity set, sorted
 /// by id: the window's carrier first, else the birth stamped here. Each one

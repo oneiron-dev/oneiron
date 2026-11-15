@@ -43,23 +43,8 @@ impl MintedT2 {
     }
 }
 
-/// One family's registered T2: the exact reviewed corpus the host's pass asks
-/// with, and the closed-form T1 that retired it, if one reproduces every label.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MintedRegistration {
-    pub family: String,
-    /// Hash of the seed's wording and the corpus. A new label or a reworded
-    /// seed is a new revision, registered afresh.
-    pub revision: [u8; 32],
-    #[serde(with = "super::receipt_serde::ids")]
-    pub positive_events: Vec<EntityId>,
-    #[serde(with = "super::receipt_serde::ids")]
-    pub negative_events: Vec<EntityId>,
-    pub registered_at: u64,
-    /// The T1 detector that reproduces this revision's labels. A graduated
-    /// T2 no longer runs.
-    pub graduated_to: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::self_heal::distillation::MintedRegistration;
 
 /// One reviewed example as a minted T2 is shown it: its runs, oldest first.
 #[derive(Clone, Debug)]

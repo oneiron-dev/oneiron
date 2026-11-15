@@ -4,13 +4,12 @@
 
 use super::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalEntity {
-    pub id: [u8; 16],
-    /// The exact 25-byte envelope followed by the original binary body.
-    pub blob: Vec<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::canonical::vocabulary::{
+    CanonicalContainerManifest, CanonicalCustodyTransition, CanonicalEntity, CanonicalPinCarrier,
+    CanonicalRoomFact, CanonicalRoomTurn, CanonicalSchemaManifest, CanonicalShellWorld,
+    CanonicalTombstone,
+};
 
 /// A source edge, never an edges_in row, vector or retrieval posting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,87 +21,11 @@ pub struct CanonicalBaseEdge {
     pub value: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalTombstone {
-    pub id: [u8; 16],
-    pub deleted_at: u64,
-    /// Pinned Oneiron tombstone binary, independent of CRDT operation encoding.
-    pub value: Vec<u8>,
-}
-
 pub use crate::store::canonical_document::{
     CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt,
     CanonicalDocumentVersion, CanonicalEntityDocument, CanonicalEntityDocumentHistory,
     CanonicalForkStatus, CanonicalSettleVerb,
 };
-
-/// World proof retained when a soft-deleted CLAIM has only its header left.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalShellWorld {
-    pub id: [u8; 16],
-    pub world: [u8; 16],
-}
-
-/// One room turn row a base window carries (OF-522), under its map key,
-/// kept as the window holds it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalRoomTurn {
-    pub key: String,
-    pub row: Vec<u8>,
-}
-
-/// One room side row a base window carries (FIX 1794), under its map key,
-/// kept as the window holds it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalRoomFact {
-    pub key: String,
-    pub row: Vec<u8>,
-}
-
-/// One document quote pin a base window carries (FIX 853), under its map
-/// key, kept as the window holds it. A pin on a document the snapshot
-/// captures rides in that document's history instead.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalPinCarrier {
-    pub key: String,
-    pub row: Vec<u8>,
-}
-
-/// One owner-signed custody transition piece a base window carries
-/// (OF-422): opaque signed and sealed bytes, kept as the window holds them,
-/// with its place among its transition's pieces (Phase2 A).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalCustodyTransition {
-    pub id: [u8; 16],
-    #[serde(default)]
-    pub piece: u32,
-    pub carrier: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalContainerManifest {
-    pub container_id: String,
-    pub container_kind: String,
-    pub schema_version: u16,
-    pub source_entity_id: Option<[u8; 16]>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalSchemaManifest {
-    pub oneiron_schema_version: u16,
-    /// Informational producer version. Rebuild does not import its binary format.
-    pub loro_version: String,
-    pub container_schema_version: u16,
-    pub analyzer_manifest_blake3: [u8; 32],
-}
 
 /// Ordered source state. No op IDs, Loro exports, or Layer-2 indexes are
 /// encoded, but for the version an entity document's origin names (FIX 3553).

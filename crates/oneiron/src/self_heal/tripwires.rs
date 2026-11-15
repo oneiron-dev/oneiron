@@ -135,70 +135,11 @@ impl DeterministicDetector for ConsolidationReceiptDetector<'_> {
     }
 }
 
-fn default_retrieval_regressions() -> u64 {
-    32
-}
+#[doc(hidden)]
+pub use oneiron_records::self_heal::tripwires::TripwireBounds;
+#[doc(hidden)]
+use oneiron_records::self_heal::tripwires::default_retrieval_regressions;
 
-/// One fixed-window bound resolved from the vault's POLICY_MANIFEST rows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TripwireBounds {
-    pub window_secs: u64,
-    pub consent_depth: u64,
-    pub actor_writes: u64,
-    /// Degraded retrieval runs inside one window that read as a regression
-    /// (the ARCH-0037 kill-criterion shape, ARCH-0066 §4).
-    #[serde(default = "default_retrieval_regressions")]
-    pub retrieval_regressions: u64,
-}
-impl Default for TripwireBounds {
-    fn default() -> Self {
-        Self {
-            window_secs: 600,
-            consent_depth: 1_000,
-            actor_writes: 100,
-            retrieval_regressions: default_retrieval_regressions(),
-        }
-    }
-}
-impl TripwireBounds {
-    pub(crate) fn decode(value: &Value) -> Option<Self> {
-        let entries = value.as_map()?;
-        if !(3..=4).contains(&entries.len()) {
-            return None;
-        }
-        let field = |name| {
-            let matches: Vec<_> = entries
-                .iter()
-                .filter(|(key, _)| key.as_str() == Some(name))
-                .collect();
-            if matches.len() != 1 {
-                return None;
-            }
-            matches[0].1.as_u64()
-        };
-        let bounds = Self {
-            window_secs: field("window_secs")?,
-            consent_depth: field("consent_depth")?,
-            actor_writes: field("actor_writes")?,
-            retrieval_regressions: match entries.len() {
-                4 => field("retrieval_regressions")?,
-                _ => default_retrieval_regressions(),
-            },
-        };
-        bounds.valid().then_some(bounds)
-    }
-
-    /// A positive window and positive thresholds. A large threshold is the
-    /// owner's to set; `Vault::tripwire_bounds` asks past
-    /// `limits.tripwire_threshold`.
-    pub(super) fn valid(self) -> bool {
-        self.window_secs > 0
-            && self.consent_depth > 0
-            && self.actor_writes > 0
-            && self.retrieval_regressions > 0
-    }
-}
 pub struct ConsentStormDetector {
     pub bounds: TripwireBounds,
     pub window_end: u64,

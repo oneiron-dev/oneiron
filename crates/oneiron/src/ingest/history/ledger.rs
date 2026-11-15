@@ -142,29 +142,10 @@ pub(super) fn content_hash(message: &HistoryMessage) -> String {
     hash(message, message.said_by == Some(UNKNOWN_SPEAKER))
 }
 
-/// Whether `landed`, the [`content_hash`]es of what landed of one message,
-/// holds `message`. Words of an unknown speaker are held by the same words
-/// with the speaker known too, so a later copy never lands them as unknown
-/// again; words with the speaker known are not held by the same words of an
-/// unknown speaker, so the import that knows who said them lands them, as a
-/// revision the Dreamer reads.
-pub(super) fn holds(landed: &[String], message: &HistoryMessage) -> bool {
-    let held = |unknown| landed.contains(&hash(message, unknown));
-    held(false) || (message.said_by == Some(UNKNOWN_SPEAKER) && held(true))
-}
-
-fn hash(message: &HistoryMessage, unknown_speaker: bool) -> String {
-    let mut hasher = blake3::Hasher::new();
-    if unknown_speaker {
-        hasher.update(b"unknown\0");
-    }
-    hasher.update(match message.role {
-        HistoryRole::User => b"user\0",
-        HistoryRole::Assistant => b"asst\0",
-    });
-    hasher.update(message.text.as_bytes());
-    hasher.finalize().to_hex().to_string()
-}
+#[doc(hidden)]
+use oneiron_records::ingest::history::ledger::hash;
+#[doc(hidden)]
+pub(super) use oneiron_records::ingest::history::ledger::holds;
 
 pub(super) fn get(
     dbs: &impl SideTableDbs,

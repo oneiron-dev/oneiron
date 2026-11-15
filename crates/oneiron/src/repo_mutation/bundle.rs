@@ -29,9 +29,8 @@ use crate::write_envelope::WriteActor;
 
 pub(crate) mod tree;
 
-/// CALL BUNDLE-CHILD-OP: the hash domain of the deterministic document
-/// operation a native bundle's file lowers to, from (proposal, index).
-const BUNDLE_FILE_OPERATION_DOMAIN: &[u8] = b"oneiron:repo-bundle-file-op:v1";
+#[doc(hidden)]
+use oneiron_records::repo_mutation::bundle::BUNDLE_FILE_OPERATION_DOMAIN;
 
 /// The reviewed bytes one native bundle may hold, all files together: the
 /// same bound one ordinary proposal's file has.

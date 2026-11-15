@@ -47,9 +47,8 @@ const KEY_ID_DOMAIN: &str = "oneiron/checkpoint-payload/key-id/v1";
 /// to the commitment it was sealed with.
 const LOCATOR_DOMAIN: &str = "oneiron/checkpoint-payload/locators/v1";
 
-fn corrupt() -> Error {
-    CustodyKind::CheckpointPayload.corrupt()
-}
+#[doc(hidden)]
+use oneiron_records::recovery::checkpoint::payload::seal::corrupt;
 
 /// What one bundle holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

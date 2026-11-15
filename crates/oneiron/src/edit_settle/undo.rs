@@ -27,20 +27,8 @@ use crate::write_envelope::WriteActor;
 const UNDO: SideTable<(EntityId, [u8; 32]), KeepUndo, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_UNDO);
 
-/// The once-only undo of one kept proposal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct KeepUndo {
-    pub proposal_ref: String,
-    /// The version the Keep appended.
-    pub kept_version: u64,
-    /// The version the Keep was appended onto, whose bytes the undo restored.
-    pub restored_version: u64,
-    /// The new version the undo appended.
-    pub version: u64,
-    pub actor: EntityId,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_settle::undo::KeepUndo;
 
 /// The result of undoing one Keep.
 #[derive(Debug, Clone)]

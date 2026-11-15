@@ -178,29 +178,10 @@ fn agent_grant_view(standing: &AgentGrantStanding, confers: bool) -> AgentGrantV
     }
 }
 
-/// What a narrowing did (untangle 6.3c; S6-4 amended).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum SystemAgentGrantNarrowed {
-    /// Nothing to narrow: the grant already holds no more than asked, or no
-    /// grant stands.
-    Unchanged,
-    /// Nothing changed: the narrowing breaks `breaks`. Ask again with
-    /// `confirm` to apply it.
-    ConfirmRequired {
-        warning: String,
-        breaks: Vec<SystemFunction>,
-        /// 64 hex.
-        confirm: String,
-    },
-    /// Applied: `grant` is the narrower grant (32 hex), none when the grant
-    /// was revoked whole; `breaks` is what the owner confirmed.
-    Narrowed {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        grant: Option<EntityId>,
-        breaks: Vec<SystemFunction>,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::verbs::agent_grant::{
+    EngineControlChangeEntry, EngineDefaultGrantEntry, SystemAgentGrantNarrowed,
+};
 
 /// `vault.agents.grants.narrow`: the owner narrows or revokes a base agent's
 /// Steward grant. A narrowing that breaks a vault function answers with the
@@ -320,16 +301,6 @@ fn hex32(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// `vault.engine.defaults`'s answer row: one grant the engine stood by
-/// default, by its grant id, with its receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EngineDefaultGrantEntry {
-    /// The grant (32 hex).
-    pub grant: EntityId,
-    pub receipt: crate::federation::EngineDefaultGrant,
-}
-
 /// `vault.engine.defaults`: every grant the engine stood by default, oldest
 /// first, for the owner to read on first open (lead 10 Nov 06:5x). Each is
 /// the engine's act, never the owner's; the owner narrows or revokes it at
@@ -344,16 +315,6 @@ pub fn engine_default_grants_as(
         .into_iter()
         .map(|(grant, receipt)| EngineDefaultGrantEntry { grant, receipt })
         .collect())
-}
-
-/// `vault.engine.controls.changes`'s answer row: one change made through
-/// the engine-control door, by its receipt id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EngineControlChangeEntry {
-    /// The receipt (32 hex).
-    pub id: EntityId,
-    pub change: EngineControlChange,
 }
 
 /// `vault.engine.controls.changes`: every change the owner or a holder of

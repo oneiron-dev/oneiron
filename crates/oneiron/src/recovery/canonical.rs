@@ -55,8 +55,8 @@ pub use withdrawn_cutoffs::CanonicalCutoff;
 
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
 pub const CANONICAL_SNAPSHOT_ARTIFACT_TYPE: u16 = 1;
-/// Maximum decoded artifact size. Recovery is off the hot path but remains bounded.
-pub const CANONICAL_SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
+#[doc(hidden)]
+pub use oneiron_records::recovery::canonical::CANONICAL_SNAPSHOT_MAX_BYTES;
 
 impl CanonicalBaseEdge {
     pub(super) fn key(&self) -> Result<String> {

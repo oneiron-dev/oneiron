@@ -130,17 +130,8 @@ pub fn mint_invitation_slip_embedded(
     ))
 }
 
-/// An owner's invitation pairing code (FIX 8745): the owner passes it to the
-/// invitee by any channel, and the invitee redeems it once at the pairing
-/// door with a key of their own, which binds the invitation to that key and
-/// returns the invitation's slip.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InvitationCode {
-    /// The single-use code.
-    pub code: String,
-    /// When the code expires: within the hour, and not after the invitation.
-    pub expires_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::verbs::shared_members::InvitationCode;
 
 /// `vault.members.invitation_code` on a server: the owner's act mints an
 /// invitation pairing code under the host's own `issuer` (FIX 8745).

@@ -123,12 +123,11 @@ impl CanonicalDocument {
         )
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalHead {
-    pub entity_id: [u8; 16],
-    pub head: [u8; 16],
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::document::CanonicalHead;
+#[doc(hidden)]
+use oneiron_records::recovery::document::hex;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalHeadMove {
@@ -150,10 +149,6 @@ impl CanonicalHeadMove {
         Ok(value)
     }
 }
-fn hex(value: [u8; 16]) -> String {
-    value.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 pub(super) fn capture(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

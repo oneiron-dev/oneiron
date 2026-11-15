@@ -159,12 +159,9 @@ pub use oneiron_verb_wire::verbs::{
     TaskWaveReceipt, TaskWaveRequest, WorkspaceRefRequest,
 };
 
-/// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
-/// wrote nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectGoalDismissReceipt {
-    pub dismissed: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::verbs::{ProjectCardDismissal, ProjectGoalDismissReceipt, RoomEntry};
+
 /// `vault.companions.sharing.set`: the owner's standing yes to one frozen
 /// clearance offer for the contact a companion's sharing is about.
 /// `expected_delta` is the offer's canonical bytes, as the owner was shown
@@ -219,14 +216,6 @@ pub struct WorkCompanionSetRequest {
     pub policy: crate::workspace_roster::WorkCompanionPolicy,
 }
 pub use crate::task_verb::TaskUpdateRequest;
-/// `vault.projects.dismiss_card`'s result: `false` when the card was
-/// dismissed already.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectCardDismissal {
-    pub card_id: String,
-    pub dismissed: bool,
-}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCreateRequest {
@@ -325,11 +314,6 @@ pub fn task_create_from_message(
 use oneiron_verb_wire::verb_input::decode;
 fn encode<T: Serialize>(value: T) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoomEntry {
-    pub id: String,
-    pub room: crate::workspace_roster::ProjectRoom,
 }
 pub use crate::memory::RecallRequest;
 

@@ -95,15 +95,10 @@ pub struct VerifiedSource {
     pub registry_bound: bool,
 }
 
-/// What admitted a restore's checkpoint signer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SignerTrust {
-    /// One of the plan's external pins.
-    Pinned,
-    /// A signer the vault's mode roots delegated, not pinned.
-    ModeRootDelegated,
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::checkpoint::admission::facts::{
+    AnchorDisposition, CustodyRouteFact, RetiredBy, SignerTrust,
+};
 
 /// One custody log position: public structure, never a key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,29 +108,6 @@ pub struct CustodyPositionFact {
     pub epoch: u64,
     pub seq: u64,
     pub tip: [u8; 32],
-}
-
-/// How the restore took its image's custody.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CustodyRouteFact {
-    /// A head was admitted and landed beside the destination.
-    Landed,
-    /// The custody is on this host, or the image binds none.
-    Local,
-    /// No head was found: claim rows whose keys stayed behind dropped.
-    NoHead,
-}
-
-/// What the restore proved of the head's currency.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AnchorDisposition {
-    ConfiguredVerified,
-    /// No anchor configured: the head was used as it is.
-    UnsetRollbackNotProven,
-    /// No head was admitted.
-    NotApplicable,
 }
 
 /// What the restore admitted of its custody, read after its own changes.
@@ -184,16 +156,6 @@ pub struct AddedRecipient {
     /// The escrow capsule's report id, BLAKE3 of its bytes in hex, as the
     /// spool names it; spooled at the next start, never here.
     pub report_id: String,
-}
-
-/// Why a recipient retired in the restore.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RetiredBy {
-    /// The plan named it released.
-    Plan,
-    /// The custody log retired it earlier; the image still carried its wrap.
-    CustodyLog,
 }
 
 /// One recipient the restore retired, with the vault's own receipt.

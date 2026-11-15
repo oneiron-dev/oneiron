@@ -13,8 +13,8 @@ use crate::temporal::TimeRange;
 /// Schema version of both `vault_meta` row families below.
 pub const VAULT_LFS_SCHEMA_VERSION: u8 = 2;
 
-/// Domain separator for deterministic LFS ASSET ids.
-pub const VAULT_LFS_ASSET_ID_DOMAIN: &[u8] = b"oneiron:origin-lfs-asset:v1";
+#[doc(hidden)]
+pub use oneiron_records::origin::lfs::store::VAULT_LFS_ASSET_ID_DOMAIN;
 
 /// Domain separator for the repository key an attachment row is scoped to.
 pub const VAULT_LFS_REPO_ID_DOMAIN: &[u8] = b"oneiron:origin-lfs-repo:v1";

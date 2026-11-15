@@ -146,14 +146,12 @@ pub struct SecretRegisterReply {
     pub custody: SecretCustodyReply,
 }
 
-/// A stored binding, its rung on the wire's 0 to 2 grade.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SecretRegisteredBinding {
-    pub effector: String,
-    pub tier_ceiling: u8,
-    pub scopes: Vec<String>,
-}
+#[doc(hidden)]
+use oneiron_records::verbs::secret_custody::hex;
+#[doc(hidden)]
+pub use oneiron_records::verbs::secret_custody::{
+    SecretCustodyCandidateReply, SecretRegisteredBinding, SecretRotationReceipt,
+};
 
 /// A rotate's reply, as the owner route writes it: the fields of the
 /// receipt this install wrote when it rotated the record itself, beside
@@ -164,19 +162,6 @@ pub struct SecretRotateReply {
     #[serde(flatten)]
     pub receipt: Option<SecretRotationReceipt>,
     pub custody: SecretCustodyReply,
-}
-
-/// What a rotation changed: the generation moved, never the value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SecretRotationReceipt {
-    pub receipt_id: String,
-    pub name: String,
-    pub from_generation: u32,
-    pub to_generation: u32,
-    pub rotated_at: u64,
-    /// The receipt's own kind, `rotated`.
-    pub kind: String,
 }
 
 /// A revoke's reply, as the owner route writes it: the receipt this install
@@ -230,22 +215,6 @@ pub struct SecretCustodyLiveRequest {
     /// before the result, and for any other work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_text: Option<String>,
-}
-
-/// One install a surface may offer as holder or recipient.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SecretCustodyCandidateReply {
-    /// The install, as 32 hex.
-    pub machine: String,
-    /// The profile entry a permit binds, as 64 hex.
-    pub profile: String,
-    /// The encryption key digest a permit binds, as 64 hex.
-    pub encryption_key_digest: String,
-    /// The key a surface seals an input to: its suite and public bytes.
-    pub suite: u16,
-    pub encryption_key_base64: String,
-    pub this_install: bool,
 }
 
 /// `vault.secrets.register`: registers the secret, a portable one as a
@@ -494,10 +463,6 @@ fn manifest_source(source: &SecretManifestSource) -> MemoryResult<ManifestSource
         repo: source.repo.clone(),
         git_ref,
     })
-}
-
-fn hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 impl From<SecretCustodyWork> for SecretCustodyReply {

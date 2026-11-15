@@ -58,10 +58,10 @@ pub use verdict::{
 pub const AUTOREASON_CAMPAIGN_SCHEMA_VERSION: u32 = 1;
 /// Stable id of the claim-authoring autoreason campaign.
 pub const AUTOREASON_CAMPAIGN_ID: &str = "autoreason-claim-authoring";
-/// Predicate emitted when the campaign keeps the experiment.
-pub const EXPERIMENT_VERDICT_KEEP: &str = "experiment.verdict.keep";
-/// Predicate emitted when the campaign discards the experiment.
-pub const EXPERIMENT_VERDICT_DISCARD: &str = "experiment.verdict.discard";
+#[doc(hidden)]
+pub use oneiron_records::autoreason_campaign::{
+    EXPERIMENT_VERDICT_DISCARD, EXPERIMENT_VERDICT_KEEP,
+};
 
 /// Incumbent-confidence threshold handed to the landed OF-366 gate.
 const OF366_UNCERTAINTY_TAU: f32 = 0.5;

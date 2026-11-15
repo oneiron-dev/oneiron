@@ -159,11 +159,13 @@ const EXPORT_RECEIPT_ID_PREFIX: &str = "reservoir_export:";
 /// failing.
 pub const AMENDMENT_RECEIPT_ID_PREFIX: &str = "proposal_text_amendment:";
 
-/// Only accepted schema version for any row this module stores.
-const ROW_VERSION: u8 = 1;
-
-const CANDIDATE_ROW_LABEL: &str = "reservoir candidate row";
-const EXPORT_RECEIPT_ROW_LABEL: &str = "reservoir export receipt row";
+#[doc(hidden)]
+pub use oneiron_records::edit_distance::reservoir::TrainingPair;
+#[doc(hidden)]
+use oneiron_records::edit_distance::reservoir::{
+    CANDIDATE_ROW_LABEL, EXPORT_RECEIPT_ROW_LABEL, ROW_VERSION, encode_row, serialize_entity_hex,
+    serialize_opt_entity_hex,
+};
 
 /// The audience a reservoir export discloses to.
 ///
@@ -207,44 +209,6 @@ const MAX_TASK_CLASS_LEN: usize = MAX_CONSENT_REF_LEN;
 
 const TASK_CLASS_SEPARATOR: char = ',';
 
-// ---------------------------------------------------------------------------
-// The pair
-// ---------------------------------------------------------------------------
-
-/// One preference pair: what the model drafted, and what the decider kept.
-///
-/// Every tag is optional and its absence is EXPLICIT. Old rows predate the tag
-/// ledgers, and a mandatory `String` would force the projection to choose
-/// between dropping a usable pair and inventing a sentinel — both of which
-/// corrupt a training corpus more quietly than a missing tag ever could.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TrainingPair {
-    /// The proposal as drafted — the DPO `rejected` side.
-    pub rejected: String,
-    /// The proposal as the decider left it — the `chosen` side, and the SFT
-    /// target on its own.
-    pub chosen: String,
-    /// The kind of work this pair came from (`AmendmentEvidence::scope`).
-    pub task_class: Option<String>,
-    /// The skill the amended proposal rode, when it rode one.
-    #[serde(serialize_with = "serialize_opt_entity_hex")]
-    pub skill: Option<EntityId>,
-    /// The executor identity at revision the amendment's evidence was stamped
-    /// with (FIX 9812) — never the model serving NOW, which would be a guess
-    /// about history. `None` when the stamp is unknown.
-    pub model_id: Option<String>,
-    /// The amendment this pair came from, as the id ED-00 mints for the
-    /// artifact that carried it.
-    ///
-    /// One value names both ends of the join: the retention row holding the two
-    /// texts lives under this id, and the amendment ledgers live under
-    /// [`amendment_receipt_id`] of it. A consumer that wants the Δ, the
-    /// evidence or the fold reads that spelling; a consumer that wants the
-    /// artifact reads this one.
-    #[serde(serialize_with = "serialize_entity_hex")]
-    pub receipt_ref: EntityId,
-}
-
 /// The `receipt_id` an ED-00 artifact's amendment ledgers key on.
 ///
 /// The one place this spelling exists. Producers (ED-01's Δ, ED-03's evidence,
@@ -254,25 +218,6 @@ pub struct TrainingPair {
 #[must_use]
 pub fn amendment_receipt_id(artifact: EntityId) -> String {
     format!("{AMENDMENT_RECEIPT_ID_PREFIX}{}", artifact.to_hex())
-}
-
-/// Ids cross the wire as lower hex, the one spelling every other receipt field
-/// in this engine uses — a consumer joining an exported pair back to its
-/// artifact compares strings, never byte encodings.
-fn serialize_entity_hex<S: serde::Serializer>(
-    id: &EntityId,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    serializer.serialize_str(&id.to_hex())
-}
-
-/// The optional spelling of the same hex encoding: `None` rides the wire as
-/// `null`, `Some` as the hex string.
-fn serialize_opt_entity_hex<S: serde::Serializer>(
-    id: &Option<EntityId>,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    id.as_ref().map(EntityId::to_hex).serialize(serializer)
 }
 
 /// What an export asks for. Both filters are optional; both narrow.
@@ -744,12 +689,6 @@ fn stored_candidate(pair: &TrainingPair) -> StoredCandidate {
         skill: pair.skill.map(|id| id.to_hex()),
         model_id: pair.model_id.clone(),
     }
-}
-
-/// Rows serialize through the house canonical-JSON door, so a row's bytes are a
-/// function of its values rather than of map iteration order.
-fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    crate::llm::canonical_json_bytes(row).map_err(|_| Error::CorruptedIndex(label))
 }
 
 fn decode_candidate(raw: &[u8]) -> Result<StoredCandidate> {

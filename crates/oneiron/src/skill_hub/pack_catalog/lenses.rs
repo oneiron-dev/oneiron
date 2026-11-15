@@ -38,9 +38,9 @@ use crate::skill_hub::{HubFile, HubPin, HubRef};
 use crate::{EntityId, TimeRange, Vault, error::Result};
 
 const LENS_DIR: &str = "lenses/";
-const LENS_MANIFEST: &str = "LENS.json";
-const LENS_TREE: &str = "tree.json";
-const LENS_INTENT: &str = "intent.md";
+#[doc(hidden)]
+use oneiron_records::skill_hub::pack_catalog::lenses::{LENS_INTENT, LENS_MANIFEST, LENS_TREE};
+
 const LENS_COMPONENT: &str = "lens.wasm";
 
 /// The first-party weave lens pack: "The weave report is a lens over the

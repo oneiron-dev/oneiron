@@ -9,9 +9,8 @@ use crate::entity_doc::{CitationPin, DocActor};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
-pub(crate) fn refused(reason: &'static str) -> Error {
-    Error::InvalidConfig(format!("document pin refused: {reason}"))
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::room_codec::document_pins::refused;
 
 /// Decodes a pin's bytes, with the message it quotes and the record that
 /// cites it. A pin has one spelling, so equal pins ride under one key.

@@ -18,19 +18,6 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
-impl ViewReceipt {
-    /// The source holders whose erase retires this view.
-    fn source_holders(&self) -> Vec<EntityId> {
-        let mut holders: Vec<_> = self
-            .base
-            .iter()
-            .flat_map(|(repo, tested)| [*repo, *tested])
-            .collect();
-        holders.extend(self.run.as_ref().map(|stamp| stamp.repo));
-        holders
-    }
-}
-
 /// Set by a pass that failed, so the next housekeeping tick retries it.
 static COLLECTION_OWED: AtomicBool = AtomicBool::new(false);
 

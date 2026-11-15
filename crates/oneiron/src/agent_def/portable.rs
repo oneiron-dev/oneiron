@@ -150,15 +150,10 @@ pub(crate) struct OmittedClaim {
     pub(crate) reason: OmittedClaimReason,
 }
 
-/// Why a knowledge claim stays home.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum OmittedClaimReason {
-    /// Its value names an entity or an edge.
-    RefValue,
-    /// Its value is not text, and names no entity or edge.
-    TypedValue,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::agent_def::portable::OmittedClaimReason;
+#[doc(hidden)]
+use oneiron_records::agent_def::portable::invalid;
 
 /// The facets a sharer sends another party (OF-491): the reference-free
 /// AgentPack projection, not the native facets above. Each skill dependency
@@ -248,8 +243,4 @@ fn names_a_ref(value: &Value) -> bool {
             .any(|(key, value)| names_a_ref(key) || names_a_ref(value)),
         _ => false,
     }
-}
-
-fn invalid() -> Error {
-    Error::InvariantViolation("agent facet encoding failed")
 }

@@ -11,13 +11,9 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use unicode_script::{Script, UnicodeScript};
 
-/// Owner-managed install prohibitions. A scan verdict is a signal, not a rule.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackInstallRules {
-    pub removed_hashes: Vec<String>,
-    pub known_bad_patterns: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_hub::pack_catalog::screening::PackInstallRules;
+
 impl Vault {
     /// Replace the local install rule set. This does not alter any staged source.
     pub fn set_pack_install_rules(

@@ -196,15 +196,8 @@ impl SlackOutboundMessage {
     }
 }
 
-/// Slack Web API call body after persona attribution.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SlackPersonaOutbound {
-    pub method: String,
-    pub workspace_ref: String,
-    pub identity_key: String,
-    pub persona_handle: String,
-    pub body: Value,
-}
+#[doc(hidden)]
+pub use oneiron_records::channel_identity_provider::slack_adapter::SlackPersonaOutbound;
 
 /// Oneiron-first Slack shared-presence adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]

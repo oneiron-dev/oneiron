@@ -3,9 +3,11 @@ use super::{
     IngestError, IngestResult, IngestSource, NormalizedIngestBatch, NormalizedIngestEntity,
     NormalizedIngestRecord,
 };
+#[doc(hidden)]
+pub use oneiron_records::ingest::docs::{DOCS_EXPORT_SOURCE_ID, DocsPage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub const DOCS_EXPORT_SOURCE_ID: &str = "docs-export";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DocsExport {
@@ -14,13 +16,6 @@ pub struct DocsExport {
     pub project_id: crate::EntityId,
     pub registry: Value,
     pub pages: Vec<DocsPage>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DocsPage {
-    pub page_id: String,
-    pub path: String,
-    pub text: String,
 }
 pub use crate::store::document_segments::{
     DOCS_SEGMENT_MAX_BYTES, DocsSegment, docs_semantic_segments,

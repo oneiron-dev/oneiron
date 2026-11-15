@@ -3,21 +3,10 @@
 
 use crate::error::Error;
 
-// ---------------------------------------------------------------------------
-// Pinned strings
-// ---------------------------------------------------------------------------
-
-/// The predicate a mined LEXICAL substitution claims.
-///
-/// `preference.*` is an existing public claim family (`serialize.rs` already
-/// treats it as manifest-critical), so a mined phrasing preference is readable
-/// by the same prompt-assembly path that reads a stated one — which is the
-/// whole point of §4's "the edits stop happening". Defined in the owning module
-/// rather than `claim.rs` for the `identity_topology::PREDICATE_ENTITY_DISTINCT_FROM`
-/// reason: `CLAIM_PREDICATE_REGISTRY` is a documented well-known list whose
-/// arity is coordinated across lanes, and a predicate does not need to join it
-/// to be written through the public gate.
-pub const PREDICATE_PREFERENCE_PHRASING: &str = "preference.phrasing";
+#[doc(hidden)]
+pub use oneiron_records::edit_distance::miner::config::PREDICATE_PREFERENCE_PHRASING;
+#[doc(hidden)]
+pub(super) use oneiron_records::edit_distance::miner::config::ROW_VERSION;
 
 /// Domain for cluster handles, so a handle can never be confused with another
 /// unit's hash (the `DREAMER_BUCKET_HASH_DOMAIN` pattern).
@@ -29,9 +18,6 @@ pub(super) const MINER_CLUSTER_HASH_DOMAIN: &[u8] =
 /// a mint-mark key, or another unit's entity.
 pub(super) const MINER_EVIDENCE_RECORD_ID_DOMAIN: &[u8] =
     b"oneiron:edit-distance-mined-evidence:v1";
-
-/// Only accepted schema version for any row this module stores.
-pub(super) const ROW_VERSION: u8 = 1;
 
 pub(super) const MINT_MARK_ROW_LABEL: &str = "substitution mint mark row";
 

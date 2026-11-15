@@ -9,8 +9,10 @@ use crate::{
     error::{Error, Result},
     store::Store,
 };
+#[doc(hidden)]
+use oneiron_records::agent_def::portable_source::{FORMAT, invalid};
 use serde::{Deserialize, Serialize};
-const FORMAT: &str = "oneiron.agent-birth-source.v1";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AgentBirthSource {
@@ -267,10 +269,6 @@ pub(crate) fn read_birth_source(
     }
     Ok(Some(source))
 }
-fn invalid(reason: &'static str) -> Error {
-    Error::Artifact(crate::error::ArtifactError::InvalidAgentDefBody(reason))
-}
-
 // FIX [LIBTEST-QUARANTINE-AGENT-DEF-PORTABLE-SOURCE-TESTS]: the lib test target's type check fails here (16 errors: E0061 x10, E0599 x4, E0308 x2); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]

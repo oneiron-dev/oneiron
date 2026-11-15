@@ -74,23 +74,5 @@ pub struct LiveVoiceEvents {
     pub events: Vec<LiveVoiceEvent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LiveVoiceToolReply {
-    pub processed: LiveVoiceProcessed,
-    pub reply: LiveVoiceToolCallReply,
-}
-
-/// The connector's reply an `ai.voice.tool` answer carries beside the
-/// session's processing (FIX 11725): whole, or, for a caller off this device
-/// whose `awaiting_input` questions name a row that stays here, those
-/// questions narrowed as `connector.call` narrows them, their answer path
-/// whole.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum LiveVoiceToolCallReply {
-    /// The connector's questions, the text of each naming a row that stays
-    /// on this device left here.
-    QuestionsNarrowed(super::act_answer::NarrowedQuestions),
-    /// The connector's reply, whole.
-    Done(super::connector_call::ConnectorCallReply),
-}
+#[doc(hidden)]
+pub use oneiron_records::verbs::live_voice::{LiveVoiceToolCallReply, LiveVoiceToolReply};

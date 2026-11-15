@@ -13,7 +13,8 @@ use super::room_parts::ROOM_FACT_MAX_ROW_BYTES;
 use crate::error::{Error, Result};
 use crate::workspace_roster::RoomSideRow;
 
-const MANIFEST: &[u8] = b"\0offer-parts\0";
+#[doc(hidden)]
+use oneiron_records::room_codec::offer_parts::{MANIFEST, refused};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,10 +28,6 @@ pub(crate) struct OfferManifest {
 struct OfferText {
     what: String,
     artifact_ref: Option<String>,
-}
-
-fn refused(reason: &'static str) -> Error {
-    Error::InvalidConfig(format!("room offer parts refused: {reason}"))
 }
 
 pub(crate) fn is_manifest(bytes: &[u8]) -> bool {

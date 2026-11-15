@@ -127,11 +127,8 @@ pub struct ArtifactAskOutcome {
     pub next_sheet_row: Option<u32>,
 }
 
-/// Whether a held organ call was let go.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReleasedWait {
-    pub released: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::blob_artifact::verbs::ReleasedWait;
 
 /// A kept proposal: the version it became, the threads it moved, its
 /// receipt and the review it settled.

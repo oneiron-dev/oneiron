@@ -25,41 +25,8 @@ const DEEP_REVIEW_ACTION: &str = "claims.import.review";
 /// The derivation a deep review names beside its source.
 const DEEP_REVIEW_DERIVED: &str = "derived:ner_claims";
 
-/// One derived claim as it was written and as the owner reviews it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DocsDeepReviewClaim {
-    pub claim_ref: String,
-    /// The ASSET_TEXT chunk its quote was found in.
-    pub chunk_ref: String,
-    pub segment_hash: String,
-    pub source_record_id: String,
-    pub predicate: String,
-    pub value: Value,
-    /// When it was written; its occurred window is this instant.
-    pub learned_at: u64,
-}
-
-/// The owner's one review of every claim derived from a source revision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DocsDeepReview {
-    /// Each derived claim, in `claim_refs` order.
-    pub claims: Vec<DocsDeepReviewClaim>,
-    /// `Proposed` until the owner approves or declines the exact batch, or a
-    /// standing grant approves every batch as it is written.
-    pub decision: ClaimApprovalStatus,
-    /// The standing grant that approved the claims, when one did.
-    pub standing_grant_ref: Option<String>,
-}
-
-impl DocsDeepReview {
-    pub(super) const fn proposed() -> Self {
-        Self {
-            claims: Vec::new(),
-            decision: ClaimApprovalStatus::Proposed,
-            standing_grant_ref: None,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::ingest::docs_deep::review::{DocsDeepReview, DocsDeepReviewClaim};
 
 /// One derived claim's Gate write: id, candidate, envelope, occurred window
 /// and learned time.

@@ -8,18 +8,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::store::custody_protocol::Lineage;
 use crate::{Result, Vault};
 
-/// What an explicit head transfer kept in current local custody. These
-/// counts do not assert that a keystore exists or that this install can sign.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct IssuerSeedTransferReport {
-    pub candidates: usize,
-    pub published_generations: usize,
-    pub already_held: usize,
-    /// The archive or the destination's current root did not select them.
-    pub not_selected: usize,
-    /// Rollback is not proven when the source had no configured anchor.
-    pub custody_note: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::checkpoint::custody_head::issuer_transfer::IssuerSeedTransferReport;
 
 impl Vault {
     /// Admits one published protected head and transfers only live issuer

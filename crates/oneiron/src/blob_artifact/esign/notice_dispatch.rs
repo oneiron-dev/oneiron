@@ -23,21 +23,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const ESIGN_NOTICE_ATTEMPT_KIND: &str = "esign.notice";
-/// Frozen transition intent, staged with its triggering claim. The cloud edge
-/// receives the sealed artifact refs only after the email send gate allows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EsignNotice {
-    pub document: String,
-    pub recipient: String,
-    pub email: String,
-    pub transition: String,
-    pub dispatch_ref: Option<String>,
-    pub sealed_items: Vec<SealedItem>,
-    pub principal: Option<String>,
-    pub event_ref: Option<String>,
-    pub generation: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::blob_artifact::esign::notice_dispatch::EsignNotice;
+
 fn decode(attempt: &AttemptRecord) -> Result<EsignNotice> {
     if attempt.kind != ESIGN_NOTICE_ATTEMPT_KIND {
         return Err(invalid("not an esign notice"));

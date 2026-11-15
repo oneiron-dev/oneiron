@@ -78,6 +78,10 @@ pub use host_holds::{
     HostHoldsRecipient, HostHoldsSealing, HostHoldsUnavailable, HostOrderHolds,
 };
 use image::{CheckpointImage, read_image, read_image_required};
+#[doc(hidden)]
+use oneiron_records::recovery::checkpoint::CanonicalRows;
+#[doc(hidden)]
+pub use oneiron_records::recovery::checkpoint::{RestoreEpoch, RestoreReason};
 pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
@@ -94,7 +98,6 @@ pub use watermark::{
     last_backed_up, verify_with_pins,
 };
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
-type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// Test-only raw decoded `vault_meta` rows whose keys match `prefixes`.
 #[cfg(oneiron_test_support)]
@@ -266,27 +269,6 @@ impl SideRestoreSource<'_> {
             Source::Disk { page_seal, .. } => page_seal.as_ref(),
         }
     }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RestoreReason {
-    Restore,
-    Wake,
-    Migrate,
-    /// An owner's activation of an archived vault as a side vault
-    /// ([`Vault::activate_archived`]): it lands no checkpoint, so its epoch
-    /// names none.
-    Activate,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RestoreEpoch {
-    pub checkpoint_id: String,
-    pub restored_at: u64,
-    pub reason: RestoreReason,
-    /// What it still owes of the world key pads its image names (PAD-2):
-    /// absent from a row that owes and says nothing.
-    #[serde(default, skip_serializing_if = "RestorePadState::is_empty")]
-    pub pad_recovery: RestorePadState,
 }
 /// Source checkpoint identity and newly rebuilt engine indexes.
 #[derive(Clone, Debug, PartialEq, Eq)]

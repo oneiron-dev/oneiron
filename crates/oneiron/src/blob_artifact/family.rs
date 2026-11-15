@@ -502,6 +502,5 @@ impl Vault {
     }
 }
 
-pub(crate) fn hash_hex(hash: &[u8; 32]) -> String {
-    blake3::Hash::from_bytes(*hash).to_hex().to_string()
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::blob_artifact::family::hash_hex;

@@ -78,22 +78,20 @@ impl SideKey for AggregateKey {
     }
 }
 
-/// Only accepted schema version for any row this module stores.
-pub(super) const ROW_VERSION: u8 = 1;
+#[doc(hidden)]
+use oneiron_records::edit_distance::routing::keys::KEY_SEPARATOR;
+#[doc(hidden)]
+pub(super) use oneiron_records::edit_distance::routing::keys::{
+    MEMBER_ROW_LABEL, ROW_VERSION, decode_row, encode_row,
+};
 
 pub(super) const AGGREGATE_ROW_LABEL: &str = "routing aggregate row";
-
-pub(super) const MEMBER_ROW_LABEL: &str = "routing membership row";
 
 pub(super) const RUNG_ROW_LABEL: &str = "routing rollout rung row";
 
 pub(super) const SERVING_MODEL_ROW_LABEL: &str = "routing serving model row";
 
 pub(super) const OUTCOME_ROW_LABEL: &str = "routing outcome row";
-
-/// Separator between a key's parts. No part may contain it, which the key
-/// builder enforces rather than assumes.
-const KEY_SEPARATOR: u8 = 0;
 
 /// The task-type part of a head whose runs no task placed. It holds no `@`,
 /// so no `node@version` form can collide with it.
@@ -239,21 +237,6 @@ pub(super) struct StoredOutcome {
     pub(super) v: u8,
     pub(super) outcome: String,
     pub(super) at: u64,
-}
-
-// ---------------------------------------------------------------------------
-// Keys + rows
-// ---------------------------------------------------------------------------
-
-pub(super) fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(row).map_err(|_| Error::InvariantViolation(label))
-}
-
-pub(super) fn decode_row<T: serde::de::DeserializeOwned>(
-    raw: &[u8],
-    label: &'static str,
-) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
 }
 
 macro_rules! row_codec {

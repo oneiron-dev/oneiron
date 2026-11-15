@@ -104,12 +104,16 @@ pub const GMAIL_METADATA_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gm
 pub const GMAIL_SEND_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gmail.send";
 
 const GMAIL_INBOX_POLL_DEDUPE_PREFIX: &str = "gmail:inbox_poll:v1:";
-pub(super) const GMAIL_EVENT_ID_PREFIX: &str = "gmail:";
-pub(crate) const GMAIL_THREAD_PAYLOAD_PREFIX: &str = "gmail:thread:";
-const MAX_GMAIL_MESSAGES_PER_PAGE: usize = 500;
-
-/// Provider-native ceiling on a Gmail id, independent of where it lands.
-const MAX_GMAIL_ID_BYTES: usize = 128;
+#[doc(hidden)]
+pub(super) use oneiron_records::channel_identity_provider::gmail::GMAIL_EVENT_ID_PREFIX;
+#[doc(hidden)]
+pub(crate) use oneiron_records::channel_identity_provider::gmail::GMAIL_THREAD_PAYLOAD_PREFIX;
+#[doc(hidden)]
+pub use oneiron_records::channel_identity_provider::gmail::GmailInboxPollConfig;
+#[doc(hidden)]
+use oneiron_records::channel_identity_provider::gmail::{
+    MAX_GMAIL_ID_BYTES, MAX_GMAIL_MESSAGES_PER_PAGE, min_bytes,
+};
 
 /// Ceiling on a raw Gmail message id.
 ///
@@ -128,10 +132,6 @@ pub(super) const MAX_GMAIL_THREAD_ID_BYTES: usize = min_bytes(
     MAX_GMAIL_ID_BYTES,
     MAX_EMAIL_PAYLOAD_REF_BYTES - GMAIL_THREAD_PAYLOAD_PREFIX.len(),
 );
-
-const fn min_bytes(a: usize, b: usize) -> usize {
-    if a < b { a } else { b }
-}
 
 /// Maps a Google OAuth scope URL onto the read scope class it grants.
 ///
@@ -796,19 +796,6 @@ impl GmailDelegatedAdapter {
             fulfilled_at,
         }
     }
-}
-
-/// Durable payload of a `gmail_inbox_poll` attempt.
-///
-/// Names only: the mailbox, the custody record, and the identity row. No token
-/// bytes reach the queue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GmailInboxPollConfig {
-    pub mailbox_address: String,
-    pub custody_record_ref: String,
-    pub identity_ref: String,
-    /// The typed placement read boundary carried into the durable poll.
-    pub placement_policy: PlacementPolicy,
 }
 
 /// Result of one successfully admitted page: each of its messages was

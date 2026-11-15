@@ -20,11 +20,10 @@ use crate::store::{ManifestDbs, Store};
 
 use super::versions::{BlobArtifactVersion, VERSIONS};
 
-const SOURCE_TASK: u8 = b't';
-const SOURCE_ASK: u8 = b'a';
-const SOURCE_CODE_RUN: u8 = b'c';
-const SOURCE_SKILL: u8 = b's';
-const SOURCE_AGENT_RUN: u8 = b'r';
+#[doc(hidden)]
+use oneiron_records::blob_artifact::born_from::{
+    SOURCE_AGENT_RUN, SOURCE_ASK, SOURCE_CODE_RUN, SOURCE_SKILL, SOURCE_TASK,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -96,33 +96,8 @@ pub(super) struct OracleRecord {
     recorded_at: u64,
 }
 
-/// A typed read of the deck body at one frontier.
-#[derive(Debug, Clone)]
-pub struct PptxBody {
-    pub deck: LiveDeck,
-    /// Every stamped operation the body holds, in log order.
-    pub log: Vec<StampedOp>,
-    /// Who made each visible thing; imported content has no maker.
-    pub attribution: AttributionIndex,
-    pub frontier: Vec<u8>,
-}
-
-/// A deck fork reviewed against the head it would land on.
-#[derive(Debug, Clone)]
-pub struct PptxReview {
-    pub head: Vec<u8>,
-    /// The fork's frontier this review read; a landing applies the fork up
-    /// to it, beside `head` (FIX 9992).
-    pub fork_head: Vec<u8>,
-    pub report: PreflightReport,
-    /// Units the fork touches that the head changed since its base: their
-    /// answers are withdrawn (ARCH-0075 section 4), untouched units carry.
-    pub stale_units: Vec<NodeId>,
-    /// Why the relationship and render components could not be attached
-    /// (the head or the candidate does not project); the diff then keeps its
-    /// conservative affected slides.
-    pub evidence_refusal: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::office_body::pptx::{PptxBody, PptxReview};
 
 /// A projected deck. `authoritative` only when the export gate is open for the
 /// profile; until then the bytes are a proposal artifact for the edit rails.

@@ -55,15 +55,8 @@ const INCARNATION: SideTable<(), [u8; 16], Named> = SideTable::new(&side_table::
 /// (`oneiron_crypto::backup`), built by the writer from what it wrote.
 pub type BackupArtifactEvidence = oneiron_crypto::backup::BackupEvidence;
 
-/// Which rows a backup snapshot was asked to select.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BackupSelection {
-    /// The existing whole-vault canonical snapshot, including private worlds.
-    WholeVault,
-    /// An automatic copy selected by the worlds' sealed-copy settings.
-    Automatic,
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::checkpoint::watermark::BackupSelection;
 
 /// Where a vault stood for whether it changed since a backup. Two compare
 /// equal only when their selections match, no content was committed and custody

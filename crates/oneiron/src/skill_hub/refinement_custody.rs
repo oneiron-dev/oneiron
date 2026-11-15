@@ -43,26 +43,9 @@ fn receipt_id(candidate: &EntityId, ruling: &EntityId) -> Result<EntityId> {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    content = "receipt",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub(super) enum RefinementReceipt {
-    Skill(SharedSkillMergeReceipt),
-    Claim(ClaimRefinementMergeReceipt),
-}
-impl RefinementReceipt {
-    fn identity(&self) -> Result<(EntityId, EntityId)> {
-        let (candidate, ruling) = match self {
-            Self::Skill(row) => (&row.delta.candidate, &row.receipt_id),
-            Self::Claim(row) => (&row.candidate, &row.receipt_id),
-        };
-        Ok((EntityId::from_hex(candidate)?, EntityId::from_hex(ruling)?))
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::skill_hub::refinement_custody::RefinementReceipt;
+
 fn encode(candidate: &EntityId, receipt: &RefinementReceipt) -> Result<(EntityId, Vec<u8>)> {
     let (bound, ruling) = receipt.identity()?;
     if bound != *candidate {

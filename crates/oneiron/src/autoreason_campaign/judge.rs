@@ -21,21 +21,10 @@ pub use oneiron_verb_wire::autoreason_campaign::judge::{
     BlindCampaignJudgeInput, CampaignGoldAnchor,
 };
 
-/// One arm's taste on a split, as the shared decision path answered it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
-pub struct CampaignTaste {
-    /// Quality score, finite in `[0, 1]`.
-    pub score: f64,
-    /// Binary usefulness reading, `None` when it abstained; audit-only — never
-    /// read by verdict or validation logic.
-    pub useful: Option<bool>,
-    /// Digest of the external gold anchor the score was asked against.
-    pub external_anchor_digest: String,
-    /// The receipts of the score and usefulness decisions, in that order:
-    /// the providers, rung, band and clock that answered each (FIX 447).
-    pub receipts: Vec<DecisionReceipt>,
-}
+#[doc(hidden)]
+pub use oneiron_records::autoreason_campaign::judge::CampaignTaste;
+#[doc(hidden)]
+use oneiron_records::autoreason_campaign::judge::is_unit_interval_f64;
 
 /// The dial a taste pack runs under unless the host picks another. It ends
 /// below Human: a campaign report queues no person ask.
@@ -136,8 +125,4 @@ pub(super) fn validate_taste(taste: &CampaignTaste) -> CampaignResult<()> {
         });
     }
     Ok(())
-}
-
-fn is_unit_interval_f64(value: f64) -> bool {
-    value.is_finite() && (0.0..=1.0).contains(&value)
 }

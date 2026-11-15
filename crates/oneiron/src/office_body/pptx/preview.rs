@@ -100,34 +100,8 @@ static DRAWN: Mutex<Drawn> = Mutex::new(Drawn {
 #[doc(hidden)]
 pub use oneiron_verb_wire::office_body::pptx::preview::DeckPreviewRequest;
 
-/// The slides a deck preview drew, and the projection they show.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeckPreview {
-    /// The head the export projected; for a fork, the head its candidate
-    /// replays onto.
-    pub frontier: Vec<u8>,
-    pub profile: String,
-    pub projector: String,
-    /// BLAKE3 of the export's memo key, in hex.
-    pub export_key: String,
-    /// The renderer's identity: its version and raster settings.
-    pub renderer: String,
-    /// Always true: fonts, autofit and image effects differ from
-    /// PowerPoint's.
-    pub provisional: bool,
-    pub slides: Vec<DeckPreviewSlide>,
-}
-
-/// One drawn slide.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeckPreviewSlide {
-    pub slide: u64,
-    /// `image/png`, or `image/jpeg`.
-    pub media_type: String,
-    /// The image's BLAKE3 in hex, as a review image is keyed.
-    pub image_hash: String,
-    pub content_base64: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::office_body::pptx::preview::{DeckPreview, DeckPreviewSlide};
 
 impl Memory<'_> {
     /// `vault.artifacts.body.deck.preview`: draw the asked slides of the

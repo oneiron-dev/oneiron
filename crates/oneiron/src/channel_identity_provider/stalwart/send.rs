@@ -14,7 +14,8 @@ use crate::outbound::{
 use crate::outbound_intent_ledger::DeliveryReadBack;
 use crate::{EntityId, Result};
 
-pub const NATIVE_MAIL_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+#[doc(hidden)]
+pub use oneiron_records::channel_identity_provider::stalwart::send::NATIVE_MAIL_MAX_MESSAGE_BYTES;
 
 /// Agent-visible fields only. Sender, headers and route come from the host and
 /// frozen dispatch request. Unsupported fields fail deserialization, not send.

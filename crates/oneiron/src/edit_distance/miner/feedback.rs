@@ -13,7 +13,8 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable};
 use crate::store::GateDecisionRecord;
 
-const LABEL: &str = "principal-bound inbox decision";
+#[doc(hidden)]
+use oneiron_records::edit_distance::miner::feedback::LABEL;
 
 /// Immutable owner-bound decision on an inbox/amendment intake item, keyed by
 /// receipt id. Its reviewed copies leave with their source claim, its actor or
