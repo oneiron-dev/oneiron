@@ -26,6 +26,8 @@ export interface MemoryOperationContext {
   readonly abortSignal: AbortSignal;
   readonly messages: readonly HistoryMessage[];
   readonly operationId: string;
+  /** The eve session; served ids are tracked per session. */
+  readonly session: { readonly id: string };
   readonly memory: { readonly scope: MemoryScope; readonly slot: string };
 }
 
@@ -97,6 +99,9 @@ export interface OneironMemoryProvider {
 export declare const RECALL_LIMIT_DEFAULT: number;
 export declare const REMOVAL_CHECKS_PER_TURN: number;
 export declare const SERVED_IDS_PER_SLOT: number;
+export declare const TRACKED_SESSION_SLOTS: number;
+/** The content that replaces a served message once its record is confirmed gone. */
+export declare const REMOVED_CONTENT: string;
 
 export declare function oneironMemoryProvider(options: OneironMemoryProviderOptions): OneironMemoryProvider;
 export declare function recallOperationId(operationId: string): string;

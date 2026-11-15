@@ -7,8 +7,22 @@ import { createHash } from "node:crypto";
 export const RECALL_LIMIT_DEFAULT = 8;
 /** Previously served ids checked for removal on one turn. */
 export const REMOVAL_CHECKS_PER_TURN = 16;
-/** Served ids remembered per partition and slot; the oldest go first. */
+/**
+ * Served ids remembered per session, partition and slot; the least recently
+ * served or checked go first.
+ */
 export const SERVED_IDS_PER_SLOT = 256;
+/**
+ * Session, partition and slot triples whose served ids one provider
+ * remembers; the least recently recalled go first.
+ */
+export const TRACKED_SESSION_SLOTS = 1024;
+/**
+ * The content that replaces a served message once the vault confirms its
+ * record gone. eve refuses blank recall content, and a keyed message can
+ * only be replaced, never removed.
+ */
+export const REMOVED_CONTENT = "(This memory was retracted, replaced or removed, and no longer holds.)";
 
 const MESSAGE_ID_PREFIX = "oneiron:";
 
@@ -65,16 +79,18 @@ export function oneironMemoryProvider(options) {
         if (!answer.ok) {
           throw wireError("vault.recall", answer);
         }
-        const seen = servedFor(served, scope, slot);
+        const seen = servedFor(served, context.session?.id ?? "", scope, slot);
         const messages = [];
         const now = new Set();
         for (const item of answer.body?.items ?? []) {
           const id = messageId(item);
-          if (id === null || now.has(id)) {
+          const content = itemContent(item);
+          // eve refuses a blank message and fails the whole turn on it.
+          if (id === null || now.has(id) || content.trim() === "") {
             continue;
           }
           now.add(id);
-          messages.push({ id, content: itemContent(item) });
+          messages.push({ id, content });
           seen.delete(id);
           seen.set(id, { ref: item.record?.id ?? item.short_id, kind: item.kind });
         }
@@ -116,7 +132,7 @@ export function recallOperationId(operationId) {
  * name alone keeps one record under one message id across edits.
  */
 export function messageId(item) {
-  const name = (item.short_id ?? "").split(/[:@]/)[0];
+  const name = shortName(item.short_id);
   if (name !== "") {
     return MESSAGE_ID_PREFIX + name;
   }
@@ -140,26 +156,32 @@ export function conversationRef(scope, slot) {
 }
 
 /**
- * Keyed empty messages for the ids served before that this turn's pack
- * left out and the vault confirms gone: a claim whose newest version is
- * not active (retracted or superseded), a record that no longer reads (it
- * was erased, or this read narrowed past it). An id that is only outside
- * this turn's top items stays as it is.
+ * Keyed removal notices for the ids served before that this turn's pack
+ * left out and the vault confirms gone: a claim whose own version is not
+ * active (retracted or superseded), a record that no longer reads (it was
+ * erased, or this read narrowed past it). An id that is only outside this
+ * turn's top items stays as it is, and goes to the back of the checks, so
+ * every served id is checked in turn. A check that throws fails the turn
+ * before any removal is recorded, so the next turn checks again.
  */
 async function removedMessages(client, seen, now, signal) {
-  const removed = [];
-  let checks = 0;
+  const checked = [];
   for (const [id, record] of [...seen]) {
     if (now.has(id)) {
       continue;
     }
-    if (checks >= REMOVAL_CHECKS_PER_TURN) {
+    if (checked.length >= REMOVAL_CHECKS_PER_TURN) {
       break;
     }
-    checks += 1;
-    if (await recordGone(client, record, signal)) {
-      seen.delete(id);
-      removed.push({ id, content: "" });
+    checked.push({ id, record, gone: await recordGone(client, record, signal) });
+  }
+  const removed = [];
+  for (const { id, record, gone } of checked) {
+    seen.delete(id);
+    if (gone) {
+      removed.push({ id, content: REMOVED_CONTENT });
+    } else {
+      seen.set(id, record);
     }
   }
   return removed;
@@ -179,8 +201,14 @@ async function recordGone(client, record, signal) {
     if (!answer.ok) {
       return false;
     }
-    const versions = answer.body?.value ?? [];
-    return versions.length === 0 || versions[versions.length - 1].lifecycle !== "active";
+    // The history is the claim's whole supersession timeline, oldest first:
+    // the served claim's own version decides, not the chain's newest. No
+    // own version means the served claim no longer reads.
+    const name = shortName(record.ref);
+    const own = (answer.body?.value ?? []).find(
+      (version) => version.claim_ref === record.ref || shortName(version.short_ref) === name,
+    );
+    return own === undefined || own.lifecycle !== "active";
   }
   const answer = await facadeJson(
     client.facade.vault.get({ entity_ref: record.ref }, { signal }),
@@ -268,14 +296,24 @@ function messagesText(messages, role) {
   return lines.map((line) => line.trim()).filter((line) => line !== "").join("\n");
 }
 
-function servedFor(served, scope, slot) {
-  const key = conversationRef(scope, slot);
-  let seen = served.get(key);
-  if (!seen) {
-    seen = new Map();
-    served.set(key, seen);
+/**
+ * The ids served to one eve session for one partition and slot. Each
+ * session keeps its own recalled messages, so each tracks its own removals.
+ */
+function servedFor(served, sessionId, scope, slot) {
+  const key = `${sessionId}\0${conversationRef(scope, slot)}`;
+  const seen = served.get(key) ?? new Map();
+  served.delete(key);
+  served.set(key, seen);
+  while (served.size > TRACKED_SESSION_SLOTS) {
+    served.delete(served.keys().next().value);
   }
   return seen;
+}
+
+/** A short id's name, without its `:hash` byte or `@` revision pin. */
+function shortName(ref) {
+  return (ref ?? "").split(/[:@]/)[0];
 }
 
 /**

@@ -4,11 +4,11 @@
 // @oneiron/client's HttpBaseClient over fetch. No vault, no eve install.
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
-import {
-  conversationRef,
-  oneironMemoryProvider,
-  recallOperationId,
-} from "./index.js";
+// A namespace import: a name the module lacks reads as undefined here, so
+// each test that needs it fails alone rather than the whole file.
+import * as oneironEve from "./index.js";
+
+const { conversationRef, oneironMemoryProvider, recallOperationId, REMOVED_CONTENT } = oneironEve;
 
 const calls = [];
 let answers = {};
@@ -52,11 +52,12 @@ const client = {
 
 const scope = { key: "user:owen", namespace: "preview", value: "owen" };
 
-function turnStarted(operationId, text) {
+function turnStarted(operationId, text, sessionId = "session-1") {
   return {
     abortSignal: new AbortController().signal,
     messages: [{ role: "user", content: text }],
     operationId,
+    session: { id: sessionId },
     memory: { scope, slot: "memory" },
     turn: { id: "turn-1", input: [{ role: "user", content: text }], sequence: 1 },
   };
@@ -74,6 +75,31 @@ function claimItem(name, hash, text) {
 
 function pack(...items) {
   return [200, { items, scope_honesty: { out_of_scope_worlds: [] }, pack_version: 1 }];
+}
+
+function history(...versions) {
+  return () => [200, { value: versions, narrowing: {} }];
+}
+
+// The rules eve 1.0.0-rc.18 puts on a recall result
+// (dist/src/shared/memory-state.js validateMemoryRecallResult); eve fails
+// the turn on a result that breaks one.
+function expectEveAccepts(result) {
+  if (result == null) {
+    return;
+  }
+  expect(Object.keys(result)).toEqual(["messages"]);
+  const ids = new Set();
+  for (const message of result.messages) {
+    expect(Object.keys(message).filter((key) => key !== "id" && key !== "content")).toEqual([]);
+    expect(typeof message.content).toBe("string");
+    expect(message.content.trim().length).toBeGreaterThan(0);
+    if (message.id !== undefined) {
+      expect(message.id.length).toBeGreaterThan(0);
+      expect(ids.has(message.id)).toBe(false);
+      ids.add(message.id);
+    }
+  }
 }
 
 function recallBodies() {
@@ -95,6 +121,7 @@ describe("recall", () => {
     });
     const provider = oneironMemoryProvider({ connect: () => client });
     const result = await provider.recall["turn.started"](turnStarted("op-1", "Where do I sit?"));
+    expectEveAccepts(result);
     expect(result).toEqual({
       messages: [
         { id: "oneiron:cl", content: "preference.seat: window seat" },
@@ -140,7 +167,7 @@ describe("recall", () => {
     expect(after.messages[0].content).toBe("preference.seat: aisle seat");
   });
 
-  test("a retracted claim becomes an empty keyed message", async () => {
+  test("a retracted claim's message is replaced by the removal notice eve accepts", async () => {
     const provider = oneironMemoryProvider({ connect: () => client });
     answers["vault.recall"] = pack(claimItem("cl", "a3", "window seat"), claimItem("cm", "11", "vegetarian"));
     await provider.recall["turn.started"](turnStarted("op-5", "seat?"));
@@ -150,29 +177,61 @@ describe("recall", () => {
       { value: [{ claim_ref: body.claim_ref, lifecycle: "retracted" }], narrowing: {} },
     ];
     const result = await provider.recall["turn.started"](turnStarted("op-6", "seat?"));
+    expectEveAccepts(result);
     expect(result.messages).toEqual([
-      { id: "oneiron:cl", content: "" },
+      { id: "oneiron:cl", content: REMOVED_CONTENT },
       { id: "oneiron:cm", content: "preference.seat: vegetarian" },
     ]);
-    const history = calls.filter((call) => call.verb === "vault.claims.history");
-    expect(history.map((call) => call.body)).toEqual([{ claim_ref: "cl".padEnd(32, "0") }]);
+    const histories = calls.filter((call) => call.verb === "vault.claims.history");
+    expect(histories.map((call) => call.body)).toEqual([{ claim_ref: "cl".padEnd(32, "0") }]);
   });
 
-  test("an item only outside this turn's top items stays, and empties once it is retracted", async () => {
+  test("an item only outside this turn's top items stays, and is replaced once it is retracted", async () => {
     const provider = oneironMemoryProvider({ connect: () => client });
     answers["vault.recall"] = pack(claimItem("cl", "a3", "window seat"), claimItem("cm", "11", "vegetarian"));
     await provider.recall["turn.started"](turnStarted("op-7", "seat?"));
     answers["vault.recall"] = pack(claimItem("cm", "11", "vegetarian"));
     let lifecycle = "active";
-    answers["vault.claims.history"] = () => [200, { value: [{ lifecycle }], narrowing: {} }];
+    answers["vault.claims.history"] = (body) => [200, { value: [{ claim_ref: body.claim_ref, lifecycle }], narrowing: {} }];
     const kept = await provider.recall["turn.started"](turnStarted("op-8", "seat?"));
     expect(kept.messages).toEqual([{ id: "oneiron:cm", content: "preference.seat: vegetarian" }]);
-    lifecycle = "superseded";
+    lifecycle = "retracted";
     const later = await provider.recall["turn.started"](turnStarted("op-9", "seat?"));
-    expect(later.messages[0]).toEqual({ id: "oneiron:cl", content: "" });
+    expectEveAccepts(later);
+    expect(later.messages[0]).toEqual({ id: "oneiron:cl", content: REMOVED_CONTENT });
   });
 
-  test("a record that no longer reads becomes an empty keyed message", async () => {
+  test("a superseded claim is replaced though its timeline's newest version is active", async () => {
+    const provider = oneironMemoryProvider({ connect: () => client });
+    const served = "cl".padEnd(32, "0");
+    answers["vault.recall"] = pack(claimItem("cl", "a3", "window seat"));
+    await provider.recall["turn.started"](turnStarted("op-20", "seat?"));
+    answers["vault.recall"] = pack();
+    // claims.history answers the whole supersession timeline, oldest first.
+    answers["vault.claims.history"] = history(
+      { claim_ref: served, short_ref: "cl:a3", lifecycle: "superseded" },
+      { claim_ref: "cn".padEnd(32, "0"), short_ref: "cn:5b", lifecycle: "active" },
+    );
+    const result = await provider.recall["turn.started"](turnStarted("op-21", "seat?"));
+    expectEveAccepts(result);
+    expect(result).toEqual({ messages: [{ id: "oneiron:cl", content: REMOVED_CONTENT }] });
+  });
+
+  test("a claim whose own version is active stays, whatever an older version's lifecycle", async () => {
+    const provider = oneironMemoryProvider({ connect: () => client });
+    const served = "cl".padEnd(32, "0");
+    answers["vault.recall"] = pack(claimItem("cl", "a3", "window seat"));
+    await provider.recall["turn.started"](turnStarted("op-22", "seat?"));
+    answers["vault.recall"] = pack();
+    answers["vault.claims.history"] = history(
+      { claim_ref: "ck".padEnd(32, "0"), short_ref: "ck:01", lifecycle: "superseded" },
+      { claim_ref: served, short_ref: "cl:a3", lifecycle: "active" },
+    );
+    const result = await provider.recall["turn.started"](turnStarted("op-23", "seat?"));
+    expect(result).toBeNull();
+  });
+
+  test("a record that no longer reads is replaced by the removal notice", async () => {
     const provider = oneironMemoryProvider({ connect: () => client });
     const message = { short_id: "ms2:0f", kind: "MESSAGE", value_text: "I fly on Friday", record: { id: "b".repeat(32) } };
     answers["vault.recall"] = pack(message);
@@ -180,8 +239,54 @@ describe("recall", () => {
     answers["vault.recall"] = pack();
     answers["vault.get"] = [200, { value: null, narrowing: {} }];
     const result = await provider.recall["turn.started"](turnStarted("op-11", "when?"));
-    expect(result).toEqual({ messages: [{ id: "oneiron:ms2", content: "" }] });
+    expectEveAccepts(result);
+    expect(result).toEqual({ messages: [{ id: "oneiron:ms2", content: REMOVED_CONTENT }] });
     expect(calls.find((call) => call.verb === "vault.get").body).toEqual({ entity_ref: "b".repeat(32) });
+  });
+
+  test("every served id is checked in turn past the per-turn cap", async () => {
+    const provider = oneironMemoryProvider({ connect: () => client });
+    const names = Array.from({ length: oneironEve.REMOVAL_CHECKS_PER_TURN + 1 }, (_, index) => `c${index}`);
+    const erased = names[names.length - 1];
+    answers["vault.recall"] = pack(...names.map((name) => claimItem(name, "a3", `fact ${name}`)));
+    await provider.recall["turn.started"](turnStarted("op-24", "facts?"));
+    answers["vault.recall"] = pack();
+    answers["vault.claims.history"] = (body) =>
+      body.claim_ref === erased.padEnd(32, "0")
+        ? [404, { error: { code: "NOT_FOUND", message: "no claim" } }]
+        : [200, { value: [{ claim_ref: body.claim_ref, lifecycle: "active" }], narrowing: {} }];
+    const first = await provider.recall["turn.started"](turnStarted("op-25", "facts?"));
+    expect(first).toBeNull();
+    const second = await provider.recall["turn.started"](turnStarted("op-26", "facts?"));
+    expectEveAccepts(second);
+    expect(second).toEqual({ messages: [{ id: `oneiron:${erased}`, content: REMOVED_CONTENT }] });
+  });
+
+  test("each session of one partition and slot tracks its own removals", async () => {
+    const provider = oneironMemoryProvider({ connect: () => client });
+    answers["vault.recall"] = pack(claimItem("cl", "a3", "window seat"));
+    await provider.recall["turn.started"](turnStarted("op-27", "seat?", "session-1"));
+    await provider.recall["turn.started"](turnStarted("op-28", "seat?", "session-2"));
+    answers["vault.recall"] = pack();
+    answers["vault.claims.history"] = [404, { error: { code: "NOT_FOUND", message: "erased" } }];
+    const one = await provider.recall["turn.started"](turnStarted("op-29", "seat?", "session-1"));
+    const two = await provider.recall["turn.started"](turnStarted("op-30", "seat?", "session-2"));
+    // Both sessions recalled cl, so both are told it is gone.
+    const removedIds = [one, two].map((result) => result?.messages.map((message) => message.id));
+    expect(removedIds).toEqual([["oneiron:cl"], ["oneiron:cl"]]);
+    expect(one).toEqual({ messages: [{ id: "oneiron:cl", content: REMOVED_CONTENT }] });
+    expect(two).toEqual(one);
+  });
+
+  test("an item with no text is left out, since eve refuses a blank message", async () => {
+    const provider = oneironMemoryProvider({ connect: () => client });
+    answers["vault.recall"] = pack(
+      { short_id: "pe:01", kind: "PERSON", value_text: "  ", record: { id: "d".repeat(32) } },
+      claimItem("cl", "a3", "window seat"),
+    );
+    const result = await provider.recall["turn.started"](turnStarted("op-31", "seat?"));
+    expectEveAccepts(result);
+    expect(result).toEqual({ messages: [{ id: "oneiron:cl", content: "preference.seat: window seat" }] });
   });
 
   test("a replay the vault refuses as changed answers no memory", async () => {

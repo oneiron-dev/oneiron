@@ -55,17 +55,25 @@ export default defineMemory({
   claim, or the item's text otherwise. The id uses the short id's name
   without its `:hash` byte, which changes when the record's body changes,
   so an edit supersedes the same message.
-- **Removal.** The provider remembers the ids it served for each partition
-  and slot: at most 256, oldest first out, in process memory. Missing from
-  a later pack is not proof of removal, because recall answers its top
-  items. So each missing id is checked (at most 16 per turn):
-  - a claim, through `vault.claims.history`: gone when its newest version
-    is not active;
+- **Removal.** The provider remembers the ids it served to each eve
+  session for each partition and slot (eve keeps recalled messages per
+  session): at most 256 ids per session slot and 1,024 session slots, least
+  recently used first out, in process memory. Missing from a later pack is
+  not proof of removal, because recall answers its top items. So each
+  missing id is checked, at most 16 per turn; an id that still holds goes
+  to the back, so every served id is checked in turn:
+  - a claim, through `vault.claims.history`, which answers the claim's
+    whole supersession timeline: gone when the served claim's own version
+    is not active (retracted or superseded) or is no longer in it;
   - another record, through `vault.get`: gone when it no longer reads;
   - either, when the answer is `NOT_FOUND`.
 
-  A confirmed-gone id is answered as `{ id, content: "" }`, which empties
-  that message in eve's history.
+  A keyed eve message can be replaced but never removed, and eve refuses
+  blank content (it fails the turn). So a confirmed-gone id is answered as
+  `{ id, content: REMOVED_CONTENT }`, a short notice that replaces that
+  message in the session's recalled messages. A pack item with no text is
+  left out for the same reason. After eve's `clear()` on a session, a later
+  removal can add one such notice that replaces nothing.
 - **Capture** (`turn.completed`, on unless `capture: false`). This
   witnesses the settled turn with `vault.witness`: the turn input's user
   text, then the assistant text after the history's last user message
