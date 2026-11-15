@@ -20,6 +20,7 @@ pub mod media_job_spend;
 pub mod native_board;
 pub mod openapi_document;
 pub mod replay_admission;
+pub mod residence;
 pub mod resident_pump;
 pub mod siwc_seat;
 pub mod solved_runs;
