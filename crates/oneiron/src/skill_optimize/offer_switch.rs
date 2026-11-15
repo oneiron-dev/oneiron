@@ -80,13 +80,8 @@ impl SwitchApplication {
     }
 }
 
-/// The owner's undo of a switch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OfferSwitchUndo {
-    pub owner: SwitchOwner,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_optimize::offer_switch::OfferSwitchUndo;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::offer_switch::SwitchOwner;
