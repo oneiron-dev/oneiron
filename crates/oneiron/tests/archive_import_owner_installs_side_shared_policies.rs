@@ -18,6 +18,26 @@
 //!   ORG_ADMIN_POLICY row naming an admin PERSON the destination never held reports
 //!   one held-back row with reason `missing_live_entity` and is still retained byte
 //!   for byte.
+//! * `a_restored_pending_widen_ask_keeps_no_ask_number`: a Pending
+//!   OWNER_POLICY_WORLD_PRIVACY_REQUEST row installs without the source's decision
+//!   ask number (the ask queue does not travel and numbers from 1 on every vault),
+//!   and the owner's answer to the restored request leaves another pending
+//!   request's ask open.
+//! * `the_owner_restore_installs_the_world_privacy_receipt_live`: one
+//!   OWNER_POLICY_WORLD_PRIVACY_RECEIPT row installs and the destination's change
+//!   log reads it with its settings revision and log entry.
+//! * `the_owner_restore_installs_the_shared_act_policy_change_live`: one applied
+//!   SHARED_ACT_POLICY_CHANGE row installs on a destination shared under the same
+//!   vault id and reads back whole.
+//! * `the_owner_restore_installs_an_org_admin_policy_whose_admin_is_live`: one
+//!   ORG_ADMIN_POLICY row whose admin PERSON travels with the archive installs and
+//!   the destination reads it.
+//! * `the_owner_restore_installs_the_mail_compliance_setting`: one
+//!   MAIL_PACK_COMPLIANCE_SETTING row installs and the destination reads compliance
+//!   search on where it read off before the import.
+//!
+//! POLICY_HOLD_QUEUE has no landing and no test: no production route queues a hold
+//! (FIX-LIST ARCHIVE-POLICY-HOLD-QUEUE-NOT-RESTORED).
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on 56a501392094; an absent field fails its
@@ -29,14 +49,32 @@ mod retained_side_rows;
 
 use std::collections::BTreeSet;
 use std::io::Cursor;
+use std::sync::Arc;
 
+use oneiron::EdgeActorClass;
 use oneiron::EntityId;
+use oneiron::WriteActor;
+use oneiron::authority::{
+    ActSurface, HostSlipIssuer, MachineRole, ModelOrder, ReadLocation, WorldPrivacy,
+};
 use oneiron::edit_distance::escalation::{
     EscalationReceipt, EscalationRuling, EscalationTrigger, StandingPolicyStatus,
     escalation_standing_n, maybe_propose_standing_policy, record_escalation, standing_policy_for,
 };
-use oneiron::federation::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};
-use oneiron::policy_model::{WidenUnanimity, WidenUnanimityOutcome};
+use oneiron::federation::{
+    FederationGrantRole, OrgAdminError, OrgAdminPolicy, OrgAdminPower, SharedActPolicyChangeState,
+    SharedVaultPreset,
+};
+use oneiron::mail_pack::{
+    MailComplianceSetRequest, MailComplianceSettingView, install_mail_calendar_pack_embedded,
+};
+use oneiron::policy_model::{
+    WidenUnanimity, WidenUnanimityOutcome, WorldPrivacyAnswer, WorldPrivacyOutcome,
+    WorldPrivacyRequestStatus,
+};
+use oneiron::verbs::{
+    AgentDefinitionCreateRequest, AgentDefinitionSpec, create_agent_definition_as,
+};
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
 };
@@ -328,5 +366,473 @@ fn an_org_admin_policy_naming_a_missing_person_is_held_back() {
         rows_for(&retained_rows(&export_whole(&dest)), "ORG_ADMIN_POLICY"),
         source_tuple,
         "the destination retains the held-back org tuple byte for byte"
+    );
+}
+
+/// A restored pending widen ask keeps no ask number: the decision ask queue
+/// does not travel, so the landing installs the request with `ask: None`.
+/// Part 2: answering the restored request leaves the other request's ask
+/// open.
+#[test]
+fn a_restored_pending_widen_ask_keeps_no_ask_number() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let agent = fixed_id(0x5A);
+    let definition: AgentDefinitionSpec = serde_json::from_value(serde_json::json!({
+        "agent_id": "widen-ask-agent",
+        "desc": "World privacy widen agent",
+        "version": "1",
+        "ceiling": "auto",
+        "enabled": true,
+    }))
+    .expect("the agent definition parses");
+    create_agent_definition_as(
+        &source,
+        &source_owner,
+        AgentDefinitionCreateRequest {
+            agent_def_ref: agent,
+            definition,
+        },
+    )
+    .expect("the owner creates the agent");
+    let world = source
+        .create_world(&source_owner, "widen ask world", source.now_recorded_at())
+        .expect("the owner creates a world");
+    // Any model-order change widens a world at its default settings.
+    let widen = WorldPrivacy {
+        models: ModelOrder::Ordered(vec!["r1".to_owned()]),
+        ..WorldPrivacy::default()
+    };
+    let writer = WriteActor::new(agent, EdgeActorClass::Agent);
+    let source_request = match source
+        .agent_world_privacy(&writer, Vec::new(), world, widen.clone(), None)
+        .expect("the agent's widen asks")
+    {
+        WorldPrivacyOutcome::Asked(request) => request,
+        other => panic!("the agent's widen asks, not {other:?}"),
+    };
+    assert_eq!(
+        source_request.status,
+        WorldPrivacyRequestStatus::Pending,
+        "the source's request is pending"
+    );
+    assert!(
+        source_request.ask.is_some(),
+        "the source's request keeps its ask number"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(
+            &retained_rows(&archive),
+            "OWNER_POLICY_WORLD_PRIVACY_REQUEST"
+        )
+        .len(),
+        1,
+        "the source archive holds one OWNER_POLICY_WORLD_PRIVACY_REQUEST tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(
+            &summary,
+            "OWNER_POLICY_WORLD_PRIVACY_REQUEST",
+            "installed_rows"
+        ),
+        Some(1),
+        "the owner import reports one installed OWNER_POLICY_WORLD_PRIVACY_REQUEST row; \
+         an absent field means it installed nothing: {summary}"
+    );
+    let restored = dest
+        .world_privacy_requests(false)
+        .expect("read the restored requests");
+    assert_eq!(restored.len(), 1, "the destination holds one request");
+    assert_eq!(
+        restored[0].status,
+        WorldPrivacyRequestStatus::Pending,
+        "the restored request is pending"
+    );
+    assert_eq!(
+        restored[0].ask, None,
+        "a restored pending request names no ask of this vault"
+    );
+    assert!(
+        dest.decision_asks(None, 8, true)
+            .expect("read the destination asks")
+            .is_empty(),
+        "the destination's ask queue holds no ask after the restore"
+    );
+
+    // Part 2: a second widen on the destination takes the number the
+    // source's ask had, and answering the restored request leaves it open.
+    let dest_writer = WriteActor::new(agent, EdgeActorClass::Agent);
+    let second = match dest
+        .agent_world_privacy(&dest_writer, Vec::new(), world, widen, None)
+        .expect("the second widen asks")
+    {
+        WorldPrivacyOutcome::Asked(request) => request,
+        other => panic!("the second widen asks, not {other:?}"),
+    };
+    assert_eq!(
+        second.ask, source_request.ask,
+        "the second ask takes the number the source's ask had"
+    );
+    let second_seq = second.ask.expect("the second ask is queued");
+    let restored_id = restored[0].id().expect("the restored request has its id");
+    match dest
+        .answer_world_privacy_request(&dest_owner, ActSurface::ThisInstall, restored_id, false)
+        .expect("the owner declines the restored request")
+    {
+        WorldPrivacyAnswer::Declined(_) => {}
+        other => panic!("the decline declines, not {other:?}"),
+    }
+    let reread = dest
+        .world_privacy_requests(false)
+        .expect("read the requests again");
+    let live_second = reread
+        .iter()
+        .find(|request| request.request_id == second.request_id)
+        .expect("the second request is still listed");
+    assert_eq!(
+        live_second.status,
+        WorldPrivacyRequestStatus::Pending,
+        "the second request is still pending"
+    );
+    assert!(
+        dest.decision_ask(second_seq)
+            .expect("read the second ask")
+            .is_some_and(|ask| ask.is_open()),
+        "the restored request's answer leaves the other request's ask open"
+    );
+}
+
+/// The owner restore installs the world's privacy receipt live: the restored change log
+/// holds the receipt naming the world with its stored settings revision and log entry.
+#[test]
+fn the_owner_restore_installs_the_world_privacy_receipt_live() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let issuer = HostSlipIssuer::from_secret(b"side-4c world privacy receipt host")
+        .expect("the fixture issuer derives");
+    source
+        .ensure_host_root_slip(&issuer)
+        .expect("the source takes a host root");
+    source.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    source
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("the source enrolls its install");
+    let world = source
+        .create_world(&source_owner, "owen world", source.now_recorded_at())
+        .expect("the owner creates the source world");
+    let change = source
+        .set_world_privacy_as(
+            &source_owner,
+            ActSurface::ThisInstall,
+            world,
+            WorldPrivacy {
+                read: ReadLocation::MyMachines,
+                ..WorldPrivacy::default()
+            },
+            None,
+        )
+        .expect("the owner keeps the world on their machines");
+    let source_log = source
+        .world_privacy_change_log()
+        .expect("read the source receipt log");
+    assert_eq!(source_log.len(), 1, "the source holds one receipt");
+    assert_eq!(source_log[0].revision, 1, "the first receipt is revision 1");
+    assert_eq!(
+        source_log[0].world,
+        world.to_hex(),
+        "the receipt names the world"
+    );
+    assert_eq!(
+        source_log[0].receipt_id, change.receipt_id,
+        "the log holds the change"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(
+            &retained_rows(&archive),
+            "OWNER_POLICY_WORLD_PRIVACY_RECEIPT"
+        )
+        .len(),
+        1,
+        "the source archive holds one receipt tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    assert!(
+        dest.world_privacy_change_log()
+            .expect("read the bare log")
+            .is_empty(),
+        "the bare destination holds no receipt"
+    );
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(
+            &summary,
+            "OWNER_POLICY_WORLD_PRIVACY_RECEIPT",
+            "installed_rows"
+        ),
+        Some(1),
+        "one installed receipt row; an absent field means it installed nothing: {summary}"
+    );
+    let dest_log = dest
+        .world_privacy_change_log()
+        .expect("read the restored receipt log");
+    assert_eq!(
+        dest_log.len(),
+        1,
+        "the destination holds one restored receipt"
+    );
+    assert_eq!(
+        dest_log[0].revision, 1,
+        "the restored receipt is revision 1"
+    );
+    assert_eq!(
+        dest_log[0].world,
+        world.to_hex(),
+        "the restored receipt names the world"
+    );
+    assert_eq!(
+        dest_log[0].revision_after, source_log[0].revision_after,
+        "the restored receipt keeps its settings revision"
+    );
+    assert_eq!(
+        dest_log[0].entry_hash, source_log[0].entry_hash,
+        "the restored receipt keeps its log entry"
+    );
+}
+
+/// The owner restore installs the shared-act policy change live: the sole editor's
+/// applied change reads back whole on a destination shared under the same vault id.
+#[test]
+fn the_owner_restore_installs_the_shared_act_policy_change_live() {
+    const SHARED_VAULT_ID: u64 = 7;
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    source
+        .initialize_shared_vault(
+            &source_owner,
+            SHARED_VAULT_ID,
+            Some(SharedVaultPreset::Team),
+            &[],
+            source.now_recorded_at(),
+        )
+        .expect("the owner shares the source vault");
+    let view = source
+        .shared_act_policies(&source_owner, SHARED_VAULT_ID)
+        .expect("read the source act rows");
+    let mut row = view
+        .effective
+        .get("add_owner")
+        .expect("the shared kind ships add_owner")
+        .clone();
+    row.wait_secs = 3600;
+    row.objector_roles = vec![FederationGrantRole::Owner];
+    let change = source
+        .propose_shared_act_policy_change(
+            &source_owner,
+            SHARED_VAULT_ID,
+            "add_owner",
+            Some(row),
+            &view.policy_hash,
+        )
+        .expect("the sole editor proposes the tighter row");
+    assert_eq!(
+        change.state,
+        SharedActPolicyChangeState::Applied,
+        "the sole editor's change applies at once: {change:?}"
+    );
+    assert!(
+        change.awaiting.is_empty(),
+        "the applied change waits on no one"
+    );
+    assert_eq!(
+        source
+            .shared_act_policy_change(&source_owner, &change.id)
+            .expect("read the source change"),
+        change,
+        "the source reads its applied change"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "SHARED_ACT_POLICY_CHANGE").len(),
+        1,
+        "the source archive holds one change tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    dest.initialize_shared_vault(
+        &dest_owner,
+        SHARED_VAULT_ID,
+        Some(SharedVaultPreset::Team),
+        &[],
+        dest.now_recorded_at(),
+    )
+    .expect("the destination shares its vault under the same id");
+    assert!(
+        dest.shared_act_policy_change(&dest_owner, &change.id)
+            .is_err(),
+        "the destination holds no change before the import"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "SHARED_ACT_POLICY_CHANGE", "installed_rows"),
+        Some(1),
+        "one installed change row; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        dest.shared_act_policy_change(&dest_owner, &change.id)
+            .expect("read the restored change"),
+        change,
+        "the owner import installs the applied change live"
+    );
+}
+
+/// The owner restore installs an org admin policy whose admin is live.
+#[test]
+fn the_owner_restore_installs_an_org_admin_policy_whose_admin_is_live() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let admin = source
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner PERSON");
+    let org = fixed_id(0x6A);
+    let policy = OrgAdminPolicy::new(
+        org,
+        BTreeSet::from([admin]),
+        BTreeSet::from([OrgAdminPower::AddMember]),
+    )
+    .expect("the org policy builds");
+    source
+        .configure_org_admin_as_owner(&source_owner, &policy)
+        .expect("the owner stores the source org row");
+    assert_eq!(
+        source
+            .org_admin_policy(org)
+            .expect("read the source org row"),
+        policy,
+        "the source holds the org row"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "ORG_ADMIN_POLICY").len(),
+        1,
+        "the source archive holds one org tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    assert!(
+        matches!(dest.org_admin_policy(org), Err(OrgAdminError::Denied)),
+        "the bare destination holds no org row"
+    );
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "ORG_ADMIN_POLICY", "installed_rows"),
+        Some(1),
+        "the owner import installs one org row; absent means none: {summary}"
+    );
+    assert_eq!(
+        dest.org_admin_policy(org)
+            .expect("read the restored org row"),
+        policy,
+        "the owner import installs the org row live"
+    );
+}
+
+/// The owner restore installs the mail compliance setting live.
+#[test]
+fn the_owner_restore_installs_the_mail_compliance_setting() {
+    let (_source_dir, source) = open_source_vault();
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner PERSON");
+    // The pack installs as the embedded owner, as a server starts it; the
+    // same steps as `tests/mail_active_sources.rs`.
+    let issuer = HostSlipIssuer::from_secret(b"mail compliance setting test host")
+        .expect("the host issuer builds");
+    source.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    source
+        .ensure_host_root_slip(&issuer)
+        .expect("the host roots the vault");
+    source
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("the serving install enrols");
+    let memory = source.memory(owner, EdgeActorClass::Human);
+    install_mail_calendar_pack_embedded(&memory).expect("the pack installs");
+    let source_setting: MailComplianceSettingView = memory
+        .mail_compliance_set(&MailComplianceSetRequest {
+            enabled: true,
+            purpose: "owen audits the shared mailbox".to_owned(),
+        })
+        .expect("the owner turns compliance search on");
+    assert!(source_setting.enabled, "the source reads the setting on");
+    assert_eq!(
+        source_setting.set_by_ref,
+        Some(owner.to_hex()),
+        "the source names the setter"
+    );
+    assert!(
+        source_setting.set_at.is_some(),
+        "the source stamps the change"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "MAIL_PACK_COMPLIANCE_SETTING").len(),
+        1,
+        "the source archive holds one compliance tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_actor = dest
+        .ensure_embedded_owner_actor()
+        .expect("the destination embedded owner");
+    let dest_memory = dest.memory(dest_actor, EdgeActorClass::Human);
+    assert!(
+        !dest_memory
+            .mail_compliance_setting()
+            .expect("read the bare setting")
+            .enabled,
+        "the bare destination reads compliance search off"
+    );
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "MAIL_PACK_COMPLIANCE_SETTING", "installed_rows"),
+        Some(1),
+        "the owner import installs one compliance row; absent means none: {summary}"
+    );
+    assert_eq!(
+        dest_memory
+            .mail_compliance_setting()
+            .expect("read the restored setting"),
+        source_setting,
+        "the owner import installs the setting live"
     );
 }
