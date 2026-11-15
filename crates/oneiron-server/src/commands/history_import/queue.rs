@@ -36,7 +36,8 @@ use serde::{Deserialize, Serialize};
 use super::confined::open_file;
 use super::{
     Decoded, ImportWarning, QueuedSession, Totals, below, crossed_decoded, earliest_first,
-    no_hook_root, own_second, queue_dreamer, queued_stamp, read_queued,
+    history_file, no_hook_root, own_second, queue_dreamer, queued_stamp, read_queued, read_text,
+    session_log_name,
 };
 use crate::config::{ImportConfig, ServeConfig};
 use crate::server::SyncServer;
@@ -111,6 +112,20 @@ pub(super) fn enqueue(
             ),
         })?;
     below(&root, &path)?;
+    // What `serve` would refuse at drain, refused here, where the caller sees
+    // it: a misnamed log, or one in another format, never queues.
+    anyhow::ensure!(
+        session_log_name(source, &path),
+        "{} is not a {} session log",
+        path.display(),
+        source.source_id()
+    );
+    let file = fs::File::open(&path)
+        .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
+    let text = read_text(file, &path)?;
+    source
+        .decode(&text, &history_file(source, &path))
+        .map_err(|error| anyhow::anyhow!("{}: {error}", path.display()))?;
     let dir = config.import.queue_dir_for(&config.vault_path);
     fs::DirBuilder::new()
         .recursive(true)
