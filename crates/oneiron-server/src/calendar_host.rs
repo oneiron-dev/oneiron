@@ -21,7 +21,7 @@ mod xml;
 pub(crate) use caldav::HttpCalDav;
 pub(crate) use card_pass::spawn_calendar_card_pass;
 pub(crate) use feed_poll::spawn_calendar_polls;
-pub(crate) use ics::HttpIcsFeed;
+pub(crate) use ics::{HttpIcsFeed, admit_feed_url, get_admitted};
 pub(crate) use pattern_head::PatternLabelHead;
 pub(crate) use safeguard::calendar_body_screener;
 pub use safeguard::install_calendar_label_head;
@@ -35,6 +35,16 @@ const CALENDAR_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// ([`ServedChannelSink::client_with_timeout`]) with the calendar's bound.
 pub(super) fn client() -> oneiron::Result<reqwest::blocking::Client> {
     ServedChannelSink::client_with_timeout(CALENDAR_REQUEST_TIMEOUT)
+}
+
+/// The ICS feed's client: [`client`], and on a managed node (`Some(egress)`,
+/// from `SyncServer::hosted_egress_guard`) every name
+/// it connects to resolves through the hosted egress guard, so a feed name
+/// that answers with a private or node address is refused at connect time.
+pub(super) fn feed_client(
+    egress: Option<std::sync::Arc<oneiron::web_fetch::HostedEgressGuard>>,
+) -> oneiron::Result<reqwest::blocking::Client> {
+    ServedChannelSink::guarded_client_with_timeout(CALENDAR_REQUEST_TIMEOUT, egress)
 }
 
 pub(super) fn authorization(value: &[u8]) -> oneiron::Result<HeaderValue> {

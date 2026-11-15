@@ -314,6 +314,7 @@ pub(crate) async fn calendar_ics_poll(
                 Arc::clone(server.vault()),
                 owner.clone(),
                 row.config.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(MemoryError::bad_request)?;
             let fetcher =
