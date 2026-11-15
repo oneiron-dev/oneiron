@@ -104,6 +104,7 @@ impl DreamerDecisionLender for FixtureStepLender {
         );
         step(ExtractionStepLoan {
             call,
+            prompt: &resources.decisions.extraction_prompt,
             guard: &resources.guard,
             deadline: &resources.deadline,
             now_ms: resources.now_ms,
