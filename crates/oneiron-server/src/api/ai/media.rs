@@ -525,11 +525,15 @@ pub(super) fn failure(error: &LlmError) -> Response {
         LlmError::Retryable(RetryableLlmError::QuotaSpent { .. }) => {
             (StatusCode::TOO_MANY_REQUESTS, "quota_spent")
         }
+        // A privacy hold, not a rate refusal: no offer the call may use on
+        // this device answered. 503 on every door that answers it, as
+        // `/v1/llm` and the OpenAI wire do (UC-11, ruling
+        // UC11-KEPT-ON-DEVICE-STATUS = C).
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
-            (StatusCode::CONFLICT, "kept_on_device")
+            (StatusCode::SERVICE_UNAVAILABLE, "kept_on_device")
         }
         LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => {
-            (StatusCode::CONFLICT, "world_route_not_admitted")
+            (StatusCode::SERVICE_UNAVAILABLE, "world_route_not_admitted")
         }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "provider_unavailable"),
     };
