@@ -5,6 +5,7 @@
 use super::park_cause::executor_error_park_cause;
 use super::*;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::policy_wait::PolicyWaitKind;
 
 impl DreamerWakeDriver<'_> {
     /// Releases what admission acquired for `admitted` after a non-deadline
@@ -72,7 +73,16 @@ impl DreamerWakeDriver<'_> {
             );
             return Ok(true);
         }
-        let parked = self.park_attempt(admitted, reason, cause, &input.lease_owner, input.now);
+        // A refusal an owner policy write clears is indexed with its park, so that write requeues it once
+        // (FIX 23347 part 2); every other owner-act refusal stays owner-released.
+        let policy = PolicyWaitKind::of_error_kind(kind)
+            .filter(|_| cause == DreamerParkCause::ExecutorError);
+        let parked = match policy {
+            Some(policy) => {
+                self.park_on_policy(admitted, reason, policy, &input.lease_owner, input.now)
+            }
+            None => self.park_attempt(admitted, reason, cause, &input.lease_owner, input.now),
+        };
         let park = if parked.is_ok() {
             "committed"
         } else {

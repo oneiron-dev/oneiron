@@ -7,6 +7,7 @@ use crate::attempt_queue::AttemptRecord;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 
+use super::policy_wait::{PolicyWaitKind, index_policy_wait_in_txn};
 use super::store::DreamerRunnerStore;
 use super::types::{DreamerParkedAttemptRecord, ParkDreamerAttempt};
 
@@ -64,6 +65,28 @@ impl DreamerRunnerStore<'_> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let record = self.park_if_current_lease_in_txn(&mut wtxn, input, lease)?;
         wtxn.commit()?;
+        if record.is_some() {
+            self.vault.store.notify_attempt_observers();
+        }
+        Ok(record)
+    }
+
+    /// [`Self::park_if_current_lease`] for an executor-error park an owner policy write clears (FIX 23347): the
+    /// park and its policy-wait entry under `kind` land in one writer, so the owner's write that clears that
+    /// policy requeues it once.
+    pub(crate) fn park_on_policy_if_current_lease(
+        &self,
+        input: ParkDreamerAttempt,
+        lease: DreamerTryLease<'_>,
+        kind: PolicyWaitKind,
+    ) -> Result<Option<DreamerParkedAttemptRecord>> {
+        let record = self.vault.with_write_txn_grouped(|wtxn| {
+            let Some(record) = self.park_if_current_lease_in_txn(wtxn, input, lease)? else {
+                return Ok(None);
+            };
+            index_policy_wait_in_txn(self.vault, wtxn, kind, record.attempt_id)?;
+            Ok(Some(record))
+        })?;
         if record.is_some() {
             self.vault.store.notify_attempt_observers();
         }
