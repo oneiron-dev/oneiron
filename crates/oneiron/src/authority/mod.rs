@@ -413,6 +413,7 @@ pub use owner_key_removal_door::{
     EndedOwnerKey, LastDeviceKeyConfirmation, MachineRemoval, MachineRemovalReceipt,
     OwnerKeyRemoval, RemainingOwnerKeys,
 };
+pub use owner_proof::{OwnerKeyRequirement, WebSignInAct};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{

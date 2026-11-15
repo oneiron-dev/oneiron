@@ -65,8 +65,8 @@ use oneiron::authority::{
     HeldAnswerListing, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
-    ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript,
-    fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
+    OwnerKeyRequirement, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, WebSignInAct, authority_entry_hash,
+    authority_transcript, fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
     machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -3284,5 +3284,166 @@ fn the_web_sign_in_value_is_blake3_over_the_owner_keys_in_order() {
         web_sign_in_value(&keys),
         web_sign_in_value(&BTreeSet::from([first])),
         "a later key changes the value"
+    );
+}
+
+/// What the vault asks of its owner, as a door, a route and the key changes
+/// list read it off the fold ([`AuthorityFold::owner_key_requirement`]). A
+/// hosted vault that never held an owner key asks for none and has landed no
+/// act of the web sign-in setting.
+#[test]
+fn a_vault_that_never_held_an_owner_key_reads_as_never_held() {
+    let fold = OwnerKeyVault::hosted().fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::NeverHeld,
+        "no owner key was ever enrolled: {:?}",
+        fold.issues
+    );
+    assert!(fold.web_sign_in_acts().is_empty());
+}
+
+/// The ratchet, as the fold reads it out: the vault asks while its key is
+/// live and after the key's removal alike, under the value over the key it
+/// has held. A reading off the live roster would say the vault never held a
+/// key once the last one is removed.
+#[test]
+fn a_vault_whose_last_owner_key_was_removed_reads_as_requiring_one() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let required = OwnerKeyRequirement::Required {
+        web_sign_in_switch: Some(speaks_for(&[&key])),
+    };
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    assert_eq!(
+        vault.fold().owner_key_requirement(),
+        required,
+        "beside its live owner key the vault asks for one"
+    );
+    vault.key_removes_itself(&key, vec![enrolled]);
+    let fold = vault.fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        required,
+        "the key's removal changes nothing about what the vault asks: {:?}",
+        fold.issues
+    );
+}
+
+/// The owner's switch back reads as web sign-in, and the fold keeps the act
+/// as the switch.
+#[test]
+fn the_switch_back_reads_as_web_sign_in() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let fold = vault.fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::WebSignIn,
+        "the switch carries the owner key's proof and the value over that key: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.web_sign_in_acts(),
+        &BTreeMap::from([(switched, WebSignInAct::SwitchedBack)])
+    );
+}
+
+/// WAYBACK-6 = A, read out: a key enrolled after the switch back makes the
+/// vault ask again, under the value over both keys, and the switch stays
+/// among the landed acts as the switch it was.
+#[test]
+fn a_key_enrolled_after_the_switch_back_reads_as_required_under_a_new_value() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let later = signing(LATER_OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    vault.enrol(&later, 3, vec![switched]);
+    let fold = vault.fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: Some(speaks_for(&[&key, &later])),
+        },
+        "the switch spoke for the first key alone: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.web_sign_in_acts(),
+        &BTreeMap::from([(switched, WebSignInAct::SwitchedBack)])
+    );
+}
+
+/// A switch back that a later act of the setting replaced stays among the
+/// landed acts: the history of switches is the fold's, not only its live
+/// act. The later act, which asks for an owner key again, lands as that. A
+/// reading of the live acts alone would drop the switch.
+#[test]
+fn a_switch_back_that_a_later_act_replaced_stays_among_the_landed_acts() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let asks =
+        vault.node_sets_web_sign_in(2, vec![switched], ASKS_FOR_AN_OWNER_KEY, &[switched], &[]);
+    let fold = vault.fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: Some(speaks_for(&[&key])),
+        },
+        "the later act ends the switch back: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.web_sign_in_acts(),
+        &BTreeMap::from([
+            (switched, WebSignInAct::SwitchedBack),
+            (asks, WebSignInAct::AsksAgain),
+        ])
+    );
+}
+
+/// A switch back with no owner key's proof waits: it has landed nothing, so
+/// it is no act of the setting and the vault asks as before.
+#[test]
+fn a_switch_back_that_waits_for_the_owners_proof_is_no_landed_act() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let unproven = vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[]);
+    let fold = vault.fold();
+    assert!(
+        fold.waiting_owner_choices().contains(&unproven),
+        "the unproven switch waits for the owner's proof: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: Some(speaks_for(&[&key])),
+        }
+    );
+    assert!(fold.web_sign_in_acts().is_empty());
+}
+
+/// A self-host vault asks for its owner root's proof and has no value that
+/// switches it back: it has no account to fall back to.
+#[test]
+fn a_self_host_vault_reads_as_required_with_no_value_to_switch_it_back() {
+    let fold = OwnerKeyVault::self_host().fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: None,
+        },
+        "the owner root is the vault's owner key: {:?}",
+        fold.issues
     );
 }
