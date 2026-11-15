@@ -489,6 +489,14 @@ impl DepositSettlementPort for StripeClient<'_> {
             Ok(moved) => Ok(moved),
             Err(error @ StripeCallError::Refused { .. }) => match self.payment_intent(id) {
                 Ok(intent) if done.contains(&intent.status.as_str()) => Ok(intent.amount_received),
+                // The read that would say whether the move stands done failed
+                // for now: the row runs again, never failing for good on an
+                // outage (Muse review of the money fixes, 15 Nov).
+                Err(
+                    read @ (StripeCallError::Transport(_)
+                    | StripeCallError::Unavailable { .. }
+                    | StripeCallError::Setup(_)),
+                ) => Err(read.into_failure()),
                 _ => Err(error.into_failure()),
             },
             Err(error) => Err(error.into_failure()),
