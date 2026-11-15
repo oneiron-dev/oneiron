@@ -324,7 +324,7 @@ pub(super) fn measure(
         ),
         Some(dreaming) => {
             let mut round = Round::begin(dreaming, &agent, &http, store.base(), store.watch())?;
-            (round.witness(lives), Some(round))
+            (round.witness(lives)?, Some(round))
         }
     };
     let ingest = Summary::of(&samples, started.elapsed().as_secs_f64());
@@ -346,7 +346,7 @@ pub(super) fn measure(
         }
         _ => None,
     };
-    let dream = round.map(Round::finish);
+    let dream = round.map(Round::finish).transpose()?;
     let (rows, seconds) = ask(plan, &agent, lives, name);
     let disk_mib = store.disk_mib();
     say(&format!("{name} store: {}", store.stop()));

@@ -30,6 +30,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 
+use super::dream::cycle::QUIET;
 use super::phases::loadavg;
 use super::server::{Embedding, loopback_url};
 use corpus::{Life, Pick};
@@ -181,7 +182,16 @@ fn parse(args: &[String]) -> Result<Plan, String> {
             "--judge" => judge = Some(answer::endpoint(flag, value)?),
             "--model-key-file" => key_file = Some(PathBuf::from(value)),
             "--dreamed" => dream_model = Some(answer::endpoint(flag, value)?),
-            "--dream-max-seconds" => dream_max = Some(Duration::from_secs(num(value)? as u64)),
+            "--dream-max-seconds" => {
+                let seconds = num(value)? as u64;
+                if seconds < QUIET.as_secs() {
+                    return Err(format!(
+                        "--dream-max-seconds is at least {}: the Dreamer must stay still that long",
+                        QUIET.as_secs()
+                    ));
+                }
+                dream_max = Some(Duration::from_secs(seconds));
+            }
             _ => return Err(format!("unknown flag {flag}")),
         }
     }

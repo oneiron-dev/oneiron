@@ -967,15 +967,29 @@ struct DreamerStub {
     _runtime: tokio::runtime::Runtime,
 }
 
-/// The first `[T<n> speaker] text` line of an extraction transcript: its
-/// turn label and its text as the call showed it.
-fn first_turn(transcript: &str) -> Option<(&str, &str)> {
+/// The first `[T<n> speaker] text` line of an extraction transcript whose
+/// text has the word `name`: its turn label and its text as the call showed
+/// it.
+fn named_turn<'t>(transcript: &'t str, name: &str) -> Option<(&'t str, &'t str)> {
     transcript.lines().find_map(|line| {
         let (head, text) = line.strip_prefix('[')?.split_once("] ")?;
         let label = head.split(' ').next()?;
         let digits = label.strip_prefix('T')?;
-        (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) && !text.is_empty())
-            .then_some((label, text))
+        (!digits.is_empty()
+            && digits.bytes().all(|b| b.is_ascii_digit())
+            && text
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == name))
+        .then_some((label, text))
+    })
+}
+
+/// The `P<n>` label of an `entity P<n> "<name>"` line the transcript lists.
+fn listed_entity<'t>(transcript: &'t str, name: &str) -> Option<&'t str> {
+    let quoted = serde_json::to_string(name).ok()?;
+    transcript.lines().find_map(|line| {
+        let (label, shown) = line.strip_prefix("entity ")?.split_once(' ')?;
+        (label.starts_with('P') && shown == quoted).then_some(label)
     })
 }
 
@@ -1033,10 +1047,17 @@ fn pack_answer(questions: &[Value]) -> Value {
     answer.into()
 }
 
+/// The person the fixture's L90002 d1s1t07 names ("Remind me to call my
+/// brother Owen on Sunday."): the one turn of the fixture that names a person.
+const PERSON: &str = "Owen";
+
 /// What the Dreamer's stub model answers, by the call's shape (the Dreamer
 /// call map, `lanes/kimi/OPUS-LIVESBENCH/muse-dream-map/map.md`): the bench's
-/// preflight gets `OK`; an extraction lands one claim about a person it
-/// declares, quoting the first turn it was shown whole; the sieve's follower
+/// preflight gets `OK`; an extraction shown the fixture's turn that names
+/// `PERSON` lands one claim about that person, quoting the turn whole: it
+/// declares the person, whom the engine mints only because the turn names
+/// them, or takes the person's label once the transcript lists them; any
+/// other extraction gets no candidate; the sieve's follower
 /// batch reads every span not novel; a typed pack takes each question's first
 /// shown label; a conflict's merged value and a summary get the shape their
 /// call asks for. Anything else gets an empty extraction.
@@ -1053,22 +1074,25 @@ fn dreamer_reply(body: &Value) -> (&'static str, Value) {
         return ("preflight", json!("OK"));
     }
     if system.starts_with("Extract durable memory claims") {
-        let Some((label, text)) = last.as_str().and_then(first_turn) else {
+        let transcript = last.as_str().unwrap_or("");
+        let Some((label, text)) = named_turn(transcript, PERSON) else {
             return ("extraction", json!({"candidates": []}));
         };
-        return (
-            "extraction",
-            json!({
-                "candidates": [{
-                    "subject": "new:P1",
-                    "predicate": "profile.note",
-                    "value": text,
-                    "confidence": 0.9,
-                    "evidence_refs": [{"source": label, "quote": text}],
-                }],
-                "persons": [{"id": "new:P1", "name": "Owen", "evidence_turn_refs": [label]}],
-            }),
-        );
+        let listed = listed_entity(transcript, PERSON);
+        let mut reply = json!({
+            "candidates": [{
+                "subject": listed.unwrap_or("new:P1"),
+                "predicate": "profile.note",
+                "value": text,
+                "confidence": 0.9,
+                "evidence_refs": [{"source": label, "quote": text}],
+            }],
+        });
+        if listed.is_none() {
+            reply["persons"] =
+                json!([{"id": "new:P1", "name": PERSON, "evidence_turn_refs": [label]}]);
+        }
+        return ("extraction", reply);
     }
     if let Some(parts) = last.as_array() {
         let asked = parts
@@ -1175,6 +1199,19 @@ fn the_dreamed_arm_consolidates_before_it_asks() {
     let stub = dreamer_stub();
     let dir = tempfile::tempdir().unwrap();
     let dreamed = format!("{},stub-dreamer", stub.base_url);
+    // A bound shorter than the Dreamer's 30 s quiet could never be met.
+    let (output, report) = lives(
+        dir.path(),
+        &[&fixture()],
+        &["--dreamed", &dreamed, "--dream-max-seconds", "0"],
+    );
+    assert!(!output.status.success());
+    assert!(report.is_none(), "refused before any store is opened");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--dream-max-seconds is at least 30"),
+        "stderr names the bound: {stderr}"
+    );
     let (output, report) = lives(
         dir.path(),
         &[&fixture()],
@@ -1205,21 +1242,21 @@ fn the_dreamed_arm_consolidates_before_it_asks() {
     let dream = &dreamed["dream"];
     assert_eq!(dream["model"]["model"], "stub-dreamer", "{dream}");
     assert_eq!(dream["model"]["reply_model"], "stub-dreamer", "{dream}");
-    // One sitting per life, each opened before its turns and ended after them.
+    // One sitting per life, each seen open before its turns and ended after
+    // them (an arm whose sitting does not open is not measured).
     let sittings = dream["sittings"].as_array().expect("sittings");
     assert_eq!(sittings.len(), 2, "{dream}");
     for (sitting, life) in sittings.iter().zip(["L90001", "L90002"]) {
         assert_eq!(sitting["life"], life, "{sitting}");
-        assert_eq!(sitting["opened"], true, "{sitting}");
         assert!(
             sitting["turns"].as_u64().is_some_and(|n| n > 0),
             "{sitting}"
         );
-        assert_eq!(sitting["hint_errors"], json!([]), "{sitting}");
     }
-    // The round ran before the questions: the Dreamer extracted with the
-    // model, and the claims it landed are counted.
-    assert!(dream["still"]["reached"].is_boolean(), "{dream}");
+    // The round ran before the questions, and the Dreamer was still when
+    // they were asked: it extracted with the model, and the claim it landed
+    // about the person L90002's turn names is counted.
+    assert_eq!(dream["still"]["reached"], true, "{dream}");
     assert!(
         dream["landed"].as_u64().is_some_and(|n| n >= 1),
         "the Dreamer landed a claim: {dream}"

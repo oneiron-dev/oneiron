@@ -21,7 +21,7 @@ const STEP: Duration = Duration::from_millis(500);
 /// How long the Dreamer stays still before a round whose attempts all ended
 /// (or, on a server without the stage lines, one that ran an attempt) counts
 /// as finished.
-const QUIET: Duration = Duration::from_secs(30);
+pub(in crate::load) const QUIET: Duration = Duration::from_secs(30);
 /// How long the bench waits for the sitting's open line after the open
 /// hint; a server that does not log it is waited for this long.
 pub(in crate::load) const OPEN_WAIT: Duration = Duration::from_secs(60);
@@ -279,7 +279,7 @@ pub(in crate::load) struct StillWait {
     /// How long the wait took, in ms.
     pub(in crate::load) waited_ms: f64,
     /// The status read last, when that read answered.
-    pub(super) status: Option<DreamerStatus>,
+    pub(in crate::load) status: Option<DreamerStatus>,
     /// The bound had already run out when the wait began (FIX 21929): the
     /// cycle hit it, and no still arm can follow inside it.
     pub(super) post_bound: bool,

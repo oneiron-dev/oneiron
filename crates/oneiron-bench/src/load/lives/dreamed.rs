@@ -8,7 +8,10 @@
 //! queues the Meso round over that life's conversations. After the last life
 //! the bench waits for the round to start, then until the Dreamer stays still
 //! (`load dream`'s `await_still`), and only then asks the plain arm's
-//! questions, so the two arms' rows sit side by side.
+//! questions, so the two arms' rows sit side by side. A sitting that does not
+//! open, a hint the server refuses, a round that does not start or a Dreamer
+//! not still within `--dream-max-seconds` makes the arm `not_ready` before it
+//! asks: its rows would not measure a consolidated store.
 //!
 //! Spawned, the model key (`--model-key-file`, when given) goes to the
 //! server's environment only, and the owner's stopped-vault grant routes the
@@ -34,7 +37,7 @@ use reqwest::blocking::Client;
 use serde::Serialize;
 
 use super::super::client::Agent;
-use super::super::dream::cycle::{self, DreamerStatus, OPEN_WAIT, StillWait};
+use super::super::dream::cycle::{self, DreamerStatus, OPEN_WAIT, QUIET, StillWait};
 use super::super::dream::server_log::{Scan, Tail};
 use super::super::dream::{RUST_LOG, proof, setup};
 use super::super::server::Vault;
@@ -259,16 +262,13 @@ impl Watch {
     }
 }
 
-/// One life's sitting.
+/// One life's sitting, opened before its first turn and ended after its last.
 #[derive(Serialize)]
 struct Sitting {
     life: String,
-    /// The server applied the open before the life's first turn.
-    opened: bool,
-    /// From the open hint to the open seen (or the wait's end), in ms.
+    /// From the open hint to the open seen, in ms.
     open_ms: f64,
     turns: usize,
-    hint_errors: Vec<String>,
 }
 
 /// The dreamed arm's model, as the report pins it.
@@ -289,8 +289,7 @@ pub(super) struct Dream {
     /// The Dreamer's status once it ran, before the first sitting.
     ready: DreamerStatus,
     sittings: Vec<Sitting>,
-    /// An attempt started after the last sitting's end, within `OPEN_WAIT`.
-    round_started: bool,
+    /// The wait for a still Dreamer, after a round started.
     still: StillWait,
     claims_before: usize,
     claims_after: usize,
@@ -343,40 +342,37 @@ impl<'r> Round<'r> {
     }
 
     /// Witnesses each life in a sitting of its own; every witness's sample.
-    pub(super) fn witness(&mut self, lives: &[Life]) -> Vec<Sample> {
+    /// A refused hint, or an open not seen within `OPEN_WAIT`, ends the arm:
+    /// that life's turns would join no sitting of their own.
+    pub(super) fn witness(&mut self, lives: &[Life]) -> Result<Vec<Sample>, String> {
         let mut samples = Vec::new();
         for life in lives {
-            let mut sitting = Sitting {
-                life: life.key.clone(),
-                opened: false,
-                open_ms: 0.0,
-                turns: 0,
-                hint_errors: Vec::new(),
-            };
             let mark = self.watch.mark(self.origin);
             let asked = Instant::now();
-            match cycle::hint(self.agent, self.http, self.base, "open") {
-                Ok(()) => sitting.opened = self.watch.await_open(mark, self.origin),
-                Err(error) => sitting.hint_errors.push(error),
-            }
-            sitting.open_ms = asked.elapsed().as_secs_f64() * 1000.0;
-            if !sitting.opened {
-                say(&format!(
-                    "{}: no sitting open seen; witnessing anyway",
-                    life.key
+            cycle::hint(self.agent, self.http, self.base, "open")
+                .map_err(|error| format!("{}: the open hint failed: {error}", life.key))?;
+            if !self.watch.await_open(mark, self.origin) {
+                return Err(format!(
+                    "{}: no sitting open seen within {} s of the open hint",
+                    life.key,
+                    OPEN_WAIT.as_secs()
                 ));
             }
+            let mut sitting = Sitting {
+                life: life.key.clone(),
+                open_ms: asked.elapsed().as_secs_f64() * 1000.0,
+                turns: 0,
+            };
             for turn in &life.turns {
                 samples.push(witness(self.agent, turn));
                 sitting.turns += 1;
             }
             self.before_end = cycle::status(self.agent, self.http, self.base).unwrap_or_default();
-            if let Err(error) = cycle::hint(self.agent, self.http, self.base, "end") {
-                sitting.hint_errors.push(error);
-            }
+            cycle::hint(self.agent, self.http, self.base, "end")
+                .map_err(|error| format!("{}: the end hint failed: {error}", life.key))?;
             self.sittings.push(sitting);
         }
-        samples
+        Ok(samples)
     }
 
     /// Whether an attempt starts (or runs) after the last sitting's end,
@@ -396,9 +392,17 @@ impl<'r> Round<'r> {
     }
 
     /// Waits for the round, then for a still Dreamer within the arm's bound,
-    /// and counts the claims it landed.
-    pub(super) fn finish(mut self) -> Dream {
-        let round_started = self.await_round(&self.before_end);
+    /// and counts the claims it landed. A round that does not start within
+    /// `OPEN_WAIT`, or a Dreamer not still by the bound, ends the arm: its
+    /// questions would not be asked of a consolidated store, and the
+    /// Dreamer's work would run under their timings.
+    pub(super) fn finish(mut self) -> Result<Dream, String> {
+        if !self.await_round(&self.before_end) {
+            return Err(format!(
+                "no Dreamer round started within {} s of the last sitting's end",
+                OPEN_WAIT.as_secs()
+            ));
+        }
         let deadline = Instant::now() + self.dreaming.max_wait;
         let still = cycle::await_still(
             self.agent,
@@ -414,6 +418,17 @@ impl<'r> Round<'r> {
             still.reached,
             still.waited_ms / 1000.0
         ));
+        if !still.reached {
+            return Err(format!(
+                "the Dreamer was not still for {} s within --dream-max-seconds {} (last state {})",
+                QUIET.as_secs(),
+                self.dreaming.max_wait.as_secs(),
+                still
+                    .status
+                    .as_ref()
+                    .map_or("unread", |status| status.state.as_str())
+            ));
+        }
         let (claims_before, claims_after, landed, list_cut, list_error) =
             match (&self.listed_before, &proof::listed(self.agent)) {
                 (Ok((before, cut_before)), Ok((after, cut_after))) => (
@@ -425,7 +440,7 @@ impl<'r> Round<'r> {
                 ),
                 (Err(error), _) | (_, Err(error)) => (0, 0, 0, false, Some(error.clone())),
             };
-        Dream {
+        Ok(Dream {
             model: Pinned {
                 base_url: self.dreaming.endpoint.base_url.clone(),
                 model: self.dreaming.endpoint.model.clone(),
@@ -434,13 +449,12 @@ impl<'r> Round<'r> {
             },
             ready: self.ready,
             sittings: self.sittings,
-            round_started,
             still,
             claims_before,
             claims_after,
             landed,
             list_cut,
             list_error,
-        }
+        })
     }
 }

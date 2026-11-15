@@ -224,11 +224,14 @@ $B/oneiron-bench load lives --server $B/oneiron-server --embedder none \
   the life's turns and ends it, so its close queues the round over that
   life's conversations. After the last life the bench waits for the round to
   start, then until the Dreamer has been still for 30 s (bounded by
-  `--dream-max-seconds`), and only then asks. The arm's ingest wall time
-  includes the sittings' open waits. Its system gains `dream`: the pinned
-  model, the Dreamer's status when ready, each sitting (opened, open ms,
-  turns, hint errors), whether the round started, the still wait, and the
-  claims listed before the first sitting and after the wait (`landed`, with
+  `--dream-max-seconds`, at least 30), and only then asks. A sitting not seen
+  open within 60 s of its open, a hint the server refuses, a round that does
+  not start within 60 s of the last end, or a Dreamer not still by the bound
+  makes the arm `not_ready` with that reason before it asks; the other arms
+  still run. The arm's ingest wall time includes the sittings' open waits.
+  Its system gains `dream`: the pinned model, the Dreamer's status when
+  ready, each sitting (open ms, turns), the still wait, and the claims
+  listed before the first sitting and after the wait (`landed`, with
   `list_cut` when a list hit its 1,000-row limit). Spawned, the
   `--model-key-file` key, when given, goes to the server's environment only
   and the model is routed as a third party's (`openai-compat`, `dreamer grant
