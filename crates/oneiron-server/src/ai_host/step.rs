@@ -908,10 +908,11 @@ impl StepRunner {
             hook_wait: false,
             error: Error::InvalidConfig(format!("workflow step budget: {denied:?}")),
         };
-        // A run the owner approved a one-off overdraft for, answering its
-        // run-budget ask, widens each of its meters by that cap once, fresh or
-        // restored, until it is held again (ARCH-0026 depletion ladder;
-        // RUNBUDGET-OVERDRAFT).
+        // A run the owner approved a one-off overdraft for, or added dollars
+        // to, answering its run-budget ask, widens each of its meters by that
+        // cap (the units bought) once, fresh or restored, until it is held
+        // again (ARCH-0026 depletion ladder; RUNBUDGET-OVERDRAFT,
+        // RUNBUDGET-ADDFUNDS-METER).
         let overdraft = dispatcher.run_overdraft(attempt.id)?;
         let guard = if let Some(saved) = &continuation {
             live_lease::restore_try_meter(saved.progress.budget.clone(), overdraft.as_ref())
