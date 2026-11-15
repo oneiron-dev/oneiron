@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "oneiron",
+  "description": "Your Oneiron vault as your coding agent's memory: the vault's tools over MCP, and a skill that says when to recall and what to save.",
+  "author": {
+    "name": "Oneiron"
+  },
+  "homepage": "https://github.com/oneiron-dev/oneiron",
+  "repository": "https://github.com/oneiron-dev/oneiron",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp", "oneiron"]
+}
