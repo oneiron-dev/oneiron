@@ -466,6 +466,12 @@ impl HttpEmbedder {
         Ok(())
     }
 
+    /// The GPU pool this endpoint's document batches route through, once it
+    /// is bound ([`Self::route_batches_through`]).
+    pub(crate) fn batch_pool(&self) -> Option<&GpuPool> {
+        self.pods.get().map(|pods| &pods.pool)
+    }
+
     /// Drops the tail of an over-long input at a character boundary.
     fn truncate(&self, text: String) -> String {
         if text.len() <= self.max_input_chars {

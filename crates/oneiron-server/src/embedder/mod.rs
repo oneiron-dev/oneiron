@@ -299,6 +299,15 @@ impl EmbedderSlot {
         self.ready.get()
     }
 
+    /// The GPU pool the serving endpoint provider's document batches route
+    /// through ([`route_batches_through`]); `None` for any other provider.
+    pub(crate) fn batch_pool(&self) -> Option<crate::runtime::GpuPool> {
+        self.ready()
+            .and_then(|ready| ready.as_endpoint())
+            .and_then(endpoint::HttpEmbedder::batch_pool)
+            .cloned()
+    }
+
     /// The provider once the vault has admitted it, for a caller that embeds
     /// its own rows: an off-record room's epoch summaries, which take no
     /// `pe:` marker for the worker to fill.

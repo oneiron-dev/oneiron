@@ -224,6 +224,17 @@ impl GpuRegistry {
     pub fn release(&mut self, id: u64) -> bool {
         self.leases.remove(&id).is_some()
     }
+    /// Whether every pod keeps hours and `now` is outside each one's, so no
+    /// pod takes a new lease at this hour, whatever its health. A pod that
+    /// keeps no hours is open at any hour; a registry with no pods is never
+    /// outside them.
+    pub fn outside_hours(&self, now: u64) -> bool {
+        !self.pods.is_empty()
+            && self
+                .pods
+                .values()
+                .all(|pod| pod.hours.as_ref().is_some_and(|hours| !hours.contains(now)))
+    }
 }
 
 /// The routing host, not the worker, binds the holding account to a GPU job.

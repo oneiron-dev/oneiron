@@ -12,6 +12,7 @@ pub(crate) mod home_vectors;
 pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
+mod pod_hours;
 mod refusal;
 pub use refusal::is_device_local_row_refusal;
 #[cfg(feature = "sync")]
@@ -49,6 +50,7 @@ pub(crate) use media::text_vector_sources_in_txn;
 pub use media::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
 };
+pub use pod_hours::{PodHoursClock, PodHoursWait};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
     apply_ops_session_projected, discard_repo_derived_index_copy_in_txn,
@@ -223,6 +225,7 @@ struct LeaseBatch {
     egress_denied: usize,
     egress_no_verdict: usize,
     device_local: usize,
+    held_for_pod_hours: usize,
 }
 
 /// One actually-filled measured item: the leased source it filled, with the actual
@@ -255,6 +258,10 @@ pub struct PendingEmbeddingReconcileReport {
     /// Rows a device-local world keeps (DEC-0005): embedded on device, or
     /// left pending unsent while no embedder on this device takes them.
     pub device_local: usize,
+    /// Rows the owner's wait holds pending, unleased and unsent while every
+    /// GPU pod is outside its hours (NIGHT-BACKFILL-HOLD): backfill only, by
+    /// default.
+    pub held_for_pod_hours: usize,
     /// Actually-filled measured items, in fill order, for the operational
     /// `EmbedTokens` meter. Stale/deferred/reused/skipped/failed fills and
     /// unmeasured remote fills have no entry.
@@ -270,6 +277,7 @@ pub struct PendingEmbeddingReconciler {
     lease_duration_ms: u64,
     remote_rung: Option<RemoteRung>,
     rung_role: routing::RungRole,
+    pod_hours: Option<std::sync::Arc<dyn PodHoursClock>>,
 }
 
 #[cfg(feature = "sync")]
@@ -286,6 +294,7 @@ impl PendingEmbeddingReconciler {
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
             remote_rung: None,
             rung_role: routing::RungRole::Fallback,
+            pod_hours: None,
         }
     }
 
@@ -361,6 +370,17 @@ impl PendingEmbeddingReconciler {
         Ok(self)
     }
 
+    /// Reads `clock`, the GPU pods the primary's batches route through, once
+    /// per pass: while every pod is outside its hours, the queued jobs the
+    /// owner's wait names (backfill only, by default) stay pending, unleased
+    /// and unsent, and a pass inside the hours embeds them
+    /// (NIGHT-BACKFILL-HOLD). Without it no job waits.
+    #[must_use]
+    pub fn with_pod_hours(mut self, clock: std::sync::Arc<dyn PodHoursClock>) -> Self {
+        self.pod_hours = Some(clock);
+        self
+    }
+
     pub fn reconcile_once(&self) -> Result<PendingEmbeddingReconcileReport> {
         self.reconcile_once_at(crate::unix_millis_now())
     }
@@ -401,6 +421,7 @@ impl PendingEmbeddingReconciler {
             egress_denied: batch.egress_denied,
             egress_no_verdict: batch.egress_no_verdict,
             device_local: batch.device_local,
+            held_for_pod_hours: batch.held_for_pod_hours,
             ..PendingEmbeddingReconcileReport::default()
         };
         Ok(batch.work)
@@ -602,6 +623,13 @@ impl PendingEmbeddingReconciler {
         let primary_on_device = self.embedder.locality() == EmbedderLocality::OnDevice;
         let primary_endpoint = self.embedder.endpoint();
         let rung_endpoint = self.remote_rung.as_ref().map(RemoteRung::endpoint);
+        // The pods' hours are read once, before the writer: a job the wait
+        // names is held before its payload is read.
+        let wait = PodHoursWait::default();
+        let outside_pod_hours = self
+            .pod_hours
+            .as_ref()
+            .is_some_and(|clock| clock.outside_pod_hours());
         self.vault.with_write_txn_grouped(|wtxn| {
             let flagged_primary =
                 crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
@@ -621,6 +649,10 @@ impl PendingEmbeddingReconciler {
                 }
                 if batch.work.len() >= self.batch_size {
                     break;
+                }
+                if outside_pod_hours && wait.holds(job.priority) {
+                    batch.held_for_pod_hours += 1;
+                    continue;
                 }
                 let Some((input, entity_type)) =
                     pending_input_in_txn(&self.vault, wtxn, &job.entity_id)?

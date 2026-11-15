@@ -531,6 +531,15 @@ impl GpuPool {
     }
 }
 
+/// The embedding reconciler reads the pods' hours once per pass: while every
+/// pod is outside them, the backfill the owner's wait names stays pending
+/// instead of going to the endpoint (NIGHT-BACKFILL-HOLD).
+impl oneiron::embed::PodHoursClock for GpuPool {
+    fn outside_pod_hours(&self) -> bool {
+        self.registry().outside_hours(unix_seconds_now())
+    }
+}
+
 /// A live batch lease on one pod.
 pub struct GpuLeaseGuard {
     pool: GpuPool,

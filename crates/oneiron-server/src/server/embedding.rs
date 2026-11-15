@@ -237,6 +237,11 @@ impl SyncServer {
             if let Some(remote) = slot.remote_rung(server.run_receipts())? {
                 reconciler = reconciler.with_remote_rung(remote)?;
             }
+            // Batches through a GPU pool: the backfill waits for its pods'
+            // hours instead of going to the endpoint (NIGHT-BACKFILL-HOLD).
+            if let Some(pool) = slot.batch_pool() {
+                reconciler = reconciler.with_pod_hours(Arc::new(pool));
+            }
             Ok(reconciler)
         })
         .await
@@ -392,6 +397,7 @@ impl SyncServer {
             egress_denied = report.egress_denied,
             egress_no_verdict = report.egress_no_verdict,
             remote_failed_fallback_local = report.remote_failed_fallback_local,
+            held_for_pod_hours = report.held_for_pod_hours,
             truncations,
             "embedding reconcile pass"
         );
