@@ -9,7 +9,7 @@
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test foldpast_tail_scope`.
-#![cfg(all(feature = "test-support", oneiron_test_support))]
+#![cfg(all(feature = "test-support", feature = "test-hooks", oneiron_test_support))]
 
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{
@@ -49,6 +49,39 @@ fn fresh_device(seed: u8, roles: u16) -> DeviceAuthority {
         },
         tier: AuthorityTier::Software,
         roles,
+    }
+}
+
+/// Writes a newer clean attested image on `home` and adopts it on
+/// `adopting`, which adopted an older one.
+fn adopt_newer_image(home: &Vault, issuer: &HostSlipIssuer, adopting: &Vault) {
+    let head = home
+        .write_authority_checkpoint_v2(issuer)
+        .expect("write newer image");
+    let image: AuthorityCheckpointV2 = home
+        .authority_checkpoint_v2(&head)
+        .expect("read newer image")
+        .expect("newer image some");
+    let bytes = image.encode().expect("newer image encodes");
+    let attestations = home
+        .authority_checkpoint_attestations(&head)
+        .expect("newer attestations");
+    let pin = home
+        .authority_checkpoint_pin([0x5a; 32])
+        .expect("newer pin")
+        .expect("newer pin some");
+    match image.building_pin {
+        Some(root) => {
+            let fixed = pin.digest().expect("pin digest");
+            adopting
+                .adopt_recovered_authority_checkpoint(&pin, &bytes, &attestations, fixed, root)
+                .expect("adopt newer image");
+        }
+        None => {
+            adopting
+                .adopt_authority_checkpoint(&pin, &bytes, &attestations)
+                .expect("adopt newer image");
+        }
     }
 }
 
@@ -751,6 +784,41 @@ fn binding_an_actor_a_covered_row_bound_still_needs_history() {
         home_fold.valid_entries.contains(&hash),
         "home accepts a second key's binding of the same actor"
     );
+    let err = fixture
+        .adopting
+        .authority_fold()
+        .expect_err("adopting needs history");
+    assert!(
+        matches!(
+            err,
+            Error::Record(RecordError::AuthorityHistoryRequired { .. })
+        ),
+        "history required, got {err:?}"
+    );
+}
+
+#[test]
+fn readoption_keeps_no_receipt_for_a_row_the_prior_image_covered() {
+    let (fixture, confirm) = cosigned_confirm_fixture();
+    // As a vault that adopted before adoptions kept receipts.
+    assert!(
+        forget_first_seen_receipt(&fixture.adopting, &confirm).expect("forget the receipt"),
+        "adoption kept a first-seen receipt of the covered approval"
+    );
+    let unrelated = sign_next_host_op(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xE7)),
+    )
+    .expect("sign unrelated confirm");
+    put_signed_entries(&fixture.home, &[unrelated]).expect("store unrelated confirm");
+    adopt_newer_image(&fixture.home, &fixture.issuer, &fixture.adopting);
+    assert!(
+        !forget_first_seen_receipt(&fixture.adopting, &confirm).expect("probe the receipt"),
+        "the newer adoption kept no receipt for a row the prior image covered"
+    );
+    revoke_agent(&fixture);
+    fixture.home.authority_fold().expect("home folds revoke");
     let err = fixture
         .adopting
         .authority_fold()
