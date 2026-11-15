@@ -782,8 +782,9 @@ impl ScopedReadActorKey {
     /// The grant basis this key reads under, as a saved lane keeps it beside
     /// its frozen Scope (FIX 14344): its owner standing (the vault owner's
     /// floor, a narrower credential's owner exemption, or neither; each
-    /// proved again at every read) and its grant gate (none, the
-    /// relationship-only gate, or the access gate).
+    /// proved again at every read), its grant gate (none, the
+    /// relationship-only gate, or the access gate) and the principal that
+    /// gate admitted rows on the grants of.
     pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
         use super::frozen::{NativeGrantGate, NativeOwnerStanding};
         let owner_standing = if self.owner.is_some() {
@@ -803,6 +804,7 @@ impl ScopedReadActorKey {
         super::frozen::NativeReadBasis {
             owner_standing,
             grant_gate,
+            grant_principal: self.principal_ref.filter(|_| self.enforce_access_grants),
         }
     }
 
@@ -820,6 +822,9 @@ impl ScopedReadActorKey {
     ///   owner as principal where an ungated key held the floor, and it
     ///   closes unscoped rows where either gate closed them. A key a gate
     ///   already binds keeps its own principal, or none (Astra F1 on #8061).
+    /// - Under the saved key's gate it reads on the grants of that gate's
+    ///   principal alone, and on none where the two keys' principals differ
+    ///   or the saved gate was bound to none (Sol F5 on #8065).
     ///
     /// A key no gate bound held no exemption to keep: its lane, rebuilt over
     /// a key a gate binds, reads only the relationship rows its principal's
@@ -851,6 +856,9 @@ impl ScopedReadActorKey {
         let neither_gated = key_ungated && saved_ungated;
         if key_ungated && (lost_floor.is_some() || !neither_gated) {
             self.principal_ref = self.principal_ref.or(floor_owner);
+        }
+        if !saved_ungated && self.principal_ref != basis.grant_principal {
+            self.principal_ref = None;
         }
         if neither_gated {
             self.owner_exemption = exemption_owner;

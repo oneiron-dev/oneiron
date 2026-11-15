@@ -102,6 +102,10 @@ pub(crate) struct NativeReadBasis {
     pub(crate) owner_standing: NativeOwnerStanding,
     /// The grant gate the live key read under.
     pub(crate) grant_gate: NativeGrantGate,
+    /// The principal on whose grants that gate admitted a row; `None` under
+    /// no gate, and under a gate bound to no principal, which admitted no
+    /// row on a grant (Sol F5 on #8065).
+    pub(crate) grant_principal: Option<EntityId>,
 }
 
 /// The owner standing a saved lane's live key held ([`NativeReadBasis`]).
