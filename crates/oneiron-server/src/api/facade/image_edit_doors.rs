@@ -66,10 +66,11 @@ pub(in crate::api::facade) fn image_editor(
     })
 }
 
-/// `vault.artifacts.image.edit`: the caller's edit of one image artifact it
-/// reads, its PNG waiting for Keep or held for a node. The organ calls run
-/// on a blocking thread. Beside the answer, the rows its reads listed and the
-/// artifact it read.
+/// `vault.artifacts.image.edit`: the caller's edit of one version of an
+/// image artifact its lane reads whole, its PNG waiting for Keep or held for
+/// a node. The organ calls run on a blocking thread and read that version
+/// alone. Beside the answer, the rows its reads listed and the version it
+/// read: the artifact, the version's CLAIM and its content's ASSET.
 pub(crate) async fn vault_artifacts_image_edit(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -83,17 +84,19 @@ pub(crate) async fn vault_artifacts_image_edit(
     // the owner's other nodes.
     let router = crate::handler::mesh::organ_router(server);
     let sight = source_sight(auth);
-    let source = EntityId::from_hex(&input.artifact_ref).ok();
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |server, _, memory| {
             let ImageExportFormat::Png = input.format;
-            let (artifact, actor) =
-                memory.artifacts_edit_admission(&input.artifact_ref, &input.run_ref)?;
+            let (admitted, actor) = memory.artifacts_edit_admission(
+                &input.artifact_ref,
+                input.version,
+                &input.run_ref,
+            )?;
             // The owner's own edit keeps the host's receipt as built.
             let submitter = (!memory.is_vault_owner()?).then_some(caller.0);
             let edit = ImageEdit {
-                artifact,
-                version: input.version,
+                artifact: admitted.artifact,
+                version: Some(admitted.version),
                 ops: input.ops.iter().copied().map(image_op).collect(),
                 run_ref: input.run_ref,
                 trigger: None,
@@ -103,20 +106,23 @@ pub(crate) async fn vault_artifacts_image_edit(
                 class: CallClass::Interactive,
                 deadline: CALL_DEADLINE,
             };
-            edit_image(&router, server.vault(), &edit, actor, &AskHandlers::none())
-                .map(edit_answer)
-                .map_err(|refusal| refusal_error(VERB, refusal))
+            let edited = edit_image(&router, server.vault(), &edit, actor, &AskHandlers::none())
+                .map_err(|refusal| refusal_error(VERB, refusal))?;
+            Ok((edit_answer(edited), admitted.sources()))
         })
         .await;
-    if answer.is_ok() {
-        listed.extend(source);
-    }
+    let answer = answer.map(|(answer, sources)| {
+        listed.extend(sources);
+        answer
+    });
     (answer, listed)
 }
 
-/// `vault.artifacts.image.preview`: the caller's preview of one image
-/// artifact it reads, drawn by one organ call on a blocking thread. Beside
-/// the answer, the rows its reads listed and the artifact it read.
+/// `vault.artifacts.image.preview`: the caller's preview of one version of
+/// an image artifact its lane reads whole, drawn from that version alone by
+/// one organ call on a blocking thread. Beside the answer, the rows its
+/// reads listed and the version it read: the artifact, the version's CLAIM
+/// and its content's ASSET.
 pub(crate) async fn vault_artifacts_image_preview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -128,17 +134,17 @@ pub(crate) async fn vault_artifacts_image_preview(
     };
     let router = crate::handler::mesh::organ_router(server);
     let sight = source_sight(auth);
-    let source = EntityId::from_hex(&input.artifact_ref).ok();
     let (answer, mut listed) = credential_listing(
         server,
         auth,
         caller,
         PREVIEW_VERB,
         move |server, _, memory| {
-            let artifact = memory.artifacts_preview_admission(&input.artifact_ref)?;
+            let admitted =
+                memory.artifacts_preview_admission(&input.artifact_ref, input.version)?;
             let preview = ImagePreview {
-                artifact,
-                version: input.version,
+                artifact: admitted.artifact,
+                version: Some(admitted.version),
                 ops: input.ops.iter().copied().map(image_op).collect(),
                 max_side: input.max_side,
                 sight,
@@ -146,15 +152,16 @@ pub(crate) async fn vault_artifacts_image_preview(
                 class: CallClass::Interactive,
                 deadline: CALL_DEADLINE,
             };
-            preview_image(&router, server.vault(), &preview, &AskHandlers::none())
-                .map(preview_answer)
-                .map_err(|refusal| refusal_error(PREVIEW_VERB, refusal))
+            let previewed = preview_image(&router, server.vault(), &preview, &AskHandlers::none())
+                .map_err(|refusal| refusal_error(PREVIEW_VERB, refusal))?;
+            Ok((preview_answer(previewed), admitted.sources()))
         },
     )
     .await;
-    if answer.is_ok() {
-        listed.extend(source);
-    }
+    let answer = answer.map(|(answer, sources)| {
+        listed.extend(sources);
+        answer
+    });
     (answer, listed)
 }
 

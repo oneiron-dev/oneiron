@@ -446,6 +446,33 @@ impl Memory<'_> {
         Err(MemoryError::from(Error::EntityNotFound))
     }
 
+    /// Refuses unless a handle bound to a read credential reads `artifact`
+    /// and `rows`, the rows one of its versions is, all judged in one
+    /// snapshot by the lane, as the export door admits a version for a
+    /// credential with record caveats (FIX 7645). The artifact covers its
+    /// own version rows for the records check alone (FIX 8245); every other
+    /// check judges each row. A row the lane does not read is absent. A
+    /// handle bound to no credential reads as its actor's own verbs do.
+    pub(crate) fn require_credential_version_reads(
+        &self,
+        artifact: EntityId,
+        rows: &[EntityId],
+    ) -> MemoryResult<()> {
+        if self.read_proof.is_none() {
+            return Ok(());
+        }
+        let ids: Vec<EntityId> = std::iter::once(artifact)
+            .chain(rows.iter().copied())
+            .collect();
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_artifact_records_cover(&[artifact]);
+        if lane.all_refs_readable(&ids).map_err(MemoryError::from)? {
+            return Ok(());
+        }
+        Err(MemoryError::from(Error::EntityNotFound))
+    }
+
     /// Whether the bound actor is the vault owner now: the local embedded
     /// owner, or a human whose owner binding verifies. A row the owner may
     /// read beside its caller asks it (FIX 2279).
