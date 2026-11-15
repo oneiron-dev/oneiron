@@ -138,7 +138,7 @@ pub(crate) enum ArchivedSideGroup {
     Team,
     /// Customer hold protection and its supporting history.
     LegalHold,
-    /// Standing grants, one-use markers and parked widen proposals.
+    /// Standing grants and one-use markers.
     Consent,
     /// Voice identity and reference-render consent.
     Voice,
@@ -240,8 +240,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
             Some(Group::LegalHold)
         }
         name if name == side_table::CONSENT_STANDING_GRANT.name
-            || name == side_table::CONSENT_APPROVE_ONCE_MARKER.name
-            || name == side_table::CONSENT_WIDEN_PROPOSAL.name =>
+            || name == side_table::CONSENT_APPROVE_ONCE_MARKER.name =>
         {
             Some(Group::Consent)
         }

@@ -4,8 +4,9 @@
 //! recomputed grant digest, its live-row writer checks hold, and its stamp actor is a live
 //! `PERSON`; revoked rows install as inert history. Each archived
 //! `CONSENT_APPROVE_ONCE_MARKER` row lands when its state byte is available or spent.
-//! Widen rows land through the worker beside the private widen table, which this dispatcher
-//! calls in input order. No landing mints a grant, writes a receipt, or notifies; the shared
+//! A `CONSENT_WIDEN_PROPOSAL` row has no landing: the export's credential pass holds every
+//! such row out of an archive, because a proposal's canonical delta is a MessagePack value
+//! kept as a byte array. No landing mints a grant, writes a receipt, or notifies; the shared
 //! archive installer queues the consent-answer refresh after commit.
 
 use super::codec::GRANTS;
@@ -38,11 +39,6 @@ pub(crate) fn land_archived_consent_rows_in_txn(
             }
             name if name == side_table::CONSENT_APPROVE_ONCE_MARKER.name => {
                 land_archived_approve_once_row_in_txn(vault, txn, permit, row)?
-            }
-            name if name == side_table::CONSENT_WIDEN_PROPOSAL.name => {
-                crate::consent::widen::archive_restore::land_archived_widen_row_in_txn(
-                    vault, txn, permit, row,
-                )?
             }
             // The dispatcher never sends a foreign envelope here; without an owning table the
             // envelope has no decoding.

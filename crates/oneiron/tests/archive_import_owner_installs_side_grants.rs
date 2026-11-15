@@ -22,10 +22,9 @@
 //! * `a_revoked_standing_grant_restores_revoked_and_authorizes_nothing`: the owner import
 //!   installs the revoked CONSENT_STANDING_GRANT row live, the restored row reads Revoked,
 //!   no active grant survives, and the bound act evaluates Ask.
-//! * `an_unexpired_widen_proposal_restores_unresolved_and_an_expired_one_is_held_back`: an
-//!   unresolved unexpired CONSENT_WIDEN_PROPOSAL row installs and reads unresolved with no
-//!   settlement, while an unresolved expired one reports one held-back row with reason
-//!   `invalid_value` and installs nothing.
+//!
+//! No test covers CONSENT_WIDEN_PROPOSAL: the export's credential pass holds every row of
+//! that table out of an archive, so the owner's restore has no landing for it.
 //!
 //! Every vault a test deletes from installs a process-memory device keystore first: the
 //! delete's plan phase loads the install signing key, so a delete without one fails.
@@ -40,7 +39,6 @@ mod retained_side_rows;
 
 use std::io::Cursor;
 
-use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
 use oneiron::consent::{
     ActionClass, ActionEnvelope, ActorBound, ComposedEffect, ConsentDecision, ConsentGrantStatus,
     EffectFacts, GrantBound,
@@ -89,20 +87,12 @@ fn put_person_at(vault: &Vault, id: EntityId, name: &[u8], occurred: TimeRange, 
         .expect("the vault stores the fixture person");
 }
 
-/// Puts a PERSON row for `id` holding `name`, stamped now.
-fn put_person(vault: &Vault, id: EntityId, name: &[u8]) {
-    let now = vault.now_recorded_at();
-    put_person_at(
-        vault,
-        id,
-        name,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-    );
-}
+/// The stamps of the 2026-03 sync window (`sync_edge_kind_gating.rs`'s month). A source and a
+/// preseeded destination both write the room and its persons at these, so each destination
+/// row is the row the archive carries: the import refuses a stored row of the same id that
+/// differs, and never overwrites it.
+const WINDOW_OCCURRED: TimeRange = TimeRange { start: 1, end: 1 };
+const WINDOW_LEARNED_AT: u64 = 1_772_400_000;
 
 /// Installs a process-memory device keystore, as a host does after each open:
 /// the delete's plan phase loads the install signing key before its first
@@ -135,29 +125,30 @@ fn assert_admin_semantics(
     );
 }
 
-/// Builds the room seating owen and yuki with yuki holding the Admin grant, at
-/// `occurred`/`learned_at`: the vault owner creates the room over owen (so the creator's
-/// implicit Owner never falls on owen), joins yuki second, and grants the role. Returns the
-/// room, owen and yuki. Asserts the grant's semantic effect on the source.
-fn build_admin_grant_room(
-    source: &Vault,
+/// Seats owen and yuki in a group room at `occurred`/`learned_at`, with no role granted: the
+/// vault owner creates the room empty (so the creator's implicit Owner never falls on owen,
+/// and no initial member's entry mints a reserved TASK fact, which the actorless import
+/// refuses and whose id two vaults would share), then joins owen and yuki. Returns the room,
+/// owen and yuki.
+fn seat_room(
+    vault: &Vault,
     occurred: TimeRange,
     learned_at: u64,
 ) -> (EntityId, EntityId, EntityId) {
     let room = fixed_id(0x6B);
     let owen = fixed_id(0x6C);
     let yuki = fixed_id(0x6D);
-    put_person_at(source, owen, b"owen", occurred, learned_at);
-    put_person_at(source, yuki, b"yuki", occurred, learned_at);
-    let owner = source
+    put_person_at(vault, owen, b"owen", occurred, learned_at);
+    put_person_at(vault, yuki, b"yuki", occurred, learned_at);
+    let owner = vault
         .ensure_embedded_owner_actor()
-        .expect("the source names its embedded owner actor");
-    source
+        .expect("the vault names its embedded owner actor");
+    vault
         .create_conversation_with_text(
             room,
             &ConversationBody {
                 kind: ConversationKind::Group,
-                member_ids: vec![owen],
+                member_ids: vec![],
                 ..Default::default()
             },
             WriteActor::new(owner, EdgeActorClass::Human),
@@ -165,16 +156,33 @@ fn build_admin_grant_room(
             learned_at,
             &[],
         )
-        .expect("the owner creates the group room over owen");
-    source
-        .join_member(
-            room,
-            yuki,
-            WriteActor::new(owner, EdgeActorClass::Human),
-            occurred.start,
-            HistoryChoice::Share,
-        )
-        .expect("yuki joins the room second");
+        .expect("the owner creates the empty group room");
+    for (member, name) in [(owen, "owen"), (yuki, "yuki")] {
+        vault
+            .join_member(
+                room,
+                member,
+                WriteActor::new(owner, EdgeActorClass::Human),
+                occurred.start,
+                HistoryChoice::Share,
+            )
+            .unwrap_or_else(|err| panic!("{name} joins the room: {err:?}"));
+    }
+    (room, owen, yuki)
+}
+
+/// Builds the room seating owen and yuki ([`seat_room`]) with yuki holding the Admin grant,
+/// at `occurred`/`learned_at`. Returns the room, owen and yuki. Asserts the grant's semantic
+/// effect on the source.
+fn build_admin_grant_room(
+    source: &Vault,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> (EntityId, EntityId, EntityId) {
+    let (room, owen, yuki) = seat_room(source, occurred, learned_at);
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("the source names its embedded owner actor");
     source
         .set_room_role(
             room,
@@ -203,35 +211,11 @@ fn room_source_with_admin_grant() -> (tempfile::TempDir, Vault, EntityId, Entity
     (dir, source, room, owen, yuki)
 }
 
-/// Seats owen and yuki in `room` on a fresh vault with empty roles, through public doors: the
-/// membership the import's room guard and the grant landing read, without the grant itself.
-/// The vault owner creates and joins so owen stays a plain Member.
-fn preseed_destination_room(dest: &Vault, room: EntityId, owen: EntityId, yuki: EntityId) {
-    put_person(dest, owen, b"owen");
-    put_person(dest, yuki, b"yuki");
-    let owner = dest
-        .ensure_embedded_owner_actor()
-        .expect("the destination names its embedded owner actor");
-    let at = dest.now_recorded_at();
-    dest.create_conversation(
-        room,
-        &ConversationBody {
-            kind: ConversationKind::Group,
-            member_ids: vec![owen],
-            ..Default::default()
-        },
-        WriteActor::new(owner, EdgeActorClass::Human),
-        at,
-    )
-    .expect("the owner seats the destination room");
-    dest.join_member(
-        room,
-        yuki,
-        WriteActor::new(owner, EdgeActorClass::Human),
-        at,
-        HistoryChoice::Share,
-    )
-    .expect("yuki joins the destination room second");
+/// Seats owen and yuki in the room on a fresh vault with empty roles, through the public
+/// doors and at the stamps a window-stamped source used ([`seat_room`]): the membership the
+/// import's room guard and the grant landing read, without the grant itself.
+fn preseed_destination_room(dest: &Vault) {
+    seat_room(dest, WINDOW_OCCURRED, WINDOW_LEARNED_AT);
 }
 
 /// Mirrors the source's 2026-03 window (room, owen, yuki) into the destination through the
@@ -257,9 +241,11 @@ fn mirror_room_window_into(source: &Vault, dest: &Vault) {
     let materializer = Materializer::new();
     let restored = window::forward_rematerialize(dest, &doc, &materializer, &window_key)
         .expect("the destination window lands");
+    // The destination's persons are already the source's rows byte for byte, and a
+    // byte-identical row is skipped uncounted; the room row differs by its roles entry.
     assert!(
-        restored >= 3,
-        "the destination lands the room, owen and yuki: {restored}"
+        restored >= 1,
+        "the destination lands the room row with its roles entry: {restored}"
     );
 }
 
@@ -294,8 +280,7 @@ fn delete_room_and_grantee(source: &Vault, room: EntityId, grantee: EntityId) {
 #[test]
 fn the_owner_restore_installs_the_room_admin_grant_and_a_repeat_reports_it_unchanged() {
     let (_source_dir, source) = open_source_vault();
-    let (room, owen, yuki) =
-        build_admin_grant_room(&source, TimeRange { start: 1, end: 1 }, 1_772_400_000);
+    let (room, owen, yuki) = build_admin_grant_room(&source, WINDOW_OCCURRED, WINDOW_LEARNED_AT);
     assert_eq!(
         source
             .conversation_body(room)
@@ -314,7 +299,7 @@ fn the_owner_restore_installs_the_room_admin_grant_and_a_repeat_reports_it_uncha
     );
 
     let (_dest_dir, dest) = open_later_vault();
-    preseed_destination_room(&dest, room, owen, yuki);
+    preseed_destination_room(&dest);
     mirror_room_window_into(&source, &dest);
     assert_eq!(
         dest.conversation_body(room)
@@ -439,9 +424,10 @@ fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
 /// the live room and holds the row back for the grantee.
 #[test]
 fn a_grant_without_its_live_grantee_is_held_back_missing_live_entity() {
-    let (_source_dir, source, room, owen, yuki) = room_source_with_admin_grant();
+    let (_source_dir, source) = open_source_vault();
+    let (room, _owen, yuki) = build_admin_grant_room(&source, WINDOW_OCCURRED, WINDOW_LEARNED_AT);
     let (_dest_dir, dest) = open_later_vault();
-    preseed_destination_room(&dest, room, owen, yuki);
+    preseed_destination_room(&dest);
     install_keystore(&dest);
     assert!(
         dest.delete_entity_with_reason(&yuki, DeleteReason::UserDelete)
@@ -598,163 +584,5 @@ fn a_revoked_standing_grant_restores_revoked_and_authorizes_nothing() {
             .decision,
         ConsentDecision::Ask,
         "the covered send asks on the destination: the restored revocation authorizes nothing"
-    );
-}
-
-/// A verified agent slip for `agent`, mirroring `widen_agent_credential`
-/// (`src/consent/tests.rs`): a PERSON holder, the agent class, and the host
-/// root's scope, which carries the widen verbs.
-fn agent_slip(vault: &Vault, agent: EntityId, slip_id: [u8; 32]) -> VerifiedSlip {
-    let issuer = HostSlipIssuer::from_secret(b"side-grants-test-host-secret").expect("host issuer");
-    let root = vault
-        .ensure_host_root_slip(&issuer)
-        .expect("host root slip");
-    let mut claims = root.claims.clone();
-    claims.slip_id = slip_id;
-    claims.parent_id = None;
-    claims.holder_ref = agent.to_hex();
-    claims.actor_class = Some("agent".to_owned());
-    claims.expires_at = claims.issued_at + 600;
-    claims.ttl_secs = 600;
-    let slip = vault
-        .mint_capability_slip(&issuer, claims)
-        .expect("the agent slip");
-    let challenge = b"side-grants-widen";
-    let proof = issuer
-        .binding_proof(&slip, challenge)
-        .expect("binding proof");
-    vault
-        .verify_capability_slip(&issuer.public_key(), &slip, challenge, &proof)
-        .expect("verified slip")
-}
-
-/// An unresolved unexpired widen proposal restores unresolved; an expired one is held back.
-#[test]
-fn an_unexpired_widen_proposal_restores_unresolved_and_an_expired_one_is_held_back() {
-    // Unexpired: filed with a half-hour horizon, exported at once.
-    let (_source_dir, source) = open_source_vault();
-    let agent = fixed_id(0x72);
-    put_person(&source, agent, b"yuki");
-    let owner_ref = source
-        .ensure_embedded_owner_actor()
-        .expect("the source names its embedded owner actor")
-        .to_hex();
-    let credential = agent_slip(&source, agent, [0x73; 32]);
-    let filed = source
-        .propose_action_widen(
-            &credential,
-            standing_bound(),
-            &owner_ref,
-            source.now_recorded_at() + 1_800,
-        )
-        .expect("the agent files its widen proposal");
-    assert_eq!(
-        source
-            .widen_proposal(&filed.proposal_ref)
-            .expect("read the source proposal")
-            .as_ref(),
-        Some(&filed),
-        "the source holds the filed proposal"
-    );
-    assert_eq!(
-        source
-            .widen_proposal_settlement(&filed.proposal_ref)
-            .expect("read the source settlement"),
-        None,
-        "the filed proposal is unresolved"
-    );
-    let archive = export_whole(&source);
-    let source_tuple = rows_for(&retained_rows(&archive), "CONSENT_WIDEN_PROPOSAL");
-    assert_eq!(
-        source_tuple.len(),
-        1,
-        "the source archive holds one widen tuple"
-    );
-
-    let (_dest_dir, dest) = open_later_vault();
-    let dest_owner = owner_proof(&dest);
-    let receipt = dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
-        .expect("the owner import succeeds");
-    let summary =
-        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
-    assert_eq!(
-        table_count(&summary, "CONSENT_WIDEN_PROPOSAL", "installed_rows"),
-        Some(1),
-        "the owner import reports one installed CONSENT_WIDEN_PROPOSAL row; an absent field means it installed nothing: {summary}"
-    );
-    assert_eq!(
-        dest.widen_proposal(&filed.proposal_ref)
-            .expect("read the restored proposal")
-            .as_ref(),
-        Some(&filed),
-        "the restored proposal reads back as filed"
-    );
-    assert_eq!(
-        dest.widen_proposal_settlement(&filed.proposal_ref)
-            .expect("read the restored settlement"),
-        None,
-        "the restored proposal is still unresolved"
-    );
-
-    // Expired: filed with a two-second horizon, exported after it lapses.
-    let (_stale_dir, stale) = open_source_vault();
-    let stale_agent = fixed_id(0x75);
-    put_person(&stale, stale_agent, b"owen");
-    let stale_owner = stale
-        .ensure_embedded_owner_actor()
-        .expect("the stale source names its embedded owner actor")
-        .to_hex();
-    let stale_credential = agent_slip(&stale, stale_agent, [0x76; 32]);
-    let expiring = stale
-        .propose_action_widen(
-            &stale_credential,
-            standing_bound(),
-            &stale_owner,
-            stale.now_recorded_at() + 2,
-        )
-        .expect("the agent files its short proposal");
-    assert_eq!(
-        stale
-            .widen_proposal_settlement(&expiring.proposal_ref)
-            .expect("read the stale settlement"),
-        None,
-        "the short proposal is unresolved when filed"
-    );
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    let stale_archive = export_whole(&stale);
-    let stale_tuple = rows_for(&retained_rows(&stale_archive), "CONSENT_WIDEN_PROPOSAL");
-    assert_eq!(
-        stale_tuple.len(),
-        1,
-        "the stale archive holds one widen tuple"
-    );
-
-    let (_stale_dest_dir, stale_dest) = open_later_vault();
-    let stale_dest_owner = owner_proof(&stale_dest);
-    let stale_receipt = stale_dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&stale_archive), &stale_dest_owner)
-        .expect("the owner import succeeds");
-    let stale_summary = serde_json::to_value(&stale_receipt.retained_side_rows)
-        .expect("the stale summary serializes");
-    assert_eq!(
-        held_back_for_table(&stale_summary, "CONSENT_WIDEN_PROPOSAL"),
-        Some(serde_json::json!([{"reason": "invalid_value", "rows": 1}])),
-        "the owner import holds back one widen row as invalid_value; an absent field means it counted no held-back outcome: {stale_summary}"
-    );
-    assert_eq!(
-        stale_dest
-            .widen_proposal(&expiring.proposal_ref)
-            .expect("read the missing proposal"),
-        None,
-        "the expired proposal installs nothing live"
-    );
-    assert_eq!(
-        rows_for(
-            &retained_rows(&export_whole(&stale_dest)),
-            "CONSENT_WIDEN_PROPOSAL"
-        ),
-        stale_tuple,
-        "the destination retains the held-back widen tuple byte for byte"
     );
 }
