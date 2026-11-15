@@ -37,11 +37,11 @@ pub use evidence_spans::{
     EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,
     evidence_spans, validate_evidence_spans,
 };
-pub(crate) use extraction_inputs::extraction_inputs_page_bound;
 pub use extraction_inputs::{
     ExtractionInputsPage, ExtractionInputsPageRequest, ExtractionPolicy, ExtractionTurn,
     extraction_inputs_page,
 };
+pub(crate) use extraction_inputs::{extraction_inputs_page_bound, extraction_turn_read};
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
     PolicyPreflightRequest, PolicyPreflightVerdict, policy_preflight, validate_policy_preflight,

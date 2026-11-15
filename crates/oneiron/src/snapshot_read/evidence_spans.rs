@@ -12,6 +12,7 @@ use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 
+use super::extraction_turn_read;
 use super::source_version::{SourceVersion, SourceVersionCheck, blake3_ref, source_version_in_txn};
 use crate::EntityId;
 use crate::batch::secret_scan::LiftedKeys;
@@ -202,7 +203,17 @@ fn bound_evidence_spans(
     validate_evidence_spans(input)?;
     let vault = memory.vault();
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
+    let turn_read = if binding.is_some() {
+        extraction_turn_read(&read, None)?
+    } else {
+        None
+    };
     let _pins = read.prepare_point_read::<MemoryError>()?;
+    let _turn_pins = turn_read
+        .as_ref()
+        .map(|read| read.prepare_point_read::<MemoryError>())
+        .transpose()?;
+    let turn_read = turn_read.as_ref().unwrap_or(&read);
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     if let Some(binding) = binding {
         memory.prove_read_authority_in_txn(&txn)?;
@@ -212,13 +223,23 @@ fn bound_evidence_spans(
         &txn,
         &[PointRead::id(input.source)],
         None,
-        |txn, _rows| -> MemoryResult<EvidenceSpans> {
+        |txn, rows| -> MemoryResult<EvidenceSpans> {
+            let source_read = if rows
+                .first()
+                .and_then(Option::as_ref)
+                .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_TURN)
+            {
+                turn_read
+            } else {
+                &read
+            };
             if let Some(asked) = &input.version {
-                match asked.recheck_in_txn(&read, txn)? {
+                match asked.recheck_in_txn(source_read, txn)? {
                     SourceVersionCheck::Current => {}
                     SourceVersionCheck::Withheld => return Ok(withheld()),
                     SourceVersionCheck::Moved => {
-                        let Some((version, _)) = source_version_in_txn(&read, txn, &input.source)?
+                        let Some((version, _)) =
+                            source_version_in_txn(source_read, txn, &input.source)?
                         else {
                             return Ok(withheld());
                         };
@@ -231,14 +252,15 @@ fn bound_evidence_spans(
                     }
                 }
             }
-            let Some((version, text)) = source_version_in_txn(&read, txn, &input.source)? else {
+            let Some((version, text)) = source_version_in_txn(source_read, txn, &input.source)?
+            else {
                 return Ok(withheld());
             };
             let (spans, masked) = match text {
                 Some(turn) => {
                     let keys = super::source_version::turn_lifted_keys_in_txn(
                         memory,
-                        &read,
+                        source_read,
                         txn,
                         &input.source,
                         &turn,
