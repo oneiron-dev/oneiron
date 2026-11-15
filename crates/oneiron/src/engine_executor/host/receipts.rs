@@ -4,7 +4,7 @@
 
 use super::*;
 pub(super) use crate::code_run::{merge_ranges, subtract_ranges};
-use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
+use oneiron_contracts::lifecycle::LifecycleWords;
 
 impl RecordingJsHost<'_, '_> {
     /// The fold receipt `input` names, computed here from the jobs it names

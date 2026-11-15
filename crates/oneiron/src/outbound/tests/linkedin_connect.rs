@@ -5,7 +5,7 @@ use crate::linkedin_connector::{
     LinkedInConnectionObservation, LinkedInConnectionState, LinkedInMcpConnectRequest,
     LinkedInMcpConnectTransport, LinkedInMcpVerifiedConnectSink, LinkedInVerifiedConnectPlan,
 };
-use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
+use oneiron_contracts::lifecycle::LifecycleWords;
 
 struct ConnectTransport {
     calls: Vec<LinkedInMcpConnectRequest>,

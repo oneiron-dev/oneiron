@@ -16,7 +16,7 @@ use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::side_table::{self, Raw, RawValue, SideKey, SideTable};
-use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
+use oneiron_contracts::lifecycle::LifecycleWords;
 
 /// Checkout lease act. Key: hex32.
 pub(crate) const LEASE: SideTable<CheckoutId, CheckoutLeaseAct, Raw> =

@@ -13,7 +13,7 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::side_table::{CodecError, RawValue};
-use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
+use oneiron_contracts::lifecycle::LifecycleWords;
 
 mod nested;
 

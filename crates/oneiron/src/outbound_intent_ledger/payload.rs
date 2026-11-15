@@ -412,7 +412,8 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
         if recipient_only {
             // The send names the erased person as its recipient: it stops
             // for that, as an actor's erase stops its own sends.
-            stop_for_erase(&mut record, IntentEscalationReason::RecipientErased);
+            stop_for_erase(&mut record, IntentEscalationReason::RecipientErased)
+                .map_err(erase_error)?;
         }
         // A session its remote task's polls kept open is owed its end
         // before the handle naming it goes (FIX 16028).
@@ -434,7 +435,7 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
         };
         let stops = matches!(record.state, IntentState::Pending | IntentState::Deferred);
         record.authorizing_owner = None;
-        stop_for_erase(&mut record, IntentEscalationReason::OwnerNotLive);
+        stop_for_erase(&mut record, IntentEscalationReason::OwnerNotLive).map_err(erase_error)?;
         put_ledger_record(vault, wtxn, &record).map_err(erase_error)?;
         // An older checkpoint of the call still names him: its compartment
         // rolls, and the next capture reseals the row without him.
@@ -527,9 +528,9 @@ fn stop_for_erase(
     reason: IntentEscalationReason,
 ) -> IntentLedgerResult<()> {
     if matches!(record.state, IntentState::Pending | IntentState::Deferred) {
-        record.delivery_uncertain |=
-            record.recorded_outcome.is_none() || record.state == IntentState::Deferred;
+        let uncertain = record.recorded_outcome.is_none() || record.state == IntentState::Deferred;
         record.state.transition_to(IntentState::Abandoned)?;
+        record.delivery_uncertain |= uncertain;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
     }
     Ok(())

@@ -48,7 +48,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
-use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
+use oneiron_contracts::lifecycle::LifecycleWords;
 use oneiron_model::llm::{DreamerFailureDecision, LlmResponse};
 
 /// What a thing branch's pass is handed by its partition attempt: the wake,
