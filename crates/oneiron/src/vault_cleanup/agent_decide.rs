@@ -73,6 +73,23 @@ fn agent_decides_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, agent: EntityId) -
         .is_ok())
 }
 
+impl Memory<'_> {
+    /// Whether this caller is an agent [`Vault::decide_cleanup_proposal_as_agent`] admits now,
+    /// for `can()`.
+    ///
+    /// # Errors
+    ///
+    /// A store read that fails.
+    pub(crate) fn agent_decides_cleanup(&self) -> MemoryResult<bool> {
+        if self.actor_class() != EdgeActorClass::Agent {
+            return Ok(false);
+        }
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        Ok(agent_decides_in_txn(vault, &txn, self.actor())?)
+    }
+}
+
 /// The `vault.cleanup.decide` row's door: an agent through
 /// [`Vault::decide_cleanup_proposal_as_agent`], anyone else as the vault's
 /// owner through [`Vault::decide_cleanup_proposal_as`].
