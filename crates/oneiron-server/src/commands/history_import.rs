@@ -282,11 +282,23 @@ fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
     )
 }
 
+/// The one import second owned at a time in this process. The CLI, the
+/// queue pass and the hosted-import worker all own their second through
+/// `own_second`, which holds this from its first read of the vault's clock
+/// until the second is owned, so two imports that start in the same second
+/// own different seconds and each keeps a review of its own.
+static OWN_SECOND: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The second this import lands at: after every write before it, so no two
-/// imports share one and each has a review of its own. Waits out the rest of
-/// the current second; a vault clock more than two seconds ahead of this
-/// machine's refuses the import rather than share a second with an earlier one.
+/// imports share one and each has a review of its own. Holds the process's
+/// one import-second lock for the whole wait, so two imports that start in
+/// the same second own different seconds. Waits out the rest of the current
+/// second; a vault clock more than two seconds ahead of this machine's
+/// refuses the import rather than share a second with an earlier one.
 pub(crate) fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
+    let _second = OWN_SECOND
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let start = vault.now_recorded_at();
     let deadline = Instant::now() + std::time::Duration::from_secs(2);
     loop {
