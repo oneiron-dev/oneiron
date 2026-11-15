@@ -1,7 +1,5 @@
 //! Held-out defect-injection audit: fixtures, the generic harness, and the pass-rate report.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -30,39 +28,8 @@ pub struct AuditFixture {
     pub expected: Option<AttributionVerdict>,
 }
 
-/// Aggregate result of one audit pass.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct AttributionAuditReport {
-    pub total: usize,
-    /// Cases the judge answered correctly — including the cases where the
-    /// correct answer was to abstain.
-    pub passed: usize,
-    /// Cases the judge abstained on, right or wrong. A judge that abstains on
-    /// everything earns only the fixtures whose honest answer is abstention,
-    /// so it can never score 100%.
-    pub abstained: usize,
-    pub at: u64,
-}
-
-impl AttributionAuditReport {
-    /// Passed over total. An empty fixture set scores 0.0, never 1.0: "nothing
-    /// was checked" is the worst evidence, not the best.
-    #[must_use]
-    pub fn pass_rate(&self) -> f32 {
-        if self.total == 0 {
-            return 0.0;
-        }
-        // Precision loss here is intended: this is a reported metric, not an
-        // accumulator, and both counts are bounded by the fixture set.
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reported aggregate metric over a bounded fixture set"
-        )]
-        {
-            self.passed as f32 / self.total as f32
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_attribution::audit::AttributionAuditReport;
 
 /// One persisted audit run: the receipt reference its floor fit cites, its
 /// aggregate report, and its batch kept whole.

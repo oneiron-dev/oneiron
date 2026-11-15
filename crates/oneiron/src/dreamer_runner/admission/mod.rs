@@ -149,11 +149,12 @@ impl DreamerRunnerStore<'_> {
     /// Atomically admits the next queued vault-cleanup attempt (ONE-1931).
     ///
     /// Per-device, like SKILL-OPT and for the same reason: the queue rows are
-    /// private runner state, and in the default propose-first posture the
-    /// pass's only output is a PROPOSAL. There is no home-node gate because
-    /// there is no canon to serialize — the rows a cleanup pass reads are this
-    /// vault's own, and two devices proposing the same archive is one question
-    /// asked twice, not two archives.
+    /// private runner state. There is no home-node gate because there is no
+    /// canon to serialize — the rows a cleanup pass reads are this vault's
+    /// own. In the default automatic posture each device archives its own
+    /// copy, as local hygiene that publishes no CRDT tombstone; in the
+    /// owner's propose-first posture two devices proposing the same archive
+    /// is one question asked twice, not two archives.
     ///
     /// # Errors
     ///
