@@ -6,7 +6,7 @@
 //! Erase keeps its own executor (`Memory::execute_completed_entity_erase`),
 //! and once it has erased the record [`Vault::record_erase_completion`]
 //! writes the act's receipt and tells the Owners (OF-150); a Member's or
-//! Admin's ask for one is `erase_ask`.
+//! Admin's ask for one is `erase_ask`, and so is an agent's.
 mod actor_erase;
 mod erase_ask;
 mod execute;
@@ -21,7 +21,8 @@ mod removal_file;
 mod removal_import;
 
 pub use erase_ask::{
-    EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
+    EraseAskKind, EraseAskStatus, EraseProposal, NOTIFICATION_PRODUCER_ERASE_ASK,
+    NOTIFICATION_PRODUCER_ERASE_PROPOSAL, SharedEraseAsk,
 };
 pub use member_ask::{
     MemberAskChange, MemberAskStatus, NOTIFICATION_PRODUCER_MEMBER_ASK, SharedMemberAsk,

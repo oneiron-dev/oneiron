@@ -1,0 +1,14 @@
+{
+  "name": "vault.records.erase_propose",
+  "description": "An agent asks the Owners to erase a record its own live owner Grant reads: the shared vault's erase ask, or an inbox ask to the owner of a personal vault. It erases nothing.",
+  "input": "crate::task_verb::sdk::RecordEraseRequest",
+  "output": "crate::federation::EraseProposal",
+  "call": "crate::task_verb::sdk::propose_record_erase(memory, input)?",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false
+}
