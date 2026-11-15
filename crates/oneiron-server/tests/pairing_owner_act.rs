@@ -14,6 +14,10 @@
 //! main, `a_non_owner_top_scope_slip_gets_403_on_the_link_door` and
 //! `a_non_owner_cannot_revoke_another_holders_slip` fail instead (200). The
 //! owner's link and the owner's revoke pass everywhere.
+//! `a_holder_revoke_queued_behind_its_own_slips_revocation_writes_nothing`
+//! (Sol review of this PR, P2) calls the holder revoke with the caller's
+//! verified credential, a signature this PR's earlier head did not have, so
+//! it runs green on the head only.
 //!
 //! The owner acts on its host-root credential, the established self-hosted
 //! owner path. Every other credential is a real logged mint at top scope,
@@ -30,7 +34,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer, VerifiedSlip};
 use oneiron::federation::Scope;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -310,4 +314,60 @@ async fn the_owner_revokes_any_slip() {
         "the owner revokes an agent's slip: {body}"
     );
     assert!(!live(&fixture, &held), "the agent's slip is gone");
+}
+
+/// `credential` verified as a request door verifies it, over a fixed
+/// challenge its holder signs.
+fn verified(fixture: &Fixture, credential: &Credential) -> VerifiedSlip {
+    let challenge = b"oneiron-request:pairing-owner-act";
+    let Holder::Key(key) = &credential.holder else {
+        panic!("a minted slip, proved by its holder's key");
+    };
+    let transcript = credential
+        .slip
+        .binding_transcript(challenge)
+        .expect("holder binding transcript");
+    fixture
+        .vault
+        .verify_capability_slip(
+            &fixture.issuer.public_key(),
+            &credential.slip,
+            challenge,
+            &key.sign(&transcript).to_bytes(),
+        )
+        .expect("the holder proves its slip")
+}
+
+#[test]
+fn a_holder_revoke_queued_behind_its_own_slips_revocation_writes_nothing() {
+    let fixture = setup();
+    let name = "pairing-owner-act-lapsed";
+    let held = agent(&fixture, name, 0x71);
+    let first = agent(&fixture, name, 0x72);
+    let second = agent(&fixture, name, 0x73);
+    let credential = verified(&fixture, &held);
+    assert!(
+        fixture
+            .vault
+            .revoke_capability_slip_held_by(&fixture.issuer, &credential, first.slip.claims.slip_id)
+            .expect("a live holder revokes its own slip"),
+        "the first revoke appends"
+    );
+    assert!(!live(&fixture, &first), "the first slip is gone");
+
+    // The caller's own slip is revoked after its request was admitted and
+    // before its revoking writer runs.
+    fixture
+        .vault
+        .revoke_capability_slip_once(&fixture.issuer, held.slip.claims.slip_id)
+        .expect("the host revokes the caller's slip");
+    let refused = fixture
+        .vault
+        .revoke_capability_slip_held_by(&fixture.issuer, &credential, second.slip.claims.slip_id)
+        .expect_err("a revoke on a revoked credential wrote");
+    assert!(
+        !matches!(refused.kind(), oneiron::ErrorKind::AuthorityRefused),
+        "a lapsed caller is refused as unauthenticated (401), not 403: {refused}"
+    );
+    assert!(live(&fixture, &second), "the second slip stands");
 }

@@ -650,15 +650,16 @@ pub(super) async fn revoke(
                 .revoke_capability_slip_as_owner(issuer, &owner, request.slip_id)
         })?,
         Err(refusal) => {
-            let holder = auth
+            // The request's own slip rides into the revoking transaction and
+            // is judged live there (Sol review of #8342, P2).
+            let credential = auth
                 .principal_ref()
                 .and(auth.verified_slip())
-                .map(|slip| slip.claims().holder_ref.as_str())
                 .ok_or(refusal)?;
             let issuer = server.host_issuer().ok_or_else(ApiError::unauthorized)?;
             server
                 .vault()
-                .revoke_capability_slip_held_by(issuer, holder, request.slip_id)
+                .revoke_capability_slip_held_by(issuer, credential, request.slip_id)
                 .map_err(|error| match error.kind() {
                     oneiron::ErrorKind::AuthorityRefused => ApiError::forbidden_scope("owner"),
                     _ => ApiError::unauthorized(),

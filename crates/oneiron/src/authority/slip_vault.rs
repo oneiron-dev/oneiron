@@ -595,17 +595,21 @@ impl Vault {
         self.revoke_capability_slip_by(issuer, SlipRevoker::Owner(owner), slip_id)
     }
     /// [`Self::revoke_capability_slip_once`] asked by a holder that is not
-    /// the owner: only a slip whose logged mint names `holder_ref` (FIX
-    /// 8216). Any other id, one with no logged mint included, is refused
-    /// with `AuthorityRefused` before anything is written, already revoked
-    /// or not, so the answer says nothing about another holder's slips.
+    /// the owner, on the credential its request authenticated: only a slip
+    /// whose logged mint names that credential's holder (FIX 8216). The
+    /// credential is judged live again in the revoking transaction, so a
+    /// revoke queued behind its own slip's revocation or expiry writes
+    /// nothing (Sol review of #8342, P2). Any other id, one with no logged
+    /// mint included, is refused with `AuthorityRefused` before anything is
+    /// written, already revoked or not, so the answer says nothing about
+    /// another holder's slips.
     pub fn revoke_capability_slip_held_by(
         &self,
         issuer: &HostSlipIssuer,
-        holder_ref: &str,
+        credential: &VerifiedSlip,
         slip_id: [u8; 32],
     ) -> Result<bool> {
-        self.revoke_capability_slip_by(issuer, SlipRevoker::Holder(holder_ref), slip_id)
+        self.revoke_capability_slip_by(issuer, SlipRevoker::Holder(credential), slip_id)
     }
     /// Appends one signed revocation of `slip_id` for `by`, judged in the
     /// revoking transaction.
@@ -623,12 +627,19 @@ impl Vault {
             SlipRevoker::Owner(owner) => {
                 owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
             }
-            SlipRevoker::Holder(holder_ref) => {
+            SlipRevoker::Holder(credential) => {
+                // The request's own slip stands in this writer, as the owner
+                // arm revalidates its proof: judged before the target, so a
+                // lapsed caller learns nothing about the id it names.
+                if !self.capability_slip_is_live_in_txn(&txn, credential)? {
+                    return Err(invalid_authority());
+                }
+                let holder_ref = &credential.claims().holder_ref;
                 let held = fold
                     .slips
                     .mints
                     .get(&slip_id)
-                    .is_some_and(|mint| mint.action.claims.holder_ref == holder_ref);
+                    .is_some_and(|mint| &mint.action.claims.holder_ref == holder_ref);
                 if !held {
                     return Err(super::owner_act::authority_refused(SLIP_REVOKE_NOT_HOLDER));
                 }
@@ -949,8 +960,9 @@ enum SlipRevoker<'a> {
     Host,
     /// The vault's owner, for any slip.
     Owner(&'a crate::consent::AuthenticatedOwner),
-    /// A holder that is not the owner, for the slips minted to it.
-    Holder(&'a str),
+    /// A holder that is not the owner, on the credential its request
+    /// authenticated, for the slips minted to that credential's holder.
+    Holder(&'a VerifiedSlip),
 }
 pub(super) fn random_slip_id() -> [u8; 32] {
     use rand_core::{OsRng, RngCore};
