@@ -143,6 +143,13 @@ impl EmbeddedDeviceSync {
         self.host.as_ref().is_some_and(DeviceSyncHost::dials_peers)
     }
 
+    /// The root snapshot the device's server exports to a socket that reads
+    /// its root (L7-47).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn served_root_snapshot(&self) -> Result<Vec<u8>, String> {
+        self.server.export_root_snapshot()
+    }
+
     /// Stops and joins the connection, credential renewal and archive
     /// receiver, then the listener. This does not close or reconfigure the
     /// app's vault.

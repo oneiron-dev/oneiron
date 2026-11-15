@@ -1,22 +1,25 @@
 #![cfg(all(oneiron_test_support, feature = "mesh"))]
 //! The macOS app's mesh peer path (L7-47, RULING L7-47-PR2-TESTS = A).
 //!
-//! PR2 carries exactly these three tests, over one vault each: with a mesh bind the app's
+//! PR2 carries the ruling's three tests, over one vault each: with a mesh bind the app's
 //! listener offers the sync ALPN alone and its server serves as a peer; with no bind the device
 //! sync still starts over the home URL with no listener and no peer dialer; and the link has a
-//! peer dialer exactly when its listener runs. The two-machine serve/ask proof is FIX-LIST row
-//! [MESH-TWO-MACHINE-PEER-E2E], not these tests.
+//! peer dialer exactly when its listener runs. A fourth, from the PR's blind review: the root
+//! the server exports names a window the link persisted after start. The two-machine serve/ask
+//! proof is FIX-LIST row [MESH-TWO-MACHINE-PEER-E2E], not these tests.
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! --all-features --features oneiron/test-support --test embedded_peer_serve`.
 
 use std::future::Future;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use oneiron::sync::mesh_path::SYNC_ALPN;
 use oneiron_server::ENGINE_THREAD_STACK_BYTES;
 use oneiron_server::test_doors::embedded_peer_fixture::enrolled_device;
 use oneiron_server::test_doors::embedded_peer_path::{
-    has_peer_dialer, listener_alpns, serves_as_peer, start_on_mesh_bind,
+    has_peer_dialer, listener_alpns, persist_link_learned_window, served_root_windows,
+    serves_as_peer, start_on_mesh_bind,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -128,5 +131,31 @@ async fn peer_dialer_matches_listener() -> TestResult {
     );
     bound.stop().await;
     plain.stop().await;
+    Ok(())
+}
+
+#[test]
+fn embedded_device_serves_its_peers_the_windows_its_link_learned_after_start() -> TestResult {
+    on_engine_stack(serves_windows_learned_after_start)
+}
+
+async fn serves_windows_learned_after_start() -> TestResult {
+    const LEARNED: &str = "2019-04";
+    let dir = tempfile::tempdir()?;
+    let (vault, config) = enrolled_device(dir.path())?;
+    let bind: SocketAddr = "127.0.0.1:0".parse()?;
+    let sync = start_on_mesh_bind(Arc::clone(&vault), &config, Some(bind))
+        .await
+        .ok_or("the device sync did not start: the fixture's enrolment must dial a home")?;
+    assert!(
+        !served_root_windows(&sync)?.iter().any(|key| key == LEARNED),
+        "a fresh device's server names no window {LEARNED}"
+    );
+    persist_link_learned_window(&vault, LEARNED)?;
+    assert!(
+        served_root_windows(&sync)?.iter().any(|key| key == LEARNED),
+        "the Mac app's server names to its peers a window its link learned after start"
+    );
+    sync.stop().await;
     Ok(())
 }
