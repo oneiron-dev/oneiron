@@ -15,6 +15,7 @@ use crate::git_wire::operation::GitWireOperation;
 use crate::git_wire::repo::GitWireRepo;
 use crate::git_wire::repo::GitWireRepoIdentity;
 use oneiron_base::error::Result;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The lifecycle of a durable GitWire record. `Applied` and `Failed` are
 /// terminal and can never be overwritten.
@@ -101,46 +102,58 @@ impl StoredGitWireRecord {
     /// never the mutable state, outcome, or timing — so a handle stays valid
     /// across the record's own lifecycle while still failing closed if the row
     /// is replaced by a different intent or is gone.
+    ///
+    /// A capability handed out before an upgrade must still match its row, so
+    /// it keeps its bytes (K, PLAN-UC-04 3.3): each field framed by its length
+    /// as a u32 big-endian.
     pub fn capability_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hash_field(&mut hasher, GIT_WIRE_DOMAIN);
-        hash_field(&mut hasher, b"capability");
-        hash_field(&mut hasher, &self.record_key);
-        hash_field(&mut hasher, &self.repo_identity);
-        hash_field(&mut hasher, self.operation.as_bytes());
+        let mut digest = LegacyDigest::new(purposes::git_wire::CAPABILITY);
+        for field in [
+            GIT_WIRE_DOMAIN,
+            b"capability".as_slice(),
+            self.record_key.as_slice(),
+            self.repo_identity.as_slice(),
+            self.operation.as_bytes(),
+        ] {
+            digest.len_u32_be_saturating(field.len()).raw(field);
+        }
         for publication in &self.publications {
-            hash_field(&mut hasher, publication.name.as_bytes());
-            hash_field(
-                &mut hasher,
-                publication.expected.as_deref().unwrap_or("*").as_bytes(),
-            );
-            hash_field(
-                &mut hasher,
-                publication.next.as_deref().unwrap_or("-").as_bytes(),
-            );
+            for field in [
+                publication.name.as_str(),
+                publication.expected.as_deref().unwrap_or("*"),
+                publication.next.as_deref().unwrap_or("-"),
+            ] {
+                digest
+                    .len_u32_be_saturating(field.len())
+                    .raw(field.as_bytes());
+            }
         }
         for observed in &self.observed_before {
-            hash_field(&mut hasher, observed.name.as_bytes());
-            hash_field(
-                &mut hasher,
-                observed.oid.as_deref().unwrap_or("-").as_bytes(),
-            );
+            for field in [
+                observed.name.as_str(),
+                observed.oid.as_deref().unwrap_or("-"),
+            ] {
+                digest
+                    .len_u32_be_saturating(field.len())
+                    .raw(field.as_bytes());
+            }
         }
         for keep in &self.keep_refs {
-            hash_field(&mut hasher, keep.as_bytes());
+            digest
+                .len_u32_be_saturating(keep.len())
+                .raw(keep.as_bytes());
         }
-        hash_field(
-            &mut hasher,
+        let started_at = self.started_at.to_be_bytes();
+        for field in [
             self.worktree_commit.as_deref().unwrap_or("-").as_bytes(),
-        );
-        hash_field(
-            &mut hasher,
             self.worktree_settings_hash
                 .as_ref()
                 .map_or(b"-".as_slice(), |hash| hash.as_slice()),
-        );
-        hash_field(&mut hasher, &self.started_at.to_be_bytes());
-        *hasher.finalize().as_bytes()
+            started_at.as_slice(),
+        ] {
+            digest.len_u32_be_saturating(field.len()).raw(field);
+        }
+        digest.finish()
     }
 }
 
@@ -246,50 +259,73 @@ impl GitWireCommitOutcome {
     }
 }
 
+/// A ref publication's journal key. Rows are stored under it, so it keeps its
+/// bytes (K, PLAN-UC-04 3.3): each field framed by its length as a u32
+/// big-endian.
 pub fn ref_record_key(
     identity: GitWireRepoIdentity,
     publications: &[GitRefPublication],
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hash_field(&mut hasher, GIT_WIRE_DOMAIN);
-    hash_field(&mut hasher, b"ref-effect");
-    hash_field(&mut hasher, identity.as_bytes());
+    let mut digest = LegacyDigest::new(purposes::git_wire::REF_RECORD_KEY);
+    for field in [
+        GIT_WIRE_DOMAIN,
+        b"ref-effect".as_slice(),
+        identity.as_bytes().as_slice(),
+    ] {
+        digest.len_u32_be_saturating(field.len()).raw(field);
+    }
     for publication in publications {
-        hash_field(&mut hasher, publication.name.as_str().as_bytes());
-        match publication.expected() {
-            GitRefExpectation::Absent => hash_field(&mut hasher, b"absent"),
-            GitRefExpectation::Value(oid) => hash_field(&mut hasher, oid.as_str().as_bytes()),
-            GitRefExpectation::Any => hash_field(&mut hasher, b"any"),
-        }
-        match publication.next() {
-            Some(oid) => hash_field(&mut hasher, oid.as_str().as_bytes()),
-            None => hash_field(&mut hasher, b"delete"),
+        let expected = match publication.expected() {
+            GitRefExpectation::Absent => b"absent".as_slice(),
+            GitRefExpectation::Value(oid) => oid.as_str().as_bytes(),
+            GitRefExpectation::Any => b"any".as_slice(),
+        };
+        let next = match publication.next() {
+            Some(oid) => oid.as_str().as_bytes(),
+            None => b"delete".as_slice(),
+        };
+        for field in [publication.name.as_str().as_bytes(), expected, next] {
+            digest.len_u32_be_saturating(field.len()).raw(field);
         }
     }
-    *hasher.finalize().as_bytes()
+    digest.finish()
 }
 
+/// A staged plan's journal key. Rows are stored under it, so it keeps its
+/// bytes (K, PLAN-UC-04 3.3): each field framed by its length as a u32
+/// big-endian.
 pub fn stage_record_key(identity: GitWireRepoIdentity, plan_hash: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hash_field(&mut hasher, GIT_WIRE_DOMAIN);
-    hash_field(&mut hasher, b"stage");
-    hash_field(&mut hasher, identity.as_bytes());
-    hash_field(&mut hasher, plan_hash);
-    *hasher.finalize().as_bytes()
+    let mut digest = LegacyDigest::new(purposes::git_wire::STAGE_RECORD_KEY);
+    for field in [
+        GIT_WIRE_DOMAIN,
+        b"stage".as_slice(),
+        identity.as_bytes().as_slice(),
+        plan_hash.as_slice(),
+    ] {
+        digest.len_u32_be_saturating(field.len()).raw(field);
+    }
+    digest.finish()
 }
 
+/// A worktree effect's journal key. Rows are stored under it, so it keeps its
+/// bytes (K, PLAN-UC-04 3.3): each field framed by its length as a u32
+/// big-endian.
 pub fn worktree_record_key(
     identity: GitWireRepoIdentity,
     operation: GitWireOperation,
     scope: &[u8; 32],
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hash_field(&mut hasher, GIT_WIRE_DOMAIN);
-    hash_field(&mut hasher, b"worktree");
-    hash_field(&mut hasher, identity.as_bytes());
-    hash_field(&mut hasher, operation.as_str().as_bytes());
-    hash_field(&mut hasher, scope);
-    *hasher.finalize().as_bytes()
+    let mut digest = LegacyDigest::new(purposes::git_wire::WORKTREE_RECORD_KEY);
+    for field in [
+        GIT_WIRE_DOMAIN,
+        b"worktree".as_slice(),
+        identity.as_bytes().as_slice(),
+        operation.as_str().as_bytes(),
+        scope.as_slice(),
+    ] {
+        digest.len_u32_be_saturating(field.len()).raw(field);
+    }
+    digest.finish()
 }
 
 pub fn new_record(
@@ -419,12 +455,6 @@ pub fn rejection_from_stored(stored: &StoredGitWireRecord) -> Result<GitWireReje
         Some(GitWireFailureClass::Unauthorized) => Ok(GitWireRejection::Unauthorized),
         _ => Ok(GitWireRejection::EffectUnconfirmed),
     }
-}
-
-pub fn hash_field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-    hasher.update(&length.to_be_bytes());
-    hasher.update(bytes);
 }
 
 pub fn hex_lower(bytes: &[u8]) -> String {

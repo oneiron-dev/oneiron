@@ -13,10 +13,10 @@ use crate::git_wire::config::GIT_WIRE_REPO_LOCK_FILE_NAME;
 use crate::git_wire::failure::GitWireResult;
 use crate::git_wire::failure::invalid;
 use crate::git_wire::ids::GitOid;
-use crate::git_wire::record::hash_field;
 use crate::git_wire::record::hex_lower;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The identity of one object store.
 ///
@@ -81,12 +81,18 @@ impl GitWireRepo {
     }
 }
 
+/// A repository's identity. Every journal row stores it, so it keeps its bytes
+/// (K, PLAN-UC-04 3.3): each field framed by its length as a u32 big-endian.
 pub fn repo_identity_for(common_dir: &Path) -> GitWireRepoIdentity {
-    let mut hasher = blake3::Hasher::new();
-    hash_field(&mut hasher, GIT_WIRE_DOMAIN);
-    hash_field(&mut hasher, b"repo-identity");
-    hash_field(&mut hasher, common_dir.as_os_str().as_encoded_bytes());
-    GitWireRepoIdentity(*hasher.finalize().as_bytes())
+    let mut digest = LegacyDigest::new(purposes::git_wire::REPO_IDENTITY);
+    for field in [
+        GIT_WIRE_DOMAIN,
+        b"repo-identity".as_slice(),
+        common_dir.as_os_str().as_encoded_bytes(),
+    ] {
+        digest.len_u32_be_saturating(field.len()).raw(field);
+    }
+    GitWireRepoIdentity(digest.finish())
 }
 
 struct GitWireRepoLockCell {

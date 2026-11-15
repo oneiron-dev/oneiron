@@ -110,6 +110,8 @@ pub(crate) use self::repo::{
     lock_repository, lock_repository_within, try_lock_repository,
     try_lock_repository_for_maintenance,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wire_worktree::worktree_scope_for_test;
 pub(crate) use oneiron_store::git_wire::path_text::{
     git_path_bytes, git_path_has_control, git_path_os_str, git_path_string, git_path_text,
     git_path_text_of_os,
