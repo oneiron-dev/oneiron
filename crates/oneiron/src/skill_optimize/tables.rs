@@ -65,6 +65,12 @@ crate::side_table::side_tables! {
     SKILL_OPTIMIZE_EVAL_REPAIR_SEED: VaultMeta b"skill_optimize:eval_repair_seed:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::skill_optimize::erase_eval_repair_seeds_in_txn;
+    /// The Repair case each confirmed seed holds (census L1-20): the seed
+    /// key, written when a seed confirms and dropped with its seed by the
+    /// seed table's scrub (MessagePack named encoding of 32 bytes).
+    /// Key: id16 (case).
+    SKILL_OPTIMIZE_EVAL_REPAIR_SEED_CASE: VaultMeta b"skill_optimize:eval_repair_seed_case:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// One paired eval measurement: its frozen request, state, case legs, family summaries and
     /// card (MessagePack named map). Key: bytes32 (request digest).
     SKILL_OPTIMIZE_EVAL_MEASUREMENT: VaultMeta b"skill_optimize:eval_measurement:v1:" Named

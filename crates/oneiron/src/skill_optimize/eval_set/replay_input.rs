@@ -13,15 +13,24 @@ use super::cohort::{cohort_in_txn, exposure_row_in_txn};
 use super::measurement::{
     EvalMeasurement, MeasurementState, MeasurementUnavailable, measurement_in_txn,
 };
-use super::{EvalCase, EvalExposureKind, EvalLabel, case_in_txn};
+use super::repair_seed::{grade, memory_read_refused, row_reads_in_txn};
+use super::{
+    DerivationKind, EvalCase, EvalExposureKind, EvalLabel, EvalRepairLegAnswer, EvalRepairSeed,
+    EvalRepairSeedState, EvalRepairTask, case_in_txn,
+};
+use crate::EdgeActorClass;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ingest::ag_ui_capture_owner_in_txn;
 
 /// A terminal pack receipt's namespace: `attempt:<32 hex>`.
 const ATTEMPT_RECEIPT: &str = "attempt:";
+
+/// `EvalTaskInput.kind` of a released Repair case.
+pub const REPAIR_RESPONSE_TASK_KIND: &str = "repair_response";
 
 /// One released case's task, as every leg of a measurement is given it.
 #[derive(Debug, Clone, PartialEq)]
@@ -193,6 +202,82 @@ fn hydrate(vault: &Vault, txn: &heed::RoTxn<'_>, case: EvalCase) -> Result<Relea
     }))
 }
 
+/// A released Repair case: its recompiled task, the `Confirmed` seed
+/// holding it, and its ledger row, after every release check.
+struct ReleasedRepair {
+    task: EvalRepairTask,
+    seed: EvalRepairSeed,
+    member: EvalCase,
+}
+
+/// A Repair member's release, for [`Vault::released_eval_task`] and
+/// [`Vault::grade_released_eval_repair_answer`] alike: the claimed
+/// measurement's checks, the case index's `Confirmed` seed, then the task
+/// recompiled through the capture owner's own scoped read.
+fn released_repair_task(
+    vault: &Vault,
+    measurement: &[u8; 32],
+    case: &EntityId,
+) -> Result<std::result::Result<ReleasedRepair, MeasurementUnavailable>> {
+    let txn = vault.store.env.read_txn()?;
+    let row = measurement_in_txn(vault, &txn, measurement)?.ok_or(Error::EntityNotFound)?;
+    if !released(vault, &txn, &row)? || !row.members.contains(case) {
+        return Ok(Err(MeasurementUnavailable::NotReleased));
+    }
+    let cohort = cohort_in_txn(vault, &txn, &row.request.cohort)?;
+    if cohort.membership_digest != row.request.membership_digest || cohort.cases != row.members {
+        return Ok(Err(MeasurementUnavailable::CohortMoved));
+    }
+    let member =
+        case_in_txn(vault, &txn, case)?.ok_or(Error::CorruptedIndex("eval cohort case"))?;
+    if member.kind != DerivationKind::Repair {
+        return Ok(Err(MeasurementUnavailable::UnsupportedTaskPayload));
+    }
+    let Some(seed) = vault.eval_repair_seed_for_case_in_txn(&txn, &member.id)? else {
+        return Ok(Err(MeasurementUnavailable::UnsupportedTaskPayload));
+    };
+    let confirmed = matches!(
+        &seed.state,
+        EvalRepairSeedState::Confirmed { case: held, .. } if held == &member.id
+    );
+    if !confirmed {
+        return Ok(Err(MeasurementUnavailable::UnsupportedTaskPayload));
+    }
+    for row in &seed.source_rows {
+        if !row_reads_in_txn(vault, &txn, row)? {
+            return Ok(Err(MeasurementUnavailable::TaskGone));
+        }
+    }
+    let Ok(claim) = EntityId::from_hex(&seed.source.claim_ref) else {
+        return Ok(Err(MeasurementUnavailable::TaskGone));
+    };
+    let owner = ag_ui_capture_owner_in_txn(vault, &txn, &claim)?;
+    drop(txn);
+    let Some(owner) = owner else {
+        return Ok(Err(MeasurementUnavailable::TaskGone));
+    };
+    let read = match vault
+        .memory(owner, EdgeActorClass::Human)
+        .read_eval_repair_task(&seed.source)
+    {
+        Ok(read) => read,
+        Err(error) if memory_read_refused(&error) => {
+            return Ok(Err(MeasurementUnavailable::TaskGone));
+        }
+        Err(error) => return Err(Error::Refused(error.message)),
+    };
+    let Some(mut task) = read.task else {
+        return Ok(Err(MeasurementUnavailable::TaskGone));
+    };
+    if let Some(adjudication) = &seed.adjudication {
+        task.adjudicate(adjudication.answer_digest);
+    }
+    if task.task_hash != seed.task_hash {
+        return Ok(Err(MeasurementUnavailable::TaskGone));
+    }
+    Ok(Ok(ReleasedRepair { task, seed, member }))
+}
+
 impl Vault {
     /// The task one member of a claimed measurement was given, for the
     /// measuring host alone: the stored claim, its three Candidate
@@ -219,6 +304,67 @@ impl Vault {
         }
         let member =
             case_in_txn(self, &txn, case)?.ok_or(Error::CorruptedIndex("eval cohort case"))?;
+        if member.kind == DerivationKind::Repair {
+            // The Repair path reads on its own snapshot, then through the
+            // capture owner's scoped read: no second reader on this thread.
+            drop(txn);
+            let released = released_repair_task(self, measurement, case)?;
+            let repair = match released {
+                Err(unavailable) => return Ok(Err(unavailable)),
+                Ok(repair) => repair,
+            };
+            let source_hash: [u8; 32] = oneiron_hex::decode(&repair.seed.source.source_hash)
+                .ok_or(Error::CorruptedIndex("eval repair seed source hash"))?;
+            // The leg input, with the declared tools materialized for the
+            // call: the task's `tools` field holds their names, and the
+            // server parses the declared tools from here.
+            let mut input = repair.task.response_input().clone();
+            if let Some(fields) = input.as_object_mut() {
+                fields.insert(
+                    "tools".to_owned(),
+                    serde_json::to_value(repair.task.tools())
+                        .map_err(|_| Error::CorruptedIndex("eval measurement task input"))?,
+                );
+            }
+            return Ok(Ok(EvalTaskInput {
+                case: repair.member.id,
+                family: repair.member.family,
+                stratum: repair.member.stratum.clone(),
+                kind: REPAIR_RESPONSE_TASK_KIND.to_owned(),
+                input,
+                labels: repair
+                    .member
+                    .labels
+                    .iter()
+                    .filter(|label| label.kind.anchors())
+                    .cloned()
+                    .collect(),
+                source_hash,
+                task_hash: repair.seed.task_hash,
+                source_rows: repair.member.content_source_rows(),
+            }));
+        }
         hydrate(self, &txn, member)
+    }
+
+    /// Fixed code's exact grade of one leg's answer on a released Repair case of a claimed measurement: the same
+    /// release checks as `released_eval_task`, then the recompiled task's `grade_response` / `grade_tool_calls`.
+    /// `Err(UnsupportedTaskPayload)` for a case no Confirmed seed holds; `Err(TaskGone)` for a capture that no longer
+    /// reads or a task that moved.
+    /// # Errors
+    /// A missing measurement, a member gone from the ledger, or storage
+    /// errors.
+    pub fn grade_released_eval_repair_answer(
+        &self,
+        measurement: &[u8; 32],
+        case: &EntityId,
+        answer: &EvalRepairLegAnswer,
+    ) -> Result<std::result::Result<bool, MeasurementUnavailable>> {
+        let released = released_repair_task(self, measurement, case)?;
+        let repair = match released {
+            Err(unavailable) => return Ok(Err(unavailable)),
+            Ok(repair) => repair,
+        };
+        Ok(Ok(grade(&repair.task, answer)))
     }
 }

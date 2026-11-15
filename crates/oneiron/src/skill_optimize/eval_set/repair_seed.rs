@@ -36,15 +36,23 @@ use super::{
 };
 use crate::Vault;
 use crate::claim::ScopedReadReceipt;
+use crate::dreamer_runner::maintenance::coach::enqueue_coach_eval_repair_seed_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
+    MemoryResult,
+};
 use crate::ports::{EntityStoreRead, TombstoneStoreRead, raw_readable_in_txn};
 use crate::side_table::{self, Named, SideTable};
 
 /// One seed per task source, keyed by the BLAKE3 of the source's identity.
 const SEEDS: SideTable<[u8; 32], EvalRepairSeed, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_EVAL_REPAIR_SEED);
+/// The seed key holding a Repair case, by case id: written when a seed
+/// confirms, dropped with its seed by the seed table's scrub.
+const CASES: SideTable<EntityId, [u8; 32], Named> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_EVAL_REPAIR_SEED_CASE);
 /// The seed key's domain.
 const SEED_DOMAIN: &[u8] = b"skill_optimize:eval_repair_seed:v1\0";
 
@@ -233,7 +241,7 @@ fn is_a_seed_identifier(seed: &EvalRepairSeed, answer: &str) -> Result<bool> {
     .any(|identifier| identifier.trim() == answer))
 }
 
-fn grade(task: &EvalRepairTask, answer: &EvalRepairLegAnswer) -> bool {
+pub(super) fn grade(task: &EvalRepairTask, answer: &EvalRepairLegAnswer) -> bool {
     match answer {
         EvalRepairLegAnswer::Response(text) => task.grade_response(text),
         EvalRepairLegAnswer::ToolCalls(calls) => task.grade_tool_calls(calls),
@@ -252,6 +260,17 @@ fn sources_live_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, rows: &[EntityId]) 
         }
     }
     Ok(true)
+}
+
+/// Whether a `Memory` seed door's error refuses the read (a withheld
+/// capture, or a task that no longer compiles) rather than failing storage:
+/// the host doors answer `None` for one and pass the other through as an
+/// error.
+pub(super) fn memory_read_refused(error: &MemoryError) -> bool {
+    matches!(
+        error.code.as_str(),
+        MEMORY_CODE_BAD_REQUEST | MEMORY_CODE_NOT_FOUND | MEMORY_CODE_FORBIDDEN
+    )
 }
 
 /// Whether `row` still reads in this snapshot, by the capture listing's rule
@@ -311,6 +330,11 @@ fn commit_proposal(
     vault.with_write_txn_grouped(|txn| {
         let key = seed_key(&task.source)?;
         if let Some(existing) = SEEDS.get(&vault.store, txn, &key)? {
+            // A replay over a seed the host could not serve queues its job
+            // again; the dedupe key keeps one live job.
+            if existing.state == EvalRepairSeedState::Pending {
+                enqueue_coach_eval_repair_seed_in_txn(vault, txn, &key, at)?;
+            }
             return Ok(existing);
         }
         let mut refusal = None;
@@ -371,6 +395,9 @@ fn commit_proposal(
             },
         };
         SEEDS.put(&vault.store, txn, &key, &seed)?;
+        if seed.state == EvalRepairSeedState::Pending {
+            enqueue_coach_eval_repair_seed_in_txn(vault, txn, &key, at)?;
+        }
         Ok(seed)
     })
 }
@@ -444,6 +471,7 @@ fn commit_settlement(
                 };
                 let case =
                     record_case_in_txn(vault, txn, &draft, Some(task.source_rows.as_slice()), at)?;
+                CASES.put(&vault.store, txn, &case.id, &key)?;
                 let value = task
                     .outcome_digest()
                     .ok_or(invalid("an adjudicated repair seed waits for its label"))?;
@@ -683,6 +711,7 @@ impl Memory<'_> {
             seed.adjudication = Some(adjudication);
             seed.state = EvalRepairSeedState::Pending;
             SEEDS.put(&vault.store, txn, &key, &seed)?;
+            enqueue_coach_eval_repair_seed_in_txn(vault, txn, &key, label.at)?;
             Ok(seed)
         })?;
         Ok(EvalRepairSeedRead {
@@ -704,6 +733,29 @@ impl Vault {
     ) -> Result<Option<EvalRepairSeed>> {
         let txn = self.store.env.read_txn()?;
         SEEDS.get(&self.store, &txn, &seed_key(source)?)
+    }
+
+    /// The seed stored under `key`, on the caller's snapshot, for the host
+    /// doors.
+    pub(super) fn eval_repair_seed_by_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &[u8; 32],
+    ) -> Result<Option<EvalRepairSeed>> {
+        SEEDS.get(&self.store, txn, key)
+    }
+
+    /// The seed holding Repair case `case`, on the caller's snapshot, for
+    /// the released-task doors.
+    pub(super) fn eval_repair_seed_for_case_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        case: &EntityId,
+    ) -> Result<Option<EvalRepairSeed>> {
+        let Some(key) = CASES.get(&self.store, txn, case)? else {
+            return Ok(None);
+        };
+        SEEDS.get(&self.store, txn, &key)
     }
 
     /// Every seed the gate can grade now, for the measuring host: the
@@ -809,13 +861,17 @@ pub(crate) fn erase_eval_repair_seeds_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let named: Vec<[u8; 32]> = SEEDS
+    let named: Vec<([u8; 32], EvalRepairSeed)> = SEEDS
         .scan(&vault.store, wtxn)?
         .into_iter()
         .filter(|(_, seed)| seed.source_rows.contains(id))
-        .map(|(key, _)| key)
         .collect();
-    for key in named {
+    for (key, seed) in named {
+        // A confirmed seed's case stays, but no release reads through it
+        // again: its index row goes with the seed.
+        if let EvalRepairSeedState::Confirmed { case, .. } = &seed.state {
+            CASES.delete(&vault.store, wtxn, case)?;
+        }
         SEEDS.delete(&vault.store, wtxn, &key)?;
     }
     Ok(())

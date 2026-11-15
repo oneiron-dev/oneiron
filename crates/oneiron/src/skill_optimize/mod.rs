@@ -205,7 +205,8 @@ pub use self::eval_set::{
 };
 pub use self::eval_set::{
     EvalRepairAdjudication, EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs,
-    EvalRepairSeedRead, EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
+    EvalRepairSeedRead, EvalRepairSeedRefusal, EvalRepairSeedRelease, EvalRepairSeedRequest,
+    EvalRepairSeedState, REPAIR_RESPONSE_TASK_KIND,
 };
 pub(crate) use self::eval_set::{
     PairedScores, erase_eval_repair_seeds_in_txn, erase_eval_source_in_txn, estimate_paired,

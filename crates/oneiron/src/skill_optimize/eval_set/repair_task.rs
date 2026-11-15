@@ -77,6 +77,12 @@ impl EvalRepairTask {
         &self.input
     }
 
+    /// The declared tools the task offers; none for a text-response world.
+    #[must_use]
+    pub fn tools(&self) -> &[EvalRepairTool] {
+        &self.tools
+    }
+
     /// Exact response equality, without trimming, case folding or a model call.
     /// A true result says only that this response meets this sourced check.
     /// A tool world's task grades no response, and an adjudicated task grades

@@ -32,6 +32,8 @@ use rmpv::Value;
 
 // A paired eval measurement's job, queued per request (FIX 574).
 mod eval_measurement;
+// A repair seed's measuring job, queued per Pending seed (census L1-20 PR D).
+mod eval_repair_seed;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
 mod person_threshold;
 // Q2 tuning's quick picks, read, policy call and proposal (FIX 2437).
@@ -40,6 +42,7 @@ mod think_threshold;
 pub use self::think_threshold::ThinkThresholdPolicy;
 
 pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
+pub(crate) use self::eval_repair_seed::enqueue_coach_eval_repair_seed_in_txn;
 
 pub use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
 /// Skill authoring from sessions: the session-end `actor.*` craft-note distill
@@ -83,6 +86,11 @@ pub const COACH_OFFER_CHECK_FACET: &str = "coach.offer_check";
 /// [`Vault::coach_eval_measurement_target`], then generates, scores and
 /// records its legs. Input: `{measurement: <64 hex>}`.
 pub const COACH_EVAL_MEASUREMENT_FACET: &str = "coach.eval_measurement";
+/// One repair seed's measuring job (census L1-20 PR D), queued for the host
+/// when the seed turns `Pending`. The host reads it through
+/// [`Vault::coach_eval_repair_seed_target`], then answers the released task
+/// under each arm and settles the seed. Input: `{seed: <64 hex>}`.
+pub const COACH_EVAL_REPAIR_SEED_FACET: &str = "coach.eval_repair_seed";
 /// One owner-authorized training run, queued for the host when the owner
 /// authorizes it; the host trains, then evaluates, or records why it cannot.
 /// Input: `{run: <32 hex>, spec: <64 hex>}`.

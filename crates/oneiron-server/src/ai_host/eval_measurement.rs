@@ -15,8 +15,9 @@ use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::learning::{Retest, RetestScore, record_retest};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_optimize::{
-    EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalSeat, EvalTaskInput,
-    HeldOutReplayNotes, JudgeRubric, MeasurementState, MeasurementUnavailable, seat_model_role,
+    EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalRepairLegAnswer, EvalRepairTool,
+    EvalSeat, EvalTaskInput, HeldOutReplayNotes, JudgeRubric, MeasurementState,
+    MeasurementUnavailable, REPAIR_RESPONSE_TASK_KIND, seat_model_role,
 };
 use oneiron::{BudgetExhaustionPolicy, Vault};
 
@@ -26,11 +27,13 @@ use crate::server::SyncServer;
 mod helper;
 mod legs;
 mod offer;
+mod repair_seed;
 mod score;
 mod seat_score;
 
 pub(super) use helper::request_helper_measurements;
 pub(super) use offer::attach_measured_card;
+pub(super) use repair_seed::run as run_repair_seed;
 
 use legs::{Arms, Generated, NativeArms, NativeOpened, Opened, SeatGenerated};
 use score::Scored;
@@ -260,7 +263,22 @@ impl Job<'_> {
             Leg::Incumbent | Leg::Retest => &arms.incumbent,
         };
         let prompt = legs::task_text(task);
-        let (answer, served, serving_offer) = match arms.generate(
+        // A released Repair case offers its declared tools; every other
+        // kind answers with none, as before.
+        let repair = task.kind == REPAIR_RESPONSE_TASK_KIND;
+        let tools: Vec<EvalRepairTool> = if !repair || task.input["tools"].is_null() {
+            Vec::new()
+        } else {
+            match serde_json::from_value::<Vec<EvalRepairTool>>(task.input["tools"].clone()) {
+                Ok(tools) => tools,
+                Err(_) => {
+                    return Ok(EvalLegRecord::unavailable(
+                        MeasurementUnavailable::UnsupportedTaskPayload,
+                    ));
+                }
+            }
+        };
+        let (answer, tool_calls, served, serving_offer) = match arms.generate(
             self.server,
             self.vault,
             &self.run,
@@ -268,21 +286,33 @@ impl Job<'_> {
             &prompt,
             &self.clock,
             self.judge.decisions().principal,
+            &tools,
         ) {
             Generated::Answer {
                 text,
+                tool_calls,
                 served,
                 serving_offer,
-            } => (text, served, serving_offer),
+            } => (text, tool_calls, served, serving_offer),
             Generated::Unavailable(reason) => return Ok(EvalLegRecord::unavailable(reason)),
         };
         // The answer is made from the case's task, so it records the case's
         // source rows: an erase or withdrawal of one withholds the stored
         // answer and the leg keeps its reference (FIX 10447). A case whose
-        // rows are unknown stores it as before.
+        // rows are unknown stores it as before. A tool world's answer is its
+        // tool calls, kept as the gate grades them.
+        let encoded_calls;
+        let stored: &[u8] = if tools.is_empty() {
+            answer.as_bytes()
+        } else {
+            encoded_calls = serde_json::to_vec(&tool_calls).map_err(|_| {
+                oneiron::Error::InvariantViolation("a repair leg's tool calls did not encode")
+            })?;
+            &encoded_calls
+        };
         let output = oneiron::compaction::output::store_output_sourced(
             self.vault,
-            answer.as_bytes(),
+            stored,
             task.source_rows.clone(),
         )?;
         let mut record = EvalLegRecord {
@@ -297,21 +327,45 @@ impl Job<'_> {
             serving_offer,
             ..EvalLegRecord::default()
         };
-        match score::score(
-            self.vault,
-            self.judge,
-            &self.clock,
-            self.rubric.as_ref(),
-            task,
-            &prompt,
-            &answer,
-            &self.run,
-        )? {
-            Scored::Score { value, judge } => {
-                record.score = Some(value);
-                record.judge = judge;
+        // A released Repair case is scored exactly by fixed code, with no
+        // judge call; every other kind is scored blind, as before.
+        if repair {
+            let answer = if tools.is_empty() {
+                EvalRepairLegAnswer::Response(answer)
+            } else {
+                EvalRepairLegAnswer::ToolCalls(tool_calls)
+            };
+            match self
+                .vault
+                .grade_released_eval_repair_answer(&self.digest, &task.case, &answer)?
+            {
+                Ok(true) => {
+                    record.score = Some(1.0);
+                    record.judge = None;
+                }
+                Ok(false) => {
+                    record.score = Some(0.0);
+                    record.judge = None;
+                }
+                Err(reason) => record.unavailable = Some(reason),
             }
-            Scored::Unavailable(reason) => record.unavailable = Some(reason),
+        } else {
+            match score::score(
+                self.vault,
+                self.judge,
+                &self.clock,
+                self.rubric.as_ref(),
+                task,
+                &prompt,
+                &answer,
+                &self.run,
+            )? {
+                Scored::Score { value, judge } => {
+                    record.score = Some(value);
+                    record.judge = judge;
+                }
+                Scored::Unavailable(reason) => record.unavailable = Some(reason),
+            }
         }
         Ok(record)
     }

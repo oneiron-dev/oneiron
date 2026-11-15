@@ -11,7 +11,7 @@ pub use ag_ui::{
     AgUiEventLinks, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,
     AgUiObservationKind, AgUiRepairLink, AgUiRepairLinkStatus, AgUiSource,
 };
-pub(crate) use ag_ui::{AgUiCaptureMeta, ag_ui_captures_in_txn};
+pub(crate) use ag_ui::{AgUiCaptureMeta, ag_ui_capture_owner_in_txn, ag_ui_captures_in_txn};
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
 pub(crate) use fingerprint::{

@@ -20,13 +20,14 @@ use oneiron::memory::extraction::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill::{LoadedSkillPack, MeasuredSkillPack};
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalMeasurement, EvalSeat, EvalServingOffer, EvalTaskInput, HeldOutReplayNotes,
-    MeasurementUnavailable, seat_model_role,
+    EvalArmPin, EvalMeasurement, EvalRepairTool, EvalRepairToolCall, EvalRepairToolEffect,
+    EvalSeat, EvalServingOffer, EvalTaskInput, HeldOutReplayNotes, MeasurementUnavailable,
+    seat_model_role,
 };
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmError, LlmMessage, LlmMessageRole,
-    LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence,
-    Vault,
+    LlmRequest, LlmResponse, LlmToolSpec, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence, Vault,
 };
 use serde_json::{Value, json};
 
@@ -72,6 +73,8 @@ pub(super) enum Opened {
 pub(super) enum Generated {
     Answer {
         text: String,
+        /// Every tool call of the response, in order.
+        tool_calls: Vec<EvalRepairToolCall>,
         /// The provider that answered, as the ladder stamped it.
         served: Option<String>,
         serving_offer: Option<EvalServingOffer>,
@@ -172,12 +175,36 @@ pub(super) fn open(
     attempt: &AttemptRecord,
     now: u64,
 ) -> oneiron::Result<Opened> {
-    let Some(role) = seat_model_role(&row.request.seat) else {
+    open_pins(
+        server,
+        vault,
+        &row.request.seat,
+        &row.request.incumbent,
+        &row.request.candidate,
+        attempt,
+        now,
+    )
+}
+
+/// The arms two pins name as this host serves them, as [`open`] serves a
+/// row's: both answer as one picked model under the same route prompt,
+/// each skill arm under its pinned content, loaded on the job's `attempt`.
+pub(super) fn open_pins(
+    server: &SyncServer,
+    vault: &Vault,
+    seat: &EvalSeat,
+    incumbent: &EvalArmPin,
+    candidate: &EvalArmPin,
+    attempt: &AttemptRecord,
+    now: u64,
+) -> oneiron::Result<Opened> {
+    let Some(role) = seat_model_role(seat) else {
         return Ok(Opened::Refused(MeasurementUnavailable::NoModelRole));
     };
-    let incumbent = served(server, vault, &row.request.incumbent)?;
-    let candidate = served(server, vault, &row.request.candidate)?;
-    let (mut incumbent, mut candidate, prompt) = match (incumbent, candidate) {
+    let served_incumbent = served(server, vault, incumbent)?;
+    let served_candidate = served(server, vault, candidate)?;
+    let (mut incumbent_arm, mut candidate_arm, prompt) = match (served_incumbent, served_candidate)
+    {
         (Served::Refused(reason), _) | (_, Served::Refused(reason)) => {
             return Ok(Opened::Refused(reason));
         }
@@ -190,8 +217,8 @@ pub(super) fn open(
         _ => return Ok(Opened::Unserved),
     };
     for (arm, pin) in [
-        (&mut incumbent, &row.request.incumbent),
-        (&mut candidate, &row.request.candidate),
+        (&mut incumbent_arm, incumbent),
+        (&mut candidate_arm, candidate),
     ] {
         let Some(digest) = &pin.skill_digest else {
             continue;
@@ -202,8 +229,8 @@ pub(super) fn open(
         }
     }
     Ok(Opened::Ready(Arms {
-        incumbent,
-        candidate,
+        incumbent: incumbent_arm,
+        candidate: candidate_arm,
         role,
         prompt,
     }))
@@ -231,6 +258,26 @@ fn answer_text(response: &LlmResponse) -> String {
         .collect()
 }
 
+/// Every tool call of the response, in order: the call's name with its
+/// `argument` property, or the whole input when it has none.
+fn answer_tool_calls(response: &LlmResponse) -> Vec<EvalRepairToolCall> {
+    response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::ToolCall { name, input, .. } => Some(EvalRepairToolCall {
+                tool: name.clone(),
+                argument: input
+                    .get("argument")
+                    .cloned()
+                    .unwrap_or_else(|| input.clone()),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 /// One text message.
 fn text_message(role: LlmMessageRole, text: &str) -> LlmMessage {
     LlmMessage {
@@ -242,9 +289,42 @@ fn text_message(role: LlmMessageRole, text: &str) -> LlmMessage {
     }
 }
 
+/// What a declared tool does, in words.
+fn tool_effect_text(effect: &EvalRepairToolEffect) -> String {
+    match effect {
+        EvalRepairToolEffect::Set { pointer } => {
+            format!("sets the state at {pointer} to the argument")
+        }
+        EvalRepairToolEffect::Append { pointer } => {
+            format!("pushes the argument onto the array at {pointer}")
+        }
+        EvalRepairToolEffect::Remove { pointer } => {
+            format!("removes the field or array item at {pointer}; the argument is null")
+        }
+    }
+}
+
+/// One declared tool as the leg offers it: its name, its effect in words,
+/// and any JSON value under one property `argument`.
+fn tool_spec(tool: &EvalRepairTool) -> LlmToolSpec {
+    LlmToolSpec {
+        name: tool.name.clone(),
+        description: tool_effect_text(&tool.effect),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "argument": {}
+            },
+            "required": ["argument"],
+            "additionalProperties": false
+        }),
+    }
+}
+
 /// The leg's request to `arm`'s model: a skill arm's pinned content as the
-/// instruction, then the task as one user message.
-fn request(arm: &ServedArm, task: &str) -> LlmRequest {
+/// instruction, then the task as one user message, with the declared tools
+/// a repair world offers.
+fn request(arm: &ServedArm, task: &str, tools: &[EvalRepairTool]) -> LlmRequest {
     let purpose = CallPurpose::Other {
         name: CALL_PURPOSE.to_owned(),
     };
@@ -267,7 +347,7 @@ fn request(arm: &ServedArm, task: &str) -> LlmRequest {
             host_paid: false,
         },
         messages,
-        tools: Vec::new(),
+        tools: tools.iter().map(tool_spec).collect(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
         host_segments: None,
@@ -291,9 +371,10 @@ impl Arms {
         task: &str,
         clock: &RetrievalDeadline,
         principal: oneiron::EntityId,
+        tools: &[EvalRepairTool],
     ) -> Generated {
         let runtime = server.ai.model_runtime();
-        let Ok(call) = runtime.admit_seat_bound(vault, self.role, request(arm, task)) else {
+        let Ok(call) = runtime.admit_seat_bound(vault, self.role, request(arm, task, tools)) else {
             return Generated::Unavailable(MeasurementUnavailable::NoExactModelRoute);
         };
         if call.ladder.exact_prompt() != Some(self.prompt.as_deref()) {
@@ -333,6 +414,7 @@ impl Arms {
                 );
                 Generated::Answer {
                     text: answer_text(&response),
+                    tool_calls: answer_tool_calls(&response),
                     served: response.usage.served_provider().map(str::to_owned),
                     serving_offer,
                 }

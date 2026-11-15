@@ -52,6 +52,7 @@ pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, f
 mod measurement;
 mod repair_seed;
 pub(crate) use repair_seed::erase_eval_repair_seeds_in_txn;
+mod repair_seed_host;
 mod repair_task;
 mod replay_input;
 mod sufficiency;
@@ -100,12 +101,13 @@ pub use repair_seed::{
     EvalRepairAdjudication, EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs,
     EvalRepairSeedRead, EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
 };
+pub use repair_seed_host::EvalRepairSeedRelease;
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
     EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairTool, EvalRepairToolCall,
     EvalRepairToolEffect, EvalRepairWorld,
 };
-pub use replay_input::EvalTaskInput;
+pub use replay_input::{EvalTaskInput, REPAIR_RESPONSE_TASK_KIND};
 pub use sufficiency::{
     EvalLabelAsk, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
     WaitingDecision, sufficiency_card,
