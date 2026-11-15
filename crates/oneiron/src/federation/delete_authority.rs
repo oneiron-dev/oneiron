@@ -35,7 +35,10 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
-use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK,
+};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
 
@@ -273,8 +276,10 @@ fn other_arms(
         Ok(admitted) => admitted,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    if removal_widens(&record) {
-        return Ok(Err(DeleteRefusal::AuthorityRow));
+    match record.widens {
+        Ok(false) => {}
+        Ok(true) => return Ok(Err(DeleteRefusal::AuthorityRow)),
+        Err(kind) => return Ok(Err(DeleteRefusal::Unreadable(kind))),
     }
     if !credential_reaches(vault, txn, caller, Some(&record), false)? {
         return Ok(Err(DeleteRefusal::CredentialBounds));
@@ -282,44 +287,120 @@ fn other_arms(
     Ok(Ok(admitted))
 }
 
-/// Whether deleting `record` widens someone's access or authority: the
-/// record restricts it, so it is authority, not an item, and only whoever may
-/// widen it deletes it (the lead's RULING WORLD-ACCESS-GRANT-DELETE = A,
-/// 15 Nov: "deleting a restriction IS a widening"). DEL-2 stands for every
-/// other record. Each kind is told from the record's own kind and body, a
-/// CLAIM by its predicate and, where only some values restrict, one field:
+/// Whether deleting the record `id` of `kind`, stored as `body`, widens
+/// someone's access or authority: the record restricts it, so it is
+/// authority, not an item, and only whoever may widen it deletes it (the
+/// lead's RULING WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a
+/// restriction IS a widening"). DEL-2 stands for every other record. Each
+/// kind is told from the record's own kind and body, a CLAIM by its
+/// predicate and, where only some values restrict, its value:
 /// - a world-access grant or default (ARCH-0067 #tiers), open or closed;
 /// - a party's `comm.opt_out` and a `comm.do_not_contact` bar, which hold
 ///   sends to that party;
+/// - a `comm.reachable_via` of `reachable: false`, which skips that channel
+///   to that party;
+/// - a paused, suppressed or exited `campaign.member`, which holds the
+///   campaign's sends to that person. The heads are not folded, so a delete
+///   is refused even while a sibling head would still hold the sends;
+/// - a `disclosure.import_audience` of only me or a project, which moves the
+///   topic's later imports out of the audience their source shared them
+///   with. The value alone tells it, so a row the topic never settled to is
+///   refused too;
 /// - a delivery window (`delivery_window.*`), which holds interrupts;
 /// - an Approved `repo.secret_mark`, which masks the bytes a repo serves;
-/// - a `project.leader_chat` rule of `false`, which narrows leader chat.
+/// - a `project.leader_chat` rule of `false`, which narrows leader chat;
+/// - a claim-class descriptor, any one: a synced row may be stricter than
+///   the compiled one, and no order between two descriptors exists to tell;
+/// - a counterparty contact, and its `counterparty_contact.counterparty`
+///   head, while the contact's own heads hold it opted out or revoked. The
+///   send gate finds a party's contacts by that head, and a delete of the
+///   contact retires all its heads.
 ///
-/// Rows whose restriction needs another codec or row to tell are FIX rows
-/// (`comm.reachable_via` false, a paused, suppressed or exited
-/// `campaign.member`, a narrowing `disclosure.import_audience`, a synced
-/// claim-class descriptor stricter than the compiled one).
-fn removal_widens(record: &TargetRecord) -> bool {
-    if record.kind != crate::registry::ENTITY_TYPE_CLAIM {
-        return false;
+/// The last kind reads the contact's live heads in `txn`, so an error there
+/// is an error here, and the delete is refused as unreadable.
+fn removal_widens(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    body: &[u8],
+) -> Result<bool> {
+    use crate::write_envelope::cohort_claims::{CampaignMemberState, PREDICATE_CAMPAIGN_MEMBER};
+
+    match kind {
+        ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR => return Ok(true),
+        ENTITY_TYPE_COUNTERPARTY_CONTACT => return contact_held(vault, txn, id),
+        ENTITY_TYPE_CLAIM => {}
+        _ => return Ok(false),
     }
-    let Ok(body) = crate::claim::decode_claim_body(&record.body, true) else {
-        return false;
+    let Ok(body) = crate::claim::decode_claim_body(body, true) else {
+        return Ok(false);
     };
     let predicate = body.predicate.as_str();
-    crate::write_envelope::world_access_predicates::is_world_access_tier_predicate(predicate)
-        || predicate == crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT
-        || predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT
-        || crate::delivery_window::DELIVERY_WINDOW_CLAIM_PREDICATES.contains(&predicate)
-        || (predicate == crate::origin::secret_marks::REPO_SECRET_MARK_PREDICATE
-            && body.approval == crate::claim::ClaimApprovalStatus::Approved)
-        || (predicate == crate::workspace_roster::LEADER_CHAT_RULE_PREDICATE
-            && body.value == rmpv::Value::Boolean(false))
+    if predicate == crate::counterparty_contact::PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY {
+        return match body.subject {
+            crate::claim::ClaimSubject::Entity(contact) => contact_held(vault, txn, contact),
+            _ => Ok(false),
+        };
+    }
+    Ok(
+        crate::write_envelope::world_access_predicates::is_world_access_tier_predicate(predicate)
+            || predicate == crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT
+            || predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT
+            || (predicate == crate::write_envelope::communication::PREDICATE_COMM_REACHABLE_VIA
+                && matches!(
+                    crate::comm::CommClaim::from_claim_body(&body).map(|claim| claim.value),
+                    Ok(crate::comm::CommClaimValue::ReachableVia {
+                        reachable: false,
+                        ..
+                    })
+                ))
+            || (predicate == PREDICATE_CAMPAIGN_MEMBER
+                && matches!(
+                    crate::write_envelope::cohort_claims::decode_campaign_member_value(&body.value)
+                        .map(|member| member.state),
+                    Ok(CampaignMemberState::Paused { .. }
+                        | CampaignMemberState::Suppressed
+                        | CampaignMemberState::Exited)
+                ))
+            || (predicate == crate::disclosure::PREDICATE_DISCLOSURE_IMPORT_AUDIENCE
+                && matches!(
+                    crate::disclosure::decode_import_audience_value(&body.value),
+                    Ok((
+                        _,
+                        crate::ingest::ImportAudience::OnlyMe
+                            | crate::ingest::ImportAudience::Project { .. },
+                        _
+                    ))
+                ))
+            || crate::delivery_window::DELIVERY_WINDOW_CLAIM_PREDICATES.contains(&predicate)
+            || (predicate == crate::origin::secret_marks::REPO_SECRET_MARK_PREDICATE
+                && body.approval == crate::claim::ClaimApprovalStatus::Approved)
+            || (predicate == crate::workspace_roster::LEADER_CHAT_RULE_PREDICATE
+                && body.value == rmpv::Value::Boolean(false)),
+    )
 }
 
-/// The record as `txn` holds it: its kind, body, a TASK's Owner fact and
-/// the position the scoped doors select it at. `None` where no row is
-/// stored.
+/// Whether the counterparty contact `contact` is held now by its own heads:
+/// opted out or revoked. A contact with no live head holds nothing; a party's
+/// own `comm.opt_out` heads are records of their own ([`removal_widens`]).
+fn contact_held(vault: &Vault, txn: &heed::RoTxn<'_>, contact: EntityId) -> Result<bool> {
+    Ok(
+        crate::counterparty_contact::counterparty_contact_record_from_store_claims_in_txn(
+            &vault.store,
+            txn,
+            &contact,
+        )?
+        .is_some_and(|record| {
+            record.is_opted_out()
+                || record.status == crate::counterparty_contact::CounterpartyContactStatus::Revoked
+        }),
+    )
+}
+
+/// The record as `txn` holds it: its kind, body, a TASK's Owner fact, the
+/// position the scoped doors select it at, and whether its removal widens
+/// someone's access or authority. `None` where no row is stored.
 #[derive(Clone)]
 struct TargetRecord {
     id: EntityId,
@@ -329,6 +410,12 @@ struct TargetRecord {
     task_owner: Option<EntityId>,
     /// `None` where the record proves no position: no grant axis holds it.
     position: Option<Scope>,
+    /// [`removal_widens`] as this read found it, or the kind of the error
+    /// that read met. Kept with the last live read: a delete's own scrub
+    /// retires heads the read looks at (a contact's `counterparty` head), so
+    /// the publish judges what the record restricted while it stood. Only a
+    /// caller below the Owner is refused on it.
+    widens: std::result::Result<bool, ErrorKind>,
 }
 
 impl TargetRecord {
@@ -367,12 +454,15 @@ impl TargetRecord {
         } else {
             None
         };
+        let widens =
+            removal_widens(vault, txn, id, header.entity_type, &body).map_err(|error| error.kind());
         Ok(Some(Self {
             id,
             kind: header.entity_type,
             body,
             task_owner,
             position,
+            widens,
         }))
     }
 }
