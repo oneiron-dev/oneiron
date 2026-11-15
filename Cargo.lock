@@ -9206,6 +9206,8 @@ dependencies = [
  "blake3",
  "dom_smoothie",
  "encoding_rs",
+ "oneiron-fingerprint",
+ "oneiron-hex",
  "reqwest 0.12.28",
  "schemars 0.8.22",
  "serde",
