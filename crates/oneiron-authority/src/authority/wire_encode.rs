@@ -5,10 +5,11 @@
 //! side: any field or variant change must edit BOTH files (and the golden
 //! vectors in `authority/tests.rs`) or the wire format silently drifts.
 
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::federation::{federation_direction_scope_value, federation_pact_scope_value};
 
 use super::*;
@@ -432,8 +433,5 @@ fn sorted_hashes(values: &[[u8; 32]]) -> Vec<[u8; 32]> {
 }
 
 pub fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value)
-        .map_err(|_| Error::InvariantViolation("authority log body MessagePack encode failed"))?;
-    Ok(out)
+    Ok(msgpack::encode(value))
 }
