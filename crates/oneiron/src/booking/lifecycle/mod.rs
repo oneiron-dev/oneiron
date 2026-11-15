@@ -106,6 +106,7 @@ pub use self::types::{
     WAITLIST_OFFER_TTL_SECS, WaitlistAction, WaitlistClaim, WaitlistJoin, WaitlistReceipt,
     WaitlistSpec,
 };
+pub(crate) use self::waitlist::erase_waitlist_contact_in_txn;
 pub use self::waitlist::waitlist_entry_event_type;
 
 pub(crate) use self::confirmation_state::{

@@ -58,6 +58,7 @@ pub(super) fn validate_operation_shape(
             validate_event_type(&input.event_type)?;
             validate_session_ref(&input.session_ref)?;
             validate_idempotency_key(&input.idempotency_key)?;
+            validate_booker_email(&input.booker_email, anonymous)?;
             validate_window(input.window)
         }
         BookingOperationRequest::Waitlist(BookingWaitlistInput::Leave(input)) => {
@@ -216,10 +217,13 @@ fn validate_intake(intake: &[BookingIntakeAnswer], anonymous: bool) -> Result<()
     Ok(())
 }
 
-/// The booker email and intake of a request that books: a confirm, or a
-/// waitlist claim.
+/// The booker email and intake of a request that names a booker: a confirm,
+/// a waitlist join (no intake), or a waitlist claim.
 fn booker_answers(request: &BookingOperationRequest) -> Option<(&str, &[BookingIntakeAnswer])> {
     match request {
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Join(input)) => {
+            Some((input.booker_email.as_str(), &[]))
+        }
         BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => {
             Some((input.booker_email.as_str(), input.intake.as_slice()))
         }
@@ -230,7 +234,7 @@ fn booker_answers(request: &BookingOperationRequest) -> Option<(&str, &[BookingI
     }
 }
 
-/// An authenticated caller's confirm or claim, measured against its
+/// An authenticated caller's confirm, join or claim, measured against its
 /// `[limits]` rows once the shape is valid (ABC rows 69, 70, 72): past a row
 /// it asks whether everything is okay, and the request is served whole.
 pub(super) fn measure_authenticated(vault: &oneiron::Vault, request: &BookingOperationRequest) {

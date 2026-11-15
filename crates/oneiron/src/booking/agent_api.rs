@@ -263,6 +263,9 @@ pub struct BookingWaitlistJoinInput {
     pub window: TimeRange,
     pub visitor_tz: String,
     pub session_ref: String,
+    /// The address an offer is sent to. The waiter's contact is resolved
+    /// from it at join, as a confirm resolves its booker's.
+    pub booker_email: String,
     /// Replay hygiene only.
     pub idempotency_key: String,
 }

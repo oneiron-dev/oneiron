@@ -778,15 +778,22 @@ async fn execute_waitlist(
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
     let (action, idempotency_key) = match input {
-        BookingWaitlistInput::Join(join) => (
-            WaitlistAction::Join(WaitlistJoin {
-                event_type: join.event_type,
-                window: join.window,
-                session_key: session_key(page_ref, &join.session_ref),
-                visitor_tz: join.visitor_tz,
-            }),
-            join.idempotency_key,
-        ),
+        BookingWaitlistInput::Join(join) => {
+            // The offer goes to this contact, so the join resolves it as a
+            // confirm resolves its booker's (RULING L3-13 OFFER = A).
+            let contact_ref =
+                resolve_booker_contact(server, &join.booker_email, now, public_authority.as_ref())?;
+            (
+                WaitlistAction::Join(WaitlistJoin {
+                    event_type: join.event_type,
+                    window: join.window,
+                    session_key: session_key(page_ref, &join.session_ref),
+                    visitor_tz: join.visitor_tz,
+                    contact_ref,
+                }),
+                join.idempotency_key,
+            )
+        }
         BookingWaitlistInput::Leave(leave) => (
             WaitlistAction::Leave {
                 token: OpaqueLifecycleToken(leave.entry_token),

@@ -224,12 +224,20 @@ pub(crate) fn booking_waitlist_input_schema() -> Value {
                 json!({
                     "stage": { "const": "join" },
                     "input": closed_object_schema(
-                        &["event_type", "window", "visitor_tz", "session_ref", "idempotency_key"],
+                        &[
+                            "event_type",
+                            "window",
+                            "visitor_tz",
+                            "session_ref",
+                            "booker_email",
+                            "idempotency_key",
+                        ],
                         json!({
                             "event_type": nonblank_string_schema(),
                             "window": booking_utc_window_schema(),
                             "visitor_tz": nonblank_string_schema(),
                             "session_ref": nonblank_string_schema(),
+                            "booker_email": nonblank_string_schema(),
                             "idempotency_key": nonblank_string_schema(),
                         }),
                     ),

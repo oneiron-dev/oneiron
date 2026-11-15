@@ -249,6 +249,7 @@ impl Fixture {
                     window,
                     session_key,
                     visitor_tz: "UTC".to_owned(),
+                    contact_ref: self.booker,
                 }),
                 now,
             )

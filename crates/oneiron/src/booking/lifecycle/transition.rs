@@ -24,8 +24,8 @@ use super::types::{
     WaitlistSpec,
 };
 use super::waitlist::{
-    FreedSlot, WaitlistOutcome, run_waitlist_offer_pass, slot_freed_by, waitlist_in_writer,
-    waitlist_settle_scope,
+    FreedSlot, WaitlistOfferMade, WaitlistOutcome, run_waitlist_offer_pass, slot_freed_by,
+    waitlist_in_writer, waitlist_settle_scope,
 };
 use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
 use crate::booking::invite_grant::{
@@ -54,7 +54,7 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
     attempt: &BookingLifecycleAttempt,
     now_utc: u64,
     invite_actor: Option<EntityId>,
-    invite_sink: Option<&mut S>,
+    mut invite_sink: Option<&mut S>,
 ) -> Result<BookingVerbReceipt, BookingError> {
     match &attempt.request {
         BookingVerbRequest::Hold(spec) => {
@@ -79,12 +79,12 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
                 now_utc,
                 attempt.public_authority.as_ref(),
             )?;
-            pass_freed_slot(vault, oracle, freed, now_utc);
+            let offers = pass_freed_slot(vault, oracle, freed, now_utc);
             // The move carries its `REQUEST` under the bumped SEQUENCE through
             // the same grant, gate and intent ledger as the confirm's (FIX
             // 7850). As there, the writer has returned, and a dispatch failure
             // never fails a move that is already committed.
-            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink.as_deref_mut())
                 && let Err(error) = dispatch_booking_revision_invite_outcome(
                     vault,
                     actor,
@@ -95,16 +95,17 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             {
                 tracing::debug!(%error, "booking move sent no revised invite");
             }
+            send_waitlist_offers(vault, invite_actor, invite_sink, &offers, now_utc);
             Ok(BookingVerbReceipt::Rescheduled(receipt))
         }
         BookingVerbRequest::Cancel(spec) => {
             let freed = slot_freed_by(vault, &spec.token, LifecycleTokenScope::Cancel);
             let receipt = execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())?;
-            pass_freed_slot(vault, oracle, freed, now_utc);
+            let offers = pass_freed_slot(vault, oracle, freed, now_utc);
             // The cancel carries its `CANCEL` to the booker under the bumped
             // SEQUENCE (FIX 7850), on the grant that covered the booking, and
             // a dispatch failure never fails the committed cancel.
-            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink.as_deref_mut())
                 && let Err(error) = dispatch_booking_cancel_invite_outcome(
                     vault,
                     actor,
@@ -115,6 +116,7 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             {
                 tracing::debug!(%error, "booking cancel sent no cancel invite");
             }
+            send_waitlist_offers(vault, invite_actor, invite_sink, &offers, now_utc);
             Ok(BookingVerbReceipt::Cancelled(receipt))
         }
         BookingVerbRequest::Waitlist(spec) => execute_waitlist(
@@ -130,14 +132,43 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
 }
 
 /// Offers the slot a committed cancel or move freed to its page's waitlist,
-/// in a writer of its own, now that the solver sees the slot free. A failure
-/// never fails the committed transition.
-fn pass_freed_slot(vault: &Vault, oracle: &dyn SlotOracle, freed: Option<FreedSlot>, now_utc: u64) {
-    if let Some((page_ref, event_type, slot)) = freed
-        && let Err(error) =
-            run_waitlist_offer_pass(vault, oracle, page_ref, &event_type, Some(slot), now_utc)
-    {
-        tracing::debug!(%error, "a freed booking slot reached no waiter");
+/// in a writer of its own, now that the solver sees the slot free, and
+/// answers the offers it made. A failure never fails the committed
+/// transition.
+fn pass_freed_slot(
+    vault: &Vault,
+    oracle: &dyn SlotOracle,
+    freed: Option<FreedSlot>,
+    now_utc: u64,
+) -> Vec<WaitlistOfferMade> {
+    let Some((page_ref, event_type, slot)) = freed else {
+        return Vec::new();
+    };
+    run_waitlist_offer_pass(vault, oracle, page_ref, &event_type, Some(slot), now_utc)
+        .unwrap_or_else(|error| {
+            tracing::debug!(%error, "a freed booking slot reached no waiter");
+            Vec::new()
+        })
+}
+
+/// Sends each offer a committed pass made to its waiter, as the page's live
+/// publisher, on the sink the turn carries (RULING L3-13 OFFER = A). A send
+/// failure never fails the transition that freed the slot: the offer's hold
+/// stands, and the waiter can still claim it with the entry token.
+fn send_waitlist_offers<S: OutboundExecutionSink>(
+    vault: &Vault,
+    invite_actor: Option<EntityId>,
+    invite_sink: Option<&mut S>,
+    offers: &[WaitlistOfferMade],
+    now_utc: u64,
+) {
+    let (Some(actor), Some(sink)) = (invite_actor, invite_sink) else {
+        return;
+    };
+    for offer in offers {
+        if let Err(error) = dispatch_waitlist_offer(vault, actor, offer, &mut *sink, now_utc) {
+            tracing::debug!(%error, "a waitlist offer was not sent");
+        }
     }
 }
 
@@ -150,11 +181,19 @@ fn execute_waitlist<S: OutboundExecutionSink>(
     spec: &WaitlistSpec,
     now_utc: u64,
     invite_actor: Option<EntityId>,
-    invite_sink: Option<&mut S>,
+    mut invite_sink: Option<&mut S>,
     public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingVerbReceipt, BookingError> {
     if let Some(event_type) = waitlist_settle_scope(vault, spec)? {
-        run_waitlist_offer_pass(vault, oracle, spec.page_ref, &event_type, None, now_utc)?;
+        let offers =
+            run_waitlist_offer_pass(vault, oracle, spec.page_ref, &event_type, None, now_utc)?;
+        send_waitlist_offers(
+            vault,
+            invite_actor,
+            invite_sink.as_deref_mut(),
+            &offers,
+            now_utc,
+        );
     }
     let staged = booking_writer_with_publication(
         vault,
@@ -164,10 +203,17 @@ fn execute_waitlist<S: OutboundExecutionSink>(
         |wtxn| waitlist_in_writer(vault, oracle, spec, wtxn, now_utc),
     )?;
     if let Some((event_type, slot)) = staged.freed {
-        pass_freed_slot(
+        let offers = pass_freed_slot(
             vault,
             oracle,
             Some((spec.page_ref, event_type, slot)),
+            now_utc,
+        );
+        send_waitlist_offers(
+            vault,
+            invite_actor,
+            invite_sink.as_deref_mut(),
+            &offers,
             now_utc,
         );
     }

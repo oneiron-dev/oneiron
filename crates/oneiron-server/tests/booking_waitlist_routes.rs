@@ -461,6 +461,7 @@ fn join(slot: (u64, u64), session: &str) -> Value {
         "event_type": EVENT_TYPE,
         "window": {"start": slot.0, "end": slot.1},
         "visitor_tz": "UTC", "session_ref": session,
+        "booker_email": "yuki@example.com",
         "idempotency_key": format!("join-{session}"),
     }}})
 }

@@ -40,7 +40,7 @@ use super::types::{
     ConfirmReceipt, ConfirmSpec, LifecycleTokenScope, SoftHoldRow, WAITLIST_OFFER_TTL_SECS,
     WaitlistAction, WaitlistClaim, WaitlistJoin, WaitlistReceipt, WaitlistSpec,
 };
-use super::{digest_serde, time_range_serde};
+use super::{digest_serde, entity_ref_serde, time_range_serde};
 use crate::booking::{BookingError, EventTypeKey, RankedSlot, SlotOracle, SolveRequest};
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::temporal::TimeRange;
@@ -77,6 +77,10 @@ struct WaitlistEntryRow {
     #[serde(with = "digest_serde")]
     session_hash: [u8; 32],
     visitor_tz: String,
+    /// The waiter's contact: the offer goes to it, and an erase of it drops
+    /// the entry ([`erase_waitlist_contact_in_txn`]).
+    #[serde(with = "entity_ref_serde")]
+    contact_ref: EntityId,
     /// The digest of the hold token a claim derives from the entry token,
     /// which an offer's hold row carries.
     #[serde(with = "digest_serde")]
@@ -107,6 +111,17 @@ pub(super) enum WaitlistOutcome {
 pub(super) struct WaitlistStaged {
     pub(super) outcome: WaitlistOutcome,
     pub(super) freed: Option<(EventTypeKey, TimeRange)>,
+}
+
+/// One offer a committed offer pass made: the slot now held for a waiter,
+/// until when, and the contact the offer is sent to.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct WaitlistOfferMade {
+    pub(super) page_ref: EntityId,
+    pub(super) event_type: EventTypeKey,
+    pub(super) contact_ref: EntityId,
+    pub(super) slot: TimeRange,
+    pub(super) offered_until: u64,
 }
 
 fn entry_token_digest(token: &OpaqueLifecycleToken) -> [u8; 32] {
@@ -374,6 +389,7 @@ fn join_in_writer(
                 window: join.window,
                 session_hash,
                 visitor_tz: join.visitor_tz.clone(),
+                contact_ref: join.contact_ref,
                 claim_hold_hash: token_digest(&claim_hold_token(&token)),
                 offer: None,
             },
@@ -537,7 +553,8 @@ fn slot_is_held(
 /// Settles one page and event type's waitlist in its own writer: drops each
 /// entry whose window has passed, ends each offer that lapsed, and offers each
 /// lapsed slot and `freed` to the first waiting entry whose window holds it,
-/// when the slot is still bookable and nobody holds it.
+/// when the slot is still bookable and nobody holds it. Answers the offers
+/// it made, once its writer has committed, for the caller to send.
 ///
 /// # Errors
 ///
@@ -549,13 +566,13 @@ pub(super) fn run_waitlist_offer_pass(
     event_type: &EventTypeKey,
     freed: Option<TimeRange>,
     now_utc: u64,
-) -> Result<(), BookingError> {
-    booking_writer(vault, |wtxn| {
+) -> Result<Vec<WaitlistOfferMade>, BookingError> {
+    let offers = booking_writer(vault, |wtxn| {
         offer_pass_in_writer(vault, oracle, page_ref, event_type, freed, wtxn, now_utc)
     })?;
     // The pass lists no read set: the stage after it lists its own.
     let _ = oracle.take_read_rows();
-    Ok(())
+    Ok(offers)
 }
 
 fn offer_pass_in_writer(
@@ -566,9 +583,10 @@ fn offer_pass_in_writer(
     freed: Option<TimeRange>,
     wtxn: &mut heed::RwTxn<'_>,
     now_utc: u64,
-) -> Result<(), BookingError> {
+) -> Result<Vec<WaitlistOfferMade>, BookingError> {
     let event_hash = event_type_digest(event_type);
     let mut waiting = Vec::new();
+    let mut offers = Vec::new();
     let mut slots = Vec::new();
     for (key, entry) in fifo(vault, &*wtxn, &page_ref, &event_hash)? {
         if entry.window.end <= now_utc {
@@ -589,7 +607,7 @@ fn offer_pass_in_writer(
     }
     slots.extend(freed);
     if slots.is_empty() || waiting.is_empty() {
-        return Ok(());
+        return Ok(offers);
     }
     let notice = oracle.minimum_notice_secs(event_type)?;
     for slot in slots {
@@ -643,6 +661,50 @@ fn offer_pass_in_writer(
         WAITLIST
             .put(&vault.store, wtxn, &key, &entry)
             .map_err(|error| engine_failure("waitlist write", error))?;
+        offers.push(WaitlistOfferMade {
+            page_ref,
+            event_type: event_type.clone(),
+            contact_ref: entry.contact_ref,
+            slot,
+            offered_until,
+        });
+    }
+    Ok(offers)
+}
+
+/// Drops every waitlist entry an erased contact joined with, and the hold
+/// of any offer it carried (owner rule KEY STORE = A). The offered slot is
+/// back in availability for everyone at once; it passes to no other waiter.
+/// A per-entity eraser (`deletion::derived_rows`): it runs in the erase
+/// transaction at both delete doors, and an entity that is not a PERSON is a
+/// no-op.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_waitlist_contact_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> crate::Result<()> {
+    if let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+        crate::vault::live_entity_row_in_txn(store, txn, entity)?
+        && entity_type != crate::registry::ENTITY_TYPE_PERSON
+    {
+        return Ok(());
+    }
+    let mut named = Vec::new();
+    for row in WAITLIST.iter_from(store, txn, &[])? {
+        let Ok((key, entry)) = row else {
+            continue;
+        };
+        if entry.contact_ref == *entity {
+            named.push(key);
+        }
+    }
+    for key in named {
+        WAITLIST.delete(store, txn, &key)?;
+        HOLD.delete(store, txn, &hold_digest(&offer_session_key(&key.2)))?;
     }
     Ok(())
 }

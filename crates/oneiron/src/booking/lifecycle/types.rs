@@ -219,6 +219,10 @@ pub struct WaitlistJoin {
     /// the same session replaces the first, as a second hold replaces a hold.
     pub session_key: SessionKey,
     pub visitor_tz: String,
+    /// The waiter's contact, resolved from the address it joined with: an
+    /// offer is sent to it, and an erase of it drops the entry.
+    #[serde(with = "entity_ref_serde")]
+    pub contact_ref: EntityId,
 }
 
 /// Book the slot an offer holds. The entry token proves the waiter, not the
