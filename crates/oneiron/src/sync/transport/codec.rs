@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll, ready};
 
 use futures_util::{Sink, Stream};
-use serde::Serialize;
 use tokio_tungstenite::tungstenite::error::{CapacityError, Error as WsError};
 use tokio_tungstenite::tungstenite::{Bytes, Message};
 
@@ -271,17 +270,8 @@ impl LinkBytes {
     }
 }
 
-/// One inner tag's counts. `tag` 63 also holds every higher tag.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct TagBytesRow {
-    pub tag: u8,
-    pub out_frames: u64,
-    pub out_raw: u64,
-    pub out_sent: u64,
-    pub in_frames: u64,
-    pub in_raw: u64,
-    pub in_received: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::transport::codec::TagBytesRow;
 
 /// Every link in this process, summed per inner tag.
 pub fn process_link_bytes() -> Vec<TagBytesRow> {

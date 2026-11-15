@@ -63,19 +63,8 @@ const BLOCK_STOPPED_REASON: &str = "stopped at the owner's answer";
 /// The lifecycle call a settled ask's continuation records (FIX 5079).
 const BLOCK_CONTINUATION_CALL: &str = "block_continuation";
 
-/// What a blocked TASK waits on its owner for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum BlockPurpose {
-    /// A result whose done-means is the owner's call, under the brief
-    /// revision it was judged against.
-    Done {
-        result_ref: EntityId,
-        brief_rev: u32,
-    },
-    /// Work its taker cannot go on with without the owner.
-    Blocked,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::task_verb::highway_block::BlockPurpose;
 
 /// The typed continuation one engine-opened ask on a blocked TASK runs when
 /// it settles.
