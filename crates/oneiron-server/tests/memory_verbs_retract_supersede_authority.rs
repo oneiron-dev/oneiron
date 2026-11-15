@@ -18,6 +18,11 @@
 //! On main every `non_owner_*` case is red: the claim closes. The `owner_*`
 //! and `agent_retracts_its_own_claim_at_the_vault_time` cases pass on both.
 //!
+//! The scoped agent is cut on verbs only. A slip cut on records, channels,
+//! worlds or facets is refused before any verb runs, on main too
+//! (`CoreAuth::require` asks an unrestricted record scope of a write), so
+//! it never reaches these mechanics.
+//!
 //! Deterministic: one in-process vault, server and router per case
 //! (`oneshot`). No model is configured and none is called.
 //!
@@ -41,7 +46,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::ClaimInput;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
@@ -203,23 +208,14 @@ fn full_agent(fx: &Fixture, name: &str) -> (EntityId, Caller) {
 }
 
 /// The callers that are not the owner, each named for its failure message:
-/// a scoped agent (read and write in one other world), an agent on a
-/// full-vault slip, and a member on a full-vault slip.
+/// a scoped agent (its slip names only the read and write verbs), an agent
+/// on a full-vault slip, and a member on a full-vault slip.
 fn non_owners(fx: &Fixture) -> Vec<(&'static str, Caller)> {
-    let world = fx
-        .vault
-        .create_world(
-            &owner_proof(fx),
-            "memory verbs scoped agent",
-            fx.vault.now_recorded_at(),
-        )
-        .expect("a world the scoped agent works in");
     let mut scoped = Scope::top();
     scoped.verbs = ScopeAxis::Some(BTreeSet::from([
         "core:read".to_owned(),
         "core:write".to_owned(),
     ]));
-    scoped.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(world)]));
     let scoped_agent = fx
         .vault
         .ensure_agent_principal("memory-verbs-scoped-agent")

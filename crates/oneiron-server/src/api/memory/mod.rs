@@ -288,9 +288,9 @@ pub(super) use self::watch::{
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
         (status = 400, description = "Malformed verb request, or a retract by a caller that is not the vault owner naming `at`.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds, unresolved_actor, or account_key_unbound (an account key that does not name the owner, on a rooted vault). remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does. supersede by a caller that is not the vault owner is refused. retract by a caller that is not the vault owner answers `vault.claims.retract`'s refusal in the facade's MemoryError body: FORBIDDEN for a claim it did not write, OWNER_BINDING_REQUIRED for a person who is not the bound owner, or unresolved_actor.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds, unresolved_actor, or account_key_unbound (an account key that does not name the owner, on a rooted vault). remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does. supersede by a caller that is not the vault owner is refused. retract by a caller that is not the vault owner answers `vault.claims.retract`'s refusal in the facade's MemoryError body: FORBIDDEN for a claim it did not write, for a token that names no actor (unresolved_actor), or for an account key on a rooted vault retracting a claim its person did not write (account_key_unbound); OWNER_BINDING_REQUIRED for a person the authority log does not bind.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Referenced entity was not found. A retract by a caller that is not the vault owner answers the claim door's NOT_FOUND in the facade's MemoryError body.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept. A retract by a caller that is not the vault owner of a claim the general door does not close (an expression preference) answers the claim door's INVALID_STATE in the facade's MemoryError body.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 422, description = "remember: a ref the entity names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body (as `/v1/core/batch`).", body = super::facade::MemoryErrorEnvelopeSchema, content_type = "application/json"),
         (status = 500, description = "Memory verb failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -769,26 +769,40 @@ fn core_memory_delete_by_role(
         CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
         CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
     };
-    match memory.safe_delete(&id.to_hex(), reason) {
-        Err(refusal)
-            if by_account_key
-                && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-                && server
-                    .vault()
-                    .authority_vault_id()
-                    .is_ok_and(|root| root.is_some()) =>
-        {
-            Err(oneiron::memory::MemoryError::new(
-                oneiron::memory::MEMORY_CODE_FORBIDDEN,
-                "account_key_unbound: this key can't delete in this vault; use your app login or ask the owner",
-                &[
-                    "Present the person's own paired slip (--principal-ref, --actor-class human) to delete as that person.",
-                ],
-            )
-            .into())
-        }
-        outcome => Ok(outcome?),
+    Ok(memory
+        .safe_delete(&id.to_hex(), reason)
+        .map_err(|refusal| account_key_unbound(server, by_account_key, refusal, "delete"))?)
+}
+
+/// An account key's refusal of `act`: the key carries no vault slip, so on a
+/// rooted vault no person but the owner stands by it, and the engine's owner
+/// refusal there answers `account_key_unbound` with the remedy (Engine rulings
+/// 13 Nov 08:20 and 08:30 = C). Any other refusal passes unchanged.
+fn account_key_unbound(
+    server: &SyncServer,
+    by_account_key: bool,
+    refusal: oneiron::memory::MemoryError,
+    act: &str,
+) -> oneiron::memory::MemoryError {
+    if by_account_key
+        && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+        && server
+            .vault()
+            .authority_vault_id()
+            .is_ok_and(|root| root.is_some())
+    {
+        let remedy = format!(
+            "Present the person's own paired slip (--principal-ref, --actor-class human) to {act} as that person."
+        );
+        return oneiron::memory::MemoryError::new(
+            oneiron::memory::MEMORY_CODE_FORBIDDEN,
+            format!(
+                "account_key_unbound: this key can't {act} in this vault; use your app login or ask the owner"
+            ),
+            &[remedy.as_str()],
+        );
     }
+    refusal
 }
 
 /// The actor a memory verb judges a caller that is not the vault owner on:
@@ -833,8 +847,8 @@ fn non_owner_supersede_refusal() -> ApiError {
             required_scope: Some("owner".to_owned()),
         },
         [
-            "Write the replacement through vault.claims.upsert: it supersedes the prior under its authorship check and the write gates.",
-            "A live run supersedes through vault.claims.supersede.",
+            "Write a replacement on the same subject, scope and predicate through vault.claims.upsert: it supersedes the standing head under its authorship check and the write gates.",
+            "A live run supersedes through vault.claims.supersede; the vault owner supersedes any pair here.",
         ],
     )
 }
@@ -842,19 +856,24 @@ fn non_owner_supersede_refusal() -> ApiError {
 /// The core retract of `id` by a caller that is not the vault owner: the
 /// claim door `vault.claims.retract` runs ([`oneiron::Memory::claim_retract`]),
 /// on the caller's own actor ([`core_memory_caller`]) with the credential's
-/// proof bound. A human who is the bound owner retracts any claim, recorded
-/// as the owner's explicit retraction; anyone else only a claim it wrote, and
-/// an agent's retract the gate holds parks for the holder's consent. The
-/// vault's clock dates it.
+/// proof bound. A human the authority log binds retracts any claim, recorded
+/// as the owner's explicit retraction (the door takes that binding for
+/// ownership: FIX-LIST CLAIM-RETRACT-HUMAN-BINDING-IS-NOT-OWNERSHIP); anyone
+/// else only a claim it wrote, and an agent's retract the gate holds parks
+/// for the holder's consent. An account key on a rooted vault retracting a
+/// claim its person did not write answers `account_key_unbound`, as delete
+/// does. The vault's clock dates it.
 fn core_memory_retract_by_actor(
     server: &SyncServer,
     auth: &CoreAuth,
     id: &oneiron::EntityId,
 ) -> Result<oneiron::memory::CommitReceipt, DagWriteError> {
-    let (actor, class, _) = core_memory_caller(server, auth, "retract")?;
+    let (actor, class, by_account_key) = core_memory_caller(server, auth, "retract")?;
     let memory = super::scoped_auth::credential_memory(server.vault(), Some(auth), actor, class)
         .at(auth.locality());
-    Ok(memory.claim_retract(&id.to_hex())?)
+    Ok(memory.claim_retract(&id.to_hex()).map_err(|refusal| {
+        account_key_unbound(server, by_account_key, refusal, "retract another's claim")
+    })?)
 }
 
 pub(crate) fn core_memory_delete_reason(
