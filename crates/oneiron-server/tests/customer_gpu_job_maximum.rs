@@ -5,9 +5,11 @@
 //! - A job is quoted, started by the owner, told to checkpoint at 50, 80 and
 //!   95 percent, warned at 95, stopped at its maximum after a checkpoint taken
 //!   after the warning, settled at its quote, and resumed once from that
-//!   checkpoint.
-//! - Starting and cancelling are the owner's acts; an agent whose Grant names
-//!   the verbs may quote and read status, and is refused start and cancel.
+//!   checkpoint by the add-funds notice's one tap (C2 05).
+//! - An agent whose Grant names the verbs quotes and reads status, starts a
+//!   job only within the per-job maximum the owner set beside that Grant
+//!   (`vault.gpu.jobs.allow`, the owner's own act; RULING L10-31-STARTER =
+//!   B), and cancels only a job it started.
 //! - An offer whose backend is not registered refuses its start before any
 //!   reservation.
 //! - `serve` refuses a section with a price shape other than our list, a zero
@@ -21,7 +23,10 @@
 //! sleeps.
 //!
 //! Red: at #8059's head plus this file alone, the target does not build (no
-//! `test_doors::gpu_backend`, no `gpu_jobs` config).
+//! `test_doors::gpu_backend`, no `gpu_jobs` config). At #8063's head (6c71b86d6a1c)
+//! plus this file, the agent's start within its maximum and the stop
+//! notice's tap fail: no `vault.gpu.jobs.allow`, start and cancel refuse
+//! every agent, and the notice offers no tap.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
 //! --locked -p oneiron-server --all-features --features oneiron/test-support
@@ -424,6 +429,43 @@ fn refusal(body: &Value) -> String {
         .to_owned()
 }
 
+/// The owner's add-funds notice of a stop at the maximum, as their inbox
+/// lists it with its taps.
+async fn owner_stop_notice(fixture: &Fixture) -> Value {
+    let (status, page) = as_owner(fixture, "self.inbox.list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "owner inbox: {page}");
+    page["rows"]
+        .as_array()
+        .expect("inbox rows")
+        .iter()
+        .find(|row| row["source"]["producer"].as_str() == Some("gpu_job.stopped_at_maximum"))
+        .unwrap_or_else(|| panic!("the add-funds notice in the owner's inbox: {page}"))
+        .clone()
+}
+
+/// `agent` quotes a job of `maximum_secs` and starts it on that quote.
+async fn agent_start(fixture: &Fixture, agent: &Agent, maximum_secs: u64) -> (StatusCode, Value) {
+    let (status, quote) = as_agent(
+        fixture,
+        agent,
+        "vault.gpu.jobs.quote",
+        quote_input("h100-test", maximum_secs, None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an agent whose Grant names quote quotes: {quote}"
+    );
+    as_agent(
+        fixture,
+        agent,
+        "vault.gpu.jobs.start",
+        json!({"quote": quote, "resume": false}),
+    )
+    .await
+}
+
 #[test]
 fn gpu_job_warns_checkpoints_and_stops_at_its_maximum() {
     run_on_engine_stack("gpu-job-maximum", || async {
@@ -501,25 +543,53 @@ fn gpu_job_warns_checkpoints_and_stops_at_its_maximum() {
             "100 billed seconds and 20 overhead seconds at 2, never above the quote: {status}"
         );
 
-        let resume_quote = owner_quote(&fixture, "h100-test", Some(&job)).await;
+        let offered = status["stop"]["resume_quote"].clone();
         assert_eq!(
-            resume_quote["job"].as_str(),
+            offered["job"].as_str(),
             Some(job.as_str()),
-            "{resume_quote}"
+            "the stop offers one more chunk of this job: {status}"
         );
-        let (status, resumed) = as_owner(
-            &fixture,
-            "vault.gpu.jobs.start",
-            json!({"quote": resume_quote, "resume": true}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "owner resume: {resumed}");
+        assert_eq!(
+            offered["maximum_secs"].as_u64(),
+            Some(100),
+            "of its first maximum: {status}"
+        );
+        let stop_notice = owner_stop_notice(&fixture).await;
+        let taps = stop_notice["actions"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(taps.len(), 1, "one tap, the resume: {stop_notice}");
+        assert_eq!(
+            taps[0]["verb"].as_str(),
+            Some("vault.gpu.jobs.start"),
+            "{stop_notice}"
+        );
+        assert_eq!(
+            taps[0]["args"],
+            json!({"quote": offered, "resume": true}),
+            "the tap starts on the quote the stop shows: {stop_notice}"
+        );
+        let (status, resumed) =
+            as_owner(&fixture, "vault.gpu.jobs.start", taps[0]["args"].clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner's one tap resumes: {resumed}"
+        );
         assert_eq!(resumed["state"].as_str(), Some("running"), "{resumed}");
         assert_eq!(resumed["chunks"].as_u64(), Some(2), "{resumed}");
         assert_eq!(
             fixture.gpu.called("create"),
             2,
             "the resume created one chunk"
+        );
+        let stop_notice = owner_stop_notice(&fixture).await;
+        assert!(
+            stop_notice["actions"]
+                .as_array()
+                .is_none_or(|taps| taps.is_empty()),
+            "the tap is gone once the resume took the stop: {stop_notice}"
         );
 
         let again = owner_quote(&fixture, "h100-test", Some(&job)).await;
@@ -539,11 +609,11 @@ fn gpu_job_warns_checkpoints_and_stops_at_its_maximum() {
 }
 
 #[test]
-fn starting_a_gpu_job_is_the_owners_act() {
-    run_on_engine_stack("gpu-job-owner-act", || async {
+fn an_agent_starts_only_within_the_maximum_the_owner_set_beside_its_grant() {
+    run_on_engine_stack("gpu-job-agent-start", || async {
         let fixture = setup(SECTION);
         let agent = pair_agent(&fixture, "gpu-job-agent", [0x61; 32]).await;
-        let (status, body) = as_owner(
+        let (status, minted) = as_owner(
             &fixture,
             "vault.agents.grants.mint",
             json!({
@@ -559,6 +629,7 @@ fn starting_a_gpu_job_is_the_owners_act() {
                         "vault.gpu.jobs.status",
                         "vault.gpu.jobs.start",
                         "vault.gpu.jobs.cancel",
+                        "vault.gpu.jobs.allow",
                     ]},
                     "sensitivity": {"kind": "at_most", "value": "restricted"},
                 },
@@ -568,58 +639,89 @@ fn starting_a_gpu_job_is_the_owners_act() {
         assert_eq!(
             status,
             StatusCode::OK,
-            "owner mints the agent's Grant: {body}"
+            "owner mints the agent's Grant: {minted}"
         );
+        let grant = minted["grant"]["grant_ref"]
+            .as_str()
+            .expect("the Grant's id")
+            .to_owned();
 
-        let (status, quote) = as_agent(
-            &fixture,
-            &agent,
-            "vault.gpu.jobs.quote",
-            quote_input("h100-test", 100, None),
-        )
-        .await;
+        let (status, body) = agent_start(&fixture, &agent, 100).await;
         assert_eq!(
             status,
-            StatusCode::OK,
-            "an agent whose Grant names quote quotes: {quote}"
+            StatusCode::FORBIDDEN,
+            "no maximum beside the Grant, no start: {body}"
+        );
+        assert!(
+            refusal(&body).contains("vault.gpu.jobs.allow"),
+            "the refusal names the owner's door: {body}"
         );
 
         let (status, body) = as_agent(
             &fixture,
             &agent,
-            "vault.gpu.jobs.start",
-            json!({"quote": quote, "resume": false}),
+            "vault.gpu.jobs.allow",
+            json!({"grant": grant, "maximum_secs": 1000}),
         )
         .await;
         assert_eq!(
             status,
             StatusCode::FORBIDDEN,
-            "starting is the owner's act: {body}"
+            "setting the maximum is the owner's own act, even with the verb in the Grant: {body}"
         );
+
+        let (status, allowed) = as_owner(
+            &fixture,
+            "vault.gpu.jobs.allow",
+            json!({"grant": grant, "maximum_secs": 150}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the owner sets 150 s: {allowed}");
+        assert_eq!(allowed["maximum_secs"].as_u64(), Some(150), "{allowed}");
+        assert_eq!(
+            allowed["agent"].as_str(),
+            Some(agent.principal.to_hex().as_str()),
+            "{allowed}"
+        );
+
+        let (status, body) = agent_start(&fixture, &agent, 200).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a job over the maximum is refused: {body}"
+        );
+        assert!(refusal(&body).contains("over the 150 seconds"), "{body}");
         assert_eq!(
             fixture.gpu.called("create"),
             0,
-            "the agent's start created nothing"
+            "the refused starts created nothing"
         );
 
+        let (status, started) = agent_start(&fixture, &agent, 150).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a job within the maximum starts: {started}"
+        );
+        assert_eq!(started["state"].as_str(), Some("running"), "{started}");
+        let agents_job = started["job"].as_str().expect("job id").to_owned();
+        assert_eq!(fixture.gpu.called("create"), 1);
+
+        let quote = owner_quote(&fixture, "h100-test", None).await;
         let (status, started) = as_owner(
             &fixture,
             "vault.gpu.jobs.start",
             json!({"quote": quote, "resume": false}),
         )
         .await;
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "the owner starts on that quote: {started}"
-        );
-        let job = started["job"].as_str().expect("job id").to_owned();
+        assert_eq!(status, StatusCode::OK, "the owner starts: {started}");
+        let owners_job = started["job"].as_str().expect("job id").to_owned();
 
         let (status, body) = as_agent(
             &fixture,
             &agent,
             "vault.gpu.jobs.status",
-            json!({"job": job}),
+            json!({"job": owners_job}),
         )
         .await;
         assert_eq!(
@@ -627,37 +729,71 @@ fn starting_a_gpu_job_is_the_owners_act() {
             StatusCode::OK,
             "an agent whose Grant names status reads it: {body}"
         );
-        assert_eq!(body["state"].as_str(), Some("running"), "{body}");
-
         let (status, body) = as_agent(
             &fixture,
             &agent,
             "vault.gpu.jobs.cancel",
-            json!({"job": job}),
+            json!({"job": owners_job}),
         )
         .await;
         assert_eq!(
             status,
             StatusCode::FORBIDDEN,
-            "cancelling is the owner's act: {body}"
+            "an agent never cancels the owner's job: {body}"
         );
-        assert_eq!(
-            fixture.gpu.called("terminate"),
-            0,
-            "the agent's cancel ended nothing"
-        );
-
-        let (status, body) = as_owner(&fixture, "vault.gpu.jobs.cancel", json!({"job": job})).await;
-        assert_eq!(status, StatusCode::OK, "the owner cancels: {body}");
         assert!(
-            matches!(body["state"].as_str(), Some("ending" | "ended")),
+            refusal(&body).contains("only a GPU job it started"),
             "{body}"
         );
         assert_eq!(
             fixture.gpu.called("terminate"),
-            1,
-            "the owner's cancel terminates"
+            0,
+            "the refused cancel ended nothing"
         );
+
+        let (status, body) = as_agent(
+            &fixture,
+            &agent,
+            "vault.gpu.jobs.cancel",
+            json!({"job": agents_job}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the agent cancels its own job: {body}"
+        );
+        assert!(
+            matches!(body["state"].as_str(), Some("ending" | "ended")),
+            "{body}"
+        );
+        assert_eq!(fixture.gpu.called("terminate"), 1);
+
+        let (status, removed) = as_owner(
+            &fixture,
+            "vault.gpu.jobs.allow",
+            json!({"grant": grant, "maximum_secs": 0}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the owner removes it: {removed}");
+        assert_eq!(removed["maximum_secs"].as_u64(), Some(0), "{removed}");
+        assert!(removed["agent"].is_null(), "{removed}");
+        let (status, body) = agent_start(&fixture, &agent, 100).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "with the maximum removed, the agent starts nothing: {body}"
+        );
+        assert_eq!(fixture.gpu.called("create"), 2);
+
+        let (status, body) = as_owner(
+            &fixture,
+            "vault.gpu.jobs.cancel",
+            json!({"job": owners_job}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the owner cancels: {body}");
+        assert_eq!(fixture.gpu.called("terminate"), 2);
     });
 }
 
