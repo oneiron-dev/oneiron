@@ -2961,18 +2961,31 @@ id = "home-gpu"
 url = "https://home-gpu.example:8000/v1"
 capacity = 2
 hours = { start = "22:00", end = "07:00", utc_offset = "+09:00" }
+
+# A box in a zone with daylight saving: its hours follow the zone's clock.
+[[gpu.pods]]
+id = "berlin-gpu"
+url = "https://berlin-gpu.example:8000/v1"
+capacity = 2
+hours = { start = "22:00", end = "07:00", iana_timezone = "Europe/Berlin" }
 ```
 
 A pod with `hours` takes new batches only inside them (CROSS-ARCH-0024
 #my-network 07: embeddings can run on the GPU box at night). `start` is the
-first minute in and `end` the first minute out, both `"HH:MM"` in
-`utc_offset`; a start later than the end runs across midnight. The offset is
-required and fixed, so it does not follow daylight-saving changes. A batch
-that took its lease inside the hours keeps it until the batch ends. Outside
-every pod's hours, batches go to the `[embedder]` endpoint, as with no
-healthy pod. A pod without `hours` takes batches at any hour. `serve` refuses
-a time that is not `"HH:MM"`, a start equal to the end, and an offset beyond
-14:00.
+first minute in and `end` the first minute out, both `"HH:MM"`; a start later
+than the end runs across midnight. The hours are read on exactly one clock:
+`utc_offset`, a fixed offset that does not follow daylight-saving changes, or
+`iana_timezone`, an IANA zone in its canonical spelling, read in the engine's
+embedded zone database (the calendar's), so the hours move with the zone's
+daylight-saving changes. In a zone, on the night the clocks jump forward the
+skipped minutes never occur, so a start inside the gap opens at the first
+minute after it; on the night they fall back, the repeated hour is in or out
+both times. A batch that took its lease inside the hours keeps it until the
+batch ends. Outside every pod's hours, batches go to the `[embedder]`
+endpoint, as with no healthy pod. A pod without `hours` takes batches at any
+hour. `serve` refuses a time that is not `"HH:MM"`, a start equal to the end,
+an offset beyond 14:00, a zone the database does not hold, and hours with no
+clock or with both.
 
 `serve` polls each pod at start and then every `poll_seconds`. A pod is
 healthy when it answers at all (transport), answers `health_path` with a 2xx
