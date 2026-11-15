@@ -31,12 +31,16 @@ use super::*;
 /// in any role (yours, work or school, rented, a hosted node, an execution
 /// node), as the sync wire accepts a proven peer machine
 /// ([`AuthorityFold::machine_proof_key`]) and not only a "yours" one. Live:
-/// not removed in any chain, not conflicted or poisoned, not stale, held or
-/// unsettled where the view says so. A role change between linked roles
-/// never revokes it; only removal does. It never admits a key the authority
-/// roster names (the host root, an owner or roster device key: FIX 2222, the
-/// unattended host root acts as nobody), nor an engine MACHINE writer, which
-/// no profile names.
+/// some chain names `key` live (not conflicted or poisoned, not stale, held
+/// or unsettled where the view says so), and the roster's chain has not
+/// removed the machine. An anchor chain's removal vetoes nothing: any fresh
+/// key can publish a root and mark any machine removed in its own chain, and
+/// the fold cannot tell the owner's anchor from a stranger's (RULING
+/// FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C, 16 Nov 05:10). A role change between
+/// linked roles never revokes it; only removal does. It never admits a key
+/// the authority roster names (the host root, an owner or roster device key:
+/// FIX 2222, the unattended host root acts as nobody), nor an engine MACHINE
+/// writer, which no profile names.
 pub(crate) fn owner_act_signer_admits(
     machine: Option<&FoldedMachine>,
     roster: &BTreeMap<AuthorityKey, FoldedDevice>,
@@ -44,7 +48,7 @@ pub(crate) fn owner_act_signer_admits(
 ) -> bool {
     !roster.contains_key(&AuthorityKey::Ed25519(*key))
         && machine.is_some_and(|folded| {
-            folded.chains().all(|(_, chain)| !chain.removed)
+            folded.roster.as_ref().is_none_or(|chain| !chain.removed)
                 && folded
                     .chains()
                     .any(|(_, chain)| chain.is_live() && chain.profile.machine_key == *key)
