@@ -9,7 +9,7 @@ use oneiron::skill_optimize::HeldOutReplayNotes;
 use oneiron::task_type::TaskTypeNode;
 use oneiron::{EntityId, LlmMessageRole};
 
-use super::super::code_fix::{HostModels, clip, message};
+use super::super::code_fix::{HostModels, message};
 use crate::server::SyncServer;
 
 /// The purpose the names are metered and routed under.
@@ -68,9 +68,9 @@ impl TypeNamer for HostNamer<'_> {
             return Ok(None);
         };
         let data = serde_json::json!({
-            "parent_type": clip(&parent.name, PARENT_NAME_BYTES),
+            "parent_type": &parent.name[..parent.name.floor_char_boundary(PARENT_NAME_BYTES)],
             "decision": axis.as_str(),
-            "winning_value": clip(winner, PARENT_NAME_BYTES),
+            "winning_value": &winner[..winner.floor_char_boundary(PARENT_NAME_BYTES)],
         });
         let Some(text) = self.models.generate_sourced(
             self.models.coach(),

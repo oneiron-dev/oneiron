@@ -23,9 +23,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use oneiron_browser::{
-    BatchStopCause, ExpectInput, ExpectOutput, LibraryRunOutput, SecretArg, SubgoalStatus,
-};
+use oneiron_browser::{BatchStopCause, LibraryRunOutput, SecretArg, SubgoalStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -77,41 +75,10 @@ struct AttemptRow {
     pinned_at: u64,
 }
 
-/// The program a try's first lease pinned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskWorkflowPin {
-    /// The live program the handle led to, and the TASK's arguments for it.
-    Active {
-        record: EntityId,
-        args: BTreeMap<String, String>,
-        /// Secret slots' arguments in typed form, as bound (FIX 8348).
-        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-        secret_args: BTreeMap<String, SecretArg>,
-        /// The program's secret parameter names at pin time: their values
-        /// are masked in the try's receipt (FIX 8348).
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        secret_names: Vec<String>,
-    },
-    /// No program to run, and why.
-    Unavailable { cause: TaskWorkflowUnavailable },
-}
-
-/// Why a try's first lease pinned no program.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskWorkflowUnavailable {
-    /// The handle's lineage ends at `id`, retired for `reason` with no
-    /// successor.
-    Retired {
-        id: EntityId,
-        reason: Option<String>,
-    },
-    /// No program was ever filed under the handle.
-    Missing,
-    /// The library did not read; `detail` is its error.
-    Unreadable { detail: String },
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::browser_workflow::{
+    TaskWorkflowCheck, TaskWorkflowPin, TaskWorkflowReport, TaskWorkflowUnavailable,
+};
 
 /// One bound try's pin, as its host reads it under its lease. Read-only.
 #[derive(Debug, Clone)]
@@ -360,38 +327,6 @@ fn pinned_row_in(
         ));
     }
     Ok(Some(row))
-}
-
-/// What a bound try's host found when it ran the pinned program, for
-/// [`record_task_workflow_outcome`].
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskWorkflowReport {
-    /// The strict program ran to its end, and `checks` are the TASK's
-    /// browser checks as the host read them on the page it left, in the
-    /// pinned done-means' order.
-    Ran {
-        output: LibraryRunOutput,
-        checks: Vec<TaskWorkflowCheck>,
-    },
-    /// The strict program handed off before its end, for `stop_cause`;
-    /// `output` is its run, `None` when the call never ran.
-    Program {
-        stop_cause: BatchStopCause,
-        output: Option<LibraryRunOutput>,
-    },
-    /// The pin names no program, so nothing ran.
-    Unavailable,
-    /// The program was started at an earlier entry and its end was never
-    /// recorded (FIX 8104): whether it acted on the page is unknown.
-    Interrupted,
-}
-
-/// One TASK browser check, and what the page showed for it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskWorkflowCheck {
-    pub expect: ExpectInput,
-    pub observed: ExpectOutput,
 }
 
 /// Records, once, what came of the try `binding` leases, in one writer under

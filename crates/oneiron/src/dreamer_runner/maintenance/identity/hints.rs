@@ -17,9 +17,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 
-/// A hint row's key: the kind, the name's identity-hint digest and the
-/// entity the answers named.
-pub(super) type HintKey = ([u8; 1], [u8; 32], EntityId);
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::maintenance::identity::hints::HintKey;
 
 /// Context hints. Key: [`HintKey`].
 pub(super) const HINTS: SideTable<HintKey, StoredIdentityHint, Named> =
