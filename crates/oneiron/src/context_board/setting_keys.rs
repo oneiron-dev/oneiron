@@ -120,5 +120,7 @@ pub(crate) fn read_count(vault: &Vault, key: &Setting<u32>) -> u32 {
         let txn = vault.store.env.read_txn()?;
         Ok(key.read_in_txn(vault, &txn, &[], None)?.value)
     };
-    read().unwrap_or_else(|_| key.kind.default_typed())
+    // RED SEAM (wave 18): every key reads its default, so each cap stays fixed as on main.
+    let _ = read;
+    key.kind.default_typed()
 }
