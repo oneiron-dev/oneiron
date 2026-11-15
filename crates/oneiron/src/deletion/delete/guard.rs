@@ -70,6 +70,11 @@ impl Vault {
             self.store
                 .delete_guards
                 .reject_audience_edit_delete(&self.store, &txn, id)?;
+            // An audit_read grant ends only through the owner's revoke. Its
+            // refusal comes before a hold's: the settlement of a privacy
+            // erase a hold refused limits the record's use (Astra delta-3
+            // N3).
+            crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, &txn, id)?;
             self.store.delete_guards.precheck_goal_delete(
                 &self.store,
                 &txn,
@@ -122,6 +127,8 @@ impl Vault {
                 header.entity_type,
             )));
         }
+        // Again on the header this leg read: a grant the owner wrote after
+        // the first check is refused before any writer opens.
         if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
             crate::access_grant::reject_audit_read_grant_delete_in_txn(
                 &self.store,
