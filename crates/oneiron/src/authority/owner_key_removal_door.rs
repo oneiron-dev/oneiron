@@ -32,6 +32,13 @@
 //! is no device key: it stays, the root's door changes it, and it does not
 //! count toward the keys that remain on a device.
 //!
+//! Both doors mark the rows their write counted for the vault's loaded
+//! windows, in the write, and announce them once it committed, as the
+//! recovery root's door does: the host and every replica then see the keys
+//! ended without a window reload. Another landing of a removal
+//! ([`Vault::set_machine_role`], the confirm of a held removal) commits as
+//! every other owner answer does.
+//!
 //! Each counted enrolment of a key speaks for itself. A key that one
 //! enrolment names as a device's key and another, on a branch that never saw
 //! the first, marks as the recovery root's is both: both doors end it as that
@@ -215,7 +222,9 @@ impl Vault {
             ends_recovery_root,
             ..self.owner_keys_remaining_in_txn(&txn, &after, &[])?
         };
+        let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         Ok(OwnerKeyRemoval::Removed { ended, remaining })
     }
 
@@ -266,7 +275,9 @@ impl Vault {
         {
             let receipt =
                 self.end_keys_of_removed_machine_in_txn(&mut txn, machine, standing, seen, ending)?;
+            let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
             txn.commit()?;
+            self.note_committed_authority_rows(rows);
             return Ok(MachineRemoval::Written(receipt));
         }
         let mut answer = AnswerAct::by_owner(actor, surface, MachineRole::Removed, seen);
@@ -294,7 +305,9 @@ impl Vault {
             ends_recovery_root,
             ..self.owner_keys_remaining_in_txn(&txn, &after, &[])?
         };
+        let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         #[cfg(feature = "sync")]
         if landing.held().is_none() {
             self.reseal_after_machine_admission()?;
@@ -351,6 +364,23 @@ impl Vault {
             live_keys,
             remaining,
         })
+    }
+
+    /// Marks the authority rows a removal door's write counted, from
+    /// `before` to the transaction's fold now, for the vault's loaded
+    /// windows, in the write: the removal, each revocation and each frontier
+    /// join. Answers them for the announcement once the write committed
+    /// ([`Self::note_committed_authority_rows`]). A crash between the commit
+    /// and the announcement still mirrors them.
+    fn mark_rows_counted_since_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        before: &AuthorityFold,
+    ) -> Result<BTreeSet<EntityId>> {
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        let rows = super::root_recovery_door::authority_rows_counted_since(before, &after)?;
+        self.mark_authority_rows_in_txn(txn, &rows)?;
+        Ok(rows)
     }
 
     /// Whether this vault is a hosted one: there a managed host's custodial

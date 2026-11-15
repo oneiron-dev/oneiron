@@ -301,8 +301,9 @@ fn this_install_successor(
 /// revocations, the enrolment and its binding). The door marks them for the
 /// vault's loaded windows in its write and announces them once it committed,
 /// as the ReRoot writer does (FIX 11993), so the host and every replica see
-/// the lost key revoked without a window reload.
-fn authority_rows_counted_since(
+/// the lost key revoked without a window reload. The owner key removal
+/// doors do the same with the rows their writes counted.
+pub(super) fn authority_rows_counted_since(
     before: &AuthorityFold,
     after: &AuthorityFold,
 ) -> Result<BTreeSet<EntityId>> {
