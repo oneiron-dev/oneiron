@@ -115,6 +115,7 @@ pub(super) fn apply_op(
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::GrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)

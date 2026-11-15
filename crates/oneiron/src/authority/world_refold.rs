@@ -41,6 +41,7 @@ pub(super) fn refolds(
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::PolicySettingSet(_)
                 | AuthorityOp::AgentGrantAct(_)
+                | AuthorityOp::GrantAct(_)
                 | AuthorityOp::SlipGrantRevoke { .. }
                 | AuthorityOp::MembershipExecution(_)
         )

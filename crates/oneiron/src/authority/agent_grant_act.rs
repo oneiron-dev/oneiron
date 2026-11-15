@@ -156,6 +156,19 @@ pub(super) fn apply_agent_grant_act(
     entry: &AuthorityLogEntry,
     record: &AgentGrantActRecord,
     hash: AuthorityEntryHash,
+    standing: (Option<&PinnedRoot>, InstallCounted<'_>),
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    apply_carried_grant_act(state, entry, record.machine, hash, standing)
+}
+
+/// The carrier checks every grant act's transition runs (`AgentGrantAct`, `GrantAct`): no
+/// cosign, an install key of `machine` that some chain of it names and that is no roster key,
+/// and a sequence above the signer's last.
+pub(super) fn apply_carried_grant_act(
+    state: &FoldState,
+    entry: &AuthorityLogEntry,
+    machine: EntityId,
+    hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     if !entry.cosigns.is_empty() {
@@ -165,7 +178,7 @@ pub(super) fn apply_agent_grant_act(
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     };
-    let named = Standing::new(state, pin, counted).names_key(record.machine, key);
+    let named = Standing::new(state, pin, counted).names_key(machine, key);
     if !named || state.roster.contains_key(signer) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }

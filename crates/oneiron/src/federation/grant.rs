@@ -19,12 +19,17 @@ mod git_push;
 mod guest_key;
 mod inquiry_terms;
 mod repo_bounds;
+mod terms_key;
 mod verb_classes;
 mod wallet_ref;
 mod working_view_bounds;
 
 pub use detach::ConnectMemberLeaveBinding;
 pub(crate) use git_push::git_push_scope;
+pub use terms_key::{
+    GrantTermsKey, decode_federation_grant_body_keyed, encode_federation_grant_body_keyed,
+    federation_grant_terms, reencode_federation_grant_body,
+};
 
 /// Current FederationGrant body schema version.
 ///
@@ -54,9 +59,12 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 /// the local release (FIX 12555); `inquiry_terms` the Connect guest grant
 /// that carries the verb class `inquire`, an inquiry edge (INQUIRE-1);
 /// `working_view_bounds` an owner's agent grant with repo bounds that edits
-/// one owner working view alone (row 6 WORKING-VIEW-EDIT). Each optional
-/// tail key keeps its own named child constant, never a bare index alias.
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 18] = [
+/// one owner working view alone (row 6 WORKING-VIEW-EDIT); `terms_key` the
+/// per-grant key a giving act's terms commitment is keyed by (pass 28 R2),
+/// which is never a term and which [`FederationGrant`] does not hold. Each
+/// optional tail key keeps its own named child constant, never a bare index
+/// alias.
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 19] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -75,6 +83,7 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 18] = [
     detach::KEY_DETACH_ON_MEMBER_LEAVE,
     inquiry_terms::KEY_INQUIRY_TERMS,
     working_view_bounds::KEY_WORKING_VIEW_BOUNDS,
+    terms_key::KEY_TERMS_KEY,
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -748,6 +757,14 @@ impl FederationGrant {
 /// before; a delegate appends `expires_at` and `delegated_by` in
 /// [`FEDERATION_GRANT_BODY_KEYS`] order.
 pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> {
+    encode_msgpack_value(
+        &Value::Map(federation_grant_body_entries(grant)?),
+        "federation grant body MessagePack encode failed",
+    )
+}
+
+/// `grant`'s body entries in canonical order, validated.
+fn federation_grant_body_entries(grant: &FederationGrant) -> Result<Vec<(Value, Value)>> {
     grant.validate()?;
     let mut entries = vec![
         (
@@ -788,11 +805,7 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
     entries.extend(wallet_ref::body_entry(grant));
     entries.extend(inquiry_terms::body_entry(grant));
     entries.extend(working_view_bounds::body_entry(grant));
-
-    encode_msgpack_value(
-        &Value::Map(entries),
-        "federation grant body MessagePack encode failed",
-    )
+    Ok(entries)
 }
 
 /// Decodes and validates a FederationGrant body.

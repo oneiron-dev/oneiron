@@ -352,6 +352,29 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // So is a person's giving or end of a Grant row no other act carries, or
+    // a rule's end, which moves its Grant's line alone (pass 28 R2).
+    if let AuthorityOp::GrantAct(record) = &entry.op {
+        if let Err(issue) = super::grant_act::apply_grant_act(
+            &state,
+            entry,
+            record,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        super::grant_lines::apply_grant_act_line(
+            &mut state,
+            entry,
+            record,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        );
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // So is a membership change's record no host issuer signed, which
     // withdraws the slips of each Grant it names (FIX 12335).
     if let AuthorityOp::MembershipExecution(record) = &entry.op {
@@ -712,6 +735,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_)
-        | AuthorityOp::MembershipExecution(_) => false,
+        | AuthorityOp::MembershipExecution(_)
+        | AuthorityOp::GrantAct(_) => false,
     }
 }

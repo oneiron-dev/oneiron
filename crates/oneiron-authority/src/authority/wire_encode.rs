@@ -316,6 +316,7 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::MembershipExecution(record) => {
             super::membership_execution::membership_execution_value(record)
         }
+        AuthorityOp::GrantAct(record) => super::grant_act::grant_act_value(record),
     }
 }
 

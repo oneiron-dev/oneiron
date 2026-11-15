@@ -151,8 +151,9 @@ pub(crate) use self::coreference::{
 pub use self::grant::{
     ConnectMemberLeaveBinding, FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,
     FederationGrant, FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole,
-    FederationGrantScope, MAX_DELEGATE_TTL_SECS, MAX_GUEST_DISCLOSED_REFS,
-    decode_federation_grant_body, encode_federation_grant_body,
+    FederationGrantScope, GrantTermsKey, MAX_DELEGATE_TTL_SECS, MAX_GUEST_DISCLOSED_REFS,
+    decode_federation_grant_body, decode_federation_grant_body_keyed, encode_federation_grant_body,
+    encode_federation_grant_body_keyed, federation_grant_terms, reencode_federation_grant_body,
 };
 pub use self::guest::{
     GUEST_SHARE_ENVELOPE_BODY_KEYS, GUEST_SHARE_ENVELOPE_KEYS, GUEST_SHARE_ENVELOPE_SCHEMA_VERSION,

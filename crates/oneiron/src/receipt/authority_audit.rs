@@ -579,6 +579,7 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::MembershipExecution(record) => {
             agent_grant_act::classify_membership_execution(record)
         }
+        AuthorityOp::GrantAct(record) => agent_grant_act::classify_grant_act(record),
         AuthorityOp::PolicySettingSet(set) => carried_act::classify_policy_setting(set),
         AuthorityOp::ExportAct(record) => carried_act::classify_export(record),
     }

@@ -224,6 +224,12 @@ pub enum AuthorityOp {
     /// slips of each Grant it names and carries an Owner act's handover. A
     /// main-log entry, so every machine the owner admits folds it.
     MembershipExecution(MembershipExecution),
+    /// One giving or end of a Grant row's standing that no other act carries
+    /// (pass 28 R2): a shared vault's member role, a delegate, a house link,
+    /// an inquiry edge's re-scope, or a lapse's end, signed in its writer's
+    /// transaction by the install key of a live machine of the vault, in any
+    /// role. A main-log entry, so every machine the owner admits folds it.
+    GrantAct(GrantActRecord),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -550,6 +556,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OriginCut(cut) => cut.validate(),
         AuthorityOp::DeviceSuccession(succession) => succession.validate(),
         AuthorityOp::MembershipExecution(record) => record.validate(),
+        AuthorityOp::GrantAct(record) => record.validate(),
     }
 }
 

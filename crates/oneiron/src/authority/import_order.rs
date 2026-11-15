@@ -122,6 +122,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        AuthorityOp::GrantAct(record) => {
+            vec![Grant::InstallKey(
+                record.machine,
+                entry.signer_key().clone(),
+            )]
+        }
         AuthorityOp::PolicySettingSet(set) => {
             vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
         }

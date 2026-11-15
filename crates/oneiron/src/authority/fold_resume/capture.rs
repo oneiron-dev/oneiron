@@ -343,6 +343,7 @@ pub(in crate::authority) fn admits_past(
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::GrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)

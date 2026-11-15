@@ -9,14 +9,17 @@
 //! re-pacts suspend a pact instead of picking a winner (ARCH-0043:162). An end is forever: no
 //! later act gives an ended Grant back, so a row put again at its id stands for nothing.
 //!
-//! The givings are the owner's agent Grant mints (`AgentGrantAct`, FIX 5628). The ends are his
-//! revokes, a `SlipGrantRevoke`, and the Grants a carrier-signed `MembershipExecution`
-//! withdraws (FIX 12335). An owner's act counts as every owner act does: some chain of its
-//! machine names the signing key, the one carrier rule admits the machine at the act's parents
-//! ([`super::owner_act_signer_admits`], pin-free) and the owner is live there
-//! ([`super::owner_act::owner_live_at`]); otherwise it is valid and without effect. A giving
-//! gives on this install only where it counts here in full: an end only takes away, so it
-//! needs no more than to count.
+//! The givings are the owner's agent Grant mints (`AgentGrantAct`, FIX 5628) and a general
+//! grant act's givings (`GrantAct`, pass 28 R2), which commit to their row's terms under the
+//! row's own key. The ends are his revokes, a general grant act's ends, a `SlipGrantRevoke`,
+//! and the Grants a carrier-signed `MembershipExecution` withdraws (FIX 12335). An owner's act
+//! counts as every owner act does: some chain of its machine names the signing key, the one
+//! carrier rule admits the machine at the act's parents ([`super::owner_act_signer_admits`],
+//! pin-free) and the owner is live there ([`super::owner_act::owner_live_at`]); otherwise it is
+//! valid and without effect. A general grant act needs its carrier alone: whether its deciding
+//! person could give those terms reads rows (a vault's owners, an admin's powers), so the
+//! reader judges it. A giving gives on this install only where it counts here in full: an end
+//! only takes away, so it needs no more than to count.
 //!
 //! The fold reads the log alone: a giving need not find its row, and a row need not find its
 //! act. Only the reader puts the two together.
@@ -27,7 +30,8 @@ use std::sync::Arc;
 use crate::entity_id::EntityId;
 use crate::federation::{
     FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
-    FederationGrantScope, GitPushBounds, RepoAccessBounds, Scope, WalletRef, WorkingViewEditBounds,
+    FederationGrantScope, GitPushBounds, GrantTermsKey, RepoAccessBounds, Scope, WalletRef,
+    WorkingViewEditBounds, federation_grant_terms,
 };
 
 use super::machine_standing::{InstallCounted, Standing, StandingView};
@@ -42,16 +46,39 @@ pub(crate) enum GrantTerms {
     Nothing,
     /// The owner's agent Grant mint, every term in clear.
     OwnerAgentMint(Box<OwnerAgentMint>),
+    /// A general grant act's giving: its terms by their keyed commitment alone.
+    Committed(CommittedTerms),
 }
 
 impl GrantTerms {
-    /// Whether `grant` is exactly the row these terms state.
-    pub(crate) fn matches_row(&self, grant: &FederationGrant) -> bool {
+    /// Whether `grant`, the row `id` holding the terms key `terms_key`, is exactly the row
+    /// these terms state. A committed giving opens only with the row's own key.
+    pub(crate) fn matches_row(
+        &self,
+        id: EntityId,
+        grant: &FederationGrant,
+        terms_key: Option<&GrantTermsKey>,
+    ) -> bool {
         match self {
             Self::Nothing => false,
             Self::OwnerAgentMint(mint) => mint.row(grant.scope.clone()) == *grant,
+            Self::Committed(committed) => terms_key.is_some_and(|key| {
+                federation_grant_terms(id, grant, key).is_ok_and(|terms| terms == committed.terms)
+            }),
         }
     }
+}
+
+/// A general grant act's giving as the fold holds it (`GrantActChange::Give`): the row's
+/// family, the person who gave it, and the keyed commitment to the row's terms.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CommittedTerms {
+    /// The row's family, whose rule judges the giver.
+    pub(crate) family: GrantFamily,
+    /// The deciding person.
+    pub(crate) giver: EntityId,
+    /// The commitment ([`federation_grant_terms`]).
+    pub(crate) terms: [u8; 32],
 }
 
 /// The owner's agent Grant mint as its act states it (`AgentGrantChange::Mint`): who gave it,
@@ -169,6 +196,18 @@ impl GrantLines {
     pub(super) fn end(&mut self, grant: EntityId, hash: AuthorityEntryHash) {
         self.ends.entry(grant).or_default().insert(hash);
     }
+
+    /// Records the counted act `hash` that gives `grant` as `edit` says, replacing every live
+    /// giving the act's parents carry.
+    fn give(&mut self, grant: EntityId, hash: AuthorityEntryHash, edit: FrontierEdit<GrantTerms>) {
+        let frontier = self.givings.entry(grant).or_default();
+        let seen = std::mem::take(&mut frontier.live);
+        let replaced = seen.keys().copied().collect();
+        frontier.superseded.extend(seen);
+        frontier
+            .live
+            .insert(hash, Arc::new(FrontierEdit { replaced, ..edit }));
+    }
 }
 
 /// What the counted acts say of one Grant, as this install counts them.
@@ -224,22 +263,78 @@ pub(super) fn apply_owner_agent_grant_line(
         state.grant_lines.end(record.grant, hash);
         return;
     };
-    let frontier = state.grant_lines.givings.entry(record.grant).or_default();
-    let seen = std::mem::take(&mut frontier.live);
-    let replaced = seen.keys().copied().collect();
-    frontier.superseded.extend(seen);
-    frontier.live.insert(
+    state.grant_lines.give(
+        record.grant,
         hash,
-        Arc::new(FrontierEdit {
+        FrontierEdit {
             settings: GrantTerms::OwnerAgentMint(Box::new(mint)),
             machine: record.machine,
             key,
-            replaced,
+            replaced: BTreeSet::new(),
             narrow_only,
             marks,
             restriction_only,
             disputed: false,
-        }),
+        },
+    );
+}
+
+/// The `GrantAct` transition's grant line, once `super::grant_act::apply_grant_act` took the
+/// entry as valid: a counted giving gives its row the terms it commits to, replacing the
+/// givings its parents carry; a counted end ends the row and withdraws the slips minted under
+/// it. A carrier the one rule does not admit carries a valid act without effect. The deciding
+/// person is not judged here: the
+/// fold holds no shared vault's owners or admins, so the reader judges them by the family's
+/// own rule.
+pub(super) fn apply_grant_act_line(
+    state: &mut FoldState,
+    entry: &AuthorityLogEntry,
+    record: &GrantActRecord,
+    hash: AuthorityEntryHash,
+    (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
+    restriction_only: bool,
+) {
+    let signer = entry.signer_key();
+    let AuthorityKey::Ed25519(key) = signer else {
+        return;
+    };
+    let key = *key;
+    let standing = Standing::new(state, pin, counted);
+    let roster = StandingView::Under(MachineAdmitter::Roster);
+    let admitted = standing.admits_owner_act_signer(record.machine, &key, roster);
+    let marks = standing.live_signing_chains(record.machine, signer);
+    let narrow_only =
+        !standing.admits_owner_act_signer(record.machine, &key, StandingView::Install);
+    drop(standing);
+    if !admitted {
+        state.grant_lines.refused.insert(hash);
+        return;
+    }
+    // `GrantActRecord::validate` refused a rule's giving. An end withdraws the slips minted
+    // under the row too, as a membership execution's withdrawal does (FIX 12335).
+    let (GrantActChange::Give { terms }, Some(giver)) = (record.change, record.decider_person())
+    else {
+        state.slips.revoke_grant(record.subject.to_hex());
+        state.grant_lines.end(record.subject, hash);
+        return;
+    };
+    state.grant_lines.give(
+        record.subject,
+        hash,
+        FrontierEdit {
+            settings: GrantTerms::Committed(CommittedTerms {
+                family: record.family,
+                giver,
+                terms,
+            }),
+            machine: record.machine,
+            key,
+            replaced: BTreeSet::new(),
+            narrow_only,
+            marks,
+            restriction_only,
+            disputed: false,
+        },
     );
 }
 

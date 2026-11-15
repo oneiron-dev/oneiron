@@ -7,7 +7,8 @@
 //! so a forged row cannot block a reader either.
 //!
 //! The readers move to it in pass 28 R3, each with the hand-written guard it replaces; the
-//! Grant kinds with no act of their own today get one in R2, and own-device and engine-default
+//! Grant kinds with no act of their own before R2 get the general grant act, whose giving
+//! commits to the row's terms under the row's own terms key; own-device and engine-default
 //! Grants are read as derived in R4.
 
 use crate::Vault;
@@ -17,7 +18,7 @@ use crate::error::Result;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
-use super::{FederationGrant, decode_federation_grant_body};
+use super::{FederationGrant, decode_federation_grant_body_keyed};
 
 /// A Grant the verified fold stands behind: its row, and the counted act that gives it.
 #[derive(Debug, Clone)]
@@ -47,8 +48,9 @@ impl StandingGrant {
 
 impl Vault {
     /// What the Grant row `id` confers at `now`, read in `txn`: the row, when it is live,
-    /// decodes, has not expired, is exactly what the one counted act that gives it states,
-    /// and no counted act ended it. `None` for every other row: one no counted act gives
+    /// decodes, has not expired, is exactly what the one counted act that gives it states
+    /// (a general grant act's commitment opens with the row's own terms key), and no counted
+    /// act ended it. `None` for every other row: one no counted act gives
     /// (a forged row), one put again after its end, one whose terms are not its act's, and
     /// one that two acts the fold cannot order both give.
     ///
@@ -69,7 +71,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let Ok(grant) = decode_federation_grant_body(&body) else {
+        let Ok((grant, terms_key)) = decode_federation_grant_body_keyed(&body) else {
             return Ok(None);
         };
         // Expiry alone: what a live Grant then confers (a verb, a class, a git push) is
@@ -85,10 +87,12 @@ impl Vault {
         let Some((act, terms)) = &line.giving else {
             return Ok(None);
         };
-        Ok(terms.matches_row(&grant).then_some(StandingGrant {
-            id,
-            grant,
-            act: *act,
-        }))
+        Ok(terms
+            .matches_row(id, &grant, terms_key.as_ref())
+            .then_some(StandingGrant {
+                id,
+                grant,
+                act: *act,
+            }))
     }
 }

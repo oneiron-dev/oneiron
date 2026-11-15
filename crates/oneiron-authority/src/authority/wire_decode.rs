@@ -286,6 +286,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_MEMBERSHIP_EXECUTION => {
             super::membership_execution::decode_membership_execution(entries)
         }
+        OP_KIND_GRANT_ACT => super::grant_act::decode_grant_act(entries),
         _ => Err(invalid_authority()),
     }
 }
