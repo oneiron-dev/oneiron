@@ -1,6 +1,6 @@
 {
   "name": "vault.gpu.jobs.cancel",
-  "description": "Ends a GPU job: a running chunk is terminated and settles its billed time, and a stopped job gives up its resume. The owner's own act; it needs none of the conditions of a stop at the maximum.",
+  "description": "Ends a GPU job: a running chunk is terminated and settles its billed time, and a stopped job gives up its resume. The owner's act, or an agent's on a job it started; it needs none of the conditions of a stop at the maximum.",
   "input": "crate::gpu_job::GpuJobRef",
   "output": "crate::gpu_job::GpuJobStatus",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.jobs.cancel\", &input)?",

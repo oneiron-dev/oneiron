@@ -65,7 +65,9 @@ impl Memory<'_> {
     /// call a moved agent run's replayed step makes that its earlier machine
     /// may have made, is sent again or left (FIX 4747), and a model pack
     /// change is reverted (FIX 5369). An applied stock switch offers the
-    /// owner's undo while its binding still holds (FIX 4663). Any other row,
+    /// owner's undo while its binding still holds (FIX 4663). A GPU job's
+    /// stop at its maximum offers its one-click resume while the stop stands
+    /// (CROSS-ARCH-0023 C2 05). Any other row,
     /// and a target that no longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
@@ -98,8 +100,46 @@ impl Memory<'_> {
             NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
                 self.mail_reply_ask_actions(row)
             }
+            NotificationKind::Ask if producer == crate::gpu_job::GPU_JOB_STOPPED_PRODUCER => {
+                self.gpu_job_resume_actions(row)
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The producer names the GPU job in `source.result`; the notice is the
+    /// add-funds notice of its stop at the maximum (C2 04). Shown while that
+    /// stop stands: one tap starts one more chunk of the job's first maximum
+    /// from the stop's checkpoint, on the quote the stop priced (C2 05). The
+    /// start checks that quote against the host's offer as it stands then.
+    fn gpu_job_resume_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(job) = row
+            .source
+            .result
+            .as_deref()
+            .and_then(|job| EntityId::from_hex(job).ok())
+        else {
+            return Vec::new();
+        };
+        let Ok(Some(job)) = self.vault().gpu_job(&job) else {
+            return Vec::new();
+        };
+        let resume_quote = job
+            .resume_quote
+            .as_ref()
+            .filter(|_| job.state == crate::gpu_job::GpuJobState::Stopped && job.stop.is_some());
+        resume_quote
+            .map(|quote| {
+                NotificationAction::new(
+                    crate::gpu_job::GpuJobVerb::Start.name(),
+                    serde_json::json!({
+                        "quote": crate::gpu_job::GpuJobQuoteTerms::from(quote),
+                        "resume": true,
+                    }),
+                )
+            })
+            .into_iter()
+            .collect()
     }
 
     /// The producer names the request in `source.result`; the ask is the

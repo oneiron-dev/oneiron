@@ -62,7 +62,7 @@ impl Vault {
                 }
             }
             GpuJobState::Running => {
-                self.observe_gpu_chunk(job, taken_up, permits, connector, now_ms)
+                self.observe_gpu_chunk(job, offer, taken_up, permits, connector, now_ms)
             }
             _ => self
                 .end_gpu_chunk(job, permits, connector, now_ms)
@@ -74,6 +74,7 @@ impl Vault {
     fn observe_gpu_chunk(
         &self,
         mut job: GpuJob,
+        offer: &GpuOffer,
         taken_up: bool,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
@@ -139,6 +140,19 @@ impl Vault {
                     match job.maximum.stop_at_maximum() {
                         Ok(stop) => {
                             job.stop = Some(stop);
+                            // The notice's one tap (C2 05): one more chunk of
+                            // the job's first maximum, priced now.
+                            let resume_quote = job.chunks.first().and_then(|first| {
+                                offer
+                                    .quote_for(
+                                        job.id,
+                                        &first.quote.request(),
+                                        first.quote.maximum_secs,
+                                        now_ms,
+                                    )
+                                    .ok()
+                            });
+                            job.resume_quote = resume_quote;
                             job.state = GpuJobState::Ending {
                                 reason: GpuEndReason::AtMaximum,
                             };

@@ -1,6 +1,6 @@
 {
   "name": "vault.gpu.jobs.start",
-  "description": "Starts a GPU job on the quote the owner saw, reserving the whole quote before anything starts, or with resume the next chunk of a stopped job from its checkpoint. The owner's own act.",
+  "description": "Starts a GPU job on the quote shown, reserving the whole quote before anything starts, or with resume the next chunk of a stopped job from its checkpoint. The owner's act, or an agent's within the maximum the owner set beside its Grant.",
   "input": "crate::gpu_job::GpuJobStartRequest",
   "output": "crate::gpu_job::GpuJobStatus",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.jobs.start\", &input)?",

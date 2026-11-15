@@ -1,20 +1,24 @@
 //! The customer GPU job doors (row L10-31; CROSS-ARCH-0023 lifecycle, C2):
-//! `vault.gpu.jobs.quote`, `.start`, `.status`, `.list` and `.cancel` over
-//! this host's `[gpu_jobs]` offers and registered backends. The engine
-//! decides (`oneiron::gpu_job`); a door reads the offer and backend, builds
-//! the job's run, and calls it. Quotes, status and the list are reads: the
-//! owner under their own proof, or an agent whose own Grant names the verb.
-//! Start (and resume) and cancel are the owner's own acts: pressing start on
-//! the quote is the showing of its maximum (C2 01). Job records live in a
-//! side table, which holds no entity row: the doors list none.
+//! `vault.gpu.jobs.quote`, `.start`, `.status`, `.list`, `.cancel` and
+//! `.allow` over this host's `[gpu_jobs]` offers and registered backends.
+//! The engine decides (`oneiron::gpu_job`); a door reads the offer and
+//! backend, builds the job's run, and calls it. Quotes, status and the list
+//! are reads: the owner under their own proof, or an agent whose own Grant
+//! names the verb. Start (and resume) and cancel are the owner's acts, or an
+//! agent's under its own Grant within the per-job maximum the owner set
+//! beside it with `allow` (RULING L10-31-STARTER = B); the engine judges the
+//! agent again in the act's own write. Pressing start on the quote is the
+//! owner's showing of its maximum (C2 01). Job records live in side tables,
+//! which hold no entity row: the doors list none.
 
 use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GpuJobError, GpuJobList, GpuJobListRequest, GpuJobQuote, GpuJobQuoteRequest, GpuJobQuoteTerms,
-    GpuJobRef, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
+    GpuJobActor, GpuJobAgent, GpuJobAllowRequest, GpuJobAllowanceView, GpuJobError, GpuJobList,
+    GpuJobListRequest, GpuJobQuote, GpuJobQuoteRequest, GpuJobQuoteTerms, GpuJobRef,
+    GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
 };
 use oneiron::llm::run_admission::ResumeRefused;
 use oneiron::memory::{
@@ -42,14 +46,30 @@ impl From<GpuHostError> for MemoryError {
     }
 }
 
+/// A GPU job door's caller, as the engine admitted it: the owner under
+/// their own proof, or an agent under its own handle.
+enum DoorCaller {
+    Owner(AuthenticatedOwner),
+    Agent(GpuJobAgent),
+}
+
+impl DoorCaller {
+    fn actor(&self) -> GpuJobActor<'_> {
+        match self {
+            Self::Owner(owner) => GpuJobActor::Owner(owner),
+            Self::Agent(agent) => GpuJobActor::Agent(agent),
+        }
+    }
+}
+
 /// `act` off the runtime on the caller's own handle, after the engine admits
-/// the caller to `verb`, with the caller's own owner proof when its
-/// credential is owner-grade and none otherwise.
+/// the caller to `verb`: the caller's own owner proof when its credential is
+/// owner-grade, its agent handle otherwise.
 async fn gpu_door<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     verb: GpuJobVerb,
-    act: impl FnOnce(&SyncServer, Option<&AuthenticatedOwner>) -> MemoryResult<T> + Send + 'static,
+    act: impl FnOnce(&SyncServer, &DoorCaller) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
     let caller = match crate::api::facade::facade_actor(server, auth)
         .map_err(FacadeApiError::into_memory_error)
@@ -72,7 +92,11 @@ async fn gpu_door<T: Send + 'static>(
         verb.name(),
         move |server, _, memory| {
             memory.gpu_job_admits(owner.as_ref(), verb)?;
-            act(server, owner.as_ref())
+            let caller = match owner {
+                Some(owner) => DoorCaller::Owner(owner),
+                None => DoorCaller::Agent(memory.gpu_job_agent()),
+            };
+            act(server, &caller)
         },
     )
     .await
@@ -80,8 +104,8 @@ async fn gpu_door<T: Send + 'static>(
 
 /// The GPU job rows' early authority check: the engine's admission of the
 /// caller for `verb` (the owner's own proof on an owner-grade credential,
-/// else an agent's own Grant naming a read verb), judged before the row's
-/// verb hooks fire. The door admits the caller again when it acts.
+/// else an agent's own Grant naming any verb but `allow`), judged before the
+/// row's verb hooks fire. The door admits the caller again when it acts.
 pub(super) fn gpu_job_caller_admits(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -108,17 +132,15 @@ pub(super) fn gpu_job_caller_admits(
 
 /// The owner's proof an owner act runs under; the admission already refused
 /// any other caller.
-fn owner_act(
-    owner: Option<&AuthenticatedOwner>,
-    verb: GpuJobVerb,
-) -> MemoryResult<&AuthenticatedOwner> {
-    owner.ok_or_else(|| {
-        MemoryError::new(
+fn owner_act(caller: &DoorCaller, verb: GpuJobVerb) -> MemoryResult<&AuthenticatedOwner> {
+    match caller {
+        DoorCaller::Owner(owner) => Ok(owner),
+        DoorCaller::Agent(_) => Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{} takes the vault owner's own proof", verb.name()),
             &["Call it as the vault owner."],
-        )
-    })
+        )),
+    }
 }
 
 /// `vault.gpu.jobs.quote`: the price of one chunk on one of this host's
@@ -150,9 +172,10 @@ pub(crate) async fn vault_gpu_jobs_quote(
     .await
 }
 
-/// `vault.gpu.jobs.start`: the owner starts a job on the quote they saw, or,
-/// with `resume`, the next chunk of the stopped job it names from the
-/// checkpoint its stop kept. The whole quote is reserved before anything is
+/// `vault.gpu.jobs.start`: the owner starts a job on the quote they saw, or
+/// an agent within the per-job maximum its Grant carries; with `resume`, the
+/// next chunk of the stopped job it names from the checkpoint its stop kept
+/// (an agent's own job only). The whole quote is reserved before anything is
 /// written or created; an offer whose backend this host has not registered
 /// refuses before that.
 pub(crate) async fn vault_gpu_jobs_start(
@@ -160,8 +183,7 @@ pub(crate) async fn vault_gpu_jobs_start(
     auth: &CoreAuth,
     input: GpuJobStartRequest,
 ) -> Listed<GpuJobStatus> {
-    gpu_door(server, auth, GpuJobVerb::Start, move |server, owner| {
-        let owner = owner_act(owner, GpuJobVerb::Start)?;
+    gpu_door(server, auth, GpuJobVerb::Start, move |server, caller| {
         let quote = GpuJobQuote::try_from(input.quote)?;
         let (offer, connector) = offer_with_backend(server, &quote.offer)?;
         let resume = if input.resume {
@@ -178,7 +200,7 @@ pub(crate) async fn vault_gpu_jobs_start(
         };
         let admission = job_admission(server, &offer.offer, &quote);
         let job = server.vault.start_gpu_job(
-            owner,
+            caller.actor(),
             &offer.offer,
             &quote,
             resume.as_ref(),
@@ -223,22 +245,21 @@ pub(crate) async fn vault_gpu_jobs_list(
     .await
 }
 
-/// `vault.gpu.jobs.cancel`: the owner ends their job. A live chunk is
-/// terminated and settles its billed time; a stopped job gives up its
-/// resume. When the provider does not answer, the cancel stands and the
-/// worker terminates the chunk on its next steps.
+/// `vault.gpu.jobs.cancel`: the owner ends their job, or an agent one it
+/// started. A live chunk is terminated and settles its billed time; a
+/// stopped job gives up its resume. When the provider does not answer, the
+/// cancel stands and the worker terminates the chunk on its next steps.
 pub(crate) async fn vault_gpu_jobs_cancel(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: GpuJobRef,
 ) -> Listed<GpuJobStatus> {
-    gpu_door(server, auth, GpuJobVerb::Cancel, move |server, owner| {
-        let owner = owner_act(owner, GpuJobVerb::Cancel)?;
+    gpu_door(server, auth, GpuJobVerb::Cancel, move |server, caller| {
         let id = input.id()?;
         let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
         let (_, connector) = offer_with_backend(server, &job.offer.name)?;
         let job = match server.vault.cancel_gpu_job(
-            owner,
+            caller.actor(),
             &id,
             server.gpu_jobs.permits(),
             connector.as_ref(),
@@ -251,6 +272,26 @@ pub(crate) async fn vault_gpu_jobs_cancel(
             Err(error) => return Err(error.into()),
         };
         Ok(GpuJobStatus::from(&job))
+    })
+    .await
+}
+
+/// `vault.gpu.jobs.allow`: the owner sets the longest run time one GPU job an
+/// agent starts under the Grant `grant` may declare (RULING L10-31-STARTER =
+/// B); 0 removes it. The Grant must be the one that admits its agent to
+/// `vault.gpu.jobs.start` now.
+pub(crate) async fn vault_gpu_jobs_allow(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GpuJobAllowRequest,
+) -> Listed<GpuJobAllowanceView> {
+    gpu_door(server, auth, GpuJobVerb::Allow, move |server, caller| {
+        let owner = owner_act(caller, GpuJobVerb::Allow)?;
+        let grant = input.grant_id()?;
+        let allowance = server
+            .vault
+            .allow_gpu_jobs(owner, &grant, input.maximum_secs, now_ms())?;
+        Ok(GpuJobAllowanceView::of(&grant, allowance.as_ref()))
     })
     .await
 }

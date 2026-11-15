@@ -24,6 +24,7 @@ use crate::llm::run_admission::{
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod allowance;
 mod caller;
 mod connector;
 mod offer;
@@ -33,7 +34,9 @@ mod step;
 pub(crate) mod tables;
 mod wire;
 
-pub use caller::GpuJobVerb;
+pub use allowance::GpuJobAllowance;
+pub(crate) use allowance::erase_allowance_actor_in_txn;
+pub use caller::{GpuJobActor, GpuJobAgent, GpuJobVerb};
 pub use connector::{
     GpuConnectorError, GpuJobConnector, GpuJobSignal, GpuJobSpec, GpuResourceRef,
     GpuResourceStatus, GpuTermination,
@@ -41,8 +44,8 @@ pub use connector::{
 pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;
 pub use wire::{
-    GpuJobList, GpuJobListRequest, GpuJobQuoteRequest, GpuJobQuoteTerms, GpuJobRef,
-    GpuJobStartRequest, GpuJobStatus, GpuJobStopView,
+    GpuJobAllowRequest, GpuJobAllowanceView, GpuJobList, GpuJobListRequest, GpuJobQuoteRequest,
+    GpuJobQuoteTerms, GpuJobRef, GpuJobStartRequest, GpuJobStatus, GpuJobStopView,
 };
 
 /// Producer of the customer's 95 percent warning.
@@ -88,6 +91,10 @@ pub enum GpuJobError {
     Ended,
     #[error(transparent)]
     Connector(#[from] connector::GpuConnectorError),
+    /// The caller may not do this act: an agent past its Grant or its
+    /// per-job maximum, or on a job it did not start.
+    #[error(transparent)]
+    Caller(crate::memory::MemoryError),
 }
 
 /// The verb doors' refusal: a malformed request is the caller's, a quote or
@@ -101,6 +108,7 @@ impl From<GpuJobError> for crate::memory::MemoryError {
         };
         let refusal = match error {
             GpuJobError::Vault(error) => return error.into(),
+            GpuJobError::Caller(error) => return error,
             refusal => refusal,
         };
         let code = match &refusal {
@@ -115,7 +123,9 @@ impl From<GpuJobError> for crate::memory::MemoryError {
             | GpuJobError::Ended => MEMORY_CODE_INVALID_STATE,
             GpuJobError::Denied(_) => MEMORY_CODE_BUDGET_SPENT,
             GpuJobError::NotFound => MEMORY_CODE_NOT_FOUND,
-            GpuJobError::Vault(_) | GpuJobError::Connector(_) => MEMORY_CODE_INTERNAL,
+            GpuJobError::Vault(_) | GpuJobError::Connector(_) | GpuJobError::Caller(_) => {
+                MEMORY_CODE_INTERNAL
+            }
         };
         MemoryError::new(code, refusal.to_string(), &[])
     }
@@ -223,6 +233,11 @@ pub struct GpuJob {
     /// The last stop at the maximum, with its add-funds notice and resume
     /// offer, until a resume takes it.
     pub stop: Option<MaximumStop>,
+    /// The quote the stop's notice offers for one more chunk of the job's
+    /// first maximum, priced when the job stopped. It stays good while the
+    /// stop stands; a start checks it against the offer as it stands then.
+    #[serde(default)]
+    pub resume_quote: Option<GpuJobQuote>,
     /// Operations was told the job ran past its maximum by more than 10
     /// percent with no checkpoint to stop at.
     pub overrun_reported: bool,

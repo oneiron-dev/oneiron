@@ -195,6 +195,17 @@ impl GpuJobQuote {
     /// terms quoted again give the same digest, and the quote has not
     /// expired.
     pub(super) fn check(&self, offer: &GpuOffer, now_ms: u64) -> Result<(), GpuJobError> {
+        self.check_terms(offer)?;
+        if now_ms > self.valid_until_ms {
+            return Err(GpuJobError::QuoteExpired);
+        }
+        Ok(())
+    }
+
+    /// Checks this quote's terms against `offer` as it stands: the same terms
+    /// quoted again give the same digest. A stop's resume quote is checked
+    /// so, at any time while its stop stands.
+    pub(super) fn check_terms(&self, offer: &GpuOffer) -> Result<(), GpuJobError> {
         let again = offer.quote_for(
             self.job,
             &self.request(),
@@ -203,9 +214,6 @@ impl GpuJobQuote {
         )?;
         if again != *self {
             return Err(GpuJobError::QuoteChanged);
-        }
-        if now_ms > self.valid_until_ms {
-            return Err(GpuJobError::QuoteExpired);
         }
         Ok(())
     }

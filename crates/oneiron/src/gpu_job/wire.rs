@@ -8,7 +8,8 @@ use crate::EntityId;
 use crate::llm::run_admission::LeaseUnit;
 
 use super::{
-    GpuEndReason, GpuJob, GpuJobError, GpuJobQuote, GpuJobRequest, GpuJobState, PriceShape,
+    GpuEndReason, GpuJob, GpuJobAllowance, GpuJobError, GpuJobQuote, GpuJobRequest, GpuJobState,
+    PriceShape,
 };
 
 /// `vault.gpu.jobs.quote`: what to run, on which of the host's offers. A
@@ -168,6 +169,63 @@ pub struct GpuJobStopView {
     pub maximum_secs: u64,
     /// The checkpoint the resume starts from.
     pub checkpoint: String,
+    /// The one-tap resume: one more chunk of the job's first maximum,
+    /// priced when it stopped. `vault.gpu.jobs.start` takes it with
+    /// `resume` while the stop stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_quote: Option<GpuJobQuoteTerms>,
+}
+
+/// `vault.gpu.jobs.allow`: the longest run time, in seconds, one GPU job an
+/// agent starts under the Grant `grant` (hex) may declare over all its
+/// chunks. 0 removes it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpuJobAllowRequest {
+    pub grant: String,
+    pub maximum_secs: u64,
+}
+
+impl GpuJobAllowRequest {
+    /// The Grant's id.
+    ///
+    /// # Errors
+    ///
+    /// A bad request for an id that does not parse.
+    pub fn grant_id(&self) -> Result<EntityId, GpuJobError> {
+        EntityId::from_hex(&self.grant).map_err(|_| {
+            GpuJobError::Caller(crate::memory::MemoryError::new(
+                crate::memory::MEMORY_CODE_BAD_REQUEST,
+                "grant must be a Grant id (32 hex)",
+                &[],
+            ))
+        })
+    }
+}
+
+/// What `vault.gpu.jobs.allow` left beside the Grant: its agent and per-job
+/// maximum, or none once removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GpuJobAllowanceView {
+    pub grant: String,
+    /// The agent the Grant names; `None` once removed.
+    pub agent: Option<String>,
+    /// 0 once removed.
+    pub maximum_secs: u64,
+    pub set_at_ms: Option<u64>,
+}
+
+impl GpuJobAllowanceView {
+    /// The view of `allowance` as `vault.gpu.jobs.allow` left it for `grant`.
+    #[must_use]
+    pub fn of(grant: &EntityId, allowance: Option<&GpuJobAllowance>) -> Self {
+        Self {
+            grant: grant.to_hex(),
+            agent: allowance.map(|row| row.agent.to_hex()),
+            maximum_secs: allowance.map_or(0, |row| row.maximum_secs),
+            set_at_ms: allowance.map(|row| row.set_at_ms),
+        }
+    }
 }
 
 /// Where one job stands: its state, its run time and spend against its
@@ -258,6 +316,7 @@ impl From<&GpuJob> for GpuJobStatus {
                 used_secs: stop.notice.used_units,
                 maximum_secs: stop.notice.maximum.units,
                 checkpoint: stop.notice.checkpoint.0.clone(),
+                resume_quote: job.resume_quote.as_ref().map(GpuJobQuoteTerms::from),
             }),
             created_at_ms: job.created_at_ms,
             updated_at_ms: job.updated_at_ms,
