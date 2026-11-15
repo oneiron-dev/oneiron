@@ -12,6 +12,7 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_base::error::SecretError;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
 use oneiron_contracts::secret_lease::SecretLeaseStatus;
 
 pub fn invalid_body(reason: &'static str) -> Error {
@@ -26,16 +27,7 @@ pub fn invalid_body(reason: &'static str) -> Error {
 /// DUPLICATED key both yield `None` — the call site turns that into the
 /// typed body reject; an ambiguous body is never defaulted.
 pub fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    let mut found = None;
-    for (k, v) in entries {
-        if k.as_str() == Some(key) {
-            if found.is_some() {
-                return None;
-            }
-            found = Some(v);
-        }
-    }
-    found
+    Entries::new(entries).get(key).ok().flatten()
 }
 
 pub fn as_u64(value: &Value) -> Option<u64> {
@@ -81,17 +73,10 @@ pub fn tier_at(entries: &[(Value, Value)], key: &str, reason: &'static str) -> R
 /// Decodes a MessagePack key-map body, rejecting non-map bodies and
 /// trailing bytes. Shared shape for the three row codecs.
 pub fn decode_map_body(bytes: &[u8], reason: &'static str) -> Result<Vec<(Value, Value)>> {
-    use std::io::Cursor;
-
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_body(reason))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_body("trailing bytes after secret lease row body"));
-    }
-    let Value::Map(entries) = value else {
-        return Err(invalid_body(reason));
-    };
-    Ok(entries)
+    msgpack::decode_map(bytes).map_err(|error| match error {
+        MsgpackError::Trailing => invalid_body("trailing bytes after secret lease row body"),
+        _ => invalid_body(reason),
+    })
 }
 
 pub fn encode_map_body(pairs: Vec<(&str, Value)>) -> Result<Vec<u8>> {
@@ -101,10 +86,7 @@ pub fn encode_map_body(pairs: Vec<(&str, Value)>) -> Result<Vec<u8>> {
             .map(|(k, v)| (Value::from(k), v))
             .collect(),
     );
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &map)
-        .map_err(|_| invalid_body("encode secret lease row body"))?;
-    Ok(out)
+    Ok(msgpack::encode(&map))
 }
 
 /// The lease body's MessagePack keys, in field order. `9 keys = 9 fields`.

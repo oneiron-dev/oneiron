@@ -9,7 +9,6 @@ use crate::{EntityId, Vault};
 use frontier::{FrontierEntry, decode_frontier};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
-use serde::{Deserialize, Serialize};
 pub(crate) mod checkpoint;
 mod frontier;
 mod native;
@@ -41,13 +40,8 @@ const FRONTIER: SideTable<(EntityId, [u8; 16]), Vec<u8>, Raw> =
 pub(super) const IDENTITY: SideTable<[u8; 16], EntityId, Raw> =
     SideTable::new(&side_table::ENTITY_REVISION_IDENTITY);
 
-#[derive(Serialize, Deserialize)]
-pub(super) struct RevisionState {
-    pub live: RevisionRef,
-    pub indexed: RevisionRef,
-    pub changed_at_ms: u64,
-    pub has_doc: bool,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::vault::entity_revision::storage::{RevisionState, reference};
 
 pub(super) fn state(
     store: &impl ManifestDbs,
@@ -64,15 +58,6 @@ pub(super) fn put_state(
     value: &RevisionState,
 ) -> Result<()> {
     STATE.put(store, txn, id, value)
-}
-
-pub(super) fn reference(id: &EntityId, raw: &[u8]) -> RevisionRef {
-    let mut hash = blake3::Hasher::new();
-    hash.update(id.as_bytes());
-    hash.update(raw);
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    RevisionRef(bytes)
 }
 
 /// All top-level string leaves are independent text containers. The raw

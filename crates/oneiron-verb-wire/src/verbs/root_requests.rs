@@ -31,6 +31,11 @@ pub struct RootRequestCreateRequest {
     /// The machine an `anchor` marks, 32 hex.
     #[serde(default)]
     pub machine: Option<String>,
+    /// An asker's approved check-in for this change, 32 hex
+    /// (`root_request_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// One root change as a surface shows it: its kind, and the ids it binds.
