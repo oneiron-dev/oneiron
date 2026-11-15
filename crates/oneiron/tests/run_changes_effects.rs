@@ -16,6 +16,12 @@
 //! journal, so the runs list none, and the revert of a run that only asked
 //! effects answers not_found. Green on the head.
 //!
+//! Review round 2 of #8213: a held dispatch send names no held call, so a
+//! pass in no run that sends it answers its listed receipt; and a held call
+//! the consent sweep minted carries its adopting caller's run. Red on this
+//! head without those two fixes: the sent send reads never landed, and the
+//! adopted call names no run.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test run_changes_effects`
 #![cfg(all(oneiron_test_support, feature = "test-support"))]
 
@@ -31,7 +37,10 @@ use oneiron::code_run::{
 use oneiron::memory::HostWriteOrigin;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{AgentVerb, invoke};
-use oneiron::test_doors::run_changes::{append_effect_receipt, journal_run_effect};
+use oneiron::test_doors::run_changes::{
+    append_binding_decision, append_effect_receipt, journal_run_effect,
+    sweep_minted_call_adopted_run,
+};
 use oneiron::test_support::{
     bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
 };
@@ -476,5 +485,70 @@ fn a_runs_two_held_calls_of_one_binding_list_apart_under_their_own_answers() -> 
         rows(&f.revert_all(plain)?, "not_undone", "reason")?,
         vec![(sent, "one_way".to_owned())]
     );
+    Ok(())
+}
+
+/// A run schedules a send its gate holds. A pass no run asks then sends it:
+/// the connector-send executor dispatches the due send with no run, and its
+/// gate records the answer on the send's own effect binding. The run lists
+/// the held receipt once, and reads it by the newest decision on its
+/// binding (FIX 11478): the send went out, so the revert reports it one-way.
+/// A dispatch send names no held call, so no call's answer, which no
+/// run-less pass journals, stands in for it.
+#[test]
+fn a_runs_held_send_reads_landed_once_a_pass_in_no_run_sends_it() -> TestResult {
+    let f = Fixture::open()?;
+    let run = f.run("run-effects-sent")?;
+    let sent = f.call(
+        &run,
+        "connector.outbound.schedule",
+        send_to("owen.sent@example.com"),
+    )?;
+    assert_eq!(
+        sent["gate_outcome"], "pending",
+        "the gate holds the send: {sent}"
+    );
+    let held = receipt_of(&sent)?;
+    let answer = append_binding_decision(&f.vault, &held, "allow")?;
+
+    let listed = effects(&f, "run-effects-sent")?;
+    assert_eq!(
+        listed,
+        vec![held.clone()],
+        "the held receipt, once: the executor's pass joins no run"
+    );
+    assert!(!listed.contains(&answer));
+    let outcome = f.revert_all("run-effects-sent")?;
+    let reported: Vec<_> = rows(&outcome, "not_undone", "reason")?
+        .into_iter()
+        .filter(|(change, _)| *change == held)
+        .collect();
+    assert_eq!(
+        reported,
+        vec![(held.clone(), "one_way".to_owned())],
+        "the send went out: one-way, not never landed"
+    );
+    assert!(
+        rows(&outcome, "compensated", "receipt")?
+            .iter()
+            .all(|(change, _)| *change != held),
+        "the send is not taken back"
+    );
+    Ok(())
+}
+
+/// The consent sweep mints a held call's row anew when the call's own row
+/// was lost: the original pass's run is unknown to it. The same caller's
+/// call adopts that row, and with it the run its write binds, so the
+/// resume's gate receipts join that run's journal (the drive hands the row's
+/// run to the chokepoint). A caller in no run leaves the row in none.
+#[test]
+fn a_sweep_minted_call_adopted_by_a_runs_caller_carries_that_run() -> TestResult {
+    assert_eq!(
+        sweep_minted_call_adopted_run(Some("run-effects-adopted")),
+        Some("run-effects-adopted".to_owned()),
+        "the adopting caller's run"
+    );
+    assert_eq!(sweep_minted_call_adopted_run(None), None);
     Ok(())
 }
