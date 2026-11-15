@@ -7,7 +7,8 @@
 //!   actor's scope holds stays.
 //! - RAMP-SCOPE-ERASED-TOKEN-LIVE: a scope whose actor is
 //!   `ERASED_CALL_IDENTITY` is refused, at `RampScope::new`, at
-//!   `RampScope::validate`, and at the writer doors, before any row is
+//!   `RampScope::validate`, and at the writer doors (the floor dial, the
+//!   outcome, the owner's demotion and the owner's unpin), before any row is
 //!   written. The erase writes that token into the rows it keeps as acts, and
 //!   the fold reads none of them, so a live scope keyed by it would be lost at
 //!   the next rebuild.
@@ -23,7 +24,8 @@
 use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::consent_graduation::RampScope;
+use oneiron::consent_graduation::{DemotionReason, RampScope};
+use oneiron::edit_distance::graduation::unpin_scope_as_owner;
 use oneiron::error::GateError;
 use oneiron::identity_topology::ProposalOutcome;
 use oneiron::receipt::ERASED_CALL_IDENTITY;
@@ -187,6 +189,14 @@ fn a_scope_whose_actor_is_the_erased_token_is_refused() {
                 .map(|_| ())
         ),
         "the outcome door refuses a scope keyed by the erased token"
+    );
+    assert!(
+        refused(vault.demote_scope_to_propose(&owner, &erased, DemotionReason::Rejected)),
+        "the demotion door refuses a scope keyed by the erased token"
+    );
+    assert!(
+        refused(unpin_scope_as_owner(&vault, &owner, &erased)),
+        "the unpin door refuses a scope keyed by the erased token"
     );
     assert_eq!(
         tables_with_rows(&vault),

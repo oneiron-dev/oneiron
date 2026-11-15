@@ -169,6 +169,14 @@ pub(super) struct StoredRampOutcome {
     pub(super) at: u64,
 }
 
+/// A stored stats row as its scope and its counters.
+///
+/// A row whose actor is
+/// [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY) reads as
+/// corrupt, as a scope keyed by that token is refused. No writer stores one:
+/// the erase deletes an erased actor's stats rows, and the fold skips erased
+/// actors. A row written under that literal actor before the refusal is
+/// dropped and refolded by `Vault::rebuild_ramp_stats_from_receipts`.
 pub(super) fn stats_row_parts(row: StoredScopeStats) -> Result<(RampScope, Counters)> {
     if row.v != RAMP_ROW_VERSION {
         return Err(Error::CorruptedIndex("ramp stats row"));
@@ -268,7 +276,8 @@ pub(super) fn stored_row_scope(
 /// was dialed on, so a floor on a scope with no stats, outcome, demotion or
 /// answer row is found by its own actor, and its digest key goes with it
 /// (RAMP-FLOOR-ORPHAN-ERASE). A floor row written before it carried its scope
-/// is found only through its scope's other rows.
+/// is found only through its scope's other rows; a four-byte row on a scope
+/// with no other row stays, as nothing in it names its actor.
 ///
 /// # Errors
 ///
