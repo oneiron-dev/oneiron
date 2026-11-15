@@ -309,11 +309,41 @@ pub trait ChangeLogStoreRead: Transactions {
     ) -> Result<Option<([u8; 16], super::ChangeLogRecord)>>;
 }
 
+/// How many posting ids a phonetic search reads between two checks of its
+/// deadline. A common code's posting can name much of the vault.
+pub(crate) const PHONETIC_IDS_PER_CHECKPOINT: usize = 256;
+
+/// `deadline`'s in-stage checkpoint for a phonetic search; with no
+/// deadline, nothing.
+pub(crate) fn phonetic_checkpoint(
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
+) -> Result<()> {
+    deadline.map_or(
+        Ok(()),
+        crate::retrieval_depth::RetrievalDeadline::checkpoint,
+    )
+}
+
 /// Read half used by retrieval pipelines that hold only a storage snapshot.
 pub trait RetrievalIndexRead: Transactions {
+    /// Every row any of `codes` names, scored by its matches, with no
+    /// deadline.
     fn port_retrieval_phonetic_search(
         &self,
         txn: &Self::Read<'_>,
         codes: &[String],
+    ) -> Result<Vec<oneiron_retrieval::pipeline::ScoredEntity>> {
+        self.port_retrieval_phonetic_search_with_deadline(txn, codes, None)
+    }
+    /// [`Self::port_retrieval_phonetic_search`] under a retrieval deadline:
+    /// it checks in before each code's posting, every
+    /// `PHONETIC_IDS_PER_CHECKPOINT` ids inside one, and before the final
+    /// sort, so a stage past its share stops there with
+    /// `Error::RetrievalStageCut` instead of reading every posting.
+    fn port_retrieval_phonetic_search_with_deadline(
+        &self,
+        txn: &Self::Read<'_>,
+        codes: &[String],
+        deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
     ) -> Result<Vec<oneiron_retrieval::pipeline::ScoredEntity>>;
 }

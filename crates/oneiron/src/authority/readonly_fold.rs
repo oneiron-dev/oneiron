@@ -920,7 +920,7 @@ fn fold_stored_tail_in_txn(
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
     let mut entries = authority_log_rows_in_txn(store, txn)?
         .into_iter()
-        .map(|(_, body)| decode_authority_log_entry_body(&body))
+        .map(|(_, body)| decode_stored_authority_log_body(&body))
         .collect::<Result<Vec<_>>>()?;
     entries.extend(unstored);
     let mut rows = Vec::with_capacity(entries.len());
@@ -1078,4 +1078,14 @@ fn authority_log_body_in_txn(
         .get(ENTITY_METADATA_HEADER_LEN..)
         .ok_or(Error::CorruptedIndex("entity header"))?;
     Ok(body.to_vec())
+}
+
+/// The entry a stored AUTHORITY_LOG `body` holds. Every stored row decoded
+/// when its write landed, so a body that no longer decodes is store damage:
+/// it answers `CorruptedIndex`, as the peer-log reader's does
+/// (`federation/peer_authority.rs`), never the refusal a bad arriving row
+/// gets (ARCH-0006a #list-read-built).
+pub(super) fn decode_stored_authority_log_body(body: &[u8]) -> Result<AuthorityLogEntry> {
+    decode_authority_log_entry_body(body)
+        .map_err(|_| Error::CorruptedIndex("stored authority log row"))
 }

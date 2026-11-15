@@ -48,28 +48,10 @@ pub use standing::TurnActionAuthority;
 
 pub use crate::attempt_queue::turn_action_kind::TURN_ACTION_ATTEMPT_KIND;
 
-/// Names the assistant TURN an action acts on.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TurnActionRequest {
-    /// The assistant TURN: a short ref or a 32-hex id.
-    pub turn_id: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::conversation::turn_actions::{TurnActionReceipt, TurnActionRequest};
 
 pub use crate::attempt_queue::turn_action_kind::TurnAction;
-
-/// A queued action: the attempt that will run it, never a claim that text
-/// exists.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TurnActionReceipt {
-    pub action: TurnAction,
-    /// 32-hex id of the assistant TURN acted on.
-    pub turn_id: String,
-    /// 32-hex id of its generated MESSAGE.
-    pub message_id: String,
-    /// 32-hex id of the queued attempt.
-    pub attempt_id: String,
-}
 
 /// The payload of a [`TURN_ACTION_ATTEMPT_KIND`] attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,7 +79,7 @@ pub struct TurnActionAttempt {
 /// One earlier line of the conversation, as a chat request carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnActionLine {
-    /// `User` or `Companion`.
+    /// `User`, `Companion` or `Counterparty`.
     pub author: WitnessAuthor,
     pub text: String,
     /// The selected TURN and MESSAGE behind this line; unknown if either

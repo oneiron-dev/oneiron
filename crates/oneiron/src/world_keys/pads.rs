@@ -78,10 +78,6 @@ pub use crate::key_material::WorldKeyDestroyCause;
 
 pub use crate::key_material::WorldKeyDestruction;
 
-fn hex(bytes: &[u8; 16]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// Whether `world` was soft-deleted here less than [`DELETED_WORLD_KEEP_SECS`]
 /// before `now`, and its keys were not destroyed since: a pin change still
 /// rewraps them, so the new kit restores the world from old bundles. An erased
@@ -472,6 +468,29 @@ pub(crate) fn reject_held_pad_carrier_in_txn(
     store.reject_legal_holds_in_txn(txn, &sealed, actor)
 }
 
+/// How many days the old sealed bundles that hold an erased world are kept:
+/// their 90 daily generations (BUNDLE-RETENTION = A, owner 2026-10-18).
+pub(crate) const ERASED_WORLD_BACKUP_KEEP_DAYS: u32 =
+    (SEALED_BUNDLE_KEEP as u64 * SEALED_BUNDLE_UPLOAD_INTERVAL_SECS / 86_400) as u32;
+
+/// Whether `target` is a WORLD row here other than the base world: a world
+/// whose keys an erase of it destroys.
+pub(crate) fn is_erasable_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<bool> {
+    if target == crate::claim::base_world_id() {
+        return Ok(false);
+    }
+    Ok(store
+        .port_entity_with_raw(txn, &target, |raw| {
+            Ok(EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD))
+        })?
+        .unwrap_or(false))
+}
+
 /// Destroys `world`'s keys on this replica, in the caller's write transaction:
 /// purges every pad row of the world, stages each one's hard tombstone, and
 /// writes the permanent destroyed fact with its receipt. `target` is any row
@@ -490,12 +509,7 @@ pub(crate) fn destroy_world_keys_in_txn(
     if target == crate::claim::base_world_id() {
         return Ok(None);
     }
-    let is_world = store
-        .port_entity_with_raw(wtxn, &target, |raw| {
-            Ok(EntityMetadataHeader::parse(raw)
-                .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD))
-        })?
-        .unwrap_or(false);
+    let is_world = is_erasable_world_in_txn(store, wtxn, target)?;
     let rows = world_pad_rows_in_txn(store, wtxn, target)?;
     let fact = HexId(target);
     let existing = DESTROYED.get(store, wtxn, &fact)?;
@@ -537,10 +551,10 @@ pub(crate) fn destroy_world_keys_in_txn(
         cause,
         keys: rows
             .iter()
-            .map(|(_, key, _)| format!("{}:{}", key.generation, hex(&key.mint)))
+            .map(|(_, key, _)| format!("{}:{}", key.generation, oneiron_hex::encode(&key.mint)))
             .collect(),
         pad_rows: rows.iter().map(|(id, _, _)| id.to_hex()).collect(),
-        request_id: request_id.as_ref().map(hex),
+        request_id: request_id.as_ref().map(|bytes| oneiron_hex::encode(bytes)),
         at: crate::ports::recorded_at_in_txn(store, wtxn)?,
     };
     DESTROYED.put(store, wtxn, &fact, &receipt)?;

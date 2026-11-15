@@ -270,7 +270,8 @@ pub(super) fn record_tradeoff_resolution_in_txn(
         disposition,
         accepted: disposition.admits(),
         tradeoff_resolution: Some(resolution),
-        goal_revision: goal_definition_in_txn(vault, txn, &pending.skill)?.revision,
+        // Integrity: stamp the revision after a pick; expose no project goal content.
+        goal_revision: goal_definition_in_txn(vault, txn, &pending.skill, None)?.revision,
         cycle: cycle.as_str().to_owned(),
         at,
         ..pending
@@ -406,14 +407,15 @@ fn admission_refusal_in_txn(
     // fact, which makes the strict gate a formality.
     let committed = held_out_receipts_in_txn(vault, wtxn, target)?;
     let outcomes = held_out_outcome_results_in_txn(vault, wtxn, target)?;
+    // Integrity: compare the admitted body's basis, never show the goal record.
     if !ScoredBasis::of(
         staged,
         current,
         &committed,
         &outcomes,
         proposal_tier,
-        goal_definition_in_txn(vault, wtxn, target)?.revision,
-        goal_definition_in_txn(vault, wtxn, target)?.goal_id,
+        goal_definition_in_txn(vault, wtxn, target, None)?.revision,
+        goal_definition_in_txn(vault, wtxn, target, None)?.goal_id,
     )?
     .matches(accepted)
     {

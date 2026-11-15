@@ -55,8 +55,8 @@ use crate::store::key_custody::{
 };
 use crate::store::{Store, StoreCore};
 
-/// How many bytes of a value's first window an entry's tag keeps.
-pub(crate) const KNOWN_TAG_BYTES: usize = 8;
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::known_history::KNOWN_TAG_BYTES;
 
 /// The width of one history entry's secret.
 const ENTRY_BYTES: usize = CustodyKind::KnownValueEntry.secret_len();
