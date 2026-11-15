@@ -86,11 +86,12 @@ pub(crate) struct AgUiCaptureMeta {
 
 /// Every AG-UI capture whose claim time falls in `[from, until)`: Imported
 /// claims whose stored file decodes, whose capture actor is a live vault
-/// owner and whose mappings and events are valid (the checks
+/// owner and whose mappings are valid (the checks
 /// [`Memory::read_ag_ui_file`] makes, minus the caller's scope and
-/// fingerprint pin), the newest first, at most `limit`. Only those `limit`
-/// have their events decoded. Fixed code's listing for the eval-authoring
-/// inventory.
+/// fingerprint pin), the newest `limit` of them, newest first, less those
+/// whose events no longer decode. The walk holds at most twice `limit`
+/// files, and only those `limit` have their events decoded. Fixed code's
+/// listing for the eval-authoring inventory.
 pub(crate) fn ag_ui_captures_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -104,6 +105,16 @@ pub(crate) fn ag_ui_captures_in_txn(
         AG_UI_FILE_PREDICATE,
         |id, body| {
             if body.source != Some(ClaimSource::Imported) {
+                return Ok(());
+            }
+            let Some(raw) = vault.get_raw_in(txn, &id)? else {
+                return Ok(());
+            };
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+                return Ok(());
+            };
+            let at = header.occurred_start;
+            if at < from || at >= until {
                 return Ok(());
             }
             let Ok(file) = rmpv::ext::from_value::<StoredFile>(body.value.clone()) else {
@@ -122,29 +133,21 @@ pub(crate) fn ag_ui_captures_in_txn(
             {
                 return Ok(());
             }
-            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
-                return Ok(());
-            }
-            let Some(raw) = vault.get_raw_in(txn, &id)? else {
-                return Ok(());
-            };
-            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
-                return Ok(());
-            };
-            let at = header.occurred_start;
-            if at < from || at >= until || validate_mappings(&file.custom_mappings).is_err() {
+            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?
+                || validate_mappings(&file.custom_mappings).is_err()
+            {
                 return Ok(());
             }
             listed.push((at, id, actor, file));
+            if listed.len() > limit.saturating_mul(2) {
+                keep_newest(&mut listed, limit);
+            }
             Ok(())
         },
     )?;
-    listed.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    keep_newest(&mut listed, limit);
     let mut captures = Vec::new();
     for (at, id, owner, file) in listed {
-        if captures.len() == limit {
-            break;
-        }
         let Ok(events) = AgUiSource::decode(&file.jsonl) else {
             continue;
         };
@@ -162,6 +165,12 @@ pub(crate) fn ag_ui_captures_in_txn(
         });
     }
     Ok(captures)
+}
+
+/// Keeps the newest `limit` of `listed`, by claim time, then id.
+fn keep_newest(listed: &mut Vec<(u64, EntityId, EntityId, StoredFile)>, limit: usize) {
+    listed.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    listed.truncate(limit);
 }
 
 impl Vault {

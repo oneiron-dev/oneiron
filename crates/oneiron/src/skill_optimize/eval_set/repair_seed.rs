@@ -266,8 +266,9 @@ fn family_held_in_txn(
 /// `AwaitingLabel` for an adjudicated-response task. A stored seed refused
 /// as `CandidateFailed` is re-proposed when the request keeps its old arm
 /// and names another candidate: the row is replaced in the same write with
-/// a fresh seed on the same family, the live-capture and held-family checks
-/// still applying. Every other stored seed is returned unchanged.
+/// a fresh seed on the same family, with no adjudicated label, the
+/// live-capture and held-family checks still applying. Every other stored
+/// seed is returned unchanged.
 fn commit_proposal(
     vault: &Vault,
     task: &EvalRepairTask,
@@ -298,9 +299,11 @@ fn commit_proposal(
                     "a cohort already holds this capture's family, so a new repair from it is not held out",
                 ));
             }
-            // A landed adjudicated label stays: the task is the same, and
-            // its answer does not depend on the arms.
-            let state = if existing.adjudication.is_none() && task.awaits_adjudication() {
+            // A landed adjudicated label is dropped: it was checked against
+            // the old candidate's identifiers, and its answer, held only as
+            // a digest, could be the new candidate's. The fresh seed awaits
+            // a fresh label.
+            let state = if task.awaits_adjudication() {
                 EvalRepairSeedState::AwaitingLabel
             } else {
                 EvalRepairSeedState::Pending
@@ -313,7 +316,7 @@ fn commit_proposal(
                 candidate: request.candidate.clone(),
                 source_rows: task.source_rows.clone(),
                 proposed_at: at,
-                adjudication: existing.adjudication,
+                adjudication: None,
                 state,
             };
             SEEDS.put(&vault.store, txn, &key, &seed)?;

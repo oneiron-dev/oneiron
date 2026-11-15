@@ -247,7 +247,10 @@ pub struct EvalAuthoringReport {
     pub cuts_with_coverage_gaps: usize,
     pub cohorts_retired: Vec<EntityId>,
     pub cohorts_kept: usize,
+    /// A report an execution stored before repair seeds reads as zero.
+    #[serde(default)]
     pub repair_seeds_proposed: usize,
+    #[serde(default)]
     pub repair_seeds_reused: usize,
     pub skipped: Vec<EvalAuthoringSkip>,
 }

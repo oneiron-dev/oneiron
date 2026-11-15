@@ -11,8 +11,8 @@ use serde_json::Value;
 use super::super::cohort::{EXPOSURE_PREFIX, is_space_probe_seat};
 use super::super::repair_seed::seeds_in_txn;
 use super::super::{
-    CASE_PREFIX, DerivationKind, EvalCase, EvalExposure, EvalRepairSeedState, EvalRepairTaskSpec,
-    EvalSeat, FAMILY_PREFIX, SourceFamily, rows_in_txn,
+    CASE_PREFIX, DerivationKind, EvalCase, EvalExposure, EvalRepairSeed, EvalRepairSeedState,
+    EvalRepairTaskSpec, EvalSeat, FAMILY_PREFIX, SourceFamily, rows_in_txn,
 };
 use super::{
     CandidateLabel, EVAL_AUTHORING_WINDOW_SECS, EvalAuthoringInventory, EvalCandidate,
@@ -30,47 +30,102 @@ use crate::skill::{SkillContentHash, SkillLifecycle};
 use crate::skill_optimize::gate::target_of;
 use crate::skill_optimize::union_source_rows;
 
-/// The RFC 6901 pointer of every object in `failure` that reads as a repair
-/// task contract, depth-first: objects and arrays to depth 8, at most 4096
-/// nodes. Only an object holding a contract's `world` and `grader` is tried,
-/// in place.
+/// The captures, and below them the rows, the inventory lists at most: the
+/// newest in the window first.
+const MAX_REPAIR_CAPTURES: usize = 64;
+const MAX_REPAIR_ROWS: usize = 64;
+/// The task contracts one failure event lists at most.
+const MAX_TASK_CONTRACTS_PER_FAILURE: usize = 8;
+/// The nodes one failure event's walk visits at most, and its depth.
+const MAX_CONTRACT_WALK_NODES: usize = 4096;
+const MAX_CONTRACT_WALK_DEPTH: u8 = 8;
+/// The open skill revisions the inventory lists at most.
+const MAX_SKILL_PAIR_ROWS: usize = 64;
+
+/// The RFC 6901 pointer of each object in `failure` that reads as a repair
+/// task contract, depth-first, at most [`MAX_TASK_CONTRACTS_PER_FAILURE`]:
+/// objects and arrays to [`MAX_CONTRACT_WALK_DEPTH`], at most
+/// [`MAX_CONTRACT_WALK_NODES`] nodes, counted as they are stacked, so a wide
+/// container stops the walk's growth. Only an object holding a contract's
+/// `world` and `grader` is tried, in place.
 fn task_pointers(failure: &Value) -> Vec<String> {
     fn escape(token: &str) -> String {
         token.replace('~', "~0").replace('/', "~1")
     }
     let mut pointers = Vec::new();
     let mut stack: Vec<(String, &Value, u8)> = vec![(String::new(), failure, 0)];
-    let mut nodes = 0;
+    let mut stacked = 1;
     while let Some((pointer, value, depth)) = stack.pop() {
-        nodes += 1;
-        if nodes > 4096 {
-            break;
-        }
         if let Value::Object(fields) = value
             && fields.contains_key("world")
             && fields.contains_key("grader")
             && EvalRepairTaskSpec::deserialize(value).is_ok()
         {
             pointers.push(pointer.clone());
+            if pointers.len() == MAX_TASK_CONTRACTS_PER_FAILURE {
+                break;
+            }
         }
-        if depth == 8 {
+        if depth == MAX_CONTRACT_WALK_DEPTH {
             continue;
         }
-        match value {
-            Value::Object(fields) => {
-                for (key, child) in fields.iter().rev() {
-                    stack.push((format!("{pointer}/{}", escape(key)), child, depth + 1));
-                }
-            }
-            Value::Array(items) => {
-                for (index, child) in items.iter().enumerate().rev() {
-                    stack.push((format!("{pointer}/{index}"), child, depth + 1));
-                }
-            }
-            _ => {}
-        }
+        let room = MAX_CONTRACT_WALK_NODES - stacked;
+        let children: Vec<(String, &Value, u8)> = match value {
+            Value::Object(fields) => fields
+                .iter()
+                .take(room)
+                .map(|(key, child)| (format!("{pointer}/{}", escape(key)), child, depth + 1))
+                .collect(),
+            Value::Array(items) => items
+                .iter()
+                .take(room)
+                .enumerate()
+                .map(|(index, child)| (format!("{pointer}/{index}"), child, depth + 1))
+                .collect(),
+            _ => Vec::new(),
+        };
+        stacked += children.len();
+        stack.extend(children.into_iter().rev());
     }
     pointers
+}
+
+/// Where the inventory shows a stored seed: its source's capture, outcome
+/// and task pointer.
+type SeedTaskKey<'a> = (&'a str, &'a str, usize, &'a str);
+
+/// Every stored seed's seat and standing, by its task, each task's seeds in
+/// seat order: one pass over the seeds, whatever the repair rows.
+fn seed_summaries(
+    seeds: &[EvalRepairSeed],
+) -> BTreeMap<SeedTaskKey<'_>, Vec<EvalRepairSeedSummary>> {
+    let mut by_task: BTreeMap<SeedTaskKey<'_>, Vec<EvalRepairSeedSummary>> = BTreeMap::new();
+    for seed in seeds {
+        let source = &seed.source;
+        by_task
+            .entry((
+                source.claim_ref.as_str(),
+                source.source_hash.as_str(),
+                source.outcome_ordinal,
+                source.task_pointer.as_str(),
+            ))
+            .or_default()
+            .push(EvalRepairSeedSummary {
+                seat: source.seat.clone(),
+                standing: match &seed.state {
+                    EvalRepairSeedState::Pending => EvalRepairSeedStanding::Pending,
+                    EvalRepairSeedState::AwaitingLabel => EvalRepairSeedStanding::AwaitingLabel,
+                    EvalRepairSeedState::Confirmed { .. } => EvalRepairSeedStanding::Confirmed,
+                    EvalRepairSeedState::Refused { reason, .. } => {
+                        EvalRepairSeedStanding::Refused { reason: *reason }
+                    }
+                },
+            });
+    }
+    for summaries in by_task.values_mut() {
+        summaries.sort_by(|a, b| a.seat.cmp(&b.seat));
+    }
+    by_task
 }
 
 /// [`eval_authoring_inventory`](super::eval_authoring_inventory) beside the
@@ -188,12 +243,21 @@ pub fn eval_authoring_inventory_sourced(
         }
     }
     // One row per task contract on a linked repair: the repair the skill
-    // may seed, with every stored seed of its task.
+    // may seed, with every stored seed of its task. Each failure event is
+    // walked once, however many outcomes link to it.
     let mut repairs = Vec::new();
-    let captures = ag_ui_captures_in_txn(vault, &txn, from, now.saturating_add(1), 64)?;
+    let captures = ag_ui_captures_in_txn(
+        vault,
+        &txn,
+        from,
+        now.saturating_add(1),
+        MAX_REPAIR_CAPTURES,
+    )?;
     let seeds = seeds_in_txn(vault, &txn)?;
-    for meta in &captures {
+    let seeds_by_task = seed_summaries(&seeds);
+    'captures: for meta in &captures {
         read.push(meta.claim);
+        let mut contracts: BTreeMap<usize, Vec<String>> = BTreeMap::new();
         for link in meta
             .repair_links
             .iter()
@@ -205,38 +269,28 @@ pub fn eval_authoring_inventory_sourced(
             let Some(failure) = meta.events.get(failure_ordinal) else {
                 continue;
             };
-            for task_pointer in task_pointers(failure.raw()) {
-                let mut summaries: Vec<EvalRepairSeedSummary> = seeds
-                    .iter()
-                    .filter(|seed| {
-                        seed.source.claim_ref == meta.claim_ref
-                            && seed.source.source_hash == meta.source_hash
-                            && seed.source.outcome_ordinal == link.outcome_ordinal
-                            && seed.source.task_pointer == task_pointer
-                    })
-                    .map(|seed| EvalRepairSeedSummary {
-                        seat: seed.source.seat.clone(),
-                        standing: match &seed.state {
-                            EvalRepairSeedState::Pending => EvalRepairSeedStanding::Pending,
-                            EvalRepairSeedState::AwaitingLabel => {
-                                EvalRepairSeedStanding::AwaitingLabel
-                            }
-                            EvalRepairSeedState::Confirmed { .. } => {
-                                EvalRepairSeedStanding::Confirmed
-                            }
-                            EvalRepairSeedState::Refused { reason, .. } => {
-                                EvalRepairSeedStanding::Refused { reason: *reason }
-                            }
-                        },
-                    })
-                    .collect();
-                summaries.sort_by(|a, b| a.seat.cmp(&b.seat));
+            let pointers = contracts
+                .entry(failure_ordinal)
+                .or_insert_with(|| task_pointers(failure.raw()));
+            for task_pointer in pointers.iter() {
+                if repairs.len() == MAX_REPAIR_ROWS {
+                    break 'captures;
+                }
+                let summaries = seeds_by_task
+                    .get(&(
+                        meta.claim_ref.as_str(),
+                        meta.source_hash.as_str(),
+                        link.outcome_ordinal,
+                        task_pointer.as_str(),
+                    ))
+                    .cloned()
+                    .unwrap_or_default();
                 repairs.push(EvalRepairCandidate {
                     id: format!("r{}", repairs.len() + 1),
                     claim_ref: meta.claim_ref.clone(),
                     source_hash: meta.source_hash.clone(),
                     outcome_ordinal: link.outcome_ordinal,
-                    task_pointer,
+                    task_pointer: task_pointer.clone(),
                     app_id: meta.app_id.clone(),
                     at: meta.at,
                     seeds: summaries,
@@ -249,6 +303,9 @@ pub fn eval_authoring_inventory_sourced(
     // candidate arms a repair seed compares.
     let mut skill_pairs = Vec::new();
     for id in vault.entities_by_type(ENTITY_TYPE_SKILL)? {
+        if skill_pairs.len() == MAX_SKILL_PAIR_ROWS {
+            break;
+        }
         let Some(record) = vault.get_skill_record_in_txn(&txn, &id)? else {
             continue;
         };
