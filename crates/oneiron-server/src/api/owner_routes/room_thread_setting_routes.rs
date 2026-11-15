@@ -9,11 +9,13 @@
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::setting::{SetSetting, SettingCaller, SettingMode, SettingScope};
+use oneiron::setting::{SetSetting, SettingCaller};
 use serde::{Deserialize, Serialize};
 
+use super::machine_routes::act_surface_admitted;
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -104,13 +106,19 @@ async fn read(
 
 /// `POST /v1/owner/settings/room-threads`: sets either switch, or both, as
 /// the owner, and answers the two as they now read; the next walk-in or
-/// delete reads them. Each switch is its own key and its own change.
+/// delete reads them. Each switch is its own key and its own change, and
+/// each change is the owner's act signed from where the owner spoke (FIX 6465,
+/// stage 7a-1).
 async fn put(
     auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<RoomThreadSettingsChange>,
 ) -> OwnerReply<RoomThreadSettings> {
     let owner = owner(&auth, &server)?;
+    // A change records where the owner spoke from (FIX 6465): audit only.
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let change = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<RoomThreadSettings> {
         let vault = server.vault();
@@ -122,14 +130,8 @@ async fn put(
             vault.set_setting(
                 SettingCaller::Owner(&owner),
                 SetSetting {
-                    key: key.to_owned(),
-                    item: None,
-                    scope: SettingScope::Vault,
-                    mode: SettingMode::Value,
-                    value: Some(serde_json::Value::Bool(on)),
-                    expected_revision: None,
-                    why: None,
-                    check_in_ref: None,
+                    surface: Some(surface),
+                    ..SetSetting::vault_value(key, serde_json::Value::Bool(on))
                 },
             )?;
         }

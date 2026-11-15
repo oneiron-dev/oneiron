@@ -10,7 +10,8 @@
 //! - changes in one write are each signed, and a caller's write that fails leaves none;
 //! - only the owner's change names a surface: an agent naming one is refused, nothing written;
 //! - the verb signs the owner's change from this install;
-//! - an older door's act keeps its wire name and its target (`undo_send`).
+//! - a setting a door used to sign signs on its key's own target once it is a key, and the older
+//!   wire name keeps its target (`undo_send`, moved to `outbound.undo_send` by SETTING-DIALS D3a).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_signed_act`.
 
@@ -34,7 +35,7 @@ use serde_json::{Value, json};
 
 const GET: &str = "vault.settings.get";
 const SET: &str = "vault.settings.set";
-const UNDO_SEND_SET: &str = "vault.consent.undo_send.set";
+const UNDO_SEND: &str = "outbound.undo_send";
 const NUMBER: &str = "test.owner_number";
 const MODE: &str = "test.optional_mode";
 const T0: u64 = 1_790_000_000;
@@ -339,13 +340,17 @@ fn the_verb_signs_the_owners_change_from_this_install() {
 }
 
 #[test]
-fn an_older_doors_act_keeps_its_wire_name_and_target() {
+fn a_moved_doors_setting_signs_on_its_key_and_the_old_name_keeps_its_target() {
     let fx = Fixture::rooted();
     let before = fx.setting_acts();
     invoke(
         &fx.as_owner(),
-        UNDO_SEND_SET,
-        json!({ "all_channels_secs": 60 }),
+        SET,
+        json!({
+            "key": UNDO_SEND,
+            "scope": { "kind": "vault" },
+            "value": { "all_channels_secs": 60, "channels": [] },
+        }),
     )
     .expect("the owner sets the undo-send window");
     let acts: Vec<Value> = fx
@@ -357,10 +362,17 @@ fn an_older_doors_act_keeps_its_wire_name_and_target() {
     assert_eq!(
         acts,
         [json!({
-            "detail": "undo_send set",
-            "target": owner_act_target("settings.undo_send").expect("target").to_hex(),
+            "detail": format!("{UNDO_SEND} set"),
+            "target": target_of(UNDO_SEND),
         })],
-        "the older door's act reads as before"
+        "the moved setting signs on its key's own target"
+    );
+    assert_ne!(
+        target_of(UNDO_SEND),
+        owner_act_target("settings.undo_send")
+            .expect("target")
+            .to_hex(),
+        "the first act on the moved key starts its own target"
     );
     assert_eq!(
         target_of("undo_send"),

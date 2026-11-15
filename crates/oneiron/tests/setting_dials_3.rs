@@ -6,7 +6,9 @@
 //! - the owner sets each through `vault.settings.set`, and the kept reader returns that value; the
 //!   undo-send window is stored as its old `normalized()` stored it, and a window it refused is
 //!   refused;
-//! - they stay owner acts: an agent's change waits on a check-in, and an agent reads none of them.
+//! - they stay owner acts: an agent's change waits on a check-in, and an agent reads none of them;
+//! - the owner's change of each through the verb is signed on the key's own target from this
+//!   install, as the old doors signed theirs (stage 7a-1, RULING SETTING-7A-SIGNED-ACT-BASE = A).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_dials_3`.
 #![cfg(oneiron_test_support)]
@@ -19,8 +21,11 @@ use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::Memory;
+use oneiron::policy_setting_doors::policy_setting_target;
+use oneiron::receipt::AuthorityAuditQuery;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
+use oneiron::test_doors::setting::setting_change;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -134,6 +139,35 @@ impl Fixture {
         .expect("the owner mints the Grant");
         assert!(minted.grant.confers, "the Grant confers");
     }
+
+    /// The owner's setting acts on the main log, as the owner's audit lists them: each entry's
+    /// hash (hex), its detail (`<key> set` or `<key> clear`) and its target (hex).
+    fn setting_acts(&self) -> Vec<(String, String, String)> {
+        self.vault
+            .authority_audit(
+                &self.owner_proof,
+                &AuthorityAuditQuery {
+                    limit: Some(500),
+                    ..AuthorityAuditQuery::default()
+                },
+            )
+            .expect("the owner's audit")
+            .rows
+            .into_iter()
+            .filter(|row| row.source_op == "policy_setting")
+            .map(|row| {
+                (
+                    row.entry_hash,
+                    row.detail.unwrap_or_default(),
+                    row.subject_ref.unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn call(memory: &Memory<'_>, verb: &str, input: Value) -> Value {
@@ -290,4 +324,42 @@ fn they_stay_owner_acts_and_no_agent_reads_them() {
         json!(0),
         "nothing applied"
     );
+}
+
+#[test]
+fn the_owners_change_of_each_key_is_signed_on_its_target() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+
+    for (key, value) in [
+        (WALK_IN, json!(false)),
+        (DELETE, json!(false)),
+        (
+            UNDO_SEND,
+            json!({ "all_channels_secs": 45, "channels": [] }),
+        ),
+    ] {
+        let applied = call(&me, SET, set(key, value));
+        let sequence = applied["sequence"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("{key}: a change sequence: {applied}"));
+        let change = setting_change(&fx.vault, sequence)
+            .expect("the change stream")
+            .expect("the change row");
+        assert_eq!(change.surface, Some(ActSurface::ThisInstall), "{key}");
+        let entry = hex(&change
+            .signed
+            .unwrap_or_else(|| panic!("{key}: the change row names its signed entry")));
+        let acts = fx.setting_acts();
+        let (_, detail, target) = acts
+            .iter()
+            .find(|(hash, _, _)| *hash == entry)
+            .unwrap_or_else(|| panic!("{key}: the main log holds the entry {entry}: {acts:?}"));
+        assert_eq!(*detail, format!("{key} set"));
+        assert_eq!(
+            *target,
+            policy_setting_target(key).expect("a key's target").to_hex(),
+            "{key}: signed on the key's own target"
+        );
+    }
 }

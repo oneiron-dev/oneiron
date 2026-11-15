@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::setting::{SetSetting, SettingCaller, SettingMode, SettingScope};
+use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::task_verb::sdk::ModelResponsesStoreSettings as ModelSettings;
 
 use super::{CHANGED, OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
@@ -90,16 +90,10 @@ async fn put(
     let settings = blocking(move || -> OwnerResult<ModelSettings> {
         server.vault().set_setting(
             SettingCaller::Owner(&owner),
-            SetSetting {
-                key: "models.responses_store".to_owned(),
-                item: None,
-                scope: SettingScope::Vault,
-                mode: SettingMode::Value,
-                value: Some(serde_json::Value::Bool(settings.responses_store)),
-                expected_revision: None,
-                why: None,
-                check_in_ref: None,
-            },
+            SetSetting::vault_value(
+                "models.responses_store",
+                serde_json::Value::Bool(settings.responses_store),
+            ),
         )?;
         Ok(settings)
     })
