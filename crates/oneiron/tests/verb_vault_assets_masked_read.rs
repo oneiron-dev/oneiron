@@ -17,6 +17,7 @@ use base64::Engine as _;
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::claim::base_world_id;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
 use oneiron::policy_model::SecretScanMode;
@@ -24,6 +25,7 @@ use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
     AgentGrantMintRequest, AgentGrantRevokeRequest, mint_agent_grant_as, revoke_agent_grant_as,
@@ -416,14 +418,7 @@ fn masked_asset_read_withholds_a_non_repo_asset_whose_bytes_hold_a_key() {
             GateDecisionId::now(),
         )
         .expect("owner proof");
-    fixture
-        .vault
-        .set_secret_scan_mode(
-            &owner_proof,
-            SecretScanMode::Off,
-            MASKED_ASSET_READ_TEST_NOW,
-        )
-        .expect("owner turns the write door's scan off");
+    switch_secret_scan_off(&fixture.vault, &owner_proof);
     let token = masked_asset_read_token();
     let keyed_body = format!("deploy token {token}\n");
     let clean_body = "deploy notes with no key\n";
@@ -478,5 +473,28 @@ fn masked_asset_read_withholds_a_non_repo_asset_whose_bytes_hold_a_key() {
     assert!(
         !keyed.to_string().contains(&base64_token),
         "no answer carries the token's body as base64",
+    );
+}
+
+/// The owner switches the write door's secret scan off: the Setting key
+/// `secret_scan.mode` through `Vault::set_setting` (SETTING-PLAIN PLAIN-2b
+/// deleted `Vault::set_secret_scan_mode` and its receipt table).
+fn switch_secret_scan_off(vault: &Vault, owner: &AuthenticatedOwner) {
+    let mode = serde_json::to_value(SecretScanMode::Off).expect("the mode as JSON");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value("secret_scan.mode", mode),
+        )
+        .expect("the owner switches the scan off");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's switch applies: {outcome:?}"
     );
 }

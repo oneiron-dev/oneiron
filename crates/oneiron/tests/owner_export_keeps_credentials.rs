@@ -44,11 +44,13 @@
 
 use oneiron::batch::export::{ExportImportRefusal, ExportSourceContent};
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
 use oneiron::federation::record_scope::ScopedRecord;
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::serialize::{ExportBody, ExportValue};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::skill_hub::{HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
 use oneiron::store::GateDecisionId;
@@ -78,10 +80,10 @@ fn open_restore_vault() -> Result<(tempfile::TempDir, Vault)> {
     Ok((dir, fresh))
 }
 
-fn scan_off(vault: &Vault, principal: &str, at: u64) -> Result<()> {
+fn scan_off(vault: &Vault, principal: &str) -> Result<()> {
     let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = vault.authenticate_owner(owner_id, principal, true, GateDecisionId::now())?;
-    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, at)?;
+    switch_secret_scan_off(vault, &owner);
     Ok(())
 }
 
@@ -306,7 +308,7 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
     // Substantive negative checks need selected rows that hold the bytes: a
     // skill row alone carries metadata, not source. Seed scan-off ASSET
     // copies of every source file, as the in-crate contract does.
-    scan_off(&vault, "principal:contact-source-residue", 131)?;
+    scan_off(&vault, "principal:contact-source-residue")?;
     let mut selected = vec![id];
     let mut source_files = Vec::new();
     for file in &tainted.files {
@@ -429,7 +431,7 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
 #[test]
 fn owner_archive_keeps_json_text_credentials() -> Result<()> {
     let (_dir, vault) = open_vault();
-    scan_off(&vault, "principal:json-text-residue", 10)?;
+    scan_off(&vault, "principal:json-text-residue")?;
     // A token-shaped value whose `p` is a JSON escape: no text rule reads it.
     let suffix = "0123456789abcdefghijklmnopqrstuvwxyz";
     let escaped = format!(r"gh\u0070_{suffix}");
@@ -518,7 +520,7 @@ fn owner_archive_keeps_json_text_credentials() -> Result<()> {
 #[test]
 fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
     let (_dir, vault) = open_vault();
-    scan_off(&vault, "principal:person-residue", 10)?;
+    scan_off(&vault, "principal:person-residue")?;
     let id = EntityId::now();
     let credential = format!("ghp_{}", "a".repeat(36));
     let nested_payload = encode(&Value::Map(vec![(
@@ -651,7 +653,7 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
         let (_fresh_dir, fresh) = open_restore_vault()?;
         // No owner copy: the seeded destination already holds the embedded
         // owner at time zero, so scan_off below creates nothing.
-        scan_off(&fresh, "principal:person-restore-residue", 10)?;
+        scan_off(&fresh, "principal:person-restore-residue")?;
         fresh.import_whole_vault_archive(export.bytes())?;
         let stored = fresh.get(&id)?.expect("restored person row");
         let mut cursor = std::io::Cursor::new(&stored);
@@ -839,7 +841,7 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
 #[test]
 fn owner_archive_keeps_claim_evidence_credentials() -> Result<()> {
     let (_dir, vault) = open_vault();
-    scan_off(&vault, "principal:claim-evidence-residue", 10)?;
+    scan_off(&vault, "principal:claim-evidence-residue")?;
     let credential = format!("ghp_{}", "a".repeat(36));
     let occurred = TimeRange { start: 1, end: 1 };
     let subject = EntityId::now();
@@ -889,4 +891,27 @@ fn owner_archive_keeps_claim_evidence_credentials() -> Result<()> {
         "the derivation envelope carries the claim's evidence"
     );
     Ok(())
+}
+
+/// The owner switches the write door's secret scan off: the Setting key
+/// `secret_scan.mode` through `Vault::set_setting` (SETTING-PLAIN PLAIN-2b
+/// deleted `Vault::set_secret_scan_mode` and its receipt table).
+fn switch_secret_scan_off(vault: &Vault, owner: &AuthenticatedOwner) {
+    let mode = serde_json::to_value(SecretScanMode::Off).expect("the mode as JSON");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value("secret_scan.mode", mode),
+        )
+        .expect("the owner switches the scan off");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's switch applies: {outcome:?}"
+    );
 }

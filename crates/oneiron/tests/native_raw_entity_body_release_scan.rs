@@ -20,11 +20,13 @@ use std::sync::Arc;
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::claim::base_world_id;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{Memory, MemoryError};
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::secret_custody::SecretSight;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{
@@ -124,9 +126,7 @@ fn raw_body_fixture() -> RawBodyFixture {
     )
     .expect("owner grants the agent the base world");
     assert!(minted.grant.confers, "the grant confers");
-    vault
-        .set_secret_scan_mode(&owner_proof, SecretScanMode::Off, RAW_BODY_TEST_NOW)
-        .expect("owner turns the write door's scan off");
+    switch_secret_scan_off(&vault, &owner_proof);
     RawBodyFixture {
         vault,
         holder,
@@ -268,5 +268,28 @@ fn sighted_asset_bytes_withholds_unmarked_plain_bytes_that_hold_a_key() {
     assert!(
         matches!(shown, Err(ErrorKind::MaskedCopyWithheld)),
         "unmarked plain bytes that hold a token are withheld as MaskedCopyWithheld; got {shown:?} (Ok(n) is the served length)",
+    );
+}
+
+/// The owner switches the write door's secret scan off: the Setting key
+/// `secret_scan.mode` through `Vault::set_setting` (SETTING-PLAIN PLAIN-2b
+/// deleted `Vault::set_secret_scan_mode` and its receipt table).
+fn switch_secret_scan_off(vault: &Vault, owner: &AuthenticatedOwner) {
+    let mode = serde_json::to_value(SecretScanMode::Off).expect("the mode as JSON");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value("secret_scan.mode", mode),
+        )
+        .expect("the owner switches the scan off");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's switch applies: {outcome:?}"
     );
 }

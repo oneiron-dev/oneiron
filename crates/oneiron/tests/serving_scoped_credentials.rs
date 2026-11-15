@@ -10,12 +10,14 @@ use oneiron::code_run::vault_read::{
     CoreEntityRecord, CoreHydrateRequest, CoreHydrateResponse, CoreHydrateStatus, CoreQueryRequest,
     CountMode, InProcessVaultReadAdapter, VaultReadClient, View,
 };
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::llm::ModelId;
 use oneiron::llm::image::{ImageBytes, ImageResponse};
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
@@ -48,7 +50,7 @@ impl Fixture {
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
         let owner_proof =
             vault.authenticate_owner(owner, "principal:owen", true, GateDecisionId::now())?;
-        vault.set_secret_scan_mode(&owner_proof, SecretScanMode::Off, 10)?;
+        switch_secret_scan_off(&vault, &owner_proof);
 
         let agent = EntityId::now();
         create_agent_definition_as(
@@ -603,4 +605,27 @@ fn agent_core_query_nulls_encoded_carriers() -> TestResult {
             .expect("the agent's core-query PERSON keeps its safe body"),
     );
     Ok(())
+}
+
+/// The owner switches the write door's secret scan off: the Setting key
+/// `secret_scan.mode` through `Vault::set_setting` (SETTING-PLAIN PLAIN-2b
+/// deleted `Vault::set_secret_scan_mode` and its receipt table).
+fn switch_secret_scan_off(vault: &Vault, owner: &AuthenticatedOwner) {
+    let mode = serde_json::to_value(SecretScanMode::Off).expect("the mode as JSON");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value("secret_scan.mode", mode),
+        )
+        .expect("the owner switches the scan off");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's switch applies: {outcome:?}"
+    );
 }

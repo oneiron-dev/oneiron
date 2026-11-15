@@ -524,13 +524,12 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         other => panic!("refused for another reason: {other}"),
     };
     refused(
-        vault
-            .set_secret_scan_mode(
-                &admitted,
-                oneiron::policy_model::SecretScanMode::Off,
-                vault.now_recorded_at(),
-            )
-            .unwrap_err(),
+        crate::owner::secrets::switch_secret_scan(
+            vault,
+            &admitted,
+            oneiron::policy_model::SecretScanMode::Off,
+        )
+        .unwrap_err(),
     );
     assert_eq!(
         vault.secret_scan_mode().unwrap(),

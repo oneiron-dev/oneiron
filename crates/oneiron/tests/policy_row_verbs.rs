@@ -42,6 +42,7 @@ fn non_owner_cannot_land_a_row_by_presenting_an_authenticated_person() -> TestRe
 fn a_host_turns_the_secret_scan_off_through_the_public_owner_door() -> TestResult {
     use oneiron::policy_model::SecretScanMode;
     use oneiron::registry::ENTITY_TYPE_TURN as TURN;
+    use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
     let dir = tempfile::tempdir()?;
     let token = ["gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"].concat();
     let turn = format!("user: the token is {token}");
@@ -71,8 +72,24 @@ fn a_host_turns_the_secret_scan_off_through_the_public_owner_door() -> TestResul
         );
         let owner = vault.ensure_embedded_owner_actor()?;
         let auth = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
-        let receipt = vault.set_secret_scan_mode(&auth, SecretScanMode::Off, 10)?;
-        assert_eq!(receipt.mode, SecretScanMode::Off);
+        let outcome = vault.set_setting(
+            SettingCaller::Owner(&auth),
+            SetSetting::vault_value(
+                "secret_scan.mode",
+                serde_json::to_value(SecretScanMode::Off)?,
+            ),
+        )?;
+        assert!(
+            matches!(
+                outcome,
+                SetSettingOutcome::Applied {
+                    sequence: Some(_),
+                    ..
+                }
+            ),
+            "the owner's switch applies: {outcome:?}"
+        );
+        assert_eq!(vault.secret_scan_mode()?, SecretScanMode::Off);
     }
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     assert_eq!(vault.secret_scan_mode()?, SecretScanMode::Off);

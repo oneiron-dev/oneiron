@@ -453,13 +453,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default()).unwrap();
         let owner = super::super::local_owner(&vault).unwrap();
-        vault
-            .set_secret_scan_mode(
-                &owner,
-                oneiron::policy_model::SecretScanMode::Off,
-                vault.now_recorded_at(),
-            )
-            .unwrap();
+        // The owner's switch through the Setting door (SETTING-PLAIN PLAIN-2b
+        // deleted `Vault::set_secret_scan_mode`).
+        crate::owner::secrets::switch_secret_scan(
+            &vault,
+            &owner,
+            oneiron::policy_model::SecretScanMode::Off,
+        )
+        .unwrap();
         let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
         let agent = EntityId::now();
         for value in [
@@ -496,13 +497,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default()).unwrap();
         let owner = super::super::local_owner(&vault).unwrap();
-        vault
-            .set_secret_scan_mode(
-                &owner,
-                oneiron::policy_model::SecretScanMode::Off,
-                vault.now_recorded_at(),
-            )
-            .unwrap();
+        // The owner's switch through the Setting door (SETTING-PLAIN PLAIN-2b
+        // deleted `Vault::set_secret_scan_mode`).
+        crate::owner::secrets::switch_secret_scan(
+            &vault,
+            &owner,
+            oneiron::policy_model::SecretScanMode::Off,
+        )
+        .unwrap();
         // The public BIP39 test vector, a word per entry behind a key of byte
         // values, and whole under a credential name.
         let phrase = "legal winner thank year wave sausage worth useful legal winner thank yellow";
