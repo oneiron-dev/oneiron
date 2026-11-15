@@ -63,6 +63,76 @@ impl PendingConnectorCall {
             && held_arguments.is_some()
             && held_arguments == asked_arguments
     }
+
+    /// The sweep-minted row `self` as the live caller's same call `caller`
+    /// adopts it: the caller's catalog name, arguments, credential, grant,
+    /// secret use and retention, the agent run try its write binds, and the
+    /// code run that asks it, so the resume's gate receipts join that run's
+    /// change journal (ARCH-0040 #revert-run). The sweep knew none of them.
+    fn adopted_by(self, caller: Self) -> Self {
+        Self {
+            name: caller.name,
+            arguments: caller.arguments,
+            credential: caller.credential,
+            grant: caller.grant,
+            secret_use: caller.secret_use,
+            off_record: caller.off_record,
+            agent_run: caller.agent_run,
+            run_ref: caller.run_ref,
+            sweep_minted: false,
+            sweep_dry_run_forced: false,
+            ..self
+        }
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// The code run a sweep-minted held call carries once a caller asking it
+    /// from `caller_run` adopts it: the row the consent sweep mints names no
+    /// run (`connector_call_consent.rs`), and the caller's is the run its
+    /// write binds.
+    pub(crate) fn sweep_minted_call_adopted_run(caller_run: Option<String>) -> Option<String> {
+        let minted = PendingConnectorCall {
+            name: "catalog-server".to_owned(),
+            tool: "create_issue".to_owned(),
+            arguments: "{}".to_owned(),
+            mutation: super::tool_call::MutationIntent::ExplicitMutation,
+            grant_id: None,
+            attempt_id: AttemptId::now(),
+            call_seq: 1,
+            principal_ref: "agent:caller".to_owned(),
+            remember_context: None,
+            held_at_ms: 0,
+            settled: None,
+            held_reasons: Vec::new(),
+            owner_ask_seq: None,
+            credential: None,
+            grant: None,
+            secret_use: None,
+            sweep_minted: true,
+            sweep_dry_run_forced: false,
+            live_use: false,
+            code_consent_wait: None,
+            off_record: true,
+            source_rows: None,
+            approval: None,
+            input: None,
+            code: None,
+            sealed_arguments: None,
+            paced_until: None,
+            agent_run: None,
+            run_ref: None,
+        };
+        let caller = PendingConnectorCall {
+            sweep_minted: false,
+            off_record: false,
+            source_rows: Some(Vec::new()),
+            run_ref: caller_run,
+            ..minted.clone()
+        };
+        minted.adopted_by(caller).run_ref
+    }
 }
 
 impl Vault {
@@ -259,18 +329,7 @@ impl Vault {
                     return Ok((expired, held.source_rows));
                 }
                 let held = if held.sweep_minted {
-                    PendingConnectorCall {
-                        name: pending.name,
-                        arguments: pending.arguments,
-                        credential: pending.credential,
-                        grant: pending.grant,
-                        secret_use: pending.secret_use,
-                        off_record: pending.off_record,
-                        agent_run: pending.agent_run,
-                        sweep_minted: false,
-                        sweep_dry_run_forced: false,
-                        ..held
-                    }
+                    held.adopted_by(pending)
                 } else {
                     held
                 };
