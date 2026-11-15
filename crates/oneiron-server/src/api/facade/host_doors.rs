@@ -299,6 +299,7 @@ pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
+pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 pub(crate) use super::critical_confirm_doors::*;
 pub(crate) use super::plugin_section_doors::*;

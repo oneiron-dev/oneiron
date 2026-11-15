@@ -8,9 +8,9 @@ run from the repository root).
 For each door fn in each file whose verb row says "door": "hand", it prints the old body beside the row edit and the
 door the generator emits, after checking four facts against the row (DESIGN section 4): the same callee and arguments,
 the same rule, the same handle (the new call says `memory` exactly when the old door read through the credential's
-handle) and the same rows. A door of a shape it does not know is refused and left as it is, with the reason. With
---apply it rewrites each accepted row (the three substitutions of DESIGN section 1.3 in `call`, `"door": "hand"`
-dropped) and deletes each accepted door fn with its doc comment. It edits no `use` line: the build's unused-import
+handle) and the same rows. A door of a shape it does not know, or on a setting verb (SETTING_HELD), is refused and
+left as it is, with the reason. With --apply it rewrites each accepted row (the three substitutions of DESIGN section
+1.3 in `call`, `"door": "hand"` dropped) and deletes each accepted door fn with its doc comment. It edits no `use` line: the build's unused-import
 warnings name the ones a move leaves.
 
 Known shapes (each wrapper proves the owner with `facade_owner`, as rule `owner` does):
@@ -37,6 +37,22 @@ WRAPPERS = {
     "as_owner": ("crate::api::facade::host_doors::support::owner_listing::as_owner", ("memory", "owner"), True),
     "as_owner_naming": ("crate::api::facade::legal_hold_doors::as_owner_naming", ("server", "owner"), False),
 }
+
+# The 31 pure doors on setting verbs (UC-01 plan, U1-A2: fable/15's setting tables joined with fable/19's door
+# census). A Setting stage deletes or keeps each of them, so each stays hand-written until Setting stages 1 to 3
+# have landed; a kept one moves in a later PR.
+SETTING_HELD = frozenset({
+    "vault.agents.plan_mode.set", "vault.code.origin.lfs_path_policy.get", "vault.code.origin.lfs_path_policy.set",
+    "vault.commitments.reminder_route.get", "vault.commitments.reminder_route.set", "vault.drafters.policy.set",
+    "vault.drafters.status", "vault.free_time.policy.get", "vault.free_time.policy.set",
+    "vault.free_time.policy.set_as", "vault.retrieval.policy.get", "vault.retrieval.policy.pin", "vault.sieve.cadence",
+    "vault.sieve.policy", "vault.sieve.policy.set", "vault.sieve.recipe_policy", "vault.sieve.recipe_policy.set",
+    "vault.skills.advisory_ask.set", "vault.skills.code_auto_install.set", "vault.skills.fit.set",
+    "vault.skills.optimize.preferences.get", "vault.skills.optimize.preferences.set",
+    "vault.sync.retained_work.wait.set", "vault.trusted_contacts.consent", "vault.trusted_contacts.dial.set",
+    "vault.trusted_contacts.list", "vault.trusted_contacts.name", "vault.trusted_contacts.revoke",
+    "vault.weave.schedules.clear", "vault.weave.schedules.list", "vault.weave.schedules.put",
+})
 
 # A string or char literal, whose whitespace is part of its value.
 LITERAL = re.compile(r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])')")
@@ -246,6 +262,8 @@ def check_door(source, match, rows, names, module):
     row = rows[verb]
     if row.get("door") != "hand":
         refuse('the row has no "door": "hand"')
+    if verb in SETTING_HELD:
+        refuse("a setting verb (U1-A2): its door stays hand-written until Setting stages 1 to 3 have landed")
     if row.get("proof") != "owner":
         refuse(f"rule `{row.get('proof')}` has no generated door yet")
     for flag in ("host_door_caller", "host_door_session", "host_door_paced", "host_door_lens_owner",
