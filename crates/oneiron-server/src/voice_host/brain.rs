@@ -731,7 +731,7 @@ impl Brain for ChatBrain {
             .bindings
             .record
             .clone()
-            .filter(CallRecord::keeps_turns)
+            .filter(|record| record.keeps_turns(&self.bindings.vault))
             .map(|record| KeptTurn {
                 ai: self.bindings.ai.clone(),
                 vault: Arc::clone(&self.bindings.vault),
