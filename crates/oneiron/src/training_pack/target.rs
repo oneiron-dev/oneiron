@@ -11,10 +11,8 @@ use crate::llm::manifest::{ModelBinding, ModelRole};
 
 use super::{hash_json, invalid};
 
-/// The labels a question head trains on: one yes or no per target.
-pub const QUESTION_LABEL_SCHEMA: &str = "oneiron.per-target-binary/1";
-/// How a question head's input is written as text.
-pub const QUESTION_RENDERER: &str = "oneiron.detector-target-text/1";
+#[doc(hidden)]
+pub use oneiron_records::training_pack::target::{QUESTION_LABEL_SCHEMA, QUESTION_RENDERER};
 
 /// The plan's target. A role plan writes `role` and `output_binding` as the
 /// plan's own keys, as before; a question plan writes one `question` key.
