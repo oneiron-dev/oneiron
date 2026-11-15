@@ -7,11 +7,13 @@
 //! The harness never runs an agent, so building it spends no prompt.
 //! `code-bench-pack` materializes each ready cell (its world, prompt, tools
 //! and MCP servers) for a driver; a missing piece marks the arm not ready,
-//! and nothing is faked. The task's own tests stay sealed from the writer.
+//! and nothing is faked: each declared MCP server is probed. The task's own
+//! tests and the repository they come from stay sealed from the writer.
 //!
 //! `oneiron-bench beam code-bench-pack <plan.json>`.
 
 mod manifest;
+mod mcp_probe;
 mod pack;
 mod profile;
 
