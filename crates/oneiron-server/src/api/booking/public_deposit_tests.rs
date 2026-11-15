@@ -11,7 +11,8 @@
 //! reaches Stripe. The Astra money review's cases (15 Nov): a hold opens a
 //! payment only under the terms the visitor read; a void that finds the
 //! payment captured refunds it; a refund Stripe holds pending stays owed
-//! and is never made twice.
+//! and is never made twice. The Muse Spark blind review's case (16 Nov): a
+//! refund owed while the key is withheld waits, and runs once it is back.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -944,4 +945,106 @@ async fn a_refund_stripe_holds_pending_stays_owed_and_is_made_once() {
         1,
         "the pending refund was never made twice"
     );
+}
+
+/// A setup failure (here the host withholds the owner's key, L8-60) makes no
+/// Stripe call. The refund it holds up stays owed past the settle row's
+/// tries, and runs once the key is back (Muse Spark blind review of #8231,
+/// 16 Nov).
+#[tokio::test]
+async fn a_refund_owed_while_the_key_is_withheld_waits_and_runs_once_it_is_back() {
+    let terms = any_notice_terms();
+    let (fixture, stripe) = deposit_fixture_with(terms.clone(), SECRET_KEY).await;
+    let slots = fixture.slots().await;
+    let (payment_id, cancel_token) = paid_booking(
+        &fixture,
+        &stripe,
+        selected(&slots[0]),
+        "withheld-key",
+        &terms,
+    )
+    .await;
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Captured {
+            amount_minor: 5_000
+        }
+    );
+
+    // The owner marks the key a payment credential, and the host withholds
+    // payment credentials: its runner fence is unproven and the serve flag
+    // is off.
+    let vault = &fixture.server.vault;
+    let secret = vault
+        .resolve_secret_ref(STRIPE_SECRET_KEY_NAME)
+        .expect("resolve the secret key")
+        .expect("the secret key is stored");
+    vault
+        .set_secret_payment_mark(
+            &crate::test_credentials::embedded_owner(vault),
+            &secret,
+            Some(true),
+        )
+        .expect("the owner's payment mark");
+    vault.set_payment_credential_release(PaymentCredentialRelease {
+        runner_fence_proven: false,
+        withholding_lifted: false,
+    });
+    fixture
+        .dispatch(
+            "booking.cancel",
+            cancel(cancel_token, "cancel-withheld-key"),
+        )
+        .await
+        .expect("cancel");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::RefundDue {
+            amount_minor: 5_000
+        }
+    );
+
+    // More passes than a settle row's tries, each past the row's longest
+    // wait: the refund stays owed, and no request reaches Stripe.
+    let calls_before = stripe.lock().expect("fake stripe").calls.len();
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    let now = now_secs().expect("clock");
+    for pass in 0..10_u64 {
+        let drain = settle_deposits_once(vault, &base, now + pass * 3_601).expect("settle pass");
+        assert_eq!(
+            drain.failed, 0,
+            "pass {pass}: a withheld key fails no move for good"
+        );
+        assert_eq!(drain.refunded, 0, "pass {pass}: no refund without the key");
+    }
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::RefundDue {
+            amount_minor: 5_000
+        },
+        "the refund stays owed while the key is withheld"
+    );
+    assert_eq!(
+        stripe.lock().expect("fake stripe").calls.len(),
+        calls_before,
+        "a withheld key makes no Stripe call"
+    );
+
+    // The self-hoster lifts the withholding: the next pass makes the refund.
+    vault.set_payment_credential_release(PaymentCredentialRelease {
+        runner_fence_proven: false,
+        withholding_lifted: true,
+    });
+    let drain = settle_deposits_once(vault, &base, now + 10 * 3_601).expect("settle pass");
+    assert_eq!(
+        drain.refunded, 1,
+        "the owed refund runs once the key is back"
+    );
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 5_000
+        }
+    );
+    assert_eq!(refund_posts(&stripe), 1, "refunded once");
 }
