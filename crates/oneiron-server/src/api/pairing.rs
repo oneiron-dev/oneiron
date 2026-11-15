@@ -1,6 +1,6 @@
 //! Pairing-only enrollment and unauthenticated liveness discovery.
 use crate::auth::{parse_signature, parse_slip_id};
-use crate::error::{ApiError, EnvelopedApiError};
+use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::{Json, extract::State, http::HeaderMap, http::request::Parts};
 use oneiron::authority::{
@@ -606,17 +606,51 @@ pub(super) fn register_live_paired_mcp(
     registry.register(credential, record).is_ok()
 }
 
+/// Policy hook (FIX-LIST 23279): the HTTP refusal for a default
+/// agent-Grant mint's reason, or `None` when `error` is none. An owner's
+/// link for a named agent mints the agent's default read Grant in the
+/// issue's own writer, and a failed mint refuses the link; the refusal
+/// names the mint's rule, as the grants door answers the same failure
+/// (`owner_routes::owner_error`'s `Refused`), a 409, never this door's
+/// unexplained 401, so the owner can tell a missing carrier from a bad
+/// credential.
+fn grant_mint_refusal(error: &oneiron::Error) -> Option<ApiError> {
+    use oneiron::authority::{
+        AGENT_GRANT_ACT_NO_CARRIER, AGENT_GRANT_ACT_NOT_COUNTED, AGENT_GRANT_ACT_TOO_MANY_HEADS,
+    };
+    let oneiron::Error::Record(oneiron::error::RecordError::AuthorityRefused(reason)) = error
+    else {
+        return None;
+    };
+    if !matches!(
+        *reason,
+        AGENT_GRANT_ACT_NO_CARRIER | AGENT_GRANT_ACT_TOO_MANY_HEADS | AGENT_GRANT_ACT_NOT_COUNTED
+    ) {
+        return None;
+    }
+    Some(ApiError::new(
+        *reason,
+        ApiErrorDetails::InvalidState {
+            state: Some("refused".to_owned()),
+        },
+        std::iter::empty::<String>(),
+    ))
+}
+
 pub(super) fn with_issuer<T>(
     server: &SyncServer,
     operation: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> Result<T, ApiError> {
     // A scope the vault refuses on a link says why, and so does a renewal's
-    // named refusal (FIX 4651); every other failure stays an unexplained 401.
+    // named refusal (FIX 4651) or a default agent-Grant mint's (FIX-LIST
+    // 23279); every other failure stays an unexplained 401.
     let refusal = |error: oneiron::Error| match error.kind() {
         oneiron::ErrorKind::InvalidPairingScope => {
             ApiError::bad_request(error.to_string(), Some("scope.facets"))
         }
-        _ => renewal_error::renewal_refusal(&error).unwrap_or_else(ApiError::unauthorized),
+        _ => renewal_error::renewal_refusal(&error)
+            .or_else(|| grant_mint_refusal(&error))
+            .unwrap_or_else(ApiError::unauthorized),
     };
     // The managed issuer, else this install's own self-host root issuer
     // (FIX-LIST 3018); a host holding neither signs nothing.
