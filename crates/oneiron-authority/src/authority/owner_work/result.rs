@@ -76,12 +76,10 @@ pub enum OwnerWorkRefusal {
     /// The live custody floor on the holder no longer admits the secret's
     /// bindings.
     WiderThanFloor,
-    /// A root request's target computes another revision of the owner roots
-    /// and its own standing than the act's `seen` (FIX 4738). It may not
-    /// have folded yet a root record or a mark of itself the recorder held,
-    /// or the roots may have moved since: the inequality alone does not say
-    /// which. The owner reviews where the target stands and asks again, once
-    /// it has synced when it lagged.
+    /// A root request's target computes another revision of its roster heads
+    /// than the act's `seen` (FIX 4738): the target's roster heads moved
+    /// since the owner recorded the request. The owner reviews where the
+    /// target stands and asks again.
     RootRevisionMismatch,
 }
 

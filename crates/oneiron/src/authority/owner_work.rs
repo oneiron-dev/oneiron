@@ -26,9 +26,9 @@
 //! stands.
 //!
 //! A root request's `seen` is the revision of
-//! [`AuthorityFold::root_work_basis`]: the owner roots and the target's
-//! standing, as the deciding surface saw them, which the request carries as
-//! its witness (FIX 5551).
+//! [`AuthorityFold::root_work_basis`]: the target's roster heads, as the
+//! deciding surface saw them, which the request carries as its witness
+//! (FIX 5551).
 //! A custody request's is its secret's live custody requests, compared here
 //! before it joins them, and an admitted revoke is terminal for its secret
 //! (`custody`).
@@ -67,9 +67,7 @@ use crate::entity_id::EntityId;
 use super::machine_standing::{InstallCounted, Mark, Standing, StandingView};
 use super::*;
 
-pub(crate) use self::root_basis::{
-    RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn,
-};
+pub(crate) use self::root_basis::{RootBasisCheck, check_root_basis};
 
 /// One admitted request, as its entry carried it. The body rides in an
 /// `Arc` the folded view shares, so a view build clones no permit set
@@ -151,17 +149,13 @@ struct FoldedWorkRequest {
 /// The heads a root request's revision is over (CALLS ROOT_WORK_REVISION).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RootRevisionHeads {
-    /// Every valid owner root, each by its id (two entries of one root carry
-    /// the same keys, so the id stands for its record on every replica), and
-    /// the target's roster revision, its accepted roster revision and the
-    /// head of each anchor's chain of it. The root the change binds, and its
-    /// anchor's chain of the target, are left out: their arrival is what a
-    /// pin waits for and what a restore or an anchoring writes, never a
-    /// change the owner did not see. The pin is local, so it is never a head.
-    RootsAndTargetStanding,
+    /// The target's roster revision and its accepted roster revision, each
+    /// by its entry. Nothing else is a head: neither the owner roots, nor
+    /// any anchor's chain of the target, nor the pin, which is local.
+    TargetRosterStanding,
 }
 
-const ROOT_WORK_REVISION: RootRevisionHeads = RootRevisionHeads::RootsAndTargetStanding;
+const ROOT_WORK_REVISION: RootRevisionHeads = RootRevisionHeads::TargetRosterStanding;
 
 /// Every owner work request and result, as this install folds them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -282,68 +276,26 @@ impl AuthorityFold {
         &self.owner_work.refused
     }
 
-    /// The heads a root request's `change` on `target` is over (CALLS
-    /// ROOT_WORK_REVISION), by kind: every valid owner root by its id, and
-    /// the target's roster revision, its accepted roster revision and the
-    /// head of each anchor's chain of it, leaving out the root the change
-    /// binds and its anchor's chain. Their revision
+    /// The heads a root request on `target` is over (CALLS
+    /// ROOT_WORK_REVISION): the target's roster revision and its accepted
+    /// roster revision, each by its entry. Their revision
     /// ([`RootRevisionBasis::revision`], [`act_revision`] under
     /// [`ROOT_WORK_REVISION_CONTEXT`]) is the act's `seen`; the recorder signs
     /// the heads with the request as its witness (FIX 5551), and the target
     /// builds them again in its own writer transaction (`root_basis`): a
-    /// different revision is a change the owner did not see, or heads the
-    /// target has not folded yet. The request itself is never a head, so no
-    /// request makes itself stale. The basis names the anchor it left out
-    /// (FIX 6556); the recorder adds the heads' parents
-    /// ([`root_work_witness_in_txn`]).
-    pub(crate) fn root_work_basis(
-        &self,
-        target: EntityId,
-        change: RootChange,
-    ) -> RootRevisionBasis {
-        let bound = change.root().and_then(|root| {
-            self.root_anchors
-                .iter()
-                .find(|(_, roots)| roots.contains(&root))
-                .map(|(anchor, _)| *anchor)
-        });
-        self.root_work_heads(target, bound)
-    }
-
-    /// [`Self::root_work_basis`]'s heads on `target`, leaving out `bound`'s
-    /// roots and its chain of the target: the anchor this fold holds the
-    /// change's root under, or, on a target the root's record has not
-    /// reached, the one its witness names (FIX 6556).
-    pub(crate) fn root_work_heads(
-        &self,
-        target: EntityId,
-        bound: Option<[u8; 32]>,
-    ) -> RootRevisionBasis {
+    /// different revision is a roster change the owner did not see. The
+    /// request itself is never a head, so no request makes itself stale.
+    pub(crate) fn root_work_basis(&self, target: EntityId) -> RootRevisionBasis {
         match ROOT_WORK_REVISION {
-            RootRevisionHeads::RootsAndTargetStanding => {
-                let roots = self
-                    .root_anchors
-                    .iter()
-                    .filter(|(anchor, _)| Some(**anchor) != bound)
-                    .flat_map(|(_, roots)| roots.iter().copied())
-                    .collect();
+            RootRevisionHeads::TargetRosterStanding => {
                 let machine = self.machine(target);
                 RootRevisionBasis {
-                    roots,
                     roster: machine
                         .and_then(|machine| machine.roster.as_ref())
                         .map(|revision| revision.entry),
                     roster_trusted: machine
                         .and_then(|machine| machine.roster_trusted.as_ref())
                         .map(|revision| revision.entry),
-                    anchored: machine
-                        .into_iter()
-                        .flat_map(|machine| machine.anchored.iter())
-                        .filter(|(anchor, _)| Some(**anchor) != bound)
-                        .map(|(anchor, revision)| (*anchor, revision.entry))
-                        .collect(),
-                    bound,
-                    parents: BTreeMap::new(),
                 }
             }
         }

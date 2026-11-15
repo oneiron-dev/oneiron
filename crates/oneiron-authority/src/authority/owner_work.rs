@@ -207,7 +207,7 @@ impl WorldKeyMode {
 
 /// The context a root request's `seen` is hashed under: one kind's revision
 /// never stands for another's ([`act_revision`]).
-pub const ROOT_WORK_REVISION_CONTEXT: &[u8] = b"oneiron/root-work-revision/v1";
+pub const ROOT_WORK_REVISION_CONTEXT: &[u8] = b"oneiron/root-work-revision/v2";
 
 /// The context a bundle publication's `seen` is hashed under: the vault-wide
 /// world policy revision the deciding surface showed ([`act_revision`]).
@@ -300,11 +300,10 @@ pub enum OwnerWorkBody {
     WorldKey { mode: WorldKeyMode },
     /// A change to the target install's own recovery root. The act's target
     /// is that install, which is also the request's executor, and its `seen`
-    /// is the revision of the roots and of the target's standing the change
-    /// is for ([`ROOT_WORK_REVISION_CONTEXT`]). `basis` names those heads as
-    /// the recorder folded them, its witness (FIX 5551): its revision is the
-    /// act's `seen`. Beside them it carries the bound anchor and the anchor
-    /// heads' parents, outside the revision (FIX 6556).
+    /// is the revision of the target's roster heads the change is for
+    /// ([`ROOT_WORK_REVISION_CONTEXT`]). `basis` names those heads as the
+    /// recorder folded them, its witness (FIX 5551): its revision is the
+    /// act's `seen`.
     Root {
         change: RootChange,
         basis: RootRevisionBasis,
@@ -465,12 +464,9 @@ impl OwnerWorkRequest {
             return Err(invalid_authority());
         }
         // A root change is done on the install it changes, and only there,
-        // and its basis is the revision its act saw (FIX 5551). Only a
-        // change that binds a root has a bound anchor (FIX 6556).
-        if let OwnerWorkBody::Root { change, basis } = &self.work
-            && (self.act.target != self.executor
-                || basis.revision() != self.act.seen
-                || (change.root().is_none() && basis.bound.is_some()))
+        // and its basis is the revision its act saw (FIX 5551).
+        if let OwnerWorkBody::Root { basis, .. } = &self.work
+            && (self.act.target != self.executor || basis.revision() != self.act.seen)
         {
             return Err(invalid_authority());
         }
