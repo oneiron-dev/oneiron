@@ -4,8 +4,6 @@
 //! admitted bytes replay unchanged. The scale is this device's local truth,
 //! set by its owner and never synced or taken from the wire.
 
-use serde::{Deserialize, Serialize};
-
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};

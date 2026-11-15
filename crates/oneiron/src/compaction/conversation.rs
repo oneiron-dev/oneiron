@@ -16,15 +16,13 @@
 //! declaration. A flight that cannot run keeps the raw log and names why; it
 //! is never handed to the Dreamer or the plain house writer.
 
-use serde::{Deserialize, Serialize};
-
 use super::driver::{ConversationBinding, WindowLog};
 use super::{
-    CompactHooks, CompactionBackend, CompactionCheck, CompactionCheckMaterial,
-    CompactionCheckMaterialRef, CompactionDirective, CompactionDriver, CompactionEvidence,
-    CompactionExecution, CompactionGateFailure, CompactionGatePolicy, CompactionOff,
-    CompactionRefusal, CompactionRequest, CompactionSuppression, GatedCompaction,
-    SelfCompactionUnavailable, compact_invocation, compaction_input_tokens, gate_compaction,
+    CompactHooks, CompactionBackend, CompactionCheck, CompactionCheckMaterial, CompactionDirective,
+    CompactionDriver, CompactionEvidence, CompactionExecution, CompactionGateFailure,
+    CompactionGatePolicy, CompactionOff, CompactionRefusal, CompactionRequest,
+    CompactionSuppression, GatedCompaction, SelfCompactionUnavailable, compact_invocation,
+    compaction_input_tokens, gate_compaction,
 };
 use crate::code_run::{ExecutorStorage, LiveCompactionFork};
 use crate::edge::EdgeActorClass;

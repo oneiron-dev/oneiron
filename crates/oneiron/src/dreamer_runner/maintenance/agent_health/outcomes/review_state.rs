@@ -3,11 +3,9 @@
 //! state's `health_review:` digest and shared by every receipt of that state.
 //! The rows hold ids only, never a body or brief text.
 
-use serde::{Deserialize, Serialize};
-
+use crate::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::{EntityId, Result};
 
 #[doc(hidden)]
 pub use oneiron_records::dreamer_runner::maintenance::agent_health::outcomes::review_state::HealthReviewState;

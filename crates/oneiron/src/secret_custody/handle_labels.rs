@@ -9,7 +9,6 @@
 //! label, no migration, no automatic labeling.
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;

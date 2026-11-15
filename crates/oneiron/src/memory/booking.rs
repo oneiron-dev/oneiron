@@ -3,11 +3,11 @@
 use super::{Memory, MemoryError, MemoryResult};
 use crate::EntityId;
 use crate::booking::emergency_reschedule::{
-    self as emergency, EmergencyActionPolicy, EmergencyBatchPlan, EmergencyItem, EmergencyPlan,
+    self as emergency, EmergencyBatchPlan, EmergencyItem, EmergencyPlan,
     EmergencyRescheduleRequest, OwnerInstructionRecord,
 };
 use crate::booking::{BookingLifecycleConsumerInput, CalendarRevision, OpaqueLifecycleToken};
-use crate::calendar::query::{CalendarRangeDto, CalendarSel};
+use crate::calendar::query::CalendarSel;
 use crate::outbound::OutboundExecutionSink;
 
 #[doc(hidden)]

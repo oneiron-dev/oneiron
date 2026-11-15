@@ -9,7 +9,7 @@ use crate::consent::{
 };
 use crate::context_projection::{ChatProjection, ContextSpec, MemoryProjection};
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::Result;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 
 use super::workflow_record::WorkflowTaskBinding;

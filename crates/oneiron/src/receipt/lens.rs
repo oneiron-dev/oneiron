@@ -7,8 +7,6 @@
 //! Selection and clearing also append that decision to the shared Gate ledger
 //! in the slot's writer; clearing keeps its audit even after the slot is gone.
 
-use serde::{Deserialize, Serialize};
-
 #[doc(hidden)]
 pub use oneiron_records::receipt::lens::{
     LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision,

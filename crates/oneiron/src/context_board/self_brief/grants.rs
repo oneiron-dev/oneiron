@@ -4,9 +4,6 @@
 //! credential and parent ceilings ride beside the list as their own
 //! descriptions ([`super::ceilings`]), never as a Grant.
 
-use crate::entity_id::EntityId;
-use crate::federation::{RepoAccessBounds, Scope};
-
 #[doc(hidden)]
 pub(super) use oneiron_records::context_board::self_brief::grants::GRANT_ADMISSION_RULE;
 #[doc(hidden)]

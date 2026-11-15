@@ -1,7 +1,5 @@
 //! Provider-neutral transport seam, change classification, and ICS render.
 
-use serde::{Deserialize, Serialize};
-
 use super::inbound::read_event_name;
 use super::outbound::{
     CalendarRemoteObjectObservation, CalendarRemoteObjectRow, CalendarWriteOutboxRow,

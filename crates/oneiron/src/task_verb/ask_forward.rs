@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use super::ask_record::{self, AskGroup};
 use super::{TaskAskAnswer, TaskAskHandle, TaskAskWord};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::entity_id::derived_domains::{TASK_ASK_FORWARD_INTENT, TASK_ASK_FORWARD_RESULT};
 use crate::error::{Error, RecordError, Result};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,

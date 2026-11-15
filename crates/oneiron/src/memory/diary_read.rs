@@ -27,7 +27,6 @@ use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault, WriteActor};
-use serde::{Deserialize, Serialize};
 
 mod doors;
 mod log;

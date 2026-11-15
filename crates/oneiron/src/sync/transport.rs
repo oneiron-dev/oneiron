@@ -9,8 +9,6 @@
 pub use crate::store::framing::TransportError;
 use crate::store::framing::checked_encoded_frame_len;
 use crate::sync::types::parse_window_key_str;
-use loro::LoroValue;
-use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 

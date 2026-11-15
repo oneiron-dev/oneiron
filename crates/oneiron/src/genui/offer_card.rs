@@ -13,14 +13,13 @@ use crate::error::GateError;
 use crate::llm::run_admission::DeclaredMaximum;
 use crate::memory::{Memory, MemoryResult};
 use crate::workspace_roster::{
-    OfferAnswer, OfferAnswerRequest, OfferCard, OfferReopenRequest, OfferSettlement, OfferState,
-    OfferVoteRequest, ROOM_OFFER_IDLE_SECS,
+    OfferAnswer, OfferCard, OfferSettlement, OfferState, ROOM_OFFER_IDLE_SECS,
 };
 use crate::{EntityId, Error, Result};
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
-use oneiron_records::genui::offer_card::{OFFER_CARD_PREVIEW_BYTES, card_preview};
+use oneiron_records::genui::offer_card::card_preview;
 #[doc(hidden)]
 pub use oneiron_records::genui::offer_card::{
     OFFER_JOIN_ACTION_ID, OFFER_NOT_NOW_ACTION_ID, OFFER_REOPEN_ACTION_ID,

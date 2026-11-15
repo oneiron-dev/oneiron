@@ -14,7 +14,7 @@ use super::{
 };
 use crate::Vault;
 use crate::error::Error;
-use crate::llm::decision::{DecisionAnswer, TypedDecision};
+use crate::llm::decision::TypedDecision;
 use crate::llm::seat::{SeatLearningContext, SeatPolicy, learned_models};
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::task_type::TaskTypeRef;

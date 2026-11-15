@@ -4,8 +4,6 @@
 //! is a blob version, a code revision, or (FIX 2783) one exact revision of a
 //! CLAIM or of a record's common document.
 
-use serde::{Deserialize, Serialize};
-
 pub(crate) use crate::gate::team_review::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 
 #[doc(hidden)]

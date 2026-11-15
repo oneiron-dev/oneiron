@@ -16,7 +16,6 @@ use crate::{
     store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 mod asset_body;
 #[cfg(feature = "sync")]

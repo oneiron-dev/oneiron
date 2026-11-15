@@ -2,8 +2,6 @@
 
 use std::num::NonZeroU16;
 
-use serde::{Deserialize, Serialize};
-
 use crate::failure_ladder::healer_dispatch::HealerSlot;
 
 use super::classify::DEFAULT_MAX_CONSECUTIVE_TRANSIENTS;

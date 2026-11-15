@@ -51,7 +51,6 @@ use crate::registry::{
 };
 use crate::secret_custody::CustodyWrite;
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::store::Store;
 use crate::{EntityId, Result, Vault, WriteActor};
 use oneiron_model::llm::LlmRequest;
 

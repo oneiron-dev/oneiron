@@ -3,7 +3,7 @@
 
 pub(crate) use oneiron_store::pending_gate_consent::records::*;
 
-use super::{GATE_DIFF_HANDLE_MAX_LEN, GateDecisionId};
+use super::GateDecisionId;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 

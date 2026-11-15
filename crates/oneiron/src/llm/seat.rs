@@ -16,7 +16,6 @@ pub use run::TaskSeatReceipt;
 
 use serde::{Deserialize, Serialize};
 
-use super::decision::TypedDecision;
 use super::registry::ModelWireFormat;
 use super::run_admission::offer_id;
 use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};

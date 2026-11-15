@@ -23,9 +23,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use oneiron_browser::{
-    BatchStopCause, ExpectInput, ExpectOutput, LibraryRunOutput, SecretArg, SubgoalStatus,
-};
+use oneiron_browser::{BatchStopCause, LibraryRunOutput, SecretArg, SubgoalStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;

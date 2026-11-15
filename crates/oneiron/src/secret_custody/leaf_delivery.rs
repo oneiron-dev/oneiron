@@ -42,7 +42,7 @@ use crate::authority::{
     owner_act_signer_admits,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::store::CredentialLeaf;
 use crate::world_keys::MachineSecret;
 

@@ -6,8 +6,6 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::agent_dispatch::decode_agent_dispatch_input;
 use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
@@ -15,7 +13,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 
 const FAILURE: SideTable<[u8; 16], FailureSignalClass, Raw> =

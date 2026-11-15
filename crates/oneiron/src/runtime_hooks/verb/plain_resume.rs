@@ -42,9 +42,7 @@ use super::state::DrainScope;
 use super::{InvocationId, VerbAskRefusal, VerbCall, VerbResume};
 
 #[doc(hidden)]
-use oneiron_records::runtime_hooks::verb::plain_resume::{
-    PLAIN_CEILING, PLAIN_GRANT_REVISION, revision,
-};
+use oneiron_records::runtime_hooks::verb::plain_resume::{PLAIN_CEILING, revision};
 
 /// How settlement runs a plain call again ([`VerbResume::Row`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

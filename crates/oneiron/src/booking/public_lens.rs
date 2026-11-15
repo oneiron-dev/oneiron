@@ -12,12 +12,10 @@
 //! frame, and a `booking-owner_display` section carries the frames after it.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use crate::booking::{
     BookingError, BookingLandingContent, BookingSlotPreview, BookingVerb, DisclosureRung,
-    EventTypeKey, OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview,
-    project_at_rung,
+    OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview, project_at_rung,
 };
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,

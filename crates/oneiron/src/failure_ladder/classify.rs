@@ -2,8 +2,6 @@
 
 use std::num::NonZeroU16;
 
-use serde::{Deserialize, Serialize};
-
 /// Consecutive transient failures a scope tolerates before escalating.
 pub const DEFAULT_MAX_CONSECUTIVE_TRANSIENTS: NonZeroU16 =
     NonZeroU16::new(3).expect("three is non-zero");

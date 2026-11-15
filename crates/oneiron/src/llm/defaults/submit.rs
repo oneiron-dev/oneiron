@@ -11,7 +11,7 @@
 //! under the same check in the ruling's own transaction. The resident door's
 //! no-widening rule is not this door's: a holder both tightens and loosens.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::POLICY;
 use crate::authority::ActSurface;

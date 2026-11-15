@@ -3,13 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::OutboundDraftInput;
 use crate::skill_hub::pack_catalog::HookOutcomeKind;
-use crate::{EntityId, OutboundDraftInput};
 
-use super::block::HookBlockLifetime;
-
-#[doc(hidden)]
-pub(super) use oneiron_records::runtime_hooks::outcome::MAX_TOKEN_CAP;
 #[doc(hidden)]
 pub use oneiron_records::runtime_hooks::outcome::{
     BlockRequest, EnqueuedDreamer, EnqueuedTask, ProposedClaim, ProposedEdge, ProposedNote,

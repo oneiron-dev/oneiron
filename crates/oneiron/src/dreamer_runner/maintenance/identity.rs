@@ -92,7 +92,7 @@ use crate::model_decision::{DecisionBandPolicy, DecisionDial};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 pub const IDENTITY_RECHECK_FACET: &str = "dreamer.identity_recheck";
 /// The producer of an identity ask's inbox NOTIFICATION; `source.result`

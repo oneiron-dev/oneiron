@@ -14,8 +14,6 @@ use crate::disclosure::{PREDICATE_DISCLOSURE_ATTENDEE_ASK, attendee_ask_ref};
 
 pub(super) const ATTENDEE_ENTRY: &str = "tasks.attendee_entry";
 #[doc(hidden)]
-use oneiron_records::task_verb::ask_record::attendee_entry::ENTRY_ID_DOMAIN;
-#[doc(hidden)]
 pub(crate) use oneiron_records::task_verb::ask_record::attendee_entry::attendee_entry_id;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

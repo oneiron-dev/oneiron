@@ -8,13 +8,10 @@
 //! `passes` is a saved contract verdict bound to that very receipt, else
 //! none; a Baseline receipt records no verdict and a reused one copies no
 //! run. `check_status` is unchanged.
-use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::contract_oracle::ContractOracle;
-use crate::merge_queue::{
-    CheckPhase, QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckHoldReason, StoredQueueCheckReceipt,
-};
+use crate::merge_queue::{CheckPhase, QUEUE_CHECK_CANDIDATE_PREFIX, StoredQueueCheckReceipt};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::merge_queue_doors::check_receipt::CodeCheckReceiptRequest;

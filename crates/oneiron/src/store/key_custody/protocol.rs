@@ -6,7 +6,6 @@ pub use oneiron_store::key_custody::protocol::*;
 pub use super::identity::{CustodyNamespace, CustodyVaultId};
 use crate::error::Result;
 pub use oneiron_store::key_custody::log::{CustodyEpoch, CustodyPosition};
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use zeroize::Zeroizing;
 // Where a restore asks its residence home to start the log (FIX 12045).
@@ -17,7 +16,6 @@ pub use self::drain::{
 pub use self::fetched::{CustodyHomeCursor, CustodyHomePage, FetchedCustodySource};
 pub(crate) use super::anchor::anchored_position;
 use super::files::read_whole;
-use super::identity::hex_decode;
 use super::log::{frame_hash, frame_name};
 
 mod drain;

@@ -4,7 +4,6 @@
 
 use super::*;
 use crate::receipt::ERASED_CALL_IDENTITY;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub(in crate::task_verb) use oneiron_records::task_verb::fanout_launch::scrub::{

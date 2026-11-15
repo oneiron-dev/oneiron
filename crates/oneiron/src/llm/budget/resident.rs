@@ -6,8 +6,6 @@
 //! owner's share setting stays.
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
 use crate::llm::run_admission::{AllocationRef, ResidentLedger, ResidentShare, ResidentStanding};
 use crate::store::resident_budget_rows::{RESIDENTS, ResidentAllocationUsage, ResidentRow};
 use crate::{EntityId, Result, Vault};

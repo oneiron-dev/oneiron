@@ -21,7 +21,7 @@ use crate::batch::secret_scan::{
     decode_members, nested_past_decoder, release_reads_whole, scan_file_content,
     scan_undecoded_body,
 };
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 mod file_stream;
 pub(crate) use file_stream::attaches_as_file_read;

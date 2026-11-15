@@ -9,8 +9,6 @@
 //! live leader, is left to the ask's climb toward the owner.
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };

@@ -46,7 +46,7 @@ use super::{ADMISSION, ARM, DECIDED, DISARMED, WAKE};
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::sync::WindowKey;
 
 /// The largest row either map carries whole; an arming or wake past it stays

@@ -37,7 +37,7 @@ use crate::store::Store;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::workspace_roster::spend_scope::SpendState;
 use crate::workspace_roster::{
-    ConsentNeed, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, RosterActor,
+    JoinDecision, JoinRefusal, JoinRequest, JoinSubject, RosterActor,
     join_subject_for_actor_in_txn, rooms_join_in_txn,
 };
 use crate::{EntityId, Vault, WriteActor};

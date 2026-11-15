@@ -10,8 +10,7 @@ use super::kernel::{
 use super::projection::{GrantReceiptProjection, project_receipts_by_grant_limited};
 use crate::Vault;
 use crate::access_grant::{
-    AccessGrant, AccessGrantOwnerActReceipt, AccessGrantScope, access_grant_owner_acts_in_txn,
-    decode_live_access_grant_body,
+    AccessGrant, AccessGrantScope, access_grant_owner_acts_in_txn, decode_live_access_grant_body,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;

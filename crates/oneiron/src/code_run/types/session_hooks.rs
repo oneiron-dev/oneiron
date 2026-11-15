@@ -10,8 +10,6 @@
 //! hooks bound to it could not be read, and says so (Engine 10-19 17:1x).
 //! Outside a room the list is empty.
 
-use serde::{Deserialize, Serialize};
-
 #[doc(hidden)]
 pub use oneiron_records::code_run::types::session_hooks::{
     SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt,

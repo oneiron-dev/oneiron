@@ -1,7 +1,6 @@
 //! An owner's purpose answer is authored content, not a label or a grant.
 
 use heed::RwTxn;
-use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};

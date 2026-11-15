@@ -10,10 +10,6 @@ use crate::{
 
 #[doc(hidden)]
 pub use oneiron_records::context_board::capabilities::CapabilityHit;
-#[doc(hidden)]
-use oneiron_records::context_board::capabilities::{
-    deserialize_capability_id, serialize_capability_id,
-};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillsSection {

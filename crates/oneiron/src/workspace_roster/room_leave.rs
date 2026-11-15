@@ -12,12 +12,10 @@
 //! is ([`super::join_door::caller_stands_for_in_txn`], OF-531). Removing
 //! someone else is the vault owner's, as an invitation is (OF-529).
 
-use serde::{Deserialize, Serialize};
-
 use super::JoinSubject;
 use crate::error::{ClaimError, Error};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
+use crate::{EdgeActorClass, Vault, WriteActor};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::room_leave::RoomLeaveRequest;

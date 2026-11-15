@@ -19,7 +19,7 @@
 //! The knob doors join one family at a time (6.6b); the verbs come after
 //! slice 4.2.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::system_agent_grant::{SystemAgent, steward_reach_in};
 use super::{

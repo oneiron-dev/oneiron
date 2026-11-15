@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::store::attempt_cancel::{AttemptCancelState, AttemptResumePoint};
+use crate::store::attempt_cancel::AttemptCancelState;
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::AttemptEvent;
 use crate::store::attempt_manifest::ManifestEntry;

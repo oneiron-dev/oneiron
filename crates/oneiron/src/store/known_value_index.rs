@@ -56,7 +56,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::secret_record::SecretCustodyRecord;
-use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, Store};
+use crate::store::{KnownEntry, KnownHistory, KnownHistoryIds, Store};
 use crate::vault::Vault;
 
 pub(crate) use self::forms::{decodings, occurrences};

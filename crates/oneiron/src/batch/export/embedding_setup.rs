@@ -5,7 +5,7 @@
 //! hashes, a space's physical key, device provenance and locality, refusal caches, moves and
 //! probes, and provider configuration stay home. A space id's `@where` names an offer key,
 //! which the receiving host resolves against its own models.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
@@ -14,10 +14,9 @@ use serde_json::Value;
 
 use super::ArchiveRecordKind;
 use super::archive_index::{IndexedArchive, Tag};
-use crate::config::VectorEvidenceFloors;
 use crate::error::{Error, Result};
 use crate::side_table::SideTableDbs;
-use crate::store::embedding::{EmbeddingSpace, InputKind, KindSlotBindings};
+use crate::store::embedding::{InputKind, KindSlotBindings};
 
 /// Which records an export holds, for [`carries_embedding_setup`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -25,7 +25,6 @@ pub use oneiron_verb_wire::code_run::run_verbs::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::code_run::SessionHookDisposition;
 use crate::entity_id::EntityId;
 
 /// `vault.claims.supersede`: closes `oldId` in favour of `newId`.

@@ -412,9 +412,6 @@ pub(super) fn decision(
     }
 }
 
-#[doc(hidden)]
-pub(super) use oneiron_records::memory::authorship::entity_serde;
-
 /// Explicit owner replacement/withdrawal in a family-owned actor-facing door.
 /// This is never used by auto-upsert. Only the vault owner overrides: the
 /// embedded owner on an unrooted vault, the bound owner on a rooted one; a

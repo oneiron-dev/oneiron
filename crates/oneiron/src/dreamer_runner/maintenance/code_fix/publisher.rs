@@ -25,9 +25,7 @@ use crate::dreamer_runner::shadow_values::ShadowMeterContext;
 use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
 use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
 use crate::dreamer_runner::shadow_values::ShadowUnavailable;
-use crate::dreamer_runner::shadow_values::ShadowUsage;
 use crate::{EntityId, Result};
-use oneiron_model::llm::{LlmInputUsage, LlmOutputUsage};
 
 #[doc(hidden)]
 pub use oneiron_records::dreamer_runner::maintenance::code_fix::publisher::{

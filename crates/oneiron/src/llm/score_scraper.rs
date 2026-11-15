@@ -9,7 +9,6 @@ use crate::{Vault, error::Result};
 pub use http::HttpScoreFetch;
 #[doc(hidden)]
 pub use oneiron_records::llm::score_scraper::{ScoreScraperConfig, ScoreSourceConfig};
-use serde::{Deserialize, Serialize};
 pub use worker::ScoreScraperWorker;
 
 pub trait ScoreFetch {

@@ -1,7 +1,5 @@
 //! Held-out defect-injection audit: fixtures, the generic harness, and the pass-rate report.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;

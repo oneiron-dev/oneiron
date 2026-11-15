@@ -10,7 +10,6 @@ use crate::gate::record_references::receipt_landed_prose;
 use crate::temporal::TimeRange;
 use crate::write_envelope::skill_record::{SkillLifecycle, SkillRecord};
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 const AUTHOR_KIND: &str = "memory_skill_author";
 const AUTHOR_PROOF: &str = "memoryAuthorDecision";

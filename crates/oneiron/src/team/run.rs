@@ -32,8 +32,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::agent_dispatch::{
     AgentDispatcher, TeamRunStamp, attempt_team_stamp, decode_agent_dispatch_input,

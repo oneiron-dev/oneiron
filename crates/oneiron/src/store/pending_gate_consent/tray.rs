@@ -6,14 +6,13 @@ use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
 
 use super::Store;
 use super::records::{
-    PendingGateConsentGroup, PendingGateConsentRecord, decode_pending_gate_consent,
-    encode_pending_gate_consent, vet_pending_gate_consent_record,
+    PendingGateConsentGroup, PendingGateConsentRecord, vet_pending_gate_consent_record,
 };
 use super::sequence_sweep::SEQUENCE_INDEX;
 use super::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT};

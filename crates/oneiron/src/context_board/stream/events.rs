@@ -2,8 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::frames::{DeltaRow, StreamConnectionId};
 use super::provenance::{
     ChildEvent, VerifiedDiaryReviewEvent, VerifiedOwnTaskEvent, VerifiedRoomWakeEvent,

@@ -2,7 +2,6 @@
 //! wall masks values before storage; the receipt is a native Gate id.
 
 use heed::RwTxn;
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;

@@ -18,15 +18,12 @@
 //! ([`crate::Vault::self_brief_parent_ceiling`],
 //! [`crate::Vault::self_brief_class_reads`]). None of them writes anything.
 
-use std::collections::BTreeSet;
-
 use crate::agent_dispatch::AgentDispatchInput;
 use crate::attempt_queue::AttemptId;
 use crate::authority::VerifiedSlip;
 use crate::claim::ScopedReadActorKey;
-use crate::context_projection::ContextSpec;
 use crate::entity_id::EntityId;
-use crate::federation::{Scope, ScopeAxis, ScopeId};
+use crate::federation::Scope;
 use crate::policy_manifest_doors::{PolicyCeiling, PolicyGrantValue};
 
 #[doc(hidden)]

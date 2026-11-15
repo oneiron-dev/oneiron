@@ -2,8 +2,6 @@
 //! Entry: `BookingAntiAbuseRule`.
 //! Defines its own items.
 
-use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
-
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::storage::{ROW_ID_MAX_LEN, RULE_KEY_DOMAIN, hex_lower, refused};

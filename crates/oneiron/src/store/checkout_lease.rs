@@ -6,7 +6,6 @@ use crate::error::Error;
 use crate::side_table::{FixedSideKey, SideKey};
 use crate::store::attempt_id::AttemptId;
 use crate::store::code_snapshot::RepoRef;
-use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[doc(hidden)]

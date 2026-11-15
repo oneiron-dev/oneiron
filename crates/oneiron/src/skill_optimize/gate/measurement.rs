@@ -1,7 +1,6 @@
 //! Receipt-only DecoEvo measurements, per-axis world-outcome calibration, and
 //! the judge against the human picks in the skill's anchor.
 use super::*;
-use serde::{Deserialize, Serialize};
 
 use crate::skill_optimize::JudgeLabel;
 

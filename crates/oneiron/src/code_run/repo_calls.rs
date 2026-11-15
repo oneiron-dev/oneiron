@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::SelfEffect;
 use crate::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::memory::repo_doors::{
     RepoCheckoutBindInput, RepoExportInput, RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput,
     RepoProposalResolveInput, RepoProposalSubmitInput, RepoSnapshotsGetInput,

@@ -12,8 +12,6 @@
 //! this module owns the rung vocabulary, the surface ceiling, the default-rung
 //! policy, the projection DTOs, and the projection itself.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
 use crate::access_grant::AccessGrant;
 use crate::booking::{BookingError, SlotMask};
 use crate::entity_id::EntityId;
@@ -22,10 +20,6 @@ use crate::entity_id::EntityId;
 pub use oneiron_records::booking::disclosure_rung::{
     BusyBlockRow, DisclosureRung, EventDetailsRow, EventRow, RungProjection, SurfaceClass,
     TitledEventRow, project_at_rung,
-};
-#[doc(hidden)]
-use oneiron_records::booking::disclosure_rung::{
-    entity_ref_serde, entity_refs_serde, validate_slot_mask,
 };
 
 /// The context a default rung is being chosen for (ARCH-0062 R1).

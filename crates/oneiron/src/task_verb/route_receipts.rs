@@ -8,7 +8,6 @@ use crate::entity_id::EntityId;
 use crate::gate::PolicyApprovalCeiling;
 use crate::lens::RecordRef;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
-use crate::run_tree::RunTreeStatus;
 
 use super::terminal_state::TaskTerminalDisposition;
 

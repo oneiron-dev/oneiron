@@ -1,5 +1,4 @@
 //! Typed actor-owned, worldless keyed-memory requests and results.
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::key_value::types::{

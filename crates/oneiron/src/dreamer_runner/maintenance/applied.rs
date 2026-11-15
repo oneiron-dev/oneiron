@@ -46,8 +46,6 @@ pub const IDENTITY_PROVISIONAL_KIND: &str = "dreamer_identity_provisional";
 /// The Gate receipt a background identity settle leaves (FIX 3327).
 const IDENTITY_SETTLE_KIND: &str = "dreamer_identity_settle";
 #[doc(hidden)]
-use oneiron_records::dreamer_runner::maintenance::applied::PROJECT_TREE_FORK_KEY;
-#[doc(hidden)]
 pub use oneiron_records::dreamer_runner::maintenance::applied::{
     MAINTENANCE_REVERT_KIND, MaintenanceRevert, MaintenanceTarget,
 };

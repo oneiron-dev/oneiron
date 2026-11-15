@@ -43,7 +43,7 @@ use crate::edit_settle::PendingProposalView;
 use crate::llm::decision::{DecisionBandPolicy, Reversibility};
 use crate::office_body::LivePin;
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::{EntityId, Error, ErrorKind, Result, Vault, WriteActor};
+use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 /// Key: id16(question) + id16(artifact).
 pub(super) const ASKED: SideTable<(EntityId, EntityId), ArtifactAsked, Named> =

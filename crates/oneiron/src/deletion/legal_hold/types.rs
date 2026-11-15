@@ -3,8 +3,6 @@
 //! time or a typed code: the hold log holds no memory content and no free
 //! text (C3).
 
-use serde::{Deserialize, Serialize};
-
 use crate::entity_id::EntityId;
 
 #[doc(hidden)]

@@ -1,7 +1,6 @@
 //! Vector-free voice attribution and session roster records.
 
 use crate::entity_id::EntityId;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_records::conversation::voice_roster::VoicePrintCalibration;

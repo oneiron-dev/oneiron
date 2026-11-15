@@ -52,7 +52,6 @@ use serde::{Deserialize, Serialize};
 
 use super::super::replay_capsule::{CapsuleHost, StepReplayCapsule};
 use super::super::storage::{fork_execution_outputs, store_fork_execution};
-use super::owner::OwnerJudgment;
 use super::source_admission::ContributionSourceAdmission;
 use super::{
     ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, Outcome, PairReader,

@@ -56,8 +56,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::{
     FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
     FederationGrantScope, Scope, ScopeAxis, decode_federation_grant_body,

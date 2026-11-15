@@ -3,9 +3,7 @@ use crate::{
     error::{Error, Result},
     serialize::ExportBody,
     store::receipt_row::ReceiptRecord,
-    write_envelope::claim_body::ClaimBody,
 };
-use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

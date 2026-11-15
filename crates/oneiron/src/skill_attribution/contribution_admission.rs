@@ -13,7 +13,7 @@ use super::contribution::{
 };
 use super::contribution_targets::{ContributionTarget, Experiment};
 use super::late_credit::{CREDIT_RECEIPT, receipt_id};
-use crate::code_run::{ForkMismatch, matched_contribution_facts_in_txn};
+use crate::code_run::matched_contribution_facts_in_txn;
 use crate::entity_id::EntityId;
 use crate::receipt::ContributionCheck;
 use crate::{Result, Vault};

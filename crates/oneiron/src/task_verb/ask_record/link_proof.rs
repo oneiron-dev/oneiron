@@ -15,9 +15,7 @@ const TRANSCRIPT: &[u8] = b"oneiron.tasks.ask.link_answer.v1\0";
 #[doc(hidden)]
 pub(super) use oneiron_records::task_verb::ask_record::link_proof::LinkProof;
 #[doc(hidden)]
-use oneiron_records::task_verb::ask_record::link_proof::{
-    FORWARD_RESULT_TRANSCRIPT, forward_result_message,
-};
+use oneiron_records::task_verb::ask_record::link_proof::forward_result_message;
 
 pub(in crate::task_verb) fn mint_key(
     vault: &Vault,

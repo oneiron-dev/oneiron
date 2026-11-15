@@ -5,8 +5,6 @@
 //! its proposal replaces. The owner's apply door (`apply.rs`) takes exactly
 //! the revisions this pack loaded, so the list and the door cannot disagree.
 
-use serde::{Deserialize, Serialize};
-
 use super::AgentHealthCard;
 use super::ask::{AgentHealthCoachDraft, AgentHealthCoachRoute};
 use crate::attempt_queue::{AttemptId, ManifestEntry};

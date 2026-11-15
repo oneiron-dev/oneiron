@@ -1,11 +1,9 @@
 //! DEC-0006 action vocabulary, request/decision/intent types and evaluation helpers.
 
-use super::consent_cards::{BundleApprovalScope, ConsentScopeEscalator};
 use super::protocol::{Of336ActionDescriptor, Of336ComponentKind};
 use crate::booking::DisclosureRung;
 use crate::consent::AuthenticatedOwner;
 use crate::error::GateError;
-use crate::lens::LensText;
 use crate::receipt::{ReceiptKind, ReceiptRecord};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};

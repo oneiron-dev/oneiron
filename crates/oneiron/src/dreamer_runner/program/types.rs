@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 
 use super::authority::TurnProgramAuthority;
 
@@ -16,9 +16,9 @@ pub use oneiron_verb_wire::dreamer_runner::program::types::{
 };
 
 #[doc(hidden)]
-pub use oneiron_records::dreamer_runner::program::types::LandedTurnRef;
+use oneiron_records::dreamer_runner::program::types::ADMISSION_DOMAIN;
 #[doc(hidden)]
-use oneiron_records::dreamer_runner::program::types::{ADMISSION_DOMAIN, CODE_RUN_DOMAIN};
+pub use oneiron_records::dreamer_runner::program::types::LandedTurnRef;
 #[doc(hidden)]
 pub(super) use oneiron_records::dreamer_runner::program::types::{code_run_bytes, run_id};
 

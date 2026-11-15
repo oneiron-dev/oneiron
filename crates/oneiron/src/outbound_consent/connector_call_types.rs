@@ -2,7 +2,6 @@
 //! questions, and the caller's status view.
 //! Entry: `ConnectorCallHost`. Defines its own items; the stored rows stay in `connector_call`.
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::attempt_queue::AttemptId;

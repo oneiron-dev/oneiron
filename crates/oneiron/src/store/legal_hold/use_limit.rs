@@ -2,7 +2,6 @@
 //! cooperative review restriction kept as separate states.
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 use super::{id_key, notice, standing_on_in_txn};
 use crate::deletion::{LegalHoldReason, LegalHoldUseLimit};

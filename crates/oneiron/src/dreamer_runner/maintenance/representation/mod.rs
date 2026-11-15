@@ -12,7 +12,7 @@ mod tests;
 use rmpv::Value;
 
 use crate::compaction::output::OutputRef;
-use crate::{EntityId, Error, Result};
+use crate::{EntityId, Result};
 pub use approval::{
     ApprovedRepresentation, RepresentationReview, schedule_approved_representation,
 };

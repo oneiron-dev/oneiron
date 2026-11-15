@@ -11,13 +11,12 @@ use super::grant::{
     persona_snapshot_export_receipts, scan_entities_by_type, standing_outbound_grants_lens,
 };
 use super::identity_kind::{channel_identity_lifecycle_receipts, identity_topology_receipts};
-use super::kernel::{
-    FIELD_BUNDLE_REF, FIELD_GRANT_REF, MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery,
-    ReceiptRecord, ReceiptScan, ReceiptView, hex_lower, lineage_scan_query, projection_scan_query,
-    retain_newest_receipt,
-};
 #[cfg(test)]
 use super::kernel::{GATE_RECEIPT_MAX_BUFFERED, GATE_RECEIPT_PAGES_SCANNED};
+use super::kernel::{
+    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptView,
+    hex_lower, lineage_scan_query, projection_scan_query, retain_newest_receipt,
+};
 use super::ledgers::{
     attempt_pack_receipts, durable_send_receipts, scan_attempt_pack_receipts,
     scan_durable_send_receipts,
@@ -33,8 +32,9 @@ use super::record::scan_suppression_receipts;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, PendingGateConsentRecord};
+use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
 
+#[cfg(test)]
 pub(super) use crate::store::gate_receipt::{
     SYSTEM_NOTICE_AUDIENCE_ALL, SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
 };
@@ -646,7 +646,6 @@ pub(crate) fn gate_decision_receipt_from_base(record: &GateDecisionRecord) -> Re
 }
 
 pub(crate) use crate::store::gate_receipt::gate_decision_receipt;
-pub(super) use crate::store::gate_receipt::select_gate_system_notice_for_receipt;
 
 fn pending_tray_query(vault: &Vault, query: PendingTrayQuery) -> Result<Vec<PendingTrayAsk>> {
     if query.limit == 0 {

@@ -14,7 +14,6 @@ use stored_rows::StoredRows;
 pub(crate) use stored_rows::llm_registry_row_accepts_masked;
 
 use super::{LlmCatalogEntry, ModelId};
-use crate::entity_id::EntityId;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::skill_optimize::{live_source_rows_in, union_source_rows};
 use crate::{
@@ -57,8 +56,6 @@ pub struct CatalogSeed {
 }
 #[doc(hidden)]
 pub(super) use oneiron_verb_wire::llm::registry::invalid;
-#[doc(hidden)]
-use oneiron_verb_wire::llm::registry::price;
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::registry::{ScoreObservation, ScoreSnapshot};
 

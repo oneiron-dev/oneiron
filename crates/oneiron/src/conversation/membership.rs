@@ -2,7 +2,6 @@
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, Named, Raw, SideTable};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub(super) const MEMBERSHIP_ROW_VERSION: u8 = 2;

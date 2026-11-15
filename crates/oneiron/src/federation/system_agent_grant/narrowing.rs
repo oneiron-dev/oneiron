@@ -22,8 +22,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::{SystemAgent, steward_reach_in};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;

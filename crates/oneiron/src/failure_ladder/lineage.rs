@@ -3,8 +3,6 @@
 use std::collections::HashSet;
 use std::num::NonZeroU16;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::agent_dispatch::HealerSlotOutcome;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
@@ -13,7 +11,6 @@ use crate::error::{Error, Result};
 
 use super::blocked_reports::BlockedReportRef;
 use super::classify::{FailureClass, TypedFailureEvidence};
-use super::scope::FailureScope;
 
 /// One typed attempt-failure input, raised while the failing row is still the
 /// authenticated leased ATTEMPT.

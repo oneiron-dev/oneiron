@@ -4,7 +4,6 @@
 //! drops a record's label with its row.
 
 use heed::RwTxn;
-use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;

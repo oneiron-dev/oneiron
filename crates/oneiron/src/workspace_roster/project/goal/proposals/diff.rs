@@ -3,11 +3,9 @@
 //! human; a floor the proposal drops or relaxes is named here, never left to
 //! the proposal's prose.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
-use super::super::{GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord};
+use super::super::GoalRecord;
 
 #[doc(hidden)]
 pub use oneiron_records::workspace_roster::project::goal::proposals::diff::{
@@ -16,7 +14,7 @@ pub use oneiron_records::workspace_roster::project::goal::proposals::diff::{
 };
 #[doc(hidden)]
 use oneiron_records::workspace_roster::project::goal::proposals::diff::{
-    axis_changes, preference_changes, preference_pairs, text_change,
+    axis_changes, preference_changes, text_change,
 };
 
 /// Every field of a goal record a proposal changes against its base.

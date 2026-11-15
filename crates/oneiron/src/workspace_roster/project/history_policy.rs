@@ -16,8 +16,6 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 
 #[doc(hidden)]
-use oneiron_records::workspace_roster::project::history_policy::default_cycle_worlds_max;
-#[doc(hidden)]
 pub use oneiron_records::workspace_roster::project::history_policy::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
     ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectHistoryQuestion,

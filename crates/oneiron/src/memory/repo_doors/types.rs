@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::attempt_queue::AttemptId;
 use crate::origin::RepoPortableId;
 
 /// `self.code.snapshots.get`: the manifest of one snapshot of the admitted

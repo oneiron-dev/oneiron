@@ -4,13 +4,9 @@
 
 use std::fmt::Write;
 
-use serde::{Deserialize, Serialize};
-
-use super::{BookingError, EventTypeKey, PublicBookingPageToken, RankedSlot, SlotMask};
+use super::{BookingError, EventTypeKey, PublicBookingPageToken, SlotMask};
 use crate::calendar::tz::utc_to_wall;
 
-#[doc(hidden)]
-use oneiron_records::booking::conversion::safe_asset_path;
 #[doc(hidden)]
 pub use oneiron_records::booking::conversion::{
     BookingFaq, BookingLandingContent, BookingSlotPreview, BookingSnippetLink,

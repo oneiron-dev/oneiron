@@ -12,8 +12,6 @@
 //! [`super::owner`]). A pair they do not prove is still recorded, as
 //! unmatched; nothing here refuses it.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::replay_capsule::StepReplayCapsule;
 use super::super::storage::{fork_rows_in_txn, step_replay_capsules_in_txn};
 use super::ancestor::select_target;

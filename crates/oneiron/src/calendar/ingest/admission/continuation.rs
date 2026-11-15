@@ -11,7 +11,6 @@
 //! continuation whose event is gone, or whose passport names other content
 //! now, settles with nothing to do: the pass that moved it on reconciled it.
 
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::*;

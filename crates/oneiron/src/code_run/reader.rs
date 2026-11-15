@@ -22,7 +22,7 @@ use crate::agent_def::AgentModel;
 use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
-use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+use crate::{EntityId, Result, Vault};
 
 pub use self::coverage::SourceDeliveryWitness;
 pub(crate) use self::coverage::{merge_ranges, subtract_ranges};

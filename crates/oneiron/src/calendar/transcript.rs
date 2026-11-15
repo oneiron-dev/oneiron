@@ -9,7 +9,6 @@ use crate::ingest::{
 };
 use crate::note::TakeTarget;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod door;

@@ -1,6 +1,6 @@
 //! CRDT-independent EntityDoc snapshot values and causal history.
 
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

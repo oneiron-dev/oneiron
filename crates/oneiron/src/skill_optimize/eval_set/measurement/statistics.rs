@@ -11,15 +11,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::entity_id::EntityId;
 
 #[doc(hidden)]
 pub(crate) use oneiron_records::skill_optimize::eval_set::measurement::statistics::{
-    BOOTSTRAP_RESAMPLES, CI_LEVEL, DETECTABLE_Z_ALPHA, DETECTABLE_Z_POWER, FAMILY_REDUCER,
-    METHOD_REVISION, MIN_INTERVAL_FAMILIES, QUANTILE_METHOD, SAMPLER, SEED_DOMAIN,
-    WITHIN_FAMILY_REDUCER,
+    BOOTSTRAP_RESAMPLES, CI_LEVEL, DETECTABLE_Z_ALPHA, DETECTABLE_Z_POWER, MIN_INTERVAL_FAMILIES,
+    SEED_DOMAIN,
 };
 #[doc(hidden)]
 pub use oneiron_records::skill_optimize::eval_set::measurement::statistics::{

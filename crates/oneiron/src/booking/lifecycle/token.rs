@@ -2,7 +2,6 @@
 //! digests, and the token/hold row reads that resolve them.
 
 use rand_core::{OsRng, RngCore};
-use serde::{Deserialize, Serialize};
 
 use super::claim::{booking_event_type_in, read_booking_facts_to_cancel};
 use super::storage::{HOLD, confirm_receipt_key, engine_failure, read_receipt, read_txn, refused};
@@ -24,8 +23,6 @@ const TOKEN_DIGEST_DOMAIN: &[u8] = b"oneiron.booking.token.v1\0";
 
 const LEASE_DIGEST_DOMAIN: &[u8] = b"oneiron.booking.checkout_lease.v1\0";
 
-#[doc(hidden)]
-use oneiron_records::booking::lifecycle::token::SESSION_KEY_DOMAIN;
 #[doc(hidden)]
 pub(in crate::booking) use oneiron_records::booking::lifecycle::token::digest_with;
 #[doc(hidden)]

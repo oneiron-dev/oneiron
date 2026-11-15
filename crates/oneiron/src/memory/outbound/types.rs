@@ -1,7 +1,5 @@
 //! Outbound schedule DTOs: context, draft input, and intent receipt.
 
-use serde::{Deserialize, Serialize};
-
 pub use crate::delivery_window::OutboundScheduleContext;
 
 #[doc(hidden)]

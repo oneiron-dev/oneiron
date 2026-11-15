@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::storage::refused;
 use super::token::{HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, TOKEN_RAW_BYTES};
-use super::{
-    digest_serde, entity_ref_serde, entity_refs_serde, opt_digest_serde, time_range_serde,
-};
+use super::{digest_serde, entity_ref_serde, opt_digest_serde, time_range_serde};
 use crate::EntityId;
 use crate::booking::constraint::validate_visitor_tz;
 use crate::booking::{BookingError, ConstraintObject, EventTypeKey, RankedSlot};

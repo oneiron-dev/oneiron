@@ -15,7 +15,6 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
-use serde::{Deserialize, Serialize};
 use std::ops::Bound;
 
 /// Block rows one read snapshot serves: a work-page size, not a cap. A larger

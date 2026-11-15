@@ -3,8 +3,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::booking::{PublicBookingPageToken, RankedSlot};
 use crate::calendar::tz::utc_to_wall;
 

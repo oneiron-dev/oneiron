@@ -4,15 +4,12 @@
 pub use oneiron_store::embedding::*;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::settings::ReadDestination;
-use oneiron_base::config::VectorEvidenceFloors;
 use oneiron_base::machine_destination::PeerMachine;
 pub use oneiron_store::embedding_vocabulary::InputKind;
 pub(crate) use oneiron_store::embedding_vocabulary::TEXT_HASH_LEN;
 pub use oneiron_store::embedding_vocabulary::{EmbeddingDevice, EmbeddingProvenance};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 #[doc(hidden)]
 pub use oneiron_records::store::embedding::EmbedderLocality;

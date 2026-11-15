@@ -1,15 +1,13 @@
 //! Companion proposal state, creation, and the curated shortlist.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::booking::constraint::validate_visitor_tz;
 use crate::booking::lifecycle::{booking_writer, digest_with, mint_raw_token};
-use crate::booking::{
-    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotOracle, SolveRequest,
-};
+use crate::booking::{BookingError, ConstraintObject, RankedSlot, SlotOracle, SolveRequest};
 use crate::calendar::tz::utc_to_wall;
 use crate::temporal::TimeRange;
 

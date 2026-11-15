@@ -17,7 +17,7 @@ pub(crate) use crate::store::project_kind::{
 #[doc(hidden)]
 pub(crate) use oneiron_records::workspace_roster::project::revision::RevisionOrigin;
 #[doc(hidden)]
-use oneiron_records::workspace_roster::project::revision::{REVISION_HASH_DOMAIN, hash_of};
+use oneiron_records::workspace_roster::project::revision::hash_of;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;

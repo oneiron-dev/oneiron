@@ -34,8 +34,6 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
-use serde::{Deserialize, Serialize};
-
 use super::kernel::hex_lower;
 use crate::Vault;
 use crate::authority::{

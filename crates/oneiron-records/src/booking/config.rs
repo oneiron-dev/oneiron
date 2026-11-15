@@ -5,9 +5,7 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_verb_wire::booking::constraint::BookingError;
 use oneiron_verb_wire::booking::constraint::EventTypeKey;
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
-use serde::Serializer;
 
 /// The one booking-page configuration predicate. Matching is exact everywhere:
 /// no `booking.` prefix is ever accepted as family membership.

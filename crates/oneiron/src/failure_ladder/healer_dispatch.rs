@@ -1,7 +1,6 @@
 //! Failure-ladder healer routing contract.
 
 use crate::failure_ladder::HealerCase;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_records::failure_ladder::healer_dispatch::HealerSlot;

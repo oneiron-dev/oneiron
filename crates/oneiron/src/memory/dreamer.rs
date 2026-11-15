@@ -5,8 +5,6 @@ use super::outbound::*;
 use super::support::*;
 use super::*;
 
-use serde::{Deserialize, Serialize};
-
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::{

@@ -16,7 +16,6 @@
 //! kept rows are the read ([`Vault::question_unit_asks`]).
 
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use super::records::AnswerRecord;
 use super::store::encode;

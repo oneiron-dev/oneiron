@@ -5,9 +5,9 @@ use super::{
     TeacherProbePolicy, invalid,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::{Vault, error::Result, llm::ModelId};
+use crate::{Vault, error::Result};
 use serde::{Deserialize, Serialize};
-use std::{fs::File, io::Write, path::Path};
+use std::path::Path;
 
 pub(super) const ENCODER_EXPORT: SideTable<(), EncoderExport, Named> =
     SideTable::new(&side_table::LLM_ENCODER_EXPORT);
@@ -15,9 +15,7 @@ pub(super) const ENCODER_EXPORT: SideTable<(), EncoderExport, Named> =
 #[doc(hidden)]
 pub use oneiron_records::llm::manifest::encoder_export::{CheckpointPin, SharedBaseFork};
 #[doc(hidden)]
-use oneiron_records::llm::manifest::encoder_export::{
-    checkpoint_hash, json_hash, valid_digest, write_json,
-};
+use oneiron_records::llm::manifest::encoder_export::{json_hash, valid_digest, write_json};
 
 /// One offline job, targeting a candidate manifest's extraction encoder. Export
 /// one job for each desired student; tier selection stays with the manifest.

@@ -17,7 +17,6 @@ use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::{EntityId, WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 /// Content-addressed claim-conflict review packet. Key: bytes32 (bundle id).
 const PACKET: SideTable<[u8; 32], ClaimConflictBundle, LegacyJson> =

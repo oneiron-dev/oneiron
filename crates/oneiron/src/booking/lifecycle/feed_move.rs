@@ -18,8 +18,6 @@
 //! feed keeps that item's update owed and lands every other item of the pass
 //! (Engine ruling 16:10, 12 Nov).
 
-use serde::{Deserialize, Serialize};
-
 use super::claim::{encode_event_body, read_booking_facts};
 use super::door::attempt_failure_reason;
 use super::emergency::emergency_current_revision_in;

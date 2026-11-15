@@ -11,8 +11,6 @@
 //! card is read from its numbers. Nothing missing is filled with zero, and a
 //! Partial row carries no card: "a set too small to judge shows as unknown".
 
-use std::collections::BTreeSet;
-
 use serde::{Deserialize, Serialize};
 
 use super::{EvalSeat, SufficiencyCard};

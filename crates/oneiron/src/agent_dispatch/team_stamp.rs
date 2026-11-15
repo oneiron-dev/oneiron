@@ -14,8 +14,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::team::TeamPattern;
 
-use super::team_shape::CoordinationPattern;
-
 #[doc(hidden)]
 use oneiron_records::agent_dispatch::team_stamp::MAX_TEAM_REF_BYTES;
 

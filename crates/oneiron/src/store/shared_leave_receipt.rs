@@ -1,8 +1,6 @@
 //! The device's confirmed shared-vault leave receipts, also read before
 //! open-time bootstrap.
 
-use serde::{Deserialize, Serialize};
-
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;

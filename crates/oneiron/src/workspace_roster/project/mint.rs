@@ -15,7 +15,6 @@ use crate::registry::{
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionId;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
-use serde::{Deserialize, Serialize};
 
 /// Durable owner tap of one project card: the tap digest and the mint receipt. Key: blake3
 /// hash32 of the card id.

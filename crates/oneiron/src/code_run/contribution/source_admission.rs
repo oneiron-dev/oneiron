@@ -46,7 +46,6 @@ use super::{
 };
 use crate::claim::ScopedReadActorKey;
 use crate::dreamer_runner::maintenance::code_fix::{CaptureRefs, admitting_grant_in};
-use crate::learning::Anchor;
 use crate::llm::decision::questions::question_lane;
 use crate::{EntityId, Error, LlmResponse, Result, Vault};
 

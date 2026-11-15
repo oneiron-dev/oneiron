@@ -28,7 +28,7 @@ use crate::store::attempt_inputs::FailAttempt;
 use crate::store::attempt_inputs::RetryAttempt;
 use crate::store::attempt_outcomes::ClaimOutcome;
 use crate::store::attempt_record::AttemptRecord;
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Result, Vault};
 use oneiron_authority::authority::FederationPactStatus;
 
 mod answer;

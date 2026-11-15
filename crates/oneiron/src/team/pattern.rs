@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::Vault;
 use crate::agent_dispatch::TeamPlan;

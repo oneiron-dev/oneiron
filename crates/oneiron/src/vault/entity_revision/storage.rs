@@ -9,7 +9,6 @@ use crate::{EntityId, Vault};
 use frontier::{FrontierEntry, decode_frontier};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
-use serde::{Deserialize, Serialize};
 pub(crate) mod checkpoint;
 mod frontier;
 mod native;

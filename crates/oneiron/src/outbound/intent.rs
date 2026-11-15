@@ -2,8 +2,6 @@
 //! Entry: `OutboundIntent`.
 //! Defines its own items.
 
-use serde::{Deserialize, Serialize};
-
 pub use crate::dreamer_runner::maintenance::identity::MentionProvenance;
 
 /// Version for the intent field contract consumed by the later dispatcher.

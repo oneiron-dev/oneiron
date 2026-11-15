@@ -5,7 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::OutboundIntent;
 use crate::memory::channel_doors::ChannelSelectionRequest;
 
 #[doc(hidden)]

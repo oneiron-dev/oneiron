@@ -3,8 +3,6 @@
 
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result};
 

@@ -23,16 +23,12 @@
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::side_table::{self, FixedSideKey, Named, Raw, SideKey, SideTable, SideTableDbs};
+use crate::side_table::{self, Named, Raw, SideKey, SideTable, SideTableDbs};
 use crate::store::Store;
-use oneiron_model::llm::{
-    CacheDigest, CacheIdentity, ConditioningDigest, ScopeDigest, TokenDigest, VaultRef,
-};
 
 #[doc(hidden)]
 pub use oneiron_records::store::snapshot_catalog::{

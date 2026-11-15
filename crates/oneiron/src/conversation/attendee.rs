@@ -29,8 +29,6 @@
 //! container adds no `(room, contact)` grant. A contact already cleared is
 //! not asked or cleared again.
 
-use serde::{Deserialize, Serialize};
-
 use super::membership::HistoryChoice;
 use super::*;
 use crate::consent::{AuthenticatedOwner, ContactDisclosureOutcome, DisclosureConfirmationReceipt};

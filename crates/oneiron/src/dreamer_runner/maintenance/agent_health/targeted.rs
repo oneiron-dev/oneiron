@@ -26,7 +26,6 @@
 mod pending;
 
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use super::{
     Attempts, COACH_AGENT_HEALTH_FACET, DialBook, Dispatched, Dispatches, SilenceCalls, Traps,

@@ -7,7 +7,6 @@ use crate::federation::{ScopeAxis, ScopeId};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Participants one session's presence holds past which this process says

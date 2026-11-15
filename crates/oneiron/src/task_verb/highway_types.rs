@@ -6,8 +6,6 @@
 //! the ATTEMPT or the ask group); a protocol session is correlation only and
 //! never holds state (ARCH-0028).
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -16,12 +14,8 @@ use crate::entity_id::EntityId;
 use super::ask_types::{TaskAskHandle, TaskAskSpec, TaskAskStatus};
 use super::brief::{BriefStamp, QueueTaskBrief, hex32};
 use super::route_receipts::TaskRouteOutcome;
-use super::task_actor::TaskActor;
-use super::terminal_state::TaskTerminalDisposition;
 use super::verb_kind::{TaskAssignee, TaskTtl};
 
-#[doc(hidden)]
-use oneiron_records::task_verb::highway_types::attempt_hex;
 #[doc(hidden)]
 pub use oneiron_records::task_verb::highway_types::{
     AttemptHandle, AttemptView, TaskHandle, TaskLifecycleRecord, TaskPhase, TaskWorkflowHandoff,

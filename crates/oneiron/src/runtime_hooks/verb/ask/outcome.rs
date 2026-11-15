@@ -4,12 +4,7 @@
 //! the completed chain's notice metadata when its source supplied one
 //! (FIX 12517).
 
-use std::collections::BTreeSet;
-
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-use super::{ASKS, MAX_SAVED_VERB_ERROR_BYTES, cut};
+use super::ASKS;
 use crate::runtime_hooks::{InvocationId, VerbHookStop};
 use crate::{EntityId, Error, Result, Vault};
 

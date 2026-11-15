@@ -9,11 +9,9 @@ use super::policy::{DecisionBandPolicy, Reversibility};
 use super::types::invalid;
 use super::{
     AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion,
-    HumanAskReason, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The state field the presence question reads the coordinate question's wording from.

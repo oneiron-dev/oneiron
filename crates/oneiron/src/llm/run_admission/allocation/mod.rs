@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use super::declaration::LeaseUnit;
 use super::host::{Allocation, AllocationRef, AllocationRefusal};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};

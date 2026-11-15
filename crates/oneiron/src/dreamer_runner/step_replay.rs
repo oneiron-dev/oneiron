@@ -1,13 +1,11 @@
+use crate::EntityId;
 use crate::Result;
 use crate::code_run::FoldWordRef;
 use crate::compaction::output::OutputRef;
 use crate::model_binding::ModelRole;
 use crate::side_table::ErasedForm;
-use crate::{ContentPart, EntityId, LlmRequest, ModelId, ModelLocality};
 use serde::{Deserialize, Serialize};
 
-#[doc(hidden)]
-use oneiron_records::dreamer_runner::step_replay::locate_span;
 #[doc(hidden)]
 pub use oneiron_records::dreamer_runner::step_replay::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot,

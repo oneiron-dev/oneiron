@@ -5,7 +5,6 @@
 //! it. The handoff keeps the one run the yes started, and the promise check
 //! follows that run. A bare train approval still records only its intent,
 //! and nothing here binds a model.
-use serde::{Deserialize, Serialize};
 
 use super::{
     EvalSeat, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferIntent, OfferModelPin,

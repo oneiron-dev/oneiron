@@ -3,8 +3,6 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-use serde::{Deserialize, Serialize};
-
 use super::civil_date::{local_day, visitor_zone_error, week_of};
 use crate::booking::{BookingError, EventTypeKey};
 use crate::entity_id::EntityId;

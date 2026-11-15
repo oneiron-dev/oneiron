@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::TurnActionAttempt;
 use crate::authority::{InvocationSlipBinding, ManagedOwnerCheckError, VerifiedSlip};
 use crate::edge::EdgeActorClass;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::MemoryResult;
 use crate::{EntityId, Error, Vault};
 
 /// What a queued action's requester stands on: never a secret, and judged

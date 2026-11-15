@@ -40,7 +40,7 @@ use super::{
 };
 use crate::error::GateError;
 use crate::side_table::{self, ErasedForm, Named, SideKey, SideTable};
-use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
+use crate::store::body_descriptor::{BodyLocation, BodyRef, OwnedBody};
 use crate::store::{
     ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan, Store, is_opaque_erased,
     stamp_opaque_erased,

@@ -15,8 +15,7 @@ use std::sync::Arc;
 use getrandom::SysRng;
 use heed::{RoTxn, RwTxn};
 use oneiron_crypto::{
-    Argon2Cost, Envelope, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId, WrapType,
-    seal,
+    Argon2Cost, Envelope, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, WrapType, seal,
 };
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -24,7 +23,7 @@ use zeroize::Zeroizing;
 use super::custody::{body_key_in, pin_body_custody_in_txn};
 use super::frames::{FORMAT_VERSION, FileKey};
 use super::{BodyDir, BodySeal, DirSeal, KeyScope, StagedBodyKey};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::side_table::{self, Named, Raw, SideTable, SideTableDbs};
 use crate::store::ManifestDbs;
 

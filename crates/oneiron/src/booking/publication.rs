@@ -18,10 +18,6 @@ use crate::booking::{
     MAX_BOOKING_WINDOW_SECS, ThemeTokens,
 };
 use crate::claim::{ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable};
-use crate::edge::EdgeActorClass;
-use crate::write_envelope::{
-    WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
-};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 
 #[doc(hidden)]

@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use super::{Memory, MemoryResult};
 use crate::task_verb::TaskAskPreflight;
 use crate::verbs::{CanEffect, CanRequest};
-use crate::{EdgeActorClass, EntityId};
 
 /// What `can` answers: an ask's preflight, one effect's dated verdict (FIX
 /// 22102), or one verb's gate (FIX [UI-GATE-PREVIEW]). Untagged, so an ask's

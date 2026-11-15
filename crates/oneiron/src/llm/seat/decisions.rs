@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{SeatCandidate, SeatTask, invalid};
@@ -12,7 +11,7 @@ use crate::agent_dispatch::MeasuredRate;
 use crate::llm::decision::catalogue::SEAT_PICK;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion, HeldLadder,
-    Reversibility, TypedDecision, cut_text, fit_state,
+    Reversibility, cut_text, fit_state,
 };
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::retrieval_depth::RetrievalDeadline;

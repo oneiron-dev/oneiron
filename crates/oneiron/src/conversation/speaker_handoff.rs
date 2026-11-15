@@ -15,8 +15,6 @@
 //! still reads as it did.
 //! Entry: `Vault::hand_off_speaker_entry`.
 
-use serde::{Deserialize, Serialize};
-
 use super::*;
 use crate::disclosure::AttendeeIdentityChoice;
 

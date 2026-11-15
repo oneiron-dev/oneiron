@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::authority::{HostActionIdentity, InvocationSlipBinding};
-use crate::memory::{MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, MemoryResult};
+use crate::memory::MemoryResult;
 use crate::receipt::{ActionInputs, CallOutcome, CallReceiptInput, CallTransport};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, Result, Vault};

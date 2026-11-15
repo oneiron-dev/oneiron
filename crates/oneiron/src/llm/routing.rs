@@ -57,9 +57,7 @@ pub(crate) fn llm_routed_seat_accepts_masked(bytes: &[u8]) -> bool {
 #[doc(hidden)]
 pub use oneiron_records::llm::routing::{DescriptionReask, ReaskTrigger, SeatSettings};
 #[doc(hidden)]
-use oneiron_records::llm::routing::{
-    apply_controls, gemini_wire_field, invalid, validate_overrides,
-};
+use oneiron_records::llm::routing::{apply_controls, invalid, validate_overrides};
 
 impl ModelDescription {
     /// The first available line in the seat policy's evidence order.

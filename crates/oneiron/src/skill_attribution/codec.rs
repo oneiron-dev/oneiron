@@ -6,8 +6,8 @@ pub(crate) use oneiron_store::skill_attribution::codec::*;
 use super::audit::AttributionAuditReport;
 use super::calibration::AuditBatch;
 use super::types::{
-    AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, FollowedState,
-    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
+    AttemptOutcome, DeviationCause, FollowedState, OutcomeEvidence,
+    SKILL_ATTRIBUTION_SCHEMA_VERSION,
 };
 use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
@@ -20,7 +20,6 @@ pub(super) use crate::store::skill_attribution_evidence::{EVIDENCE, EvidenceRow}
 pub(super) use crate::store::skill_attribution_judgments::{EDIT_PROPOSAL, JUDGMENT};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
 
 impl RawValue for EvidenceRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {

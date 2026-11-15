@@ -35,7 +35,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::super::compaction::{
@@ -43,10 +42,10 @@ use super::super::compaction::{
 };
 use super::super::folds::{base_code_run_folds_in_txn, seed_code_run_folds_in_txn};
 use crate::code_run::payload::decode_self_dispatch_outcome;
-use crate::code_run::support::{expect_map, invalid_code_run_replay, map_get, str_value};
+use crate::code_run::support::{expect_map, map_get, str_value};
 use crate::code_run::{CodeRunBridgeCall, CodeRunReplayRecord, SelfDispatchOutcome, SelfEffect};
 use crate::compaction::{
-    FoldCompactAsked, FoldLedger, FoldMarked, FoldRecord, FoldReply, FoldUnfolded, SelfFoldCall,
+    FoldCompactAsked, FoldLedger, FoldMarked, FoldRecord, FoldUnfolded, SelfFoldCall,
     parse_fold_handle,
 };
 use crate::store::Store;

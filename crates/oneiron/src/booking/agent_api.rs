@@ -25,8 +25,6 @@ use crate::booking::{ConstraintObject, EventTypeKey};
 use crate::temporal::TimeRange;
 
 #[doc(hidden)]
-use oneiron_records::booking::agent_api::is_relative_same_origin_path;
-#[doc(hidden)]
 pub use oneiron_records::booking::agent_api::{
     BOOKING_AGENT_INSTRUCTIONS_VERSION, BookingAgentEndpoint, BookingAgentInstructionsBlock,
     BookingAgentInstructionsDefect,

@@ -38,7 +38,7 @@ use super::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::row_birth::RowBirth;
-use crate::vault::{RevisionRef, Vault};
+use crate::vault::Vault;
 use oneiron_model::llm::SelfCompactionSource;
 
 /// Why a flight could not be written as its agent. The flight keeps its raw

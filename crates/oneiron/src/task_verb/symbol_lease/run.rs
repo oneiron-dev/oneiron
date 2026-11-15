@@ -11,12 +11,9 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::{
     LEASES, SymbolLease, blockers, holds_at, load, observe_declaration, save, validate_declaration,
 };
-use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 

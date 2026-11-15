@@ -73,14 +73,6 @@ pub(crate) use self::rebind_types::{
     CodeConsentRebind, CodeConsentRebindProposal, CodeConsentRebindTarget,
 };
 
-use crate::EntityId;
-use crate::outbound_consent::{
-    ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorQuestion, ConnectorResultAbsence,
-    UntrustedToolResult,
-};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
 #[doc(hidden)]
 pub(crate) use oneiron_records::code_run::consent_wait::source;
 #[doc(hidden)]

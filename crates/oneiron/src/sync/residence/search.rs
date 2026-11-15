@@ -3,8 +3,6 @@
 //! revision of that whole list, so no page mixes two lists and none is cut
 //! short as complete. A search one page holds keeps its single call.
 
-use serde::{Deserialize, Serialize};
-
 use super::{ResolvedRecallSelection, recall_scope_transcript, residence_window_for_blob};
 use crate::Vault;
 use crate::claim::{CallerLocality, ScopedReadActorKey};

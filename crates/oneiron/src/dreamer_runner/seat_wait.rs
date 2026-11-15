@@ -7,8 +7,6 @@
 //! it covers, in its own write. The reset a refusal reported is carried on the row and indexed
 //! by time, so the sweep releases what is due; the reset alone wakes nothing.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::bytes_to_hex_lower;

@@ -13,7 +13,7 @@ use crate::llm::BudgetCheckpoint;
 use crate::provenance::body::{owned_body_in_txn, release_body_in_txn};
 use crate::side_table::{self, ErasedForm, Named, SideTable};
 use crate::store::result_manifest::StagedSinks;
-use crate::{ContentPart, EdgeActorClass, EntityId, Error, LlmRequest, LlmResponse, Result, Vault};
+use crate::{ContentPart, EdgeActorClass, EntityId, Error, Result, Vault};
 
 use super::super::{AgentDispatcher, SpendScopeId, agent_dispatch_run_actor};
 

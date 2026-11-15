@@ -3,8 +3,6 @@
 //! delegates to that host. This keeps socket state out of the vault.
 
 use super::{Memory, MemoryError};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[doc(hidden)]
 pub use oneiron_records::memory::subscriptions::ScopedView;

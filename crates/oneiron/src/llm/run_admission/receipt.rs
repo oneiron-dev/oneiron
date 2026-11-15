@@ -5,10 +5,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use super::super::{
-    BrokerIsolation, BudgetDenied, InferenceCallReceipt, LlmInputUsage, LlmOutputUsage, ModelId,
-    ModelLocality,
-};
+use super::super::{BrokerIsolation, BudgetDenied, InferenceCallReceipt, ModelId, ModelLocality};
 use super::admission::{RunAttribution, RunDenied};
 use super::declaration::{DeclarationEditor, LeaseUnit};
 use super::host::{AllocationRef, Payer, PayerPerson};

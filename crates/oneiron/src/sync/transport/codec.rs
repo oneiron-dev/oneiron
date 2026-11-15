@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll, ready};
 
 use futures_util::{Sink, Stream};
-use serde::Serialize;
 use tokio_tungstenite::tungstenite::error::{CapacityError, Error as WsError};
 use tokio_tungstenite::tungstenite::{Bytes, Message};
 

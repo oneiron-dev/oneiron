@@ -10,7 +10,7 @@ use crate::code_sandbox::source::PreparedSource;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
 use crate::entity_id::EntityId;
 use crate::llm::BudgetGuard;
-use crate::{Error, LlmError, ModelId, ModelLocality, ModelTierRef, Result};
+use crate::{Error, ModelId, ModelLocality, ModelTierRef, Result};
 use std::path::PathBuf;
 
 #[doc(hidden)]

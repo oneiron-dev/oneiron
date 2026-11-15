@@ -7,7 +7,7 @@ use super::store::{
 use super::types::{EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus};
 use crate::code_run::{
     CodeConsentResume, CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord,
-    ExecutorStorage, ParkedWait, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    ExecutorStorage, ParkedWait, SelfDurableWait, SelfEffect, WaitKey,
     code_consent_resume_evidence, encode_code_run_replay_value, verify_code_consent_consumed,
     verify_parked_code_consent,
 };

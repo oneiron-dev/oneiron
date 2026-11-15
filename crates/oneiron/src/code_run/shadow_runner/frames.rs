@@ -8,12 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::types::{
-    ShadowMeterContext, ShadowModelPin, ShadowRunRequest, ShadowRunResult, ShadowUnavailable,
-    ShadowUsage,
-};
+use super::types::{ShadowMeterContext, ShadowModelPin, ShadowRunRequest, ShadowRunResult};
 use crate::compaction::output::OutputRef;
-use crate::{EntityId, LlmRequest, LlmResponse};
+use crate::{EntityId, LlmRequest};
 
 /// One frame of an arm's protocol.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

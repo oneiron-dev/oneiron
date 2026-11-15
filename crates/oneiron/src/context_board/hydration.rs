@@ -1,7 +1,5 @@
 //! The assembled context one hydration call returns: session prefix material (counts, last activity, notifications, unprocessed work, token meter) beside the MEMORIES cursor and section (ARCH-0067 §2, v5 assembled context). Step two: split into the cached-prefix blocks and the dynamic tail.
 
-use std::collections::BTreeMap;
-
 use super::memories::{MemoriesCursor, MemoriesSection};
 
 #[doc(hidden)]

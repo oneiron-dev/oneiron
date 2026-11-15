@@ -16,12 +16,11 @@
 use super::policy::{DecisionBandPolicy, Reversibility};
 use super::types::invalid;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion,
-    HumanAskReason, ImageBox, LocatedDecision, TypedDecision,
+    AnswerContract, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion, LocatedDecision,
+    TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[doc(hidden)]

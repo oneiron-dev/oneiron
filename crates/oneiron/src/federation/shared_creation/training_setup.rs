@@ -18,11 +18,11 @@
 //! 10-21): a setup answer never signs over an admin's choice.
 
 use super::SHARED_VAULT_CREATION;
-use crate::authority::{ActSurface, AuthorityEntryHash, AuthorityFold, authority_refused};
+use crate::Vault;
+use crate::authority::{ActSurface, AuthorityFold, authority_refused};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::world_keys::PolicyRevision;
-use crate::{EntityId, Vault};
 
 /// The question identity's own domain.
 const QUESTION_CONTEXT: &str = "oneiron shared vault setup training question v1";

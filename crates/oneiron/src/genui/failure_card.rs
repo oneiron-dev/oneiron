@@ -6,8 +6,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::failure_ladder::{
-    BlockedReportRef, FailureClass, HealerRepairRoute, RetryLineagePathology, RetryOrdinal,
-    failure_card_ref, failure_case_ref,
+    BlockedReportRef, FailureClass, RetryLineagePathology, RetryOrdinal, failure_card_ref,
+    failure_case_ref,
 };
 use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::run_tree::{RunTree, RunTreeFailureDiagram, mark_run_tree_failure};

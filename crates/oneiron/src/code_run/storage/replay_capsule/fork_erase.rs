@@ -15,7 +15,7 @@ use super::super::super::contribution::{
 };
 use super::super::super::replay_capsule::StepReplayCapsule;
 use super::{FORKS, ForkRow, ForkValue, ForkWrite, actor_gone_in_txn};
-use crate::entity_id::{ENTITY_ID_LEN, bytes_to_hex_lower};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::skill_attribution::{ContributionCandidate, ContributionTarget};
 use crate::{EntityId, Result, Vault};
 

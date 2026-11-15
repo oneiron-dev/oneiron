@@ -3,7 +3,6 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::super::types::{CustodyClass, SecretCustodyStatus};

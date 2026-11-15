@@ -1,8 +1,8 @@
 //! Provenance of a filled vector, written atomically with the fill.
 use super::EmbedderLocality;
 use crate::ports::RetrievalIndexInventory;
-use crate::side_table::{self, Raw, RawValue, SideTable};
-use crate::{EntityId, Error, Result, Vault};
+use crate::side_table::{self, Raw, SideTable};
+use crate::{EntityId, Result, Vault};
 
 /// Where the current reconciled embedding vector was filled. Key: id16.
 const EMBEDDING_LOCALITY: SideTable<EntityId, EmbedderLocality, Raw> =

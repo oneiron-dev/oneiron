@@ -1,6 +1,5 @@
 //! Board stream frames, snapshots and carrier coalescing.
 
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[doc(hidden)]

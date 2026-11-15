@@ -1,11 +1,6 @@
 //! Local references to occurrences in the host's actual publisher inputs.
 
-use std::collections::HashMap;
-
-use serde::{Deserialize, Serialize};
-
-use super::{CandidateRun, CodeFixSettled, PublisherCandidate, PublisherCandidateKind};
-use crate::dreamer_runner::shadow_values::EngineArtifactPin;
+use super::{CandidateRun, CodeFixSettled, PublisherCandidate};
 use crate::failure_signals::CodeFixVerdict;
 
 #[doc(hidden)]

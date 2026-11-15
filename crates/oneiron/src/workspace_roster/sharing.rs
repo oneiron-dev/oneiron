@@ -23,7 +23,6 @@ use crate::disclosure::RoomParty;
 use crate::error::RecordError;
 use crate::federation::{Scope, ScopeAxis};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_records::workspace_roster::sharing::{

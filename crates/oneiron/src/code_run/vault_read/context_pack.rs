@@ -1,10 +1,5 @@
 //! Context-pack request controls, record shapes, stats and projection types.
 
-use std::collections::BTreeMap;
-
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
 pub use oneiron_contracts::code_run::vault_read::{
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery,
     ContextPackRetrievalBudgetControls, ContextPackTypeRef, CoreContextPackRequest, MediaQueryKind,

@@ -11,8 +11,6 @@
 //! its outcome were read from, as the writer that assembled each named them
 //! (FIX 7103). A writer that names none leaves them unknown.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -62,9 +60,9 @@ impl StoredTeamReceipt {
 }
 
 #[doc(hidden)]
-pub use oneiron_records::team::receipt::{Coverage, DecidedBy, TeamShape};
+use oneiron_records::team::receipt::bounded;
 #[doc(hidden)]
-use oneiron_records::team::receipt::{MAX_REF_BYTES, bounded};
+pub use oneiron_records::team::receipt::{Coverage, DecidedBy, TeamShape};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::team::receipt::PatternSkillRef;

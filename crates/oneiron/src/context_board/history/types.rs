@@ -2,7 +2,6 @@
 
 use crate::vault::RevisionRef;
 use crate::{EntityId, error::Error};
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Planner-resolved, agent-free selection. Index-only candidates are separate
@@ -90,8 +89,6 @@ pub struct BoardTurn {
 
 #[doc(hidden)]
 pub(super) use oneiron_records::context_board::history::types::TurnAnchor;
-#[doc(hidden)]
-use oneiron_records::context_board::history::types::entity_id_codec;
 
 /// Claims written by this turn. Empty on an unchanged selection.
 #[derive(Debug, Clone, PartialEq, Eq)]

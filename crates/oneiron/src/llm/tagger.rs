@@ -15,7 +15,6 @@ use crate::{
 pub use oneiron_records::llm::tagger::{
     CoreferenceTag, InputDelta, MentionTag, PprSeed, RenderReceipt, RetrievalTags, ShadowTagReport,
 };
-use serde::{Deserialize, Serialize};
 
 pub trait OneironerTagger: Send + Sync {
     fn model(&self) -> ModelId;

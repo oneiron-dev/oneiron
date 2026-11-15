@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::entity_id::EntityId;
+use crate::llm::ModelId;
 use crate::llm::manifest::{ModelBinding, ModelRole};
-use crate::llm::run_admission::{BudgetLine, LeaseUnit, Payer};
-use crate::llm::{ModelId, ModelLocality};
+use crate::llm::run_admission::BudgetLine;
 use crate::skill_optimize::{EvalCohort, EvalExposure, EvalSeat};
 
 use super::{DataTimeline, TrainingTarget};

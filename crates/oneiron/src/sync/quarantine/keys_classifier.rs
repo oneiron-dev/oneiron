@@ -1,6 +1,5 @@
 //! Quarantine key codec plus remote/local rejection classifier.
 
-use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::error::{Error, ErrorKind, GateError, Result};

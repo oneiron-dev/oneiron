@@ -2,7 +2,7 @@
 
 use super::authority_state::TaskRenderState;
 use super::render::{bare_job_row, intent_row};
-use crate::attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus};
+use crate::attempt_queue::run_tree_view::RunTreeNode;
 use crate::consult_ladder::LadderTerminalDisposition;
 use crate::context_board::consult_result::ConsultResultPresence;
 use crate::context_board::task_kind::TaskKind;

@@ -1,11 +1,6 @@
 //! The checker doors' wire types (FIX 6868). A request names no argv, plan
 //! body, output, actor, green, pass or receipt; the answer names no host
 //! path, plan command body or command exhaust.
-use serde::{Deserialize, Serialize};
-
-use super::MergeQueuePointersView;
-use crate::EntityId;
-use crate::merge_queue::{Quarantine, QueueCheckHoldReason};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::merge_queue_doors::checker_types::{

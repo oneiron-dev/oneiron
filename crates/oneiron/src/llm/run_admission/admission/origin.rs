@@ -4,8 +4,6 @@
 //! run (FIX 11003).
 use std::sync::atomic::Ordering;
 
-use serde::Serialize;
-
 use super::{RunAdmission, RunInner};
 
 #[doc(hidden)]

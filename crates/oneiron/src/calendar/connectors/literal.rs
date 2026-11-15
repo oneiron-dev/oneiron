@@ -4,7 +4,6 @@ use zeroize::Zeroizing;
 
 use super::door::CalendarConnectorOperation;
 use super::remote::RemoteWriteReceipt;
-use crate::entity_id::EntityId;
 use crate::secret_custody::{
     open_connector_resume_in_txn, read_back_connector_resume_for_activation,
     retire_connector_resume_in_txn, seal_connector_resume_in_txn,

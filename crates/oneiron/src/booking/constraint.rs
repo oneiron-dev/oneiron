@@ -251,8 +251,6 @@ pub struct SolveRequest {
 }
 
 #[doc(hidden)]
-use oneiron_records::booking::constraint::admit;
-#[doc(hidden)]
 pub use oneiron_records::booking::constraint::{
     ConstraintSessionCaps, ConstraintSessionState, SlotHostBinding, SlotMask, SolveResult,
 };

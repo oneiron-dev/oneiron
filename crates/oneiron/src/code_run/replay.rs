@@ -7,14 +7,9 @@ use super::codec::{
     CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS, CODE_RUN_OUTPUT_PREVIEW_KEYS,
     CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS, CODE_RUN_STEP_CHECKPOINT_KEYS,
 };
-use super::payload::{
-    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
-};
-use super::support::{
-    code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, u64_value,
-    validate_text,
-};
-use super::types::{SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult};
+use super::payload::decode_self_dispatch_outcome;
+use super::support::code_run_layout_hash;
+use super::types::{SelfDispatchOutcome, SelfEffect};
 // The bridge call's body names these by their `super::` paths.
 use super::{SelfStoredReply, SelfStoredReplyKind, spawn_replay};
 mod bridge;

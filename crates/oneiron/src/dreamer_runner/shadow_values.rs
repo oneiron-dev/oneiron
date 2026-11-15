@@ -1,11 +1,11 @@
 //! Immutable shadow-run artifact, request-part and evidence vocabulary.
 
+use crate::EntityId;
 use crate::compaction::output::OutputRef;
 use crate::dreamer_runner::step_replay::{
-    CapsuleRequest, ExecutorStepStart, ReplayRoutePin, StepReplayCapsule, StoredRungBinding,
+    CapsuleRequest, ExecutorStepStart, ReplayRoutePin, StepReplayCapsule,
 };
 use crate::store::result_manifest::CodeRunRawOutput;
-use crate::{EntityId, LlmUsage};
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]

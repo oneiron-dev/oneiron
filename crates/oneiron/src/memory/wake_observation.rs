@@ -1,7 +1,5 @@
 //! Durable and live wake-observation read vocabulary.
 
-use serde::{Deserialize, Serialize};
-
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use oneiron_model::llm::BudgetLeaseState;
