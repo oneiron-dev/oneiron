@@ -156,6 +156,15 @@ impl CanonicalCapture {
                 // typed body receipts and forks on its next reverse pass.
                 "office_proposals",
                 "typed_body_rows",
+                // FIX 5266, FIX 26753: not captured; the rebuilt window takes
+                // their rows again from this vault's turn program armings and
+                // riding wakes on its next reverse pass.
+                "turn_program_arms",
+                "turn_program_wakes",
+                // FIX 26753: not captured; the rebuilt window takes its rows
+                // again from this vault's stored birth positions on its next
+                // reverse pass.
+                "origin_positions",
                 "repo_manifests",
                 "withdrawn_cutoffs",
                 "peer_origins",
