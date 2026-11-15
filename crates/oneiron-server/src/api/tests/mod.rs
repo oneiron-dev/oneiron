@@ -803,6 +803,29 @@ fn seed_disclosure_claim_in_world(
     text: &str,
     world: oneiron::EntityId,
 ) -> oneiron::EntityId {
+    seed_claim_in_world(server, subject, text, world, Some("private"))
+}
+
+/// [`seed_disclosure_claim_in_world`] with no sensitivity stamp. An unstamped
+/// claim reads at the sensitive floor for the audience, and a reader homed in
+/// another vault still reads it (DEC-0006 `#home-clearance`): a reader that
+/// names no room of this vault reads no stamped claim.
+fn seed_unstamped_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+) -> oneiron::EntityId {
+    seed_claim_in_world(server, subject, text, world, None)
+}
+
+fn seed_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+    stamp: Option<&str>,
+) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();
     let mut claim = oneiron::ClaimBody::new(
         "event.diary",
@@ -817,12 +840,12 @@ fn seed_disclosure_claim_in_world(
     // A TURN subject has no stored FACET of its own, and a CLAIM birth needs
     // one: the claim takes the vault's default facet.
     claim.scope_facet = server.vault.default_facet().expect("default facet");
-    // Tier B is required here: otherwise the tier check rejects this claim
-    // before the test can exercise the contact's world clearance.
-    claim.scope = Some(rmpv::Value::Map(vec![(
-        rmpv::Value::from("sensitivity"),
-        rmpv::Value::from("private"),
-    )]));
+    claim.scope = stamp.map(|stamp| {
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("sensitivity"),
+            rmpv::Value::from(stamp),
+        )])
+    });
     server
         .vault
         .put_claim(
