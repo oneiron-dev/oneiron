@@ -139,6 +139,7 @@ mod owner_work;
 mod owner_work_diagnostics;
 mod pact_openings;
 mod past_grant_standing;
+mod person_proof;
 mod pinned_root;
 mod policy_setting_choice;
 mod principal_standing;
@@ -207,7 +208,7 @@ pub use oneiron_authority::authority::{
     MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
     ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
-    OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
+    OwnerWorkRequest, OwnerWorkResult, PersonChoiceProof, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
