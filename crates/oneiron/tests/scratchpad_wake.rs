@@ -27,7 +27,7 @@ use oneiron::receipt::{attempt_pack_receipt, attempt_pack_receipt_id};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::run_lifecycle::force_cancel_authority;
-use oneiron::test_doors::scratchpad_wake::run_bound_memory;
+use oneiron::test_doors::scratchpad_wake::{race_next_pad_birth, raced_pad, run_bound_memory};
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use oneiron_testkit::{FixtureVault, TestVault, fixture_cache};
 
@@ -258,6 +258,55 @@ fn a_wake_cancelled_before_its_first_line_opens_no_pad() {
         scratch_ref(&vault, leased.id),
         None,
         "the cancelled wake's receipt names no pad"
+    );
+}
+
+/// Two first lines of one wake race: each reads that the wake has no pad,
+/// and the other line opens it first. The later line lands on that pad, so
+/// the wake keeps one pad that holds both lines, and its terminal write
+/// seals that pad and names it on the receipt.
+#[test]
+fn a_racing_first_line_lands_on_the_pad_the_other_opened() {
+    let (copy, vault, agent) = open();
+    let queue = AttemptQueue::new(&vault);
+    let t = copy.clock().now();
+    let (leased, run) = wake(&queue, t);
+    let memory = run_bound_memory(&vault, agent, run).expect("run-bound memory");
+    race_next_pad_birth("the first racing line");
+    let receipt = memory
+        .scratchpad_append(LABEL, "the second racing line", None, false)
+        .expect("the later racing line lands");
+    let first = raced_pad().expect("the racing line ran in the gap");
+    assert_eq!(
+        receipt.pad, first,
+        "the later racing line lands on the pad the other line opened"
+    );
+    assert!(!receipt.opened, "the later racing line opens no second pad");
+    assert_eq!(
+        receipt.sealed_prior, None,
+        "the later racing line seals no pad"
+    );
+    let recall = memory
+        .scratchpad_recall(LABEL, "racing")
+        .expect("recall")
+        .expect("the wake has a pad");
+    assert_eq!(
+        recall.pad, first,
+        "the wake's pad is the one the race opened"
+    );
+    assert!(!recall.sealed, "a running wake's pad is live");
+    let lines: Vec<&str> = recall.lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(
+        lines,
+        ["the second racing line", "the first racing line"],
+        "the wake's one pad holds both racing lines"
+    );
+    complete(&queue, &leased, t + 5);
+    assert!(sealed(&vault, first), "the wake's end seals its one pad");
+    assert_eq!(
+        scratch_ref(&vault, leased.id),
+        Some(first.to_hex()),
+        "the terminal receipt names the pad both lines landed in"
     );
 }
 

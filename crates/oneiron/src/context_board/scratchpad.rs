@@ -695,6 +695,8 @@ impl Memory<'_> {
                 sealed_prior: None,
             });
         }
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::scratchpad_wake::at_pad_birth(self, session)?;
         let actor = self.actor();
         let run = self.bound_code_run();
         // OF-548: the pad's birth and its pointers commit in one write. A
