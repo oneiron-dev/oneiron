@@ -278,8 +278,9 @@ fn members_in_txn(
 
 /// The side a turn's sent messages are on, from their stored authors: the
 /// one non-system author among them, the user's (`A`) or the companion's
-/// (`B`). `None` when they name none, both, or an author this build does not
-/// know: a role is never guessed.
+/// (`B`). `None` when they name none, both, a `counterparty` (somebody
+/// else's imported speech, on neither side), or an author this build does
+/// not know: a role is never guessed.
 pub(crate) fn turn_role<A: AsRef<[u8]>>(
     authors: impl IntoIterator<Item = A>,
 ) -> Option<SpeakerRole> {
@@ -293,6 +294,7 @@ pub(crate) fn turn_role<A: AsRef<[u8]>>(
         } else if author == WITNESS_AUTHOR_SYSTEM.as_bytes() {
             continue;
         } else {
+            // A `counterparty` row is on neither side, as is an unknown one.
             return None;
         };
         if role.is_some_and(|known| known != this) {

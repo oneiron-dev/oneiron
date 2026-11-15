@@ -11,10 +11,7 @@ use serde_json::Value;
 
 use self::connector_wait::connector_call_answer;
 use crate::EntityId;
-use crate::code_run::payload::{
-    agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
-    self_call_request_value,
-};
+use crate::code_run::payload::{decode_self_dispatch_outcome, self_call_request_value};
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
@@ -27,15 +24,32 @@ use crate::memory::HostWriteOrigin;
 use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
-use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher};
 
 use self::receipts::{
     KEPT_ANSWER_REFUSED, KeptWrite, MEDIA_STEP_TRAPPED, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN,
-    VERB_HOOK_STOPPED, is_write, meets, never_ran_mark, row_identity, standing_refusal,
+    VERB_HOOK_STOPPED, is_write, meets, never_ran_mark, records_call, standing_refusal,
 };
 pub(crate) use self::receipts::{recorded_call, write_receipt_may_have_run};
+
+/// Test door (census L1-06): records `first` as the bridge records a write,
+/// then answers whether `again`, the same step's write made again, meets
+/// that row by the comparison `kept_write_answer` makes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn resumed_write_meets_recorded_row(
+    first: &SelfAgentVerbCall,
+    again: &SelfAgentVerbCall,
+) -> Result<bool> {
+    let row = CodeRunBridgeCall::record(
+        0,
+        &SelfCall::AgentVerb(first.clone()),
+        &never_ran_mark(VERB_HOOK_STOPPED),
+        0,
+        0,
+    )?;
+    Ok(records_call(&row, again))
+}
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
@@ -361,7 +375,7 @@ impl HostSelfDispatcher<'_> {
                 call.clone(),
             ))?)?
         } else {
-            row_identity(row) == Some(call_identity(call.verb.as_str(), &call.input))
+            records_call(row, &call)
         };
         if !recorded {
             return Err(Error::InvariantViolation(
@@ -570,56 +584,10 @@ fn worded(outcome: SelfDispatchOutcome, door: &dyn AgentVerbDoor) -> SelfDispatc
     }
 }
 
-/// How an operation's send went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SecretUseStatus {
-    /// The provider answered; `result` is its answer.
-    Answered,
-    /// The operation failed; `failure` says why.
-    Failed,
-    /// It ran, but its result could not be cleared of the value, so none
-    /// comes back.
-    Withheld,
-}
-
-/// `self.use`'s answer. It never holds the value.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretUseAnswer {
-    pub status: SecretUseStatus,
-    /// The operation's answer, when it answered.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
-    /// Why it failed, when it did.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure: Option<String>,
-    pub receipt: SecretUseRecord,
-}
-
-/// One use's receipt: what was used, by what, and how it went.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretUseRecord {
-    pub handle: String,
-    /// The secret's rotation generation when it was used.
-    pub generation: u32,
-    /// The custody record whose value the send actually presented, as its
-    /// door released it (FIX 8052); distinct from the admitted handle.
-    /// `None` when nothing was sent, or nothing said what was.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub presented_custody: Option<EntityId>,
-    /// The generation the send actually presented; distinct from the
-    /// admitted generation. `None` when nothing said what was presented.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub presented_generation: Option<u32>,
-    /// The effector the binding names, such as `connector:slack`.
-    pub effector: String,
-    pub operation: String,
-    /// The Gate record that keeps it, `gate:<hex>`.
-    pub decision: String,
-    pub used_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_run::dispatcher::agent_verb::{
+    SecretUseAnswer, SecretUseRecord, SecretUseStatus,
+};
 
 /// The answer of a `reveal.wait` as a run's record keeps it: without the
 /// value. The guest reads the full answer; its step row and any receipt keep

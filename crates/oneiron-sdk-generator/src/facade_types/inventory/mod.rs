@@ -463,4 +463,64 @@ mod tests {
         );
         fs::remove_dir_all(&root).expect("cleanup");
     }
+
+    /// SDK-GEN-CRATES-MISSES-CONSENT-STATE: core split slice 2 moved the consent state into `oneiron_consent_state`,
+    /// and core re-exports it at the old paths. A facade field core declares with a consent type reads that type's
+    /// declaration from the moved crate (never `unknown`), and the crate file is in the dependency set the build
+    /// crate watches. Run on the repository's own sources.
+    #[test]
+    fn a_consent_state_field_reads_its_declaration_from_the_consent_state_crate() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("the repository root");
+        let pins = crate::facade_types::type_names(&root).expect("type_names.json");
+        let mut inventory = Inventory::with_type_names(&root, &[], &pins).expect("the inventory");
+        let Ir::Ref(key, _) = inventory
+            .root_ir("crate::consent::bypass_lifecycle::BypassGrantBoundRequest")
+            .expect("the row type")
+        else {
+            panic!("BypassGrantBoundRequest reads as a declaration");
+        };
+        let Ir::Object(fields, _) = inventory
+            .decl(&key)
+            .expect("its declaration")
+            .ir()
+            .expect("its body")
+        else {
+            panic!("BypassGrantBoundRequest reads as a record");
+        };
+        for (field, rust) in [("classes", "CatastropheClass"), ("scope", "BypassScope")] {
+            let value = &fields
+                .iter()
+                .find(|member| member.key == Value::Str(field.to_owned()))
+                .unwrap_or_else(|| panic!("BypassGrantBoundRequest has a {field} field"))
+                .value;
+            let value = match value {
+                Ir::Array(item) => item.as_ref(),
+                other => other,
+            };
+            let Ir::Ref(found, _) = value else {
+                panic!("{field} reads as {value:?}, not the {rust} declaration");
+            };
+            assert_eq!(
+                (found.crate_name.as_str(), found.name.as_str()),
+                ("oneiron_consent_state", rust),
+                "{field}"
+            );
+        }
+        let unread: Vec<_> = inventory
+            .fallbacks
+            .iter()
+            .filter(|(_, text, _)| text == "CatastropheClass" || text == "BypassScope")
+            .collect();
+        assert!(unread.is_empty(), "{unread:?}");
+        assert!(
+            inventory
+                .index
+                .dependency_paths()
+                .any(|path| path == "crates/oneiron-consent-state/src/consent/bypass.rs"),
+            "the dependency set names the consent state file"
+        );
+    }
 }

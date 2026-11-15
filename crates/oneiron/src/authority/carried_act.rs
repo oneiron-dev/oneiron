@@ -58,8 +58,9 @@ impl AgentCarriedAct {
 }
 
 /// The agent-carried acts in `fold` whose Grant `store` holds refused at the
-/// act's time ([`grant_standing_in_txn`]). A Grant that does not read is
-/// logged and keeps today's trust in the carrier (rubric 1). A NOW-refused
+/// act's time ([`grant_standing_in_txn`]). A Grant that does not read keeps
+/// today's trust in the carrier (rubric 1), and is logged the first time
+/// `logged` meets its act (FIX 23233). A NOW-refused
 /// native WorldPrivacy act a later counted signed owner-agent revoke saw
 /// (FIX 4703, [`super::past_grant_standing`]) is omitted from this
 /// Grant-only refused list; every other act keeps its NOW judgment, and any
@@ -74,6 +75,7 @@ pub(super) fn grant_refused_agent_acts(
     fold: &AuthorityFold,
     use_past_standing: bool,
     preserved_world_acts: impl FnOnce(&[AuthorityEntryHash]) -> Result<BTreeSet<AuthorityEntryHash>>,
+    logged: &mut super::readonly_fold::UnreadLogged,
 ) -> Vec<AuthorityEntryHash> {
     let acts = &fold.agent_carried_acts;
     let now_refused: Vec<AuthorityEntryHash> = acts
@@ -82,11 +84,13 @@ pub(super) fn grant_refused_agent_acts(
             match grant_standing_in_txn(store, txn, act.grant, act.agent, act.act, act.at) {
                 Ok(standing) => standing == GrantStanding::Refused,
                 Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        entry = %crate::entity_id::bytes_to_hex_lower(*hash),
-                        "an agent act's Grant did not read; its carrier is trusted"
-                    );
+                    if logged.first_grant(**hash) {
+                        tracing::warn!(
+                            %error,
+                            entry = %crate::entity_id::bytes_to_hex_lower(*hash),
+                            "an agent act's Grant did not read; its carrier is trusted"
+                        );
+                    }
                     false
                 }
             }

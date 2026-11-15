@@ -193,7 +193,7 @@ impl Vault {
                         owner_answer,
                     ),
                 }?;
-                self.complete_deferred_claim_in_txn(wtxn, &id, false, now, Some(actor))?;
+                self.complete_deferred_claim_in_txn(wtxn, &id, None, now, Some(actor))?;
                 // An approved task proposal lands its TASK in this txn.
                 crate::task_verb::settle_task_proposal_in_txn(self, wtxn, id, Some(actor), now)?;
                 // An approved curator finding applies with it (FIX 5423).
@@ -372,7 +372,7 @@ impl Vault {
             // The parked binding is checked, and the retract closes the
             // claim as the settling actor's (FIX 11039).
             GateConsentBundleAction::Approve => {
-                self.complete_deferred_claim_in_txn(wtxn, &id, false, now, Some(actor))?;
+                self.complete_deferred_claim_in_txn(wtxn, &id, None, now, Some(actor))?;
             }
             GateConsentBundleAction::Decline => self.cancel_deferred_claim_in_txn(wtxn, &id)?,
         }

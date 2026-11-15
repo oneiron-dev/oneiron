@@ -195,9 +195,8 @@ pub struct DescribeRequest {
     pub after: Option<[u8; 32]>,
 }
 
-/// The refusal of an `after` that names no handle to poll.
-pub(crate) const AFTER_NEEDS_HANDLE: &str =
-    "describe(after) polls a handle: name the handle it observed";
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::memory::shape_doors::AFTER_NEEDS_HANDLE;
 
 impl DescribeRequest {
     /// The one describe selector check (FIX 3256), which every door runs

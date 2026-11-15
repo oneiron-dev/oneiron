@@ -18,8 +18,8 @@ use super::{
 };
 use crate::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, ContentPart, DeterministicFallback,
-    DurableStepContext, DurableStepResult, LlmBackend, LlmError, LlmMessage, LlmMessageRole,
-    LlmRequest, LlmResponse, LlmUsage, ResponseFormat, StepOutcome, call_as_step,
+    DurableStepContext, DurableStepResult, FinishReason, LlmBackend, LlmError, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ResponseFormat, StepOutcome, call_as_step,
 };
 use crate::model_step_context::StepEffectBinding;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -129,7 +129,9 @@ impl DecisionLadder<'_> {
     /// dial reaches the person) over the call's state, with the ladder's paired question
     /// beside each of the call's, and the reply gives a probability per label and the
     /// paired P(yes) per question; a question it leaves out, or answers with no weight,
-    /// abstains, and so does every question on the step's deterministic fallback. A step
+    /// abstains, and so does every question on the step's deterministic fallback. A reply
+    /// its provider stopped at the token cap answers nothing: the questions go on past the
+    /// rung, and a call that ends there closes on a token-cap receipt. A step
     /// that traps, refuses or fails, and a raw request the backend fails or the guard does
     /// not admit, returns to the caller as its own outcome; it is not a decision.
     #[expect(
@@ -489,13 +491,17 @@ fn labels_of(question: &DecisionQuestion) -> Vec<&str> {
 /// P(yes) the reply gives it there; a missing or out-of-range one is no reading. With
 /// `labels`, each entry and weight is read under the name the request showed, and a choice
 /// answers the canonical option at the index its label was shown at; a missing or unknown
-/// name is no weight, as a missing id is.
+/// name is no weight, as a missing id is. A reply its provider stopped at the request's
+/// token cap is unfinished, so it answers nothing (ARCH-0076 #receipt).
 fn answers(
     response: &LlmResponse,
     asked: &[&DecisionQuestion],
     paired: Option<&DecisionQuestion>,
     labels: Option<&dyn DecisionWireLabels>,
 ) -> Result<Vec<ProviderDecision>> {
+    if response.finish_reason == FinishReason::Length {
+        return Err(Error::DecisionReadTokenCap);
+    }
     let text: String = response
         .message
         .content
