@@ -495,7 +495,11 @@ fn check_window_update(
     // that evidence until every edge op in this same import is inspected.
     let mut historical = HashMap::<EntityId, Vec<u8>>::new();
     let mut birth_owners = BTreeSet::new();
+    let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
+    let mut carries_birth = false;
     for op in operations.changes.iter().flat_map(|change| &change.ops) {
+        carries_birth |= op.container == births
+            && matches!(&op.content, JsonOpContent::Map(MapOp::Insert { .. }));
         if op.container == entities
             && let JsonOpContent::Map(MapOp::Insert {
                 key: raw_key,
@@ -513,12 +517,23 @@ fn check_window_update(
     // starts from as well as the inserts above, not only the candidate's
     // latest map: a delete later in the range takes its owner (and the
     // birth carrier) out of that map, as a hard delete in a full-history
-    // snapshot does. An update starts from the held doc; a snapshot starts
-    // from its encoded root, read above.
+    // snapshot does. A snapshot starts from its encoded root, read above.
+    // An update starts from the state at its start frontiers, read off the
+    // candidate, which holds the held doc and the update together: the held
+    // doc's latest map is not that state once this update, or a concurrent
+    // local delete, has landed, so judging from it would refuse the same
+    // bytes on redelivery. A shallow candidate may hold no state at those
+    // frontiers to check out; the held latest map then stands in.
     if metadata.mode.is_snapshot() {
         birth_owners.extend(root_owners);
-    } else {
-        map_for_each_value_bytes(&doc.get_map("entities"), |raw, blob| {
+    } else if carries_birth {
+        let at_start = candidate.fork();
+        let start = if at_start.checkout(&metadata.start_frontiers).is_ok() {
+            &at_start
+        } else {
+            doc
+        };
+        map_for_each_value_bytes(&start.get_map("entities"), |raw, blob| {
             if blob.is_some()
                 && let Ok(id) = EntityId::from_hex(raw)
                 && id.to_hex() == raw
@@ -552,7 +567,6 @@ fn check_window_update(
         }
     }
     let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
-    let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     let custody = ContainerID::new_root(crate::sync::custody::CUSTODY_MAP, ContainerType::Map);
     let room_turns =
         ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);

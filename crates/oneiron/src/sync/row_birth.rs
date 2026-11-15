@@ -240,25 +240,34 @@ pub(in crate::sync) fn drop_orphan_births(doc: &LoroDoc) -> Result<bool> {
     Ok(!orphans.is_empty())
 }
 
-/// Window admission for one inserted birth: the key is a canonical id, the
-/// value is a canonical envelope, and its owner entity is carried by the
-/// admitted document, in its latest state or in `also_carried` (the state
-/// the inspected range starts from and the entity inserts it carries, as
-/// window admission collects them). A later delete in the same range takes
-/// a shipped owner out of the latest map, so the latest map alone would
-/// refuse its earlier birth. A birth for a row the sender did not ship in
-/// any of those states is refused before import.
+/// Window admission for one inserted birth: the key is a canonical id and
+/// the value is a canonical envelope. A birth still live in the admitted
+/// document's latest state must find its owner entity live there too: that
+/// carrier waits in the document and is stamped when its row lands, so no
+/// earlier state may excuse it. `also_carried` (the state the inspected
+/// range starts from and the entity inserts it carries, as window admission
+/// collects them) excuses only a birth the latest state no longer carries:
+/// a later delete in the same range takes a shipped owner and its birth
+/// out of the latest maps, so the latest maps alone would refuse its
+/// earlier birth, and a birth carrier that is gone by the end stamps
+/// nothing. A birth for a row the sender did not ship in any of those
+/// states is refused before import.
 pub(crate) fn validate_carried_birth(
     candidate: &LoroDoc,
     key: &str,
     value: &LoroValue,
     also_carried: &std::collections::BTreeSet<EntityId>,
 ) -> Result<()> {
-    let owner_carried = owner(key).is_some_and(|id| also_carried.contains(&id))
-        || matches!(
-            candidate.get_map("entities").get(key),
-            Some(ValueOrContainer::Value(LoroValue::Binary(_)))
-        );
+    let owner_live = matches!(
+        candidate.get_map("entities").get(key),
+        Some(ValueOrContainer::Value(LoroValue::Binary(_)))
+    );
+    let birth_live = matches!(
+        births(candidate).get(key),
+        Some(ValueOrContainer::Value(LoroValue::Binary(_)))
+    );
+    let owner_carried =
+        owner_live || (!birth_live && owner(key).is_some_and(|id| also_carried.contains(&id)));
     let well_formed = owner(key).is_some()
         && matches!(value, LoroValue::Binary(bytes) if decode(bytes).is_some())
         && owner_carried;
