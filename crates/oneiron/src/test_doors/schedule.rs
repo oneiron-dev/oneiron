@@ -114,6 +114,53 @@ pub static TEST_LAPSE: JobSpec = JobSpec {
     run: run_count,
 };
 
+/// Fails its first run about a subject; every later run is done.
+fn run_fail_once(_vault: &Vault, armed: &Armed, _deadline: &Deadline) -> Result<Ran> {
+    Ok(if count(armed) == 1 {
+        Ran::Failed
+    } else {
+        Ran::Done
+    })
+}
+
+/// A job whose first run about a subject fails, and whose retry is done.
+pub static TEST_FAIL_ONCE: JobSpec = JobSpec {
+    code: "test.fail_once",
+    arm_by: ArmBy::Actor,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    run: run_fail_once,
+};
+
+/// How far past its due time the first run of [`TEST_REARM`] about a subject arms its own row
+/// again.
+pub const TEST_REARM_AFTER_SECS: u64 = 3_600;
+
+/// The first run about a subject arms its own row again, at its due time plus
+/// [`TEST_REARM_AFTER_SECS`], in its own write while it runs, then answers done; every later run
+/// only counts (review round 1 of #8026, P1 on `run.rs`).
+fn run_rearm(vault: &Vault, armed: &Armed, _deadline: &Deadline) -> Result<Ran> {
+    if count(armed) == 1 {
+        let at = armed.due_at.saturating_add(TEST_REARM_AFTER_SECS);
+        vault.arm_schedule(None, TEST_REARM.code, armed.subject, Trigger::At { at })?;
+    }
+    Ok(Ran::Done)
+}
+
+/// A one-time job the engine arms (`Trigger::At`) whose first run arms its own row again
+/// ([`run_rearm`]).
+pub static TEST_REARM: JobSpec = JobSpec {
+    code: "test.rearm",
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    run: run_rearm,
+};
+
 /// The engine arms `job` about `subject`, as its own doors do.
 ///
 /// # Errors
