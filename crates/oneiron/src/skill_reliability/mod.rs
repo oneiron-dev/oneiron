@@ -103,3 +103,9 @@ use rmpv::Value;
 mod archive;
 pub(crate) mod tables;
 pub(crate) use archive::{imported_reliability_body, validate_imported_reliability};
+
+/// The outcome-row decoder (`codec::decode_value`) for the trailing-bytes test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn outcome_value_decode_for_test(raw: &[u8]) -> crate::Result<rmpv::Value> {
+    codec::decode_value(raw)
+}

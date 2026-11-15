@@ -122,6 +122,12 @@ pub(super) fn decode_value(raw: &[u8]) -> Result<Value> {
         .map_err(|_| invalid_consolidation("dreamer consolidation MessagePack decode failed"))
 }
 
+/// [`decode_value`] for the trailing-bytes test door (`test_doors::msgpack_trailing`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn consolidation_value_decode_for_test(raw: &[u8]) -> Result<Value> {
+    decode_value(raw)
+}
+
 pub(super) fn expect_map<'v>(
     value: &'v Value,
     context: &'static str,

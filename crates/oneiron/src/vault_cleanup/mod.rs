@@ -244,3 +244,11 @@ pub(crate) use attempt_retention::{
     attempt_is_archived, forget_archived_attempt_in_txn, refresh_archived_attempt_in_rows,
     refresh_archived_attempt_in_txn, restore_task_attempts,
 };
+
+/// The receipt-row decoder (`codec_receipts::decode_row`) for the trailing-bytes test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn receipt_row_decode_for_test(
+    raw: &[u8],
+) -> crate::Result<Vec<(rmpv::Value, rmpv::Value)>> {
+    codec_receipts::decode_row(raw, "vault cleanup test row")
+}
