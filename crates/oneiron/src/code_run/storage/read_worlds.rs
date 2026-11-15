@@ -22,7 +22,7 @@ use std::ops::RangeBounds;
 use serde::{Deserialize, Serialize};
 
 use super::super::replay_capsule::StepReplayCapsule;
-use super::replay_rows::{self, REPLAY_RECORDS};
+use super::replay_rows::{self, HEADS};
 use super::routing::ExecutorStorage;
 use crate::federation::Scope;
 use crate::side_table::{self, Named, SideKey, SideTable};
@@ -589,7 +589,7 @@ impl ExecutorStorage<'_> {
                 let mut header = match session.side_table_get(&HEADERS, &key)? {
                     Some(header) => header,
                     None => {
-                        let recorded = session.side_table_get(&REPLAY_RECORDS, &run)?;
+                        let recorded = session.side_table_get(&HEADS, &run)?;
                         ReadWorldHeader::begun(recorded.is_some())
                     }
                 };

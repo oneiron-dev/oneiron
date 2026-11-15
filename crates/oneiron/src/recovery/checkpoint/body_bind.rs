@@ -84,6 +84,17 @@ fn unbound_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<(Vec<Unbound>, BTree
             .ok_or(Error::CorruptedIndex("canonical checkpoint image"))?;
         for row in db.iter(txn)? {
             let (key, value) = row?;
+            if name == "vault_meta" {
+                let Some(imaged) =
+                    crate::code_run::replay_rows::image_value(store, txn, key, value)?
+                else {
+                    continue;
+                };
+                if storage_tier(name, key) == StorageTier::Canonical {
+                    census.note(store, txn, name, key, &imaged)?;
+                }
+                continue;
+            }
             if storage_tier(name, key) == StorageTier::Canonical {
                 census.note(store, txn, name, key, value)?;
             }

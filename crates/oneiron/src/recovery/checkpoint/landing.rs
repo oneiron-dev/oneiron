@@ -245,6 +245,9 @@ impl Vault {
         // A queue row landed from its carried bytes goes unleased, as the
         // snapshot unleased every other (FIX 7115).
         response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
+        if let Some(rows) = image.databases.get_mut("vault_meta") {
+            crate::code_run::replay_rows::split_image_rows(rows).map_err(Rejected::landing)?;
+        }
         room.landing_rows(&image)?;
         let cancelled = vault.with_write_txn_grouped(|txn| {
             let destination_floor = crate::ports::claim_order::floor_in_txn(&vault.store, txn)?;

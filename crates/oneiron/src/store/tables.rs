@@ -334,12 +334,18 @@ crate::side_table::side_tables! {
     /// read by the scope-honesty census. Key: id16 (world) + id16 (claim).
     CLAIM_WORLD_INDEX: VaultMeta b"claim:world:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// A code run's replay record, keyed by run id. Key: id16.
-    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored [accepts: crate::code_run::code_run_replay_record_accepts_masked]
+    /// A code run's replay head (the record's scalar fields, its four counts and its generation), keyed by run id. Key: id16.
+    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v2:" Raw Authored [accepts: crate::code_run::code_run_replay_record_accepts_masked]
         // Payload family: A blocked report's captured requests (FIX 6708), a wait's deliveries
         // (FIX 6588) and a conversation check's gate material (FIX 5040); the wait index stays
         // unclassified, as only its settled rows hold a reply, which [`class_for_row`] places row
         // by row (FIX 9179).
+        [restore: content] [family: dispatch Response] [tier: canonical];
+    /// One replay item: one family's element bytes as they sit inside the whole encoding. Key:
+    /// id16(run) + 1-byte family tag (0 bridge calls, 1 step checkpoints, 2 outputs, 3 bindings)
+    /// + be64(index). The seam admits each item through its head's wall origin before writing it,
+    /// and the historical lift sweep walks the items as authored rows through that same origin.
+    CODE_RUN_REPLAY_ITEM: VaultMeta b"code_run:replay_item:v1:" Raw Authored
         [restore: content] [family: dispatch Response] [tier: canonical];
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).

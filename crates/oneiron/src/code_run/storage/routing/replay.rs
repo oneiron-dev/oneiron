@@ -16,10 +16,11 @@ use super::super::records::{
     MODEL_HEAL_COUNTS, next_additive_heal_count, replay_generation_matches, replay_generation_of,
     stored_replay_generation,
 };
-use super::super::replay_rows::{self, REPLAY_RECORDS};
+use super::super::replay_rows::{self, HEADS};
 use super::super::response_erase::fence_replay_in_txn;
 use super::super::response_owners::stamp_response_owner_in_txn;
 use super::*;
+use crate::code_run::codec::ReplayHead;
 use crate::side_table::RoutedDbs;
 
 impl SessionBinding<'_> {
@@ -89,15 +90,16 @@ impl SessionBinding<'_> {
                 .session
                 .side_table_compare_and_put_with_counter_routed_and(
                     &self.route,
-                    &REPLAY_RECORDS,
+                    &HEADS,
                     &record.run_id,
-                    record,
+                    &ReplayHead::of(record)?,
                     |stored| replay_generation_matches(replay_generation_of(stored)?, expected),
                     &MODEL_HEAL_COUNTS,
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
                     |txn, write| {
-                        // The helper put `record`; its erased form, when it
+                        replay_rows::put_items(&write, txn, &run_id, record)?;
+                        // The helper put the head; its erased form, when it
                         // is one, replaces it in the same segment.
                         let fenced =
                             fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
@@ -158,7 +160,7 @@ impl SessionBinding<'_> {
                         RoutedDbs::Base(vault) => {
                             stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
-                            replay_rows::put(vault, wtxn, &record.run_id, &record)
+                            replay_rows::put(vault, wtxn, &record.run_id, &record).map(drop)
                         }
                         RoutedDbs::Session(_) => {
                             stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
@@ -168,7 +170,7 @@ impl SessionBinding<'_> {
                                 Cow::Borrowed(overlay_record),
                                 Some((run, actor)),
                             )?;
-                            replay_rows::put(&write, wtxn, &record.run_id, &record)
+                            replay_rows::put(&write, wtxn, &record.run_id, &record).map(drop)
                         }
                     }
                 })
@@ -189,9 +191,9 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         self.session
             .routed_reader_txn(&self.route, |txn, read, write| {
-                put_base_replay_in_txn(txn, read, write, record, expected, None, prepare)?;
-                let mut keys = also(txn, read, write)?;
-                keys.push(replay_rows::key_bytes(&record.run_id));
+                let mut keys =
+                    put_base_replay_in_txn(txn, read, write, record, expected, None, prepare)?;
+                keys.extend(also(txn, read, write)?);
                 Ok(((), keys))
             })
     }
@@ -205,7 +207,7 @@ fn put_base_replay_in_txn(
     expected: Option<CodeRunReplayGeneration>,
     healed_model: Option<&ModelId>,
     prepare: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>, RoutedDbs<'_>) -> Result<()>,
-) -> Result<()> {
+) -> Result<Vec<Vec<u8>>> {
     let stored = stored_replay_generation(&read, &*txn, &record.run_id)?;
     replay_generation_matches(stored, expected)?;
     let RoutedDbs::Base(vault) = write else {
@@ -215,12 +217,12 @@ fn put_base_replay_in_txn(
     };
     prepare(txn, read, write)?;
     let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
-    replay_rows::put(vault, txn, &record.run_id, &record)?;
+    let keys = replay_rows::put(vault, txn, &record.run_id, &record)?;
     if let Some(model) = healed_model {
         let key = model.as_str().to_owned();
         let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;
         let (next, _) = next_additive_heal_count(base, None, RouteTarget::Base)?;
         MODEL_HEAL_COUNTS.put(&vault.store, txn, &key, &next)?;
     }
-    Ok(())
+    Ok(keys)
 }

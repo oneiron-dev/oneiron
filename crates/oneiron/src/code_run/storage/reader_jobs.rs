@@ -27,7 +27,7 @@ use std::ops::Bound;
 use heed::{RoTxn, RwTxn};
 
 use super::reader_folds::{MEMOS, SummaryMemo};
-use super::replay_rows::REPLAY_RECORDS;
+use super::replay_rows;
 use super::wait_delivery::deliver_wait_listing_in_txn;
 use crate::agent_def::AgentPowerTarget;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
@@ -304,12 +304,14 @@ impl ReaderTxn<'_, '_> {
     /// Whether `run`'s committed record holds the output at `path` with
     /// `handle`.
     fn committed(&self, run: EntityId, path: &str, handle: &str) -> Result<bool> {
-        Ok(self.get_row(&REPLAY_RECORDS, &run)?.is_some_and(|record| {
-            record
-                .outputs
-                .iter()
-                .any(|output| output.path == path && output.handle == handle)
-        }))
+        Ok(
+            replay_rows::get(&self.read, &*self.txn, &run)?.is_some_and(|record| {
+                record
+                    .outputs
+                    .iter()
+                    .any(|output| output.path == path && output.handle == handle)
+            }),
+        )
     }
 
     /// `job`'s latest finding while it is in the child's committed record:

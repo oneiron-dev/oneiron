@@ -37,6 +37,11 @@ impl<V: ErasedForm> Erased<V> {
     pub(crate) fn of(value: V) -> Result<Self> {
         value.into_erased().map(Self)
     }
+
+    /// The erased value.
+    pub(crate) fn into_inner(self) -> V {
+        self.0
+    }
 }
 
 /// What an erase writes over a row that no longer decodes (FIX 6533): none

@@ -206,13 +206,16 @@ pub(super) fn carry(
     Ok((carried, body, carriage.stub))
 }
 
-/// The row `key` of `db` as `txn` holds it.
+/// The row `key` of `db` as `txn` holds it: canonical bytes for a replay head key.
 fn row_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     db: ResponseDb,
     key: &[u8],
 ) -> Result<Option<Vec<u8>>> {
+    if db == ResponseDb::VaultMeta && crate::code_run::replay_rows::is_row_key(key) {
+        return crate::code_run::replay_rows::canonical_bytes_at(store, txn, key);
+    }
     let table = store
         .env
         .open_database::<Bytes, Bytes>(txn, Some(db.name()))?

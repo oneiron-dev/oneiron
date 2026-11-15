@@ -1,9 +1,7 @@
-//! The parts of a stored replay record a guarded append reads, decoded from
-//! the row's bytes in place (FIX 16). An append compares the stored row's
-//! generation and keeps its stored bridge calls (`over_held`); it never needs
-//! the row's outputs, bindings, live-run binding or earlier checkpoints. The
-//! walk passes over those as MessagePack and never decodes them, so an append
-//! no longer decodes the whole record it replaces at every executor step.
+//! The parts of a stored replay record read without decoding it whole (FIX 16):
+//! a generation from whole bytes, and a shell's run and birth world. The walk
+//! passes over outputs, bindings and other fields as MessagePack and never
+//! decodes them.
 
 use rmpv::Value;
 
@@ -32,17 +30,7 @@ const INDEX_PENDING_STEP: usize = 11;
 /// [`super::super::replay::CodeRunReplayRecord::generation`] reads it from
 /// the decoded record: the three counts, the last checkpoint's state hash and
 /// the pending step's digest. No bridge call or output is decoded.
-pub(crate) fn decode_code_run_replay_generation(bytes: &[u8]) -> Result<CodeRunReplayGeneration> {
-    Ok(walk(bytes, false)?.generation)
-}
-
-/// The generation, run, birth world and bridge calls of the stored record
-/// `bytes`: what a guarded append compares and keeps.
-pub(crate) fn decode_code_run_replay_held(bytes: &[u8]) -> Result<CodeRunReplayHeld> {
-    walk(bytes, true)
-}
-
-fn walk(bytes: &[u8], with_calls: bool) -> Result<CodeRunReplayHeld> {
+pub(super) fn walk(bytes: &[u8], with_calls: bool) -> Result<CodeRunReplayHeld> {
     let mut cursor = bytes;
     let entries = map_len(&mut cursor)?;
     let mut seen = [false; CODE_RUN_REPLAY_RECORD_KEYS.len()];
@@ -140,7 +128,7 @@ fn not_message_pack() -> crate::Error {
 }
 
 /// One whole value at the cursor, decoded.
-fn read(cursor: &mut &[u8]) -> Result<Value> {
+pub(super) fn read(cursor: &mut &[u8]) -> Result<Value> {
     rmpv::decode::read_value(cursor).map_err(|_| not_message_pack())
 }
 
@@ -171,7 +159,7 @@ fn count(len: usize) -> Result<u64> {
     u64::try_from(len).map_err(|_| not_message_pack())
 }
 
-fn map_len(cursor: &mut &[u8]) -> Result<usize> {
+pub(super) fn map_len(cursor: &mut &[u8]) -> Result<usize> {
     match take(cursor, 1)?[0] {
         lead @ 0x80..=0x8f => Ok(usize::from(lead & 0x0f)),
         0xde => length(cursor, 2),
@@ -180,7 +168,7 @@ fn map_len(cursor: &mut &[u8]) -> Result<usize> {
     }
 }
 
-fn array_len(cursor: &mut &[u8]) -> Result<usize> {
+pub(super) fn array_len(cursor: &mut &[u8]) -> Result<usize> {
     match take(cursor, 1)?[0] {
         lead @ 0x90..=0x9f => Ok(usize::from(lead & 0x0f)),
         0xdc => length(cursor, 2),
@@ -190,7 +178,7 @@ fn array_len(cursor: &mut &[u8]) -> Result<usize> {
 }
 
 /// The index in [`CODE_RUN_REPLAY_RECORD_KEYS`] of the string key at the cursor.
-fn key_index(cursor: &mut &[u8]) -> Result<usize> {
+pub(super) fn key_index(cursor: &mut &[u8]) -> Result<usize> {
     let len = match take(cursor, 1)?[0] {
         lead @ 0xa0..=0xbf => usize::from(lead & 0x1f),
         0xd9 => length(cursor, 1)?,
@@ -207,7 +195,7 @@ fn key_index(cursor: &mut &[u8]) -> Result<usize> {
 
 /// Passes over `values` whole MessagePack values without decoding them. An
 /// array or a map adds its members to the values still to pass over.
-fn skip_values(cursor: &mut &[u8], mut values: usize) -> Result<()> {
+pub(super) fn skip_values(cursor: &mut &[u8], mut values: usize) -> Result<()> {
     while values > 0 {
         // Each value takes at least one byte: more values than bytes left
         // cannot all be whole.

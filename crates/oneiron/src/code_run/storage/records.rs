@@ -17,7 +17,7 @@ use crate::store::{
 };
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
-use super::super::codec::{decode_code_run_replay_generation, validate_raw_output};
+use super::super::codec::{ReplayHead, validate_raw_output};
 use super::super::replay::{
     CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
     ResultOccurrence,
@@ -42,7 +42,7 @@ pub(super) use self::bodies::{
 };
 
 pub(crate) fn code_run_replay_record_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<CodeRunReplayRecord, Raw>(bytes)
+    crate::side_table::decodes::<super::super::codec::ReplayHead, Raw>(bytes)
 }
 
 impl StoredBody {
@@ -270,12 +270,8 @@ impl Vault {
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<CodeRunReplayGeneration> {
         let next_generation = record.generation()?;
-        // The stored row's generation and the calls `over_held` keeps, read
-        // from its bytes in place: an append never decodes the outputs or
-        // bindings of the row it replaces (FIX 16). A record the codec
-        // refuses fails at the put below, in this same transaction.
-        let held = replay_rows::held(&self.store, wtxn, &record.run_id)?;
-        replay_generation_matches(held.as_ref().map(|held| held.generation), expected)?;
+        let stored = replay_rows::head(&self.store, wtxn, &record.run_id)?;
+        replay_generation_matches(stored.as_ref().map(ReplayHead::generation), expected)?;
         let next_heal_count = healed_model
             .map(|model| {
                 let key = model.as_str().to_owned();
@@ -289,10 +285,21 @@ impl Vault {
             })
             .transpose()?;
         prepare(wtxn)?;
-        let record = record.over_held(held.as_ref());
         // A record whose replies an erase took stays erased (FIX 5718).
-        let record = fence_replay_in_txn(self, wtxn, record)?;
-        replay_rows::put(self, wtxn, &record.run_id, &record)?;
+        let fenced = fence_replay_in_txn(self, wtxn, Cow::Borrowed(record))?;
+        match stored {
+            Some(stored) if expected.is_some() && stored.appends_to(&fenced) => {
+                replay_rows::put_append(self, wtxn, &stored, record, &fenced)?;
+            }
+            stored => {
+                replay_rows::put(
+                    self,
+                    wtxn,
+                    &fenced.run_id,
+                    &with_stored_birth(&fenced, stored.as_ref())?,
+                )?;
+            }
+        }
         if let Some((key, count)) = next_heal_count {
             MODEL_HEAL_COUNTS.put(&self.store, wtxn, &key, &HealCount(count))?;
         }
@@ -789,11 +796,17 @@ pub(super) fn stored_replay_generation(
     replay_rows::generation(dbs, txn, run_id)
 }
 
-/// The generation of a stored replay row's bytes; `None` for no row.
+/// The generation of a stored replay head's bytes; `None` for no row and for a marker.
 pub(super) fn replay_generation_of(
     stored: Option<&[u8]>,
 ) -> Result<Option<CodeRunReplayGeneration>> {
-    stored.map(decode_code_run_replay_generation).transpose()
+    let Some(bytes) = stored else {
+        return Ok(None);
+    };
+    match ReplayHead::from_raw(bytes) {
+        Ok(head) => Ok(Some(head.generation())),
+        Err(_) => Ok(None),
+    }
 }
 
 pub(super) fn replay_generation_matches(
@@ -806,6 +819,23 @@ pub(super) fn replay_generation_matches(
     Err(Error::ConcurrentWrite(
         "code-run replay record changed; retry executor",
     ))
+}
+
+/// The Whole record with its stored birth world kept, as the old overwrite did.
+fn with_stored_birth<'a>(
+    fenced: &'a CodeRunReplayRecord,
+    stored: Option<&ReplayHead>,
+) -> Result<Cow<'a, CodeRunReplayRecord>> {
+    let Some(stored) = stored else {
+        return Ok(Cow::Borrowed(fenced));
+    };
+    let birth = stored.birth_world()?.or(fenced.birth_world);
+    if birth == fenced.birth_world {
+        return Ok(Cow::Borrowed(fenced));
+    }
+    let mut owned = fenced.clone();
+    owned.birth_world = birth;
+    Ok(Cow::Owned(owned))
 }
 
 /// Advances the contribution owned by `target` and returns both its next

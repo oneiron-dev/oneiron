@@ -28,12 +28,14 @@ use super::support::{
 mod checkpoint;
 mod held;
 mod pending_step;
+mod split;
 
 pub use self::checkpoint::CODE_RUN_STEP_CHECKPOINT_KEYS;
-use self::checkpoint::{decode_step_checkpoint, encode_step_checkpoint, validate_step_checkpoints};
-pub(crate) use self::held::{decode_code_run_replay_generation, decode_code_run_replay_held};
+pub(crate) use self::checkpoint::decode_step_checkpoint;
+use self::checkpoint::{encode_step_checkpoint, validate_step_checkpoints};
 pub(super) use self::pending_step::pending_step_digest;
 use self::pending_step::{decode_pending_step, encode_pending_step, validate_pending_step};
+pub(crate) use self::split::{ReplayFamily, ReplayHead, join_canonical, split_canonical};
 
 pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 12] = [
     "schema_version",
@@ -172,7 +174,32 @@ pub(crate) fn continuation_prefix_digest(
 /// Encodes a deterministic code-run replay record as pinned MessagePack.
 pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
     validate_code_run_replay_record(record)?;
-    let value = Value::Map(vec![
+    let value = replay_record_value(
+        record,
+        Value::Array(record.bridge_calls.iter().map(encode_bridge_call).collect()),
+        Value::Array(
+            record
+                .step_checkpoints
+                .iter()
+                .map(encode_step_checkpoint)
+                .collect(),
+        ),
+        Value::Array(record.outputs.iter().map(encode_raw_output).collect()),
+        Value::Array(record.bindings.iter().map(encode_binding).collect()),
+    );
+    encode_value(&value, "code-run replay record MessagePack encode failed")
+}
+
+/// The record's 12-entry top-level map with the four family values given.
+/// The whole encoding passes the full arrays; the shell passes empty ones.
+fn replay_record_value(
+    record: &CodeRunReplayRecord,
+    bridge_calls: Value,
+    step_checkpoints: Value,
+    outputs: Value,
+    bindings: Value,
+) -> Value {
+    Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(CODE_RUN_REPLAY_SCHEMA_VERSION),
@@ -188,24 +215,9 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
                 .as_ref()
                 .map_or(Value::Nil, encode_determinism),
         ),
-        (
-            Value::from(KEY_BRIDGE_CALLS),
-            Value::Array(record.bridge_calls.iter().map(encode_bridge_call).collect()),
-        ),
-        (
-            Value::from(KEY_STEP_CHECKPOINTS),
-            Value::Array(
-                record
-                    .step_checkpoints
-                    .iter()
-                    .map(encode_step_checkpoint)
-                    .collect(),
-            ),
-        ),
-        (
-            Value::from(KEY_OUTPUTS),
-            Value::Array(record.outputs.iter().map(encode_raw_output).collect()),
-        ),
+        (Value::from(KEY_BRIDGE_CALLS), bridge_calls),
+        (Value::from(KEY_STEP_CHECKPOINTS), step_checkpoints),
+        (Value::from(KEY_OUTPUTS), outputs),
         (
             Value::from(KEY_ABI_LAYOUT_CHECKS),
             Value::Array(
@@ -216,10 +228,7 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
                     .collect(),
             ),
         ),
-        (
-            Value::from(KEY_BINDINGS),
-            Value::Array(record.bindings.iter().map(encode_binding).collect()),
-        ),
+        (Value::from(KEY_BINDINGS), bindings),
         (
             Value::from(KEY_LIVE_RUN),
             record.live_run.as_ref().map_or(Value::Nil, encode_live_run),
@@ -241,8 +250,59 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
                 .as_ref()
                 .map_or(Value::Nil, encode_pending_step),
         ),
-    ]);
-    encode_value(&value, "code-run replay record MessagePack encode failed")
+    ])
+}
+
+/// The record's shell: the same map with the four families as empty arrays.
+/// No validation: the caller validates the full record, and a shell fails
+/// the pending-step check when a pending step names calls.
+pub(crate) fn encode_code_run_replay_shell(
+    record: &CodeRunReplayRecord,
+) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+    let value = replay_record_value(
+        record,
+        Value::Array(Vec::new()),
+        Value::Array(Vec::new()),
+        Value::Array(Vec::new()),
+        Value::Array(Vec::new()),
+    );
+    Ok(encode_value(
+        &value,
+        "code-run replay shell MessagePack encode failed",
+    )?)
+}
+
+/// One family's element as it sits inside the whole encoding: the
+/// per-element encoding of `record`'s `index`th `family` member.
+pub(crate) fn encode_code_run_replay_item(
+    record: &CodeRunReplayRecord,
+    family: ReplayFamily,
+    index: usize,
+) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+    let value = match family {
+        ReplayFamily::BridgeCalls => record.bridge_calls.get(index).map(encode_bridge_call),
+        ReplayFamily::StepCheckpoints => record
+            .step_checkpoints
+            .get(index)
+            .map(encode_step_checkpoint),
+        ReplayFamily::Outputs => record.outputs.get(index).map(encode_raw_output),
+        ReplayFamily::Bindings => record.bindings.get(index).map(encode_binding),
+    }
+    .ok_or_else(|| invalid_code_run_replay("code-run replay item index is past its family"))?;
+    Ok(encode_value(
+        &value,
+        "code-run replay item MessagePack encode failed",
+    )?)
+}
+
+/// One bridge call as it sits inside the whole encoding, for a stored item an append rewrites.
+pub(crate) fn encode_code_run_bridge_call_bytes(
+    call: &CodeRunBridgeCall,
+) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+    Ok(encode_value(
+        &encode_bridge_call(call),
+        "code-run replay item MessagePack encode failed",
+    )?)
 }
 
 /// The replay record is its own pinned MessagePack layout: the side table
@@ -307,6 +367,7 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         },
         pending_step: decode_pending_step(fields[11])?,
         verb_rows_cache: Default::default(),
+        changed_calls: Default::default(),
     };
     validate_code_run_replay_record(&record)?;
     Ok(record)
@@ -385,7 +446,7 @@ fn encode_bridge_call(call: &CodeRunBridgeCall) -> Value {
     ])
 }
 
-fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
+pub(crate) fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
     let fields = pinned_map(value, &CODE_RUN_BRIDGE_CALL_KEYS, "code-run bridge call")?;
     Ok(CodeRunBridgeCall {
         seq: u64_value(required(fields[0], "missing bridge seq")?)?,
@@ -539,7 +600,7 @@ fn encode_binding(binding: &CodeRunResultBinding) -> Value {
     ])
 }
 
-fn decode_binding(value: &Value) -> Result<CodeRunResultBinding> {
+pub(crate) fn decode_binding(value: &Value) -> Result<CodeRunResultBinding> {
     let Value::Array(items) = value else {
         return Err(invalid_code_run_replay("result binding must be an array"));
     };
@@ -629,7 +690,7 @@ fn decode_live_run(value: &Value) -> Result<Option<CodeRunLiveRunBinding>> {
     }))
 }
 
-fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
+pub(crate) fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
     let mut expected_seq = 0_u64;
     for call in &record.bridge_calls {
         if call.seq != expected_seq {
@@ -688,7 +749,7 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
     Ok(())
 }
 
-fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
+pub(crate) fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
     if call.finished_at_ms < call.started_at_ms {
         return Err(invalid_code_run_replay(
             "bridge call finished before it started",
