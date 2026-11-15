@@ -189,8 +189,7 @@ fn slip_named_grants_in_txn(
             let named = match census.get(&holder).copied() {
                 Some(named) => named,
                 None => {
-                    let named =
-                        crate::policy_model::live_ownership_census_in_txn(vault, txn, &holder)?;
+                    let named = vault.live_ownership_census_in_txn(txn, &holder)?;
                     census.insert(holder, named);
                     named
                 }
