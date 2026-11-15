@@ -209,7 +209,9 @@ pub(crate) fn credential_transport_context(
 /// owner-grade breadth (the lead's OWNER-GRADE ruling, 15 Nov: "a full slip is
 /// a scope, not a Grant"). A refusal of any kind is not the owner.
 fn owner_verified(server: &SyncServer, auth: &CoreAuth) -> bool {
-    crate::api::owner_routes::owner(auth, server).is_ok()
+    // RED PROOF: owner-grade breadth stands in for the owner door.
+    let _ = server;
+    auth.is_owner_grade()
 }
 
 /// The evidence a stale owner sign-in pays as himself on (FIX 5327): the

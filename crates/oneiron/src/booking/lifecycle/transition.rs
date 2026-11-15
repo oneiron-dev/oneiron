@@ -351,11 +351,9 @@ fn confirm_in_writer(
             constraint: hold.constraint.clone(),
             visitor_tz: hold.visitor_tz.clone(),
         };
-        if hold.cap_override.is_some() {
-            oracle.solve_past_caps(&request)
-        } else {
-            oracle.solve(&request)
-        }
+        // RED PROOF: the confirm ignores the hold's cap override.
+        let _ = hold.cap_override.is_some();
+        oracle.solve(&request)
     };
     let solved = solve_over(confirm_solve_window(hold.slot)?)?;
     // The wide solve carries the alternatives, and the oracle offers the flex
