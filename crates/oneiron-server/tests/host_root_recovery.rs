@@ -198,6 +198,38 @@ impl Host {
             .expect("lose this install's host issuer seed and its escrow");
     }
 
+    /// The stopped vault's host root acts as its owner: this install's
+    /// issuer, its verified root, and the owner that root binds. The
+    /// vault is closed before this returns, so the next step can serve
+    /// it. The error's text on a refusal.
+    fn root_acts_as_owner(&self, secret: &str) -> Result<(), String> {
+        let mut config = resolve_serve_config(&ServeArgs {
+            config: Some(self.config.clone()),
+            ..ServeArgs::default()
+        })
+        .map_err(|error| error.to_string())?;
+        config.auth_secret = Some(secret.to_owned());
+        config.keystore.dir = Some(self.keys.clone());
+        let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())
+            .map_err(|error| error.to_string())?;
+        assert!(
+            config.keystore.install_on(&vault, &config.vault_path),
+            "the file keystore installs"
+        );
+        let issuer = vault
+            .load_host_slip_issuer()
+            .map_err(|error| error.to_string())?;
+        let root = vault
+            .verified_host_root_slip(&issuer)
+            .map_err(|error| error.to_string())?;
+        let outcome = vault
+            .host_action_authority(&root)
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        drop(vault);
+        outcome
+    }
+
     /// Starts `oneiron serve` and waits until an unauthenticated call is
     /// refused. Its log (stdout, where tracing writes, and stderr) is
     /// `<name>.log` in the test directory.
@@ -389,6 +421,8 @@ fn a_lost_host_root_recovers_with_the_enrolled_kit_and_keeps_the_vault_id() {
     assert!(vault_id.is_string(), "rooted: {vault_id}");
     let found = host.dir.path().join("keys-found");
     copy_keys(&host.keys, &found);
+    host.root_acts_as_owner(OLD)
+        .expect("the old root acts as the vault's owner");
     host.lose_the_host_root();
 
     // The kit is the proof; the new host secret only admits the command.
@@ -425,6 +459,8 @@ fn a_lost_host_root_recovers_with_the_enrolled_kit_and_keeps_the_vault_id() {
     // slip stops working only because the move retired the root that minted
     // it.
     assert_eq!(host.vault_id(NEW), vault_id);
+    host.root_acts_as_owner(NEW)
+        .expect("the recovered root acts as the vault's owner");
     let agent_b = json(host.oneiron(&["token", "agent", "--name", "codex"], NEW));
 
     let link = host.bootstrap_link(NEW);
@@ -526,4 +562,28 @@ fn a_recovered_root_flags_the_vault_until_a_new_kit_is_enrolled() {
     drop_with_sigterm(host.serve(NEW, "serve-new-kit"));
     let log = host.log("serve-new-kit");
     assert!(!log.contains(FRAGILE), "{log}");
+}
+
+#[test]
+fn a_re_rooted_host_still_acts_as_the_vault_owner() {
+    let host = Host::new();
+    json(host.oneiron(&["token", "agent", "--name", "claude-code"], OLD));
+    host.root_acts_as_owner(OLD)
+        .expect("the old root acts as the vault's owner");
+    let secret_file = host.dir.path().join("new-host-secret");
+    std::fs::write(&secret_file, format!("{NEW}\n")).expect("write the secret file");
+    std::fs::set_permissions(&secret_file, std::fs::Permissions::from_mode(0o600))
+        .expect("set the secret file's mode");
+    let output = run(host.oneiron(
+        &[
+            "host",
+            "re-root",
+            "--new-secret-file",
+            secret_file.to_str().unwrap(),
+        ],
+        OLD,
+    ));
+    assert!(output.status.success(), "{}", printed(&output));
+    host.root_acts_as_owner(NEW)
+        .expect("the re-rooted host still acts as the vault's owner");
 }

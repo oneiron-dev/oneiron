@@ -4,8 +4,9 @@
 //! keeps its genesis and its id. A ReRoot retires every key on the roster, so
 //! the same transaction carries what the vault needs to keep working under the
 //! new root: its host root slip, the engine writers that were live, the
-//! physical machines' standing, and the MACHINE claim histories that were
-//! readable. Every slip the old root minted
+//! physical machines' standing, the MACHINE claim histories that were
+//! readable, and the embedded owner when the retired root held it. Every
+//! slip the old root minted
 //! stops verifying (OF-455: "existing slips on the old host fail verification
 //! against the new root"); the holders get new ones from the new root.
 //!
@@ -165,8 +166,10 @@ impl Vault {
 
     /// The one body of a host root move: `proof`'s signer, a live owner key,
     /// signs one ReRoot to `next`, and the same transaction carries the host
-    /// root slip, the live engine writers, the machines' standing and the
-    /// readable MACHINE histories.
+    /// root slip, the live engine writers, the machines' standing, the
+    /// readable MACHINE histories, and the embedded owner when the retired
+    /// root held it actively. An owner the old root did not hold is not
+    /// brought back.
     fn move_host_root(
         &self,
         proof: RootMoveProof<'_>,
@@ -232,6 +235,24 @@ impl Vault {
                 actor_class: mint.action.claims.actor_class.clone(),
             })
             .collect();
+        let owner = crate::vault::embedded_owner_actor_id()?;
+        let former_root_bound_owner = before.slips.mints.iter().any(|(id, mint)| {
+            mint.action.claims.holder_ref == "host"
+                && mint.action.claims.parent_id.is_none()
+                && before.slip_is_live_at(id, now)
+                && before
+                    .roster
+                    .get(&mint.signer)
+                    .is_some_and(|device| !device.revoked)
+                && before
+                    .actor_bindings
+                    .get(&mint.signer)
+                    .is_some_and(|binding| {
+                        binding.status == ActorBindingStatus::Active
+                            && binding.actor_class == ACTOR_CLASS_HUMAN
+                            && binding.actor_ref == owner
+                    })
+        });
 
         let sign = |transcript: &[u8]| signer.sign(transcript);
         let joiner = match &signer {
@@ -246,6 +267,12 @@ impl Vault {
         )?;
         // The new root's first entry: its sequence is what enrollment extends.
         self.ensure_host_root_slip_in_txn(&mut txn, next)?;
+        // A host root acts as the vault's owner only through a binding
+        // under its own key (H149), and the ReRoot retired the key that held
+        // it: the new root binds the same owner here, or it acts as nobody.
+        if former_root_bound_owner {
+            self.bind_rooted_owner_in_txn(&mut txn, next)?;
+        }
         for machine in &writers {
             self.enroll_engine_machine_in_txn(&mut txn, next, &vault_id, *machine)?;
         }
