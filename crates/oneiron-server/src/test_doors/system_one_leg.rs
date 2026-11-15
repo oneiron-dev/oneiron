@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron_llm_systemone::SystemOneTransport;
+use oneiron_llm::systemone::SystemOneTransport;
 
 use crate::config::models::BrokerConfig;
 use crate::models::{BrokerContext, KeyDoor};

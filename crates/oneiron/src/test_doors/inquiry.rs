@@ -3,7 +3,8 @@
 //! at the vault's store clock; the member side (PR 3) calls the log writers
 //! itself. `tests/inquiry_asking_side.rs` (PR 4) ends a TASK through
 //! [`cancel_task`] and counts the held answers through
-//! [`held_inquiry_answer_count`].
+//! [`held_inquiry_answer_count`]; PR 6 reads a copied answer's
+//! retained-copy check through [`retained_copy_admits`].
 
 use crate::error::Result;
 use crate::inquiry::{
@@ -130,4 +131,29 @@ pub fn erase_actor_in_tables_in_order(
     }
     wtxn.commit()?;
     Ok(ran)
+}
+
+/// Whether a shared read admits `record` past the recipient owner's retained
+/// courtesy copies (BIZ-LEGAL-0004 B2): the per-row check every shared read
+/// runs once its ordinary gates admit the row; the owner's own read skips
+/// it.
+///
+/// # Errors
+///
+/// `record` is not stored; storage errors.
+pub fn retained_copy_admits(vault: &Vault, record: EntityId) -> Result<bool> {
+    use crate::ports::EntityStoreRead as _;
+    let rtxn = vault.store.env.read_txn()?;
+    let row = vault
+        .store
+        .port_entity_record(&rtxn, &record)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    crate::disclosure::retained_copy_admits(
+        &vault.store,
+        &rtxn,
+        &record,
+        row.entity_type,
+        None,
+        &row.body,
+    )
 }

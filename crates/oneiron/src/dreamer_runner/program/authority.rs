@@ -31,11 +31,8 @@ use super::resume::ProgramHold;
 use super::types::{ProgramRecipePin, TurnProgramAttemptStamp};
 use super::{ADMISSION, ATTEMPT};
 
-const SCOPE_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-scope:v1";
-
-fn invalid() -> Error {
-    Error::InvalidConfig("invalid turn program binding".into())
-}
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::program::authority::{SCOPE_DOMAIN, invalid, lapsed};
 
 /// The waking actor's authority as one landed turn sealed it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -487,15 +484,6 @@ impl Standing {
         } else {
             Self::Lapsed
         }
-    }
-}
-
-/// A writer check's refusal is a lapse of the authority, not a failure to
-/// judge it.
-fn lapsed(error: Error) -> Result<bool> {
-    match error {
-        Error::Claim(_) | Error::InvalidClaimBody(_) => Ok(false),
-        error => Err(error),
     }
 }
 

@@ -21,12 +21,8 @@ const DEFERRED_PREFIX: &[u8] = b"m:federation-deferred:v1:";
 /// The schedule queue these rows wait in: its deadline index notes each one.
 const QUEUE: RetainedWorkQueue = RetainedWorkQueue::FederationBurst;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::sync) enum WorkKind {
-    Selector,
-    MemberUpdate,
-    GuestUpdate,
-}
+#[doc(hidden)]
+pub(in crate::sync) use oneiron_records::sync::federation_burst::queue::WorkKind;
 
 /// The review evidence an isolated update keeps: each part its admission
 /// lands as, the window that part imports into and its admitted bytes, in

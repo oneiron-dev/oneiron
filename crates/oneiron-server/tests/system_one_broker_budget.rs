@@ -26,7 +26,7 @@ use oneiron::{
     BudgetLease, EntityId, HostingPrivacyPosture, LlmError, RetryableLlmError, Vault, VaultConfig,
 };
 use oneiron_broker::testing::{FakeProvider, FakeReply};
-use oneiron_llm_systemone::SystemOneSeat;
+use oneiron_llm::systemone::SystemOneSeat;
 use oneiron_server::config::models::ModelsConfig;
 use oneiron_server::models::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 use oneiron_server::test_doors::system_one_leg::system_one_broker_leg;

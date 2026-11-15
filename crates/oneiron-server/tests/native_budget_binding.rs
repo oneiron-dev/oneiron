@@ -2,7 +2,7 @@
 //! `native_budget` row is the codec row that says whether its server takes a
 //! native budget (Engine ruling L9-19-WIRE = A). Set, the seat sends each
 //! call's time left as `budget_ms`; unset, the server gets the body as before.
-//! The wire itself is proved in `crates/oneiron-llm-systemone/tests/native_budget_wire.rs`.
+//! The wire itself is proved in `crates/oneiron-llm/tests/native_budget_wire.rs`.
 //!
 //! Fleet: `cargo test --locked -p oneiron-server --all-features --test native_budget_binding`
 

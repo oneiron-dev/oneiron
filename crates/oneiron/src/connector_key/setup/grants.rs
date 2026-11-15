@@ -536,9 +536,9 @@ impl Vault {
         for secret in &connection.secrets {
             frame(&mut hasher, secret.name.as_bytes());
             match live_custody_in_txn(&self.store, txn, &secret.name)? {
-                Some((id, generation)) => {
-                    frame(&mut hasher, id.as_bytes());
-                    frame(&mut hasher, &generation.to_be_bytes());
+                Some(live) => {
+                    frame(&mut hasher, live.id.as_bytes());
+                    frame(&mut hasher, &live.generation.to_be_bytes());
                 }
                 None => frame(&mut hasher, b"absent"),
             }
