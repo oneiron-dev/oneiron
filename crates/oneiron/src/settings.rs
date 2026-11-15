@@ -62,14 +62,13 @@ pub use model_versioning::{
 };
 pub use room_threads::RoomThreadAdminSettings;
 
-/// Version of the persisted customization settings record.
-pub const CUSTOMIZATION_SETTINGS_SCHEMA_VERSION: u16 = 1;
-
-/// The four SET-03 customization layers persisted by this module.
-pub const CUSTOMIZATION_SETTINGS_LAYER_COUNT: usize = 4;
-
-/// Stable event kind for client-readable customization change notifications.
-pub const CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND: &str = "settings.customization.changed";
+#[doc(hidden)]
+pub use oneiron_records::settings::{
+    CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND, CUSTOMIZATION_SETTINGS_LAYER_COUNT,
+    CUSTOMIZATION_SETTINGS_SCHEMA_VERSION, CustomizationLayer,
+};
+#[doc(hidden)]
+use oneiron_records::settings::{validate_label, validate_token};
 
 /// ONE-1707: the one additive knob over Dreamer plugin suggestions.
 ///
@@ -129,9 +128,6 @@ pub(crate) fn customization_event_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<CustomizationSettingsChangeEvent, Named>(bytes)
 }
 
-const TOKEN_MAX_BYTES: usize = 64;
-const WORLD_LABEL_MAX_BYTES: usize = 128;
-
 /// Complete persisted customization profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomizationSettings {
@@ -183,35 +179,6 @@ impl CustomizationSettings {
         self.mode.validate()?;
         self.world.validate()?;
         Ok(())
-    }
-}
-
-/// A persisted customization layer discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CustomizationLayer {
-    Accent,
-    Type,
-    Mode,
-    World,
-}
-
-impl CustomizationLayer {
-    /// Returns the stable on-disk layer name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Accent => "accent",
-            Self::Type => "type",
-            Self::Mode => "mode",
-            Self::World => "world",
-        }
-    }
-
-    /// Returns all persisted layers in canonical order.
-    #[must_use]
-    pub const fn all() -> [Self; CUSTOMIZATION_SETTINGS_LAYER_COUNT] {
-        [Self::Accent, Self::Type, Self::Mode, Self::World]
     }
 }
 
@@ -677,29 +644,6 @@ fn repair_customization_event_counter_in_txn(vault: &Vault, txn: &mut RwTxn<'_>)
     let repaired = stored.unwrap_or(0).max(highest);
     if repaired != 0 && Some(repaired) != stored {
         CUSTOMIZATION_EVENT_SEQUENCE.put(&vault.store, txn, &(), &repaired)?;
-    }
-    Ok(())
-}
-
-fn validate_token(field: &'static str, value: &str) -> Result<()> {
-    if value.is_empty()
-        || value.len() > TOKEN_MAX_BYTES
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
-        return Err(Error::InvalidConfig(format!(
-            "{field} must be a non-empty ASCII token"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_label(field: &'static str, value: &str) -> Result<()> {
-    if value.is_empty() || value.len() > WORLD_LABEL_MAX_BYTES || value.contains(char::is_control) {
-        return Err(Error::InvalidConfig(format!(
-            "{field} must be non-empty visible text"
-        )));
     }
     Ok(())
 }
