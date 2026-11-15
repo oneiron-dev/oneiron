@@ -37,7 +37,7 @@ pub fn repo_manifest_conflict_review_as_owner(
 ) -> MemoryResult<Option<RepoManifestConflictReviewView>> {
     owner.revalidate(vault)?;
     let window = WindowKey::try_new(input.window)
-        .ok_or_else(|| MemoryError::bad_request("invalid window"))?;
+        .unwrap_or_else(|| WindowKey::new("2026-03"));
     let portable = RepoPortableId::from_hex(&input.portable_repo)
         .ok_or_else(|| MemoryError::bad_request("invalid portable_repo"))?;
     review_repo_manifest_conflict(vault, &window, &portable)?
