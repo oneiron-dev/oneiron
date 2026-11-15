@@ -111,7 +111,8 @@ fn reply(body: &Value) -> String {
 
 /// A served vault whose code-mode writer compaction is live on the fake
 /// model at `base_url`, a 1500-token window with one hot turn, and whose
-/// self row reads the retained turns with the widest locality ceiling.
+/// self row reads the retained turns with the widest locality ceiling and
+/// names that served model as its cheap writer.
 async fn retained_row_server(
     base_url: &str,
 ) -> (
@@ -143,6 +144,10 @@ async fn retained_row_server(
     let mut table = server.vault().purpose_default_table().unwrap();
     table.self_compaction.source = oneiron::llm::SelfCompactionSource::RetainedTurns;
     table.self_compaction.locality = oneiron::ModelLocality::ThirdParty;
+    // The shipped row's cheap model has no offer on this server. With no
+    // model manifest the house route it gives way to is a seat, and a
+    // self-written call goes out as exactly one model, never as a seat.
+    table.self_compaction.cheap_model = oneiron::ModelId::new("local/test-model@live").unwrap();
     server.vault().set_purpose_default_table(&table).unwrap();
     (dir, prompts, Arc::new(server), host)
 }
@@ -204,6 +209,30 @@ fn seen_report(fake: &FakeLlm) -> Vec<String> {
                 .collect();
             let first = messages.first().map(message_text).unwrap_or_default();
             format!("{roles:?} {}", first.lines().next().unwrap_or_default())
+        })
+        .collect()
+}
+
+/// Each compaction call's span, pin count and input size, for a failure's
+/// report: which windows went out, and how often.
+fn compaction_calls_report(fake: &FakeLlm) -> Vec<String> {
+    fake.seen()
+        .iter()
+        .filter(|seen| is_compaction_call(&seen.body))
+        .map(|seen| {
+            let text = seen.body["messages"]
+                .as_array()
+                .and_then(|messages| messages.last())
+                .map(message_text)
+                .unwrap_or_default();
+            let input: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+            format!(
+                "from={} through={} pins={} input chars={}",
+                input["from"],
+                input["through"],
+                input["pins"].as_array().map_or(0, Vec::len),
+                text.len(),
+            )
         })
         .collect()
 }
@@ -382,7 +411,9 @@ async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
     }
     assert!(
         carried,
-        "no later chat request read the landed summary; requests: {:?}",
-        seen_report(&fake)
+        "no later chat request read the landed summary; requests: {:?}; compaction calls: {:?}; owner's read: {}",
+        seen_report(&fake),
+        compaction_calls_report(&fake),
+        log_report(&server, owner, &conversation),
     );
 }
