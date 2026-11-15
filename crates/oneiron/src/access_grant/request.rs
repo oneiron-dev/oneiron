@@ -43,6 +43,14 @@ struct RequestRow {
     addressed_to: Option<String>,
 }
 
+/// The two fields a pending page reads of a row before it decodes it whole
+/// (FIX 14): a decided row, or one asking someone else, is skipped on them.
+#[derive(serde::Deserialize)]
+struct RequestRowProbe {
+    status: AccessRequestStatus,
+    addressed_to: Option<String>,
+}
+
 /// Who answers an access request through the addressed door (FIX 1379).
 #[derive(Clone, Copy)]
 pub enum AccessRequestResponder<'a> {
@@ -198,7 +206,7 @@ impl Vault {
         after: Option<&EntityId>,
         limit: usize,
     ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
-        self.pending_access_requests_page_where(after, limit, |_| true)
+        self.pending_access_requests_page_where(after, limit, None)
     }
 
     /// [`Self::pending_access_requests_page`] over the pending requests that
@@ -212,17 +220,16 @@ impl Vault {
         after: Option<&EntityId>,
         limit: usize,
     ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
-        self.pending_access_requests_page_where(after, limit, |request| {
-            request.addressed_to == Some(addressee)
-        })
+        self.pending_access_requests_page_where(after, limit, Some(addressee))
     }
 
-    /// The page of pending requests `keep` takes, after the cursor `after`.
+    /// The page of pending requests after the cursor `after`: every one,
+    /// or with `addressee` only those that ask it.
     fn pending_access_requests_page_where(
         &self,
         after: Option<&EntityId>,
         limit: usize,
-        keep: impl Fn(&AccessRequest) -> bool,
+        addressee: Option<EntityId>,
     ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
         if limit == 0 {
             return Ok((Vec::new(), None));
@@ -231,10 +238,26 @@ impl Vault {
         // Keys order by request id, so the rows after the cursor start past it.
         let start = after.map_or(Bound::Unbounded, Bound::Excluded);
         let mut requests: Vec<AccessRequest> = Vec::new();
-        for entry in REQUESTS.iter_range(&self.store, &txn, start, Bound::Unbounded)? {
-            let (id, row) = entry?;
-            let request = AccessRequest::from_row(id, row)?;
-            if request.status != AccessRequestStatus::Pending || !keep(&request) {
+        for entry in REQUESTS.iter_raw_range(&self.store, &txn, start, Bound::Unbounded)? {
+            let (id, bytes) = entry?;
+            // Status and addressee first, so a decided row, or one asking
+            // someone else, costs no grant decode (FIX 14). A row that does
+            // not read so is decoded whole, which refuses it as before.
+            if let Ok(probe) = serde_json::from_slice::<RequestRowProbe>(&bytes)
+                && let Ok(asks) = probe
+                    .addressed_to
+                    .as_deref()
+                    .map(EntityId::from_hex)
+                    .transpose()
+                && (probe.status != AccessRequestStatus::Pending
+                    || addressee.is_some_and(|addressee| asks != Some(addressee)))
+            {
+                continue;
+            }
+            let request = AccessRequest::from_row(id, REQUESTS.decode_value(&bytes)?)?;
+            if request.status != AccessRequestStatus::Pending
+                || addressee.is_some_and(|addressee| request.addressed_to != Some(addressee))
+            {
                 continue;
             }
             if requests.len() == limit {
