@@ -4,10 +4,10 @@
 //! and UNBUILT-03-TURN-LINK = A (Engine, 15 Nov 22:31).
 //!
 //! A run is labelled only when its turn follows the convention on
-//! [`super::RetrievalTurn`]: `episode_id` names the run's CONVERSATION and
-//! `turn_id` its TURN. The natural signal is a claim the user stated
-//! ([`ClaimSource::UserStated`]) whose evidence TURN is another TURN of that
-//! conversation, learned after the run started. It corrects a claim the run
+//! [`RetrievalTurn`]: `episode_id` names the run's CONVERSATION and
+//! `turn_id` a TURN that is its `ChildOf`. The natural signal is a claim the
+//! user stated ([`ClaimSource::UserStated`]) whose evidence TURN is another
+//! TURN of that conversation, learned after the run started. It corrects a claim the run
 //! served when it supersedes that claim with another subject, predicate or
 //! value (`confirmed_fact_hit` false); it confirms the claim when it states
 //! the same subject, predicate and value (true). The gate is closed-form and
@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 
 use heed::RoTxn;
 
+use super::RetrievalTurn;
 use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
 use super::types::{RetrievalEndOutcome, RetrievalRunId, RetrievalRunRecord};
 use crate::edge::EdgeKind;
@@ -28,7 +29,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::provenance::{EvidenceTurn, claim_evidence_turns_in};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::StoreRead;
 use crate::{ClaimBody, ClaimSource, ClaimSubject, Vault};
 
@@ -48,6 +49,14 @@ struct NaturalLabel {
     turn_id: [u8; 16],
     signal: EntityId,
     confirmed: bool,
+}
+
+/// A run's CONVERSATION and TURN, read from a turn that follows the
+/// convention on [`RetrievalTurn`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RunTurnLink {
+    conversation: EntityId,
+    turn: EntityId,
 }
 
 /// A claim the user stated about a served claim, and the TURNs it came from.
@@ -98,8 +107,9 @@ impl Vault {
     }
 
     /// The outcomes `runs` earn, each with the runs it names, read in one
-    /// snapshot. A run counts only when its turn names a CONVERSATION; a
-    /// served claim's signals are read once however many runs served it.
+    /// snapshot. A run counts only when its turn follows the convention (see
+    /// [`run_turn_link_in`]); a served claim's signals are read once however
+    /// many runs served it.
     fn natural_labels(
         &self,
         runs: &[RetrievalRunRecord],
@@ -107,29 +117,28 @@ impl Vault {
         let mut labels: BTreeMap<NaturalLabel, Vec<RetrievalRunId>> = BTreeMap::new();
         let txn = self.store.env.read_txn()?;
         let read = self.store.read();
-        let mut conversations: BTreeMap<EntityId, bool> = BTreeMap::new();
+        let mut turn_links: BTreeMap<([u8; 16], [u8; 16]), Option<RunTurnLink>> = BTreeMap::new();
         let mut signals: BTreeMap<EntityId, Vec<NaturalSignal>> = BTreeMap::new();
         let mut stated_by_subject: BTreeMap<EntityId, Vec<(EntityId, ClaimBody)>> = BTreeMap::new();
         for run in runs {
             let Some(turn) = run.turn else {
                 continue;
             };
-            let Ok(conversation) = EntityId::from_bytes(turn.episode_id) else {
-                continue;
-            };
-            let names_conversation = match conversations.get(&conversation) {
+            let link = match turn_links.get(&(turn.episode_id, turn.turn_id)) {
                 Some(known) => *known,
                 None => {
-                    let known = entity_type_in(&read, &txn, &conversation)?
-                        == Some(ENTITY_TYPE_CONVERSATION);
-                    conversations.insert(conversation, known);
+                    let known = run_turn_link_in(&read, &txn, &turn)?;
+                    turn_links.insert((turn.episode_id, turn.turn_id), known);
                     known
                 }
             };
-            if !names_conversation {
+            let Some(RunTurnLink {
+                conversation,
+                turn: run_turn,
+            }) = link
+            else {
                 continue;
-            }
-            let run_turn = EntityId::from_bytes(turn.turn_id).ok();
+            };
             for served in &run.result_ids {
                 let Ok(served) = EntityId::from_bytes(*served) else {
                     continue;
@@ -142,7 +151,7 @@ impl Vault {
                 for signal in &signals[&served] {
                     let later_in_conversation = signal.turns.iter().any(|evidence| {
                         evidence.conversation == conversation
-                            && Some(evidence.turn) != run_turn
+                            && evidence.turn != run_turn
                             && evidence.learned_at > run.started_at
                     });
                     if !later_in_conversation {
@@ -245,6 +254,37 @@ fn states_same_fact(stated: &ClaimBody, served: &ClaimBody) -> bool {
     stated.subject == served.subject
         && stated.predicate == served.predicate
         && stated.value == served.value
+}
+
+/// The run's CONVERSATION and TURN when `turn` follows the convention on
+/// [`RetrievalTurn`] (UNBUILT-03-TURN-LINK = A): `episode_id` names a
+/// CONVERSATION and `turn_id` a TURN that is its `ChildOf`. None otherwise,
+/// so a run whose own TURN is unknown is never labelled.
+fn run_turn_link_in(
+    read: &StoreRead<'_>,
+    txn: &RoTxn<'_>,
+    turn: &RetrievalTurn,
+) -> Result<Option<RunTurnLink>> {
+    let (Ok(conversation), Ok(run_turn)) = (
+        EntityId::from_bytes(turn.episode_id),
+        EntityId::from_bytes(turn.turn_id),
+    ) else {
+        return Ok(None);
+    };
+    if entity_type_in(read, txn, &conversation)? != Some(ENTITY_TYPE_CONVERSATION)
+        || entity_type_in(read, txn, &run_turn)? != Some(ENTITY_TYPE_TURN)
+    {
+        return Ok(None);
+    }
+    for parent in read.port_edge_peers(txn, &run_turn, EdgeDirection::Out, EdgeKind::ChildOf)? {
+        if parent? == conversation {
+            return Ok(Some(RunTurnLink {
+                conversation,
+                turn: run_turn,
+            }));
+        }
+    }
+    Ok(None)
 }
 
 /// `id`'s stored entity type, from its row's first byte, read in place.
