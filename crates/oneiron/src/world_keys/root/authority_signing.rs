@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 use super::{RecoveryRootId, RecoveryRootSeed};
 use crate::authority::{
     AUTHORITY_TRANSCRIPT_DOMAIN, AuthorityKey, AuthorityVaultId, LEAVE_NOTICE_DELEGATION_DOMAIN,
-    OwnerKeyEnrollment, invalid_authority, owner_key_enrollment_challenge,
+    OwnerKeyEnrollment, invalid_authority, recovery_authority_enrollment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -112,9 +112,11 @@ impl RecoveryAuthoritySigner {
         &self.source_root
     }
 
-    /// Pure proof of possession for the existing enrollment door. Its owner act,
-    /// predecessor, carrying install and counted writer are still required there.
-    /// This value is not an enrollment receipt or a successful material issue.
+    /// Pure proof of possession for the recovery-authority kind's enrollment
+    /// door, over [`recovery_authority_enrollment_challenge`]: it verifies only
+    /// on a row of that kind, never on a device's. Its owner act, predecessor,
+    /// carrying install and counted writer are still required there. This
+    /// value is not an enrollment receipt or a successful material issue.
     pub(crate) fn enrollment(
         &self,
         machine: EntityId,
@@ -122,7 +124,7 @@ impl RecoveryAuthoritySigner {
     ) -> Result<OwnerKeyEnrollment> {
         let public_key = self.public_key();
         let challenge =
-            owner_key_enrollment_challenge(&self.vault_id, machine, &public_key, owner)?;
+            recovery_authority_enrollment_challenge(&self.vault_id, machine, &public_key, owner)?;
         Ok(OwnerKeyEnrollment {
             machine,
             public_key,

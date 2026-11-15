@@ -28,9 +28,12 @@
 //! The recovery root's authority key enrols in the same shape with its own
 //! attestation kind ([`RECOVERY_AUTHORITY_POSSESSION_KIND`], pass 27 R4), so
 //! a reader tells it from a device's key by the row alone: the owner's
-//! "last key held on a device" never counts the root's key. The kind is the
-//! enroller's statement under the predecessor's signature; the evidence is
-//! the same proof of possession and cannot show the derivation.
+//! "last key held on a device" never counts the root's key. Its proof of
+//! possession signs the same map under a domain of its own
+//! ([`recovery_authority_enrollment_challenge`]), so the key itself binds the
+//! kind: a proof copied from one kind's row into a row of the other kind
+//! never verifies, and no predecessor can re-label a key (Astra on
+//! OPUS-SPLIT-6's PR b, 16 Nov 01:58). The proof cannot show the derivation.
 
 use ed25519_dalek::Signature as Ed25519Signature;
 use rmpv::Value;
@@ -49,8 +52,8 @@ pub const OWNER_KEY_POSSESSION_KIND: &str = "owner-key-possession/v1";
 /// The length of that evidence: one raw Ed25519 signature.
 pub const OWNER_KEY_POSSESSION_PROOF_LEN: usize = 64;
 /// The attestation kind the recovery root's authority key carries when it
-/// enrols as an owner key: the device shape and the evidence of
-/// [`OWNER_KEY_POSSESSION_KIND`], under a kind of its own.
+/// enrols as an owner key: the device shape, and evidence of the same length
+/// over [`recovery_authority_enrollment_challenge`], under a kind of its own.
 pub const RECOVERY_AUTHORITY_POSSESSION_KIND: &str = "recovery-authority-possession/v1";
 
 /// The policy hook of CALLS "FIX 4920 enrollment shape": the `seen` of every
@@ -86,6 +89,30 @@ pub fn owner_key_enrollment_challenge(
 ) -> Result<Vec<u8>> {
     let target = owner_key_enrollment_target(vault_id, public_key)?;
     possession_transcript(
+        OWNER_KEY_ENROLLMENT_POP_DOMAIN,
+        vault_id,
+        machine,
+        public_key,
+        owner,
+        target,
+        OWNER_KEY_ENROLLMENT_SEEN,
+    )
+}
+
+/// The bytes the recovery root's authority key signs to prove it holds the
+/// key when it enrols under [`RECOVERY_AUTHORITY_POSSESSION_KIND`]: the map of
+/// [`owner_key_enrollment_challenge`] under
+/// [`RECOVERY_AUTHORITY_ENROLLMENT_POP_DOMAIN`], so its proof never verifies
+/// for a device's row, nor a device's proof for its row.
+pub fn recovery_authority_enrollment_challenge(
+    vault_id: &AuthorityVaultId,
+    machine: EntityId,
+    public_key: &[u8; 32],
+    owner: EntityId,
+) -> Result<Vec<u8>> {
+    let target = owner_key_enrollment_target(vault_id, public_key)?;
+    possession_transcript(
+        RECOVERY_AUTHORITY_ENROLLMENT_POP_DOMAIN,
         vault_id,
         machine,
         public_key,
@@ -96,6 +123,7 @@ pub fn owner_key_enrollment_challenge(
 }
 
 fn possession_transcript(
+    domain: &[u8],
     vault_id: &AuthorityVaultId,
     machine: EntityId,
     public_key: &[u8; 32],
@@ -111,12 +139,8 @@ fn possession_transcript(
         (Value::from("target"), Value::from(target.to_hex())),
         (Value::from("seen"), binary_value(seen)),
     ]))?;
-    let mut transcript = Vec::with_capacity(
-        OWNER_KEY_ENROLLMENT_POP_DOMAIN
-            .len()
-            .saturating_add(body.len()),
-    );
-    transcript.extend_from_slice(OWNER_KEY_ENROLLMENT_POP_DOMAIN);
+    let mut transcript = Vec::with_capacity(domain.len().saturating_add(body.len()));
+    transcript.extend_from_slice(domain);
     transcript.extend_from_slice(&body);
     Ok(transcript)
 }
@@ -182,7 +206,7 @@ impl OwnerKeyEnroll {
     /// The act names this vault's target for the key; the entry carries the
     /// primary signature and exactly one cosign, an Ed25519 install key, and
     /// neither is the enrolled key; and the key's proof of possession
-    /// verifies strictly over this vault's challenge.
+    /// verifies strictly over this vault's challenge for the row's kind.
     pub fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
         let vault_id = entry.vault_id.ok_or_else(invalid_authority)?;
         let key = self.public_key().ok_or_else(invalid_authority)?;
@@ -215,10 +239,17 @@ impl OwnerKeyEnroll {
     }
 
     /// The new key's strict Ed25519 signature over the challenge of this
-    /// vault, machine, key, owner, target and `seen`.
+    /// vault, machine, key, owner, target and `seen`, under the possession
+    /// domain of the row's attestation kind.
     fn verify_possession(&self, vault_id: &AuthorityVaultId) -> Result<()> {
         let key = self.public_key().ok_or_else(invalid_authority)?;
+        let domain = if self.is_recovery_authority() {
+            RECOVERY_AUTHORITY_ENROLLMENT_POP_DOMAIN
+        } else {
+            OWNER_KEY_ENROLLMENT_POP_DOMAIN
+        };
         let transcript = possession_transcript(
+            domain,
             vault_id,
             self.machine,
             key,
