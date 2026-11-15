@@ -1146,10 +1146,31 @@ fn a_restricted_selector_does_not_carry_a_row_derived_from_a_kept_call() {
 #[cfg(all(feature = "sync", feature = "test-hooks"))]
 #[test]
 fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
+    assert_selector_withholds_a_claim_born_from_a_kept_call(
+        oneiron::provenance::made_by::MadeByInputRole::Prompt,
+    );
+}
+
+/// R1 review 5 N1: a door that writes a CLAIM from evidence TURNs (the
+/// scoped CLAIM upsert's `evidence_turn_refs`) names them as `Input`, not
+/// `Prompt`; the CLAIM's words came from them all the same.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_row_written_from_a_kept_call_as_evidence() {
+    assert_selector_withholds_a_claim_born_from_a_kept_call(
+        oneiron::provenance::made_by::MadeByInputRole::Input,
+    );
+}
+
+/// An ordinary CLAIM whose birth names A's kept MESSAGE as one input of
+/// `role` never rides the Member's restricted selector; its control, born
+/// the same way from the ordinary MESSAGE, does.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn assert_selector_withholds_a_claim_born_from_a_kept_call(
+    role: oneiron::provenance::made_by::MadeByInputRole,
+) {
     use oneiron::provenance::birth::RowBirth;
-    use oneiron::provenance::made_by::{
-        MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
-    };
+    use oneiron::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByProcess};
     use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
     use oneiron::sync::client::ImportTier;
     use oneiron::sync::replay::{ReplicatedEntity, replay_entity_with_birth};
@@ -1179,9 +1200,9 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
                 .expect("subject PERSON body"),
         )
         .expect("FIXTURE: an ordinary subject PERSON");
-    // One open CLAIM per prompt input, as
+    // One open CLAIM per input, as
     // `selector_born_with_prompt_label::open_record_with_prompts` builds
-    // them, adapted to a single Prompt input in this window.
+    // them, adapted to a single input of `role` in this window.
     let prompt_claim = |prompt: EntityId, label: &str| {
         let row = EntityId::now();
         let mut body = ClaimBody::new(
@@ -1205,10 +1226,7 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
             .expect("FIXTURE: the prompt row exists");
         let birth = RowBirth {
             made_by: MadeBy {
-                inputs: vec![MadeByInput {
-                    row: prompt,
-                    role: MadeByInputRole::Prompt,
-                }],
+                inputs: vec![MadeByInput { row: prompt, role }],
                 process: MadeByProcess {
                     actor: owner,
                     class: MadeByClass::Stated,
@@ -1240,7 +1258,7 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
         assert_eq!(
             vault.row_birth(&row).expect("FIXTURE: read the row birth"),
             Some(birth),
-            "FIXTURE: the {label} CLAIM retains the exact birth with one Prompt input",
+            "FIXTURE: the {label} CLAIM retains the exact birth with one {role:?} input",
         );
         row
     };
@@ -1259,11 +1277,11 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
     });
     assert!(
         carried.contains(&prompted_control),
-        "precondition: the Member restricted window carries the ordinary prompt-born CLAIM prompted_control",
+        "precondition: the Member restricted window carries the ordinary CLAIM prompted_control born from a {role:?} input",
     );
     assert!(
         !carried.contains(&prompted_phone),
-        "LEAK: the Member restricted window carries a CLAIM a model wrote from A's kept MESSAGE",
+        "LEAK: the Member restricted window carries a CLAIM born from A's kept MESSAGE as a {role:?} input",
     );
 }
 
