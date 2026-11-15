@@ -17,6 +17,11 @@
 //!   names D's batch and D's own `green_advanced` completion. Each run reads
 //!   `superseded` on its own entry, never `done`, and the successor batch
 //!   only when its lane reads D's completion receipt.
+//! - That same step completes the reconciliation TASK (ARCH-0050:110; FIX
+//!   QUEUE-RECONCILIATION-TASK-COMPLETION): its result is the resolution
+//!   claim that closed the conflict, and the owner's view of each source
+//!   names D's TASK and work as the run that resolved it. Before that step
+//!   the TASK is open.
 //!
 //! The test plays the host: it captures the witness of each model request
 //! it built, as a host captures the request it serves, and it runs every
@@ -36,14 +41,18 @@ use fixture::{
 use oneiron::agent_def::AgentCeiling;
 use oneiron::claim::PointRead;
 use oneiron::code_run::{RepoRequestWitness, SelfEffect};
+use oneiron::context_board::{TaskBoardStatus, TaskIntentPresence};
+use oneiron::memory::code_doors::CodeConflictViewRequest;
 use oneiron::memory::merge_queue_doors::MergeQueueObserveRequest;
 use oneiron::memory::repo_doors::{
     RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput, RepoProposalResolveInput,
     RepoProposalSubmitInput, RepoQueueEntryView, RepoQueueSuccessor,
 };
 use oneiron::merge_queue::{
-    BatchState, QueueCheckStatus, QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueWork,
+    BatchState, QueueCheckStatus, QueueConflictLink, QueueDriveOutcome, QueueDrivePass,
+    QueueDriveStatus, QueueWork,
 };
+use oneiron::task_verb::TaskTerminalDisposition;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, EntityId, LlmRequest, ModelId, ModelLocality,
     ModelTierRef, ResponseFormat, TierPrecedence, Vault,
@@ -294,14 +303,27 @@ fn served_request_witness() -> TestResult<RepoRequestWitness> {
     Ok(RepoRequestWitness::capture(&request).ok_or("the request has a canonical form")?)
 }
 
-#[test]
-fn each_source_of_a_green_reconciliation_ends_superseded_with_its_own_completion_receipt()
--> TestResult {
-    let repo = RepoFixture::enrolled()?;
+/// The story up to its successor's green, on `repo`: A and B hold on one
+/// reconciliation, C lands, and D, on a TASK of its own, resolves their
+/// conflict and lands green. The hand-off step that ends A and B is the
+/// caller's.
+struct GreenSuccessor {
+    a: AgentRun,
+    b: AgentRun,
+    d: AgentRun,
+    entry_a: RepoQueueEntryView,
+    entry_b: RepoQueueEntryView,
+    entry_c: RepoQueueEntryView,
+    entry_d: RepoQueueEntryView,
+    /// The conflict link A and B carry once staging A found B.
+    link: QueueConflictLink,
+}
+
+fn green_successor(repo: &RepoFixture) -> TestResult<GreenSuccessor> {
     let vault = &repo.vault;
-    let (agent_a, a) = repo_run(&repo, "supersede-agent-a", 0x61, "supersede A")?;
-    let (_, b) = repo_run(&repo, "supersede-agent-b", 0x62, "supersede B")?;
-    let (_, c) = repo_run(&repo, "supersede-agent-c", 0x63, "supersede C")?;
+    let (agent_a, a) = repo_run(repo, "supersede-agent-a", 0x61, "supersede A")?;
+    let (_, b) = repo_run(repo, "supersede-agent-b", 0x62, "supersede B")?;
+    let (_, c) = repo_run(repo, "supersede-agent-c", 0x63, "supersede C")?;
     assert_ne!(A_MATH, MATH_RS);
     assert_ne!(C_LABEL, LABEL_RS);
 
@@ -369,7 +391,7 @@ fn each_source_of_a_green_reconciliation_ends_superseded_with_its_own_completion
     );
 
     // D, on a TASK of its own, resolves the conflict on the new green.
-    let (_, d) = repo_run(&repo, "supersede-agent-d", 0x64, "supersede D")?;
+    let (_, d) = repo_run(repo, "supersede-agent-d", 0x64, "supersede D")?;
     let branch = config
         .driver_target
         .as_ref()
@@ -417,6 +439,65 @@ fn each_source_of_a_green_reconciliation_ends_superseded_with_its_own_completion
         (seen_d.state, seen_d.drive),
         (BatchState::GreenAdvanced, QueueDriveStatus::Done)
     );
+    Ok(GreenSuccessor {
+        a,
+        b,
+        d,
+        entry_a,
+        entry_b,
+        entry_c,
+        entry_d,
+        link,
+    })
+}
+
+/// One hand-off step on A, which the green successor ends.
+fn hand_off(vault: &Vault, story: &GreenSuccessor) -> TestResult {
+    let handed = drive_next(vault, &story.entry_a.batch, |work| {
+        matches!(work, QueueWork::HandoffOverlap { .. })
+    })?
+    .ok_or("the driver's next work on A is its hand-off")?;
+    assert_eq!(handed, QueueDriveOutcome::Changed);
+    Ok(())
+}
+
+/// The reconciliation TASK of `link`'s conflict, as the owner's board
+/// reads it.
+fn reconciliation_row(
+    repo: &RepoFixture,
+    link: &QueueConflictLink,
+) -> TestResult<TaskIntentPresence> {
+    let task = link.task.ok_or("the reconciliation TASK is minted")?;
+    assert_eq!(
+        repo.vault.repo_reconciliation_task(link.conflict)?,
+        Some(task)
+    );
+    let hex = task.to_hex();
+    Ok(repo
+        .owner_memory()
+        .describe_rows()?
+        .intents
+        .into_iter()
+        .find(|row| row.id == hex)
+        .ok_or("the owner's board reads the reconciliation TASK")?)
+}
+
+#[test]
+fn each_source_of_a_green_reconciliation_ends_superseded_with_its_own_completion_receipt()
+-> TestResult {
+    let repo = RepoFixture::enrolled()?;
+    let vault = &repo.vault;
+    let GreenSuccessor {
+        a,
+        b,
+        entry_a,
+        entry_b,
+        entry_c,
+        entry_d,
+        ..
+    } = green_successor(&repo)?;
+    let configs = vault.queue_driver_configurations()?;
+    let config = configs.first().ok_or("the queue is enrolled")?;
 
     // One hand-off step on A ends A and B: D resolved their conflict.
     let handed = drive_next(vault, &entry_a.batch, |work| {
@@ -527,5 +608,96 @@ fn each_source_of_a_green_reconciliation_ends_superseded_with_its_own_completion
     let queue = vault.queue_driver_open(config)?;
     assert!(queue.cancel(&entry_a.batch).is_err());
     assert_eq!(queue.batch(&entry_a.batch)?.state, BatchState::Superseded);
+    Ok(())
+}
+
+#[test]
+fn reconciliation_task_completes_with_the_resolution_that_closed_its_conflict() -> TestResult {
+    let repo = RepoFixture::enrolled()?;
+    let vault = &repo.vault;
+    let story = green_successor(&repo)?;
+
+    // D's green alone settles nothing: the hand-off step decides it.
+    let open = reconciliation_row(&repo, &story.link)?;
+    assert_eq!(
+        (open.terminal_disposition, open.result_ref),
+        (None, None),
+        "the reconciliation TASK is open until its conflict's hand-off ends"
+    );
+
+    hand_off(vault, &story)?;
+
+    // D's resolution is the one claim that closed the conflict, and the
+    // reconciliation TASK completed with it as its result.
+    let history = repo.owner_memory().code_conflict_history_as(
+        &repo.owner_proof,
+        CodeConflictViewRequest {
+            branch_subject: story.link.branch_subject,
+        },
+    )?;
+    let closing: Vec<_> = history
+        .resolved
+        .iter()
+        .filter(|row| row.conflict == story.link.conflict)
+        .map(|row| row.resolution)
+        .collect();
+    assert_eq!(closing.len(), 1, "one claim resolved it: {closing:?}");
+    let done = reconciliation_row(&repo, &story.link)?;
+    assert_eq!(
+        (done.terminal_disposition, done.status),
+        (
+            Some(TaskTerminalDisposition::Completed),
+            TaskBoardStatus::Done
+        )
+    );
+    assert_eq!(done.result_ref, Some(closing[0].to_hex()));
+
+    // The step settled the TASK once: no source holds a hand-off still.
+    assert_eq!(
+        drive_next(vault, &story.entry_b.batch, |work| {
+            matches!(work, QueueWork::HandoffOverlap { .. })
+        })?,
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn the_owner_reads_the_run_whose_green_resolved_the_conflict() -> TestResult {
+    let repo = RepoFixture::enrolled()?;
+    let vault = &repo.vault;
+    let story = green_successor(&repo)?;
+    hand_off(vault, &story)?;
+
+    let done = reconciliation_row(&repo, &story.link)?;
+    let observed = repo.owner_memory().merge_queue_observe_as(
+        &repo.owner_proof,
+        MergeQueueObserveRequest {
+            repo: repo.repo,
+            batches: vec![story.entry_a.batch.clone(), story.entry_b.batch.clone()],
+        },
+    )?;
+    // The owner reads each source's hand-off as the verb answers it.
+    let wire = serde_json::to_value(&observed.drive)?;
+    let sources = wire.as_array().ok_or("the drive views are a list")?;
+    assert_eq!(sources.len(), 2);
+    let result = done
+        .result_ref
+        .ok_or("the reconciliation TASK names its result")?;
+    for drive in sources {
+        let conflicts = drive["conflicts"]
+            .as_array()
+            .ok_or("each source lists its conflicts")?;
+        let [conflict] = conflicts.as_slice() else {
+            return Err(format!("one conflict per source: {conflicts:?}").into());
+        };
+        assert_eq!(conflict["conflict"], story.link.conflict.to_hex());
+        assert_eq!(conflict["resolution_batch"], story.entry_d.batch.as_str());
+        // D's run made the resolution: its TASK and its work, and the claim
+        // the reconciliation TASK completed with.
+        assert_eq!(conflict["resolved_by_task"], story.d.task.to_hex());
+        assert_eq!(conflict["resolved_by_work"], story.d.work.to_hex());
+        assert_eq!(conflict["resolution_claim"], result.as_str());
+    }
     Ok(())
 }
