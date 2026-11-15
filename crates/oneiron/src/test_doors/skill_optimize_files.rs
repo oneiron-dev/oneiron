@@ -148,10 +148,17 @@ const JUDGMENT_KINDS: [&str; 7] = [
     "response_score",
 ];
 
+/// The goal axis the marker judge scores as it scores instructions: 0.75
+/// when the arm's instructions name the marker, 0.40 otherwise. A goal that
+/// names it as a floor fails the offline preflight exactly when a draft
+/// drops the marker from what the judge reads.
+pub const MARKER_FLOOR_AXIS: &str = "marker_floor";
+
 /// A held-out judge that scores instructions naming its marker phrase 0.75
-/// and every other instruction text 0.40, and answers each other judgment
-/// kind the gate asks neutrally: the proposed text wins exactly when the
-/// judge read the marker in it.
+/// and every other instruction text 0.40, on the gate's score and on the
+/// goal axis [`MARKER_FLOOR_AXIS`], and answers each other judgment kind
+/// the gate asks neutrally: the proposed text wins exactly when the judge
+/// read the marker in it.
 pub struct MarkerScorer {
     provider: MarkerProvider,
     wording: BTreeMap<String, String>,
@@ -168,7 +175,12 @@ pub fn marker_scorer(marker: &str) -> MarkerScorer {
         },
         wording: JUDGMENT_KINDS
             .into_iter()
-            .map(|kind| (kind.to_owned(), format!("fixture {kind} judgment")))
+            .map(str::to_owned)
+            .chain([format!("axis.{MARKER_FLOOR_AXIS}")])
+            .map(|kind| {
+                let text = format!("fixture {kind} judgment");
+                (kind, text)
+            })
             .collect(),
         deadline: RetrievalDeadline::after(Duration::from_secs(3600)),
         principal: EntityId::now(),
@@ -212,8 +224,9 @@ impl DecisionProvider for MarkerProvider {
 
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         let kind = judgment_kind(JUDGE_REVISION, call.question, call.state);
+        let marker_axis = format!("axis.{MARKER_FLOOR_AXIS}");
         match kind.as_deref() {
-            Some("score") => {
+            Some(kind) if kind == "score" || kind == marker_axis => {
                 let instructions = call
                     .state
                     .get("instructions")
