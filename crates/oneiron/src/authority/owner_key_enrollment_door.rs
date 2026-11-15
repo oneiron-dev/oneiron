@@ -597,6 +597,11 @@ impl Vault {
     /// checkpoint image), the smallest entry for a key enrolled on two
     /// branches, joined to the roster now, a revoked or ineligible key
     /// included. Empty before any enrollment.
+    ///
+    /// A row also says what every counted enrollment of its key says, the
+    /// listed one or not ([`EnrolledOwnerKey::device_machines`],
+    /// [`EnrolledOwnerKey::recovery_authority`]). It is the one reading of
+    /// those two facts: the removal doors decide by the same rows.
     pub fn enrolled_owner_keys(&self) -> Result<Vec<EnrolledOwnerKey>> {
         let txn = self.store.env.read_txn()?;
         self.enrolled_owner_keys_in_txn(&txn)
@@ -839,8 +844,11 @@ impl Vault {
     }
 }
 
-/// Keeps `entry`, at `hash`, in `keys` when it is a valid owner key
-/// enrollment on `fold` whose key no smaller entry already stands for.
+/// Adds `entry`, at `hash`, to the row `keys` holds of the key it enrols,
+/// when it is a valid owner key enrollment on `fold`. The row lists the
+/// smallest such entry of the key, and gathers what every one of them says
+/// of it: the machine a device's enrollment names, and the recovery root's
+/// mark. Any other entry adds nothing.
 fn keep_enrolled(
     keys: &mut BTreeMap<[u8; 32], EnrolledOwnerKey>,
     fold: &AuthorityFold,
@@ -857,13 +865,9 @@ fn keep_enrolled(
     if !fold.valid_entries.contains(&hash) {
         return;
     }
-    if keys.get(public_key).is_some_and(|kept| kept.entry <= hash) {
-        return;
-    }
-    let device = fold.roster.get(&enroll.device.key);
     let kind = EnrolledOwnerKeyKind::of(enroll);
-    keys.insert(
-        *public_key,
+    let row = keys.entry(*public_key).or_insert_with(|| {
+        let device = fold.roster.get(&enroll.device.key);
         EnrolledOwnerKey {
             entry: hash,
             machine: enroll.machine,
@@ -875,11 +879,22 @@ fn keep_enrolled(
                 .is_some_and(|device| super::checkpoint_policy::selectable_root(device, managed)),
             at: entry.ts,
             kind,
-            device_machines: match kind {
-                EnrolledOwnerKeyKind::Device => BTreeSet::from([enroll.machine]),
-                EnrolledOwnerKeyKind::RecoveryAuthority => BTreeSet::new(),
-            },
-            recovery_authority: kind == EnrolledOwnerKeyKind::RecoveryAuthority,
-        },
-    );
+            device_machines: BTreeSet::new(),
+            recovery_authority: false,
+        }
+    });
+    if hash < row.entry {
+        row.entry = hash;
+        row.machine = enroll.machine;
+        row.carrier = enroll.carrier;
+        row.owner = enroll.act.owner;
+        row.at = entry.ts;
+        row.kind = kind;
+    }
+    match kind {
+        EnrolledOwnerKeyKind::Device => {
+            row.device_machines.insert(enroll.machine);
+        }
+        EnrolledOwnerKeyKind::RecoveryAuthority => row.recovery_authority = true,
+    }
 }

@@ -38,7 +38,7 @@
 //! device's key, and while it lives it counts as the root's key, never as a
 //! key that remains on a device.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use super::machine_answers::AnswerAct;
 use super::owner_key_enrollment_door::EntrySigner;
@@ -186,11 +186,7 @@ impl Vault {
             .into_iter()
             .find(|enrolled| enrolled.public_key == key)
             .ok_or_else(|| authority_refused(NOT_ENROLLED))?;
-        let held_on_a_device = self
-            .counted_enrolments_in_txn(&txn, &fold)?
-            .get(&key)
-            .is_some_and(|counted| !counted.device_machines.is_empty());
-        if !held_on_a_device {
+        if enrolled.device_machines.is_empty() {
             return Err(authority_refused(RECOVERY_ROOT_KEY));
         }
         if !enrolled.live || !fold.proves_owner_acts(&AuthorityKey::Ed25519(key), self.is_hosted())
@@ -348,8 +344,8 @@ impl Vault {
 
     /// The live keys that a counted enrolment names as a device's key for
     /// `machine` and that prove for the owner on `fold`, ascending by key.
-    /// Each counted enrolment speaks for itself, whichever one
-    /// [`Self::enrolled_owner_keys`] lists for the key: a key enrolled on
+    /// Each counted enrolment speaks for itself, whichever one the key's
+    /// row lists ([`EnrolledOwnerKey::device_machines`]): a key enrolled on
     /// two branches for two machines is among both machines' keys, since it
     /// proved it is held on each, and a key one enrolment names as this
     /// machine's is among them although another marks it the recovery
@@ -362,44 +358,15 @@ impl Vault {
         machine: EntityId,
     ) -> Result<Vec<EnrolledOwnerKey>> {
         let hosted = self.is_hosted();
-        let counted = self.counted_enrolments_in_txn(txn, fold)?;
         Ok(self
             .enrolled_owner_keys_in_txn(txn)?
             .into_iter()
             .filter(|enrolled| {
                 enrolled.live
-                    && counted
-                        .get(&enrolled.public_key)
-                        .is_some_and(|counted| counted.device_machines.contains(&machine))
+                    && enrolled.device_machines.contains(&machine)
                     && fold.proves_owner_acts(&AuthorityKey::Ed25519(enrolled.public_key), hosted)
             })
             .collect())
-    }
-
-    /// What the counted owner key enrolments on `fold` say of each key they
-    /// name, from the rows this vault keeps (stored, or carried by an
-    /// adopted checkpoint image): every enrolment of a key, not only the one
-    /// [`Self::enrolled_owner_keys`] lists for it.
-    fn counted_enrolments_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        fold: &AuthorityFold,
-    ) -> Result<BTreeMap<[u8; 32], CountedEnrolments>> {
-        let mut keys = BTreeMap::new();
-        let mut stored = BTreeSet::new();
-        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
-            let entry = decode_authority_log_entry_body(&body)?;
-            let hash = authority_entry_hash(&entry)?;
-            stored.insert(hash);
-            count_enrolment(&mut keys, fold, hash, &entry);
-        }
-        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
-        {
-            for (hash, entry) in evidence.carried_past(&stored) {
-                count_enrolment(&mut keys, fold, *hash, entry);
-            }
-        }
-        Ok(keys)
     }
 
     /// The owner keys a removal of `machine` that stands ends on this
@@ -466,10 +433,10 @@ impl Vault {
             .map(|enrolled| AuthorityKey::Ed25519(enrolled.public_key))
             .collect();
         let recovery_roots: BTreeSet<AuthorityKey> = self
-            .counted_enrolments_in_txn(txn, fold)?
+            .enrolled_owner_keys_in_txn(txn)?
             .into_iter()
-            .filter(|(_, counted)| counted.recovery_authority)
-            .map(|(key, _)| AuthorityKey::Ed25519(key))
+            .filter(|enrolled| enrolled.recovery_authority)
+            .map(|enrolled| AuthorityKey::Ed25519(enrolled.public_key))
             .collect();
         let mut remaining = RemainingOwnerKeys::default();
         for key in fold.roster.keys() {
@@ -525,42 +492,5 @@ impl Vault {
             });
         }
         Ok(ended)
-    }
-}
-
-/// What the counted enrolments of one owner key say of it, taken together. A
-/// key enrolled on two branches may be named for two machines, or as a
-/// device's key by one enrolment and as the recovery root's by the other.
-#[derive(Debug, Default)]
-struct CountedEnrolments {
-    /// The machines its enrolments as a device's key name.
-    device_machines: BTreeSet<EntityId>,
-    /// An enrolment marks it the recovery root's authority key.
-    recovery_authority: bool,
-}
-
-/// Adds `entry`, at `hash`, to what `keys` holds of the key it enrols, when
-/// it is an owner key enrolment the fold counts. Any other entry adds
-/// nothing.
-fn count_enrolment(
-    keys: &mut BTreeMap<[u8; 32], CountedEnrolments>,
-    fold: &AuthorityFold,
-    hash: AuthorityEntryHash,
-    entry: &AuthorityLogEntry,
-) {
-    let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
-        return;
-    };
-    let Some(key) = enroll.public_key() else {
-        return;
-    };
-    if !fold.valid_entries.contains(&hash) {
-        return;
-    }
-    let counted = keys.entry(*key).or_default();
-    if enroll.is_recovery_authority() {
-        counted.recovery_authority = true;
-    } else {
-        counted.device_machines.insert(enroll.machine);
     }
 }
