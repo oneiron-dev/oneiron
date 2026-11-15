@@ -15,7 +15,7 @@ use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::store::Store;
 pub(super) use crate::store::decision_question_watches::{RESTS_ON, UNIT_WATCH};
-use crate::{EntityId, Error, Result};
+use crate::{EntityId, Error, Result, Vault};
 
 /// Key of one predicate watcher registration. Not fixed-width: a variable-length predicate,
 /// then a NUL separator, then the watching question's id16. `OutcomeBinding::validate` refuses a
@@ -165,15 +165,33 @@ fn predicate(source: &OutcomeSource) -> &str {
     }
 }
 
+/// Where an outcome derivation judges the lane a question's version was
+/// saved under (FIX SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). The
+/// principal's own lane needs no judgment beside its reader's. A narrowed
+/// lane is rebuilt over the principal's key, as refresh rebuilds it (OF-506).
+#[derive(Clone, Copy)]
+pub(super) enum SavedLaneJudge<'a> {
+    /// A vault handle: a narrowed lane is rebuilt in the derivation's own
+    /// snapshot, and each row the label rests on is read inside it.
+    Vault(&'a Vault),
+    /// A materializing batch, which holds only the store: a narrowed lane
+    /// cannot be rebuilt here, so it derives no label. A projection that
+    /// holds the vault (a window's close, a manual projection) derives it
+    /// under the lane, and every later read judges it again.
+    Deferred,
+}
+
 /// Called after the batch's final entity and edge state is installed, on both
 /// ordinary writes and replicated batches. Question metadata remains local.
+/// A question saved under a narrowed lane derives no label here
+/// (`SavedLaneJudge::Deferred`).
 pub(crate) fn project_arrivals_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
     enqueue_arrivals(store, txn, ids)?;
-    project(store, txn, ids, None)
+    project(store, txn, ids, None, SavedLaneJudge::Deferred)
 }
 
 /// Queues the batch's actual record and topology changes while projecting
@@ -185,7 +203,7 @@ pub(crate) fn project_arrivals_for_changes_in_txn(
     changed_ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
     enqueue_arrivals(store, txn, changed_ids)?;
-    project(store, txn, materialized_ids, None)
+    project(store, txn, materialized_ids, None, SavedLaneJudge::Deferred)
 }
 
 fn enqueue_arrivals(
@@ -234,28 +252,37 @@ fn enqueue_arrivals(
     Ok(())
 }
 
+/// The facts of `ids` projected for `question` alone, through `vault`: a
+/// narrowed saved lane is judged here ([`SavedLaneJudge::Vault`]).
 pub(super) fn project_question_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
     question: EntityId,
 ) -> Result<usize> {
     project(
-        store,
+        &vault.store,
         txn,
         ids,
         Some(&std::collections::BTreeSet::from([question])),
+        SavedLaneJudge::Vault(vault),
     )
 }
 
 /// [`project_question_in_txn`] for several questions over one pass of `ids`.
 pub(super) fn project_questions_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
     questions: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
-    project(store, txn, ids, Some(questions))
+    project(
+        &vault.store,
+        txn,
+        ids,
+        Some(questions),
+        SavedLaneJudge::Vault(vault),
+    )
 }
 
 fn project(
@@ -263,6 +290,7 @@ fn project(
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
     only: Option<&std::collections::BTreeSet<EntityId>>,
+    lane: SavedLaneJudge<'_>,
 ) -> Result<usize> {
     if QUESTION_WATCH.iter_from(store, txn, &[])?.next().is_none() {
         return Ok(0);
@@ -300,19 +328,16 @@ fn project(
             .into_iter()
             .map(|(_, id)| id)
             .collect();
+        let fact = Fact {
+            id: *id,
+            body: &body,
+            occurred_at: header.occurred_start,
+        };
         for question in watchers {
             if only.is_some_and(|only| !only.contains(&question)) {
                 continue;
             }
-            count += project_fact(
-                store,
-                txn,
-                &policy,
-                question,
-                *id,
-                &body,
-                header.occurred_start,
-            )?;
+            count += project_fact(store, txn, &policy, lane, question, &fact)?;
         }
     }
     Ok(count)
@@ -322,21 +347,15 @@ fn project_fact(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     policy: &PolicyManifestResolution,
+    lane: SavedLaneJudge<'_>,
     question: EntityId,
-    fact: EntityId,
-    body: &ClaimBody,
-    occurred_at: u64,
+    fact: &Fact<'_>,
 ) -> Result<usize> {
     let answers: Vec<AnswerRecord> = QUESTION_ANSWER
         .scan_from(store, txn, &family_prefix(question, b"answer"))?
         .into_iter()
         .map(|(_, answer)| answer)
         .collect();
-    let fact = Fact {
-        id: fact,
-        body,
-        occurred_at,
-    };
     let mut count = 0;
     for answer in answers {
         let version = answer.decision.receipt.question_version;
@@ -351,7 +370,7 @@ fn project_fact(
         else {
             continue;
         };
-        let Some(label) = evaluate_fact(store, txn, policy, &record, &answer, &fact)? else {
+        let Some(label) = evaluate_fact(store, txn, policy, lane, &record, &answer, fact)? else {
             continue;
         };
         let label_key = LabelKey {
@@ -376,10 +395,13 @@ pub(super) struct Fact<'a> {
 
 /// Admission and reads use the same predicate, subject, link, horizon and
 /// privacy checks. A mutable fact cannot move an old label to another unit.
+/// Every row the label rests on also reads inside the lane `record` was
+/// saved under, as `lane` judges it ([`saved_lane_reads_in_txn`]).
 pub(super) fn evaluate_fact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
+    lane: SavedLaneJudge<'_>,
     record: &QuestionRecord,
     answer: &AnswerRecord,
     fact: &Fact<'_>,
@@ -452,12 +474,24 @@ pub(super) fn evaluate_fact(
     {
         return Ok(None);
     }
-    for source in crate::reaction::outcome_sources(body)? {
-        if !reader.readable_in_txn(txn, policy, &source)? {
+    let sources = crate::reaction::outcome_sources(body)?;
+    for source in &sources {
+        if !reader.readable_in_txn(txn, policy, source)? {
             return Ok(None);
         }
     }
     if !answer_live(store, txn, policy, &reader, answer)? {
+        return Ok(None);
+    }
+    // The reader's own live authority (FIX 7461) adds nothing outside the
+    // saved lane: the lane binds each row beside it.
+    let rows: Vec<EntityId> = [fact.id, answer.unit, subject]
+        .into_iter()
+        .chain(other_endpoint)
+        .chain(sources)
+        .chain([answer.claim])
+        .collect();
+    if !saved_lane_reads_in_txn(lane, txn, record, &rows)? {
         return Ok(None);
     }
     let value = match &binding.source {
@@ -498,6 +532,52 @@ pub(super) fn evaluate_fact(
         noise_weight: binding.noise_weight,
         occurred_at: fact.occurred_at,
     }))
+}
+
+/// Whether the lane `record`'s version was saved under reads every one of
+/// `rows` in `txn`, as `lane` judges it (FIX
+/// SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). The principal's own lane reads
+/// them as the question's reader judges them, so it adds nothing here. A
+/// narrowed lane is rebuilt over the principal's key as refresh rebuilds it
+/// (OF-506): held to its frozen bounds, reading nothing once its credential
+/// is no longer live. Its claims are read at every status: the derivation
+/// keeps its own status checks. Without a vault handle a narrowed lane reads
+/// nothing ([`SavedLaneJudge::Deferred`]), and so does one whose principal's
+/// row is gone.
+///
+/// # Errors
+/// A store, fold, clock or decode failure rebuilding the lane or reading a
+/// row.
+pub(super) fn saved_lane_reads_in_txn(
+    lane: SavedLaneJudge<'_>,
+    txn: &heed::RoTxn<'_>,
+    record: &QuestionRecord,
+    rows: &[EntityId],
+) -> Result<bool> {
+    if record.read_lane.is_principal() {
+        return Ok(true);
+    }
+    let SavedLaneJudge::Vault(vault) = lane else {
+        return Ok(false);
+    };
+    let principal = record.principal;
+    let key = match super::refresh::source_actor_key(vault, txn, principal, None) {
+        Ok(key) => key.require_access_grants(Some(principal)),
+        Err(Error::EntityNotFound) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let saved = super::reader_authority::question_lane(
+        vault,
+        record.read_lane.narrow_in_txn(vault, txn, key)?,
+    )
+    .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    let policy = saved.live_policy_manifest_in(txn)?;
+    for row in rows {
+        if !saved.is_ref_readable_with_policy_in(txn, &policy, row)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether `answer`'s claim still stands as the prediction it recorded: live,
