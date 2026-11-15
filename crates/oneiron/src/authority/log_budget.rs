@@ -12,9 +12,10 @@
 //! every sign-in mints one, so a busy owner's log gains thousands a year.
 //! Nor does the owner's will this install carries under its own install key
 //! (FIX 7930): known by key possession, never by a local or replicated flag.
-//! Any other key a slip issuer's consent vouches for stores past the
-//! `authority_log_signer_bound` policy row too: the count only asks, through
-//! a typed check, and holds no row (FIX 8564, 8876). An owner anchor this
+//! Under the owner's reserve (below), any other key a slip issuer's consent
+//! vouches for stores past the `authority_log_signer_bound` policy row too:
+//! the count only asks, through a typed check, and holds no row (FIX 8564,
+//! 8876). An owner anchor this
 //! install does not pin is a stranger, since a root needs nothing but a
 //! fresh key: every stranger's row shares that one row and waits past it,
 //! never refused (world privacy P6b, r23). The fold refuses only a log whose
@@ -28,8 +29,9 @@
 //! waits, never refused, and the owner's work still lands. One admitted
 //! machine that keeps signing then stops at the reserve, and the owner's
 //! removal of it still folds. A waiting row lands on the next drain once the
-//! owner raises the floor's row or a checkpoint image ends the rows that
-//! filled it; until then a typed check names the reserve.
+//! owner raises the floor's row; until then a typed check names the reserve.
+//! An adopted checkpoint image does not lower the projection: the door counts
+//! the rows it covers as stored rows.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -77,8 +79,11 @@ const FOLD_MEMORY_FLOOR_MIN_BYTES: u64 = 1024 * 1024 * 1024;
 /// The owner's reserve under the memory floor is the floor divided by this:
 /// an eighth, so a log near an 8 GiB floor still has 1 GiB for the owner's
 /// work once every other row waits. One more row past the reserve's start
-/// projects at most 16 KiB plus 640 bytes a stored row, which the reserve
-/// holds whenever the stored log is under the floor.
+/// projects at most 16 KiB plus 640 bytes for each row it can have as an
+/// ancestor: each stored row and each distinct missing parent. On a floor at
+/// or above the default's least (1 GiB) the reserve holds several such rows
+/// even when every stored row is an ancestor of each; a floor row set to a
+/// few hundred KiB can leave it too small for one.
 const FOLD_MEMORY_OWNER_RESERVE_DIVISOR: u64 = 8;
 
 /// Runs `body` with the signer bound and the row and pair headroom rows
@@ -548,7 +553,8 @@ pub(crate) enum AuthorityDoor {
 /// The door's verdict on storing `entry`, at every door, local or
 /// replicated. A row already stored always lands. The owner's work, a row a
 /// slip issuer signs or cosigns, always lands, but a handoff only when a
-/// slip issuer signs it. Any other vouched key's row lands too: past the
+/// slip issuer signs it. Under the owner's reserve, any other vouched key's
+/// row lands too: past the
 /// `authority_log_signer_bound` row its count only asks
 /// ([`AUTHORITY_LOG_SIGNER_COUNT_ADVISORY`]), so a revocation lands as every
 /// other row does. A stranger's row, which an anchor this install does not
@@ -579,8 +585,7 @@ pub(crate) fn authority_door(
     // log past the memory floor folds to no root, and then the owner's own
     // removal of the key that filled it cannot fold. So past the reserve
     // only the owner's work lands; every other row waits for the owner to
-    // raise the floor or for a checkpoint image to end the rows that filled
-    // it.
+    // raise the floor.
     if view.projected_bytes > owner_reserve_start(store, txn)?
         && !owner_work(store, txn, &view.structure, entry)?
     {
@@ -729,8 +734,7 @@ impl AuthorityLogCheck {
     /// The stored log's projected fold peak passed the
     /// `authority_log_fold_memory_floor` row less the owner's reserve under
     /// it: every row but the owner's work waits until the owner raises that
-    /// row or a checkpoint image ends the rows that filled it, and then lands
-    /// on the next drain.
+    /// row, and then lands on the next drain.
     pub const OWNER_RESERVE: &'static str = "authority_log_owner_reserve";
     /// The scope of a headroom check on counted rows.
     pub const ROWS: &'static str = "rows";

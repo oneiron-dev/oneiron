@@ -61,7 +61,8 @@ thread_local! {
 enum PendingLanding {
     /// Stored: the rows left the evidence in the same commit.
     Landed,
-    /// The fold with them still needs history: they stay.
+    /// The fold with them still needs history, or the door holds them at a
+    /// bound (`AuthorityLogFull`, `AuthorityLogSignerPending`): they stay.
     Waiting,
     /// The fold with them answers and the door refuses them for something
     /// other than history.

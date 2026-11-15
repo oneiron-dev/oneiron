@@ -10,8 +10,8 @@
 //! log's projected fold peak would pass the floor less the reserve, a row that
 //! is not the owner's work waits at the door (`AuthorityLogFull`; a replica
 //! retries it on every drain, never refused), while the owner's work still
-//! lands: a row a slip issuer signs or cosigns, and the owner's will this
-//! install carries. The log stays under its floor, the owner removes the
+//! lands: a row a slip issuer signs or cosigns, a row an anchor this install
+//! takes as its own signs, and the owner's will this install carries. The log stays under its floor, the owner removes the
 //! machine, and a waiting row lands once the owner raises the floor.
 //!
 //! The owner's work also covers what it writes under this install's key
@@ -25,10 +25,10 @@
 //! names the reserve, and the same import lands whole once the owner raises
 //! the floor.
 //!
-//! Red on main: the first, second and fourth tests (every flood row lands,
-//! the fold passes its floor, and the removal errors; no row waits). The
-//! third is green on main, where no row waits, and guards the reserve's
-//! owner work.
+//! Red on main: all four, since main has no reserve. The first passes its
+//! floor and the removal errors; the second, third and fourth find no row
+//! waiting at the door. The third guards that the owner's key work lands
+//! past the reserve, which only the head has.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve`.
 

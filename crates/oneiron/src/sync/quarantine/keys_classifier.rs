@@ -213,7 +213,8 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::AuthorityLogStoreKeyMismatch
         // H72: a remote row whose signer no folded row admitted, or that no
         // owner key signed, waits for that admission; one past its signer's
-        // bound waits for the owner to raise it. Both are judgements of the
+        // bound, or past the owner's reserve under the fold memory floor,
+        // waits for the owner to raise that row. Both are judgements of the
         // remote op, never local corruption, and both keep a retry marker.
         | ErrorKind::AuthorityLogSignerPending
         | ErrorKind::AuthorityLogFull

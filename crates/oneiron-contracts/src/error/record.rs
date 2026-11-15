@@ -389,9 +389,11 @@ pub enum RecordError {
     )]
     AuthorityLogSignerPending { id: EntityId },
     /// Storing this AUTHORITY_LOG row would take its signer, or the log's
-    /// handoffs, past the pinned fold bound (H72). Nothing was written; a
-    /// slip issuer's slip ops, and the rows it signs that only restrict
-    /// authority, are never refused this way.
+    /// handoffs, past the pinned fold bound (H72), or the log past the
+    /// owner's reserve under its fold memory floor, where only the owner's
+    /// work lands ([AUTHORITY-LOG-SIGNER-FLOOD]). Nothing was written, and
+    /// the row may be offered again; a slip issuer's slip ops, and the rows
+    /// it signs that only restrict authority, are never refused this way.
     #[error(
         "authority log at its bound for signer {signer}; row {} not stored",
         id.to_hex()
