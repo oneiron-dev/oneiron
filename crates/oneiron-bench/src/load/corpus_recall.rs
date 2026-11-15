@@ -26,8 +26,9 @@
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
+use oneiron_base::unix_seconds_now;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -220,13 +221,6 @@ fn summary(samples: &[f64]) -> Value {
         "max_ms": sorted.last(),
         "mean_ms": mean,
     })
-}
-
-/// Seconds since the epoch, for the report.
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
 }
 
 /// The ids, kinds and order of a pack's items, and the same over content.
@@ -619,7 +613,7 @@ fn execute(plan: &Plan) -> Result<(), String> {
     let report = json!({
         "bench": "oneiron-bench load corpus-recall v1",
         "label": plan.label,
-        "started_unix": unix_now(),
+        "started_unix": unix_seconds_now(),
         "server_bin": plan.server.display().to_string(),
         "seeded_from": plan.seeded.as_ref().map(|p| p.display().to_string()),
         "corpus": plan.corpus.display().to_string(),

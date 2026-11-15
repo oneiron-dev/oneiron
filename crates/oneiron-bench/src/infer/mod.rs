@@ -36,7 +36,7 @@ mod workers;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard};
 use serde_json::{Value as JsonValue, json};
@@ -82,13 +82,6 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let mut name = OsString::from(path.as_os_str());
     name.push(suffix);
     PathBuf::from(name)
-}
-
-fn unix_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
 }
 
 fn key(arm_id: &str, case: &Case, rep: u32) -> Key {
@@ -413,7 +406,10 @@ impl Run<'_> {
                 &rt,
             )?,
             (Transport::OwnServer, Some(server)) => {
-                let work = sibling(&args.out, &format!(".server-{}", unix_ms()));
+                let work = sibling(
+                    &args.out,
+                    &format!(".server-{}", oneiron_base::unix_millis_now()),
+                );
                 arms::own_server(self.models, server, &work, &rt, &reaper)?
             }
             (Transport::OwnServer, None) => return Err("own-server needs --server".to_owned()),

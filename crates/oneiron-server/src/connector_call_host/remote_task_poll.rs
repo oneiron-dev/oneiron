@@ -52,6 +52,7 @@ use oneiron::outbound_intent_ledger::{
     DueRemoteTask, IntentLedgerError, IntentLedgerResult, RemoteTaskAnswer, RemoteTaskCredential,
     RemoteTaskEnd, RemoteTaskFormQuestion, RemoteTaskSessionEnd,
 };
+use oneiron_base::unix_millis_now;
 
 use super::live_exchange::Posted;
 use super::*;
@@ -80,14 +81,6 @@ enum Polled {
     Gone,
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 /// One pass over the Deferred rows whose tasks are due a poll, then the
 /// parked questions' reconciliation. Blocking: it sends, so run it on a
 /// blocking worker (the connector settler does).
@@ -114,11 +107,11 @@ fn poll_due_remote_tasks(server: &SyncServer) {
         tracing::warn!(%error, "remote task questions the owner answered not read");
         Vec::new()
     });
-    if let Err(error) = vault.remote_task_polls_due_at(&ready, now_ms()) {
+    if let Err(error) = vault.remote_task_polls_due_at(&ready, unix_millis_now()) {
         tracing::warn!(%error, "remote tasks the owner answered not made due");
     }
     let due = vault
-        .remote_tasks_due(now_ms(), POLLS_PER_PASS)
+        .remote_tasks_due(unix_millis_now(), POLLS_PER_PASS)
         .unwrap_or_else(|error| {
             tracing::warn!(%error, "remote tasks due a poll not read");
             Vec::new()
@@ -149,7 +142,7 @@ fn poll_due_remote_tasks(server: &SyncServer) {
             Ok(Polled::Running {
                 status,
                 poll_after_ms,
-            }) => vault.remote_task_polled(&task.intent, poll_after_ms, status, now_ms()),
+            }) => vault.remote_task_polled(&task.intent, poll_after_ms, status, unix_millis_now()),
             Ok(Polled::Ended(end, mut live)) => {
                 vault.settle_polled_remote_task(&task.intent, end).map(|_| {
                     // The ledger holds the end: the task's session ends. Its
@@ -166,7 +159,7 @@ fn poll_due_remote_tasks(server: &SyncServer) {
             Ok(Polled::Gone) => Ok(()),
             Err(reason) => {
                 tracing::info!(%intent, reason, "remote task not polled; it waits for the next pass");
-                vault.remote_task_polled(&task.intent, None, reason, now_ms())
+                vault.remote_task_polled(&task.intent, None, reason, unix_millis_now())
             }
         };
         if let Err(error) = recorded {

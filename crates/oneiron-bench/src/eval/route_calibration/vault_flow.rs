@@ -21,7 +21,7 @@ use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use super::cases::{Case, GOLD_FALSE, GOLD_TRUE, TRUTH_PREDICATE};
 use super::house_read::HouseReadRung;
 use super::report::{CaseRow, CaseStatus};
-use super::{failure, failure_from, unix_now};
+use super::{failure, failure_from, unix_seconds_now};
 use crate::eval::EvalResult;
 
 /// Every case's unit: a NOTE of this shipped kind holding the case's body.
@@ -117,7 +117,7 @@ impl BenchVault {
             &self.vault,
             self.actor(),
             definition,
-            unix_now(),
+            unix_seconds_now(),
         )?)
     }
 
@@ -137,7 +137,7 @@ impl BenchVault {
             valid_from: None,
             valid_to: None,
             // An outcome counts only at or after the answer it labels.
-            occurred_at: Some(unix_now().max(answer.answered_at)),
+            occurred_at: Some(unix_seconds_now().max(answer.answered_at)),
             learned_at: None,
             salience: None,
             confidence_details: None,
@@ -278,7 +278,7 @@ impl CaseRun<'_> {
             input,
             frontier,
             decision,
-            unix_now(),
+            unix_seconds_now(),
         )
         .map_err(|error| (CaseStatus::AdmitFailed, error.to_string()))?;
         row.answer = Some(answer.claim.to_hex());

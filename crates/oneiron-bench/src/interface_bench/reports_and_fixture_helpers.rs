@@ -6,8 +6,8 @@ use super::config_types::{
     FullRunReport, PER_TASK_TOKEN_CEILING, PERSON_COUNT, ParetoPoint, RunSettings, SCORER_VERSION,
     STANCES, SmokeRunRow, TOPIC_COUNT, TaskBundle, TaskClass, TokenBurnExtrapolation,
 };
+pub(super) use oneiron_base::unix_seconds_now;
 use std::borrow::Borrow;
-use std::time::{SystemTime, UNIX_EPOCH};
 fn usage_reason(tokens: Option<u32>) -> Option<String> {
     tokens
         .is_none()
@@ -98,7 +98,7 @@ pub(super) fn full_run_report(
         campaign: CAMPAIGN_ID.into(),
         model: settings.model.clone(),
         provider: settings.provider_lock(),
-        run_id: format!("interface-bench-1-full-{}", unix_now()),
+        run_id: format!("interface-bench-1-full-{}", unix_seconds_now()),
         task_count: bundle.full_tasks.len(),
         reps_per_task_arm: settings.full_reps,
         expected_runs: settings.full_run_count(),
@@ -370,10 +370,4 @@ pub(super) fn stance_for(person_index: usize, topic_index: usize) -> String {
 pub(super) fn superseded_by_for(person_index: usize, topic_index: usize) -> Option<String> {
     (topic_index.is_multiple_of(25) && topic_index + 1 < TOPIC_COUNT)
         .then(|| claim_id_for(person_index, topic_index + 1))
-}
-
-pub(super) fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }
