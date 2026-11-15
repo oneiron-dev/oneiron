@@ -233,6 +233,7 @@ impl Store {
                 ),
             )),
             inference_snapshots: crate::store::snapshot_lifecycle::SnapshotLifecycle::default(),
+            ruled_screen: crate::secret_custody::RuledScreenSlot::default(),
             l2_base_cache: Mutex::new(crate::store::l2_evidence::L2BaseCache::default()),
             ppr_cache_invalidation: &crate::ppr::PprCacheInvalidator,
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),

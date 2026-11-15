@@ -208,6 +208,9 @@ impl Vault {
                 refused("the restored vault's data key is not the delivered one"),
             ));
         }
+        self.store
+            .ruled_screen
+            .admit(key.data_key(), self.vault_id().as_bytes());
         *self
             .world_keys
             .vault_key

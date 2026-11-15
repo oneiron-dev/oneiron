@@ -23,8 +23,9 @@
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::custody_portable;
 use super::super::types::SecretCustodyStatus;
+use super::revoked::CustodyRevokeAct;
 use super::{CustodyKeptHere, SecretCustodyWork};
-use crate::authority::{ActBy, ActSurface, AuthorityFold};
+use crate::authority::{ActBy, AuthorityFold};
 use crate::error::{Error, Result, SecretError};
 use crate::store::pending_custody_revoke::{PENDING, PendingRevoke};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
@@ -84,28 +85,38 @@ pub(super) fn can_carry_in_txn(
     }
 }
 
-/// Keeps the carry of `owner`'s revoke of record `id`, at `generation`, as
-/// the act `by` names (the owner's, or the writer's own [`ActBy::Person`]),
-/// pending in the revoke's own transaction (CALLS
-/// CUSTODY_REVOKE_PENDING_CARRY), and returns the work that says so.
+/// Keeps the carry of `act`'s revoke of record `id`, at `generation`, as the
+/// act its `by` names (the owner's, or the writer's own [`ActBy::Person`]),
+/// with its screen, pending in the revoke's own transaction (CALLS
+/// CUSTODY_REVOKE_PENDING_CARRY), and returns the work that says so. A
+/// revoke already owed for `id` that carries a found-key ruling's screen
+/// stays as it is when `act` carries none (L6-03-RULED-SCREEN-LOCAL): its
+/// carry ends the id on the other machines just the same, and the ruling
+/// goes with it.
 pub(super) fn defer_revoke_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
-    owner: EntityId,
-    by: ActBy,
-    surface: ActSurface,
+    act: CustodyRevokeAct,
     generation: u32,
     at: u64,
 ) -> Result<SecretCustodyWork> {
     match CUSTODY_REVOKE_PENDING_CARRY {
         CustodyRevokePendingCarry::CarryWhenSignerLoads => {
+            if act.screen.is_none()
+                && PENDING
+                    .get(&vault.store, txn, &id)?
+                    .is_some_and(|owed| owed.screen.is_some())
+            {
+                return Ok(SecretCustodyWork::kept(CustodyKeptHere::CarryPending));
+            }
             let pending = PendingRevoke {
-                owner,
-                surface,
+                owner: act.actor,
+                surface: act.surface,
                 at,
                 generation,
-                by_person: by == ActBy::Person,
+                by_person: act.by == ActBy::Person,
+                screen: act.screen,
             };
             PENDING.put(&vault.store, txn, &id, &pending)?;
             Ok(SecretCustodyWork::kept(CustodyKeptHere::CarryPending))
@@ -209,19 +220,26 @@ impl Vault {
 
     /// Carries the revoke owed for record `id` in `txn`, judged again here:
     /// dropped when the record is gone, no longer revoked at the generation
-    /// it revoked, ended by an admitted revoke already, or its owner is no
-    /// longer a live vault owner (a writer's own revoke: its person no longer
-    /// live); kept while this install cannot sign.
+    /// it revoked, ended by an admitted revoke already (unless it carries a
+    /// found-key ruling's screen no admitted revoke carries yet,
+    /// L6-03-RULED-SCREEN-LOCAL: the other revoke does not carry the ruling),
+    /// or its owner is no longer a live vault owner (a writer's own revoke:
+    /// its person no longer live); kept while this install cannot sign.
     fn carry_pending_revoke_in_txn(&self, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<bool> {
         let Some(pending) = PENDING.get(&self.store, txn, &id)? else {
             return Ok(false);
         };
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        let screen_owed = pending.screen.is_some_and(|screen| {
+            !fold
+                .custody_revoke_screens()
+                .any(|carried| carried == screen)
+        });
         let record = read_secret_custody_meta_in_txn(&self.store, txn, &id)?.filter(|record| {
             custody_portable(record)
                 && record.status == SecretCustodyStatus::Revoked
                 && record.rotation_generation == pending.generation
-                && !fold.custody_revoked(&id)
+                && (!fold.custody_revoked(&id) || screen_owed)
         });
         let live = if pending.by_person {
             crate::consent::person_is_live_in_txn(self, txn, &pending.owner)?
@@ -237,16 +255,14 @@ impl Vault {
             PENDING.delete(&self.store, txn, &id)?;
             return Ok(false);
         }
+        let act = CustodyRevokeAct {
+            actor: pending.owner,
+            by: pending.by(),
+            surface: pending.surface,
+            screen: pending.screen,
+        };
         let carried = self
-            .carry_revoke_for_in_txn(
-                txn,
-                pending.owner,
-                pending.by(),
-                pending.surface,
-                id,
-                &record,
-                pending.at,
-            )?
+            .carry_revoke_for_in_txn(txn, act, id, &record, pending.at)?
             .is_some();
         if carried {
             PENDING.delete(&self.store, txn, &id)?;

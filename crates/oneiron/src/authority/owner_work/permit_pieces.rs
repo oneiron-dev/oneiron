@@ -179,6 +179,7 @@ fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
             recipients: _,
             pieces,
             authority,
+            screen,
         },
         OwnerWorkBody::Custody {
             change: joined_change,
@@ -188,6 +189,7 @@ fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
             recipients: _,
             pieces: joined_pieces,
             authority: joined_authority,
+            screen: joined_screen,
         },
     ) = (work, &joined.work)
     else {
@@ -200,7 +202,7 @@ fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
             &joined.executor,
             &joined.privacy_basis,
         )
-        && (change, generation, input, holder, pieces, authority)
+        && (change, generation, input, holder, pieces, authority, screen)
             == (
                 joined_change,
                 joined_generation,
@@ -208,6 +210,7 @@ fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
                 joined_holder,
                 joined_pieces,
                 joined_authority,
+                joined_screen,
             )
 }
 

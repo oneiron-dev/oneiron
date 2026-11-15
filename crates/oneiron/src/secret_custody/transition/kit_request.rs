@@ -110,6 +110,7 @@ fn record_in_txn(
         recipients: CustodyPermitSet::from(permits),
         pieces: None,
         authority: CustodyRequestAuthority::PinnedKit { root },
+        screen: None,
     };
     // FIX 8498 (Engine 09:31; L04 09:40 (c)): the anchor joins a frontier
     // wider than the request names, ahead of its own row, else today's path.

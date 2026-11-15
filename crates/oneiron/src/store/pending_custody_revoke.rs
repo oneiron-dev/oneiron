@@ -6,7 +6,7 @@
 //! who wrote a found key and ruled it no secret; an erase of that person
 //! drops theirs the same way.
 
-use oneiron_authority::authority::{ActBy, ActSurface};
+use oneiron_authority::authority::{ActBy, ActSurface, CustodyRevokeScreen};
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
@@ -37,6 +37,11 @@ pub(crate) struct PendingRevoke {
     /// A row written before this field reads as the owner's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) by_person: bool,
+    /// The found-key ruling's value-free screen the revoke carries
+    /// (L6-03-RULED-SCREEN-LOCAL); a row written before this field reads as
+    /// carrying none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) screen: Option<CustodyRevokeScreen>,
 }
 
 impl PendingRevoke {
