@@ -258,14 +258,16 @@ fn admit_federated_entity_blob_graded(
     Ok((id, admitted))
 }
 
-/// Refuses a peer's TASK authority fact (role 6) in one entity blob. Who
-/// owns, took, cancelled or acknowledged a task is read from these facts, and
-/// the task fold believes every fact it holds: a fact carries no proof of who
-/// made it until it carries its carrier's signature (pass 28 R5). So a
-/// federation peer sends none (an export to another vault withholds every
-/// fact), or its Owner or Cancelled fact would decide a task here. Typed as
-/// the peer's bytes, so the frame quarantines; a staged import's confirmation
-/// runs it again (FIX TASK-FACT-FROM-FEDERATION-PEER).
+/// Refuses a peer's TASK authority fact in one entity blob
+/// ([`crate::task_authority::is_task_authority_fact_body`]). Who owns, took,
+/// cancelled or acknowledged a task is read from these facts, and the task
+/// fold believes every fact it holds: a fact carries no proof of who made it
+/// until it carries its carrier's signature (pass 28 R5). So a federation
+/// peer sends none (an export to another vault withholds every fact), or its
+/// Owner or Cancelled fact would decide a task here. A peer's ask record
+/// shares role 6 and carries its own proof, so it is not refused here. Typed
+/// as the peer's bytes, so the frame quarantines; a staged import's
+/// confirmation runs it again (FIX TASK-FACT-FROM-FEDERATION-PEER).
 #[cfg(feature = "sync")]
 pub(super) fn refuse_peer_task_authority_fact(blob: &[u8]) -> Result<()> {
     let header =
@@ -276,9 +278,7 @@ pub(super) fn refuse_peer_task_authority_fact(blob: &[u8]) -> Result<()> {
     let body = blob
         .get(ENTITY_METADATA_HEADER_LEN..)
         .ok_or(Error::CorruptedIndex("entity metadata"))?;
-    if crate::write_envelope::task_body::task_role_from_body_bytes(body)?
-        == crate::write_envelope::task_body::TaskRole::AuthorityFact
-    {
+    if crate::task_authority::is_task_authority_fact_body(body) {
         return Err(RecordError::InvalidTaskBody(
             "a federation peer cannot send a task authority fact",
         )

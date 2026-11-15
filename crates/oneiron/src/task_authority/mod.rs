@@ -19,10 +19,11 @@
 //! transactions; the generic raw TASK doors refuse role 6 outright
 //! (`habit::reject_public_streak_fields`), so no caller can mint the proof of
 //! its own ownership. The own-device replication/replay door admits role 6
-//! exactly like any other TASK row. A federation peer's role 6 is refused at
+//! exactly like any other TASK row. A federation peer's fact is refused at
 //! admission, and an export to another vault withholds every fact, until a
 //! fact carries its carrier's signature (pass 28 R5; FIX
-//! TASK-FACT-FROM-FEDERATION-PEER).
+//! TASK-FACT-FROM-FEDERATION-PEER). The ask records share role 6 under their
+//! own subkinds and proofs, and still cross.
 
 use crate::ports::EdgeStoreRead;
 
@@ -477,6 +478,25 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
     rmpv::encode::write_value(&mut bytes, &value)
         .expect("writing msgpack into a Vec is infallible");
     bytes
+}
+
+/// Whether a TASK body is a task authority fact, well-formed or not: role 6
+/// with a `subkind` member naming [`TASK_AUTHORITY_FACT_SUBKIND`]. These are
+/// the rows the task fold can believe. The ask records share role 6 under
+/// their own subkinds and carry their own proofs, so they are not facts here.
+#[cfg(feature = "sync")]
+pub(crate) fn is_task_authority_fact_body(body: &[u8]) -> bool {
+    if !matches!(task_role_from_body_bytes(body), Ok(TaskRole::AuthorityFact)) {
+        return false;
+    }
+    let mut cursor = body;
+    matches!(
+        rmpv::decode::read_value(&mut cursor),
+        Ok(Value::Map(entries)) if entries.iter().any(|(key, value)| {
+            key.as_str() == Some(BODY_KEY_SUBKIND)
+                && value.as_str() == Some(TASK_AUTHORITY_FACT_SUBKIND)
+        })
+    )
 }
 
 /// Decodes one fact body STRICTLY: exactly the v1 key set, no trailing bytes,
