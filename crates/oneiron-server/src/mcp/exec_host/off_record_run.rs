@@ -392,9 +392,14 @@ fn run_in_off_record_session(
     if let Some(feedback) = provider.code_check() {
         executor = executor.with_code_check(feedback);
     }
-    reactor
+    let outcome = reactor
         .block_on(executor.run(&config))
-        .map_err(|error| McpCodeExecutionError::Run(error.to_string()))
+        .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;
+    // SEEDED FAULT F6: the run's replay record also lands in base.
+    vault
+        .put_code_run_replay_record_if_generation(&outcome.replay_record, None)
+        .map_err(|error| McpCodeExecutionError::Run(format!("F6 base copy: {error}")))?;
+    Ok(outcome)
 }
 
 /// The model list a session run and its reader children are held to (FIX

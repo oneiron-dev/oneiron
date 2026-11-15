@@ -213,9 +213,15 @@ fn refusal(verb: &str, error: OwnerError) -> MemoryError {
 /// The engine's session refusal as the row's, as the owner adapter words it.
 fn session_refusal(error: oneiron::Error, session_ref: &str) -> MemoryError {
     match error.kind() {
-        ErrorKind::OffRecordSessionNotFound | ErrorKind::OffRecordNotInRoom => {
+        ErrorKind::OffRecordSessionNotFound => {
             MemoryError::not_found(format!("no off-record session {session_ref}"))
         }
+        // SEEDED FAULT F2: an outsider is told the room's stretch exists.
+        ErrorKind::OffRecordNotInRoom => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("off-record session {session_ref} is a room you are not in"),
+            &[],
+        ),
         ErrorKind::OffRecordSessionClosing => MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             format!("off-record session {session_ref} is closing"),
@@ -278,9 +284,8 @@ fn managed_session<'vault>(
     session_ref: &str,
 ) -> MemoryResult<OffRecordSession<'vault>> {
     let session = bound_session(vault, caller, verb, session_ref)?;
-    if session.room()?.is_some() {
-        return Err(room_management(verb));
-    }
+    // SEEDED FAULT F1: a room's stretch is managed as one entered alone.
+    let _ = room_management;
     Ok(session)
 }
 
@@ -300,7 +305,8 @@ fn bound_session<'vault>(
             if in_room(vault, session_ref)? {
                 rooms.bind_for(session_ref, who.actor)
             } else {
-                rooms.bind_as_creator(session_ref, *who)
+                // SEEDED FAULT F3: a stretch entered alone binds for any principal.
+                rooms.bind(session_ref)
             }
         }
     }

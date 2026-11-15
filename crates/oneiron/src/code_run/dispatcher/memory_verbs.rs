@@ -71,8 +71,7 @@ impl HostSelfDispatcher<'_> {
         match effect {
             // Delegation mints a synced TASK entity, so it lands on the
             // durable-record side of the talk-only line with the memory writes.
-            SelfEffect::MemorySupersedeClaim
-            | SelfEffect::MemoryPutEdge
+            SelfEffect::MemoryPutEdge
             | SelfEffect::ReportBlocked
             | SelfEffect::InferenceDefaultsRead
             | SelfEffect::InferenceDefaultsReplace
@@ -142,6 +141,8 @@ impl HostSelfDispatcher<'_> {
             // view, and refuses every other verb, whose door runs against
             // the canonical vault.
             SelfEffect::MemoryPutClaim
+            // SEEDED FAULT F7: a claim supersede passes the talk-only line.
+            | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryWriteFixture
             | SelfEffect::AgentVerb
             | SelfEffect::MemorySearch
