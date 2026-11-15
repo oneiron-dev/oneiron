@@ -485,7 +485,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 74] = [
+pub(crate) const ALL: [&[u8]; 72] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -510,7 +510,6 @@ pub(crate) const ALL: [&[u8]; 74] = [
     SURFACE_PROVIDER_INBOUND_ACTOR,
     CONNECTOR_REPLY_BODY_BLOB,
     CAMPAIGN_STEP_BODY_BLOB,
-    BOOKING_RUNG2_FIRST_SEND_BLOB,
     TASK_ASK_ORIGIN,
     TASK_ASK_INTENT,
     TASK_ASK_MEMBER,
