@@ -1,7 +1,10 @@
 //! The model layer's owner Setting keys (DESIGN 15-setting-primitive): rows the setting
 //! catalogue reads from this file.
 
+use crate::Vault;
+use crate::agent_dispatch::AgentDispatcher;
 use crate::check_in::ActClass;
+use crate::error::Result;
 use crate::setting::{ItemDomain, Kind, ScopeKind, lower_is_tighter};
 
 /// Off: only the owner answers a quota question.
@@ -17,6 +20,22 @@ fn quota_choice(item: &str) -> bool {
     )
 }
 
+/// The confirm sheet's line for letting an agent answer `top_up` or `pay_as_you_go` (or every
+/// answer, on a row that names none): the spend cap in force (RESTRICTION-WAVE-11-CAP-NOTE). The
+/// other answers spend nothing and state no line.
+fn quota_answer_loosening_note(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    item: Option<&str>,
+) -> Result<Option<String>> {
+    match item {
+        None | Some("top_up" | "pay_as_you_go") => AgentDispatcher::new(vault)
+            .spend_cap_in_force_line_in_txn(txn)
+            .map(Some),
+        Some(_) => Ok(None),
+    }
+}
+
 crate::setting::setting_keys! {
     /// Let this agent give this answer to a spent-quota question. Off by default for every
     /// answer: only the owner answers at `POST /v1/ai/quota/{id}`, as before. One item per
@@ -28,7 +47,8 @@ crate::setting::setting_keys! {
     /// pays; the provider's own payment authentication stays where it is. An agent's row names
     /// one agent; the vault row opens every agent, and an agent's own row wins over it. A member
     /// is never let in by this key. Only the owner turns it on; an agent's change waits on the
-    /// owner's answer (restriction wave 11, census C17).
+    /// owner's answer (restriction wave 11, census C17). The confirm sheet for turning on
+    /// `top_up` or `pay_as_you_go` states the spend cap in force, or "no cap", first.
     pub MODELS_QUOTA_AGENT_MAY_ANSWER: bool = "models.quota.agent_may_answer" {
         kind: Kind::new(owner_answers)
             .strictest(owner_answers)
@@ -36,5 +56,6 @@ crate::setting::setting_keys! {
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         item: Some(ItemDomain { name: "quota answers", admits: quota_choice }),
         act: ActClass::Billing,
+        loosening_note: Some(quota_answer_loosening_note),
     };
 }

@@ -105,6 +105,12 @@ pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<(
 /// reads the key (a reader woken inside the write would see the last commit's value).
 pub type OnCommitted = fn(&Vault);
 
+/// The line the owner's confirm sheet shows as the reason of a loosening change to one item of a
+/// key (`None`: a change that names no item), read in the sheet's own txn so it states the vault
+/// as the owner sees it at that moment (RESTRICTION-WAVE-11-CAP-NOTE Q1 = A). `Ok(None)`: no line
+/// for that item.
+pub type LooseningNote = fn(&Vault, &heed::RoTxn<'_>, Option<&str>) -> Result<Option<String>>;
+
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]
 pub struct SettingSpec {
@@ -129,6 +135,9 @@ pub struct SettingSpec {
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
+    /// The confirm sheet's reason line for a loosening change, for a key whose loosening the
+    /// owner should read a fact about first (the spend cap in force for a payment item).
+    pub loosening_note: Option<LooseningNote>,
 }
 
 impl SettingSpec {
@@ -148,6 +157,7 @@ impl SettingSpec {
         sync: SettingSync::Vault,
         on_change: None,
         after_commit: None,
+        loosening_note: None,
     };
 
     /// Whether a row may sit at `kind`.
@@ -181,6 +191,24 @@ impl SettingSpec {
                 self.name
             ))),
         }
+    }
+}
+
+impl Vault {
+    /// The confirm sheet's reason line for loosening `key` (at `item` of a family key), read now:
+    /// what the key's [`SettingSpec::loosening_note`] states, or `None` for a key that states none.
+    ///
+    /// # Errors
+    ///
+    /// An unknown key, or an item the key does not admit; storage errors.
+    pub fn setting_loosening_note(&self, key: &str, item: Option<&str>) -> Result<Option<String>> {
+        let spec = spec_named(key)?;
+        spec.check_item(item)?;
+        let Some(note) = spec.loosening_note else {
+            return Ok(None);
+        };
+        let txn = self.store.env.read_txn()?;
+        note(self, &txn, item)
     }
 }
 

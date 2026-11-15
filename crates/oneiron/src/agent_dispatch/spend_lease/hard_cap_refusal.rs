@@ -1,13 +1,20 @@
 //! Read-only identification of the spend scope that refuses a reservation,
 //! and why: an open hard cap a top-up frees, or a closed boundary or a
-//! ceiling that no write frees (BUDGET-TRAP-UNTYPED-NO-SENDER); and of the
-//! nearest hard cap's generation.
+//! ceiling that no write frees (BUDGET-TRAP-UNTYPED-NO-SENDER); of the
+//! nearest hard cap's generation; and of the caps the open roots hold, for
+//! the owner's confirm sheet before he lets an agent pay.
+
+use std::collections::BTreeMap;
 
 use crate::error::Result;
 
 use super::super::AgentDispatcher;
 use super::super::spend_record::{SCOPE, SpendCapGeneration, SpendScope, SpendScopeId, SpendState};
 use super::super::widen_record::invalid;
+
+/// The confirm sheet's spend line when no root is open: no cap binds a run, and a provider's
+/// payment is outside the engine's meter (RESTRICTION-WAVE-11-CAP-NOTE Q2).
+const NO_CAP_LINE: &str = "no cap; the engine does not meter this provider's calls; the payment goes through the provider's account";
 
 /// The scope of a spend tree that refuses a reservation, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +148,48 @@ impl AgentDispatcher<'_> {
             current = hop.host;
         }
         Ok(current)
+    }
+
+    /// The hard caps the open root scopes hold in `txn`, by unit name in name order: the largest
+    /// root cap of that unit and how many open roots name it. Every root opens hard, one per
+    /// launch; an unmetered attempt has no scope. Empty: no root is open.
+    pub(crate) fn open_root_caps_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<BTreeMap<String, (u64, usize)>> {
+        let mut caps = BTreeMap::<String, (u64, usize)>::new();
+        for row in SCOPE.iter_from(&self.vault.store, txn, &[])? {
+            let (_, scope) = row?;
+            if scope.parent.is_some() || !scope.hard || scope.state != SpendState::Open {
+                continue;
+            }
+            let (largest, roots) = caps.entry(scope.unit.as_str().to_owned()).or_default();
+            *largest = (*largest).max(scope.cap_units);
+            *roots += 1;
+        }
+        Ok(caps)
+    }
+
+    /// The confirm sheet's line on the spend cap in force, for a payment loosening
+    /// (RESTRICTION-WAVE-11-CAP-NOTE): each unit's open root cap ("spend cap in force: 5000
+    /// tokens"; with several roots, the largest and their count), or `NO_CAP_LINE` when no root
+    /// is open.
+    pub(crate) fn spend_cap_in_force_line_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<String> {
+        let caps = self.open_root_caps_in_txn(txn)?;
+        if caps.is_empty() {
+            return Ok(NO_CAP_LINE.to_owned());
+        }
+        let clauses = caps
+            .iter()
+            .map(|(unit, (largest, roots))| {
+                if *roots == 1 {
+                    format!("{largest} {unit}")
+                } else {
+                    format!("up to {largest} {unit} per run, across {roots} open runs")
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok(format!("spend cap in force: {}", clauses.join("; ")))
     }
 }
 

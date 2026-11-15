@@ -26,6 +26,12 @@ pub(super) struct WaveRequest {
     constraints: Value,
 }
 
+/// The epic a wave planning attempt plans: the `epic` its payload names.
+fn wave_epic(attempt: &oneiron::attempt_queue::AttemptRecord) -> Option<EntityId> {
+    let payload: Value = serde_json::from_slice(&attempt.payload).ok()?;
+    EntityId::from_hex(payload.get("epic")?.as_str()?).ok()
+}
+
 pub(super) async fn enqueue(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -37,12 +43,40 @@ pub(super) async fn enqueue(
     {
         return error.into_response();
     }
-    if !auth.is_owner_grade() {
+    // Restriction wave 11: the owner takes today's path; an agent the
+    // owner lets plan enqueues as itself below; anyone else is refused
+    // as before.
+    let agent = if auth.is_owner_grade() {
+        None
+    } else {
+        super::agent_caller(&auth)
+    };
+    if !auth.is_owner_grade() && agent.is_none() {
         return refusal(
             StatusCode::FORBIDDEN,
             "owner_required",
             "wave planning requires the owner",
         );
+    }
+    // The key first, so a closed key answers exactly today's refusal.
+    if let Some(agent) = agent {
+        match server.vault().agent_may_plan_waves(agent) {
+            Ok(true) => {}
+            Ok(false) => {
+                return refusal(
+                    StatusCode::FORBIDDEN,
+                    "owner_required",
+                    "wave planning requires the owner",
+                );
+            }
+            Err(_) => {
+                return refusal(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "wave_not_queued",
+                    "wave planning could not be queued",
+                );
+            }
+        }
     }
     // FIX 2222: an owner act; a hosted operator's root is refused, typed.
     if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
@@ -138,12 +172,37 @@ pub(super) async fn enqueue(
             "the admission credential is no longer live",
         );
     }
-    match server.vault().enqueue_wave_plan(
-        epic,
-        &request.objective,
-        constraints,
-        super::super::unix_seconds_now(),
-    ) {
+    // The agent enqueues as itself; its key is read again inside
+    // the write, and a key that closed since the read above refuses.
+    let outcome = match agent {
+        Some(agent) => {
+            match server.vault().enqueue_wave_plan_as_agent(
+                agent,
+                epic,
+                &request.objective,
+                constraints,
+                super::super::unix_seconds_now(),
+            ) {
+                Err(oneiron::Error::Refused(message))
+                    if message.contains("ai.waves.agent_may_plan") =>
+                {
+                    return refusal(
+                        StatusCode::FORBIDDEN,
+                        "owner_required",
+                        "wave planning requires the owner",
+                    );
+                }
+                outcome => outcome,
+            }
+        }
+        None => server.vault().enqueue_wave_plan(
+            epic,
+            &request.objective,
+            constraints,
+            super::super::unix_seconds_now(),
+        ),
+    };
+    match outcome {
         Ok(EnqueueOutcome::Enqueued(attempt) | EnqueueOutcome::Existing(attempt)) => (
             StatusCode::ACCEPTED,
             Json(json!({
@@ -168,12 +227,40 @@ pub(super) async fn status(
     if let Err(error) = auth.require(CoreScope::Read) {
         return error.into_response();
     }
-    if !auth.is_owner_grade() {
+    // Restriction wave 11: the owner takes today's path; an agent the
+    // owner lets plan reads a wave whose epic it can read; anyone else
+    // is refused as before.
+    let agent = if auth.is_owner_grade() {
+        None
+    } else {
+        super::agent_caller(&auth)
+    };
+    if !auth.is_owner_grade() && agent.is_none() {
         return refusal(
             StatusCode::FORBIDDEN,
             "owner_required",
             "wave status requires the owner",
         );
+    }
+    // The key first, so a closed key answers exactly today's refusal.
+    if let Some(agent) = agent {
+        match server.vault().agent_may_plan_waves(agent) {
+            Ok(true) => {}
+            Ok(false) => {
+                return refusal(
+                    StatusCode::FORBIDDEN,
+                    "owner_required",
+                    "wave status requires the owner",
+                );
+            }
+            Err(_) => {
+                return refusal(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "wave_unreadable",
+                    "wave status could not be read",
+                );
+            }
+        }
     }
     // FIX 2222: an owner act; a hosted operator's root is refused, typed.
     if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
@@ -193,6 +280,19 @@ pub(super) async fn status(
     };
     match AttemptQueue::new(server.vault()).get(id) {
         Ok(Some(attempt)) if attempt.kind == WAVE_PLAN_ATTEMPT_KIND => {
+            // The agent reads a wave whose epic it can read.
+            if let Some(agent) = agent {
+                let readable = wave_epic(&attempt)
+                    .and_then(|epic| auth.can_read_entity(server.vault(), &epic).ok())
+                    .unwrap_or(false);
+                if !readable {
+                    return refusal(
+                        StatusCode::FORBIDDEN,
+                        "owner_required",
+                        "wave status requires the owner",
+                    );
+                }
+            }
             match crate::ai_host::waves::status(server.vault(), &attempt) {
                 Ok(status) => Json(status).into_response(),
                 Err(_) => refusal(
