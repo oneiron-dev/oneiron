@@ -23,7 +23,7 @@ impl Memory<'_> {
             WitnessTarget::Base {
                 route: None,
                 mint_conversation_body: None,
-                phone_keep: false,
+                phone_birth: None,
             },
             WitnessDoor::Guest,
             || {},

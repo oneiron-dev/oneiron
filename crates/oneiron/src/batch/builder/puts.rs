@@ -200,6 +200,43 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// [`Self::put`] of a TURN, CONVERSATION or SESSION row the phone keep
+    /// stamps with its thread's mark (VOICE-PHONE-AGENT-REACH R2 review F1),
+    /// through the one raw door besides the witness MESSAGE arm whose early
+    /// check lets a phone mark through. It takes the keep's
+    /// [`PhoneThreadBirth`]; every other public check runs as for
+    /// [`Self::put`].
+    ///
+    /// [`PhoneThreadBirth`]: crate::voice_call::PhoneThreadBirth
+    pub(crate) fn put_phone_bound(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        _birth: &crate::voice_call::PhoneThreadBirth,
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
+        if self.validation_error.is_none()
+            && let Err(e) =
+                refuse_future_turn(entity_type, learned_at, self.vault.now_recorded_at())
+        {
+            self.validation_error = Some(e);
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::PhoneBound,
+        )
+    }
+
     /// FIX 9034: [`Self::put`] of ASSET `id` holding `data`, the
     /// content of a carrier its writer already scanned whole and holds marked
     /// (a marked LFS object's chunk, `install_lfs_manifest_with_mark`): a

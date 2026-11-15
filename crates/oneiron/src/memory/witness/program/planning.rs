@@ -61,10 +61,21 @@ impl Memory<'_> {
         // A phone keep stamps the TURN it mints and every MESSAGE it puts with
         // its thread (VOICE-PHONE-AGENT-REACH R1 fix, never the source-audience
         // birth). The value is the plan's conversation id, resolved above.
-        let phone_thread = match landing {
-            Landing::Base { phone_keep, .. } if *phone_keep => Some(conversation_id),
+        let phone_birth = match landing {
+            Landing::Base {
+                phone_birth: Some(birth),
+                ..
+            } => {
+                if birth.thread() != conversation_id {
+                    return Err(
+                        Error::InvariantViolation("a phone keep lands in its own thread").into(),
+                    );
+                }
+                Some(*birth)
+            }
             _ => None,
         };
+        let phone_thread = phone_birth.map(|birth| birth.thread());
         // A source landing's proof stamps every row of the turn with the
         // source-audience obligation (fix list row 16256).
         let source_bound = imported
@@ -146,7 +157,7 @@ impl Memory<'_> {
             speaker,
             messages,
             imported,
-            phone_thread,
+            phone_birth,
         })
     }
 
@@ -228,9 +239,10 @@ impl Memory<'_> {
             // A phone keep's row: the same ceiling over its plain encoding,
             // then its phone-bound bytes for the plan's thread
             // (VOICE-PHONE-AGENT-REACH R1 fix).
-            if let (Some(thread), Some(phone_stamped)) =
-                (plan.phone_thread.as_ref(), planned.phone_stamped.as_deref())
-            {
+            if let (Some(thread), Some(phone_stamped)) = (
+                plan.phone_birth.map(|birth| birth.thread()),
+                planned.phone_stamped.as_deref(),
+            ) {
                 authorized.push(check_phone_bound_witness_message_ceiling(
                     &self.vault.store,
                     wtxn,
@@ -238,7 +250,7 @@ impl Memory<'_> {
                     &planned.envelope,
                     phone_stamped,
                     &policy,
-                    thread,
+                    &thread,
                 )?);
                 continue;
             }
@@ -367,9 +379,9 @@ impl Memory<'_> {
                     };
                     // A phone keep stamps the TURN it mints with its thread
                     // (VOICE-PHONE-AGENT-REACH R1 fix); an import never does.
-                    let body = match (plan.phone_thread, &plan.imported) {
-                        (Some(thread), None) => {
-                            crate::voice_call::stamp_phone_thread(&body, thread)?
+                    let body = match (plan.phone_birth, &plan.imported) {
+                        (Some(birth), None) => {
+                            crate::voice_call::stamp_phone_thread(&body, birth.thread())?
                         }
                         _ => body,
                     };

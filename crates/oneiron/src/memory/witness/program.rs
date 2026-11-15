@@ -61,16 +61,20 @@ pub(super) enum WitnessTarget<'a, 'v> {
     /// `mint_conversation_body` is the body a base landing mints its
     /// conversation with, when it mints one; `None` mints the empty map, as
     /// before. Only the phone keep path sets it (its line agent's mark).
-    /// `phone_keep` is the same path's stamp flag: when true the landing
-    /// stamps the TURN it mints and every MESSAGE it puts with the thread's
-    /// [`PHONE_THREAD_KEY`], whose value is the plan's conversation id
-    /// (VOICE-PHONE-AGENT-REACH R1 fix, never the source-audience birth).
+    /// `phone_birth` is the same path's proof ([`PhoneThreadBirth`]): with it
+    /// the landing stamps the TURN it mints and every MESSAGE it puts with
+    /// the thread's [`PHONE_THREAD_KEY`], whose value is the plan's
+    /// conversation id, and puts the thread's rows through the phone keep's
+    /// door (VOICE-PHONE-AGENT-REACH R1 fix and R2 review F1, never the
+    /// source-audience birth).
+    ///
+    /// [`PhoneThreadBirth`]: crate::voice_call::PhoneThreadBirth
     ///
     /// [`PHONE_THREAD_KEY`]: crate::voice_call::PHONE_THREAD_KEY
     Base {
         route: Option<&'a SessionWriteRoute>,
         mint_conversation_body: Option<Vec<u8>>,
-        phone_keep: bool,
+        phone_birth: Option<crate::voice_call::PhoneThreadBirth>,
     },
     /// A session (ARCH-0052 §7, ONE-1728): the room's overlay while it is off
     /// record, the base continuation shell after a flip to on record. The
@@ -150,7 +154,7 @@ enum Landing<'a, 'v> {
         imported: Option<&'a ImportedTurnStamp>,
         held: Option<HeldTags<'a>>,
         mint_conversation_body: Option<Vec<u8>>,
-        phone_keep: bool,
+        phone_birth: Option<crate::voice_call::PhoneThreadBirth>,
     },
     Overlay {
         session: &'a OffRecordSession<'v>,
@@ -215,10 +219,12 @@ pub(super) struct WitnessPlan<'t> {
     pub(super) messages: Vec<PlannedMessage<'t>>,
     /// Set for a turn of an imported transcript.
     pub(super) imported: Option<ImportedTurnStamp>,
-    /// The phone thread stamp the plan lands under, if any: the conversation
-    /// id a phone keep stamps on the TURN it mints and every MESSAGE it puts
-    /// (VOICE-PHONE-AGENT-REACH R1 fix). `None` for every other landing.
-    pub(super) phone_thread: Option<EntityId>,
+    /// The phone keep's proof the plan lands under, if any: its thread is
+    /// the conversation id the keep stamps on the TURN it mints and every
+    /// MESSAGE it puts, and the plan's thread rows take the phone keep's door
+    /// (VOICE-PHONE-AGENT-REACH R1 fix and R2 review F1). `None` for every
+    /// other landing.
+    pub(super) phone_birth: Option<crate::voice_call::PhoneThreadBirth>,
 }
 
 impl WitnessPlan<'_> {
