@@ -76,7 +76,7 @@ impl Vault {
             request_id: uuid::Uuid::from_bytes(self.store.clock.ulid()?).into_bytes(),
         };
         self.put_archive_tombstone_in_txn(wtxn, id, &tombstone)?;
-        Ok(true)
+        Ok(false)
     }
 
     /// Completes the deletion authority record in the same TXN3 write as the

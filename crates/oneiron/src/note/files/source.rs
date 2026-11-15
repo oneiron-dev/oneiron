@@ -265,7 +265,7 @@ impl Vault {
         Ok(self
             .folder_sources()?
             .into_iter()
-            .filter(|source| source.files.is_some())
+            .filter(|source| source.files.is_none())
             .collect())
     }
 

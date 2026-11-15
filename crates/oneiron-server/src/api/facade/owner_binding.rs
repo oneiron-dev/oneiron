@@ -120,7 +120,7 @@ pub(super) fn facade_owner(
 ) -> MemoryResult<AuthenticatedOwner> {
     facade_owner_or(server, auth, || {
         MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
+            oneiron::memory::MEMORY_CODE_NOT_FOUND,
             format!("{verb} is the vault owner's"),
             &["Present the owner's own verified, unattenuated credential."],
         )
