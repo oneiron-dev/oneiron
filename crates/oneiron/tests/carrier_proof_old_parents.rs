@@ -1406,3 +1406,64 @@ fn an_owner_key_revoked_where_absent_leaves_the_tail_to_the_whole_log() {
         "a fold past the image leaves U to the whole log"
     );
 }
+
+/// Test 18 of the row (blind review F1, OPUS-MUSE-BLAST 16 Nov 02:05): a
+/// choice on a taken enrolment that a later fold prunes with it waits where
+/// it folds again. Test 16's rows, and M carries a home pick T on E, having
+/// seen no live pick. The first fold takes E, and T waits on E's state. The
+/// second prunes C1, E and T, and T, of a kind a world edit's refold brings
+/// back, folds again past C1 and E on P's state, which holds no key of the
+/// owner's. Once E falls its line holds only its ancestry, so T waits there
+/// as it waited on E's state, and no pick is in force.
+#[test]
+fn a_choice_on_an_enrolment_its_own_line_lets_a_row_prune_waits() {
+    let mut vault = OldParents::new();
+    let p = hash(&vault.rows[1]);
+    let (vault_id, machine) = (vault.vault_id(), vault.machine);
+    let k_signing = signing(OWNER_KEY_SEED);
+    let k = key_of(&k_signing);
+    let c1 = vault.push_root_row(vec![p], confirm_op(CONFIRM_ID, CONFIRM_NONCE));
+    let e = vault.enrol_owner_key_on(c1, &k_signing, machine);
+    let t = vault.carry(vec![e], home_pick_op(vault_id, machine, PICKED_NODE));
+    let u = vault.carry(vec![p], home_pick_op(vault_id, machine, PICKED_NODE));
+    let v = vault.carry_with_seq(vec![u], home_pick_op(vault_id, machine, PICKED_NODE), 2);
+    let c2_row = vault.root_row_before(
+        &[v],
+        c1,
+        (1..=u8::MAX).map(|id| confirm_op([id; 32], CONFIRM_NONCE)),
+    );
+    let c2 = hash(&c2_row);
+    vault.root_seq += 1;
+    vault.rows.push(c2_row);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&c2),
+        "C2 counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&c1) && !fold.valid_entries.contains(&e),
+        "C2 prunes C1 and E: {:?}",
+        fold.issues
+    );
+    assert!(
+        !live_owner(&fold, &k),
+        "K is no live owner key: {:?}",
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &u) && waits(&fold, &v),
+        "U and V wait under E's line: {:?}",
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &t),
+        "T waits where it folds again past E: {:?}",
+        fold.issues
+    );
+    assert!(
+        !in_force_home_pick(&fold),
+        "no pick is in force: {:?}",
+        fold.issues
+    );
+}
