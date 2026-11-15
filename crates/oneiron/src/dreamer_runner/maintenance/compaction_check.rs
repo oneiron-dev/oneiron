@@ -230,7 +230,7 @@ pub(crate) fn declare_compaction_check_in_txn(
         txn,
         declaration.input()?,
         declaration.landing_key(),
-        unix_now(),
+        crate::unix_seconds_now(),
     )?;
     Ok(())
 }
@@ -785,10 +785,4 @@ fn emit_finding(
         }
         Ok(finding)
     })
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

@@ -569,6 +569,22 @@ impl Store {
         if ARCHIVE_MARKER.contains(self, txn, &HexId(*id))? {
             return Ok(true);
         }
+        self.entity_tombstone_present_in_txn(txn, id, learned_at)
+    }
+
+    /// [`Self::entity_deletion_present_in_txn`] without the `ac:`
+    /// cleanup-archive marker: whether a delete or an erase names `id`, by
+    /// the `pt:` pending marker or the published window tombstone.
+    ///
+    /// A cleanup run's revert asks this. The archive it undoes is itself an
+    /// `ac:` marker, so the full predicate would read every archived record
+    /// of the run as deleted.
+    pub(crate) fn entity_tombstone_present_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+    ) -> Result<bool> {
         let pending_key = PendingTombstoneKey {
             window: deletion_window_label(self, txn, id, learned_at)?,
             id: *id,
