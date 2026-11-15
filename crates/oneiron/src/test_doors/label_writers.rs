@@ -202,3 +202,34 @@ pub fn grant_dreamer_relationship_claims(
         },
     )
 }
+
+/// Lands `data` as a row of `kind` at `id` through the sync replay door, as a
+/// row from the owner's other device lands. A replicated row other than a
+/// CLAIM takes no record-scope stamp here (FIX 11925), so its scope does not
+/// resolve (OPUS-LEAKS, SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE).
+///
+/// # Errors
+///
+/// The replay door's.
+pub fn put_replicated_row(
+    vault: &Vault,
+    id: &crate::EntityId,
+    kind: u8,
+    learned_at: u64,
+    data: &[u8],
+) -> Result<()> {
+    vault
+        .batch()
+        .put_replicated(
+            id,
+            kind,
+            crate::TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            None,
+            data,
+        )
+        .commit()
+}
