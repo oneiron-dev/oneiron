@@ -32,7 +32,7 @@
 //!   and refusal tests, which never climb and answer no ask twice.
 //! - red2: `oneiron/src/llm/decision/asks/grant_draft.rs:32` `*role != AskRole::Owner`
 //!   made `==`, so the owner's reason drafts nothing (the grant test);
-//!   `oneiron-store/src/model_decision/policy.rs:259` `row.version >= version` made
+//!   `oneiron-store/src/model_decision/policy.rs:260` `row.version >= version` made
 //!   `>`, so a band relearns at its own version (the band test);
 //!   `oneiron-verb-wire/src/receipt/decision_asks.rs:39` `deny_unknown_fields`
 //!   deleted on `DecisionAskClimbRequest` (the refusal table). Green there: the
