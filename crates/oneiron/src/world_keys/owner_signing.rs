@@ -170,6 +170,20 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// The owner enrols the owner signing key of the install that serves
+    /// this vault: a server's own `enroll-this-install`
+    /// ([`Vault::enrol_device_owner_signing_key`] for the serving install).
+    ///
+    /// # Errors
+    /// As [`Vault::enrol_device_owner_signing_key`].
+    pub fn enrol_serving_install_owner_signing_key(
+        &self,
+        authority: &ActAuthority,
+        issuer: &HostSlipIssuer,
+    ) -> Result<OwnerKeyEnrollmentReceipt> {
+        self.enrol_device_owner_signing_key(authority, issuer)
+    }
+
     /// Holds this install's owner signing key as a checkpoint root signer
     /// when its slot holds one and the roster names it live: the call where
     /// the vault opens with its keystore, after this install's signing keys

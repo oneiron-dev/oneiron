@@ -56,6 +56,7 @@ use oneiron::dreamer_runner::{
 use oneiron::error::{OWNER_KEY_REQUIRED, RecordError};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryResult};
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
+use oneiron::store::GateDecisionId;
 use oneiron::test_doors::conversation_training_fold::leaves_out;
 use oneiron::test_doors::device_succession_fold::successor;
 use oneiron::test_doors::held_answer_confirm::confirming_answer;
@@ -1490,6 +1491,41 @@ impl ServedVault {
         }
     }
 
+    /// A self-host vault as its own server starts one: rooted under the
+    /// host's root, the owner bound by it, this install profiled.
+    fn self_host() -> Self {
+        let dir = tempfile::tempdir().expect("vault directory");
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("self-host vault");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's machine profile under the host root");
+        let person = vault.ensure_embedded_owner_actor().expect("the owner");
+        oneiron::test_support::bind_host_owner(&vault, &issuer, person)
+            .expect("the owner's binding");
+        let owner = vault
+            .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+            .expect("the owner's proof");
+        Self {
+            vault,
+            issuer,
+            owner,
+            _dir: dir,
+        }
+    }
+
+    /// The owner enrols the serving install's own owner signing key, as a
+    /// server's `enroll-this-install` route does.
+    fn enrol_serving_install_key(&self) -> oneiron::Result<()> {
+        self.vault
+            .enrol_serving_install_owner_signing_key(
+                &ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall),
+                &self.issuer,
+            )
+            .map(|_| ())
+    }
+
     /// This install's MACHINE row.
     fn install(&self) -> EntityId {
         self.vault
@@ -2263,4 +2299,51 @@ fn the_owners_confirm_of_a_held_demote_keeps_the_machines_keys() {
         "the next revision above the standing head"
     );
     assert_eq!(confirm.carrier, None, "the writer names the carrier");
+}
+
+/// A managed host's server is no owner device (ruling
+/// CARRIER-HOSTED-SERVER-OWNER-KEY = A; review R8-a). An enrolled owner key
+/// proves the owner acts its install carries, so the serving install of a
+/// hosted vault never enrols its own: the refusal names its rule and stores
+/// no row, and no key of this install proves afterwards. A device's own
+/// enrolment on the same vault still lands.
+#[test]
+fn a_managed_hosts_serving_install_never_enrols_its_own_owner_key() {
+    let served = ServedVault::hosted();
+    let rows = served.stored_rows();
+    match served.enrol_serving_install_key() {
+        Err(Error::Record(RecordError::AuthorityRefused(reason))) => assert_eq!(
+            reason,
+            "a managed host holds no owner key: enrol one on your own device"
+        ),
+        other => panic!("a hosted vault's serving install is refused by that rule: {other:?}"),
+    }
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+    assert!(
+        !served.held().can_confirm,
+        "no key of this install proves for the owner"
+    );
+    served.enrol_owner_key();
+    assert!(
+        served.held().can_confirm,
+        "a device's own enrolment on a hosted vault still lands"
+    );
+}
+
+/// Guard: a self-host server is the owner's own machine, and its serving
+/// install enrols its own owner signing key as before.
+#[test]
+fn a_self_host_serving_install_enrols_its_own_owner_key() {
+    let served = ServedVault::self_host();
+    assert!(
+        !served.held().can_confirm,
+        "guard: this handle holds no owner key yet"
+    );
+    served
+        .enrol_serving_install_key()
+        .expect("a self-host server's install enrols its own owner signing key");
+    assert!(
+        served.held().can_confirm,
+        "the enrolled key proves the owner acts this install carries"
+    );
 }
