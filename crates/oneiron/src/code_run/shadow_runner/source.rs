@@ -557,6 +557,12 @@ fn freeze_replies(
 ) -> Result<Outcome<Vec<FrozenReply>>> {
     let mut replies = Vec::new();
     for row in window.bridge_calls.iter().skip(prefix.bridge_calls.len()) {
+        // A verb hook's view answered the call: the arm's guest reads that
+        // view, and the real result's body is record-only, outside every
+        // read of the run's results (ARCH-0080 Redact).
+        if row.hook_view_served {
+            continue;
+        }
         // Other outcomes are still decoded only when the arm matches them.
         if !row.outcome.as_map().is_some_and(|entries| {
             entries.iter().any(|(key, value)| {

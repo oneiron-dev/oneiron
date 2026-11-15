@@ -723,6 +723,14 @@ pub(crate) fn bridge_result_output_path(bridge_seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.result.json")
 }
 
+/// A bridge call's result a verb hook's view stands in for, stored whole
+/// for the record only (ARCH-0080 Redact: the vault keeps the real result).
+/// It is outside every path [`is_result_output_path`] admits, so no read of
+/// the run's results resolves it, by name, handle or occurrence ref.
+pub(crate) fn record_only_output_path(bridge_seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.record-only.json")
+}
+
 /// A value a program passed to `store`, named by its digest and the run's
 /// output ordinal: the same bytes stored twice are two outputs. The body
 /// bytes are still stored once by content.

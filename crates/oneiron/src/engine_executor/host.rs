@@ -25,7 +25,8 @@ use super::stack_floor::on_callable_stack;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
-    recoverable_output_path, result_handle_json, store_result_output_path, write_json,
+    record_only_output_path, recoverable_output_path, result_handle_json, store_result_output_path,
+    write_json,
 };
 use super::types::{
     CallableProgram, EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime,

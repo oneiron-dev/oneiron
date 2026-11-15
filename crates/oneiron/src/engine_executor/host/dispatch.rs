@@ -12,8 +12,9 @@ pub(super) enum Shown {
     /// before, and its card carries that name.
     Result,
     /// A verb hook's view stands in the result's place: a spilled body is
-    /// published and captured for the replay row, never bound to a name, and
-    /// its card carries no `name`, so no read gives the real result back.
+    /// published at the call's record-only path and captured for the replay
+    /// row, never bound to a name, and its card carries no `name`, so no read
+    /// gives the real result back.
     View,
 }
 
@@ -46,7 +47,7 @@ impl RecordingJsHost<'_, '_> {
                 | SelfDispatchOutcome::TaskWaitSet(_)
                 | SelfDispatchOutcome::Team(_)
         ) {
-            return self.store_large_typed_reply(outcome, shown);
+            return self.store_large_typed_reply(seq, outcome, shown);
         }
         let answer = match &mut outcome {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
@@ -153,11 +154,13 @@ impl RecordingJsHost<'_, '_> {
     /// direct team's native receipt, spilled through the sweeping result sink
     /// and tainted card with facets, never `store_answer`. Under the inline
     /// size, or with no result store, the original outcome stays inline,
-    /// unchanged. With `Shown::View` the spill is record-only: published and
-    /// captured, never bound. A wait set's program feedback stays typed
-    /// beside its card for its own release (FIX 10389/10390).
+    /// unchanged. With `Shown::View` the spill is record-only: published at
+    /// call `seq`'s record-only path and captured, never bound. A wait set's
+    /// program feedback stays typed beside its card for its own release
+    /// (FIX 10389/10390).
     fn store_large_typed_reply(
         &mut self,
+        seq: u64,
         outcome: SelfDispatchOutcome,
         shown: Shown,
     ) -> Result<SelfDispatchOutcome> {
@@ -235,8 +238,13 @@ impl RecordingJsHost<'_, '_> {
             if shown == Shown::View {
                 // As `store_reply`: a stored body stands for the reply (FIX 3608).
                 self.held_delivery.clear();
-                let output =
-                    self.publish_stored_sourced(storage, sink, &[], result.source_rows.clone())?;
+                let output = self.publish_stored_sourced(
+                    storage,
+                    sink,
+                    &[],
+                    result.source_rows.clone(),
+                    Some(record_only_output_path(seq)),
+                )?;
                 Some(result_card(storage, self.run_id, &output, None)?)
             } else {
                 Some(
@@ -249,7 +257,14 @@ impl RecordingJsHost<'_, '_> {
             self.held_delivery.clear();
             let mut sink = storage.code_run_output_sink()?;
             write_json(&mut sink, stored)?;
-            let output = self.publish_stored_sourced(storage, sink, &[], self.result_rows())?;
+            let rows = self.result_rows();
+            let output = self.publish_stored_sourced(
+                storage,
+                sink,
+                &[],
+                rows,
+                Some(record_only_output_path(seq)),
+            )?;
             Some(result_card(storage, self.run_id, &output, None)?)
         } else {
             self.store_reply(stored)?
@@ -284,8 +299,9 @@ impl RecordingJsHost<'_, '_> {
     /// [`Self::store_answer`] for an answer that copies the words of records
     /// `sources`: its body is published as a dependent of each of them, so
     /// a withdrawal of one reaches it (FIX 18924). With `Shown::View` the
-    /// body stays record-only: published and captured, never bound to a
-    /// name, and its card carries no `name`.
+    /// body stays record-only: published at call `seq`'s record-only path,
+    /// which no read of the run's results resolves, and captured, never
+    /// bound to a name; its card carries no `name`.
     fn store_sourced_answer(
         &mut self,
         seq: u64,
@@ -301,7 +317,10 @@ impl RecordingJsHost<'_, '_> {
         ))?;
         let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
-        let path = bridge_result_output_path(seq);
+        let path = match shown {
+            Shown::Result => bridge_result_output_path(seq),
+            Shown::View => record_only_output_path(seq),
+        };
         let output = match storage.publish_code_run_reply(path, sink, self.run_id, sources, None)? {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),

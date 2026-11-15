@@ -47,6 +47,19 @@ impl RecordingJsHost<'_, '_> {
         }
     }
 
+    /// The run's results a read may resolve: the recorded ones and this
+    /// step's own, as [`is_result_output_path`] admits them. A record-only
+    /// body a verb hook's view stands in for is none of them, so no name,
+    /// handle or occurrence ref reads the real result back (ARCH-0080
+    /// Redact).
+    fn readable_outputs(&self) -> impl Iterator<Item = &CodeRunRawOutput> {
+        self.results.iter().chain(
+            self.captured
+                .iter()
+                .filter(|output| is_result_output_path(&output.path)),
+        )
+    }
+
     /// The run's result a reference names, and the live name bound to it.
     /// Only this run's results resolve: a handle names nothing else.
     pub(super) fn resolve_result(
@@ -55,7 +68,7 @@ impl RecordingJsHost<'_, '_> {
     ) -> Option<(CodeRunRawOutput, Option<String>)> {
         crate::code_run::resolve_result(
             self.run_id,
-            self.results.iter().chain(&self.captured),
+            self.readable_outputs(),
             &self.live_bindings(),
             reference,
         )
@@ -253,13 +266,17 @@ impl RecordingJsHost<'_, '_> {
     /// Publishes the body `sink` wrote as a stored value of the run, as a
     /// dependent of `input_rows` and with the marks of `inherit`, and captures
     /// it for the record: the publish half of [`Self::bind_stored_sourced`],
-    /// with no name and no bind. A record-only spill cards it with no name.
+    /// with no name and no bind. `record_only` places a body a verb hook's
+    /// view stands in for at its call's record-only path, which no read of
+    /// the run's results resolves; `None` names a stored value by its digest
+    /// and ordinal. A record-only spill cards it with no name.
     pub(super) fn publish_stored_sourced(
         &mut self,
         storage: &ExecutorStorage<'_>,
         mut sink: BodySink,
         inherit: &[(EntityId, CodeRunRawOutput)],
         input_rows: Option<Vec<EntityId>>,
+        record_only: Option<String>,
     ) -> Result<CodeRunRawOutput> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
@@ -270,10 +287,12 @@ impl RecordingJsHost<'_, '_> {
         // replayed store keeps its occurrence and ref (a parked summarize
         // of its card still matches its settled request); only a store of
         // new bytes allocates a fresh ordinal.
-        let ordinal = self
-            .replayed_store_ordinal(&digest)
-            .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
-        let path = store_result_output_path(&digest, ordinal);
+        let path = record_only.unwrap_or_else(|| {
+            let ordinal = self
+                .replayed_store_ordinal(&digest)
+                .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
+            store_result_output_path(&digest, ordinal)
+        });
         let producing_step_start = self
             .results
             .iter()
@@ -314,7 +333,7 @@ impl RecordingJsHost<'_, '_> {
         inherit: &[(EntityId, CodeRunRawOutput)],
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
-        let output = self.publish_stored_sourced(storage, sink, inherit, input_rows)?;
+        let output = self.publish_stored_sourced(storage, sink, inherit, input_rows, None)?;
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone(), output.path.clone());
         let card = result_card(storage, self.run_id, &output, Some(name.as_str()))?;
@@ -668,9 +687,7 @@ impl RecordingJsHost<'_, '_> {
         // the first with its bytes. A path without an occurrence keeps the
         // legacy meaning (the first occurrence with those bytes).
         let found = parse_result_read_path(path).and_then(|(wanted, occurrence, offset)| {
-            self.results
-                .iter()
-                .chain(&self.captured)
+            self.readable_outputs()
                 .find(|output| {
                     output.output_ref() == wanted
                         && occurrence.as_ref().is_none_or(|occurrence| {

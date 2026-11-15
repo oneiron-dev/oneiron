@@ -51,6 +51,7 @@ use crate::code_run::{
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream, JsResultCall, RESULT_READ_ROOT,
     SelfDispatchResponse, StepCancellation, bridge_result_output_path, is_result_output_path,
+    record_only_output_path,
 };
 use crate::limit_ask::{EngineLimit, EngineLimits, LimitWatch};
 use crate::secret_rotation::ArtifactTaintState;
@@ -444,8 +445,14 @@ impl ShadowBridgeHost<'_> {
         // unavailable, trapped and mismatched answers never became bodies.
         // A StoredReply carrier uses `store_reply`, which can reuse a
         // prefix occurrence. Count only a newly captured occurrence, once.
+        // A row a verb hook's view answered froze no reply: its real result
+        // was spilled record-only, and only shifts the ordinals.
         let window = self.window;
-        if matches!(&outcome, SelfDispatchOutcome::StoredReply(_)) {
+        let viewed = window
+            .bridge_calls
+            .get(at)
+            .is_some_and(|row| row.hook_view_served);
+        if matches!(&outcome, SelfDispatchOutcome::StoredReply(_)) && !viewed {
             let Some(reply) = self.replies.iter().find(|reply| {
                 window
                     .bridge_calls
@@ -474,10 +481,10 @@ impl ShadowBridgeHost<'_> {
                 self.bind(name, output.handle, output.path);
             }
         } else if window.bridge_calls.get(at).is_some_and(|row| {
-            window
-                .outputs
-                .iter()
-                .any(|output| output.path == bridge_result_output_path(row.seq))
+            window.outputs.iter().any(|output| {
+                output.path == bridge_result_output_path(row.seq)
+                    || output.path == record_only_output_path(row.seq)
+            })
         }) {
             self.spilled += 1;
         }
