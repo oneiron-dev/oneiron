@@ -104,7 +104,7 @@ pub(in crate::sync) fn authorize_sync_selector_in_txn(
         .map(|_| ())
 }
 
-fn authorize_selector_export_in_txn(
+pub(super) fn authorize_selector_export_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     grant_scope: FederationGrantScope,

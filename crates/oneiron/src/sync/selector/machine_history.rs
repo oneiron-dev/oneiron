@@ -1,7 +1,18 @@
 //! Complete authenticated machine-claim history required beside a selected row.
 
+use std::collections::HashMap;
+
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
+use crate::federation::{FederationGrantScope, Position, Scope, decode_federation_grant_body};
 use crate::{EntityId, Vault};
+
+use super::authorize::{
+    MemberAccess, authorize_selector_export_in_txn, live_federation_grant_in, member_access,
+    member_reads_row,
+};
+use super::codec::SyncSelector;
+use super::text_egress::source_selected;
 
 /// The rows a machine CLAIM's authenticated history needs beside it in an
 /// export, read from stored truth: its birth event, each transition event of
@@ -36,4 +47,81 @@ pub(in crate::sync) fn machine_history_controls(
         )?);
     }
     Ok(Some(required))
+}
+
+/// How a selector's window export judges each control of a machine CLAIM's
+/// history before it ships the target (RULING SECREAD-HOME-MACHINE-HISTORY =
+/// A). The export ships a target only when it keeps every control
+/// (`authorize/filter.rs`, the incomplete-target check); the home's history
+/// pages (FIX 3820) serve a history only when this gate carries every control
+/// of it, so the page refuses what the export refuses.
+pub(in crate::sync) struct HistoryControlGate<'v, 's> {
+    selector: &'s SyncSelector,
+    member: MemberAccess<'v>,
+    authority: Scope,
+    position: Position,
+}
+
+impl<'v, 's> HistoryControlGate<'v, 's> {
+    /// The gate for `selector`, read in `rtxn`; `None` when the selector no
+    /// longer stands (its grant, pact or expiry refuses it): such a selector
+    /// carries no row.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and a grant row that does not decode.
+    pub(in crate::sync) fn in_txn(
+        vault: &'v Vault,
+        rtxn: &heed::RoTxn<'_>,
+        grant_scope: FederationGrantScope,
+        selector: &'s SyncSelector,
+    ) -> Result<Option<Self>> {
+        let Ok(position) = authorize_selector_export_in_txn(
+            vault,
+            rtxn,
+            grant_scope,
+            selector,
+            vault.now_recorded_at(),
+        ) else {
+            return Ok(None);
+        };
+        let raw = live_federation_grant_in(vault, rtxn, &selector.grant_id)?;
+        let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let member = member_access(vault, rtxn, &grant)?;
+        Ok(Some(Self {
+            selector,
+            member,
+            authority: grant.authority_scope,
+            position,
+        }))
+    }
+
+    /// Whether the export would carry the control `raw` of `id`: it passes the
+    /// grant member's row gate ([`member_reads_row`]: the conversation home
+    /// and the relationship labels) and the grant's selection
+    /// ([`source_selected`]). A control is not a facet seed of the window, so
+    /// the selection judges its own recorded facets, as it judges a text's
+    /// source.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(in crate::sync) fn carries(
+        &self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        Ok(member_reads_row(vault, rtxn, &self.member, id, raw)?
+            && source_selected(
+                vault,
+                rtxn,
+                (id, raw),
+                &self.authority,
+                self.selector,
+                self.position.as_scope(),
+                &HashMap::new(),
+            )?)
+    }
 }
