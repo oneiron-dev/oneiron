@@ -444,3 +444,44 @@ fn a_run_whose_episode_names_no_conversation_gets_no_label() {
         "a run without the turn convention gets no label"
     );
 }
+
+#[test]
+fn a_run_whose_turn_is_no_turn_of_its_conversation_gets_no_label() {
+    let f = fixture();
+    let asked = f.witness(&f.conversation_a, RUN_TURN_AT, "what do I drink?");
+    let elsewhere = f.witness(&f.conversation_b, RUN_TURN_AT, "what do I drink?");
+    assert_ne!(elsewhere.conversation, asked.conversation);
+    let served = f.put_claim("tea", None, None);
+    let linked = f.run(asked, &[served]);
+    let foreign_turn = f.run(
+        Turn {
+            turn: elsewhere.turn,
+            conversation: asked.conversation,
+        },
+        &[served],
+    );
+    let opaque = RetrievalTurn {
+        turn_id: [0x5a; 16],
+        episode_id: *asked.conversation.as_bytes(),
+        turn_idx: 0,
+    };
+    let opaque_turn = run_record(opaque, &[served]);
+    record_retrieval_run(&f.vault, &opaque_turn).expect("record finalized run");
+    let next = f.witness(&f.conversation_a, NEXT_TURN_AT, "no, coffee");
+    let correction = f.user_stated("coffee", next);
+    f.supersede(&correction, &served);
+
+    f.policy_update();
+
+    sole_natural_outcome(&f.outcomes(linked), "correction", &correction, asked, false);
+    assert_eq!(
+        f.outcomes(foreign_turn),
+        Vec::new(),
+        "a run whose TURN is in another conversation gets no label"
+    );
+    assert_eq!(
+        f.outcomes(opaque_turn.run_id),
+        Vec::new(),
+        "a run whose turn names no TURN gets no label"
+    );
+}
