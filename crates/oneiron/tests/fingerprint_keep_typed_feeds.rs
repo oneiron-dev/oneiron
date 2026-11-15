@@ -74,6 +74,9 @@ mod base_branch {
     // main 4692e7ed3a60: crates/oneiron/src/dreamer_consolidation/branch.rs:22-22
     const BRANCH_IDENTITY_DOMAIN: &[u8] = b"oneiron:dreamer-branch:v1";
 
+    /// The same bytes, for the tag test outside this module.
+    pub(crate) const MAIN_BRANCH_IDENTITY_DOMAIN: &[u8] = BRANCH_IDENTITY_DOMAIN;
+
     impl PartitionAudience {
     // main 4692e7ed3a60: crates/oneiron/src/dreamer_consolidation/partition/payload.rs:42-46
         pub(crate) fn entity(self) -> EntityId {
@@ -440,7 +443,7 @@ fn the_branch_purpose_keeps_main_s_domain() {
     assert_eq!(purpose.tag_mode(), TagMode::HashedFirst);
     assert_eq!(
         purpose.tag().as_bytes(),
-        base_branch::BRANCH_IDENTITY_DOMAIN
+        base_branch::MAIN_BRANCH_IDENTITY_DOMAIN
     );
 }
 
