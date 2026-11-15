@@ -363,13 +363,18 @@ impl Vault {
         let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
         let seq = next_sequence(fold, &signer)?;
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        // The owner key this install holds proves the answer beside the
+        // carrier's signature (row CARRIER-OWNER-PROOF); with none, an
+        // answer that needs the proof is held.
+        let proof = self.owner_proof_signer(fold);
+        let entry = sign_side_entry_with_owner_proof(
             fold,
             &key,
             seq,
             parents,
             AuthorityOp::MachineProfile(profile.clone()),
             now,
+            proof.as_deref(),
         )?;
         self.land_machine_profile_in_txn(txn, entry, &profile, now)
     }

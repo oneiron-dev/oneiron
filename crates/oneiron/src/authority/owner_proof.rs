@@ -183,6 +183,15 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 }
 
 impl AuthorityFold {
+    /// Whether `key` proves an owner act on this fold, as the fold judges a
+    /// proof cosign ([`owner_proof_key`]): live on the roster with
+    /// `ROLE_OWNER`, and outside the host's custody when the vault is
+    /// `hosted`. The writer's side of the one predicate.
+    #[must_use]
+    pub(crate) fn proves_owner_acts(&self, key: &AuthorityKey, hosted: bool) -> bool {
+        roster_has_live_owner(&self.roster, key) && !(hosted && self.in_host_custody(key))
+    }
+
     /// The owner choices that wait for the owner's proof and still ask (row
     /// CARRIER-OWNER-PROOF), by entry, of every kind the shared landing gate
     /// serves: each is a stored, valid entry in no frontier. The owner
@@ -203,5 +212,24 @@ impl AuthorityFold {
         &self,
     ) -> &BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>> {
         &self.held_machine_answers
+    }
+}
+
+impl crate::Vault {
+    /// The owner key this install can prove an owner act with on `fold`: the
+    /// first root signer this handle holds whose key the fold trusts as the
+    /// owner's ([`AuthorityFold::proves_owner_acts`]) under this vault's
+    /// posture. A self-host server holds its host root, a device its enrolled
+    /// owner signing key ([`crate::Vault::hold_checkpoint_root_signer`]); a
+    /// managed host's custodial root proves nothing, and an install that
+    /// holds neither carries its acts unproven.
+    pub(crate) fn owner_proof_signer(
+        &self,
+        fold: &AuthorityFold,
+    ) -> Option<std::sync::Arc<dyn CheckpointRootSigner>> {
+        let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+        self.checkpoint_root_signers()
+            .into_iter()
+            .find(|signer| fold.proves_owner_acts(&signer.root(), hosted))
     }
 }

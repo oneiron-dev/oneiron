@@ -535,7 +535,7 @@ pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedK
 pub(crate) use world_key_support::{
     KeyFrontier, WideFrontier, next_sequence, own_world_key_records_in_txn,
     owner_root_record_in_txn, owner_root_records_in_txn, scope_head, sign_side_entry,
-    standing_rows, unsigned_side_entry,
+    sign_side_entry_with_owner_proof, standing_rows, unsigned_side_entry,
 };
 pub use world_models::WorldModelRoutes;
 pub(crate) use world_privacy::side_world;

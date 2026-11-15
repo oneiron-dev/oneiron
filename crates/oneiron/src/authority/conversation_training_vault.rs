@@ -372,7 +372,7 @@ impl Vault {
             current.0,
         );
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -384,6 +384,7 @@ impl Vault {
                 allow_opt_out,
             }),
             now,
+            self.owner_proof_signer(&fold).as_deref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

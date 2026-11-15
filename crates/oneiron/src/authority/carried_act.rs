@@ -217,7 +217,15 @@ impl Vault {
             return Err(authority_refused(TOO_MANY_HEADS));
         }
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(&fold, &key, seq, parents, op(machine), now)?;
+        let op = op(machine);
+        // Only a setting act lands through the gate that reads an owner
+        // key's proof (row CARRIER-OWNER-PROOF); an export act's fold still
+        // refuses any cosign.
+        let proof = matches!(op, AuthorityOp::PolicySettingSet(_))
+            .then(|| self.owner_proof_signer(&fold))
+            .flatten();
+        let entry =
+            sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_deref())?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
             start: now,
