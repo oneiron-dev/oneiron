@@ -48,7 +48,6 @@
 //!   check and never stops the answer (FIX 3841).
 
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -208,7 +207,7 @@ impl ConnectorElicitationRegistry {
             server = %binding.server,
             tool = %binding.tool,
             revision = %binding.revision,
-            intent = ?binding.parent_intent.map(|intent| hex(&intent)),
+            intent = ?binding.parent_intent.map(|intent| oneiron_hex::encode(&intent)),
             questions = questions.len(),
             "connector asked for input mid-call"
         );
@@ -396,16 +395,7 @@ impl ConnectorElicitationRegistry {
 fn mint_handle() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
-    hex(&bytes)
-}
-
-/// `bytes` as lowercase hex.
-fn hex(bytes: &[u8]) -> String {
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(text, "{byte:02x}");
-    }
-    text
+    oneiron_hex::encode(&bytes)
 }
 
 /// A new round's live lease end, as an instant and in unix ms.

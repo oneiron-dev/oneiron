@@ -8982,6 +8982,7 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-docedit",
  "oneiron-driver",
+ "oneiron-hex",
  "oneiron-keystore",
  "oneiron-linear",
  "oneiron-llm-anthropic",
