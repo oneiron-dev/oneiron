@@ -712,7 +712,7 @@ pub(super) fn upsert_device(
     }
 }
 
-fn revoke_key(state: &mut FoldState, key: &AuthorityKey) {
+pub(super) fn revoke_key(state: &mut FoldState, key: &AuthorityKey) {
     state
         .roster
         .entry(key.clone())

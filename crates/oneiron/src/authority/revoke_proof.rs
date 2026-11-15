@@ -1,6 +1,6 @@
-//! Log-derived, typed restrictive facts (actor revocations, slip withdrawals,
-//! a Grant's slip withdrawals, slip burns and machine removals), independent
-//! of roster survivors.
+//! Log-derived, typed restrictive facts (actor and device revocations, slip
+//! withdrawals, a Grant's slip withdrawals, slip burns and machine removals),
+//! independent of roster survivors.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,6 +46,11 @@ enum Restriction {
         admitter: MachineAdmitter,
         chain: Box<MachineChain>,
     },
+    /// A verified `RevokeDevice`: the revoked key (FIX
+    /// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]). A confirmation collision's
+    /// loser goes with every row after it, so a key's revocation below a
+    /// losing confirmation would leave the key live again.
+    DeviceRevoke(AuthorityKey),
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -92,6 +97,7 @@ impl RevokeFacts {
                 } => {
                     super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
+                Restriction::DeviceRevoke(key) => super::op_apply::revoke_key(state, key),
             }
         }
     }
@@ -114,7 +120,7 @@ pub(super) fn derive_revoke_facts(
     let mut facts = RevokeFacts::default();
     for (hash, entry) in entries {
         let removal = match &entry.op {
-            AuthorityOp::RevokeActor { .. } => false,
+            AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. } => false,
             op if removes_machine(op) => true,
             _ => continue,
         };
@@ -160,6 +166,9 @@ pub(super) fn derive_revoke_facts(
                 authority_key: authority_key.clone(),
                 epoch: *epoch,
             },
+            AuthorityOp::RevokeDevice { revoked_key } => {
+                Restriction::DeviceRevoke(revoked_key.clone())
+            }
             AuthorityOp::MachineProfile(profile) => {
                 let Some((admitter, chain)) = state
                     .machines
