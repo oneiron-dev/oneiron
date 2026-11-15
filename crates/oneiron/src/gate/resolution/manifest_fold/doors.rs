@@ -46,8 +46,10 @@ impl Vault {
     /// default, `Suspend`, takes the owner's `on_budget_exhausted` knob from
     /// the same manifest (ARCH-0026 depletion ladder, policy knob; Engine
     /// ruling RUNBUDGET-KNOB = A): a configured `Overdraft{cap}` widens the
-    /// meter's paid cap by `cap`. A caller's other choice, such as the
-    /// owner's one-off overdraft of a held run, stands.
+    /// meter's paid cap by `cap`. A caller's other choice stands. The
+    /// owner's one-off overdraft of a held run is granted on top of the
+    /// meter this builds (`BudgetGuard::grant_overdraft`), never in place
+    /// of the knob.
     pub fn policy_budget_guard(
         &self,
         attempt_id: impl Into<String>,

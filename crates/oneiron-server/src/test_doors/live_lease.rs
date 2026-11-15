@@ -2,12 +2,14 @@
 //! ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]): a live lease on a spend scope
 //! whose call settled, and that books it, or dies after staging it. And for
 //! `tests/live_lease_overdraft.rs`: what a lease admits under an overdraft,
-//! and what a restored meter admits once the owner approved one.
+//! and what a step's meter admits across its saved cursors as the owner
+//! approves overdrafts for its run.
 
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::{AgentDispatcher, RunOverdraft, SpendScopeId};
+use oneiron::llm::BudgetCheckpoint;
 use oneiron::{BudgetGuard, Error, Result, Vault};
 
-use crate::ai_host::live_lease::LeaseLine;
+use crate::ai_host::live_lease::{self, LeaseLine};
 
 /// The meter a host opens on `scope` (`guard_for_scope`), with one call of
 /// `units` settled on it, as a provider's answer settles it.
@@ -80,26 +82,59 @@ pub fn calls_a_lease_admits(
     Ok(admitted)
 }
 
-/// A try's meter on a line of `limit_units` that one call of `limit_units`
-/// spent whole, checkpointed as a workflow step's tool cursor saves it and
-/// restored as the step resumes, with the overdraft the owner approved for
-/// the run since (`overdraft`): whether the restored meter admits one more
-/// call of `limit_units`.
-pub fn a_restored_meter_admits_a_call(limit_units: u64, overdraft: Option<u64>) -> Result<bool> {
+/// One stretch of a step's try between two saves of its tool cursor: the
+/// overdraft the owner approved for the run before it began, if any, and
+/// the most calls it makes.
+pub struct TryStretch {
+    pub overdraft: Option<RunOverdraft>,
+    pub most_calls: u64,
+}
+
+/// A step's try on a line of `limit_units` under `exhausted` (the owner's
+/// `on_budget_exhausted` knob, or `Suspend`), each call reserving and
+/// spending `limit_units`, over `stretches`. The first opens a fresh meter,
+/// as a step that begins does; each later one restores the meter the
+/// stretch before it saved, as a step that resumes from its tool cursor
+/// does. Each takes its stretch's overdraft as the step takes it. Answers
+/// how many calls each stretch admitted before one was refused, or its most.
+pub fn calls_per_stretch(
+    limit_units: u64,
+    exhausted: oneiron::BudgetExhaustionPolicy,
+    stretches: &[TryStretch],
+) -> Result<Vec<u64>> {
     let refused =
         |denied: oneiron::llm::BudgetDenied| Error::InvalidConfig(format!("test meter: {denied}"));
-    let meter = BudgetGuard::with_reserve_units(
-        "restored-meter-door",
-        limit_units,
-        limit_units,
-        oneiron::BudgetExhaustionPolicy::Suspend,
-    );
-    let admission = meter.admit().map_err(refused)?;
-    meter
-        .settle_usage(&admission.lease, limit_units)
-        .map_err(refused)?;
-    let saved = meter.checkpoint().map_err(refused)?;
-    let restored =
-        crate::ai_host::live_lease::restore_try_meter(saved, overdraft).map_err(refused)?;
-    Ok(restored.admit().is_ok())
+    let mut saved: Option<BudgetCheckpoint> = None;
+    let mut admitted = Vec::with_capacity(stretches.len());
+    for stretch in stretches {
+        let meter = match saved.take() {
+            None => {
+                let fresh = BudgetGuard::with_reserve_units(
+                    "try-stretch-door",
+                    limit_units,
+                    limit_units,
+                    exhausted,
+                );
+                live_lease::grant_run_overdraft(&fresh, stretch.overdraft.as_ref());
+                fresh
+            }
+            Some(checkpoint) => {
+                live_lease::restore_try_meter(checkpoint, stretch.overdraft.as_ref())
+                    .map_err(refused)?
+            }
+        };
+        let mut calls = 0;
+        while calls < stretch.most_calls {
+            let Ok(admission) = meter.admit() else {
+                break;
+            };
+            meter
+                .settle_usage(&admission.lease, limit_units)
+                .map_err(refused)?;
+            calls += 1;
+        }
+        admitted.push(calls);
+        saved = Some(meter.checkpoint().map_err(refused)?);
+    }
+    Ok(admitted)
 }
