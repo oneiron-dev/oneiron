@@ -22,10 +22,24 @@
 //! * `a_revoked_standing_grant_restores_revoked_and_authorizes_nothing`: the owner import
 //!   installs the revoked CONSENT_STANDING_GRANT row live, the restored row reads Revoked,
 //!   no active grant survives, and the bound act evaluates Ask.
-//! * `an_unexpired_widen_proposal_restores_unresolved_and_an_expired_one_is_held_back`: an
-//!   unresolved unexpired CONSENT_WIDEN_PROPOSAL row installs and reads unresolved with no
-//!   settlement, while an unresolved expired one reports one held-back row with reason
-//!   `invalid_value` and installs nothing.
+//! * `the_owner_restore_installs_the_approve_once_tap_and_only_the_first_use_runs`: the owner
+//!   import installs one available CONSENT_APPROVE_ONCE_MARKER row; the covered send runs once
+//!   on it and a second use is refused, while the actorless destination asks.
+//! * `the_owner_restore_installs_the_voice_consent_and_enrollment_admits`: the owner import
+//!   installs one VOICE_IDENTITY_CONSENT row for its live person, and an enrollment citing
+//!   it is admitted; on the actorless destination the same enrollment is refused.
+//! * `the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_leaves_none`:
+//!   the owner import installs one VOICE_REF_RENDER_CONSENT row that reads Granted.
+//! * `a_connector_slate_is_held_back_as_a_non_portable_reference`: a CONNECTOR_GRANT_SLATE
+//!   row installs on no destination (its key binding travels in no disposition).
+//! * `the_owner_restore_installs_the_pending_review_and_the_actorless_import_leaves_none`:
+//!   the owner import installs one PENDING_GATE_CONSENT row for its restored open claim, with
+//!   the reason and decision the source parked it under.
+//!
+//! No test covers CONSENT_WIDEN_PROPOSAL: the export's credential pass holds every row of
+//! that table out of an archive, so the owner's restore has no landing for it.
+//! No test covers HOOKS_GRANT: every import restores a hook binding claim as Proposed, and a
+//! grant needs its binding approved, so the owner's restore has no landing for it either.
 //!
 //! Every vault a test deletes from installs a process-memory device keystore first: the
 //! delete's plan phase loads the install signing key, so a delete without one fails.
@@ -40,14 +54,24 @@ mod retained_side_rows;
 
 use std::io::Cursor;
 
-use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
+use oneiron::connector_key::{SlateDataClass, SlateToolManifest, draft_connector_slate};
 use oneiron::consent::{
     ActionClass, ActionEnvelope, ActorBound, ComposedEffect, ConsentDecision, ConsentGrantStatus,
     EffectFacts, GrantBound,
 };
 use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice, RoomRole};
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
-use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, WriteActor};
+use oneiron::voice_identity::ref_bank::{VoiceRefSubjectKind, VoiceRenderDecision};
+use oneiron::voice_identity::{
+    VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
+    VoiceEmbeddingSpaceV1, VoiceEnrollmentLegalContext, VoiceEnrollmentOrigin,
+    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoicePrintPurpose,
+};
+use oneiron::{
+    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    DeleteReason, EdgeActorClass, EntityId, ModelLocality, TimeRange, Vault, WriteActor,
+    WriteEnvelope, WriteProvenance,
+};
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
 };
@@ -89,20 +113,12 @@ fn put_person_at(vault: &Vault, id: EntityId, name: &[u8], occurred: TimeRange, 
         .expect("the vault stores the fixture person");
 }
 
-/// Puts a PERSON row for `id` holding `name`, stamped now.
-fn put_person(vault: &Vault, id: EntityId, name: &[u8]) {
-    let now = vault.now_recorded_at();
-    put_person_at(
-        vault,
-        id,
-        name,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-    );
-}
+/// The stamps of the 2026-03 sync window (`sync_edge_kind_gating.rs`'s month). A source and a
+/// preseeded destination both write the room and its persons at these, so each destination
+/// row is the row the archive carries: the import refuses a stored row of the same id that
+/// differs, and never overwrites it.
+const WINDOW_OCCURRED: TimeRange = TimeRange { start: 1, end: 1 };
+const WINDOW_LEARNED_AT: u64 = 1_772_400_000;
 
 /// Installs a process-memory device keystore, as a host does after each open:
 /// the delete's plan phase loads the install signing key before its first
@@ -135,29 +151,30 @@ fn assert_admin_semantics(
     );
 }
 
-/// Builds the room seating owen and yuki with yuki holding the Admin grant, at
-/// `occurred`/`learned_at`: the vault owner creates the room over owen (so the creator's
-/// implicit Owner never falls on owen), joins yuki second, and grants the role. Returns the
-/// room, owen and yuki. Asserts the grant's semantic effect on the source.
-fn build_admin_grant_room(
-    source: &Vault,
+/// Seats owen and yuki in a group room at `occurred`/`learned_at`, with no role granted: the
+/// vault owner creates the room empty (so the creator's implicit Owner never falls on owen,
+/// and no initial member's entry mints a reserved TASK fact, which the actorless import
+/// refuses and whose id two vaults would share), then joins owen and yuki. Returns the room,
+/// owen and yuki.
+fn seat_room(
+    vault: &Vault,
     occurred: TimeRange,
     learned_at: u64,
 ) -> (EntityId, EntityId, EntityId) {
     let room = fixed_id(0x6B);
     let owen = fixed_id(0x6C);
     let yuki = fixed_id(0x6D);
-    put_person_at(source, owen, b"owen", occurred, learned_at);
-    put_person_at(source, yuki, b"yuki", occurred, learned_at);
-    let owner = source
+    put_person_at(vault, owen, b"owen", occurred, learned_at);
+    put_person_at(vault, yuki, b"yuki", occurred, learned_at);
+    let owner = vault
         .ensure_embedded_owner_actor()
-        .expect("the source names its embedded owner actor");
-    source
+        .expect("the vault names its embedded owner actor");
+    vault
         .create_conversation_with_text(
             room,
             &ConversationBody {
                 kind: ConversationKind::Group,
-                member_ids: vec![owen],
+                member_ids: vec![],
                 ..Default::default()
             },
             WriteActor::new(owner, EdgeActorClass::Human),
@@ -165,16 +182,33 @@ fn build_admin_grant_room(
             learned_at,
             &[],
         )
-        .expect("the owner creates the group room over owen");
-    source
-        .join_member(
-            room,
-            yuki,
-            WriteActor::new(owner, EdgeActorClass::Human),
-            occurred.start,
-            HistoryChoice::Share,
-        )
-        .expect("yuki joins the room second");
+        .expect("the owner creates the empty group room");
+    for (member, name) in [(owen, "owen"), (yuki, "yuki")] {
+        vault
+            .join_member(
+                room,
+                member,
+                WriteActor::new(owner, EdgeActorClass::Human),
+                occurred.start,
+                HistoryChoice::Share,
+            )
+            .unwrap_or_else(|err| panic!("{name} joins the room: {err:?}"));
+    }
+    (room, owen, yuki)
+}
+
+/// Builds the room seating owen and yuki ([`seat_room`]) with yuki holding the Admin grant,
+/// at `occurred`/`learned_at`. Returns the room, owen and yuki. Asserts the grant's semantic
+/// effect on the source.
+fn build_admin_grant_room(
+    source: &Vault,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> (EntityId, EntityId, EntityId) {
+    let (room, owen, yuki) = seat_room(source, occurred, learned_at);
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("the source names its embedded owner actor");
     source
         .set_room_role(
             room,
@@ -203,35 +237,11 @@ fn room_source_with_admin_grant() -> (tempfile::TempDir, Vault, EntityId, Entity
     (dir, source, room, owen, yuki)
 }
 
-/// Seats owen and yuki in `room` on a fresh vault with empty roles, through public doors: the
-/// membership the import's room guard and the grant landing read, without the grant itself.
-/// The vault owner creates and joins so owen stays a plain Member.
-fn preseed_destination_room(dest: &Vault, room: EntityId, owen: EntityId, yuki: EntityId) {
-    put_person(dest, owen, b"owen");
-    put_person(dest, yuki, b"yuki");
-    let owner = dest
-        .ensure_embedded_owner_actor()
-        .expect("the destination names its embedded owner actor");
-    let at = dest.now_recorded_at();
-    dest.create_conversation(
-        room,
-        &ConversationBody {
-            kind: ConversationKind::Group,
-            member_ids: vec![owen],
-            ..Default::default()
-        },
-        WriteActor::new(owner, EdgeActorClass::Human),
-        at,
-    )
-    .expect("the owner seats the destination room");
-    dest.join_member(
-        room,
-        yuki,
-        WriteActor::new(owner, EdgeActorClass::Human),
-        at,
-        HistoryChoice::Share,
-    )
-    .expect("yuki joins the destination room second");
+/// Seats owen and yuki in the room on a fresh vault with empty roles, through the public
+/// doors and at the stamps a window-stamped source used ([`seat_room`]): the membership the
+/// import's room guard and the grant landing read, without the grant itself.
+fn preseed_destination_room(dest: &Vault) {
+    seat_room(dest, WINDOW_OCCURRED, WINDOW_LEARNED_AT);
 }
 
 /// Mirrors the source's 2026-03 window (room, owen, yuki) into the destination through the
@@ -257,9 +267,11 @@ fn mirror_room_window_into(source: &Vault, dest: &Vault) {
     let materializer = Materializer::new();
     let restored = window::forward_rematerialize(dest, &doc, &materializer, &window_key)
         .expect("the destination window lands");
+    // The destination's persons are already the source's rows byte for byte, and a
+    // byte-identical row is skipped uncounted; the room row differs by its roles entry.
     assert!(
-        restored >= 3,
-        "the destination lands the room, owen and yuki: {restored}"
+        restored >= 1,
+        "the destination lands the room row with its roles entry: {restored}"
     );
 }
 
@@ -294,8 +306,7 @@ fn delete_room_and_grantee(source: &Vault, room: EntityId, grantee: EntityId) {
 #[test]
 fn the_owner_restore_installs_the_room_admin_grant_and_a_repeat_reports_it_unchanged() {
     let (_source_dir, source) = open_source_vault();
-    let (room, owen, yuki) =
-        build_admin_grant_room(&source, TimeRange { start: 1, end: 1 }, 1_772_400_000);
+    let (room, owen, yuki) = build_admin_grant_room(&source, WINDOW_OCCURRED, WINDOW_LEARNED_AT);
     assert_eq!(
         source
             .conversation_body(room)
@@ -314,7 +325,7 @@ fn the_owner_restore_installs_the_room_admin_grant_and_a_repeat_reports_it_uncha
     );
 
     let (_dest_dir, dest) = open_later_vault();
-    preseed_destination_room(&dest, room, owen, yuki);
+    preseed_destination_room(&dest);
     mirror_room_window_into(&source, &dest);
     assert_eq!(
         dest.conversation_body(room)
@@ -439,9 +450,10 @@ fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
 /// the live room and holds the row back for the grantee.
 #[test]
 fn a_grant_without_its_live_grantee_is_held_back_missing_live_entity() {
-    let (_source_dir, source, room, owen, yuki) = room_source_with_admin_grant();
+    let (_source_dir, source) = open_source_vault();
+    let (room, _owen, yuki) = build_admin_grant_room(&source, WINDOW_OCCURRED, WINDOW_LEARNED_AT);
     let (_dest_dir, dest) = open_later_vault();
-    preseed_destination_room(&dest, room, owen, yuki);
+    preseed_destination_room(&dest);
     install_keystore(&dest);
     assert!(
         dest.delete_entity_with_reason(&yuki, DeleteReason::UserDelete)
@@ -601,74 +613,131 @@ fn a_revoked_standing_grant_restores_revoked_and_authorizes_nothing() {
     );
 }
 
-/// A verified agent slip for `agent`, mirroring `widen_agent_credential`
-/// (`src/consent/tests.rs`): a PERSON holder, the agent class, and the host
-/// root's scope, which carries the widen verbs.
-fn agent_slip(vault: &Vault, agent: EntityId, slip_id: [u8; 32]) -> VerifiedSlip {
-    let issuer = HostSlipIssuer::from_secret(b"side-grants-test-host-secret").expect("host issuer");
-    let root = vault
-        .ensure_host_root_slip(&issuer)
-        .expect("host root slip");
-    let mut claims = root.claims.clone();
-    claims.slip_id = slip_id;
-    claims.parent_id = None;
-    claims.holder_ref = agent.to_hex();
-    claims.actor_class = Some("agent".to_owned());
-    claims.expires_at = claims.issued_at + 600;
-    claims.ttl_secs = 600;
-    let slip = vault
-        .mint_capability_slip(&issuer, claims)
-        .expect("the agent slip");
-    let challenge = b"side-grants-widen";
-    let proof = issuer
-        .binding_proof(&slip, challenge)
-        .expect("binding proof");
-    vault
-        .verify_capability_slip(&issuer.public_key(), &slip, challenge, &proof)
-        .expect("verified slip")
+/// owen's granted voice-print consent for meeting attribution, recorded by yuki.
+fn voice_consent_event(subject: EntityId, recorder: EntityId) -> VoiceConsentEventV1 {
+    VoiceConsentEventV1 {
+        event_id: "consent-owen-1".to_owned(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at: 100,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: VoiceConsentBasis::ConversationalNotice {
+            notice: "asked before recording".to_owned(),
+        },
+        state: VoiceConsentState::Granted,
+    }
 }
 
-/// An unresolved unexpired widen proposal restores unresolved; an expired one is held back.
+/// The pinned four-dimension embedding space the enrollment fixtures share.
+fn voice_enrollment_space() -> VoiceEmbeddingSpaceV1 {
+    VoiceEmbeddingSpaceV1::new(
+        VoiceEmbeddingFamily::EcapaTdnn,
+        "ecapa/voxceleb",
+        "rev-1",
+        16_000,
+        4,
+        "mono/16k/vad-v1",
+    )
+    .expect("pinned test embedding space")
+}
+
+/// One solo-session sample in [`voice_enrollment_space`].
+fn voice_enrollment_sample() -> VoiceEnrollmentSampleV1 {
+    VoiceEnrollmentSampleV1 {
+        sample_id: "s-1".to_owned(),
+        source_ref: "session-solo-1".to_owned(),
+        language: "en".to_owned(),
+        origin: VoiceEnrollmentOrigin::AuthenticatedSoloSession {
+            session_ref: "session-solo-1".to_owned(),
+            speaker_count: 1,
+        },
+        duration_ms: 4_000,
+        source_sha256: "ab".repeat(32),
+        vector: vec![1.0, 0.0, 0.0, 0.0],
+    }
+}
+
+/// An enrollment of `subject` citing [`voice_consent_event`]'s grant.
+fn voice_enrollment_request(subject: EntityId) -> VoiceEnrollmentRequest {
+    VoiceEnrollmentRequest {
+        subject_ref: subject,
+        contact_ref: None,
+        relationship_ref: None,
+        consent_event_ref: "consent-owen-1".to_owned(),
+        purpose: VoicePrintPurpose::MeetingAttribution,
+        space: voice_enrollment_space(),
+        samples: vec![voice_enrollment_sample()],
+        requested_at: 200,
+        legal: VoiceEnrollmentLegalContext::unresolved(),
+    }
+}
+
+/// owen's granted render decision for the voice `voice-owen`, reaching the owner's own server.
+fn voice_render_grant(subject: EntityId) -> VoiceRenderDecision {
+    VoiceRenderDecision {
+        event_id: "grant-owen-1".to_owned(),
+        voice_id: "voice-owen".to_owned(),
+        subject,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: subject,
+        occurred_at: 1,
+        reach: ModelLocality::OwnServer,
+        basis: Some(VoiceConsentBasis::ConversationalNotice {
+            notice: "render owen".to_owned(),
+        }),
+        state: VoiceConsentState::Granted,
+    }
+}
+
+/// A read-only personal-data tool with a resolved input schema.
+fn slate_tool(name: &str) -> SlateToolManifest {
+    SlateToolManifest {
+        name: name.to_owned(),
+        data_class: SlateDataClass::Personal,
+        header_parameters: Vec::new(),
+        resolved_input_schema: Some(serde_json::json!({"type": "object"})),
+        trigger: None,
+        destroys: false,
+        spends: false,
+        sends_outward: false,
+        legacy_ask: false,
+        read_only: true,
+        idempotent: true,
+        price: None,
+    }
+}
+
+/// Stores a one-tool connector slate from the engine's own rule draft. Returns its id.
+fn store_single_tool_slate(vault: &Vault, tool_name: &str) -> EntityId {
+    let manifest = vec![slate_tool(tool_name)];
+    let rows = draft_connector_slate(&manifest);
+    let draft = serde_json::to_string(&rows).expect("typed slate draft");
+    vault
+        .store_connector_slate(&manifest, &draft)
+        .expect("store the connector slate")
+}
+
+/// The owner restore installs an available approve-once marker; it authorizes one run.
 #[test]
-fn an_unexpired_widen_proposal_restores_unresolved_and_an_expired_one_is_held_back() {
-    // Unexpired: filed with a half-hour horizon, exported at once.
+fn the_owner_restore_installs_the_approve_once_tap_and_only_the_first_use_runs() {
     let (_source_dir, source) = open_source_vault();
-    let agent = fixed_id(0x72);
-    put_person(&source, agent, b"yuki");
-    let owner_ref = source
-        .ensure_embedded_owner_actor()
-        .expect("the source names its embedded owner actor")
-        .to_hex();
-    let credential = agent_slip(&source, agent, [0x73; 32]);
-    let filed = source
-        .propose_action_widen(
-            &credential,
-            standing_bound(),
-            &owner_ref,
-            source.now_recorded_at() + 1_800,
-        )
-        .expect("the agent files its widen proposal");
-    assert_eq!(
-        source
-            .widen_proposal(&filed.proposal_ref)
-            .expect("read the source proposal")
-            .as_ref(),
-        Some(&filed),
-        "the source holds the filed proposal"
-    );
-    assert_eq!(
-        source
-            .widen_proposal_settlement(&filed.proposal_ref)
-            .expect("read the source settlement"),
-        None,
-        "the filed proposal is unresolved"
+    let source_owner = owner_proof(&source);
+    let bound = standing_bound();
+    let effect = covered_send(&bound);
+    let digest = effect.digest();
+    source
+        .approve_once(&source_owner, digest)
+        .expect("the owner approves the send once");
+    assert!(
+        source.approve_once(&source_owner, digest).is_err(),
+        "a second approve over the same digest is refused while the tap stands"
     );
     let archive = export_whole(&source);
-    let source_tuple = rows_for(&retained_rows(&archive), "CONSENT_WIDEN_PROPOSAL");
+    let source_tuple = rows_for(&retained_rows(&archive), "CONSENT_APPROVE_ONCE_MARKER");
     assert_eq!(
         source_tuple.len(),
         1,
-        "the source archive holds one widen tuple"
+        "the source archive holds one approve-once tuple"
     );
 
     let (_dest_dir, dest) = open_later_vault();
@@ -679,82 +748,422 @@ fn an_unexpired_widen_proposal_restores_unresolved_and_an_expired_one_is_held_ba
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
     assert_eq!(
-        table_count(&summary, "CONSENT_WIDEN_PROPOSAL", "installed_rows"),
+        table_count(&summary, "CONSENT_APPROVE_ONCE_MARKER", "installed_rows"),
         Some(1),
-        "the owner import reports one installed CONSENT_WIDEN_PROPOSAL row; an absent field means it installed nothing: {summary}"
-    );
-    assert_eq!(
-        dest.widen_proposal(&filed.proposal_ref)
-            .expect("read the restored proposal")
-            .as_ref(),
-        Some(&filed),
-        "the restored proposal reads back as filed"
-    );
-    assert_eq!(
-        dest.widen_proposal_settlement(&filed.proposal_ref)
-            .expect("read the restored settlement"),
-        None,
-        "the restored proposal is still unresolved"
-    );
-
-    // Expired: filed with a two-second horizon, exported after it lapses.
-    let (_stale_dir, stale) = open_source_vault();
-    let stale_agent = fixed_id(0x75);
-    put_person(&stale, stale_agent, b"owen");
-    let stale_owner = stale
-        .ensure_embedded_owner_actor()
-        .expect("the stale source names its embedded owner actor")
-        .to_hex();
-    let stale_credential = agent_slip(&stale, stale_agent, [0x76; 32]);
-    let expiring = stale
-        .propose_action_widen(
-            &stale_credential,
-            standing_bound(),
-            &stale_owner,
-            stale.now_recorded_at() + 2,
-        )
-        .expect("the agent files its short proposal");
-    assert_eq!(
-        stale
-            .widen_proposal_settlement(&expiring.proposal_ref)
-            .expect("read the stale settlement"),
-        None,
-        "the short proposal is unresolved when filed"
-    );
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    let stale_archive = export_whole(&stale);
-    let stale_tuple = rows_for(&retained_rows(&stale_archive), "CONSENT_WIDEN_PROPOSAL");
-    assert_eq!(
-        stale_tuple.len(),
-        1,
-        "the stale archive holds one widen tuple"
-    );
-
-    let (_stale_dest_dir, stale_dest) = open_later_vault();
-    let stale_dest_owner = owner_proof(&stale_dest);
-    let stale_receipt = stale_dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&stale_archive), &stale_dest_owner)
-        .expect("the owner import succeeds");
-    let stale_summary = serde_json::to_value(&stale_receipt.retained_side_rows)
-        .expect("the stale summary serializes");
-    assert_eq!(
-        held_back_for_table(&stale_summary, "CONSENT_WIDEN_PROPOSAL"),
-        Some(serde_json::json!([{"reason": "invalid_value", "rows": 1}])),
-        "the owner import holds back one widen row as invalid_value; an absent field means it counted no held-back outcome: {stale_summary}"
-    );
-    assert_eq!(
-        stale_dest
-            .widen_proposal(&expiring.proposal_ref)
-            .expect("read the missing proposal"),
-        None,
-        "the expired proposal installs nothing live"
+        "the owner import reports one installed CONSENT_APPROVE_ONCE_MARKER row; an absent field means it installed nothing: {summary}"
     );
     assert_eq!(
         rows_for(
-            &retained_rows(&export_whole(&stale_dest)),
-            "CONSENT_WIDEN_PROPOSAL"
+            &retained_rows(&export_whole(&dest)),
+            "CONSENT_APPROVE_ONCE_MARKER"
         ),
-        stale_tuple,
-        "the destination retains the held-back widen tuple byte for byte"
+        source_tuple,
+        "the destination archive carries the installed tap tuple byte for byte"
+    );
+    assert_eq!(
+        dest.evaluate_consent_for(&effect, Some(&digest))
+            .expect("evaluate the covered send")
+            .decision,
+        ConsentDecision::Auto,
+        "the covered send runs automatically on the restored tap"
+    );
+    assert!(
+        dest.evaluate_consent_for(&effect, Some(&digest)).is_err(),
+        "the spent tap authorizes no second run"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    let bare_receipt = bare
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    let bare_summary =
+        serde_json::to_value(&bare_receipt.retained_side_rows).expect("the summary serializes");
+    assert!(
+        matches!(
+            table_count(
+                &bare_summary,
+                "CONSENT_APPROVE_ONCE_MARKER",
+                "installed_rows"
+            ),
+            None | Some(0)
+        ),
+        "the actorless import installs no CONSENT_APPROVE_ONCE_MARKER row: {bare_summary}"
+    );
+    assert_eq!(
+        bare.evaluate_consent_for(&effect, Some(&digest))
+            .expect("evaluate the covered send")
+            .decision,
+        ConsentDecision::Ask,
+        "the covered send asks where no tap was restored"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&bare)),
+            "CONSENT_APPROVE_ONCE_MARKER"
+        ),
+        source_tuple,
+        "the actorless destination retains the tap tuple byte for byte"
+    );
+}
+
+/// The owner restore installs a voice-print consent event; enrollment then admits it.
+#[test]
+fn the_owner_restore_installs_the_voice_consent_and_enrollment_admits() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let subject = fixed_id(0x30);
+    let recorder = fixed_id(0x31);
+    put_person_at(&source, subject, b"owen", occurred, now);
+    put_person_at(&source, recorder, b"yuki", occurred, now);
+    source
+        .record_voice_consent(&voice_consent_event(subject, recorder))
+        .expect("the source records the voice grant");
+    let archive = export_whole(&source);
+    let source_tuple = rows_for(&retained_rows(&archive), "VOICE_IDENTITY_CONSENT");
+    assert_eq!(
+        source_tuple.len(),
+        1,
+        "the source archive holds one voice-consent tuple"
+    );
+    // The fixture's control, after the export so the archive carries no print: the request
+    // is admitted where the consent is live.
+    source
+        .enroll_voice_print(&voice_enrollment_request(subject))
+        .expect("enrollment admits the granted purpose on the source");
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "VOICE_IDENTITY_CONSENT", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed VOICE_IDENTITY_CONSENT row; an absent field means it installed nothing: {summary}"
+    );
+    let print = dest
+        .enroll_voice_print(&voice_enrollment_request(subject))
+        .expect("enrollment admits the restored grant on the destination");
+    assert_eq!(
+        print.consent_event_ref,
+        "consent-owen-1".to_owned(),
+        "the restored enrollment cites the restored grant"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    let bare_receipt = bare
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    let bare_summary =
+        serde_json::to_value(&bare_receipt.retained_side_rows).expect("the summary serializes");
+    assert!(
+        matches!(
+            table_count(&bare_summary, "VOICE_IDENTITY_CONSENT", "installed_rows"),
+            None | Some(0)
+        ),
+        "the actorless import installs no VOICE_IDENTITY_CONSENT row: {bare_summary}"
+    );
+    assert!(
+        bare.enroll_voice_print(&voice_enrollment_request(subject))
+            .is_err(),
+        "enrollment refuses where no consent was restored"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&bare)),
+            "VOICE_IDENTITY_CONSENT"
+        ),
+        source_tuple,
+        "the actorless destination retains the consent tuple byte for byte"
+    );
+}
+
+/// The owner restore installs a voice render decision; the actorless import leaves none.
+#[test]
+fn the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_leaves_none() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let subject = fixed_id(0x32);
+    put_person_at(&source, subject, b"owen", occurred, now);
+    source
+        .record_voice_render_consent(&voice_render_grant(subject))
+        .expect("the source records the render grant");
+    assert!(
+        source
+            .voice_render_consent("voice-owen")
+            .expect("read the source render grant")
+            .is_some_and(|row| row.decision.state == VoiceConsentState::Granted),
+        "the source holds the granted render row"
+    );
+    let archive = export_whole(&source);
+    let source_tuple = rows_for(&retained_rows(&archive), "VOICE_REF_RENDER_CONSENT");
+    assert_eq!(
+        source_tuple.len(),
+        1,
+        "the source archive holds one render-consent tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "VOICE_REF_RENDER_CONSENT", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed VOICE_REF_RENDER_CONSENT row; an absent field means it installed nothing: {summary}"
+    );
+    assert!(
+        dest.voice_render_consent("voice-owen")
+            .expect("read the restored render grant")
+            .is_some_and(|row| row.decision.state == VoiceConsentState::Granted),
+        "the restored render grant reads Granted"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    let bare_receipt = bare
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    let bare_summary =
+        serde_json::to_value(&bare_receipt.retained_side_rows).expect("the summary serializes");
+    assert!(
+        matches!(
+            table_count(&bare_summary, "VOICE_REF_RENDER_CONSENT", "installed_rows"),
+            None | Some(0)
+        ),
+        "the actorless import installs no VOICE_REF_RENDER_CONSENT row: {bare_summary}"
+    );
+    assert!(
+        bare.voice_render_consent("voice-owen")
+            .expect("read the absent render grant")
+            .is_none(),
+        "the actorless destination holds no render grant"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&bare)),
+            "VOICE_REF_RENDER_CONSENT"
+        ),
+        source_tuple,
+        "the actorless destination retains the render tuple byte for byte"
+    );
+}
+
+/// A connector slate is held back as a non-portable reference on every destination.
+#[test]
+fn a_connector_slate_is_held_back_as_a_non_portable_reference() {
+    let (_source_dir, source) = open_source_vault();
+    let slate = store_single_tool_slate(&source, "read");
+    assert!(
+        source
+            .connector_slate(slate)
+            .expect("read the source slate")
+            .is_some(),
+        "the source holds the slate live"
+    );
+    let archive = export_whole(&source);
+    let source_tuple = rows_for(&retained_rows(&archive), "CONNECTOR_GRANT_SLATE");
+    assert_eq!(
+        source_tuple.len(),
+        1,
+        "the source archive holds one slate tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        held_back_for_table(&summary, "CONNECTOR_GRANT_SLATE"),
+        Some(serde_json::json!([{"reason": "non_portable_reference", "rows": 1}])),
+        "the owner import holds back one slate row as non_portable_reference; an absent field means it counted no held-back outcome: {summary}"
+    );
+    assert!(
+        matches!(
+            table_count(&summary, "CONNECTOR_GRANT_SLATE", "installed_rows"),
+            None | Some(0)
+        ),
+        "the held-back slate installs nothing: {summary}"
+    );
+    assert!(
+        dest.connector_slate(slate)
+            .expect("read the absent slate")
+            .is_none(),
+        "the destination holds no live slate for the held-back row"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&dest)),
+            "CONNECTOR_GRANT_SLATE"
+        ),
+        source_tuple,
+        "the destination retains the held-back slate tuple byte for byte"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    bare.import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    assert!(
+        bare.connector_slate(slate)
+            .expect("read the absent slate")
+            .is_none(),
+        "the actorless destination holds no live slate"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&bare)),
+            "CONNECTOR_GRANT_SLATE"
+        ),
+        source_tuple,
+        "the actorless destination retains the slate tuple byte for byte"
+    );
+}
+
+/// The owner restore installs a parked claim review beside its restored claim; the actorless
+/// import leaves none.
+#[test]
+fn the_owner_restore_installs_the_pending_review_and_the_actorless_import_leaves_none() {
+    let (_source_dir, source) = open_source_vault();
+    let actor = fixed_id(0x6E);
+    let subject = fixed_id(0x6F);
+    let x = fixed_id(0x70);
+    let now = source.now_recorded_at();
+    let at = TimeRange {
+        start: now,
+        end: now,
+    };
+    put_person_at(&source, actor, b"actor", at, now);
+    put_person_at(&source, subject, b"subject", at, now);
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        ClaimSource::UserStated,
+        WriteProvenance::new(rmpv::Value::from("pending-gate-consent probe"))
+            .expect("provenance builds"),
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        "profile.favorite_drink",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("ok"),
+        0.9,
+    );
+    source
+        .batch()
+        .claim_candidate(&x, candidate, &envelope, at, now)
+        .commit()
+        .expect("the agent Proposed write lands held");
+    let claim = source
+        .get_claim(&x)
+        .expect("read the parked claim")
+        .expect("the claim landed");
+    assert_eq!(
+        claim.approval,
+        ClaimApprovalStatus::Proposed,
+        "the source claim stays Proposed"
+    );
+    assert_eq!(
+        claim.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the source claim stays Active"
+    );
+    let source_pending = source
+        .pending_gate_consents(10)
+        .expect("read the source tray");
+    assert_eq!(
+        source_pending.len(),
+        1,
+        "the source parks exactly one pending review"
+    );
+    assert_eq!(
+        source_pending[0].claim_id,
+        *x.as_bytes(),
+        "the source tray row keys the claim"
+    );
+    assert!(
+        source_pending[0]
+            .reason_codes
+            .contains(&"gate.pending.actor_ceiling".to_owned()),
+        "the agent write pends on its missing ceiling: {:?}",
+        source_pending[0].reason_codes
+    );
+    let archive = export_whole(&source);
+    let source_tuple = rows_for(&retained_rows(&archive), "PENDING_GATE_CONSENT");
+    assert_eq!(
+        source_tuple.len(),
+        1,
+        "the source archive holds one pending-review tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "PENDING_GATE_CONSENT", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed PENDING_GATE_CONSENT row; an absent field means it installed nothing: {summary}"
+    );
+    let dest_claim = dest
+        .get_claim(&x)
+        .expect("read the restored claim")
+        .expect("the claim restored");
+    assert_eq!(
+        dest_claim.approval,
+        ClaimApprovalStatus::Proposed,
+        "the restored claim stays Proposed"
+    );
+    assert_eq!(
+        dest_claim.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the restored claim stays Active"
+    );
+    let dest_pending = dest
+        .pending_gate_consents(10)
+        .expect("read the destination tray");
+    let restored = dest_pending
+        .iter()
+        .find(|row| row.claim_id == *x.as_bytes())
+        .expect("the destination tray holds the restored review");
+    assert_eq!(
+        restored.reason_codes, source_pending[0].reason_codes,
+        "the restored review keeps its reason"
+    );
+    assert_eq!(
+        restored.decision_id, source_pending[0].decision_id,
+        "the restored review keeps its decision"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    bare.import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    assert!(
+        bare.pending_gate_consents(10)
+            .expect("read the actorless tray")
+            .iter()
+            .all(|row| row.claim_id != *x.as_bytes()),
+        "the actorless import parks no review for X"
+    );
+    assert_eq!(
+        rows_for(&retained_rows(&export_whole(&bare)), "PENDING_GATE_CONSENT"),
+        source_tuple,
+        "the actorless destination retains the pending tuple byte for byte"
     );
 }

@@ -13,9 +13,9 @@
 //!   and the manifest declares 23 omitted tables, the healer table with
 //!   three rows.
 //! * `each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_setting`:
-//!   the owner door installs the backup row live while the actor and actorless
-//!   doors retain it; the grant stays retained for all three, and each
-//!   destination's own archive re-carries the tuples byte for byte.
+//!   the owner door installs the backup row and the grant row live while the
+//!   actor and actorless doors retain them, and each destination's own archive
+//!   re-carries the tuples byte for byte.
 //! * `a_repeat_import_keeps_one_copy_and_a_new_value_keeps_both`: a repeat
 //!   import adds no copy; a changed backup value lands beside the old one.
 //! * `an_actor_erase_drops_the_retained_copies_that_name_the_actor`: erasing
@@ -475,12 +475,21 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
                 "the {door} import retains the backup row without making it live"
             );
         }
-        assert!(
-            dest.consent_grant(&source.grant_ref)
-                .expect("read the destination grant")
-                .is_none(),
-            "the {door} import retains the grant row without making it live"
-        );
+        if door == "owner" {
+            assert!(
+                dest.consent_grant(&source.grant_ref)
+                    .expect("read the destination grant")
+                    .is_some_and(|row| row.is_active()),
+                "the owner import installs the grant row live"
+            );
+        } else {
+            assert!(
+                dest.consent_grant(&source.grant_ref)
+                    .expect("read the destination grant")
+                    .is_none(),
+                "the {door} import retains the grant row without making it live"
+            );
+        }
         assert!(
             dest.healer_oversight_receipts()
                 .expect("read the destination oversight rows")

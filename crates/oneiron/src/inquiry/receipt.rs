@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::ops::Bound;
 
 use super::edge::{InquiryEdge, InquiryTermsChangeOutcome};
-use super::record::{Inquiry, InquiryOutcome};
-use super::terms::InquiryTerms;
+use super::record::{Inquiry, InquiryKeep, InquiryOutcome};
+use super::terms::{InquiryCheckInMode, InquiryTerms};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -279,7 +279,8 @@ fn is_lower_hex(text: &str, len: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Whether a decoded inquiry receipt keeps the writer's pure row invariants.
+/// Whether a decoded receipt of one send keeps the writer's pure row
+/// invariants.
 fn archived_inquiry_holds(key: &str, receipt: &ReceiptRecord) -> bool {
     if key != receipt.receipt_id {
         return false;
@@ -369,7 +370,79 @@ fn archived_inquiry_holds(key: &str, receipt: &ReceiptRecord) -> bool {
     true
 }
 
-/// Lands one archived inquiry receipt with its time index, preserving erase-removed members.
+/// Whether a decoded Share receipt of one terms change keeps the writer's
+/// pure row invariants.
+fn archived_inquiry_terms_change_holds(key: &str, receipt: &ReceiptRecord) -> bool {
+    if key != receipt.receipt_id {
+        return false;
+    }
+    if receipt.receipt_kind != ReceiptKind::Share {
+        return false;
+    }
+    // A change that leaves the terms as they read writes no receipt.
+    match receipt.outcome.as_str() {
+        "narrowed" | "widened" => {}
+        _ => return false,
+    }
+    if receipt.on_behalf_of.is_some() || receipt.job_ref.is_some() {
+        return false;
+    }
+    if !receipt.policy_trace.is_empty() {
+        return false;
+    }
+    let Some(rest) = receipt.receipt_id.strip_prefix("share:inquiry_terms:") else {
+        return false;
+    };
+    let Some((grant_hex, seq)) = rest.split_once(':') else {
+        return false;
+    };
+    if !is_lower_hex(grant_hex, 32) {
+        return false;
+    }
+    let Ok(number) = seq.parse::<u32>() else {
+        return false;
+    };
+    if seq != format!("{number:06}") {
+        return false;
+    }
+    if receipt.trigger_ref.as_deref() != Some(format!("federation_grant:{grant_hex}").as_str()) {
+        return false;
+    }
+    // An actor's erase removes the member; the receipt stands without one.
+    if let Some(actor) = receipt.actor.as_deref()
+        && !is_lower_hex(actor, 32)
+    {
+        return false;
+    }
+    if receipt.fields.len() != 6 {
+        return false;
+    }
+    for name in [
+        FIELD_TASK_MODE,
+        FIELD_COPY_MODE,
+        FIELD_PREVIOUS_TASK_MODE,
+        FIELD_PREVIOUS_COPY_MODE,
+    ] {
+        let Some(mode) = receipt.fields.get(name) else {
+            return false;
+        };
+        if InquiryCheckInMode::from_token(mode).is_none() {
+            return false;
+        }
+    }
+    for name in [FIELD_KEEP_ALLOWED, FIELD_PREVIOUS_KEEP_ALLOWED] {
+        let Some(keep) = receipt.fields.get(name) else {
+            return false;
+        };
+        if InquiryKeep::from_token(keep).is_none() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Lands one archived receipt of this store, a send's or a terms change's,
+/// with its time index, preserving erase-removed members.
 fn land_archived_inquiry_receipt_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -384,7 +457,9 @@ fn land_archived_inquiry_receipt_row_in_txn(
         Ok(decoded) => decoded,
         Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
     };
-    if !archived_inquiry_holds(&key, &receipt) {
+    if !archived_inquiry_holds(&key, &receipt)
+        && !archived_inquiry_terms_change_holds(&key, &receipt)
+    {
         return Ok(ArchivedSideRowOutcome::HeldBack(
             RetainedSideHeldBackReason::InvalidValue,
         ));
@@ -400,8 +475,8 @@ fn land_archived_inquiry_receipt_row_in_txn(
 }
 
 impl Vault {
-    /// Lands the owner's archived inquiry receipts in input order, rebuilding only their time
-    /// index.
+    /// Lands the owner's archived receipts of this store, each send's and
+    /// each terms change's, in input order, rebuilding only their time index.
     pub(crate) fn land_archived_inquiry_rows_in_txn(
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
