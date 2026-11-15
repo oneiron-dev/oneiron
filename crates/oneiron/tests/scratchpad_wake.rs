@@ -244,7 +244,10 @@ fn a_retried_try_seals_its_pad_and_the_next_try_opens_a_fresh_one() {
         "the retried try's terminal write seals its pad"
     );
     assert_eq!(scratch_ref(&vault, leased.id), Some(first.to_hex()));
-    let next_leased = claim(&queue, t + 60);
+    // A claim scans at the vault's own clock, so the fake clock passes the
+    // backoff before the next try is ready.
+    let later = copy.clock().advance(60);
+    let next_leased = claim(&queue, later);
     assert_eq!(next_leased.id, next.id, "the claim leases the next try");
     let (second, opened) = write_line(&vault, agent, run_of(&next_leased), "the next try's line");
     assert!(opened, "the next try's first line opens a pad");
