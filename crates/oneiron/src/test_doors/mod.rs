@@ -51,6 +51,7 @@ pub mod feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
+pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
 pub mod grant_roles;

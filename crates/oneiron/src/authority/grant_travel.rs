@@ -32,7 +32,7 @@ use oneiron_authority::share_travel::BornWithField;
 use oneiron_authority::share_travel::TravelChoice;
 
 use super::machine_standing::{InstallCounted, Standing, StandingView};
-use super::world_strength::{FrontierEdit, WorldFrontier};
+use super::world_strength::{FrontierEdit, WalkPart, WorldFrontier, frontier_walk};
 use super::*;
 
 /// What one signed choice states: the fields it lets travel (none for a
@@ -42,6 +42,19 @@ use super::*;
 pub(super) struct SignedChoice {
     fields: BTreeSet<BornWithField>,
     at: u64,
+}
+
+#[cfg(oneiron_test_support)]
+impl SignedChoice {
+    /// A choice of `fields`, for the frontier walk doors.
+    pub(super) fn of_fields(fields: BTreeSet<BornWithField>) -> Self {
+        Self { fields, at: 0 }
+    }
+
+    /// The fields it lets travel.
+    pub(super) fn fields(&self) -> &BTreeSet<BornWithField> {
+        &self.fields
+    }
 }
 
 /// One grant's choices: the live ones, and every one a later choice replaced.
@@ -187,44 +200,32 @@ fn counts_here(
 /// install. A live choice contributes its own fields at full strength;
 /// otherwise the meet of its fields and of every choice it replaced, each
 /// judged the same way, down to full-strength choices or no choice, which
-/// lets nothing travel. Each choice is walked once, iteratively, as
-/// `world_meet` walks a world's edits.
+/// lets nothing travel ([`travel_meet`]).
 fn grant_meet(standing: &Standing<'_>, frontier: &GrantFrontier) -> BTreeSet<BornWithField> {
+    travel_meet(frontier, |hash, choice| counts_here(standing, hash, choice))
+}
+
+/// [`grant_meet`] over `frontier`, where `strong` says whether a choice
+/// counts at full strength: the fields every part of the walk
+/// ([`super::world_strength::frontier_walk`]) lets travel. No choice lets
+/// nothing travel, so the walk stops once none is left.
+pub(super) fn travel_meet(
+    frontier: &GrantFrontier,
+    strong: impl FnMut(&AuthorityEntryHash, &FrontierEdit<SignedChoice>) -> bool,
+) -> BTreeSet<BornWithField> {
     let Some(first) = frontier.live.values().next() else {
         return BTreeSet::new();
     };
     let mut meet = first.settings.fields.clone();
-    let mut visited = BTreeSet::new();
-    let mut pending = Vec::new();
-    for (hash, choice) in &frontier.live {
-        meet.retain(|field| choice.settings.fields.contains(field));
-        if visited.insert(*hash) && !counts_here(standing, hash, choice) {
-            pending.push(choice.as_ref());
+    for part in frontier_walk(frontier, strong) {
+        match part {
+            WalkPart::Edit(_, choice) => {
+                meet.retain(|field| choice.settings.fields.contains(field))
+            }
+            WalkPart::Default => meet.clear(),
         }
-    }
-    while let Some(next) = pending.pop() {
         if meet.is_empty() {
             break;
-        }
-        if next.replaced.is_empty() || next.disputed {
-            meet.clear();
-            break;
-        }
-        for replaced in &next.replaced {
-            if !visited.insert(*replaced) {
-                continue;
-            }
-            let Some(prior) = frontier
-                .superseded
-                .get(replaced)
-                .or_else(|| frontier.live.get(replaced))
-            else {
-                continue;
-            };
-            meet.retain(|field| prior.settings.fields.contains(field));
-            if !counts_here(standing, replaced, prior) {
-                pending.push(prior.as_ref());
-            }
         }
     }
     meet

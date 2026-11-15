@@ -87,6 +87,8 @@ mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
 mod frontier_join;
+#[cfg(oneiron_test_support)]
+pub(crate) mod frontier_walk_door;
 mod full_copy_mark;
 mod grant_travel;
 mod grant_travel_door;
