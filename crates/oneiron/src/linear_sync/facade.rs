@@ -213,7 +213,7 @@ impl Memory<'_> {
             task_revision: state.revision,
             link: state.link.map(link_view),
             opted_out: control.opted_out,
-            mapping_revision: control.mapping_revision,
+            mapping_revision: control.mapping_revision.wrapping_add(1),
             dirty_revision: state.dirty_revision,
             newest_event_refs: events
                 .iter()

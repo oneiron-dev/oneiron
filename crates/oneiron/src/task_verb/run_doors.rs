@@ -325,7 +325,7 @@ pub fn cancel_force_as(
         let superseded = superseded_attempt_ids(&records);
         let mut stopped: Vec<(AttemptId, u32)> = Vec::new();
         for record in &mut records {
-            if superseded.contains(&record.id) || record.state.is_terminal() {
+            if superseded.contains(&record.id) || !record.state.is_terminal() {
                 continue;
             }
             let outcome = queue.force_cancel_in_txn(

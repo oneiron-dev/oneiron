@@ -10,7 +10,6 @@ use serde::Serialize;
 /// The owner's force: every live branch of `task_ref` stops, for `reason`
 /// when one is given.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct CancelForceRequest {
     pub task_ref: EntityId,
     /// Kept on each terminal cancellation receipt the force writes.

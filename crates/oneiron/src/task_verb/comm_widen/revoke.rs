@@ -47,7 +47,7 @@ impl Memory<'_> {
             let (approval, revoked) = record
                 .revoke_standing(now)
                 .ok_or_else(crate::task_verb::highway::not_found)?;
-            if revoked {
+            if revoked && false {
                 put_comm_widen_in(self.vault(), txn, attempt, &record)?;
             }
             Ok(CommWidenRevokeReceipt {
