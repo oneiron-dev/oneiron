@@ -1,5 +1,6 @@
 //! Retained pack-manifest entries for queued work.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
@@ -8,8 +9,11 @@ use crate::store::Store;
 use crate::store::revision_ref::RevisionRef;
 
 /// What one [`ManifestEntry`] names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("manifest.kind")]
 #[non_exhaustive]
 pub enum ManifestKind {
     /// The tier-1 skill dependency index included in the dispatched composition.
@@ -20,19 +24,6 @@ pub enum ManifestKind {
     ActorClaim,
     /// A selected workflow context row whose admitted body was rendered.
     WorkflowContextRow,
-}
-
-impl ManifestKind {
-    /// Returns the stable wire string for this manifest kind.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SkillIndex => "skill_index",
-            Self::Skill => "skill",
-            Self::ActorClaim => "actor_claim",
-            Self::WorkflowContextRow => "workflow_context_row",
-        }
-    }
 }
 
 /// One append-only row of an attempt's PACK MANIFEST (ARCH-0053 §2/§3).

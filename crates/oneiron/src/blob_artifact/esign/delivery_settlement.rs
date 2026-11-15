@@ -36,11 +36,15 @@ use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::FailAttempt;
 use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// Why an invitation or reminder ended unsent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("esign.delivery.end.reason")]
 pub enum EsignDeliveryEndReason {
     /// The document ended first: voided, expired or past its deadline,
     /// declined, or sealed.
@@ -54,16 +58,11 @@ impl EsignDeliveryEndReason {
     /// The reason's code, as the settled queue row keeps it.
     #[must_use]
     pub const fn code(self) -> &'static str {
-        match self {
-            Self::DocumentEnded => "document_ended",
-            Self::RecipientEnded => "recipient_ended",
-        }
+        self.as_str()
     }
 
     fn from_code(code: &str) -> Option<Self> {
-        [Self::DocumentEnded, Self::RecipientEnded]
-            .into_iter()
-            .find(|reason| reason.code() == code)
+        <Self as Register>::named(code)
     }
 }
 
