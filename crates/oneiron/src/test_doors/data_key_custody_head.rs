@@ -1,6 +1,7 @@
 //! Doors for the vault data-key generation test: read a published custody
-//! head back from its folder, and open one with a checkpoint key's data-key
-//! subkey alone.
+//! head back from its folder, open one with a checkpoint key's data-key
+//! subkey alone, and run a publication pass whose recipients were read
+//! before a step.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use crate::recovery::checkpoint::CheckpointKey;
@@ -33,4 +34,17 @@ pub fn open_custody_head_with_checkpoint_key(
     key: &CheckpointKey,
 ) -> crate::error::Result<Vec<String>> {
     crate::store::Store::custody_head_unopened_scopes(head, key.custody_wrap())
+}
+
+/// One publication pass of `vault`'s custody to `folder` that reads its
+/// recipients, then runs `between`, then notes its policy and seals: a pass
+/// whose policy lock did not take while `between` committed.
+pub fn publish_custody_with_recipients_read_before(
+    vault: &crate::Vault,
+    folder: &std::path::Path,
+    between: impl FnOnce(),
+) -> crate::error::Result<()> {
+    vault
+        .publish_custody_with_recipients_read_before(folder, between)
+        .map(|_| ())
 }

@@ -528,14 +528,13 @@ impl Vault {
     }
 
     /// The held data key's `context` subkey for a custody publication pass,
-    /// and the key's commitment once the vault started a new data-key
-    /// generation (`None` at generation 0). Refused while the key is locked,
-    /// and when the held key is not the one the vault stores, so no head is
-    /// sealed under a replaced key.
+    /// with the key's commitment and the generation the vault stores it at.
+    /// Refused while the key is locked, and when the held key is not the one
+    /// the vault stores, so no head is sealed under a replaced key.
     pub(crate) fn custody_head_data_key(
         &self,
         context: &str,
-    ) -> Result<(Zeroizing<[u8; 32]>, Option<[u8; 32]>)> {
+    ) -> Result<(Zeroizing<[u8; 32]>, [u8; 32], u32)> {
         let vault_id = *self.vault_id().as_bytes();
         let held = self
             .held_vault_key()
@@ -551,7 +550,8 @@ impl Vault {
         }
         Ok((
             held.derive(context, &vault_id),
-            (state.generation > 0).then_some(commitment),
+            commitment,
+            state.generation,
         ))
     }
 
@@ -584,5 +584,16 @@ impl Vault {
             keys.push((key.commitment(&vault_id), key.derive(context, &vault_id)));
         }
         Ok(keys)
+    }
+}
+
+impl crate::store::Store {
+    /// The commitment of the data key this vault's key state names, `None`
+    /// while it has none, read in a read transaction of its own: what a
+    /// custody seal checks its recipients' data key against after its
+    /// census.
+    pub(crate) fn stored_vault_key_commitment(&self) -> Result<Option<[u8; 32]>> {
+        let txn = self.env.read_txn()?;
+        Ok(STATE.get(self, &txn, &())?.map(|state| state.commitment))
     }
 }

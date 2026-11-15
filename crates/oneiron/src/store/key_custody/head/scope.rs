@@ -27,6 +27,12 @@ pub(crate) struct CustodyRecipients {
     /// again under the new key. `None` at generation 0, so a vault that never
     /// started one keeps the policy digest it has.
     pub(crate) data_key_commitment: Option<[u8; 32]>,
+    /// The commitment of the held key [`Self::data_key`] derives from, at
+    /// every generation (`Some` exactly when `data_key` is): a seal checks
+    /// that the vault's stored key still names it after its census, so a
+    /// census taken after a new data-key generation is never sealed to the
+    /// key it replaced.
+    pub(crate) data_key_held_commitment: Option<[u8; 32]>,
     /// The worlds (16-byte ids) whose pads the head leaves out: their
     /// settings keep their pads off where the head goes (KS-5 pad head
     /// eligibility). They stay in this machine's custody.

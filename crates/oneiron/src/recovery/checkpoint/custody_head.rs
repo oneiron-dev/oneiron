@@ -215,12 +215,16 @@ impl Vault {
                 );
                 Default::default()
             });
-        let (data_key, data_key_commitment) = match self
+        let (data_key, data_key_held_commitment, data_key_commitment) = match self
             .unlock_vault_key()
             .and_then(|()| self.custody_head_data_key(CUSTODY_HEAD_WRAP_CONTEXT))
         {
-            Ok((subkey, commitment)) => (Some(subkey), commitment),
-            Err(_) => (None, None),
+            Ok((subkey, commitment, generation)) => (
+                Some(subkey),
+                Some(commitment),
+                (generation > 0).then_some(commitment),
+            ),
+            Err(_) => (None, None, None),
         };
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -234,6 +238,7 @@ impl Vault {
             root,
             data_key,
             data_key_commitment,
+            data_key_held_commitment,
             pad_worlds_kept_local,
             credentials_eligible,
             pad_worlds,
@@ -366,6 +371,31 @@ impl Vault {
         let publication =
             self.store
                 .publish_custody(&recipients, &standing, &targets, &outboxes, anchor)?;
+        self.custody_status_of(publication)
+    }
+
+    /// A publication pass to the folder `folder` that reads its recipients,
+    /// then runs `between`, then notes its policy and seals: a pass whose
+    /// policy lock did not take (FIX 7314) while `between` committed. Test
+    /// door only (`test_doors::data_key_custody_head`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn publish_custody_with_recipients_read_before(
+        &self,
+        folder: &Path,
+        between: impl FnOnce(),
+    ) -> Result<CustodyStatus> {
+        let recipients = match self.custody_target_recipients()? {
+            Ok(recipients) => recipients,
+            Err(pending) => return Err(crate::Error::InvalidConfig(pending.detail())),
+        };
+        between();
+        let policy = self.store.custody_policy_guard();
+        let standing = self.store.note_custody_policy(&recipients, &policy)?;
+        let folder = FolderTarget::at(folder.to_path_buf());
+        let targets: Vec<&dyn CustodyTarget> = vec![&folder];
+        let publication =
+            self.store
+                .publish_custody(&recipients, &standing, &targets, &[], None)?;
         self.custody_status_of(publication)
     }
 
