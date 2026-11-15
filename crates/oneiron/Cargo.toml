@@ -37,6 +37,8 @@ oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 # Consent state (core split slice 2).
 oneiron-consent-state = { version = "0.1.0", path = "../oneiron-consent-state" }
+# The Setting vocabulary (DESIGN 15-setting-primitive, stage 0.1).
+oneiron-setting-contract = { version = "0.1.0", path = "../oneiron-setting-contract" }
 # The serde data types (lib split, stage A): the public verbs' wire types, and the stored records above them.
 oneiron-verb-wire = { version = "0.1.0", path = "../oneiron-verb-wire" }
 oneiron-records = { version = "0.1.0", path = "../oneiron-records" }
