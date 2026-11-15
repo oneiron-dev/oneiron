@@ -56,6 +56,7 @@ pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 pub(crate) use coreference::share_consent_valid_at;
 mod grant;
 // A giving writer's act and keyed row (pass 28 R2).
+pub(crate) mod grant_ending;
 mod grant_giving;
 // What a Grant row confers: what the fold's counted acts say of it (pass 28 R1).
 mod grant_standing;
@@ -69,6 +70,7 @@ pub(crate) mod grant_policy;
 #[cfg(feature = "sync")]
 mod grant_travel;
 #[cfg(feature = "sync")]
+pub(crate) use grant_ending::owe_torn_grant_end_in_txn;
 pub(crate) use grant_travel::live_federation_grant_in;
 mod booking_payer;
 mod membership_gate;

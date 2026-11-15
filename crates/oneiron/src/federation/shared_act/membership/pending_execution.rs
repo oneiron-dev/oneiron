@@ -272,11 +272,12 @@ impl Vault {
         self.carry_pending_membership_executions_logged();
     }
 
-    /// Loads this install's key before a membership writer opens, so the
-    /// writer can sign a role's giving (pass 28 R2) and the change's record.
-    /// A key that does not load leaves the record pending, never refusing an
-    /// end; a giving then refuses in its writer (GRANT-ACT-FAILURE-POLICY =
-    /// A).
+    /// Loads this install's key before a Grant writer opens (a membership
+    /// change, a delegate, a house link or unlink, an inquiry edge's terms),
+    /// so the writer can sign its giving or end (pass 28 R2) and a
+    /// membership change's record. A key that does not load leaves an end or
+    /// a record owed, never refusing it; a giving then refuses in its writer
+    /// (GRANT-ACT-FAILURE-POLICY = A).
     pub(crate) fn load_membership_carrier(&self) {
         if let Err(error) = self.load_install_signing_if_minted() {
             tracing::debug!(
@@ -349,8 +350,9 @@ impl Vault {
     /// A person's erase, in its own writer (FIX 3520): every owed membership
     /// record that names them, as the person who executed it, the member it
     /// moved or the successor it names, is dropped, so no record is signed
-    /// in their name. The change's effects stand. It is the declared actor
-    /// scrub of the intent table.
+    /// in their name. The change's effects stand, and each Grant it withdrew
+    /// is owed a person-free end by rule instead (pass 28 R2c). It is the
+    /// declared actor scrub of the intent table.
     pub(crate) fn erase_pending_membership_execution_actor_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -368,6 +370,9 @@ impl Vault {
                     .as_ref()
                     .is_some_and(|handover| handover.to == Some(*actor));
             if names {
+                // Its Grants' ends still count, by rule and naming no one (pass 28 R2c;
+                // Engine RULING GRANT-ROW-DELETE-NO-END = A).
+                self.owe_rule_grant_ends_in_txn(wtxn, &pending.withdrawn_grants)?;
                 PENDING_MEMBERSHIP_EXECUTION.delete(&self.store, wtxn, &receipt)?;
                 dropped += 1;
             }

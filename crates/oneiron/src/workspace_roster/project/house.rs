@@ -175,6 +175,9 @@ impl Vault {
         let kind = self.project_type_byte()?;
         let seeded =
             crate::agent_def::legacy_logical_id_row(ROOT_SEED_LEADER)?.ok_or_else(invalid)?;
+        // The unlink's ends are signed in the writer when the key loads, else
+        // owed (pass 28 R2c).
+        self.load_membership_carrier();
         let (unbound, reseeded) = self.with_write_txn(|txn| {
             let (root, witness, authority) = settled_root_in_txn(self, txn)?;
             let Ok(house) = EntityId::from_hex(&authority.leader) else {
@@ -226,6 +229,8 @@ impl Vault {
     ) -> Result<bool> {
         let kind = self.project_type_byte()?;
         let house = preset.house_actor_ref.to_hex();
+        // The link's giving is signed in the writer (pass 28 R2c).
+        self.load_membership_carrier();
         let (led, reseeded) = self.with_write_txn(|txn| {
             let stored_preset = crate::workspace_roster::PRESET
                 .get(&self.store, txn, &preset.workspace_ref)?

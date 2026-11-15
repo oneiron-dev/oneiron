@@ -175,7 +175,9 @@ fn a_grant_act_in_any_other_form_does_not_decode() {
 }
 
 /// Catches a rule that lets a person give or end the owner's agent Grant by this act, lets a
-/// rule give or end any other Grant, or lets a giving commit to nothing.
+/// rule give any Grant, refuses a rule's end of any family (a direct delete of a member row or
+/// a house link ends it by rule, GRANT-ROW-DELETE-NO-END = A), or lets a giving commit to
+/// nothing.
 #[test]
 fn each_decider_gives_and_ends_only_what_its_rule_admits() {
     for family in FAMILIES {
@@ -194,10 +196,9 @@ fn each_decider_gives_and_ends_only_what_its_rule_admits() {
             by_rule(family, GIVE).validate().is_err(),
             "a rule gives {family:?}"
         );
-        assert_eq!(
+        assert!(
             by_rule(family, GrantActChange::End).validate().is_ok(),
-            family == GrantFamily::OwnerAgent,
-            "a rule ends {family:?}"
+            "a rule cannot end {family:?}"
         );
     }
     let nothing = GrantActChange::Give { terms: [0; 32] };

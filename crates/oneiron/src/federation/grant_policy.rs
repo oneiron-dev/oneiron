@@ -311,6 +311,8 @@ impl crate::Vault {
         now: u64,
         expires_at: u64,
     ) -> Result<EntityId> {
+        // The giving's act is signed in the writer (pass 28 R2c).
+        self.load_membership_carrier();
         self.with_write_txn_grouped(|txn| {
             self.create_federation_delegate_in_txn(
                 txn,
@@ -333,6 +335,8 @@ impl crate::Vault {
         requested: &Scope,
         expires_at: u64,
     ) -> Result<(EntityId, super::FederationGrant)> {
+        // The giving's act is signed in the writer (pass 28 R2c).
+        self.load_membership_carrier();
         self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let id = self.mint_federation_delegate_in_txn(
@@ -448,6 +452,16 @@ impl crate::Vault {
             grant.authority_scope = grant.authority_scope.meet(requested);
         }
         let id = EntityId::now();
+        // The admin's giving, signed in this writer and committing to the row's terms (pass 28
+        // R2c); an install that cannot carry it refuses the delegate (Engine RULING
+        // GRANT-ACT-FAILURE-POLICY = A).
+        let data = self.give_grant_in_txn(
+            txn,
+            holder_actor,
+            id,
+            crate::authority::GrantFamily::Delegate,
+            &grant,
+        )?;
         crate::batch::apply_ops(
             &self.store,
             &self.config,
@@ -462,7 +476,7 @@ impl crate::Vault {
                 },
                 learned_at: now,
                 row_version: None,
-                data: super::encode_federation_grant_body(&grant)?,
+                data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,

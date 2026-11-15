@@ -501,10 +501,14 @@ impl Vault {
     /// writer `txn`, for a caller that takes back a grant no work ever stood
     /// on and records its own reason beside it (an OAuth sign-in that lapsed
     /// before its client held a token, FIX 22142). The delete's withdrawal
-    /// marker keeps it on the record with no act beside it: the registry
-    /// lists it as revoked and the owner's revoke answers unchanged (FIX
-    /// 22188). `false`, with nothing written, for an id that names no live
-    /// agent grant of `agent`: one the owner revoked already among them.
+    /// marker keeps it on the record with no act of the owner's beside it:
+    /// the registry lists it as revoked and the owner's revoke answers
+    /// unchanged (FIX 22188). Its Grant line ends by a rule's grant act in
+    /// this writer, carried by any live machine of the vault, or owed when
+    /// this install cannot carry one now (pass 28 R2c; Engine RULING
+    /// GRANT-ACT-FAILURE-POLICY = A): an end never refuses. `false`, with
+    /// nothing written, for an id that names no live agent grant of `agent`:
+    /// one the owner revoked already among them.
     ///
     /// # Errors
     /// A store failure.
@@ -527,6 +531,12 @@ impl Vault {
             return Ok(false);
         }
         self.delete_agent_grant_row_in_txn(txn, grant_ref)?;
+        self.end_grant_in_txn(
+            txn,
+            crate::authority::GrantActBy::Rule,
+            grant_ref,
+            crate::authority::GrantFamily::OwnerAgent,
+        )?;
         Ok(true)
     }
 

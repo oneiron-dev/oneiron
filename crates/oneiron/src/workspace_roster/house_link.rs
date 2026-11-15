@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use super::WorkspaceRosterPreset;
 use super::records::PRESET;
 use crate::Vault;
+use crate::authority::{ActSurface, GrantActBy, GrantFamily};
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -41,7 +42,6 @@ use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
 use crate::federation::{
     FederationGrant, FederationGrantRole, FederationGrantScope, OrgAdminPower, SharedVaultWrite,
-    encode_federation_grant_body,
 };
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT};
@@ -387,10 +387,13 @@ pub(crate) fn link_house_in_txn(
     );
     grant.authority_scope = vault.grant_default_scope_in_txn(txn, role, vault_id, house)?;
     grant.validate()?;
-    let data = encode_federation_grant_body(&grant)?;
-    let ops = ids
-        .iter()
-        .map(|id| BatchOp::Put {
+    // The binder's giving of each row, signed in this writer, one act and one
+    // fresh terms key per id (pass 28 R2c); an install that cannot carry it
+    // refuses the bind (Engine RULING GRANT-ACT-FAILURE-POLICY = A).
+    let mut ops = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let data = vault.give_grant_in_txn(txn, binder, *id, GrantFamily::HouseLink, &grant)?;
+        ops.push(BatchOp::Put {
             id: *id,
             entity_type: ENTITY_TYPE_FEDERATION_GRANT,
             occurred: TimeRange {
@@ -399,12 +402,12 @@ pub(crate) fn link_house_in_txn(
             },
             learned_at: now,
             row_version: None,
-            data: data.clone(),
+            data,
             allow_maintenance: true,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
-        })
-        .collect();
+        });
+    }
     apply_grant_ops_in_txn(vault, txn, ops)?;
     // One bind receipt per grant written, as the unlink keeps one unbind per
     // grant removed, so the next same bind finds every grant linked here.
@@ -460,6 +463,17 @@ fn unlink_preset_in_txn(
         );
         crate::authority::withdraw_grant_row_in_txn(&vault.store, txn, *id)?;
         apply_grant_ops_in_txn(vault, txn, vec![BatchOp::Delete { id: *id }])?;
+        // The binder's end of the row's line, in this writer or owed: an end
+        // never refuses the unlink (pass 28 R2c).
+        vault.end_grant_in_txn(
+            txn,
+            GrantActBy::Person {
+                person: binder,
+                surface: ActSurface::ThisInstall,
+            },
+            *id,
+            GrantFamily::HouseLink,
+        )?;
         append_receipt_in_txn(
             vault,
             txn,
@@ -534,6 +548,8 @@ impl Vault {
         workspace_ref: &str,
         role: FederationGrantRole,
     ) -> Result<()> {
+        // The link's giving is signed in the writer (pass 28 R2c).
+        self.load_membership_carrier();
         self.with_write_txn(|txn| {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
@@ -553,6 +569,8 @@ impl Vault {
         actor: &AuthenticatedOwner,
         workspace_ref: &str,
     ) -> Result<bool> {
+        // Its end is signed in the writer when the key loads, else owed.
+        self.load_membership_carrier();
         self.with_write_txn(|txn| {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;

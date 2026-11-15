@@ -363,16 +363,28 @@ pub(super) fn open_inquiry_scope_item_in_txn(
 }
 
 /// Rewrites the inquiry edge `grant`'s row as `grant_body` in `txn`, its
-/// id, entity type and time kept: the one row write of a terms change.
+/// id, entity type and time kept: the one row write of a terms change. The
+/// owner `giver`'s giving of the new terms is signed first in `txn`, and the
+/// row is written under its fresh terms key (pass 28 R2c), so the line's
+/// newest giving is these terms; an install that cannot carry the act
+/// refuses the change (Engine RULING GRANT-ACT-FAILURE-POLICY = A).
 fn rewrite_inquiry_edge_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    giver: EntityId,
     grant: EntityId,
     grant_body: &FederationGrant,
 ) -> Result<()> {
     let header = vault
         .entity_header_in_txn(txn, &grant)?
         .ok_or(Error::EntityNotFound)?;
+    let data = vault.give_grant_in_txn(
+        txn,
+        giver,
+        grant,
+        crate::authority::GrantFamily::InquiryEdge,
+        grant_body,
+    )?;
     crate::batch::apply_ops(
         &vault.store,
         &vault.config,
@@ -387,7 +399,7 @@ fn rewrite_inquiry_edge_row_in_txn(
             },
             learned_at: header.learned_at,
             row_version: None,
-            data: crate::federation::encode_federation_grant_body(grant_body)?,
+            data,
             allow_maintenance: true,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
@@ -606,6 +618,8 @@ impl Vault {
         grant: EntityId,
         change: InquiryTermsChange,
     ) -> Result<InquiryTermsChanged> {
+        // The new terms' giving is signed in the writer (pass 28 R2c).
+        self.load_membership_carrier();
         self.with_write_txn_grouped(|txn| {
             let actor = member.revalidate_person_in_txn(self, txn)?;
             if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &actor)? {
@@ -641,7 +655,7 @@ impl Vault {
                 member.revalidate_in_txn(self, txn)?;
             }
             grant_body.inquiry_terms = Some(terms);
-            rewrite_inquiry_edge_row_in_txn(self, txn, grant, &grant_body)?;
+            rewrite_inquiry_edge_row_in_txn(self, txn, actor, grant, &grant_body)?;
             let edge = InquiryEdge { terms, ..edge };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             write_inquiry_terms_receipt_in_txn(

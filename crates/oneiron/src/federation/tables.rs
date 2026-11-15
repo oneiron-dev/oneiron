@@ -132,6 +132,16 @@ crate::side_table::side_tables! {
         // neither drops one nor revives one already signed (FIX 12335).
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::Vault::erase_pending_membership_execution_actor_in_txn;
+    /// A Grant whose counted end this install still owes (Fable pass 28 R2c; Engine RULINGS
+    /// GRANT-ACT-FAILURE-POLICY = A and GRANT-ROW-DELETE-NO-END = A): the person who took it back
+    /// (none for a rule's end) and its family as the writer knew it (none for a batch delete),
+    /// until the pass whose writer the fold counts the end in, or that finds a counted act ended
+    /// it already. Holds no term, value, credential or proof. Key: hex32 (Grant id).
+    FEDERATION_OWED_GRANT_END: VaultMeta b"federation:owed-grant-end:v1:" Named Engine
+        // Restore class: an owed end stands as the live vault owes it: a restore neither drops a
+        // taking back nor revives one already counted.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_owed_grant_end_actor_in_txn;
     /// One proposed shared-act policy change and its live editors' answers (DOOR-129). Key: hex32
     /// (change id).
     SHARED_ACT_POLICY_CHANGE: VaultMeta b"shared-act:policy-change:v1:" Named
