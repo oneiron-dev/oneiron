@@ -476,9 +476,7 @@ pub(crate) fn bind_sticky_sender_in_txn(
             wtxn,
             &SenderRotation {
                 person_ref,
-                campaign_ref,
                 previous_sender_ref,
-                sender_ref: proposed_sender_ref,
                 member_head_ref,
                 occurred_at,
             },
@@ -515,16 +513,14 @@ pub(crate) fn bind_sticky_sender_in_txn(
 /// One rotation off a dead sticky sender, as its owner notices name it.
 struct SenderRotation {
     person_ref: EntityId,
-    campaign_ref: EntityId,
     previous_sender_ref: EntityId,
-    sender_ref: EntityId,
     member_head_ref: EntityId,
     occurred_at: u64,
 }
 
-/// One notice per vault owner, in the rotation's write: the rotation's head
-/// is its result, the dead sender its detail, and the person, the campaign
-/// and both senders its subjects.
+/// One notice per vault owner, in the rotation's write (Engine RULING
+/// PACKWAVE-W3-ROTATION-RECEIPT = A): the rotation's head is its result, the
+/// dead sender its detail, and the person its subject.
 fn notify_owners_of_sender_rotation_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -543,12 +539,7 @@ fn notify_owners_of_sender_rotation_in_txn(
                     detail: Some(rotation.previous_sender_ref.to_hex()),
                     ..NotificationSource::default()
                 },
-                subject_refs: vec![
-                    rotation.person_ref,
-                    rotation.campaign_ref,
-                    rotation.previous_sender_ref,
-                    rotation.sender_ref,
-                ],
+                subject_refs: vec![rotation.person_ref],
                 recipient: Some(owner),
                 created_at: rotation.occurred_at,
                 origin_conversation: None,
