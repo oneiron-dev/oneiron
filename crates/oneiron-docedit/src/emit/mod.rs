@@ -8,12 +8,17 @@
 //! against the plan's package row, relationships, content types, id scopes,
 //! and a re-import that reads every unit back where the plan put it.
 //!
-//! Fit is decided only where geometry decides it. Laid-out text needs the
-//! actual fonts and script shaping, which emission does not have, so text,
-//! tables and charts come back `FitUnverified`; an estimate chose the slide
-//! and never certifies it. `fontScale` and `lnSpcReduction` are never
-//! written. The `deck-create-v1` oracle case set ([`oracle_cases`]) replays `emit` once per case and pins the candidates.
+//! Fit is decided where geometry decides it, or where PowerPoint measured
+//! it. Laid-out text needs the actual fonts and script shaping, which
+//! emission does not have, so text, tables and charts come back
+//! `FitUnverified` unless the caller's [`FitEvidence`] holds a clean stored
+//! Office receipt for these exact candidate bytes whose row for the unit
+//! fits; an estimate chose the slide and never certifies it. `fontScale` and
+//! `lnSpcReduction` are never written. The `deck-create-v1` oracle case set
+//! ([`oracle_cases`]) replays `emit` once per case and pins the candidates
+//! its stored receipts measured.
 mod check;
+mod evidence;
 pub mod oracle_cases;
 mod slide;
 #[cfg(test)]
@@ -34,6 +39,8 @@ use crate::native_patch::{
 use crate::ooxml::{DOCUMENT_RELATIONSHIPS as REL, XmlError, XmlTree};
 use crate::retained_opc::{self, Package};
 use std::collections::{BTreeMap, BTreeSet};
+
+pub use evidence::{EvidenceError, FitEvidence, FitReceipt, FitRow, FitVerdict};
 
 /// Names for what emission creates, from the caller's configuration. An
 /// ordinary shape is named `"{stem} {id}"`; a filled placeholder keeps its
@@ -66,6 +73,8 @@ pub struct EmitInputs<'a> {
     pub assets: &'a BTreeMap<String, StoredAsset<'a>>,
     pub names: Names<'a>,
     pub limits: GraphicLimits,
+    /// Stored PowerPoint measurements; a unit's fit is certified only from these.
+    pub fit_evidence: &'a FitEvidence,
 }
 
 /// One new deck as candidate bytes, the hash that binds them, its report and
@@ -76,8 +85,12 @@ pub struct Candidate {
     /// BLAKE3 of `bytes`.
     pub hash: [u8; 32],
     pub report: Report,
-    /// `Ok` only when geometry decides every unit's fit.
+    /// `Ok` only when geometry, or PowerPoint in a stored receipt for these
+    /// bytes, decides every unit's fit.
     pub fit: Result<(), FitUnverified>,
+    /// SHA-256 of the clean stored Office receipt for these bytes, when the
+    /// fit evidence holds one.
+    pub fit_receipt: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,12 +157,16 @@ pub struct PlacedAsset {
     pub record: AssetUse,
 }
 
-/// The units whose fit emission cannot decide: text layout needs the actual
-/// fonts and shaping. A clean render does not settle it either.
+/// The units whose fit emission cannot decide and no stored PowerPoint
+/// measurement certifies: text layout needs the actual fonts and shaping. A
+/// clean render does not settle it either.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("fit unverified for {} unit(s)", .units.len())]
 pub struct FitUnverified {
     pub units: Vec<Unverified>,
+    /// The units PowerPoint measured running past their frame; each is also
+    /// in `units`.
+    pub overflows: Vec<Unverified>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,19 +275,7 @@ pub fn emit(plan: &DesignPlan, inputs: &EmitInputs<'_>) -> Result<Candidate, Emi
     slide::write_slide_list(&mut writer.package, &presentation, &list)?;
     let bytes = writer.package.export()?;
     let write_set = check::verify(plan, template, &bytes, &slides)?;
-    let unverified: Vec<Unverified> = slides
-        .iter()
-        .flat_map(|slide| {
-            slide.units.iter().filter_map(|unit| match unit.fit {
-                FitTrace::Unverified { .. } => Some(Unverified {
-                    slide: slide.part.clone(),
-                    block: unit.block.clone(),
-                    shape: unit.shape,
-                }),
-                FitTrace::Exact { .. } => None,
-            })
-        })
-        .collect();
+    let (fit, fit_receipt) = evidence::certify(&bytes, &slides, inputs.fit_evidence);
     let omitted = plan
         .trace()
         .iter()
@@ -289,11 +294,8 @@ pub fn emit(plan: &DesignPlan, inputs: &EmitInputs<'_>) -> Result<Candidate, Emi
             assets: writer.assets,
             native: writer.native,
         },
-        fit: if unverified.is_empty() {
-            Ok(())
-        } else {
-            Err(FitUnverified { units: unverified })
-        },
+        fit,
+        fit_receipt,
     })
 }
 

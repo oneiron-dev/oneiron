@@ -333,6 +333,7 @@ impl Vault {
             adapters,
             agent_ids,
             secrets,
+            owner_export,
         )?;
         // Every row read past the locality filter below: a row the archive
         // carries, a custody record it carries as a value or a handle, a
