@@ -8,10 +8,12 @@
 //! A grant narrowed to some projects reads the rows that lie where the
 //! attempts they name ran, inside its projects
 //! ([`SubstrateReach::holds_attempts_in_txn`]; DEC-0005 #scope; FIX
-//! [SUBSTRATE-READS-NO-SCOPE-FILTER]): a card by the attempt each of its
-//! findings named, a call receipt by the attempt it held, and the failure
-//! evidence by its attempt. A row whose attempt is unknown reads only for a
-//! grant across the whole vault.
+//! [SUBSTRATE-READS-NO-SCOPE-FILTER]): a card by the attempts it names and
+//! every row it cites, a call receipt by the attempt it held, and the
+//! failure evidence by its attempt. A row whose attempt is unknown, a card
+//! citing a row that names no attempt, and a card whose measure is held
+//! against rows of other attempts read only for a grant across the whole
+//! vault.
 
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +29,7 @@ use crate::federation::{
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::receipt::CallReceipt;
-use crate::store::diagnostic_record::decode_diagnostic_event_body;
+use crate::store::diagnostic_record::{AgentHealthSignal, decode_diagnostic_event_body};
 use crate::{EntityId, Result, Vault};
 
 /// The most rows one read answers.
@@ -113,19 +115,49 @@ fn card_attempts_in_txn(
     Ok(Some(attempts))
 }
 
-/// Whether `card` lies inside the narrowed reach `reach`: each attempt its
-/// findings named ran in a project inside it. A card with no finding, or one
-/// whose attempt is unknown, does not.
+/// Whether a `signal` card's measure reads its own attempt's rows alone. A
+/// cost spike is held against the p90 spend of every closed run of its task
+/// type and unit, in any project; a silence against its actor's calls that
+/// name no attempt. Either card says what lies outside its attempts.
+const fn measured_on_its_own_rows(signal: AgentHealthSignal) -> bool {
+    !matches!(
+        signal,
+        AgentHealthSignal::CostSpike | AgentHealthSignal::Silent
+    )
+}
+
+/// Whether `card` lies inside the narrowed reach `reach`: its measure reads
+/// its own attempts' rows alone, and each attempt its findings named and
+/// every row it cites (its evidence, the attempts it witnessed, the one
+/// holding a confession) is an attempt that ran in a project inside it. A
+/// card with no finding, one whose attempt is unknown, and one citing a row
+/// that is no such attempt (another project's duplicate run, a receipt, a
+/// task, a trap's anchor) do not.
 fn card_inside_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     reach: &SubstrateReach,
     card: &AgentHealthCard,
 ) -> Result<bool> {
-    match card_attempts_in_txn(vault, txn, card)? {
-        Some(attempts) => reach.holds_attempts_in_txn(vault, txn, &attempts),
-        None => Ok(false),
+    if !measured_on_its_own_rows(card.signal) {
+        return Ok(false);
     }
+    let Some(mut attempts) = card_attempts_in_txn(vault, txn, card)? else {
+        return Ok(false);
+    };
+    let cited = card
+        .evidence
+        .iter()
+        .chain(&card.witnessed_attempts)
+        .chain(card.attempt.as_ref())
+        .chain(card.confession.as_ref());
+    for row in cited {
+        let Ok(attempt) = AttemptId::from_bytes(row.as_bytes()) else {
+            return Ok(false);
+        };
+        attempts.push(attempt);
+    }
+    reach.holds_attempts_in_txn(vault, txn, &attempts)
 }
 
 /// The attempt `call` held, as its host witnessed it; None when it held no

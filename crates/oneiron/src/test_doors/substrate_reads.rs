@@ -107,7 +107,39 @@ pub fn land_agent_health_finding(
     attempt: Option<AttemptId>,
     now: u64,
 ) -> Result<()> {
-    vault.land_agent_health_finding_for_test(subject, attempt, now)
+    vault.land_agent_health_finding_for_test(
+        subject,
+        crate::store::diagnostic_record::AgentHealthSignal::Loop,
+        attempt,
+        &[],
+        now,
+    )
+}
+
+/// Lands one finding of the signal named `signal` (its wire spelling, as
+/// `cost_spike`) on `subject`'s taskless card, naming `attempt` in its
+/// replay coordinate and citing `attempt` and then each of `cited` as its
+/// evidence, as a duplicate-work finding cites the other run.
+///
+/// # Errors
+///
+/// A signal outside the closed set; the vault's.
+pub fn land_agent_health_finding_citing(
+    vault: &Vault,
+    subject: EntityId,
+    signal: &str,
+    attempt: AttemptId,
+    cited: &[AttemptId],
+    now: u64,
+) -> Result<()> {
+    let signal = crate::store::diagnostic_record::AgentHealthSignal::from_wire(signal).ok_or(
+        Error::InvalidClaimBody("an agent health signal's wire spelling"),
+    )?;
+    let mut rows = Vec::with_capacity(cited.len());
+    for attempt in cited {
+        rows.push(EntityId::from_bytes(*attempt.as_bytes())?);
+    }
+    vault.land_agent_health_finding_for_test(subject, signal, Some(attempt), &rows, now)
 }
 
 /// Records one solo team run of `width` agents in `project`, or in the

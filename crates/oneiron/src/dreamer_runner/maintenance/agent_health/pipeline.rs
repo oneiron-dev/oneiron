@@ -660,22 +660,27 @@ fn merge(
 
 #[cfg(oneiron_test_support)]
 impl Vault {
-    /// TEST-ONLY: lands one `loop` finding on `subject`'s taskless card as
+    /// TEST-ONLY: lands one `signal` finding on `subject`'s taskless card as
     /// [`land`] does: its DIAGNOSTIC first, naming `attempt` in its replay
-    /// coordinate, then the card it merges into.
+    /// coordinate, then the card it merges into. Its evidence is `attempt`
+    /// (a fresh id for `None`), then each of `cited`.
     pub(crate) fn land_agent_health_finding_for_test(
         &self,
         subject: EntityId,
+        signal: AgentHealthSignal,
         attempt: Option<crate::attempt_queue::AttemptId>,
+        cited: &[EntityId],
         now: u64,
     ) -> Result<()> {
+        let mut evidence = vec![attempt.and_then(entity).unwrap_or_else(EntityId::now)];
+        evidence.extend_from_slice(cited);
         let finding = Finding {
             subject,
-            signal: AgentHealthSignal::Loop,
+            signal,
             task: None,
             attempt,
             generation: None,
-            evidence: vec![attempt.and_then(entity).unwrap_or_else(EntityId::now)],
+            evidence,
             source_rows: None,
             window: (now, now),
             actual: 1,

@@ -12,7 +12,8 @@
 //! Red at the base: a holder whose grant names one project is refused each
 //! read outright. Guards (they hold there too): it reads no row of another
 //! project or of the whole vault, no catalog line, which carries the
-//! vault-wide value, and no card that merged a finding naming no attempt.
+//! vault-wide value, no card that merged a finding naming no attempt, and no
+//! card citing a row outside its project or measured against one.
 //! What it reads of a cell or of a spawn choice's learning is made of its
 //! own project's runs alone: a row outside the project never moves it, and
 //! never turns it into a refusal.
@@ -31,8 +32,8 @@ use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERBS, define_agent};
 use oneiron::test_doors::steward::STEWARD_READ_VERB;
 use oneiron::test_doors::substrate_reads::{
-    dispatch_into_child_projects, land_agent_health_finding, record_settled_team_run,
-    stand_project_steward_grant,
+    dispatch_into_child_projects, land_agent_health_finding, land_agent_health_finding_citing,
+    record_settled_team_run, stand_project_steward_grant,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
@@ -479,6 +480,67 @@ fn project_scoped_steward_reads_own_project_cards() {
         subjects,
         vec![json!(inside)],
         "actor=agent {reader:?}, grant=project {own_project:?}; expected only the card of its own project's run, none of project {other_project:?}, the root project's run, a run-less finding or the mixed card {mixed:?}; seen subjects={subjects:?}"
+    );
+}
+
+/// A Steward `read` holder narrowed to one project reads no card that cites
+/// a row outside its project, or whose measure is held against rows of
+/// other runs, even when the card's one finding named a run of its own
+/// project: a duplicate-work card citing the other project's run it
+/// duplicated, a cost-spike card (its p90 baseline is every project's runs
+/// of its task type and unit) and a silence card (its quiet counts its
+/// actor's calls that name no run). A long-wait card of its own run alone
+/// still reads. Red at the base (every card is refused there) and at
+/// 90c687702fc4 (it judged a card by its findings' replay runs alone).
+#[test]
+fn project_scoped_steward_reads_no_card_citing_or_measured_outside_its_project() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = unrooted_vault(&dir);
+    let reader = define_agent(&vault).expect("a reader");
+    let (_, children) =
+        dispatch_into_child_projects(&vault, 2).expect("runs in two child projects");
+    let [(own_project, own_run), (other_project, other_run)] = children[..] else {
+        panic!("expected two child projects; seen {}", children.len());
+    };
+    let (duplicate, spike, silent, waited) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    for (subject, signal, cited, now) in [
+        (duplicate, "duplicate_work", vec![other_run], 10),
+        (spike, "cost_spike", Vec::new(), 11),
+        (silent, "silent", Vec::new(), 12),
+        (waited, "long_wait", Vec::new(), 13),
+    ] {
+        land_agent_health_finding_citing(&vault, subject, signal, own_run, &cited, now)
+            .expect("a finding on its card");
+    }
+    stand_project_steward_grant(&vault, reader, &[STEWARD_READ_VERB], own_project)
+        .expect("a read grant narrowed to one project");
+
+    let answer = read(
+        &vault,
+        reader,
+        "vault.agent_health.cards",
+        json!({ "from": 0, "to": u64::MAX }),
+    );
+    let cards = answer.unwrap_or_else(|error| {
+        panic!(
+            "actor=agent {reader:?}, grant=project {own_project:?}; expected its own project's cards, not a refusal; seen {error:?}"
+        )
+    });
+    let subjects: Vec<Value> = cards
+        .as_array()
+        .expect("cards")
+        .iter()
+        .map(|card| card["subject"].clone())
+        .collect();
+    assert_eq!(
+        subjects,
+        vec![json!(waited)],
+        "actor=agent {reader:?}, grant=project {own_project:?}; expected only the long-wait card of its own run, not the duplicate-work card {duplicate:?} citing project {other_project:?}'s run, the cost-spike card {spike:?} or the silence card {silent:?}; seen subjects={subjects:?}"
     );
 }
 
