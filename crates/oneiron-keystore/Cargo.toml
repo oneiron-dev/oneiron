@@ -11,8 +11,9 @@ publish = false
 [lib]
 doctest = false
 
-# Few dependencies on purpose: the Apple adapter is compile-checked for an Apple
-# target from Linux, so nothing here may need a C toolchain or an SDK at build time.
+# Few dependencies on purpose: the Apple adapters must check for an Apple target
+# from Linux (scripts/ci/check_keystore_apple_target.sh; no CI job runs it yet),
+# so nothing here may need a C toolchain or an SDK at build time.
 [dependencies]
 thiserror = { workspace = true }
 zeroize = { version = "1.8", features = ["derive"] }
@@ -21,6 +22,14 @@ zeroize = { version = "1.8", features = ["derive"] }
 core-foundation = "0.10"
 security-framework = { version = "3.7", features = ["OSX_10_15"] }
 security-framework-sys = "2.17"
+
+# The macOS unlock sheet (LocalAuthentication), through the bindings the
+# workspace already locks for the macOS app; no SDK at build time.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "LAContext", "block2"] }
 
 # DPAPI, through the binding the workspace already locks; no SDK at build time.
 [target.'cfg(windows)'.dependencies]

@@ -7575,7 +7575,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 2
      }
     },
@@ -8267,7 +8267,7 @@
      "path": "src/batch/lexical_query_hints.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -28694,6 +28694,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ConversationHome",
+      "HomeClearanceRequest",
+      "HomeClearanceSet",
+      "HomeClearanceView"
+     ],
+     "path": "src/disclosure/home.rs",
+     "purpose": "Conversation-home clearance (DEC-0006 `#home-clearance`): stamped content is read only in conversations…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/disclosure/import_audience.rs",
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
@@ -28711,7 +28730,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -28824,11 +28843,12 @@
      "path": "src/disclosure/vault_agent.rs",
      "purpose": "Who is one of this vault's own agents (the Engine lane's ruling, 2026-10-11): an active `agent` binding in…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DisclosureAssembly",
@@ -28837,8 +28857,8 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 13,
-      "fn": 13,
+      "crate-vis": 14,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -40319,7 +40339,7 @@
      "path": "src/federation/record_scope/note_world.rs",
      "purpose": "A NOTE's world (FIX-LIST 9433): where its live `InWorld` edges place it, read again at every read",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 1
      }
     },
@@ -53206,7 +53226,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "mod": 41,
       "re-export": 73
      }
@@ -55441,7 +55461,7 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 5
      }
     },
@@ -55904,7 +55924,7 @@
      "path": "src/memory/witness/validation.rs",
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -99708,6 +99728,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/home_clearance_stamped_content.rs",
+     "purpose": "Stamped content stays in conversations homed in its own vault, unless its owner granted clearance (DEC-0006…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102154,6 +102182,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_learned_time_ceiling.rs",
+     "purpose": "Census L7-21 (ARCH-0002 `#turn-time-built`): a TURN's learned time feeds the consolidation watermark, so the…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -102942,9 +102978,9 @@
      "purpose": "The derivation transaction (untangle slice 6.7, primitive C): an agent lands what it derived as ONE batch…"
     },
     "disclosure": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
@@ -104118,10 +104154,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 265,
+   "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7600,
-   "test_files": 1337
+   "source_files": 7601,
+   "test_files": 1339
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -117605,6 +117641,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "examples/user_presence_probe.rs",
+     "purpose": "Probe of the presence layer on a real device (row OWNER-CONFIRM-SHEET)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AppleKeychain"
      ],
@@ -117661,7 +117705,7 @@
       "const": 1,
       "enum": 5,
       "fn": 8,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -117675,6 +117719,19 @@
      ],
      "path": "src/linux_tpm.rs",
      "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MacosUserPresence"
+     ],
+     "path": "src/macos_presence.rs",
+     "purpose": "macOS: the device's own unlock sheet, and the window server's word on the screen lock (row…",
      "surface": {
       "fn": 1,
       "struct": 1
@@ -117714,9 +117771,9 @@
      "path": "src/user_presence.rs",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…",
      "surface": {
-      "const": 1,
+      "const": 3,
       "enum": 3,
-      "fn": 21,
+      "fn": 26,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -117773,6 +117830,13 @@
      "layout": "file",
      "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)"
     },
+    "macos_presence": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "macOS: the device's own unlock sheet, and the window server's word on the screen lock (row…"
+    },
     "memory": {
      "files": 1,
      "impl_vault": false,
@@ -117797,7 +117861,7 @@
    },
    "over_bar": 0,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 8,
+   "source_files": 10,
    "test_files": 1
   },
   "oneiron-lens-wire": {
@@ -140411,7 +140475,7 @@
      "path": "src/api/context_pack/interlocutor.rs",
      "purpose": "Interlocutor-set resolution and third-party party inputs for context-pack requests",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -141645,9 +141709,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/disclosure_doors.rs",
-     "purpose": "Owner registry and reveal-settlement doors, shared by HTTP and MCP",
+     "purpose": "Owner registry, home-clearance and reveal-settlement doors, shared by HTTP and MCP",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -159311,6 +159375,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_conversation_home.rs",
+     "purpose": "Conversation-home clearance on the context-pack route (DEC-0006 #home-clearance)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -160724,7 +160796,7 @@
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1887,
-   "test_files": 266
+   "test_files": 267
   },
   "oneiron-skill-attribution": {
    "files": [
