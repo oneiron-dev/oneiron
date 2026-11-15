@@ -146,17 +146,22 @@ fn writes_shared_content_in_txn(
 }
 
 /// Whether this vault's authority log minted `credential` as it shows
-/// itself, holder key and bounds alike. A slip narrowed or handed on to
-/// another key since shows other claims than its mint; and a proof verified
-/// against a snapshot other than this vault's may name a live slip id, but
-/// not the claims this vault minted under it. Every door whose effect
-/// outlives the room under the slip's authority asks it: a save here, and
-/// an export ([`OffRecordSession::export_talk_by`]).
+/// itself, holder key and bounds alike, with no caveat since. A slip
+/// narrowed or handed on to another key carries a caveat, even one that
+/// only shortens its lifetime, which the claims cannot show (verification
+/// trims the lifetime anyway); and a proof verified against a snapshot
+/// other than this vault's may name a live slip id, but not the claims this
+/// vault minted under it. Every door whose effect outlives the room under
+/// the slip's authority asks it: a save here, and an export
+/// ([`OffRecordSession::export_talk_by`]).
 pub(super) fn minted_as_shown(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     credential: &VerifiedSlip,
 ) -> Result<bool> {
+    if !credential.is_unattenuated() {
+        return Ok(false);
+    }
     let shown = credential.claims();
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     Ok(fold.slips.mints.get(&shown.slip_id).is_some_and(|mint| {
