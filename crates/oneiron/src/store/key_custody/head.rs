@@ -421,6 +421,30 @@ fn open_body(
     rmp_serde::from_slice(&plain).map_err(|_| head_corrupt())
 }
 
+#[cfg(oneiron_test_support)]
+impl crate::store::Store {
+    /// The debug names of the scopes custody head `head` leaves unopened with
+    /// the data-key subkeys `data_keys` alone (no kit, no machine key), for
+    /// the data-key generation test door. Refused when the control
+    /// compartment does not open, so an `Ok` proves a data-key wrap opened.
+    pub(crate) fn custody_head_unopened_scopes(
+        head: &[u8],
+        data_keys: Vec<Zeroizing<[u8; 32]>>,
+    ) -> Result<Vec<String>> {
+        let opener = CustodyOpener {
+            root: None,
+            data_keys,
+            machine: None,
+        };
+        let opened = open_head(head, &opener)?;
+        Ok(opened
+            .unopened
+            .iter()
+            .map(|scope| format!("{scope:?}"))
+            .collect())
+    }
+}
+
 /// Opens `head` with `opener`. The control compartment must open, and it
 /// must name every other compartment and every carried one, whole and in
 /// order; a compartment whose key the opener holds no wrap for is listed as
