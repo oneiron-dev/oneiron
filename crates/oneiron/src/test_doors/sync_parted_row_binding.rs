@@ -11,8 +11,8 @@ use loro::cursor::Side;
 use loro::{ExportMode, LoroDoc, LoroMap};
 use serde::Serialize;
 
-use crate::entity_doc::{CitationPin, DocActor};
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_doc::{CitationPin, DocActor, TextAnchor};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::origin::{REPO_MANIFEST_VERSION, RepoManifest, RepoPortableId};
 use crate::room_codec::document_pins::{PartedPin, carrier_key};
@@ -307,7 +307,7 @@ fn pin(citation: EntityId, quoted: &Quoted, quote_len: usize) -> Result<Citation
             "frontier": quoted.frontier,
             "start": quoted.start,
             "end": quoted.end,
-            "hash": blake3::hash(quote.as_bytes()).as_bytes(),
+            "hash": TextAnchor::quote_hash(&quote),
             "quote": quote,
         },
         "actor": serde_json::to_value(DocActor::Erased)
@@ -396,17 +396,10 @@ fn claim(turn: EntityId) -> RoomSideRow {
     }
 }
 
-/// The key a claim of `turn` encoded as `bytes` rides under, as the side
-/// row codec spells it (`sync::room_facts::carrier_key`).
+/// The key a claim of `turn` encoded as `bytes` rides under: the side row
+/// codec's own (`sync::room_facts::carrier_key`).
 fn claim_key(turn: EntityId, bytes: &[u8]) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.room_facts.v1");
-    hasher.update(bytes);
-    format!(
-        "claim/{}/{}",
-        turn.to_hex(),
-        bytes_to_hex_lower(&hasher.finalize().as_bytes()[..16])
-    )
+    crate::sync::room_facts::carrier_key(&claim(turn), bytes)
 }
 
 /// What the BASE-window discard projection does with the window `snapshot`
