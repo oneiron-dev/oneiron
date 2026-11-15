@@ -129,6 +129,31 @@ impl Room {
         recipe
     }
 
+    /// Grants the agent its read of the room's unscoped MESSAGEs (FIX
+    /// 10895): a room read meets every member's read, and a peer key with
+    /// no grant reads no MESSAGE at all.
+    fn conversation_grant(&self, id: oneiron::EntityId) {
+        self.server
+            .vault
+            .create_access_grant(
+                &id,
+                &AccessGrant {
+                    principal_ref: self.agent,
+                    scope: AccessGrantScope::ConversationMessages {
+                        conversation_ref: self.room,
+                    },
+                    capability: AccessGrantCapability::MessagesRead,
+                    authority_scope: oneiron::federation::Scope::top(),
+                    status: AccessGrantStatus::Active,
+                    created_at: 1,
+                    revoked_at: None,
+                    expires_at: None,
+                    companion_bounds: None,
+                },
+            )
+            .expect("grant the room's conversation");
+    }
+
     /// Grants the agent its read of the spaced message's relationship.
     fn grant(&self, id: oneiron::EntityId) {
         self.server
@@ -295,9 +320,9 @@ async fn the_owners_full_credential_reads_as_the_owner_on_v1() {
 #[tokio::test]
 async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
     let room = room();
-    // A room member's class-less peer key reads only through a class-agnostic
-    // grant (FIX 9917, FIX 1218): without one the room reads empty for all.
-    put_actor_read_grant(&room.server.vault, room.agent, None);
+    // Narrow the owner first: `restrict_principal_read_types` rewrites the
+    // first policy manifest carrying a `rules` key, and the actor grant
+    // below is one too, so granting first would lose the agent's read.
     super::context_board_history::restrict_principal_read_types(
         &room.server,
         room.owner,
@@ -306,6 +331,13 @@ async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
             oneiron::registry::ENTITY_TYPE_TURN,
         ],
     );
+    // A room member's class-less peer key reads only through a class-agnostic
+    // grant (FIX 9917, FIX 1218), and a room read meets every member's read
+    // (FIX 2951), so the agent also needs its MESSAGE grants: without them
+    // the room reads empty for all.
+    put_actor_read_grant(&room.server.vault, room.agent, None);
+    room.grant(seeded_test_entity_id(0x2401_0007));
+    room.conversation_grant(seeded_test_entity_id(0x2401_0008));
     let messages = |recipe: String| {
         let server = room.server.clone();
         let request = json!({ "room_ref": room.room.to_hex() });
@@ -346,8 +378,12 @@ async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
 async fn an_agent_class_credential_on_the_owners_person_is_not_the_owners() {
     let room = room();
     // The agent member's class-less peer key reads only through a
-    // class-agnostic grant (FIX 9917, FIX 1218).
+    // class-agnostic grant (FIX 9917, FIX 1218), and a room read meets every
+    // member's read (FIX 2951), so the agent also needs its MESSAGE grants:
+    // without them the room reads empty for all.
     put_actor_read_grant(&room.server.vault, room.agent, None);
+    room.grant(seeded_test_entity_id(0x2401_0009));
+    room.conversation_grant(seeded_test_entity_id(0x2401_000a));
     let owner = room.owner.to_hex();
     for (class, spaced) in [("agent", false), ("human", true)] {
         let recipe = format!("scope=core:read;principal_ref={owner};actor_class={class}");
@@ -648,18 +684,41 @@ async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
         person,
         persona,
     );
+    // FIX 11766: a stored snapshot carries the exact words behind every
+    // source revision. This door proves statuses only, so a record-native
+    // source over the revision itself is enough.
+    let source = seeded_test_entity_id(0x2401_0025);
     let profile = oneiron::PsychProfile::new(
         persona,
         "compact tier",
         "retrieval text tier",
         "Narrative profile tier.",
-        vec![seeded_test_entity_id(0x2401_0025)],
+        vec![source],
         oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("confidence"),
     )
-    .expect("profile");
+    .expect("profile")
+    .with_sources(vec![oneiron::psych_profile::PsychProfileSource {
+        revision_ref: source,
+        document_ref: source,
+        world_ref: None,
+        document_revision: oneiron::vault::RevisionRef(*source.as_bytes()),
+        words: oneiron::psych_profile::PsychProfileSourceWords::Record {
+            content: [0x5c; 32],
+        },
+    }])
+    .expect("profile sources");
+    // OF-172 D11: the profile is read at the id derived from its PERSON x
+    // FACET x WORLD key, not at the persona row.
+    let profile_id = oneiron::psych_profile::psych_profile_entity_id(
+        &oneiron::psych_profile::PsychProfileKey {
+            person,
+            facet: Some(persona),
+            world: None,
+        },
+    );
     room.server
         .vault
-        .put_psych_profile(&persona, &profile)
+        .put_psych_profile(&profile_id, &profile)
         .expect("put psych profile");
 
     let room_ref = room.room.to_hex();
@@ -678,9 +737,9 @@ async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
         ),
         (
             format!(
-                "/v1/companion/profiles/{}?person_ref={}",
-                persona.to_hex(),
-                person.to_hex()
+                "/v1/companion/profiles/{}?facet_ref={}",
+                person.to_hex(),
+                persona.to_hex()
             ),
             format!(
                 "scope=companion:profile:read;principal_ref={}",

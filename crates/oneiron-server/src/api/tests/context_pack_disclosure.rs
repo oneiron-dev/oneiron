@@ -730,9 +730,10 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         vec![owner, peer]
     );
 
-    let identity = seeded_test_entity_id(0x2094_0104);
     let peer_contact = seeded_test_entity_id(0x2094_0106);
-    seed_counterparty_contact(&server, peer_contact, identity, "peer@example.com");
+    // OF-272: the roster reads the member's contact from its identity claim,
+    // so the contact names the peer itself.
+    seed_counterparty_contact(&server, peer_contact, peer, "peer@example.com");
     server
         .vault
         .put_edge(&peer_contact, oneiron::EdgeKind::About, &peer, 1.0)
@@ -829,12 +830,13 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
     // losing the unique person link makes that member unknown and denies the
     // absent-owner Tier-B read even when the caller names the contact.
     seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
-    assert!(
-        server
-            .vault
-            .delete_edge(&peer_contact, oneiron::EdgeKind::About, &peer)
-            .expect("unlink peer")
-    );
+    // OF-272: the roster link is the contact's identity claim, not its About
+    // edge. Revoking the contact drops the member to unknown; revocation is
+    // one-way, and every later phase expects denial anyway.
+    server
+        .vault
+        .revoke_counterparty_contact(&peer_contact, 102)
+        .expect("revoke peer contact");
     let (status, unlinked) = room_owner_json(
         server.clone(),
         owner,
@@ -858,12 +860,8 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         "missing roster identity cannot be replaced by a wire party: {unlinked}"
     );
 
-    server
-        .vault
-        .put_edge(&peer_contact, oneiron::EdgeKind::About, &peer, 1.0)
-        .expect("relink peer");
     let other_contact = seeded_test_entity_id(0x2094_0107);
-    seed_counterparty_contact(&server, other_contact, identity, "ambiguous@example.com");
+    seed_counterparty_contact(&server, other_contact, peer, "ambiguous@example.com");
     seed_disclosure_scope(&server, other_contact, oneiron::federation::Scope::top());
     server
         .vault
