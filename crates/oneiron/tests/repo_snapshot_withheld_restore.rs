@@ -7,6 +7,10 @@
 //! keeps its bytes and its permissions.
 //!
 //! `cargo test --locked -p oneiron --all-features --test repo_snapshot_withheld_restore`.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own git subprocesses; the rule covers the engine's crates"
+)]
 
 use std::fs;
 use std::path::Path;
