@@ -62,8 +62,8 @@ impl FullCopyMarkState {
 /// The `FullCopyMark` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is the declaring machine's install key, never a roster
-/// key (FIX 2222: the host root acts as nobody), and some chain of the
-/// machine must name it. It replaces every mark of its machine its parents
+/// key (FIX 2222: the host root acts as nobody), and the machine's roster
+/// chain must name it. It replaces every mark of its machine its parents
 /// carry.
 pub(super) fn apply_full_copy_mark(
     state: &mut FoldState,

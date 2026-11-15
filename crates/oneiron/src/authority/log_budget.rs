@@ -397,10 +397,14 @@ pub(super) fn door_view(
 }
 
 /// Whether `entry`'s signer has standing to store a replicated row: a key
-/// some valid row admitted (live, revoked or retired), a machine's install
-/// key, a valid root's owner anchor, the anchor of the root record it is,
-/// or a key the stored log's structure admits though the fold does not
-/// hold it yet, such as an owner key a pre-handoff rotation named. A key
+/// some valid row admitted (live, revoked or retired), an install key the
+/// roster's chain of a machine names, a valid root's owner anchor, the
+/// anchor of the root record it is, or a key the stored log's structure
+/// admits though the fold does not hold it yet, such as an owner key a
+/// pre-handoff rotation named. An install key only an anchor's chain names
+/// stands through the structure alone, as a stranger's when the anchor is
+/// not this install's own, so its rows count against the stranger bounds
+/// (Fable pass 29: the fold reads no unpinned anchor's chain for it). A key
 /// none of these name signs no valid row, so its rows wait for the
 /// enrollment instead of being stored.
 pub(crate) fn signer_has_standing(
@@ -413,7 +417,7 @@ pub(crate) fn signer_has_standing(
     if fold.roster.contains_key(signer)
         || fold.retired_keys.contains(signer)
         || matches!(signer, AuthorityKey::Ed25519(key)
-            if fold.machines.values().any(|machine| machine.names_key(key))
+            if fold.machines.values().any(|machine| machine.roster_names_key(key))
                 || fold.root_anchors().contains_key(key))
         || self_signed_root(entry).is_some()
     {

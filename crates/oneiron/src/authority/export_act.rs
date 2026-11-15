@@ -4,7 +4,7 @@
 //! the install that made the copy is its local index.
 //!
 //! A replica checks the record: its signer is the carrier's install key,
-//! which some chain of the carrier names, never a roster key (FIX 2222),
+//! which the carrier's roster chain names, never a roster key (FIX 2222),
 //! past that key's last sequence, or the entry is invalid. A carrier the one
 //! rule did not admit ([`super::owner_act_signer_admits`]), or an owner the
 //! parents hold removed, leaves it valid and without effect: it joins the

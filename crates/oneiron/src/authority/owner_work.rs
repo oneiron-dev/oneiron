@@ -1,7 +1,7 @@
 //! Folds the owner's work requests and their results: which install is to do
 //! the key, custody or root work an owner act needs, and what it did.
 //!
-//! A request is valid when some chain of its carrier names the key that
+//! A request is valid when its carrier's roster chain names the key that
 //! signed it, and it has effect when the one carrier rule admits that
 //! carrier ([`super::owner_act_signer_admits`]) on the roster view, the same
 //! on every replica; one carried while its carrier was not admitted is valid
@@ -397,8 +397,8 @@ pub(super) fn apply_owner_work(
     }
 }
 
-/// The signer's install key, when some chain of `machine` names it and its
-/// sequence moves on; the fold issue otherwise.
+/// The signer's install key, when the roster chain of `machine` names it and
+/// its sequence moves on; the fold issue otherwise.
 fn install_signer(
     standing: &Standing<'_>,
     state: &FoldState,

@@ -281,8 +281,8 @@ pub(super) fn frontier_read(
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster check:
 /// its signer is the carrier's install key, never a roster key (FIX 2222: the
-/// host root acts as nobody). Some chain of the carrier must name the key; an
-/// edit carried while the carrier was not admitted
+/// host root acts as nobody). The carrier's roster chain must name the key;
+/// an edit carried while the carrier was not admitted
 /// ([`super::owner_act_signer_admits`], pin-free) is valid and without
 /// effect, so it never stalls what descends from it. Validity is pin-free,
 /// the same on every install, before and after the owner anchor. `pin` and
@@ -314,11 +314,12 @@ pub(super) fn apply_world_privacy(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
-    // Integrity: a one-machine pick names a machine this vault admits. That
-    // it is one marked "yours" is the owner's recipient choice, which the
-    // writer checks; readers then follow `world_readable_on`.
+    // Integrity: a one-machine pick names a machine the roster links live.
+    // That it is one marked "yours" is the owner's recipient choice, which
+    // the writer checks under its own pin; readers then follow
+    // `world_readable_on`.
     if let ReadLocation::OneMachine(target) = edit.settings.read
-        && !standing.is_admitted(target)
+        && !standing.is_linked(target)
     {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }

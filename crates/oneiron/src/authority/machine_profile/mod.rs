@@ -231,6 +231,18 @@ impl FoldedMachine {
         self.chains().any(|(_, chain)| chain.says_yours())
     }
 
+    /// The key a residence result from this machine must be signed by: its
+    /// live, answered roster head's, mine or not (FIX 8888). Every install
+    /// shares this reading, so an anchor's chain, a pinned one among them,
+    /// names no such key (Fable pass 29, K3).
+    #[must_use]
+    pub(crate) fn residence_signer_key(&self) -> Option<[u8; 32]> {
+        self.roster
+            .as_ref()
+            .filter(|roster| roster.is_live() && roster.profile.role.answered())
+            .map(|roster| roster.profile.machine_key)
+    }
+
     /// The identity under `T(admitter)`: the accepted roster revisions, plus
     /// that anchor's chain. `None` unless one of those chains admits the
     /// machine, none is removed or conflicted, every live or held one carries
@@ -474,6 +486,19 @@ impl FoldedMachine {
             .iter()
             .any(|chain| &chain.profile.machine_key == machine_key)
     }
+
+    /// The roster's chain names `machine_key`: its head or its accepted
+    /// revision, live or not. A judge every install shares reads this: an
+    /// install believes only the anchor it pins, so an anchor's chain, a
+    /// stranger's root among them, names no key there (Fable pass 29, "a
+    /// chain is read only by a reader that believes its admitter").
+    #[must_use]
+    pub(super) fn roster_names_key(&self, machine_key: &[u8; 32]) -> bool {
+        self.roster
+            .iter()
+            .chain(&self.roster_trusted)
+            .any(|chain| &chain.profile.machine_key == machine_key)
+    }
 }
 
 impl AuthorityFold {
@@ -580,6 +605,22 @@ impl AuthorityFold {
     pub fn machine_proof_key(&self, machine: EntityId) -> Option<[u8; 32]> {
         self.proving_profile(machine)
             .map(|profile| profile.machine_key)
+    }
+
+    /// The key a residence result from `machine` must be signed by
+    /// ([`FoldedMachine::residence_signer_key`]), read on the roster view as
+    /// the result judge reads it: this install's projections (a chain gone
+    /// stale or held here, a roster with no settled root) never stall a
+    /// directive whose result would stand (Astra K3 delta, F1). The
+    /// directive doors read it, so a directive is issued to, and run on,
+    /// only a machine whose result can stand; this install's pin alone
+    /// gives none.
+    #[must_use]
+    pub(crate) fn residence_signer_key(&self, machine: EntityId) -> Option<[u8; 32]> {
+        self.machines
+            .get(&machine)?
+            .roster_view()
+            .residence_signer_key()
     }
 
     /// The PERSON who answered for `machine`, as the profile whose key

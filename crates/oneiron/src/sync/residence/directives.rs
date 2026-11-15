@@ -61,8 +61,9 @@ impl Vault {
     /// anything else it is refused.
     ///
     /// # Errors
-    /// [`Error::InvalidConfig`] when `machine` is not one of the owner's
-    /// linked machines whose proof stands here, mine or not (FIX 8888), when
+    /// [`Error::InvalidConfig`] when `machine` is not a linked machine whose
+    /// roster head is live and answered, mine or not (FIX 8888; this
+    /// install's pin alone is not enough), when
     /// it is this install and this install is the elected
     /// home (which always syncs every window it may read), when an open names
     /// a window key that does not parse, or when `id` names another
@@ -86,15 +87,17 @@ impl Vault {
         let home_here = super::local_is_elected_home(self)?;
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        // A linked machine whose answered proof stands here, mine or not:
-        // a work, school or rented machine takes directives too (FIX 8888).
+        // A machine whose residence result can stand: its live, answered
+        // roster head names a key, mine or not (a work, school or rented
+        // machine takes directives too, FIX 8888). This install's pin alone
+        // names none (Fable pass 29, K3): its result would never stand.
         if self
             .authority_view_readonly_in_txn(&txn)?
-            .machine_proof_key(machine)
+            .residence_signer_key(machine)
             .is_none()
         {
             return Err(refused(
-                "a residence directive names one of the owner's machines",
+                "a residence directive names a machine the roster links and the owner answered",
             ));
         }
         if home_here && crate::identity::read_machine_id_in_txn(self, &txn)? == Some(machine) {
@@ -238,9 +241,9 @@ fn directive_states_in_txn(
 }
 
 /// The accepted directives naming this install's machine that it has no
-/// result for yet, oldest first. None on a machine whose proof does not
-/// stand here on this install's key, mine or not (FIX 8888): its results
-/// would not stand.
+/// result for yet, oldest first. None unless this install's key is its
+/// machine's live, answered roster head's, mine or not (FIX 8888): only
+/// that key's results stand (Fable pass 29, K3).
 pub(crate) fn pending_residence_directives(vault: &Vault) -> Result<Vec<ResidenceDirectiveState>> {
     let Some(local) = vault.local_machine()? else {
         return Ok(Vec::new());
@@ -248,9 +251,9 @@ pub(crate) fn pending_residence_directives(vault: &Vault) -> Result<Vec<Residenc
     let txn = vault.store.env.read_txn()?;
     let key = crate::identity::read_machine_signing_key_in_txn(vault, &txn)?
         .map(|key| key.verifying_key().to_bytes());
-    let stands = local.mine || {
+    let stands = key.is_some() && {
         let fold = vault.authority_view_readonly_in_txn(&txn)?;
-        key.is_some_and(|key| fold.machine_proof_key(local.id) == Some(key))
+        fold.residence_signer_key(local.id) == key
     };
     if !stands {
         return Ok(Vec::new());

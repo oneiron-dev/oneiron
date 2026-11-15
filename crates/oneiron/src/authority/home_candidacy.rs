@@ -77,8 +77,8 @@ pub(super) struct HomeCandidacyState {
 /// The `HomeCandidacy` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is the declaring machine's install key, never a roster
-/// key (FIX 2222: the host root acts as nobody), and some chain of the
-/// machine must name it. It replaces every declaration of its machine its
+/// key (FIX 2222: the host root acts as nobody), and the machine's roster
+/// chain must name it. It replaces every declaration of its machine its
 /// parents carry.
 pub(super) fn apply_home_candidacy(
     state: &mut FoldState,
