@@ -20,7 +20,9 @@
 use oneiron::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailDelegatedAdapterConfig,
 };
-use oneiron::test_doors::campaign_opt_out_line::{seal_gmail, seal_native_mail};
+use oneiron::test_doors::campaign_opt_out_line::{
+    seal_bulk_native_mail, seal_gmail, seal_native_mail,
+};
 
 const SUBJECT: &str = "A short call next week?";
 const RECIPIENT: &str = "yuki@example.org";
@@ -102,4 +104,36 @@ fn a_campaign_native_mail_send_ends_with_the_opt_out_line_and_a_retry_seals_the_
         "a retry of the same send must seal the same message ref"
     );
     assert_eq!(retry, sealed);
+}
+
+/// A bulk send carries List-Unsubscribe instead of the line (ARCH-0059
+/// #opt-out, FIX [CAMPAIGN-BULK-SEND-MODE] PR 2): the native message is
+/// the step body as filed, and the branch sends the RFC 8058 pair for the
+/// member's one-click link; a retry seals the same ref and headers.
+#[test]
+fn a_bulk_native_mail_send_carries_list_unsubscribe_and_no_opt_out_line() {
+    let sender_address = "owen@mail.example.test";
+    let link = "https://oneiron.test/unsubscribe/one-click/aa/bb/cc";
+    let (sealed, headers) =
+        seal_bulk_native_mail(RECIPIENT, SUBJECT, STEP_BODY, sender_address, link)
+            .expect("the bulk native message seals");
+    assert_eq!(
+        sealed.body_text, STEP_BODY,
+        "a bulk send's text is the step body as filed, with no opt-out line"
+    );
+    assert_eq!(
+        headers.get("List-Unsubscribe").map(String::as_str),
+        Some(format!("<{link}>").as_str()),
+        "the one-click link rides List-Unsubscribe: {headers:?}"
+    );
+    assert_eq!(
+        headers.get("List-Unsubscribe-Post").map(String::as_str),
+        Some("List-Unsubscribe=One-Click"),
+        "RFC 8058 one-click: {headers:?}"
+    );
+    assert_eq!(headers.len(), 2, "no other header: {headers:?}");
+
+    let retry = seal_bulk_native_mail(RECIPIENT, SUBJECT, STEP_BODY, sender_address, link)
+        .expect("the retry seals");
+    assert_eq!(retry, (sealed, headers), "a retry seals the same send");
 }

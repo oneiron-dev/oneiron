@@ -11,21 +11,26 @@
 //! campaign did before.
 //!
 //! Every campaign here is written and read through the JSON door
-//! (`self.campaign.create` / `.read` / `.update`), so the tests build on a
-//! main that has no send mode: there the door ignores the key.
+//! (`self.campaign.create` / `.read` / `.update`), so the first two tests
+//! build on a main that has no send mode: there the door ignores the key.
+//! The link test needs the one-click minter (FIX
+//! [CAMPAIGN-BULK-SEND-MODE] PR 2): a bulk email send freezes the member's
+//! link once the host installs its public origin.
 
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 use oneiron::attempt_queue::{AttemptRecord, ClaimOutcome, EnqueueOutcome};
+use oneiron::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim,
-    CampaignEnrollmentRunner, CampaignHomeNodeCandidate, CampaignProgramDraft,
-    CampaignProgramOutbound, CampaignProgramStepDraft, DetectEnrollment, EnrollmentDetection,
-    EnrollmentLegDrive, create_campaign_program, detect_enrollment,
-    elect_campaign_home_node_designation,
+    CampaignEnrollmentEvent, CampaignEnrollmentRunner, CampaignHomeNodeCandidate,
+    CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStepDraft, DetectEnrollment,
+    EnrollmentDetection, EnrollmentLegDrive, create_campaign_program,
+    derive_enrollment_outbound_request, detect_enrollment, elect_campaign_home_node_designation,
 };
+use oneiron::campaign::one_click_unsubscribe::OneClickUnsubscribeOutcome;
 use oneiron::campaign::register_crm_pack;
 use oneiron::campaign::surface::{SurfaceCall, invoke_campaign_surface, launch_campaign};
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
@@ -52,6 +57,7 @@ const SENDER_ADDRESS: &str = "owen@example.com";
 const HOME_NODE: u64 = 11;
 const CALL_SEQ: u64 = 7;
 const BODY: &[u8] = b"Hi Yuki, our new plan cuts your costs in half. Reply to book a call.";
+const ORIGIN: &str = "https://oneiron.test";
 
 // ---------------------------------------------------------------------------
 // Fixture
@@ -394,6 +400,22 @@ fn claimed_attempt(
     step: EntityId,
     member: EntityId,
 ) -> AttemptRecord {
+    claimed_enrollment(base, campaign, program, step, member).0
+}
+
+/// As [`claimed_attempt`], with the detected event and the payload the
+/// attempt carries.
+fn claimed_enrollment(
+    base: &Base,
+    campaign: EntityId,
+    program: EntityId,
+    step: EntityId,
+    member: EntityId,
+) -> (
+    AttemptRecord,
+    CampaignEnrollmentEvent,
+    CampaignEnrollmentAttemptPayload,
+) {
     let vault = &base.vault;
     let now = vault.now_recorded_at();
     let read = sweep_owner_read(vault, base.owner, EdgeActorClass::Human)
@@ -422,18 +444,12 @@ fn claimed_attempt(
         EnrollmentDetection::NoTransition => panic!("expected a recorded transition"),
     };
     let runner = CampaignEnrollmentRunner::new(vault);
-    match runner
-        .enqueue(
-            &CampaignEnrollmentAttemptPayload {
-                membership_event_ref: event.event_ref,
-                campaign_program_ref: program,
-                program_step_ref: step,
-            },
-            None,
-            now + 2,
-        )
-        .unwrap()
-    {
+    let payload = CampaignEnrollmentAttemptPayload {
+        membership_event_ref: event.event_ref,
+        campaign_program_ref: program,
+        program_step_ref: step,
+    };
+    match runner.enqueue(&payload, None, now + 2).unwrap() {
         EnqueueOutcome::Enqueued(_) | EnqueueOutcome::Existing(_) => {}
         other => panic!("unexpected enqueue outcome: {other:?}"),
     }
@@ -441,7 +457,7 @@ fn claimed_attempt(
         .claim_if_home(HOME_NODE, format!("worker:{HOME_NODE}"), now + 3)
         .unwrap()
     {
-        CampaignEnrollmentClaim::Queue(ClaimOutcome::Claimed(record)) => record,
+        CampaignEnrollmentClaim::Queue(ClaimOutcome::Claimed(record)) => (record, event, payload),
         other => panic!("expected a claim, got {other:?}"),
     }
 }
@@ -511,4 +527,95 @@ fn bulk_send_without_list_unsubscribe_is_refused() {
         "a 1:1 campaign's send reaches the Gate and is held: {drive:?}"
     );
     assert!(holds_a_send(&plain.vault), "the 1:1 send's owner ask");
+}
+
+// ---------------------------------------------------------------------------
+// The link (FIX [CAMPAIGN-BULK-SEND-MODE] PR 2: the one-click minter)
+// ---------------------------------------------------------------------------
+
+/// The envelope a claimed email leg of a campaign created with `keys`
+/// freezes, on a vault whose host installed its public origin; with the
+/// base, the member, the campaign and the claimed attempt.
+fn frozen_envelope(keys: Value) -> (Base, EntityId, EntityId, AttemptRecord, Value) {
+    let base = base();
+    base.vault
+        .install_one_click_unsubscribe_origin(ORIGIN)
+        .expect("the host's public origin");
+    let member = add_member(&base, MEMBER_ADDRESS);
+    let step = EntityId::now();
+    let (campaign, program) = launched_campaign(&base, keys, step);
+    let (attempt, event, payload) = claimed_enrollment(&base, campaign, program, step, member);
+    let at_ms = (base.vault.now_recorded_at() + 4) * 1000;
+    let request = derive_enrollment_outbound_request(&base.vault, &payload, &event, at_ms)
+        .unwrap()
+        .expect("the member's outward call");
+    let envelope: Value = serde_json::from_slice(&request.payload).expect("a JSON envelope");
+    (base, member, campaign, attempt, envelope)
+}
+
+/// With the host's public origin installed, a bulk campaign's email send
+/// freezes its send mode and the member's one-click link, and reaches the
+/// Gate as a 1:1 send does; the link redeems on this vault and writes the
+/// member's email suppression at once. A 1:1 campaign's envelope carries
+/// neither key.
+#[test]
+fn bulk_send_freezes_the_members_one_click_link() {
+    let (bulk, member, campaign, attempt, envelope) =
+        frozen_envelope(json!({ "send_mode": "bulk" }));
+    assert_eq!(envelope["send_mode"], "bulk", "the frozen mode: {envelope}");
+    let link = envelope["list_unsubscribe"]
+        .as_str()
+        .expect("the frozen one-click link");
+    let prefix = format!(
+        "{ORIGIN}/unsubscribe/one-click/{}/{}/",
+        campaign.to_hex(),
+        member.to_hex()
+    );
+    let mac = link
+        .strip_prefix(&prefix)
+        .unwrap_or_else(|| panic!("the link names the campaign and the member: {link}"));
+    assert_eq!(mac.len(), 64, "a 32-byte mac: {link}");
+
+    let at_ms = (bulk.vault.now_recorded_at() + 5) * 1000;
+    let drive = bulk
+        .vault
+        .drive_enrollment_outbound_leg(HOME_NODE, &attempt, &mut NoSend, at_ms);
+    assert!(
+        matches!(drive, Ok(EnrollmentLegDrive::AwaitingApproval { .. })),
+        "a bulk send with its link reaches the Gate and is held: {drive:?}"
+    );
+
+    let (campaign_hex, member_hex) = (campaign.to_hex(), member.to_hex());
+    assert_eq!(
+        bulk.vault
+            .redeem_one_click_unsubscribe(&campaign_hex, &member_hex, &"0".repeat(64))
+            .unwrap(),
+        OneClickUnsubscribeOutcome::NotRecognized,
+        "a mac this vault did not make is not known"
+    );
+    assert_eq!(
+        bulk.vault
+            .redeem_one_click_unsubscribe(&campaign_hex, &member_hex, mac)
+            .unwrap(),
+        OneClickUnsubscribeOutcome::Unsubscribed,
+        "the frozen link redeems"
+    );
+    let suppressions = bulk
+        .vault
+        .claims_for_subject(&member)
+        .unwrap()
+        .into_iter()
+        .filter_map(|id| bulk.vault.get_claim(&id).unwrap())
+        .filter(|body| {
+            body.predicate == PREDICATE_COMM_DO_NOT_CONTACT
+                && body.lifecycle == ClaimLifecycleStatus::Active
+        })
+        .count();
+    assert_eq!(suppressions, 1, "the member's suppression, written at once");
+
+    let (_plain, _, _, _, envelope) = frozen_envelope(json!({}));
+    assert!(
+        envelope.get("send_mode").is_none() && envelope.get("list_unsubscribe").is_none(),
+        "a 1:1 envelope carries neither bulk key: {envelope}"
+    );
 }

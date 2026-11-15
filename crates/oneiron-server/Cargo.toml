@@ -267,6 +267,14 @@ name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# Mints its member's one-click link through a test door (`--cfg oneiron_test_support`) on an
+# unseeded `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`).
+[[test]]
+name = "campaign_one_click_unsubscribe"
+path = "tests/campaign_one_click_unsubscribe.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
