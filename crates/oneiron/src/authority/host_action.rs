@@ -232,14 +232,8 @@ enum HostRoot<'a> {
     Recorded(&'a HostRootIdentity),
 }
 
-/// Whether `error` is a host action's refusal, the typed one or the owner
-/// refusal, rather than a failure to judge it.
-pub(crate) fn host_action_refused(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::HostActionRequiresSupportGrant | Error::Claim(ClaimError::ScopedReadOwnerNotLive(_))
-    )
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::authority::host_action::host_action_refused;
 
 impl Vault {
     /// The owner `root` acts as on this vault, judged in one snapshot (FIX
