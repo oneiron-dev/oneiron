@@ -18,14 +18,15 @@
 //! anywhere (his first edit of a running definition, or his save again after a statement this
 //! install could not carry). A turn-off by a writer below the owner takes no act, so a replay
 //! of the owner's last stated row after it still lands (FIX row filed with R2d). An owner-grade
-//! generic batch states the switches it puts as the owner's door does.
+//! generic batch states the switches it writes as the owner's door does, in the rollback scope
+//! of its puts, and its answer carries the same notice when one lands on this install alone.
 
 use crate::Vault;
 use crate::authority::{ActSurface, AgentSwitches, GrantActBy, GrantActChange, GrantFamily};
 use crate::entity_id::EntityId;
 #[cfg(feature = "sync")]
 use crate::error::ArtifactError;
-use crate::error::{Error, RecordError, Result};
+use crate::error::{Error, RecordError, Result, SecretError};
 
 use super::codec::decode_agent_definition;
 use super::types::AgentDefinition;
@@ -71,6 +72,35 @@ impl AgentSwitchesReach {
                  device has its install key and you save the change again.",
             ),
         }
+    }
+}
+
+/// The reach each agent definition an owner-grade batch put took, by the id it was written
+/// at, recorded in the batch's writer and readable once the batch has committed (R2d review
+/// finding 6): the batch's answer carries [`AgentSwitchesReach::notice`] per definition.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AgentSwitchesReaches(
+    std::sync::Arc<std::sync::Mutex<Vec<(EntityId, AgentSwitchesReach)>>>,
+);
+
+impl AgentSwitchesReaches {
+    /// Records `reaches`, replacing any earlier record.
+    fn replace(&self, reaches: Vec<(EntityId, AgentSwitchesReach)>) -> Result<()> {
+        *self
+            .0
+            .lock()
+            .map_err(|_| Error::InvariantViolation("agent switches reaches"))? = reaches;
+        Ok(())
+    }
+
+    /// The notice for the definition written at `id`: `Some` when a put of it landed on this
+    /// install alone.
+    pub(crate) fn notice_for(&self, id: &EntityId) -> Option<&'static str> {
+        let recorded = self.0.lock().ok()?;
+        recorded
+            .iter()
+            .filter(|(put, _)| put == id)
+            .find_map(|(_, reach)| reach.notice())
     }
 }
 
@@ -156,8 +186,9 @@ impl Vault {
     ///
     /// The row's authority here is the owner's door, so the act only carries his switches to
     /// his other installs. An act this install cannot carry or count (no live install key,
-    /// more heads than one entry names, a line another family took) or cannot form (more
-    /// models than a statement lists) leaves the edit to land here alone: the other installs
+    /// more heads than one entry names, a line another family took, a known machine whose key
+    /// did not load) or cannot form (more models than a statement lists) leaves the edit to
+    /// land here alone: the other installs
     /// hold the row waiting until a later statement, and the edit answers
     /// [`AgentSwitchesReach::ThisInstallOnly`] (Engine RULING R2D-NO-CARRIER-POLICY = B,
     /// 16 Nov 06:59).
@@ -194,10 +225,13 @@ impl Vault {
                 savepoint.commit()?;
                 Ok(AgentSwitchesReach::EveryInstall)
             }
-            Err(Error::Record(
-                RecordError::AuthorityRefused(reason)
-                | RecordError::InvalidAuthorityLogBody(reason),
-            )) => {
+            Err(
+                Error::Record(
+                    RecordError::AuthorityRefused(reason)
+                    | RecordError::InvalidAuthorityLogBody(reason),
+                )
+                | Error::Secret(SecretError::KeystoreUnavailable(reason)),
+            ) => {
                 savepoint.abort();
                 tracing::warn!(
                     agent = %id.to_hex(),
@@ -211,12 +245,15 @@ impl Vault {
         }
     }
 
-    /// An owner-grade generic batch's statements, in its writer `txn` before its puts apply
-    /// (R2d review finding 4): the vault's recorded owner states the switches of each agent
-    /// definition put of `puts` as the owner's update door does, so the row reaches his other
-    /// installs. A shared vault with several owners has no one person the batch speaks for:
-    /// a put there that needs a statement lands on this install alone, as one this install
-    /// cannot carry does, and is logged.
+    /// An owner-grade generic batch's statements, in its writer `txn` in the rollback scope of
+    /// its puts, before they apply (R2d review findings 1, 2 and 4): the vault's owner states the
+    /// switches of each agent definition put of `puts`, as the batch writes it, as the owner's
+    /// update door does, so the row reaches his other installs. The owner is `person`, the
+    /// human the batch's door bound it to, when that person is a counted owner of the vault now
+    /// (R2d review finding 5); else the vault's one recorded owner. A shared vault with several
+    /// owners and no counted owner bound to the batch has no one person it speaks for: a put
+    /// there that needs a statement lands on this install alone, as one this install cannot
+    /// carry does. Each put's reach goes to `reaches`, for the batch's answer.
     ///
     /// # Errors
     ///
@@ -224,12 +261,22 @@ impl Vault {
     pub(crate) fn state_owner_batch_switches_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        person: Option<EntityId>,
         puts: &[(EntityId, Vec<u8>)],
+        reaches: &AgentSwitchesReaches,
     ) -> Result<()> {
         if puts.is_empty() {
             return Ok(());
         }
-        let owner = crate::policy_model::sole_recorded_owner_in_txn(self, txn)?;
+        let owner = match person {
+            Some(person)
+                if crate::policy_model::is_counted_vault_owner_in_txn(self, txn, &person)? =>
+            {
+                Some(person)
+            }
+            _ => crate::policy_model::sole_recorded_owner_in_txn(self, txn)?,
+        };
+        let mut recorded = Vec::with_capacity(puts.len());
         for (id, body) in puts {
             let def = decode_agent_definition(body)?;
             let reach = match owner {
@@ -252,7 +299,8 @@ impl Vault {
                      other installs hold the widening until the owner states it"
                 );
             }
+            recorded.push((*id, reach));
         }
-        Ok(())
+        reaches.replace(recorded)
     }
 }
