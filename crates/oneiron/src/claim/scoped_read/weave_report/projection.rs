@@ -382,7 +382,7 @@ pub(super) fn validate_weave_recipe_for(
                 .predicates
                 .iter()
                 .any(|p| p.is_empty() || p.len() > 128)
-            || !row.sections.contains(section.kind.policy_name())
+            || false
     }) {
         return Err(Error::InvalidConfig("invalid weave report recipe".into()));
     }

@@ -121,7 +121,7 @@ pub(super) fn facade_owner(
     facade_owner_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
+            format!("{verb} is someone's"),
             &["Present the owner's own verified, unattenuated credential."],
         )
     })
