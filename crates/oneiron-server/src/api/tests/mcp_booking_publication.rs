@@ -99,6 +99,32 @@ fn claim(predicate: &str, subject: oneiron::EntityId, value: serde_json::Value) 
     }
 }
 
+/// The four-axis `spec` `vault.claims.upsert` takes: `input` reshaped to the
+/// verb's closed `ScopedClaimInput` (base world, the vault's default facet,
+/// every relationship, the default project). A raw `ClaimInput` names
+/// `world_ref`, which the advertised schema closes out (`tool_args_invalid`).
+fn scoped_spec(vault: &oneiron::Vault, input: &ClaimInput) -> serde_json::Value {
+    json!({
+        "id": input.id.clone(),
+        "predicate": input.predicate.clone(),
+        "subject_ref": input.subject_ref.clone(),
+        "value": input.value.clone(),
+        "confidence": input.confidence,
+        "source": input.source.clone(),
+        "scope": {
+            "world_id": oneiron::claim::base_world_id().to_hex(),
+            "scope_facet_id": vault.default_facet().expect("default facet").to_hex(),
+            "scope_relationship_id": "all",
+            "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+        },
+        "valid_from": input.valid_from,
+        "valid_to": input.valid_to,
+        "occurred_at": input.occurred_at,
+        "learned_at": input.learned_at,
+        "salience": input.salience,
+    })
+}
+
 async fn public_page_status(server: &Arc<SyncServer>, page: oneiron::EntityId) -> StatusCode {
     let request = Request::builder()
         .method("GET")
@@ -243,7 +269,7 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
             oneiron::task_verb::sdk::AgentVerb::VaultClaimsUpsert.as_str(),
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "write_memory"),
-                json!({"arguments": {"spec": input}}),
+                json!({"arguments": {"spec": scoped_spec(&server.vault, input)}}),
             ),
         )
     };
