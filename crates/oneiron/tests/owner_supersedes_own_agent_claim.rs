@@ -407,7 +407,10 @@ impl Fixture {
             "the receipt records the owner's ruling: {:?}",
             decision.reason_codes,
         );
-        assert_eq!(decision.outcome, "allow");
+        assert_eq!(
+            decision.outcome, "approved",
+            "the owner's ruling is the owner's yes"
+        );
         assert_eq!(decision.actor_ref, Some(self.owner.to_hex()));
         assert_eq!(decision.claim_ref, Some(replacement.to_hex()));
         assert_eq!(decision.fields.get("superseded"), Some(&prior.to_hex()));

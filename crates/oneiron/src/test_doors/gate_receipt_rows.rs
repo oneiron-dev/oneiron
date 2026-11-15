@@ -3,7 +3,8 @@
 //! of the policy the vault resolves to now, and the receipt draft minted
 //! through the one writer with each of its forms, and through its bound half.
 //! For `tests/gate_receipt_closed_outcome.rs` (UC-03 PR 2-1a): a row stored
-//! with a word written before stage 1f.
+//! with a word written before stage 1f. For `tests/gate_owner_answer_words.rs`
+//! (UC-03 PR 5): whether the owner restore group's read takes a row.
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -184,6 +185,17 @@ pub fn append_held_word_row(
         vault.store.append_gate_decision_in_txn(txn, &row)?;
         Ok(row)
     })
+}
+
+/// Whether the owner restore group's receipt read (DESIGN R16,
+/// `owner_restore_receipt_in_txn`) takes the row `decision` names as an
+/// owner archive-restore yes. For `tests/gate_owner_answer_words.rs` (UC-03 PR 5).
+pub fn owner_restore_receipt_taken(vault: &Vault, decision: GateDecisionId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        crate::batch::export::owner_restore_receipt_in_txn(&vault.store, &txn, &decision.to_hex())?
+            .is_some(),
+    )
 }
 
 /// The smallest draft: `noted`, the guard kind and reason, a one-byte handle.
