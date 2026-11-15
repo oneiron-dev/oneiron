@@ -75,6 +75,10 @@ pub(crate) struct DocumentWriter<'v> {
     /// sources, edges, runs, side rows, births, embedding setup, epoch floors
     /// and the manifest's own pass stay nulled.
     secrets: ExportSecrets,
+    /// Whether a room body keeps its shared pins: only in the owner's own
+    /// export. Every other export, a records archive or a code run's, carries
+    /// a room body without them (EXPORTDOORS Q2 = A).
+    keeps_room_pins: bool,
     groups: BTreeMap<String, RecordSpool>,
     files: FileSpool,
     ledger: OmissionLedger,
@@ -100,7 +104,8 @@ pub(crate) struct DocumentWriter<'v> {
 impl<'v> DocumentWriter<'v> {
     /// A writer whose spools live under `vault`'s staging directory. The
     /// built-in adapter descriptors lead the pack member. `secrets` is the
-    /// export's credential policy, from the snapshot's writer decision.
+    /// export's credential policy, from the snapshot's writer decision;
+    /// `keeps_room_pins` holds for the owner's own export alone.
     pub(crate) fn new(
         vault: &'v Vault,
         cut: ExportCut,
@@ -108,6 +113,7 @@ impl<'v> DocumentWriter<'v> {
         adapters: Vec<ExportAdapterDescriptor>,
         agent_ids: BTreeSet<EntityId>,
         secrets: ExportSecrets,
+        keeps_room_pins: bool,
     ) -> Result<Self> {
         let birth_sources = agent_ids
             .iter()
@@ -118,6 +124,7 @@ impl<'v> DocumentWriter<'v> {
             cut,
             attaches_files,
             secrets,
+            keeps_room_pins,
             groups: BTreeMap::new(),
             files: FileSpool::new(vault)?,
             ledger: OmissionLedger::default(),
@@ -631,8 +638,15 @@ impl<'v> DocumentWriter<'v> {
     /// A stored body as its typed export under this writer's policy; a hub
     /// source's members stored as files are spooled as the bytes its
     /// credential scan read (under Nulled) or as stored (under Included)
-    /// (FIX 10101).
+    /// (FIX 10101). A room body leaves without its shared pins unless this is
+    /// the owner's own export.
     fn exported_body(&mut self, body: &[u8], entity_type: u8) -> Result<ExportBody> {
+        let unpinned = if self.keeps_room_pins {
+            None
+        } else {
+            crate::conversation::body_without_room_pins(entity_type, body)?
+        };
+        let body = unpinned.as_deref().unwrap_or(body);
         let exported = ExportBody::from_bytes_with(body, entity_type, self.secrets);
         if let ExportBody::HubSource(source) = &exported {
             source.attach_files(body, &mut self.files)?;
