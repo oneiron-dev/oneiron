@@ -56,22 +56,12 @@ pub(super) const NOTE_PROPOSAL_DOC: SideTable<DocKey, Vec<u8>, Raw> =
 
 /// [`NOTE_PROPOSAL_DOC`]'s key: the owning note, then the proposal head, each
 /// 32 lower-case hex characters, colon-joined.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct DocKey(pub(super) EntityId, pub(super) EntityId);
-
-impl SideKey for DocKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        HexId(self.0).encode_into(out);
-        out.push(b':');
-        HexId(self.1).encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (note, rest) = bytes.split_at_checked(32)?;
-        let head = rest.strip_prefix(b":")?;
-        Some(Self(HexId::decode_key(note)?.0, HexId::decode_key(head)?.0))
-    }
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
+pub(super) struct DocKey(
+    #[side_key(with = HexId)] pub(super) EntityId,
+    #[side_key(with = HexId)] pub(super) EntityId,
+);
 
 /// One [`DocKey`] for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]

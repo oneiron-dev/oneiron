@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 use crate::retrieval_quality::{
     ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
 };
+use crate::side_table::SideKey;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -46,7 +47,9 @@ pub(in crate::store) const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str =
 /// `min_reward_count` may lower it.
 pub(crate) const RETRIEVAL_BLEND_TUNING_DEFAULT_MIN_REWARD_COUNT: usize = 20;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema, SideKey,
+)]
 pub struct RetrievalRunId {
     pub(super) bytes: [u8; 16],
 }

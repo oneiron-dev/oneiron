@@ -23,6 +23,7 @@ const TASK_DIGEST_CONTEXT: &str = "oneiron vault_cleanup task attempt index v1";
 /// its prefix whatever the reference's length, so every task reference the
 /// queue admits fits the store's key limit. The reference is hashed whole,
 /// never shortened.
+#[derive(SideKey)]
 struct TaskAttemptKey {
     task_digest: [u8; 32],
     attempt: [u8; 16],
@@ -34,21 +35,6 @@ impl TaskAttemptKey {
             task_digest: task_digest(task),
             attempt,
         }
-    }
-}
-
-impl SideKey for TaskAttemptKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.task_digest);
-        out.extend_from_slice(&self.attempt);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (task_digest, attempt) = bytes.split_at_checked(32)?;
-        Some(Self {
-            task_digest: task_digest.try_into().ok()?,
-            attempt: attempt.try_into().ok()?,
-        })
     }
 }
 

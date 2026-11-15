@@ -52,6 +52,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::sync::quarantine::{self, QuarantineContainer};
+use oneiron_store::side_table::key::HexU64;
 
 /// The device-lease registry mirror. Key: [`LeaseKey`], value: [`LeaseRecord`]
 /// (the pinned 66 B encoding — [`encode_lease_record`] / [`decode_lease_record`]
@@ -60,25 +61,13 @@ const LEASE: SideTable<LeaseKey, LeaseRecord, Raw> = SideTable::new(&side_table:
 
 /// `{vault_id:016x}:{client_id:016x}` — [`LEASE`]'s key, the bytes after the
 /// `ls:` table prefix (33 B, fixed width).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 pub(super) struct LeaseKey {
+    #[side_key(with = HexU64)]
     pub(super) vault_id: u64,
+    #[side_key(with = HexU64)]
     pub(super) client_id: u64,
-}
-
-impl SideKey for LeaseKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(format!("{:016x}:{:016x}", self.vault_id, self.client_id).as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(bytes).ok()?;
-        let (vault, client) = text.split_at_checked(16)?;
-        Some(Self {
-            vault_id: u64::from_be_bytes(oneiron_hex::decode::<8>(vault)?),
-            client_id: u64::from_be_bytes(oneiron_hex::decode::<8>(client.strip_prefix(':')?)?),
-        })
-    }
 }
 
 /// One [`LeaseKey`] for `test_doors::side_key_pins`.

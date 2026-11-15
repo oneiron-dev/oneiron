@@ -15,26 +15,12 @@ use std::collections::BTreeSet;
 const BAND_STATE: SideTable<BandKey, BandState, Raw> = SideTable::new(&side_table::TASK_ASK_BAND);
 const BAND_MARKER: SideTable<MarkerKey, [u8; 1], Raw> = SideTable::new(&side_table::TASK_ASK_BAND);
 
-#[derive(Clone)]
+/// The owner, then the question class framed by its big-endian `u16` byte length.
+#[derive(Clone, SideKey)]
 struct BandKey {
     owner: EntityId,
+    #[side_key(len = u16)]
     class: String,
-}
-impl SideKey for BandKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.owner.as_bytes());
-        out.extend_from_slice(&(self.class.len() as u16).to_be_bytes());
-        out.extend_from_slice(self.class.as_bytes());
-    }
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let owner = EntityId::from_bytes(bytes.get(..16)?.try_into().ok()?).ok()?;
-        let len = usize::from(u16::from_be_bytes(bytes.get(16..18)?.try_into().ok()?));
-        let class = bytes.get(18..)?;
-        (class.len() == len)
-            .then(|| String::from_utf8(class.to_vec()).ok())
-            .flatten()
-            .map(|class| Self { owner, class })
-    }
 }
 
 /// One [`BandKey`] for `test_doors::side_key_pins`.
@@ -48,24 +34,13 @@ pub(crate) fn band_key_pin_for_test(
         class: class.to_owned(),
     })
 }
+/// A consumed receipt marker: the band's key, `:`, the word id.
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 struct MarkerKey {
+    #[side_key(rest)]
     band: BandKey,
     word: EntityId,
-}
-impl SideKey for MarkerKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.band.encode_into(out);
-        out.push(b':');
-        out.extend_from_slice(self.word.as_bytes());
-    }
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let len = usize::from(u16::from_be_bytes(bytes.get(16..18)?.try_into().ok()?));
-        let end = 18usize.checked_add(len)?;
-        (bytes.len() == end + 17 && bytes[end] == b':').then_some(Self {
-            band: BandKey::decode_key(bytes.get(..end)?)?,
-            word: EntityId::from_bytes(bytes.get(end + 1..)?.try_into().ok()?).ok()?,
-        })
-    }
 }
 
 /// One [`MarkerKey`] for `test_doors::side_key_pins`.

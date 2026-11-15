@@ -50,27 +50,11 @@ const INTENT_ATTEMPT_FORMAT: SideTable<(), [u8; 1], Raw> =
     SideTable::new(&side_table::OUTBOUND_INTENT_ATTEMPT_FORMAT);
 
 /// One logical dispatch call's index key: `attempt_id.as_bytes()` (16) then `call_seq` big-endian
-/// (8) — spelled explicitly because [`AttemptId`] is a foreign type this module cannot implement
-/// [`SideKey`] on directly.
-#[derive(Debug, Clone, Copy)]
+/// (8).
+#[derive(Debug, Clone, Copy, SideKey)]
 struct AttemptCallKey {
     attempt_id: AttemptId,
     call_seq: u64,
-}
-
-impl SideKey for AttemptCallKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.attempt_id.as_bytes());
-        out.extend_from_slice(&self.call_seq.to_be_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (attempt, seq) = bytes.split_at_checked(16)?;
-        Some(Self {
-            attempt_id: AttemptId::from_bytes(attempt).ok()?,
-            call_seq: u64::from_be_bytes(seq.try_into().ok()?),
-        })
-    }
 }
 
 /// One [`AttemptCallKey`] for `test_doors::side_key_pins`.

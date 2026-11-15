@@ -74,31 +74,11 @@ const PROPOSAL_OP: SideTable<OpKey, EntityId, Raw> =
 /// [`PROPOSAL_OP`]'s key: a repo key hash (fixed 64 lower-case hex characters)
 /// and a sequence number, joined by a literal `:` exactly as the hand-spelled
 /// key did.
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 struct OpKey {
     repo_key_hash: [u8; 64],
     seq: u64,
-}
-
-impl SideKey for OpKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.repo_key_hash);
-        out.push(b':');
-        out.extend_from_slice(&self.seq.to_be_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (head, rest) = bytes.split_at_checked(64)?;
-        let (colon, seq_bytes) = rest.split_at_checked(1)?;
-        if colon != b":" {
-            return None;
-        }
-        let mut repo_key_hash = [0_u8; 64];
-        repo_key_hash.copy_from_slice(head);
-        Some(Self {
-            repo_key_hash,
-            seq: u64::from_be_bytes(seq_bytes.try_into().ok()?),
-        })
-    }
 }
 
 /// One [`OpKey`] for `test_doors::side_key_pins`.

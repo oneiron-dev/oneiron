@@ -26,29 +26,12 @@ pub fn task_follow_up_dedupe_key(task_ref: EntityId, stage: &str) -> String {
 /// The bytes after [`side_table::TASK_FOLLOW_UP_MARKER`]'s prefix: the task id,
 /// a NUL separator, then the stage name — exactly the shape this row has
 /// always spelled.
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 pub(super) struct TaskFollowUpKey {
     pub(super) task_ref: EntityId,
+    #[side_key(rest)]
     pub(super) stage: String,
-}
-
-impl SideKey for TaskFollowUpKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.task_ref.as_bytes());
-        out.push(0);
-        out.extend_from_slice(self.stage.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (id, rest) = bytes.split_at_checked(16)?;
-        let (separator, stage) = rest.split_first()?;
-        if *separator != 0 {
-            return None;
-        }
-        Some(Self {
-            task_ref: EntityId::from_bytes(id.try_into().ok()?).ok()?,
-            stage: String::from_utf8(stage.to_vec()).ok()?,
-        })
-    }
 }
 
 /// One [`TaskFollowUpKey`] for `test_doors::side_key_pins`.

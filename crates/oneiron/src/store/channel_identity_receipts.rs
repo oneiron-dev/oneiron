@@ -20,21 +20,9 @@ const RECEIPTS: SideTable<
     Named,
 > = SideTable::new(&side_table::CHANNEL_IDENTITY_LIFECYCLE_RECEIPT);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, SideKey)]
 pub struct ChannelIdentityLifecycleReceiptId {
     bytes: [u8; 16],
-}
-
-impl SideKey for ChannelIdentityLifecycleReceiptId {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.bytes);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        Some(Self {
-            bytes: bytes.try_into().ok()?,
-        })
-    }
 }
 
 impl ChannelIdentityLifecycleReceiptId {

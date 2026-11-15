@@ -40,22 +40,9 @@ const NOTE_PROPOSAL_DOC: SideTable<NoteForkKey, Vec<u8>, Raw> =
 
 /// `hex32(note) ":" hex32(fork)` — the [`NOTE_PROPOSAL_DOC`] key shape
 /// (mirrors `note::side_keys::HexPair`, not visible from this module tree).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 struct NoteForkKey(HexId, HexId);
-
-impl SideKey for NoteForkKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.0.encode_into(out);
-        out.push(b':');
-        self.1.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (a, rest) = bytes.split_at_checked(32)?;
-        let b = rest.strip_prefix(b":")?;
-        Some(Self(HexId::decode_key(a)?, HexId::decode_key(b)?))
-    }
-}
 
 /// One [`NoteForkKey`] for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
