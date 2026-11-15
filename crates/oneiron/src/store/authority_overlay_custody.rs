@@ -1046,6 +1046,40 @@ mod carrier_tests {
         );
     }
 
+    /// T-EXPORT-ADMITTED (Sol review of census L5-22 PR 1b): the peer's
+    /// admission is asked in each check's snapshot, so a peer removed
+    /// between the two checks gets no seal.
+    #[test]
+    fn an_export_to_a_peer_removed_between_its_checks_refuses_the_seal() {
+        let (_dir, vault, subject, key_ref) = vault_with_one_ready_overlay_key();
+        let machine = EntityId::now();
+        let (_session, target) = live_session(machine, [0x11; 32], [0x22; 32]);
+        assert!(
+            export_key(&vault.store, &subject, &key_ref, &target, &|_| Ok(false)).is_err(),
+            "a peer not admitted gets no seal"
+        );
+        // Admitted at the first check only: removed before the second.
+        let calls = std::cell::Cell::new(0_u32);
+        let exported = export_key(&vault.store, &subject, &key_ref, &target, &|_| {
+            let seen = calls.get();
+            calls.set(seen + 1);
+            Ok(seen == 0)
+        });
+        assert!(
+            exported.is_err(),
+            "a peer removed after the first check gets no seal"
+        );
+        assert_eq!(
+            calls.get(),
+            2,
+            "the export asks the admission at each check"
+        );
+        assert!(
+            export_key(&vault.store, &subject, &key_ref, &target, &|_| Ok(true)).is_ok(),
+            "an admitted peer gets its seal"
+        );
+    }
+
     #[test]
     fn a_retirement_after_the_export_check_refuses_the_seal() {
         let (_dir, vault, subject, key_ref) = vault_with_one_ready_overlay_key();
