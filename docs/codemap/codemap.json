@@ -2609,7 +2609,7 @@
      "path": "src/anchored_annotation/threads.rs",
      "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 8
      }
     },
@@ -9176,6 +9176,14 @@
      "notable": [],
      "path": "src/batch/tests/habit_streak.rs",
      "purpose": "Habit check-in rules and derived streak counters",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/tests/k4_open_segment.rs",
+     "purpose": "The K4 taint guard over an open room segment",
      "surface": {}
     },
     {
@@ -26397,7 +26405,7 @@
      "path": "src/context_pack/hydration.rs",
      "purpose": "Turns raw store bytes into hydrated [`super::types::ContextEntity`] rows and JSON field payloads",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -54331,7 +54339,7 @@
      "path": "src/memory/read_selection.rs",
      "purpose": "Caller-selected world and project filters",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
      }
     },
@@ -57655,7 +57663,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "PlanDocBody",
@@ -57672,7 +57680,7 @@
      "purpose": "Plan mode's plan-doc (agent-runtime-v1.md, \"Plan mode reuses built review parts\"): \"a plan-doc `NOTE` (kind…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 6,
       "struct": 7
@@ -58118,7 +58126,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -64968,7 +64976,7 @@
      "purpose": "Per-store clock and id source",
      "surface": {
       "crate-vis": 16,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1
      }
     },
@@ -70448,7 +70456,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 6,
       "struct": 1
      }
@@ -81273,10 +81281,18 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Core half of `store::root_directory`: its store-layer items live in `oneiron_store::root_directory` and are…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/store/root_directory/tests.rs",
+     "purpose": "Removing a held directory (ARCH-0038 #restore-path-open: each child's identity is checked inside…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -81772,7 +81788,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -86111,7 +86127,7 @@
      "path": "src/sync/selector/authorize.rs",
      "purpose": "Grant and pact authorization resolving the requested position under the grant ceiling, guest-share…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -86122,7 +86138,7 @@
      "path": "src/sync/selector/authorize/filter.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -99687,6 +99703,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/claims_project_narrowing.rs",
+     "purpose": "L1-12 PR O-1 (OPUS-FIX-E): `vault.claims.list_filtered` and `vault.claims.read_filtered` take `project_refs`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/coach_binding_fence.rs",
      "purpose": "A read key that names the Coach is held to its Steward grant and its live MACHINE binding whichever…",
      "surface": {}
@@ -99939,6 +99963,14 @@
      "notable": [],
      "path": "tests/context_pack_second_entity_alias_release.rs",
      "purpose": "A context pack renders another entity's alias (its id or identity key) as that entity's name at its first…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_served_claim_body.rs",
+     "purpose": "L9-13 (ARCH-0004 #rerank-door-open, \"the pinned body for assembly's later stages\"; Sol R14 S2 on #1426): a…",
      "surface": {}
     },
     {
@@ -101376,6 +101408,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/lens_result_set_selection.rs",
+     "purpose": "A generated card's result-set action reaches only the rows its clicker ticked (GENUI-SELECTION-EVENT; Engine…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101477,6 +101517,14 @@
      "notable": [],
      "path": "tests/mesh_machine_endpoint_lookup.rs",
      "purpose": "Census L3-28B (ARCH-0044 H336): the lookup any endpoint key can make used to walk every MACHINE row's body…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/metric_axis_tolerance.rs",
+     "purpose": "A metric axis's tolerance (census L9-07; RESEARCH-0651's acceptance rule, item 5; Engine ruling 2026-11-13…",
      "surface": {}
     },
     {
@@ -101829,6 +101877,14 @@
      "notable": [],
      "path": "tests/plan_mode_setting.rs",
      "purpose": "Plan mode: the owner sets each agent's plan mode",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/plan_mode_subsession.rs",
+     "purpose": "Plan mode: an approved plan's run is a sub-session off the approving turn",
      "surface": {}
     },
     {
@@ -102508,11 +102564,27 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/selector_born_with_prompt_label.rs",
+     "purpose": "A selector's born-with Prompt carries no relationship text its member does not read (OPUS-LEAKS…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/selector_relationship_label.rs",
      "purpose": "A federation selector window carries no relationship row its member does not read (OPUS-LEAKS round 2…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/selector_scope_summary_label.rs",
+     "purpose": "A selector discloses a scope SUMMARY and its copied reply only when its member reads every word source…",
      "surface": {}
     },
     {
@@ -103298,7 +103370,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 192,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104621,7 +104693,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 395,
+     "files": 396,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104880,10 +104952,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 270,
+   "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7592,
-   "test_files": 1315
+   "test_files": 1324
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -112603,7 +112675,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 106,
+      "const": 107,
       "crate-vis": 1
      }
     },
@@ -118523,7 +118595,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 11,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -118559,6 +118631,21 @@
       "enum": 1,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiComputedFunction",
+      "GeneratedUiExpressionProfile"
+     ],
+     "path": "src/lens/generated_ui/genui_expr.rs",
+     "purpose": "The expression tier of an app component's props (ARCH-0048 G5 #2; the expression system of eiri-dec-0011): a…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -118697,7 +118784,7 @@
      "path": "src/lens/generated_ui/mod.rs",
      "purpose": "The Generated-UI protocol: the [`GeneratedLens`] envelope, catalog/primitive negotiation and app-declared…",
      "surface": {
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -118780,11 +118867,35 @@
       "crate-vis": 1,
       "mod": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/genui_card_expressions.rs",
+     "purpose": "GENUI-COMPUTED: an app component's props may read the card's `$state`, either directly with `{\"$state\"…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/genui_cond_template.rs",
+     "purpose": "GENUI-COND-TEMPLATE: an app component's prop may be a `$cond` over the closed predicate algebra or a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/genui_interpolation_state_key.rs",
+     "purpose": "GENUI-INTERP-KEY: in a generated card, a text block's one escaped interpolation reads `$state`",
+     "surface": {}
     }
    ],
    "modules": {
     "lens": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -118793,8 +118904,8 @@
    },
    "over_bar": 0,
    "purpose": "The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI…",
-   "source_files": 24,
-   "test_files": 0
+   "source_files": 25,
+   "test_files": 3
   },
   "oneiron-linear": {
    "files": [
@@ -137274,7 +137385,7 @@
      "path": "src/api/mcp_gateway/board_setup.rs",
      "purpose": "Board state, setup grammar, and page preflight",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -137288,7 +137399,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/board_setup/carrier.rs",
@@ -151870,6 +151981,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/mcp_page_mint.rs",
+     "purpose": "Door for `tests/mcp_page_continuation_rejudge.rs`: one act run at a vault's next page one mint, after its…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/mcp_surface.rs",
      "purpose": "Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the…",
      "surface": {
@@ -151897,7 +152019,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 19
+      "mod": 20
      }
     },
     {
@@ -153360,6 +153482,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/mcp_page_continuation_rejudge.rs",
+     "purpose": "L1-05 (ARCH-0028 #mcp-continuation-open): an MCP page continuation is judged again under its caller's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/mcp_server_discover.rs",
      "purpose": "L1-04 (canon ARCH-0028 \"Discover catalog\"; Engine RULING L1-04 = B, 13 Nov 2026): `server/discover` on the…",
      "surface": {}
@@ -154124,7 +154254,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -154189,8 +154319,8 @@
    },
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1884,
-   "test_files": 259
+   "source_files": 1885,
+   "test_files": 260
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -161453,7 +161583,7 @@
      "purpose": "Row staging, preflight, budget checks, read probes",
      "surface": {
       "crate-vis": 2,
-      "fn": 14
+      "fn": 16
      }
     },
     {
@@ -161465,7 +161595,7 @@
      "path": "src/session_overlay/overlay/segment.rs",
      "purpose": "Txn segment install, leases, commit/apply guards",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "re-export": 1,
       "struct": 1
