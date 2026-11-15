@@ -66,6 +66,21 @@ impl EntityStoreMaintenance for Store {
         if scrubbed == stored {
             return Ok(false);
         }
+        // A scrubbed row names no identity hint and no query prefix: its
+        // rows leave the indexes in this write, since an erase's later
+        // purge reads only the shell.
+        crate::store::identity_hints::reindex_identity_hints(
+            self,
+            txn,
+            id,
+            Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
+        )?;
+        crate::ports::reindex_named_entities(
+            self,
+            txn,
+            id,
+            Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
+        )?;
         // A scrubbed MACHINE names no endpoint: its key leaves the index in
         // this write, since an erase's later purge reads only the shell.
         crate::authority::reindex_mesh_machine_endpoint(
