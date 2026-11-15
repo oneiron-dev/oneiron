@@ -429,10 +429,27 @@ impl Vault {
         }
         let draft = self.prepare_data_key_generation(ways)?;
         let transition = self.begin_wrap_transition()?;
-        let mut outcome = self.with_write_txn(|txn| {
-            self.start_data_key_generation_in_txn(txn, authority, cause, &draft, ways, &transition)
-        })?;
-        outcome.mirror_pending = self.finish_data_key_generation(draft, transition);
-        Ok(outcome)
+        // The door can answer an error after its commit is durable (an owed
+        // federation sweep, a claim VAD it pays). The act finishes at the
+        // commit, before that work: the new key is held before snapshot
+        // admission opens again, whatever the door answers after.
+        self.write_txn_door_after_commit(
+            crate::store::Callback::Opaque,
+            move |txn| {
+                let outcome = self.start_data_key_generation_in_txn(
+                    txn,
+                    authority,
+                    cause,
+                    &draft,
+                    ways,
+                    &transition,
+                )?;
+                Ok((outcome, draft, transition))
+            },
+            |(mut outcome, draft, transition)| {
+                outcome.mirror_pending = self.finish_data_key_generation(draft, transition);
+                Ok(outcome)
+            },
+        )
     }
 }
