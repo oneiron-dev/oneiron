@@ -78,6 +78,28 @@ pub(crate) fn locate_toml_section(raw: &str, section: &str) -> ConfigParseError 
     }
 }
 
+/// The one-based line where `raw`, the text of a config file, sets the root
+/// key `key`: the first line before the file's first table that starts with
+/// the key, bare or quoted, and an `=`. No line when `raw` writes the key
+/// another way. The line helps an operator find the key; whether the key is
+/// set is the parser's to say.
+pub(crate) fn locate_toml_root_key(raw: &str, key: &str) -> Option<usize> {
+    raw.lines()
+        .map(str::trim_start)
+        .take_while(|line| !line.starts_with('['))
+        .position(|line| {
+            let bare = line.strip_prefix(key);
+            let quoted = ['"', '\''].into_iter().find_map(|quote| {
+                line.strip_prefix(quote)?
+                    .strip_prefix(key)?
+                    .strip_prefix(quote)
+            });
+            bare.or(quoted)
+                .is_some_and(|rest| rest.trim_start().starts_with('='))
+        })
+        .map(|line| line + 1)
+}
+
 /// The one-based line and column in `raw` of the span `error` gives.
 fn located(raw: &str, error: &toml::de::Error) -> Option<(usize, usize)> {
     error
