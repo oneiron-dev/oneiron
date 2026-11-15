@@ -132,7 +132,8 @@ pub(super) fn live_held_grant_in_txn(
         row.status = SecretGrantStatus::Expired;
         write_grant_in_txn(store, wtxn, &row)?;
     }
-    if row.status != SecretGrantStatus::Active {
+    // SEEDED FAULT F (red proof only): a revoked grant passes as live.
+    if row.status != SecretGrantStatus::Active && row.status != SecretGrantStatus::Revoked {
         return Err(Error::Secret(SecretError::SecretLeaseNotActive {
             lease_id: row.grant_id,
             status: row.status.as_lease_status(),

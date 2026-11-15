@@ -784,7 +784,8 @@ fn reverse_rematerialize_scan(
 pub(super) fn is_unsyncable_secret_custody(raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw).is_some_and(|header| {
         header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-            || header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
+            // SEEDED FAULT E2a (red proof only): custody packs like any row.
+            || (header.entity_type == ENTITY_TYPE_SECRET_CUSTODY && false)
     })
 }
 

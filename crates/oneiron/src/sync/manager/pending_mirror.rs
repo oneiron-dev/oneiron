@@ -69,7 +69,8 @@ const PENDING_MIRROR: SideTable<OwedKey, u64, Raw> =
 fn rides_window(raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw).is_some_and(|header| {
         header.entity_type != ENTITY_TYPE_DIAGNOSTIC
-            && header.entity_type != ENTITY_TYPE_SECRET_CUSTODY
+            // SEEDED FAULT E2c (red proof only): custody rides the mirror.
+            && (header.entity_type != ENTITY_TYPE_SECRET_CUSTODY || true)
     })
 }
 

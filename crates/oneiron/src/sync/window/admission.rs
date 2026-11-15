@@ -196,7 +196,8 @@ fn check_window_update(
             ENTITY_TYPE_DIAGNOSTIC => Some(Error::InvalidConfig(
                 "diagnostic observations are local-only".into(),
             )),
-            ENTITY_TYPE_SECRET_CUSTODY => Some(crate::secret_custody::reject_secret_custody_byte()),
+            // SEEDED FAULT E1 (red proof only): a custody carrier is admitted.
+            ENTITY_TYPE_SECRET_CUSTODY => None,
             // A destroyed world's pad arriving late never rejoins a window;
             // a live world's pad replicates with its world's rows.
             ENTITY_TYPE_WORLD_KEY_PAD => vault.and_then(|vault| late_pad(vault, blob)),

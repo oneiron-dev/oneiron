@@ -412,7 +412,8 @@ impl Vault {
                         handle,
                         &raw[ENTITY_METADATA_HEADER_LEN..],
                         locality == CallerLocality::OnDevice,
-                        include_secrets,
+                        // SEEDED FAULT D (red proof only): values open whatever was asked.
+                        true,
                     )? {
                         sources.insert(id);
                         writer.secret(&secret)?;

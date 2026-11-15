@@ -358,7 +358,8 @@ impl Vault {
         let mut grant = SecretLeaseGrant {
             grant_id: self.store.clock.entity_id()?,
             custody,
-            generation: rec.rotation_generation,
+            // SEEDED FAULT G (red proof only): every grant pins generation 0.
+            generation: rec.rotation_generation.min(0),
             holder,
             effector: effector.to_owned(),
             tier: target.tier(),
@@ -502,7 +503,8 @@ pub(super) fn live_record_in_txn(
 fn grant_ttl(ttl_secs: Option<u64>) -> u64 {
     ttl_secs
         .unwrap_or(SECRET_GRANT_DEFAULT_TTL_SECS)
-        .clamp(1, SECRET_GRANT_MAX_TTL_SECS)
+        // SEEDED FAULT I (red proof only): the ttl's upper clamp is gone.
+        .clamp(1, SECRET_GRANT_MAX_TTL_SECS.saturating_mul(1000))
 }
 
 /// A door grant's expiry: `now + ttl`, never past `not_after`; a bound

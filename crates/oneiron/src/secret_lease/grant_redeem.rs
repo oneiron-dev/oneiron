@@ -270,7 +270,8 @@ impl Vault {
             }));
         }
         let rec = live_record_in_txn(&self.store, wtxn, &row.custody)?;
-        if rec.rotation_generation != row.generation {
+        // SEEDED FAULT H (red proof only): a stale grant is not refused.
+        if rec.rotation_generation != row.generation && false {
             return Err(Error::Secret(SecretError::SecretGrantStale {
                 grant_id: row.grant_id,
                 pinned_generation: row.generation,

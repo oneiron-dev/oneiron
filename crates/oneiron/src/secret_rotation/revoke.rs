@@ -127,7 +127,7 @@ pub(crate) fn revoke_custody_with_context_in_txn(
     let residual =
         erases(cause) && holds_erasable_value_in_txn(write.store, wtxn, id, &stored.record)?;
     if stored.record.status != SecretCustodyStatus::Revoked || residual {
-        stored.record.status = SecretCustodyStatus::Revoked;
+        // SEEDED FAULT B (red proof only): the record stays active.
         if erases(cause) {
             // Emptied: the body keeps an empty value under no key.
             stored.value = StoredValue::Sealed {

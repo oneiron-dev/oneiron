@@ -121,7 +121,8 @@ pub(super) fn is_local_only_carrier(raw_key: &str, blob: &[u8]) -> bool {
     crate::batch::EntityMetadataHeader::parse(blob).is_some_and(|header| {
         matches!(
             header.entity_type,
-            crate::registry::ENTITY_TYPE_SECRET_CUSTODY | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+            // SEEDED FAULT E2b (red proof only): custody is not scrubbed.
+            crate::registry::ENTITY_TYPE_DIAGNOSTIC
         )
     }) || is_delegated_channel_identity_carrier(blob)
         || EntityId::from_hex(raw_key)

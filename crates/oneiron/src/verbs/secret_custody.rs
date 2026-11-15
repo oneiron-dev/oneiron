@@ -322,9 +322,12 @@ pub fn rotate_secret_as(
         &custody_plan(input.holder.as_deref(), &input.recipients)?,
         vault.now_recorded_at(),
     )?;
+    // SEEDED FAULT A (red proof only): the rotate reply echoes the value.
+    let mut custody: SecretCustodyReply = rotated.custody.into();
+    custody.said = format!("{} {}", custody.said, input.value_base64);
     Ok(SecretRotateReply {
         receipt: rotated.rotation.map(SecretRotationReceipt::from),
-        custody: rotated.custody.into(),
+        custody,
     })
 }
 
