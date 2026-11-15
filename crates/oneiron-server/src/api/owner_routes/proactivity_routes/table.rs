@@ -5,18 +5,17 @@ use axum::routing::{get, post};
 
 use super::super::{OwnerRoute, OwnerTable, RestShape};
 use super::schema::{
-    action_mode_policy_schema, answer_identity_ask_body_schema, approve_representation_body_schema,
+    answer_identity_ask_body_schema, approve_representation_body_schema,
     decline_representation_body_schema, digest_assembled_schema, identity_settled_schema,
     label_finding_body_schema, representation_approved_schema, representation_declined_schema,
-    reviewed_finding_schema, set_action_mode_body_schema, set_stewardship_body_schema,
-    stewardship_rules_schema,
+    reviewed_finding_schema, set_stewardship_body_schema, stewardship_rules_schema,
 };
 use super::{
-    action_mode, answer_identity_ask, answer_training_offer, approve_representation,
-    assemble_digest, code_fixes, decline_representation, fund_judge_asks, identity_asks,
-    judge_ask_minutes, label_self_heal_finding, pick_judge_ask, read_digest, regrade_judge_label,
-    review_representation, self_heal_findings, self_heal_minted, set_action_mode, set_stewardship,
-    stewardship, training_offers, training_runs, undo_training_offer_switch,
+    answer_identity_ask, answer_training_offer, approve_representation, assemble_digest,
+    code_fixes, decline_representation, fund_judge_asks, identity_asks, judge_ask_minutes,
+    label_self_heal_finding, pick_judge_ask, read_digest, regrade_judge_label,
+    review_representation, self_heal_findings, self_heal_minted, set_stewardship, stewardship,
+    training_offers, training_runs, undo_training_offer_switch,
 };
 
 pub(in super::super) fn owner_table() -> OwnerTable {
@@ -40,29 +39,6 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 shape: Some(RestShape::no_body(digest_assembled_schema)),
             },
             post(assemble_digest),
-        ),
-        (
-            OwnerRoute {
-                method: "get",
-                path: "/proactivity/action-mode",
-                summary: "The owner's action-mode policy.",
-                row: None,
-                shape: None,
-            },
-            get(action_mode),
-        ),
-        (
-            OwnerRoute {
-                method: "post",
-                path: "/proactivity/action-mode",
-                summary: "Replaces the whole policy.",
-                row: None,
-                shape: Some(RestShape::json(
-                    set_action_mode_body_schema,
-                    action_mode_policy_schema,
-                )),
-            },
-            post(set_action_mode),
         ),
         (
             OwnerRoute {

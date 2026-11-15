@@ -9,13 +9,6 @@ use crate::dreamer_runner::maintenance::action_mode::{ActionModePolicy, ActionMo
 use crate::memory::state_index::StateIndex;
 use crate::{EntityId, Error};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WellnessPolicyConfigureRequest {
-    /// None clears the policy. No built-in bands or population cutoffs are substituted.
-    pub policy: Option<ActionModePolicy>,
-}
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::wellness_doors::WellnessPersonRequest;
 
@@ -32,29 +25,6 @@ pub struct WellnessProjection {
 }
 
 impl Memory<'_> {
-    pub fn wellness_policy_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-    ) -> MemoryResult<Option<ActionModePolicy>> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.affect_owner_in_txn(&txn, owner)?;
-        drop(txn);
-        Ok(self.vault.action_mode_policy()?)
-    }
-
-    pub fn wellness_policy_configure_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: &WellnessPolicyConfigureRequest,
-    ) -> MemoryResult<Option<ActionModePolicy>> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.affect_owner_in_txn(&txn, owner)?;
-        drop(txn);
-        Ok(self
-            .vault
-            .set_action_mode_policy(owner, input.policy.clone())?)
-    }
-
     pub fn wellness_derive_as_owner(
         &self,
         owner: &AuthenticatedOwner,

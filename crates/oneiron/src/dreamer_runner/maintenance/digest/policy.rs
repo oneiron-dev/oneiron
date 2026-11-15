@@ -13,13 +13,15 @@ use super::super::coach::COACH_WEAVE_DIGEST_SETTINGS_FACET;
 use super::super::proposals::{self, Finding};
 use super::super::{invalid, validate_owner_in_txn, validate_person_in_txn};
 use super::{
-    CADENCE, PRESENTATION, PROACTIVITY_POLICY_REQUEST_PREDICATE, ProactivityCadence,
-    ProactivityPolicyProposal, ProactivityPolicyRequest, ProactivityPresentation, load_cadence,
-    load_presentation,
+    PROACTIVITY_POLICY_REQUEST_PREDICATE, ProactivityCadence, ProactivityPeriod,
+    ProactivityPolicyProposal, ProactivityPolicyRequest, ProactivityPresentation,
+    cadence_row_in_txn, load_cadence, load_presentation, presentation_row_in_txn,
+    set_cadence_in_txn, set_period_in_txn, set_presentation_in_txn,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
+use crate::setting::{EngineSetting, SettingCaller};
 use crate::side_table::{self, SideTable};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -88,7 +90,7 @@ impl Vault {
             if proposal.revision != expected_revision {
                 return Err(invalid());
             }
-            apply_policy_proposal_in_txn(self, txn, claim_ref, &proposal)
+            apply_policy_proposal_in_txn(self, txn, owner, claim_ref, &proposal)
         })?;
         self.store.notify_proactivity_changes();
         Ok(())
@@ -125,7 +127,7 @@ impl Vault {
                 Err(invalid())
             };
         }
-        apply_policy_proposal_in_txn(self, txn, claim_ref, &proposal)
+        apply_policy_proposal_in_txn(self, txn, owner, claim_ref, &proposal)
     }
 
     /// Files a Dreamer-born policy request (FIX 8712): it lands Proposed in
@@ -242,7 +244,18 @@ impl Vault {
                     period_secs: request.cadence.period_secs,
                     ..cadence
                 };
-                CADENCE.put(&self.store, txn, &(), &rhythm)?;
+                // The engine applies the field the Coach's live Grant covers: that Grant, the
+                // basis and the evidence were checked above, and the receipt below names them.
+                set_period_in_txn(
+                    self,
+                    txn,
+                    SettingCaller::Engine(EngineSetting::own()),
+                    Some(ProactivityPeriod(rhythm.period_secs)),
+                    Some(&format!(
+                        "{COACH_WEAVE_DIGEST_SETTINGS_FACET}: the Coach's digest settings Grant {}",
+                        grant.to_hex()
+                    )),
+                )?;
                 let inverse = ProactivityPolicyInverse {
                     prior_cadence: basis.cadence.clone(),
                     prior_presentation: basis.presentation.clone(),
@@ -275,25 +288,44 @@ impl Vault {
     }
 }
 
-/// The settings and exact replay marker share their caller's writer.
+/// The settings and exact replay marker share their caller's writer: the owner's confirm sets
+/// the period, the delivery and the presentation, then the marker.
 fn apply_policy_proposal_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    owner: &crate::consent::AuthenticatedOwner,
     claim_ref: EntityId,
     proposal: &ProactivityPolicyProposal,
 ) -> Result<()> {
     proposal.request.presentation.measure(vault);
-    CADENCE.put(&vault.store, txn, &(), &proposal.request.cadence)?;
-    PRESENTATION.put(vault, txn, &(), &proposal.request.presentation)?;
+    let why = format!(
+        "{PROACTIVITY_POLICY_REQUEST_PREDICATE} {}",
+        claim_ref.to_hex()
+    );
+    let caller = SettingCaller::Owner(owner);
+    set_cadence_in_txn(
+        vault,
+        txn,
+        caller,
+        Some(&proposal.request.cadence),
+        Some(&why),
+    )?;
+    set_presentation_in_txn(
+        vault,
+        txn,
+        caller,
+        Some(&proposal.request.presentation),
+        Some(&why),
+    )?;
     POLICY_CONFIRMED.put(&vault.store, txn, &claim_ref, &proposal.revision)?;
     Ok(())
 }
 
-/// The shared rows as stored, in `txn`.
+/// The shared rows as set, in `txn`.
 fn basis_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityPolicyBasis> {
     Ok(ProactivityPolicyBasis {
-        cadence: CADENCE.get(&vault.store, txn, &())?,
-        presentation: PRESENTATION.get(&vault.store, txn, &())?,
+        cadence: cadence_row_in_txn(vault, txn)?,
+        presentation: presentation_row_in_txn(vault, txn)?,
     })
 }
 
@@ -427,11 +459,12 @@ impl ProactivityPolicyInverse {
 }
 
 /// Puts back each row the request applied that still holds what it applied;
-/// a row a later write changed is left as it is and listed. The caller
-/// signals the change after commit.
+/// a row a later write changed is left as it is and listed. The owner's revert
+/// writes as the owner; the caller signals the change after commit.
 pub(in crate::dreamer_runner::maintenance) fn revert_policy_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    proof: &crate::consent::AuthenticatedOwner,
     inverse: &ProactivityPolicyInverse,
     out: &mut MaintenanceRevert,
 ) -> Result<()> {
@@ -441,27 +474,31 @@ pub(in crate::dreamer_runner::maintenance) fn revert_policy_in_txn(
             .as_ref()
             .is_none_or(|rows| rows.iter().any(|applied| applied == row))
     };
+    let caller = SettingCaller::Owner(proof);
+    let why = "a revert of an applied proactivity policy request";
     if applied(CADENCE_ROW) {
-        if CADENCE.get(&vault.store, &*txn, &())?.as_ref() == Some(&inverse.cadence) {
-            match &inverse.prior_cadence {
-                Some(row) => CADENCE.put(&vault.store, txn, &(), row)?,
-                None => {
-                    CADENCE.delete(&vault.store, txn, &())?;
-                }
-            }
+        if cadence_row_in_txn(vault, txn)?.as_ref() == Some(&inverse.cadence) {
+            set_cadence_in_txn(
+                vault,
+                txn,
+                caller,
+                inverse.prior_cadence.as_ref(),
+                Some(why),
+            )?;
             out.settings.push(CADENCE_ROW.to_owned());
         } else {
             out.left_alone.push(CADENCE_ROW.to_owned());
         }
     }
     if applied(PRESENTATION_ROW) {
-        if PRESENTATION.get(&vault.store, &*txn, &())?.as_ref() == Some(&inverse.presentation) {
-            match &inverse.prior_presentation {
-                Some(row) => PRESENTATION.put(vault, txn, &(), row)?,
-                None => {
-                    PRESENTATION.delete(&vault.store, txn, &())?;
-                }
-            }
+        if presentation_row_in_txn(vault, txn)?.as_ref() == Some(&inverse.presentation) {
+            set_presentation_in_txn(
+                vault,
+                txn,
+                caller,
+                inverse.prior_presentation.as_ref(),
+                Some(why),
+            )?;
             out.settings.push(PRESENTATION_ROW.to_owned());
         } else {
             out.left_alone.push(PRESENTATION_ROW.to_owned());

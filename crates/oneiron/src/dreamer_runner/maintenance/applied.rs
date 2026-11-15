@@ -213,7 +213,7 @@ impl MaintenanceInverse {
             Self::Finding | Self::RepresentationPlan => Ok(()),
             Self::Curator(inverse) => curator::revert_in_txn(vault, txn, inverse, owner, now, out),
             Self::ProactivityPolicy(inverse) => {
-                digest::revert_policy_in_txn(vault, txn, inverse, out)
+                digest::revert_policy_in_txn(vault, txn, proof, inverse, out)
             }
             Self::ReachOut => stewardship::revert_reach_out_in_txn(vault, txn, owner, now, out),
             Self::IdentityProvisional(inverse) => {

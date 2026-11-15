@@ -18,8 +18,8 @@ use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::task_verb::sdk::{
     self, ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
     CuratorCadenceSetRequest, DreamerProjectorSetRequest, EngineControlChangeEntry,
-    FreeTimeScheduleSetRequest, ProactivityPeriodSetRequest, RetuneThresholdsSetRequest,
-    SieveBudgetsLowerRequest, StewardshipRulePeriodSetRequest,
+    FreeTimeScheduleSetRequest, RetuneThresholdsSetRequest, SieveBudgetsLowerRequest,
+    StewardshipRulePeriodSetRequest,
 };
 
 use super::FacadeApiError;
@@ -133,22 +133,6 @@ pub(crate) async fn vault_curator_cadence_set(
         auth,
         "vault.curator.cadence.set",
         move |server, actor| sdk::set_curator_cadence_as(server.vault(), actor, input),
-    )
-    .await;
-    (answer, Vec::new())
-}
-
-/// `vault.proactivity.period.set`.
-pub(crate) async fn vault_proactivity_period_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ProactivityPeriodSetRequest,
-) -> Listed<EngineControlChangeEntry> {
-    let answer = as_controller(
-        server,
-        auth,
-        "vault.proactivity.period.set",
-        move |server, actor| sdk::set_proactivity_period_as(server.vault(), actor, input),
     )
     .await;
     (answer, Vec::new())

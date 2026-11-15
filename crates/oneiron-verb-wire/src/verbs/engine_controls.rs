@@ -35,15 +35,6 @@ pub struct CuratorCadenceSetRequest {
     pub cadence_secs: u64,
 }
 
-/// `vault.proactivity.period.set`'s input: the proactivity digest's period,
-/// in seconds (above 0). Its grouping, its urgent flags and the
-/// presentation stay as the owner set them.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProactivityPeriodSetRequest {
-    pub period_secs: u64,
-}
-
 /// `vault.evaluation.retune_thresholds.set`'s input: the score regression
 /// (0 to 1) past which each tuned artifact is retuned.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

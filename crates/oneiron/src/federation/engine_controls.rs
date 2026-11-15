@@ -410,9 +410,9 @@ pub(crate) fn erase_engine_control_actor_in_txn(
 /// claim sets them, and they stay in force only while that claim does (H398).
 pub const ENGINE_CONTROLS_OWNER_ONLY_KNOBS: [&str; 5] = [
     "VAULT_CLEANUP_POSTURE",
-    "DREAMER_ACTION_MODE_POLICY",
+    "dreamer.action_mode.policy",
     "dreamer.excluded_conversations",
-    "DREAMER_PROACTIVITY_PRESENTATION",
+    "dreamer.proactivity.presentation",
     "DREAMER_FAILURE_RULES",
 ];
 

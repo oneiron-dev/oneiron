@@ -64,6 +64,7 @@ pub mod representation;
 mod retrieval_policy;
 mod room_upkeep;
 pub mod seal_checks;
+pub(crate) mod setting_keys;
 mod source_erase;
 pub(crate) use source_erase::erase_source_copies_in_txn;
 pub mod stewardship;
