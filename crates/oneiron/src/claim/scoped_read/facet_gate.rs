@@ -22,7 +22,7 @@ impl ScopedRead<'_> {
     pub fn within_room_facets(mut self, room: EntityId) -> Self {
         let key = self.actor_key.within_room_facets(room);
         self.actor_key = if key.is_homed_unnamed() {
-            match self.standing_in_room(key.clone(), room) {
+            match Self::standing_in_room(self.vault, key.clone(), room) {
                 Ok(key) => key,
                 Err(error) => {
                     tracing::warn!(%error, "room standing unread; the conversation home stays");
@@ -36,14 +36,15 @@ impl ScopedRead<'_> {
     }
 
     /// `key` marked as standing in `room` in a snapshot of its own
-    /// ([`ScopedReadActorKey::standing_in_room_in`]).
+    /// ([`ScopedReadActorKey::standing_in_room_in`]). It takes the vault, not
+    /// the read: its caller has moved the key out of the read.
     fn standing_in_room(
-        &self,
+        vault: &crate::vault::Vault,
         key: ScopedReadActorKey,
         room: EntityId,
     ) -> Result<ScopedReadActorKey> {
-        let txn = self.vault.store.env.read_txn()?;
-        key.standing_in_room_in(self.vault, &txn, room)
+        let txn = vault.store.env.read_txn()?;
+        key.standing_in_room_in(vault, &txn, room)
     }
 
     /// Whether a deleted row's shell may be named to this read: a read limited
