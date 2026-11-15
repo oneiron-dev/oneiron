@@ -198,4 +198,30 @@ impl Store {
         }
         Ok(seeds)
     }
+
+    /// Retires every live generation of this vault's escrowed host issuer
+    /// seed, for the integration tests' door (L1-07): the vault's custody
+    /// then gives no seed back to an empty slot, as a pending or unreadable
+    /// escrow leaves it. No custody bound here, or none beside the vault,
+    /// has nothing to retire.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn retire_host_issuer_seed_escrow_for_test(&self) -> Result<()> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(());
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(());
+        }
+        let subject = issuer_seed_subject(custody.binding())?;
+        let Some(newest) = custody.newest_generation(&subject)? else {
+            return Ok(());
+        };
+        for generation in 0..=newest {
+            let id = subject.at(generation);
+            if custody.state(&id)? == EntryState::Live {
+                custody.retire_local(&id)?;
+            }
+        }
+        Ok(())
+    }
 }

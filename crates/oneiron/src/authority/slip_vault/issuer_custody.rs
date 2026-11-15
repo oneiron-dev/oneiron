@@ -194,6 +194,19 @@ impl Vault {
         })
     }
 
+    /// Empties this install's `HostIssuerSeed` slot for this vault and
+    /// retires every escrowed generation of the seed, for the integration
+    /// tests' door (L1-07): the install has lost its seed, and the vault's
+    /// key custody can give none back, as a dead keystore beside a pending
+    /// or unreadable escrow leaves it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn lose_host_issuer_seed_for_test(&self) -> Result<()> {
+        let keystore = self.device_keystore()?;
+        let slot = self.host_issuer_slot()?;
+        keystore.delete(&slot).map_err(keystore_error)?;
+        self.store.retire_host_issuer_seed_escrow_for_test()
+    }
+
     /// This install's `HostIssuerSeed` slot for this vault, by the machine
     /// id it holds; none before it holds one.
     fn host_issuer_slot(&self) -> Result<KeystoreSlot> {

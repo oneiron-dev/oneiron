@@ -319,6 +319,13 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# L1-07's lost host root: the test door empties this install's issuer seed slot
+# and retires its escrow under the cfg, which needs oneiron's test support.
+[[test]]
+name = "host_root_recovery"
+path = "tests/host_root_recovery.rs"
+required-features = ["oneiron/test-support"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
