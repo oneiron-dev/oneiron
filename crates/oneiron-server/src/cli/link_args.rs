@@ -14,7 +14,8 @@ pub struct LinkArgs {
     pub command: Option<LinkCommand>,
 
     /// Where the hosted peer redeems its link: this server's origin as the
-    /// peer reaches it, `https://` (or `http://` on this machine).
+    /// peer reaches it, an `https://` origin at a host that is not a loopback
+    /// or private address.
     #[arg(long, env = "ONEIRON_LINK_ORIGIN")]
     pub origin: Option<String>,
 

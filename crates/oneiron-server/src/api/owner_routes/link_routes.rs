@@ -6,11 +6,12 @@
 //! their clients.
 //!
 //! `POST /link` (`{"origin": url}`, where the peer redeems its link: an
-//! `https://` origin, or `http://` on this machine) answers the linked-peer
-//! row, or 409 `already_linked`, `cloud_registration_required`,
-//! `mesh_listener_required`, `host_issuer_required` or
-//! `control_plane_failed`; `GET /link` answers where the peer stands;
-//! `DELETE /link` answers the unlink's receipt, or 409 `not_linked`.
+//! `https://` origin at a host that is not a loopback or private address)
+//! answers the linked-peer row, or 409 `already_linked`,
+//! `cloud_registration_required`, `mesh_listener_required`,
+//! `host_issuer_required` or `control_plane_failed`; `GET /link` answers
+//! where the peer stands; `DELETE /link` answers the unlink's receipt, or 409
+//! `not_linked`.
 
 use std::sync::Arc;
 
@@ -26,7 +27,9 @@ use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::cloud_registration::{CloudPeers, PeerControl};
 use crate::error::{ApiError, ApiErrorDetails};
-use crate::linked_peer::{LinkRefusal, LinkStatus, LinkedPeerView, UnlinkReceipt};
+use crate::linked_peer::{
+    ControlPlaneRefusal, LinkRefusal, LinkStatus, LinkedPeerView, UnlinkReceipt,
+};
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
 
@@ -36,7 +39,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/link",
-                summary: "Link a hosted peer of this vault (`oneiron link`): the cloud's always-on machine, a hosted node, never mine. The control plane of the vault's live cloud registration is handed the owner's one-use hosted-node link, which its peer redeems at `origin` (https://, or http:// on this machine); this serve's mesh listener must run. Answers the linked-peer row.",
+                summary: "Link a hosted peer of this vault (`oneiron link`): the cloud's always-on machine, a hosted node, never mine. The control plane of the vault's live cloud registration is handed the owner's one-use hosted-node link, which its peer redeems at `origin` (an https:// origin at a host that is not a loopback or private address); this serve's mesh listener must run. Answers the linked-peer row.",
                 row: None,
                 shape: None,
             },
@@ -119,10 +122,17 @@ fn link_refusal(refusal: LinkRefusal) -> ApiError {
             "this host holds no slip issuer, so it signs no link".to_owned(),
             "Serve the vault from its own host.",
         ),
-        LinkRefusal::ControlPlane(reason) => conflict(
+        LinkRefusal::ControlPlane(ControlPlaneRefusal {
+            reason,
+            unlink_owed,
+        }) => conflict(
             "control_plane_failed",
             reason,
-            "Nothing was kept here; run `oneiron link` again.",
+            if unlink_owed {
+                "The peer's unlink is still owed here; run `oneiron unlink`."
+            } else {
+                "Nothing was kept here; run `oneiron link` again."
+            },
         ),
     }
 }

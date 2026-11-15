@@ -11,9 +11,10 @@
 //! at, as `oneiron device enrol` does; the redeem records the machine it
 //! enrolled and the slip it minted. A control plane that does not take the
 //! request, or whose answer is lost, may have handed the link on first: the
-//! link is revoked here as an unlink revokes it, and the row dropped. One
-//! link act runs at a time, so a link's request and an unlink never act on
-//! each other's row.
+//! link is revoked here as an unlink revokes it, and the row dropped. When
+//! that unlink stays owed, the row stays, and the refusal says the next act
+//! is `oneiron unlink`. One link act runs at a time, so a link's request and
+//! an unlink never act on each other's row.
 //!
 //! The peer's slip is for the owner's PERSON with no actor class (RULING
 //! LINK-PEER-AUTHORITY = B): its redeem passes the HTTP door, and no owner
@@ -137,7 +138,18 @@ pub(crate) enum LinkRefusal {
     NoHostIssuer,
     /// The control plane did not take the request, or its answer was lost:
     /// the link is revoked here as an unlink revokes it.
-    ControlPlane(String),
+    ControlPlane(ControlPlaneRefusal),
+}
+
+/// A link the control plane did not take, once its cleanup ran.
+#[derive(Debug)]
+pub(crate) struct ControlPlaneRefusal {
+    /// Why the control plane did not take it.
+    pub(crate) reason: String,
+    /// The vault still holds the row: the cleanup's unlink is owed (a machine
+    /// removal or revokes this install could not sign), so a new link answers
+    /// `already_linked` until `oneiron unlink` settles it.
+    pub(crate) unlink_owed: bool,
 }
 
 /// Where the vault's linked peer stands.
@@ -281,10 +293,14 @@ pub(crate) fn link(
                 // goes too.
                 None => {
                     let removal = control.remove(&peer_id).map_err(|failure| failure.reason());
-                    Ok(Err(LinkRefusal::ControlPlane(format!(
-                        "an unlink ran while the link did; the peer's removal: {}",
-                        removal.err().as_deref().unwrap_or("accepted")
-                    ))))
+                    Ok(Err(control_plane_refusal(
+                        server,
+                        owner,
+                        format!(
+                            "an unlink ran while the link did; the peer's removal: {}",
+                            removal.err().as_deref().unwrap_or("accepted")
+                        ),
+                    )?))
                 }
             }
         }
@@ -296,9 +312,22 @@ pub(crate) fn link(
             {
                 vault.forget_linked_peer_as_owner(owner)?;
             }
-            Ok(Err(LinkRefusal::ControlPlane(failure.reason())))
+            Ok(Err(control_plane_refusal(server, owner, failure.reason())?))
         }
     }
+}
+
+/// The refusal of a link the control plane did not take, read after its
+/// cleanup: the unlink is owed when the vault still holds a row.
+fn control_plane_refusal(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    reason: String,
+) -> oneiron::Result<LinkRefusal> {
+    Ok(LinkRefusal::ControlPlane(ControlPlaneRefusal {
+        reason,
+        unlink_owed: server.vault().linked_peer_as_owner(owner)?.is_some(),
+    }))
 }
 
 /// Where the vault's linked peer stands; `control` is the control plane's

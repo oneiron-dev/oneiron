@@ -550,6 +550,7 @@ fn a_link_the_control_plane_refuses_leaves_nothing_redeemable() {
         control.refuse_create.store(true, Ordering::SeqCst);
         let refusal = host.link(&control).expect_err("the control plane refuses");
         assert!(refusal.starts_with("ControlPlane("), "{refusal}");
+        assert!(refusal.contains("unlink_owed: false"), "{refusal}");
         assert_eq!(host.status(&control)["state"], "not_linked");
         let line = handed_link(&control);
         let (peer, request) = Peer::new(&host);
@@ -712,6 +713,7 @@ fn a_peer_that_redeemed_before_its_create_was_refused_is_revoked() {
 
         let refusal = host.link(&control).expect_err("the control plane refuses");
         assert!(refusal.starts_with("ControlPlane("), "{refusal}");
+        assert!(refusal.contains("unlink_owed: false"), "{refusal}");
         let slip = redeemed
             .lock()
             .expect("the early slip")
@@ -725,6 +727,52 @@ fn a_peer_that_redeemed_before_its_create_was_refused_is_revoked() {
         assert!(
             folded.roster.as_ref().is_some_and(|roster| roster.removed),
             "its machine is removed"
+        );
+        assert_eq!(host.status(&control)["state"], "not_linked");
+    });
+}
+
+#[test]
+fn a_refused_link_whose_cleanup_stays_owed_says_to_unlink() {
+    run_on_engine_stack("link-refused-owed", || async {
+        // No serving start profiled this install: the early peer's machine
+        // removal has no carrier here, so the refused link's cleanup is owed.
+        let host = serving_host(false);
+        let control = ScriptedControlPlane::default();
+        let (peer, request) = Peer::new(&host);
+        {
+            let vault = Arc::clone(&host.vault);
+            *control.on_create.lock().expect("scripted hook") =
+                Some(Box::new(move |line: &str| {
+                    let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
+                    let _slip = redeem_at(&vault, &issuer, line, &request)
+                        .expect("the peer redeems before the control plane answers");
+                }));
+        }
+        control.refuse_create.store(true, Ordering::SeqCst);
+
+        let refusal = host.link(&control).expect_err("the control plane refuses");
+        assert!(refusal.contains("unlink_owed: true"), "{refusal}");
+        assert_eq!(host.status(&control)["state"], "unlink_owed");
+        assert_eq!(
+            host.link(&control),
+            Err("AlreadyLinked".to_owned()),
+            "a new link waits for the unlink"
+        );
+
+        host.vault
+            .ensure_serving_install_profile(&host.issuer, MachineRole::Unanswered)
+            .expect("FIXTURE: this install's live machine profile");
+        let receipt = host.unlink(&control);
+        assert_eq!(receipt["machine_removal"]["state"], "removed", "{receipt}");
+        assert_eq!(
+            receipt["machine"]["machine"],
+            peer.machine.to_hex(),
+            "{receipt}"
+        );
+        assert_eq!(
+            receipt["removal"]["state"], "nothing_to_remove",
+            "{receipt}"
         );
         assert_eq!(host.status(&control)["state"], "not_linked");
     });
