@@ -6,7 +6,8 @@ use super::provenance::PromotionCandidate;
 use crate::claim::claim_source_widens_beyond;
 use crate::{ClaimSubject, EntityId};
 
-pub(super) fn fast_path(
+/// Whether native resolves one candidate against its prior by the single-value rule.
+pub(crate) fn fast_path(
     policy: &crate::gate::PolicyManifestResolution,
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
@@ -32,7 +33,7 @@ pub(super) fn fast_path(
 /// (assembly drops the rest). The head must be the conflict's only one, read
 /// with the conflict's subject and predicate. The source check still applies,
 /// and the grant door judges the replacement after.
-pub(super) fn bound_correction(
+pub(crate) fn bound_correction(
     corrections: &BTreeMap<EntityId, EntityId>,
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],

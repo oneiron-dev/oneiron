@@ -34,6 +34,7 @@ mod commit;
 mod conflict;
 mod evidence;
 mod extraction_opening;
+mod extraction_set;
 mod link;
 mod record;
 mod revert;
@@ -42,6 +43,7 @@ mod sources;
 mod spans;
 mod supersede;
 pub(crate) mod tables;
+mod verified_landing;
 mod wire;
 
 pub use archive::{
@@ -64,6 +66,9 @@ pub use candidate::{
     CANDIDATE_OPERAND_REFUSED, CANDIDATE_OWNER_DECLINED, CANDIDATE_RESTATES_HEAD,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
+/// Shared member stamping for the build-only native resolution door.
+#[cfg(oneiron_test_support)]
+pub(crate) use conflict::inputs::member_candidate;
 pub use conflict::{
     CONFLICT_DUPLICATE, CONFLICT_HEADS_DIFFER, CONFLICT_NEEDS_EXTRACTION_ATTEMPT,
     CONFLICT_OPERANDS_REFUSED,

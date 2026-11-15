@@ -29,7 +29,8 @@ pub(crate) fn rmpv_to_json(value: &Value) -> serde_json::Value {
     }
 }
 
-pub(super) fn json_to_rmpv(value: &serde_json::Value) -> Value {
+/// Converts a JSON value to the MessagePack value native merge decoding uses.
+pub(crate) fn json_to_rmpv(value: &serde_json::Value) -> Value {
     match value {
         serde_json::Value::Null => Value::Nil,
         serde_json::Value::Bool(flag) => Value::from(*flag),

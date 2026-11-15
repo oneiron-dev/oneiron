@@ -16,18 +16,20 @@
 //! error aborts the commit.
 
 use super::batch::DerivedCandidate;
-use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
+use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn};
 use super::conflict::inputs::{derive_provenance, member_candidate};
 use super::extraction_opening::{open_attempt, open_verdict_read};
+use super::verified_landing::{
+    LandingError, LandingRefusal, attempt_dreamer_matches, land_verified_candidate,
+    promotion_run_id, refuse, refuse_or_abort,
+};
+use crate::Vault;
 use crate::dreamer_consolidation::extraction_pack::{
     ExtractionRebuildContext, check_extraction_operands_in_txn, check_pack_candidates,
     kept_matches_for_one_proposal,
 };
-use crate::dreamer_promotion::PromotionRejection;
-use crate::error::{Error, GateError, Result};
+use crate::error::{Error, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
-use crate::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryError};
-use crate::{EdgeActorClass, Vault, WriteActor};
 
 /// The refusal of a candidate item whose commit runs outside a queued
 /// extraction attempt: it names no attempt, or its attempt is not in the
@@ -101,10 +103,7 @@ pub(super) fn stage_in_txn(
     };
     // Native's rule for a promotion's run: its actor is the base agent the
     // attempt was stamped with, read here on this transaction.
-    let dreamer = vault
-        .dreamer_attempt_authority_in_txn(txn, attempt_id)?
-        .map(|stamp| WriteActor::new(stamp.actor, EdgeActorClass::System));
-    if dreamer != Some(context.stamp.actor) {
+    if !attempt_dreamer_matches(vault, txn, attempt_id, context.stamp.actor)? {
         return refuse(
             vault,
             txn,
@@ -289,90 +288,56 @@ pub(super) fn stage_in_txn(
         Ok(allowance) => allowance,
         Err(refusal) => return refuse(vault, txn, context, &[refusal.token().to_owned()]),
     };
-    // Native's preparation on this transaction, with derive provenance in
-    // place of native's. The run id is formed as the attempt sink forms it;
-    // only native's provenance reads it.
+    // Native's preparation and landing on this transaction, with derive
+    // provenance in place of native's. The run id is formed as the attempt
+    // sink forms it; only native's provenance reads it. The preparation reads
+    // the same snapshot inside the savepoint as outside it: the savepoint
+    // holds no prior writes at that point.
     let fence =
         crate::dreamer_consolidation::resources::ConsolidationFence::for_bound_read(actor, &bound);
     let run = crate::dreamer_promotion::DreamerRunContext {
-        run_id: context
-            .stamp
-            .run
-            .clone()
-            .unwrap_or_else(|| crate::entity_id::bytes_to_hex_lower(attempt_id.as_bytes())),
+        run_id: promotion_run_id(context.stamp, attempt_id),
         attempt_id,
         agent_actor: actor,
         now_ms,
     };
-    let prepared = {
-        let read_txn: &heed::RoTxn<'_> = txn;
-        crate::dreamer_promotion::prepare_promotion(
-            vault,
-            read_txn,
-            &run,
-            candidate,
-            Some(&evidence),
-            &[],
-            Some(rmpv::Value::Map(derive_provenance(context, &item.local))),
-        )
-    };
-    let (prepared, claim_candidate) = match prepared {
-        Ok(prepared) => prepared,
-        Err(rejection) => return refuse_or_abort_promotion(vault, txn, context, &rejection),
-    };
-    // A claim from imported evidence lands only in the owner's review of
-    // its import, and a derive row has no review to join.
-    if prepared.imported {
-        return refuse(
-            vault,
-            txn,
-            context,
-            &[CANDIDATE_IMPORTED_EVIDENCE.to_owned()],
-        );
-    }
-    // In a savepoint: native's landing under the fence, then the landed
-    // check on the stored claim. The gate's refusal rolls the savepoint
-    // back and refuses the item with the gate's reason codes; a
-    // claim-domain refusal (the fence, a claim the gate did not grant Auto,
-    // a landed-check mismatch) refuses it with the landing token.
+    let provenance = Some(rmpv::Value::Map(derive_provenance(context, &item.local)));
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    match crate::dreamer_promotion::land_prepared_promotion_in_txn(
+    let approval = match land_verified_candidate(
         vault,
         &run,
-        &prepared,
-        claim_candidate,
+        candidate,
+        Some(&evidence),
         Some(&fence),
-        false,
+        provenance,
         &mut savepoint,
     ) {
-        Ok(()) => {}
-        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+        Ok(approval) => {
+            savepoint.commit()?;
+            approval
+        }
+        Err(LandingError::Refusal(LandingRefusal::Gate(reasons))) => {
             savepoint.abort();
-            let reasons: Vec<String> = reason_codes.iter().map(|code| (*code).to_owned()).collect();
             return refuse(vault, txn, context, &reasons);
         }
-        Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
+        Err(LandingError::Refusal(LandingRefusal::Imported)) => {
+            savepoint.abort();
+            return refuse(
+                vault,
+                txn,
+                context,
+                &[CANDIDATE_IMPORTED_EVIDENCE.to_owned()],
+            );
+        }
+        Err(LandingError::Refusal(LandingRefusal::LandingRefused)) => {
             savepoint.abort();
             return refuse(vault, txn, context, &[CANDIDATE_LANDING_REFUSED.to_owned()]);
         }
-        Err(error) => {
+        Err(LandingError::Abort(error)) => {
             savepoint.abort();
             return Err(error);
         }
-    }
-    let stored = {
-        let save_read: &heed::RoTxn<'_> = &savepoint;
-        vault.get_claim_in_txn(save_read, &claim_id)?
     };
-    let landed = stored.as_ref().and_then(|stored| {
-        crate::dreamer_promotion::verify_landed_body(stored, &prepared.predicate, prepared.source)
-            .ok()
-    });
-    let Some(approval) = landed else {
-        savepoint.abort();
-        return refuse(vault, txn, context, &[CANDIDATE_LANDING_REFUSED.to_owned()]);
-    };
-    savepoint.commit()?;
     let receipt = allowance_receipt_in_txn(
         vault,
         txn,
@@ -386,62 +351,4 @@ pub(super) fn stage_in_txn(
         approval: Some(approval),
         receipt: Some(receipt),
     })
-}
-
-/// Refuses the item for a promotion the preparation rejected, or aborts
-/// the commit: the gate's codes when the rejection carries them, the
-/// landing token when the candidate itself was refused, and an abort for
-/// every other engine error, which is the store's. The abort names the
-/// error's kind, never the rejection's text.
-fn refuse_or_abort_promotion(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    context: &ItemContext<'_>,
-    rejection: &PromotionRejection,
-) -> Result<ItemOutcome> {
-    if let Some((_, codes)) = &rejection.gate {
-        let reasons: Vec<String> = codes.iter().map(|code| (*code).to_owned()).collect();
-        return refuse(vault, txn, context, &reasons);
-    }
-    if rejection.claim_domain {
-        return refuse(vault, txn, context, &[CANDIDATE_LANDING_REFUSED.to_owned()]);
-    }
-    Err(Error::Io(std::io::Error::other(format!(
-        "candidate preparation failed: {:?}",
-        rejection.kind
-    ))))
-}
-
-/// Refuses the item with `token` for a request refusal, or aborts the commit
-/// for anything else: only `BAD_REQUEST` and `FORBIDDEN` refuse, and every
-/// other code aborts. A storage failure reaches here as
-/// `INTERNAL_SERVER_ERROR` through the `From<Error>` mapping, which the bound
-/// evidence verification and the set selection keep for every failure that
-/// is not the request's. There is no `From<MemoryError> for Error`, so the
-/// abort carries the message as the I/O error that mapping reads as
-/// internal. A receipt carries the token only: never an error message, an id
-/// the actor does not read, or words of a TURN.
-fn refuse_or_abort(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    context: &ItemContext<'_>,
-    error: MemoryError,
-    token: &str,
-) -> Result<ItemOutcome> {
-    if error.code == MEMORY_CODE_BAD_REQUEST || error.code == MEMORY_CODE_FORBIDDEN {
-        refuse(vault, txn, context, &[token.to_owned()])
-    } else {
-        Err(Error::Io(std::io::Error::other(error.to_string())))
-    }
-}
-
-fn refuse(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    context: &ItemContext<'_>,
-    reasons: &[String],
-) -> Result<ItemOutcome> {
-    let reasons = reasons.to_vec();
-    let receipt = refusal_receipt_in_txn(vault, txn, context, None, &reasons)?;
-    Ok(ItemOutcome::Refused { reasons, receipt })
 }

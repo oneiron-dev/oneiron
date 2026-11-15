@@ -47,6 +47,7 @@ pub(crate) use failure_rules::{
 };
 mod gap;
 mod judge_context;
+pub(crate) use judge_context::{bound_correction, fast_path};
 mod kept_ask;
 mod neighbourhood;
 mod nightly_links;
@@ -103,16 +104,19 @@ mod tests;
 pub(crate) use attempt_reads::{declare_attempt_reads, record_attempt_reads};
 pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub use conflict::*;
-pub(crate) use conflict::{candidate_probe_body, topic_key_canonical_bytes};
+pub(crate) use conflict::{bound_matching_priors, candidate_probe_body, topic_key_canonical_bytes};
 pub use executor::*;
+pub(crate) use executor::{
+    cross_predicate_merge_unnamed, merged_candidate, recompute_kept_selection,
+};
 pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub(crate) use partition::PartitionAudience;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
-pub(crate) use persistence::conflict_close_candidate;
 pub(crate) use persistence::on_axes_of;
+pub(crate) use persistence::{conflict_close_candidate, conflict_close_candidate_in_txn};
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
     about_facts_in, about_revision_in, enqueue_person_about_on_wake, erase_person_about_in_txn,
@@ -196,7 +200,7 @@ pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
     live_turn_text_in, projected_turn_text_in,
 };
-pub(crate) use value_projection::rmpv_to_json;
+pub(crate) use value_projection::{json_to_rmpv, rmpv_to_json};
 pub(crate) use wake_plan::{AttemptPreparation, RESIDENCY_RETRY_SECS};
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};
 pub use watermark::*;
