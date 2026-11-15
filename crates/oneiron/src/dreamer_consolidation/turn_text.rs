@@ -633,7 +633,7 @@ pub(crate) fn live_turn_text_in(
 /// no text.
 pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<TurnText> {
     let read = dreamer_read(vault)?;
-    let txn = snapshot(vault)?;
+    let txn = read_only_snapshot(vault)?;
     // A TURN the Dreamer may not read has no text here, like an absent one.
     let Some((_, _, body)) = read
         .get_entities_parts_in_txn(&txn, std::slice::from_ref(id))?
@@ -662,6 +662,15 @@ pub(super) fn dreamer_read(vault: &Vault) -> Result<ScopedRead<'_>> {
 /// expiry is judged at a real floor, never inside the snapshot.
 pub(super) fn snapshot(vault: &Vault) -> Result<heed::RoTxn<'_>> {
     vault.store.authorization_now()?;
+    Ok(vault.store.env.read_txn()?)
+}
+
+/// A read snapshot for the side doors, opened without persisting the grant
+/// clock, so a read-only side door writes nothing. A grant's expiry is
+/// still judged inside the snapshot, at the committed floor: the read
+/// takes no time of its own, so it judges nothing past what the vault
+/// committed or this store already judged.
+fn read_only_snapshot(vault: &Vault) -> Result<heed::RoTxn<'_>> {
     Ok(vault.store.env.read_txn()?)
 }
 
