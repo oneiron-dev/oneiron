@@ -15,8 +15,10 @@
 use oneiron::attempt_queue::AttemptId;
 use oneiron::outbound_intent_ledger::derive_intent_id;
 
-// Not formatted, so the copy stays line for line equal to main's.
+// Not formatted, so the copy stays line for line equal to main's. main's copied lines
+// keep their `pub`, which this private module cannot reach.
 #[rustfmt::skip]
+#[allow(unreachable_pub)]
 mod base {
     use oneiron::attempt_queue::AttemptId;
     use oneiron::outbound_intent_ledger::{IntentLedgerError, IntentLedgerResult};
