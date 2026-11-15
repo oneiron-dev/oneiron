@@ -35,6 +35,7 @@ use std::pin::pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -226,7 +227,11 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
     }
 }
 
-/// The pinned first-party QuickJS component.
+/// The pinned first-party QuickJS component, with a step wall time of 60 s
+/// in place of the default 5 s: a test step reads a 1.5 MiB card back in
+/// slices, and on a loaded fleet box that step outlasted 5 s and stopped at
+/// its `step_deadline` (`Yielded { next_step_seq: 0 }`) in place of
+/// completing. What these tests judge is the reply, not the step's speed.
 fn quickjs_factory() -> QuickJsRuntimeFactory {
     let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR").map_or_else(
         || {
@@ -238,7 +243,11 @@ fn quickjs_factory() -> QuickJsRuntimeFactory {
     let bytes = std::fs::read(directory.join("quickjs-first-party.wasm"))
         .expect("the pinned QuickJS component");
     let pin: [u8; 32] = Sha256::digest(&bytes).into();
-    QuickJsRuntimeFactory::from_component(&bytes, pin, ComponentBudget::default())
+    let budget = ComponentBudget {
+        wall_time: Duration::from_secs(60),
+        ..ComponentBudget::default()
+    };
+    QuickJsRuntimeFactory::from_component(&bytes, pin, budget)
         .expect("the QuickJS component passes its readiness probe")
 }
 
