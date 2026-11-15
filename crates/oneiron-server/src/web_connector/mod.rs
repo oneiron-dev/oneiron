@@ -178,12 +178,9 @@ pub(crate) fn search_count(
     provider: WebProvider,
     input: &WebSearchInput,
 ) -> oneiron::Result<u32> {
-    let cap = if key_source == WebKeySource::User {
-        vault.web_search_max_results()?
-    } else {
-        MAX_RESULTS_CAP
-    };
-    Ok(input.result_count(cap.min(providers::search_ceiling(provider))))
+    // Red pin: every search keeps today's cap; the owner's key is not read.
+    let _ = (vault, key_source, providers::search_ceiling(provider));
+    Ok(input.result_count(MAX_RESULTS_CAP))
 }
 
 /// The switch names a hub connector: the same tool and arguments go to that
