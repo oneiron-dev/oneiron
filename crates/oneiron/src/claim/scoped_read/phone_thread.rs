@@ -10,7 +10,9 @@ impl ScopedRead<'_> {
     /// The marked phone-thread CONVERSATIONs the row `id` sits in, on this
     /// read's content: the row itself for a CONVERSATION, its `ChildOf`
     /// targets for a TURN, its TURNs' conversations for a MESSAGE (found as
-    /// `conversation_message_granted_in` finds them). Every other kind: none.
+    /// `conversation_message_granted_in` finds them, but an edge that does
+    /// not read is an error here, so the gate fails closed). Every other
+    /// kind: none.
     /// A conversation whose row does not read or whose body has no
     /// `phone_line_agent` mark is not a phone thread.
     pub(super) fn phone_threads_of_row_in(
@@ -23,24 +25,29 @@ impl ScopedRead<'_> {
         };
         let conversations = match row.entity_type {
             crate::registry::ENTITY_TYPE_CONVERSATION => vec![*id],
-            crate::registry::ENTITY_TYPE_TURN => self.edge_targets_in(
+            crate::registry::ENTITY_TYPE_TURN => self.edge_targets_checked_in(
                 txn,
                 id,
                 EdgeKind::ChildOf,
                 crate::registry::ENTITY_TYPE_CONVERSATION,
-            ),
-            crate::registry::ENTITY_TYPE_MESSAGE => self
-                .edge_targets_in(txn, id, EdgeKind::PartOf, crate::registry::ENTITY_TYPE_TURN)
-                .iter()
-                .flat_map(|turn| {
-                    self.edge_targets_in(
+            )?,
+            crate::registry::ENTITY_TYPE_MESSAGE => {
+                let mut conversations = Vec::new();
+                for turn in self.edge_targets_checked_in(
+                    txn,
+                    id,
+                    EdgeKind::PartOf,
+                    crate::registry::ENTITY_TYPE_TURN,
+                )? {
+                    conversations.extend(self.edge_targets_checked_in(
                         txn,
-                        turn,
+                        &turn,
                         EdgeKind::ChildOf,
                         crate::registry::ENTITY_TYPE_CONVERSATION,
-                    )
-                })
-                .collect(),
+                    )?);
+                }
+                conversations
+            }
             _ => return Ok(Vec::new()),
         };
         let mut marked = Vec::new();

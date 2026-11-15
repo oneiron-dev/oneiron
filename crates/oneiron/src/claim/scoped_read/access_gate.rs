@@ -435,7 +435,7 @@ impl ScopedRead<'_> {
     /// The targets of `id`'s outgoing `kind` edges whose rows are of
     /// `entity_type`, on this read's content; none when the edges do not
     /// read.
-    pub(super) fn edge_targets_in(
+    fn edge_targets_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
@@ -454,6 +454,29 @@ impl ScopedRead<'_> {
                     .is_some_and(|row| row.entity_type == entity_type)
             })
             .collect()
+    }
+
+    /// As [`Self::edge_targets_in`], for a check that removes rows (the
+    /// phone-thread gate): an edge or target row that does not read is an
+    /// error, never "no target", so the check fails closed.
+    pub(super) fn edge_targets_checked_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: EdgeKind,
+        entity_type: u8,
+    ) -> Result<Vec<EntityId>> {
+        let mut targets = Vec::new();
+        for edge in self.out_edges_in(txn, id, Some(kind))? {
+            let target = edge?.target;
+            if self
+                .entity_record_in(txn, &target)?
+                .is_some_and(|row| row.entity_type == entity_type)
+            {
+                targets.push(target);
+            }
+        }
+        Ok(targets)
     }
 }
 
