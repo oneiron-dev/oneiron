@@ -46,6 +46,8 @@ type NoClosure = fn(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>;
 /// spec and one validated member TASK per recipient.
 pub(super) struct AskCensus {
     holders: Vec<EntityId>,
+    /// The role a role ask reached; `None` for every other target.
+    reached_role: Option<crate::llm::decision::AskRole>,
     context_class: Option<TaskAskClass>,
     governed_task: Option<EntityId>,
     effective: TaskAskSpec,
@@ -491,14 +493,14 @@ impl Memory<'_> {
         Ok(self.ask_route_in_txn(txn, input)?.0)
     }
 
-    /// `input`'s holders, and the target its group keeps: `input`'s own,
-    /// except that a role ask keeps the role it reached, read in the same
-    /// snapshot as its holders (ROLES-EVERYWHERE = A).
+    /// `input`'s holders, and for a role ask the role it reached, read in
+    /// the same snapshot as its holders (ROLES-EVERYWHERE = A); `None` for
+    /// every other target.
     pub(super) fn ask_route_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         input: &TaskAskSpec,
-    ) -> MemoryResult<(Vec<EntityId>, Option<TaskAskTarget>)> {
+    ) -> MemoryResult<(Vec<EntityId>, Option<crate::llm::decision::AskRole>)> {
         let holders = match &input.who {
             Some(TaskAskTarget::Authority(scope)) => {
                 self.vault()
@@ -512,15 +514,11 @@ impl Memory<'_> {
             Some(TaskAskTarget::Role(to)) => {
                 let reached = self.vault().ask_role_in_txn(txn, to)?;
                 let holders = reached.holders.iter().map(|holder| holder.actor).collect();
-                let to = crate::llm::decision::AskTo {
-                    role: reached.role,
-                    ..to.clone()
-                };
-                return Ok((holders, Some(TaskAskTarget::Role(to))));
+                return Ok((holders, Some(reached.role)));
             }
             None => vec![self.short_ask_principal_in_txn(txn)?],
         };
-        Ok((holders, input.who.clone()))
+        Ok((holders, None))
     }
 
     /// A human can ask themselves. For an agent, an omitted target is the
@@ -754,6 +752,14 @@ impl crate::Vault {
         if to.validate().is_err() {
             return Err(MemoryError::bad_request(
                 "an ask's role is above its ceiling",
+            ));
+        }
+        // A task ask's answer is a word, checked by who wrote it and not by
+        // what kind of actor wrote it: a judgment. An e-signature or a payment
+        // a person must authorise asks through its own door.
+        if to.act.person_only() {
+            return Err(MemoryError::bad_request(
+                "a task ask by role carries a judgment, not a person-only act",
             ));
         }
         self.next_ask_role_in_txn(txn, to, None)?.ok_or_else(|| {

@@ -398,11 +398,12 @@ impl QueueTaskBrief {
                 }
             }
             // Its holders resolve when the escalation asks: a role with no
-            // live holder then is climbed past, so none is required now.
+            // live holder then is climbed past, so none is required now. It
+            // carries a judgment, as every task ask by role does.
             TaskAskTarget::Role(to) => {
-                if to.validate().is_err() {
+                if to.validate().is_err() || to.act.person_only() {
                     return Err(MemoryError::bad_request(
-                        "an ask's role is above its ceiling",
+                        "an escalation by role carries a judgment at or under its ceiling",
                     ));
                 }
             }

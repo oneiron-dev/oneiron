@@ -63,15 +63,14 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<AskCensus> {
         input.what.check_option_names()?;
-        let (holders, who) = self.ask_route_in_txn(txn, input)?;
+        let (holders, reached_role) = self.ask_route_in_txn(txn, input)?;
         let bound = self.ask_class_in_txn(txn, input.task_ref)?;
         let context_class = bound.as_ref().map(|(_, class)| class.clone());
-        let mut effective = input.effective(
+        let effective = input.effective(
             &holders.iter().copied().collect(),
             now,
             context_class.clone(),
         )?;
-        effective.who = who;
         // Its rows are measured where the group is kept, once.
         super::ask_limits::check_ask_keys(&self.vault().store, input, &effective)?;
         self.ask_question_in(txn, &effective.what)?;
@@ -153,6 +152,7 @@ impl Memory<'_> {
         }
         Ok(AskCensus {
             holders,
+            reached_role,
             governed_task: bound
                 .filter(|_| input.task_ref.is_none())
                 .map(|(task, _)| task),
@@ -229,6 +229,7 @@ impl Memory<'_> {
             no_live_route: census.no_live_route,
             created_at: now,
             guest_grants,
+            reached_role: census.reached_role,
             policy_surface,
             statement,
         };

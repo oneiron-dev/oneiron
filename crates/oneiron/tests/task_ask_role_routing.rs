@@ -7,8 +7,10 @@
 //! role chain (`Vault::next_ask_role_in_txn`): a responsible actor, then the
 //! boards of its project and their parents, then the owners. A role with no
 //! live holder is climbed past; past the ask's ceiling it never goes. The
-//! group keeps the role it reached, and it stands while that role keeps the
-//! live holders it was put to, as an authority ask does.
+//! group keeps the role it reached (Engine RULING UNBUILT-04-CLIMB = A), and
+//! it stands while that role keeps the live holders it was put to, as an
+//! authority ask does. A task ask by role carries a judgment: a person-only
+//! act (an e-signature, a payment) is refused.
 //!
 //! On main the target has no role variant, so this file does not compile
 //! there.
@@ -115,11 +117,12 @@ fn ask(fixture: &Fixture, intent: &str, to: AskTo) -> TestResult<TaskAskHandle> 
 
 /// Who `handle`'s members were put to, and the role its group reached.
 fn route(fixture: &Fixture, handle: TaskAskHandle) -> TestResult<(Vec<EntityId>, AskRole)> {
-    let (actors, who) = ask_group_route(&fixture.vault, handle)?.ok_or("the ask lands a group")?;
-    match who {
-        Some(TaskAskTarget::Role(to)) => Ok((actors, to.role)),
-        other => Err(format!("a role ask keeps a role target, got {other:?}").into()),
-    }
+    let (actors, reached) =
+        ask_group_route(&fixture.vault, handle)?.ok_or("the ask lands a group")?;
+    Ok((
+        actors,
+        reached.ok_or("a role ask keeps the role it reached")?,
+    ))
 }
 
 fn judgment(role: AskRole, ceiling: RoleRank) -> AskTo {
@@ -241,12 +244,30 @@ fn board_ask_with_no_live_holder_up_to_its_ceiling_is_refused() -> TestResult {
 }
 
 #[test]
-fn board_ask_settles_stale_when_its_role_holders_move() -> TestResult {
+fn board_ask_for_a_person_only_act_is_refused() -> TestResult {
+    let fixture = open_fixture()?;
+    let refused = ask(
+        &fixture,
+        "role-ask-esign",
+        AskTo {
+            role: AskRole::Owner,
+            ceiling: RoleRank::Owner,
+            act: AskAct::ESignature,
+        },
+    );
+    assert!(
+        refused.is_err(),
+        "an e-signature asks through its own door, never a task ask's word"
+    );
+    Ok(())
+}
+
+#[test]
+fn board_ask_settles_stale_when_its_board_member_is_gone() -> TestResult {
     let fixture = open_fixture()?;
     let leader = person(&fixture)?;
     let member = person(&fixture)?;
-    let successor = person(&fixture)?;
-    let (project, mut record) = project(&fixture, leader, &[member])?;
+    let (project, _) = project(&fixture, leader, &[member])?;
     let handle = ask(
         &fixture,
         "role-ask-stale",
@@ -261,14 +282,19 @@ fn board_ask_settles_stale_when_its_role_holders_move() -> TestResult {
         "the ask waits on its board"
     );
 
-    // The board changes hands: the electorate the ask was put to is gone.
-    record.board = vec![successor.to_hex()];
-    fixture.vault.put_project(project, &record, 20)?;
+    // The board's only member is gone: the electorate the ask was put to no
+    // longer holds the role.
+    assert!(
+        fixture.vault.delete_entity(&member)?,
+        "the member is deleted"
+    );
     match memory.tasks_ask_status(handle)? {
         TaskAskStatus::Settled(result) => {
             assert_eq!(result.settlement.reason, TaskAskSettlementReason::Stale);
         }
-        other => return Err(format!("a moved board settles the ask stale, got {other:?}").into()),
+        other => {
+            return Err(format!("a gone board member settles the ask stale, got {other:?}").into());
+        }
     }
     Ok(())
 }

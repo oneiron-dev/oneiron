@@ -68,6 +68,11 @@ pub(super) struct AskGroup {
     /// Disjoint FEDERATION_GRANT entity IDs, keyed by the guest's person.
     #[serde(default)]
     pub guest_grants: std::collections::BTreeMap<EntityId, EntityId>,
+    /// The role a role ask reached at admission (ROLES-EVERYWHERE = A): the
+    /// first on its chain, up to its ceiling, with a live holder. `None` for
+    /// every other target; an older group decodes with none.
+    #[serde(default)]
+    pub reached_role: Option<crate::llm::decision::AskRole>,
     pub policy_surface: super::TaskAskSurface,
     /// Stated after the census and before any member TASK (OF-393).
     pub statement: crate::agent_dispatch::FanoutStatement,
@@ -420,13 +425,13 @@ impl crate::memory::Memory<'_> {
 }
 
 /// The actors the ask group `id`'s members are put to, in member order, and
-/// the target it was admitted at; `None` when `id` names no ask group. For
-/// the integration tests' door (`test_doors::task_ask_role_routing`).
+/// the role a role ask reached; `None` when `id` names no ask group. For the
+/// integration tests' door (`test_doors::task_ask_role_routing`).
 #[cfg(oneiron_test_support)]
 pub(crate) fn ask_group_route(
     vault: &Vault,
     id: EntityId,
-) -> Result<Option<(Vec<EntityId>, Option<super::TaskAskTarget>)>> {
+) -> Result<Option<(Vec<EntityId>, Option<crate::llm::decision::AskRole>)>> {
     let txn = vault.store.env.read_txn()?;
     let Some(group) = read_group(vault, &txn, id)? else {
         return Ok(None);
@@ -436,7 +441,7 @@ pub(crate) fn ask_group_route(
         .iter()
         .map(|member| entity(&member.actor))
         .collect::<Result<Vec<_>>>()?;
-    Ok(Some((actors, group.effective.who)))
+    Ok(Some((actors, group.reached_role)))
 }
 
 pub(super) fn read_group(

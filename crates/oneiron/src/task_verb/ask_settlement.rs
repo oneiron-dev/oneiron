@@ -424,9 +424,16 @@ pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -
     // A role ask stands while the role it reached keeps the live holders it
     // was put to, as an authority ask does (ROLES-EVERYWHERE = A).
     if let Some(TaskAskTarget::Role(to)) = &group.effective.who {
+        let Some(role) = &group.reached_role else {
+            return Ok(true);
+        };
+        let at = crate::llm::decision::AskTo {
+            role: role.clone(),
+            ..to.clone()
+        };
         let live = vault
-            .next_ask_role_in_txn(txn, to, None)?
-            .filter(|reached| reached.role == to.role)
+            .next_ask_role_in_txn(txn, &at, None)?
+            .filter(|reached| reached.role == *role)
             .map(|reached| {
                 reached
                     .holders
