@@ -1,0 +1,17 @@
+{
+  "name": "vault.claims.refinements.holdouts.reserve",
+  "description": "The owner reserves its own approved, user-stated claims on an active claim's subject as the hidden held-out split that scores every session-branch edit of that claim; a later reserve replaces it.",
+  "input": "ClaimRefinementHoldoutRequest",
+  "output": "crate::task_verb::sdk::ClaimRefinementHoldoutReserved",
+  "call": "crate::task_verb::sdk::claim_refinement_holdout_reserve_as_owner(memory.vault(), &memory.embedded_owner(\"vault.claims.refinements.holdouts.reserve\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

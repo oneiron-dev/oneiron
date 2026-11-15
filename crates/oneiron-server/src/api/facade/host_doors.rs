@@ -292,6 +292,8 @@ pub(crate) use super::stream_recovery_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The owner's claim-refinement reserve and offer doors (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::claim_refinement_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;

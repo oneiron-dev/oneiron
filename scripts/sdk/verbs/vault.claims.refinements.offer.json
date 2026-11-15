@@ -1,0 +1,17 @@
+{
+  "name": "vault.claims.refinements.offer",
+  "description": "The owner stages one edit of an active claim on a resident agent's session branch; it stays a proposed branch claim until the owner's merge door rules on it after a useful-upstream yes and a held-out win.",
+  "input": "ClaimRefinementOfferRequest",
+  "output": "crate::task_verb::sdk::ClaimRefinementOffered",
+  "call": "crate::task_verb::sdk::claim_refinement_offer_as_owner(memory.vault(), &memory.embedded_owner(\"vault.claims.refinements.offer\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
