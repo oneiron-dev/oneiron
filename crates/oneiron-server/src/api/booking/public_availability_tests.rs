@@ -257,8 +257,8 @@ async fn route_on_this_device(fixture: &Fixture, path: &str, body: Value) -> Res
 }
 
 /// DEC-0005 (census L5-29): "A caller off this device reads nothing a
-/// withheld world keeps." The page's event-type configuration claim moves
-/// into a world the owner keeps on this machine. A visitor off this device
+/// withheld world keeps." The page's event-type configuration is born again
+/// in a world the owner keeps on this machine. A visitor off this device
 /// (the fixture's requests carry a proxy forwarding header) then meets no
 /// page, the same 404 an unknown page gives, rather than slots that kept
 /// configuration shapes. A visitor on this device still gets the page. On
@@ -277,8 +277,11 @@ async fn public_availability_off_this_device_ignores_a_kept_configuration() {
         "the published page answers before any world keeps its configuration"
     );
 
-    // The configuration claim moves into a kept world; its value, and so the
-    // publication's configuration hash, stay as they were.
+    // The configuration is born again in a kept world; its value, and so the
+    // publication's configuration hash, stay as they were. A claim keeps the
+    // world it was born in (a changed world is a fork with a new id, so a
+    // re-put that moves a claim is refused): the copy takes its own id and
+    // the base claim retires, so the page reads the world's configuration.
     let world = EntityId::now();
     vault
         .put_entity(
@@ -291,9 +294,13 @@ async fn public_availability_off_this_device_ignores_a_kept_configuration() {
         .expect("world");
     let mut body = vault.get_claim(&id(0x72)).expect("read").expect("config");
     body.world = Some(world);
+    let kept = EntityId::now();
     vault
-        .put_claim(&id(0x72), &body, TimeRange { start: 1, end: 1 }, 1)
-        .expect("configuration in the world");
+        .put_claim(&kept, &body, TimeRange { start: 1, end: 1 }, 1)
+        .expect("configuration born in the world");
+    vault
+        .retract_claim(&id(0x72), 1)
+        .expect("the base configuration retires");
     vault
         .keep_world_on_this_machine_under_for_test(
             &crate::test_credentials::host_issuer(&fixture.server),
@@ -306,7 +313,7 @@ async fn public_availability_off_this_device_ignores_a_kept_configuration() {
     crate::test_credentials::bind_owner(vault, "owner-fixture-secret", id(0x77));
     assert!(
         vault
-            .device_local_keeps_for(&id(0x72), &oneiron::claim::CallerLocality::OffDevice.into())
+            .device_local_keeps_for(&kept, &oneiron::claim::CallerLocality::OffDevice.into())
             .expect("world judge"),
         "the kept world holds the configuration from a caller off this device"
     );
