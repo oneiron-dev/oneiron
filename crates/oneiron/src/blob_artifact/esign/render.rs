@@ -19,6 +19,10 @@ pub use presentation::{
 mod admitted;
 pub use admitted::InspectionMemory;
 pub use lopdf::DecodeAdmissionError;
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+#[path = "../../test_doors/esign_burn.rs"]
+pub mod esign_burn;
 mod evidence;
 mod fields;
 mod preflight;

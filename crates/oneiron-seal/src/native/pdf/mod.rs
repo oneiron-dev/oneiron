@@ -49,6 +49,8 @@ pub(crate) use self::revision_facts::{
 pub(crate) use self::walk::{catalog, chain, resolve, resolve_id};
 pub(crate) use self::work::{inspect_in, prepare_in};
 pub(crate) use self::work_burn::{BurnField, BurnValue, WorkRaster};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::work_burn::{BurnImages, burn_fields};
 pub(crate) use self::work_evidence::{WorkRecipient, WorkSignature};
 pub(crate) use self::work_prepare::{WorkPrepareRequest, WorkPrepared};
 pub(crate) use self::work_present::FieldGeometry;

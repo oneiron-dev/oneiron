@@ -17,6 +17,9 @@ mod memory;
 mod native;
 #[cfg(all(unix, feature = "native"))]
 pub mod organ;
+#[cfg(all(feature = "native", oneiron_test_support))]
+#[doc(hidden)]
+pub mod test_doors;
 
 pub use api::{
     ActiveContentFacts, Anomaly, BackendError, BackendRejectCode, BackendSignature,

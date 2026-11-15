@@ -160,5 +160,13 @@ name = "esign_host_e2e"
 path = "tests/esign_host_e2e.rs"
 required-features = ["native"]
 
+# Both e-sign field burn-in ports, the engine's and this organ's, draw one
+# field set byte for byte alike (FIX [ESIGN-BURN-TWO-PORTS]). Its doors
+# compile only under `--cfg oneiron_test_support`.
+[[test]]
+name = "burn_parity"
+path = "tests/burn_parity.rs"
+required-features = ["native"]
+
 [lints]
 workspace = true
