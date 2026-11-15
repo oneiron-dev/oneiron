@@ -506,7 +506,8 @@ mod tests {
             .text(&readable, &[("body", "oauth scoped query needle")])
             .commit()
             .unwrap();
-        let server = Arc::new(crate::server::SyncServer::new(vault, cfg).unwrap());
+        let server =
+            Arc::new(crate::test_credentials::server_with_fixture_keystore(vault, cfg).unwrap());
         let app = crate::api::api_routes(server.clone());
         // The recording clock can move ahead of the authority plane's
         // monotonic observation anchor. OAuth minting must use that anchor,
@@ -648,7 +649,9 @@ mod tests {
                 )
                 .unwrap();
         }
-        let server = Arc::new(crate::server::SyncServer::new(vault.clone(), cfg).unwrap());
+        let server = Arc::new(
+            crate::test_credentials::server_with_fixture_keystore(vault.clone(), cfg).unwrap(),
+        );
         let app = crate::api::api_routes(server.clone());
         let jwt = token_for_subject(
             "https://issuer.example",
