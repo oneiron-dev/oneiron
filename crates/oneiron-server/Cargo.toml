@@ -348,6 +348,12 @@ name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The weave doors (enqueue, schedules, digests, labels, setting changes) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_weave_doors"
+path = "tests/vault_weave_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The rerank pair template price cases root their owner on a `MemoryKeystore` too.
 [[test]]
 name = "rerank_pair_template_price"
