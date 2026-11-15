@@ -740,6 +740,12 @@ fn a_hosted_nodes_own_yours_answer_stays_held() {
         !mine(&fold, machine, &node_key),
         "a hosted node's own answer, with no owner key's proof, never makes it mine"
     );
+    assert_eq!(
+        asking(&fold, machine).len(),
+        1,
+        "the answer is held, not refused: it asks the owner: {:?}",
+        fold.issues
+    );
 }
 
 /// Test 2 of the row. Main: the fold refuses any cosign on an answer, so the
@@ -765,6 +771,12 @@ fn a_hosted_nodes_unproven_home_pick_waits() {
         home_pick_in_force(&fold),
         None,
         "a not-mine node's home pick with no owner key's proof waits for the owner: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.waiting_owner_choices().len(),
+        1,
+        "the pick is stored and asks the owner, not refused: {:?}",
         fold.issues
     );
 }
@@ -803,6 +815,12 @@ fn a_hosted_nodes_unproven_removal_of_another_machine_waits() {
         "the victim's registration still stands: {:?}",
         fold.issues
     );
+    assert_eq!(
+        asking(&fold, victim).len(),
+        1,
+        "the removal is held, not refused: it asks the owner: {:?}",
+        fold.issues
+    );
 }
 
 /// Test 3, hosted guard (the lead's ruling 15 Nov 13:2x,
@@ -831,6 +849,12 @@ fn a_custodial_roots_cosign_proves_nothing_on_a_hosted_vault() {
         !mine(&fold, machine, &node_key),
         "a hosted node's own answer on a hosted vault, with no owner key's proof, never makes it mine"
     );
+    assert_eq!(
+        asking(&fold, machine).len(),
+        1,
+        "the bare answer is held and asks the owner: {:?}",
+        fold.issues
+    );
     let answer = HostedNodeAnswer::on_a_hosted_vault();
     let root = answer.root.clone();
     let (fold, machine, node_key) = answer.answer_yours(&[&root]);
@@ -838,6 +862,11 @@ fn a_custodial_roots_cosign_proves_nothing_on_a_hosted_vault() {
         !mine(&fold, machine, &node_key),
         "the host's custodial root proves nothing for the owner: {:?}",
         fold.issues
+    );
+    assert_eq!(
+        asking(&fold, machine),
+        BTreeSet::new(),
+        "an answer cosigned by a key that proves nothing is a forged entry, not a held one"
     );
 }
 
@@ -857,6 +886,12 @@ fn a_machine_paired_without_an_owner_keys_proof_is_held() {
     assert!(
         !mine(&fold, paired.paired_machine, &paired_key),
         "a pairing the owner's laptop carried with no owner key's proof is held, not mine"
+    );
+    assert_eq!(
+        asking(&fold, paired.paired_machine).len(),
+        1,
+        "the pairing is held, not refused: it asks the owner: {:?}",
+        fold.issues
     );
 }
 
@@ -896,12 +931,22 @@ fn a_strangers_cosign_or_a_second_cosign_proves_nothing() {
         !mine(&fold, machine, &node_key),
         "a stranger's cosign is no owner key's proof"
     );
+    assert_eq!(
+        asking(&fold, machine),
+        BTreeSet::new(),
+        "a forged proof is a refused entry, not a held one"
+    );
     let answer = HostedNodeAnswer::new();
     let root = answer.root.clone();
     let (fold, machine, node_key) = answer.answer_yours(&[&root, &stranger]);
     assert!(
         !mine(&fold, machine, &node_key),
         "a proven answer carries exactly one cosign"
+    );
+    assert_eq!(
+        asking(&fold, machine),
+        BTreeSet::new(),
+        "a second cosign is a refused entry, not a held one"
     );
 }
 
@@ -959,6 +1004,12 @@ fn a_hosted_nodes_unproven_rekey_of_a_mine_machine_is_held() {
         "the laptop stays mine: {:?}",
         fold.issues
     );
+    assert_eq!(
+        asking(&fold, laptop_machine).len(),
+        1,
+        "the re-key is held, not refused: it asks the owner: {:?}",
+        fold.issues
+    );
 }
 
 /// Item 2 on the MachineProfile op: a not-mine carrier's unproven demote of a
@@ -976,6 +1027,12 @@ fn a_hosted_nodes_unproven_demote_of_a_mine_machine_waits() {
     assert!(
         mine(&fold, laptop_machine, &laptop_key),
         "a not-mine node's demote with no owner key's proof waits for the owner: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        asking(&fold, laptop_machine).len(),
+        1,
+        "the demote is held, not refused: it asks the owner: {:?}",
         fold.issues
     );
 }
@@ -1352,7 +1409,7 @@ fn a_members_own_opt_out_lands_through_a_not_mine_carrier() {
 /// The same ruling's other side: the vault-wide training setting is the
 /// vault owner's act, so a not-mine carrier's unproven set waits.
 #[test]
-fn an_admins_vault_wide_training_setting_waits_through_a_not_mine_carrier() {
+fn the_owners_vault_wide_training_setting_waits_through_a_not_mine_carrier() {
     let answer = HostedNodeAnswer::new();
     let node = answer.machine;
     let target = conversation_training_vault_target(&answer.vault_id()).expect("the target");
