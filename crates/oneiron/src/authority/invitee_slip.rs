@@ -161,17 +161,18 @@ impl Vault {
         Ok(())
     }
 
-    /// What every slip door reads beside the fold's revocation check: a
-    /// grant-bound slip's grant (OF-232), an invitation-bound slip's
-    /// invitation, a support slip's delegation (OF-606), a contact-bound
-    /// slip's naming (FIX 4325) and a seat-child slip's claim (FIX 10624)
-    /// still stand.
+    /// What every slip door reads beside the fold's revocation check: the
+    /// holder's row is not deleted, and a grant-bound slip's grant (OF-232),
+    /// an invitation-bound slip's invitation, a support slip's delegation
+    /// (OF-606), a contact-bound slip's naming (FIX 4325) and a seat-child
+    /// slip's claim (FIX 10624) still stand.
     pub(super) fn require_live_slip_refs_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,
         now: u64,
     ) -> Result<()> {
+        self.require_undeleted_slip_holder_in_txn(txn, claims)?;
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
         self.require_live_slip_invitation_in_txn(txn, claims, now)?;
         if let Some(share) = &claims.share_ref {
@@ -183,6 +184,36 @@ impl Vault {
         self.require_live_delegation_in_txn(txn, claims)?;
         self.require_live_trusted_contact_binding_in_txn(txn, claims, now)?;
         self.require_live_seat_claim_in_txn(txn, claims)
+    }
+
+    /// A slip follows its holder's row (RULING DELETED-ACTOR-SLIP-AUTH = A):
+    /// when `holder_ref` names an entity whose row here is a deleted shell,
+    /// or whose row a hard delete removed, the slip does not stand, so a
+    /// deleted actor's credential authenticates nothing at any door that
+    /// verifies, admits or rechecks it. A `host` or `operator` holder, and a
+    /// holder with no row here that no delete removed (a share recipient, a
+    /// derived principal not yet stored), keep the rule they had. A row that
+    /// is restored brings its slips back. The left-notice doors verify the
+    /// origin alone and still serve a removed member.
+    fn require_undeleted_slip_holder_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Result<()> {
+        let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
+            return Ok(());
+        };
+        let deleted = match crate::vault::live_entity_row_in_txn(&self.store, txn, &holder)? {
+            crate::vault::LiveEntityRow::DeletedShell => true,
+            crate::vault::LiveEntityRow::Absent => {
+                self.local_hard_delete_marker_exists_in_txn(txn, &holder)?
+            }
+            crate::vault::LiveEntityRow::Live { .. } => false,
+        };
+        if deleted {
+            return Err(invalid_authority());
+        }
+        Ok(())
     }
 
     /// [`Self::require_live_slip_refs_in_txn`] as a judgment, for a slip
