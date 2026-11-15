@@ -51,7 +51,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::checkpoint_image::{ReplayEvidence, ReplayPoint, parents_first_of};
 use super::fold_resume::{ConfirmKeys, ImageFold, RowMeta};
 use super::*;
-use crate::error::{AuthorityHistoryReason, Result};
+use crate::error::Result;
+use oneiron_contracts::authority::AuthorityHistoryReason;
 
 mod context;
 mod result_parents;

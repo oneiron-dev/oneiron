@@ -134,7 +134,7 @@ impl AdoptedEvidence {
             vault_id: Some(self.checkpoint.image().vault_id),
             checkpoint: Some(self.checkpoint.id()),
             missing: BTreeSet::from([*missing]),
-            reason: Some(crate::error::AuthorityHistoryReason::UncarriedAncestor),
+            reason: Some(oneiron_contracts::authority::AuthorityHistoryReason::UncarriedAncestor),
         })
     }
 }

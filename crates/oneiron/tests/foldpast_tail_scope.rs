@@ -20,12 +20,13 @@ use oneiron::authority::{
     MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ROLE_ADMIN, ROLE_AGENT,
     ROLE_OWNER, authority_entry_hash, machine_profile_proof_transcript,
 };
-use oneiron::error::{AuthorityHistoryReason, Error, RecordError};
+use oneiron::error::{Error, RecordError};
 use oneiron::test_doors::foldpast::{
     connect_action, disconnect_action, forget_first_seen_receipt, put_signed_entries,
     sign_host_op_beside_next, sign_next_host_op, sign_next_host_op_cosigned, sign_next_op_as,
 };
 use oneiron::{EntityId, OpenOptions, Vault, VaultConfig, VaultStorageId};
+use oneiron_contracts::authority::AuthorityHistoryReason;
 
 /// Home vault H, adopting vault A, and H's host issuer. The vaults close
 /// before their directories go.

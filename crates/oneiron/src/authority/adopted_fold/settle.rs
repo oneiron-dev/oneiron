@@ -11,7 +11,8 @@ use super::super::fold_project::Settled;
 use super::super::fold_resume::{ConfirmKeys, Resumed};
 use super::*;
 use crate::EntityId;
-use crate::error::{AuthorityHistoryReason, Result};
+use crate::error::Result;
+use oneiron_contracts::authority::AuthorityHistoryReason;
 
 /// The tail's seeded fold past the image, settled and projected: what this
 /// install's fold past the image and a later image built past it share.
