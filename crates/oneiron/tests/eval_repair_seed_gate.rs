@@ -29,11 +29,11 @@ use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 use oneiron::skill_hub::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
 use oneiron::skill_optimize::eval_doors::{EvalAuthorNowRequest, author_now};
 use oneiron::skill_optimize::{
-    CutDecision, EvalArmPin, EvalAuthoringInventory, EvalAuthoringPlan, EvalCohortSetup, EvalLabel,
-    EvalLabelKind, EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRefusal,
-    EvalRepairSeedRequest, EvalRepairSeedStanding, EvalRepairSeedState, EvalRepairTaskSource,
-    EvalRepairToolCall, EvalSeat, FamilyPurpose, RepairSeedDecision, eval_authoring_inventory,
-    eval_authoring_skill_id, setup_eval_cohorts,
+    CutDecision, EvalArmPin, EvalAuthoringInventory, EvalAuthoringPlan, EvalAuthoringReport,
+    EvalCohortSetup, EvalLabel, EvalLabelKind, EvalRepairLegAnswer, EvalRepairSeed,
+    EvalRepairSeedLegs, EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedStanding,
+    EvalRepairSeedState, EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose,
+    RepairSeedDecision, eval_authoring_inventory, eval_authoring_skill_id, setup_eval_cohorts,
 };
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -1618,5 +1618,158 @@ fn seed_label_refuses_an_answer_that_is_a_seed_identifier() -> TestResult {
             Some(proposed.clone())
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_reproposed_seed_takes_a_fresh_label() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    // The audit's answer is a digest neither first arm holds.
+    let answer = "5f2c8e0d4b7a9163";
+    let labelled = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, answer),
+    )
+    .map_err(|refusal| format!("refused: {refusal}"))?;
+    assert_eq!(labelled.state, EvalRepairSeedState::Pending);
+    let settled = settle(
+        &fixture,
+        &source,
+        &response("wrong answer"),
+        &response("another wrong answer"),
+    )?;
+    assert!(
+        matches!(
+            settled.state,
+            EvalRepairSeedState::Refused {
+                reason: EvalRepairSeedRefusal::CandidateFailed,
+                ..
+            }
+        ),
+        "{:?}",
+        settled.state
+    );
+
+    // Re-proposed with a candidate whose digest is that answer: the kept
+    // label was checked against the first candidate only, so the fresh seed
+    // awaits a fresh label, and that answer is now a seed identifier.
+    let again = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .propose_eval_repair_seed(
+            &EvalRepairSeedRequest {
+                source: source.clone(),
+                old: arm("old-skill-digest"),
+                candidate: arm(answer),
+            },
+            PROPOSED_AT + 1,
+        )?
+        .seed
+        .expect("the owner reads their own capture");
+    assert_eq!(again.candidate.skill_digest.as_deref(), Some(answer));
+    assert_eq!(again.state, EvalRepairSeedState::AwaitingLabel);
+    assert_eq!(again.adjudication, None);
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, answer),
+    )
+    .expect_err("the answer is the new candidate's digest");
+    assert!(refusal.contains("identifiers"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(again));
+    Ok(())
+}
+
+#[test]
+fn an_authoring_report_from_before_repair_seeds_decodes() -> TestResult {
+    // An Applied execution keeps its report in a named-MessagePack side
+    // table; one stored before repair seeds has neither count.
+    let before = json!({
+        "families_assigned": 1,
+        "families_extended": 0,
+        "cases_recorded": 2,
+        "cases_reused": 0,
+        "labels_added": 1,
+        "cohorts_cut": [],
+        "cuts_with_coverage_gaps": 0,
+        "cohorts_retired": [],
+        "cohorts_kept": 0,
+        "skipped": [],
+    });
+    let report: EvalAuthoringReport = rmp_serde::from_slice(&rmp_serde::to_vec_named(&before)?)?;
+    assert_eq!(report.cases_recorded, 2);
+    assert_eq!(report.labels_added, 1);
+    assert_eq!(
+        (report.repair_seeds_proposed, report.repair_seeds_reused),
+        (0, 0)
+    );
+    Ok(())
+}
+
+#[test]
+fn the_repair_listing_is_bounded() -> TestResult {
+    let fixture = fixture()?;
+    // One failure holding twelve task contracts, and ten outcomes each
+    // linking its repair: 120 rows, were the listing unbounded.
+    let tasks: Vec<Value> = (0..12).map(|_| text_task(clean_state())).collect();
+    let mut events = vec![
+        json!({
+            "type": "CUSTOM",
+            "name": "desk.failure",
+            "value": { "id": "f-1", "threadId": "t-1", "runId": "r-1", "tasks": tasks },
+        }),
+        json!({
+            "type": "CUSTOM",
+            "name": "desk.repair",
+            "value": { "id": "p-1", "threadId": "t-1", "runId": "r-1", "failureId": "f-1" },
+        }),
+    ];
+    for outcome in 0..10 {
+        events.push(json!({
+            "type": "CUSTOM",
+            "name": "desk.outcome",
+            "value": {
+                "id": format!("o-{outcome}"),
+                "threadId": "t-1",
+                "runId": "r-1",
+                "repairId": "p-1",
+                "result": { "response": ANSWER },
+            },
+        }));
+    }
+    let jsonl = events
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    fixture.vault.ingest_ag_ui_file(
+        &fixture.proof,
+        &AgUiFileImport {
+            claim_ref: None,
+            project_ref: fixture.project.to_hex(),
+            app_id: "support-desk".to_owned(),
+            custom_mappings: mappings(),
+            jsonl,
+        },
+    )?;
+
+    let inventory = eval_authoring_inventory(&fixture.vault, fixture.vault.now_recorded_at())?;
+    let mut per_outcome: BTreeMap<usize, usize> = BTreeMap::new();
+    for repair in &inventory.repairs {
+        *per_outcome.entry(repair.outcome_ordinal).or_default() += 1;
+    }
+    // At most 8 contracts a failure, and 64 rows in all.
+    assert_eq!(inventory.repairs.len(), 64, "{per_outcome:?}");
+    assert!(
+        per_outcome.values().all(|rows| *rows == 8),
+        "{per_outcome:?}"
+    );
+    assert_eq!(
+        inventory.repairs.last().map(|repair| repair.id.as_str()),
+        Some("r64")
+    );
     Ok(())
 }
