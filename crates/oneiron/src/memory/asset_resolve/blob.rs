@@ -16,8 +16,10 @@ use rmpv::Value;
 use super::{BODY_BLAKE3, BODY_MEDIA_TYPE, EntityId, MemoryError, MemoryResult, TimeRange};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::file_secret_marks::SecretSight;
 use crate::ports::{BlobStore, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::secret_custody::MaskedFile;
 use crate::store::Store;
 
 /// The ASSET body field that holds the bytes' size.
@@ -80,16 +82,30 @@ pub(crate) fn land_asset_blob_in_txn(
     Ok(hash)
 }
 
-/// The media type and bytes `body`, an ASSET row a lane admitted, names,
-/// read in `txn`, the snapshot that lane admitted it in. `None` for a body
-/// that names no blob. A blob the store does not hold, or bytes that are not
-/// the ones the body names, are a corrupt index: an admitted ASSET's
-/// reference holds its bytes for as long as the row stands.
+/// The blob `body`, an ASSET row a lane admitted, names, read in `txn`, the
+/// snapshot that lane admitted it in, as a reader with `sight` is served it:
+/// its media type, its bytes, and the mark a masked reader's image is
+/// rastered by. `None` for a body that names no blob. A blob the store does
+/// not hold, or bytes that are not the ones the body names, are a corrupt
+/// index: an admitted ASSET's reference holds its bytes for as long as the
+/// row stands.
+///
+/// A reader that sees stored keys is served the bytes as stored. A masked
+/// reader's marked image comes with its mark, and the image form rasters its
+/// pixels by it. Every other blob a masked reader reads passes
+/// [`served_bytes_in_txn`](crate::store::file_key_masks::served_bytes_in_txn),
+/// as `vault.assets.masked_read` reads a file: a marked clip is served its
+/// masked copy, an unmarked blob only once the release scan reads it clean,
+/// and a blob served none is `None`, as a withheld row is. An upload stored
+/// while the write door's scan was off holds keys no mark covers, and serve
+/// still redacts (`SecretScanMode::Off`; FIX
+/// RAWBODY-CENSUS-UNTRACED-SERVE-PATHS).
 pub(super) fn resolve_asset_blob_in_lane(
     vault: &Vault,
     txn: &RoTxn<'_>,
     body: &[u8],
-) -> MemoryResult<Option<(String, Vec<u8>)>> {
+    sight: SecretSight,
+) -> MemoryResult<Option<(String, Vec<u8>, Option<MaskedFile>)>> {
     let Some(blob) = AssetBlobRef::of_body(body) else {
         return Ok(None);
     };
@@ -97,7 +113,21 @@ pub(super) fn resolve_asset_blob_in_lane(
         .port_blob_get(txn, &blob.hash)?
         .filter(|bytes| blob.names(bytes))
         .ok_or_else(|| MemoryError::from(crate::error::Error::CorruptedIndex("asset blob")))?;
-    Ok(Some((blob.media_type, bytes)))
+    if sight != SecretSight::Masked {
+        return Ok(Some((blob.media_type, bytes, None)));
+    }
+    let mark = crate::secret_custody::masked_file_in_txn(&vault.store, txn, &blob.hash)?;
+    if mark.is_some() && blob.media_type.starts_with("image/") {
+        return Ok(Some((blob.media_type, bytes, mark)));
+    }
+    let served = crate::store::file_key_masks::served_bytes_in_txn(
+        &vault.store,
+        txn,
+        bytes,
+        Some(&blob.hash),
+        sight,
+    )?;
+    Ok(served.map(|bytes| (blob.media_type, bytes, None)))
 }
 
 /// [`resolve_asset_blob_in_lane`] for a reader that holds a store rather
