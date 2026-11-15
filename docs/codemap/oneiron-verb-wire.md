@@ -980,3 +980,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/vault_key/escrow.rs` | src | s | 1 struct | EscrowRetirement | Moved from `crates/oneiron/src/world_keys/vault_key/escrow.rs` (lib split W1: wire types below the lib) |
 | `src/world_keys/vault_key/mod.rs` | src | s | 2 mod · 4 re-export | — | — |
 | `src/world_keys/vault_key/vocabulary.rs` | src | s | 1 enum | VaultKeyStatus | Moved from `crates/oneiron/src/world_keys/vault_key/vocabulary.rs` (lib split W1: wire types below the lib) |
+| `tests/wire_list_limit_rules.rs` | test | s | — | — | UC-13 PR 4c: the limit rules of two wire requests, pinned at limit 0, 1, the default, the maximum and the… |

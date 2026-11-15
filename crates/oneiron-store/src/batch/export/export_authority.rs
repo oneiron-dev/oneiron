@@ -151,12 +151,7 @@ pub fn validate_export_vault_label(label: &str) -> Result<()> {
 }
 
 pub fn hex_lower(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
+    oneiron_hex::encode(bytes)
 }
 
 /// Parses one 32-byte manifest hex field, fail-closed.

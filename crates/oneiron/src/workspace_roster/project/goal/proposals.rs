@@ -85,17 +85,10 @@ impl ProjectGoalProposer {
     }
 }
 
-/// The rate a proposal was admitted under: at most `open_per_base` open
-/// proposals of one proposer on one goal base, and at most `per_window` of
-/// its proposals for one project in any `window_secs` (the vault clock's
-/// seconds), dismissed ones counted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalProposalRate {
-    pub open_per_base: u32,
-    pub per_window: u32,
-    pub window_secs: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::goal::proposals::{
+    ProjectGoalProposalDismissal, ProjectGoalProposalRate, ProjectGoalProposalStatus,
+};
 
 /// The proposal's evidence shape (ARCH-0053): the attractor case, imp@k
 /// against the target over N cycles, and the cost spent. These are
@@ -125,15 +118,6 @@ pub struct ProjectGoalProposeRequest {
     pub evidence: ProjectGoalProposalEvidence,
 }
 
-/// A vault owner's outcome for a proposal: dismissed, with the reason.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalProposalDismissal {
-    pub person: EntityId,
-    pub reason: String,
-    pub at: u64,
-}
-
 /// One stored proposal. Only the dismissal is ever written after it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -151,18 +135,6 @@ pub struct ProjectGoalProposal {
     /// The rate this proposal was admitted under; none for the owner's.
     pub rate: Option<ProjectGoalProposalRate>,
     pub dismissal: Option<ProjectGoalProposalDismissal>,
-}
-
-/// Where a proposal stands now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectGoalProposalStatus {
-    /// On the goal in force and not dismissed: the interview shows it.
-    Open,
-    /// A vault owner dismissed it.
-    Dismissed,
-    /// The goal moved since; history only.
-    Superseded,
 }
 
 /// A proposal with where it stands.
