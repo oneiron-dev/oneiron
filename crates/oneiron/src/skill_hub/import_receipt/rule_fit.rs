@@ -9,18 +9,13 @@ use super::{
     FIT_ANALYSIS_BYTES, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator,
     permission_labels,
 };
-use crate::consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectFacts};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::setting::SettingValue;
 use crate::skill_hub::hub_owner::OwnerAskedSkillFit;
-use crate::skill_hub::package_codec::invalid;
+use crate::skill_hub::setting_keys::SKILL_FIT;
 use crate::skill_hub::{
     HubPackage, HubRef, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt,
 };
 use crate::{Vault, error::Result};
-
-/// The owner's skill fit setting; an absent row is the rule fit.
-const SKILL_FIT: SideTable<(), SkillFitSetting, Raw> =
-    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_SKILL_FIT);
 
 /// What the caller already holds, as its host judges it. A permission is a
 /// request label: `verb:<name>` and `lane:<name>` for a section, and
@@ -42,8 +37,20 @@ impl CallerPermissions for HoldsNothing {
     }
 }
 
-/// Which fit an ordinary skill install runs: the owner's own setting.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Which fit an ordinary skill install runs: the owner's own setting, the
+/// catalogue key `skills.fit` ([`crate::skill_hub::setting_keys::SKILL_FIT`]).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum SkillFitSetting {
     /// [`RuleSkillFit`]: a code-free package requesting no permission the
     /// caller lacks installs with undo; anything else asks.
@@ -53,35 +60,7 @@ pub enum SkillFitSetting {
     OwnerAsked,
 }
 
-impl SkillFitSetting {
-    const fn byte(self) -> u8 {
-        match self {
-            Self::RuleFit => 0,
-            Self::OwnerAsked => 1,
-        }
-    }
-
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::RuleFit => "rule_fit",
-            Self::OwnerAsked => "owner_asked",
-        }
-    }
-}
-
-impl RawValue for SkillFitSetting {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(vec![self.byte()])
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        match bytes {
-            [0] => Ok(Self::RuleFit),
-            [1] => Ok(Self::OwnerAsked),
-            _ => Err(crate::error::Error::CorruptedIndex("skill fit setting").into()),
-        }
-    }
-}
+impl SettingValue for SkillFitSetting {}
 
 /// The deterministic skill fit over the fetched package, its static scan
 /// and what the caller already holds.
@@ -202,33 +181,7 @@ impl Vault {
     /// the owner-asked fit.
     pub fn marketplace_skill_fit(&self) -> Result<SkillFitSetting> {
         let txn = self.store.env.read_txn()?;
-        Ok(SKILL_FIT.get(&self.store, &txn, &())?.unwrap_or_default())
-    }
-
-    /// The owner picks which fit an ordinary skill install runs. The change
-    /// is the owner's own act, consented once and spent in the same writer.
-    pub fn set_marketplace_skill_fit(
-        &self,
-        owner: &AuthenticatedOwner,
-        setting: SkillFitSetting,
-    ) -> Result<ConsentReceipt> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let nonce = self.store.clock.entity_id()?;
-            let effect = ComposedEffect::new(EffectFacts::new(format!(
-                "skill.marketplace.skill-fit:{}:{}",
-                setting.as_str(),
-                nonce.to_hex()
-            ))?)
-            .digest();
-            let receipt = self.approve_once_in_txn(txn, owner, effect)?;
-            let authorization =
-                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
-                    .ok_or_else(|| invalid("skill fit setting consent missing"))?;
-            SKILL_FIT.put(&self.store, txn, &(), &setting)?;
-            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
-            Ok(receipt)
-        })
+        Ok(SKILL_FIT.read_in_txn(self, &txn, &[], None)?.value)
     }
 
     /// The fit an ordinary skill install runs for `caller`, as the owner's

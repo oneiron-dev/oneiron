@@ -12,14 +12,14 @@ use super::{HubConsentReceipt, HubSkillReceipts, HubSkillRequest};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::skills::{
-    SkillAdvisoryAskRequest, SkillCapabilityView, SkillCodeAutoInstallRequest, SkillConvertReceipt,
-    SkillConvertRequest, SkillForkLineage, SkillGovernanceSetRequest, SkillGovernanceView,
-    SkillHashRuleRequest, SkillLibraryCall, SkillLibraryDependency, SkillLibraryFile,
-    SkillLibraryForkRequest, SkillLibraryLifecycle, SkillLibraryListRequest, SkillLibraryPage,
-    SkillLibraryRestoreReceipt, SkillLibraryRestoreRequest, SkillLibraryScan, SkillLibraryView,
-    SkillOptimizeAxisView, SkillOptimizeResultRequest, SkillOptimizeResultView,
-    SkillOptimizeStartReceipt, SkillOptimizeStartRequest, SkillOptimizeVerdictView,
-    SkillRestoreAdmission, SkillSourceEvidence, SkillStaleView,
+    SkillCapabilityView, SkillConvertReceipt, SkillConvertRequest, SkillForkLineage,
+    SkillGovernanceSetRequest, SkillGovernanceView, SkillHashRuleRequest, SkillLibraryCall,
+    SkillLibraryDependency, SkillLibraryFile, SkillLibraryForkRequest, SkillLibraryLifecycle,
+    SkillLibraryListRequest, SkillLibraryPage, SkillLibraryRestoreReceipt,
+    SkillLibraryRestoreRequest, SkillLibraryScan, SkillLibraryView, SkillOptimizeAxisView,
+    SkillOptimizeResultRequest, SkillOptimizeResultView, SkillOptimizeStartReceipt,
+    SkillOptimizeStartRequest, SkillOptimizeVerdictView, SkillRestoreAdmission,
+    SkillSourceEvidence, SkillStaleView,
 };
 
 pub fn skill_convert_as_owner(
@@ -390,26 +390,6 @@ pub fn skill_hash_rule_as_owner(
     let hash = crate::skill::SkillContentHash::parse_hex(&input.content_hash)?;
     Ok(vault
         .set_marketplace_blocked_hash(owner, hash, input.blocked)?
-        .into())
-}
-
-pub fn skill_code_auto_install_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: &SkillCodeAutoInstallRequest,
-) -> MemoryResult<HubConsentReceipt> {
-    Ok(vault
-        .set_marketplace_code_auto_install(owner, input.enabled)?
-        .into())
-}
-
-pub fn skill_advisory_ask_set_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: &SkillAdvisoryAskRequest,
-) -> MemoryResult<HubConsentReceipt> {
-    Ok(vault
-        .set_marketplace_advisory_ask(owner, input.enabled)?
         .into())
 }
 

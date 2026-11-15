@@ -239,19 +239,6 @@ pub struct SkillHashRuleRequest {
     pub blocked: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillCodeAutoInstallRequest {
-    pub enabled: bool,
-}
-
-/// The owner's existing dependency-advisory ask setting.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillAdvisoryAskRequest {
-    pub enabled: bool,
-}
-
 /// The governance axis of one stored skill, resolved fail-closed.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillGovernanceView {

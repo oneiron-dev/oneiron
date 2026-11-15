@@ -1,21 +1,31 @@
 //! The N dial over vault_meta, and the two text helpers every child in this module uses.
 
+use serde::{Deserialize, Serialize};
+
+use super::setting_keys::MIN_OUTCOMES;
 use crate::Vault;
 use crate::error::{ArtifactError, Error, Result};
-use crate::side_table::{self, Raw, SideTable};
+use crate::setting::{SettingSource, SettingValue};
 
-/// The N dial: a singleton row.
-const MIN_OUTCOMES: SideTable<(), [u8; 4], Raw> =
-    SideTable::new(&side_table::SKILL_OPTIMIZE_MIN_OUTCOMES);
+/// N, the attributed outcomes a skill must carry before it can be optimized: the catalogue key
+/// `skills.optimize.min_outcomes` ([`super::setting_keys::MIN_OUTCOMES`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct SkillOptimizeMinOutcomes(pub u32);
 
-/// `vault_meta` key holding N, the attributed outcomes a skill must carry
-/// before it can be optimized.
-///
-/// A per-feature engine dial over `vault_meta` — the `INBOX_REVIEW_DIAL_KEY`
-/// house pattern, the same one `SKILL_RELIABILITY_FLOOR_KEY` and
-/// `MINER_K_SETTINGS_KEY` follow. `settings.rs` is UI customization and owns
-/// nothing here.
-pub const SKILL_OPTIMIZE_MIN_OUTCOMES_KEY: &[u8] = b"settings:skill_optimize:v1:min_outcomes";
+impl SettingValue for SkillOptimizeMinOutcomes {
+    /// N is above zero: a job that may rewrite a skill on no evidence at all is the thing N
+    /// exists to prevent.
+    fn check(self) -> Result<Self> {
+        if self.0 == 0 {
+            Err(Error::InvalidConfig(
+                "skill optimize min_outcomes must be > 0: evidence is the point".into(),
+            ))
+        } else {
+            Ok(self)
+        }
+    }
+}
 
 /// N when the dial has never been set.
 ///
@@ -43,37 +53,20 @@ pub(super) fn validate_text(value: &str, max_bytes: usize, reason: &'static str)
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+/// Storage errors; [`Error::CorruptedIndex`] on a stored N that does not decode.
 pub fn skill_optimize_min_outcomes(vault: &Vault) -> Result<u32> {
     skill_optimize_min_outcomes_sourced(vault).map(|(value, _)| value)
 }
 
 /// The native dial read, with no body source when the shipped default is
-/// used. A stored singleton has no source-row identity on this carrier.
+/// used. A stored setting row has no source-row identity on this carrier.
 pub(super) fn skill_optimize_min_outcomes_sourced(
     vault: &Vault,
 ) -> Result<(u32, Option<Vec<crate::EntityId>>)> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(bytes) = MIN_OUTCOMES.get(&vault.store, &rtxn, &())? else {
-        return Ok((DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, Some(Vec::new())));
-    };
-    Ok((u32::from_be_bytes(bytes), None))
-}
-
-/// Sets the N dial.
-///
-/// # Errors
-///
-/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when `min_outcomes` is zero — a job that may
-/// rewrite a skill on no evidence at all is the thing N exists to prevent.
-pub fn set_skill_optimize_min_outcomes(vault: &Vault, min_outcomes: u32) -> Result<()> {
-    if min_outcomes == 0 {
-        return Err(invalid(
-            "skill optimize min_outcomes must be > 0: evidence is the point",
-        ));
-    }
-    vault.with_write_txn_grouped(|wtxn| {
-        MIN_OUTCOMES.put(&vault.store, wtxn, &(), &min_outcomes.to_be_bytes())?;
-        Ok(())
+    let read = MIN_OUTCOMES.read_in_txn(vault, &rtxn, &[], None)?;
+    Ok(match read.source {
+        SettingSource::Default => (read.value.0, Some(Vec::new())),
+        _ => (read.value.0, None),
     })
 }

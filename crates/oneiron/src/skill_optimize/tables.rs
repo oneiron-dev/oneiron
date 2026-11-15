@@ -9,12 +9,6 @@ crate::side_table::side_tables! {
     /// An owner's funded judge-ask minutes (u32be). Key: id16 (owner).
     SKILL_OPTIMIZE_JUDGE_MINUTES: VaultMeta b"settings:skill_optimize:judge_minutes:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
-    /// Accepted edits per Dreamer cycle. Key: ().
-    SKILL_EDIT_CYCLE_CAP: VaultMeta b"settings:skill_optimize:v1:cycle_cap" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Minimum attributed outcomes before optimization. Key: ().
-    SKILL_OPTIMIZE_MIN_OUTCOMES: VaultMeta b"settings:skill_optimize:v1:min_outcomes" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// One attempt an exploration trial routed to its proposal: the charge it reserved against the
     /// goal claim's exploration slice and, once its spend scope settles, what it spent (MessagePack
     /// named map). Key: id16 (attempt).

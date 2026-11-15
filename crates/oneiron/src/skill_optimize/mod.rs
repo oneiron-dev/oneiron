@@ -169,8 +169,7 @@ pub use self::decisions::{
     SkillOptimizeDecisions, SkillReplayResponse, SkillReplayResponses, judgment_kind,
 };
 pub use self::dials::{
-    DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
-    set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
+    DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SkillOptimizeMinOutcomes, skill_optimize_min_outcomes,
 };
 pub use self::eval_set::doors as eval_doors;
 pub use self::eval_set::{
@@ -276,8 +275,8 @@ pub use gate::{
     GoalAxisScore, GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
     HeldOutReplayCase, HeldOutReplayNotes, HeldOutVerdict, HonestyReplay, HonestyReplayObservation,
     JevTradeoffVerdict, JudgeMeasurements, PreferredResponse, ProjectGoalRevisionProposal,
-    SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME,
-    SkillEditCycle, SkillEditDisposition, SkillEditGoal, SkillEditPreflight, SkillTradeoffAsk,
+    SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle,
+    SkillEditCycleCap, SkillEditDisposition, SkillEditGoal, SkillEditPreflight, SkillTradeoffAsk,
     SkillTradeoffPreferences, SkillTradeoffQuestion, TradeoffCapacityCrossing, TradeoffChoice,
     TradeoffResolution, TradeoffRole, TradeoffRule, TradeoffRung, WorldAxisScore,
     admit_optimized_skill_revision, crossings_in_txn, dev_receipts,
@@ -287,10 +286,10 @@ pub use gate::{
     preflight_skill_edit_offline_floors, project_goal_revision_proposals, receipt_is_held_out,
     register_held_out_replay_scorer, resolve_skill_edit_tradeoff,
     resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit, score_gate_skill_edit_in_cycle,
-    score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap, set_skill_edit_goal_axes,
-    set_skill_goal_project, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask,
-    settle_skill_tradeoff_ask_as, settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest,
-    skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_as_owner, skill_edit_goal_axis_report,
+    score_gate_skill_edit_with_scorer, set_skill_edit_goal_axes, set_skill_goal_project,
+    set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as,
+    settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest, skill_edit_cycle_cap,
+    skill_edit_goal, skill_edit_goal_as_owner, skill_edit_goal_axis_report,
     skill_edit_needs_goal_axis_report, skill_edit_score_call_purpose, skill_edit_verdict,
     skill_edit_verdicts, skill_edit_verdicts_for_proposal, skill_goal_axis_plan,
     skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
@@ -319,6 +318,7 @@ pub(crate) use self::job::{
 
 use self::dials::invalid;
 pub(crate) use self::tier::tier_verdict_in_txn;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 // FIX [LIBTEST-QUARANTINE-SKILL-OPTIMIZE-TESTS]: the lib test target's type check fails here (20 errors: E0061 x15, E0308 x3, E0277 x1, E0609 x1); port it, then drop this gate
 #[cfg(any())]
