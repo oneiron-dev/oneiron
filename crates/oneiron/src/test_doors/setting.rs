@@ -112,6 +112,20 @@ pub fn owner_number_read_both_ways(
     ))
 }
 
+/// Runs the setting tables' scrub for the erased entity `id` in a write of its own, as the
+/// delete pipeline's eraser line does when `id` is erased.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn erase_entity_from_settings(vault: &Vault, id: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::setting::erase_setting_entity_in_txn(&vault.store, &mut txn, &id)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// Whether a leave of a shared vault keeps the value row of `key` at `scope` in the live setting
 /// table.
 #[cfg(all(feature = "test-support", feature = "sync"))]
