@@ -23,11 +23,10 @@ pub async fn home_answer_within(
 ) -> (Option<String>, Vec<String>) {
     let (events, mut told) = mpsc::unbounded_channel();
     let mut probe = super::peer_session::HomeProbe::new(true, vault, config, &events);
-    // The probe ends a peer session only on the home's root.
-    let answer = tokio::time::timeout(wait, probe.root_received())
+    let answer = tokio::time::timeout(wait, probe.home_answer())
         .await
         .ok()
-        .map(|()| "Root".to_owned());
+        .map(|answer| format!("{answer:?}"));
     drop(probe);
     let mut told_events = Vec::new();
     while let Ok(event) = told.try_recv() {
