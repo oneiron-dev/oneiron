@@ -30,19 +30,8 @@ pub const PACK_SETUP_ALLOW_ASK_DOOR: &str = "/v1/owner/decisions/asks/answer";
 /// keeps at most 16 KiB.
 const MAX_ALLOW_ASK_TEXT_BYTES: usize = 16_000;
 
-/// One allow put to the owner: the ask's arrival number and exactly what a
-/// yes allows.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackSetupOwnerAsk {
-    /// The ask's arrival number on the decision-ask queue.
-    pub seq: u64,
-    /// The owner door whose yes lands it.
-    pub door: String,
-    pub connection: String,
-    /// The connection's permissions a yes allows, exactly: any other one
-    /// allowed before is withdrawn.
-    pub permissions: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::connector_key::setup::allow_ask::PackSetupOwnerAsk;
 
 /// What one allow ask freezes, kept as the ask's state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -13,6 +13,7 @@ use super::wake_plan::PreparedWake;
 
 mod bound_read;
 mod extraction_scope;
+mod held;
 mod nightly_link_grant;
 mod parts;
 mod pins;
@@ -111,6 +112,9 @@ pub(super) struct BranchResources<'a> {
     /// Every scoped read this branch made, folded. Methods read through
     /// `&self`, so the fold sits behind a lock.
     read_receipt: std::sync::Mutex<ScopedReadReceipt>,
+    /// The escalation rows a window slot's early finish holds for its
+    /// settle (FIX 21927); `None` writes them at once.
+    held: std::cell::RefCell<Option<held::HeldEscalations>>,
 }
 
 impl<'a> BranchResources<'a> {
@@ -540,7 +544,9 @@ impl<'a> BranchResources<'a> {
         Ok(())
     }
 
-    pub(super) fn upsert_verified_gaps(
+    /// Writes verified contradiction gaps into the origin's gap queue; the
+    /// branch's own door is `upsert_verified_gaps`, which may hold them.
+    fn write_verified_gaps(
         &self,
         scope: &Scope,
         gaps: Vec<(
