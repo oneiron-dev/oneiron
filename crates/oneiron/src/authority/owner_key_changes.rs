@@ -49,8 +49,9 @@ impl Vault {
     /// enrolment and each counted removal of a key an enrolment names, from
     /// the rows this vault keeps (stored, or carried by an adopted
     /// checkpoint image). A key enrolled on two branches lists its smallest
-    /// enrolment entry, as [`Self::enrolled_owner_keys`] does. Empty before
-    /// any enrolment.
+    /// enrolment entry, as [`Self::enrolled_owner_keys`] does; a key that
+    /// two counted entries removed lists both removals. Empty before any
+    /// enrolment.
     ///
     /// # Errors
     /// A refusal when the proof is no longer the vault's live owner; the

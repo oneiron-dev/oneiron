@@ -67,8 +67,8 @@ pub enum LastDeviceKeyConfirmation {
 /// act ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RemainingOwnerKeys {
-    /// The live keys held on a device: every enrolled device key, and a
-    /// self-hosted vault's owner root.
+    /// The live Ed25519 keys held on a device: every enrolled device key,
+    /// and a self-hosted vault's owner root.
     pub device_keys: usize,
     /// Whether the recovery root's authority key is live.
     pub recovery_root: bool,
@@ -337,7 +337,10 @@ impl Vault {
     /// live roster key the fold trusts as the owner's
     /// ([`AuthorityFold::proves_owner_acts`]), by what its enrolment says it
     /// is. A key no enrolment names is held on a device: a self-hosted
-    /// vault's owner root.
+    /// vault's owner root. Only an Ed25519 key counts as a device key: the
+    /// fold takes an owner proof from no other suite (`owner_proof_key`)
+    /// and no install holds one to sign with, so while only a P-256 key
+    /// remains the doors ask.
     fn owner_keys_remaining_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -362,7 +365,7 @@ impl Vault {
             }
             if recovery_roots.contains(key) {
                 remaining.recovery_root = true;
-            } else {
+            } else if matches!(key, AuthorityKey::Ed25519(_)) {
                 remaining.device_keys += 1;
             }
         }
