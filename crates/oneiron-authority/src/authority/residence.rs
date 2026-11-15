@@ -13,6 +13,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -35,8 +36,6 @@ pub const RESIDENCE_PREDICTED_WINDOWS_DEFAULT: u32 = 32;
 /// The entity documents a predicted machine's prediction names when the
 /// owner set no budget.
 pub const RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT: u32 = 128;
-/// The derive-key context of a predicted set's digest.
-const PREDICTED_SET_CONTEXT: &str = "oneiron predicted residence set v1";
 const DIRECTIVE_KEYS: [&str; 6] = [OP_KEY_KIND, "id", "machine", "owner", "issued_at", "act"];
 const RESULT_KEYS: [&str; 7] = [
     OP_KEY_KIND,
@@ -391,11 +390,10 @@ impl PredictedResidenceSet {
         ]))
     }
 
-    /// The digest a prediction names for the canonical body `body`.
+    /// The digest a prediction names for the canonical body `body`: its
+    /// content hash, since the body is content-addressed.
     pub fn body_digest(body: &[u8]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key(PREDICTED_SET_CONTEXT);
-        hasher.update(body);
-        *hasher.finalize().as_bytes()
+        ContentHash::of(body).into_bytes()
     }
 
     /// The digest of this set's canonical body.
