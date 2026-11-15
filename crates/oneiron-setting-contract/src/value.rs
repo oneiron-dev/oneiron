@@ -32,6 +32,15 @@ impl SettingValue for i64 {}
 impl SettingValue for String {}
 impl SettingValue for Vec<String> {}
 
+/// An optional value, for a key that is off until someone sets it: `None` is a value of its own
+/// (MessagePack nil), and `check` checks the inner value. A nested `Option` does not round-trip
+/// (`Some(None)` encodes as `None` does), so no key's value is one.
+impl<T: SettingValue> SettingValue for Option<T> {
+    fn check(self) -> Result<Self> {
+        self.map(T::check).transpose()
+    }
+}
+
 impl SettingValue for f64 {
     fn check(self) -> Result<Self> {
         if self.is_finite() {
@@ -145,5 +154,16 @@ mod tests {
             encoded
         );
         assert!(f64::NAN.check().is_err());
+    }
+
+    #[test]
+    fn an_optional_value_checks_its_inner_value_and_none_is_a_value() {
+        let none = EncodedValue::checked(None::<u64>).expect("none encodes");
+        assert_eq!(none.decode::<Option<u64>>(), Some(None));
+        assert_eq!(none.decode::<u64>(), None, "nil is no number");
+        let some = EncodedValue::checked(Some(7_u64)).expect("some encodes");
+        assert_eq!(some.decode::<Option<u64>>(), Some(Some(7)));
+        assert!(Some(f64::NAN).check().is_err());
+        assert_eq!(None::<f64>.check().expect("none passes"), None);
     }
 }

@@ -44,6 +44,10 @@ fn daily() -> crate::schedule::Trigger {
     }
 }
 
+fn no_mode() -> Option<u64> {
+    None
+}
+
 fn channel(item: &str) -> bool {
     matches!(item, "mail" | "chat")
 }
@@ -101,5 +105,10 @@ crate::setting::setting_keys! {
     pub TEST_JOB_CADENCE: crate::schedule::Trigger = "test.job_cadence" {
         kind: Kind::new(daily),
         on_change: Some(crate::schedule::rearm_on_change),
+    };
+    /// A mode that is off until the owner sets one: an optional value.
+    pub TEST_OPTIONAL_MODE: Option<u64> = "test.optional_mode" {
+        kind: Kind::new(no_mode),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
     };
 }
