@@ -17,6 +17,8 @@ doctest = false
 [dependencies]
 anyhow = "1"
 blake3 = { workspace = true }
+# The K door only (PLAN-UC-04): the restore receipt id keeps its bytes. No record form.
+oneiron-fingerprint = { version = "0.1.0", path = "../oneiron-fingerprint", default-features = false }
 oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 serde = { workspace = true }
 serde_json = { workspace = true }
