@@ -202,7 +202,7 @@ mod digest_serde {
         deserializer: D,
     ) -> Result<[u8; 32], D::Error> {
         let hex = String::deserialize(deserializer)?;
-        super::digest_from_hex(&hex)
+        oneiron_hex::decode::<32>(&hex)
             .ok_or_else(|| serde::de::Error::custom("booking digest is not 32 lowercase hex bytes"))
     }
 }
@@ -222,72 +222,15 @@ mod opt_digest_serde {
     ) -> Result<Option<[u8; 32]>, D::Error> {
         match Option::<String>::deserialize(deserializer)? {
             None => Ok(None),
-            Some(hex) => super::digest_from_hex(&hex).map(Some).ok_or_else(|| {
+            Some(hex) => oneiron_hex::decode::<32>(&hex).map(Some).ok_or_else(|| {
                 serde::de::Error::custom("booking digest is not 32 lowercase hex bytes")
             }),
         }
     }
 }
 
-/// Parses exactly 32 lowercase hex bytes.
-fn digest_from_hex(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut out = [0_u8; 32];
-    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        let high = hex_nibble(pair[0])?;
-        let low = hex_nibble(pair[1])?;
-        *slot = (high << 4) | low;
-    }
-    Some(out)
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
-}
-
-mod entity_ref_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&value.to_hex())
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let hex = String::deserialize(deserializer)?;
-        EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
-    }
-}
-
-mod entity_refs_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &[EntityId],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(value.iter().map(EntityId::to_hex))
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Vec<EntityId>, D::Error> {
-        Vec::<String>::deserialize(deserializer)?
-            .iter()
-            .map(|hex| EntityId::from_hex(hex).map_err(serde::de::Error::custom))
-            .collect()
-    }
-}
+#[doc(hidden)]
+use oneiron_records::booking::lifecycle::{entity_ref_serde, entity_refs_serde};
 
 /// The digest row a lifecycle token resolves through. The token carries no
 /// state; this row is where the EVENT and the permitted action live.

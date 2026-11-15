@@ -675,6 +675,8 @@ impl Vault {
             home_search: Default::default(),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
+            #[cfg(feature = "sync")]
+            lfs_release_verdicts: Default::default(),
             host_net_floor: Default::default(),
             proposal_spool: Default::default(),
             sandbox_backends: Default::default(),
@@ -727,6 +729,9 @@ impl Vault {
         vault.backfill_mesh_machine_endpoint_index(false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
+        // The campaign.member claims by campaign and query, for a vault older
+        // than their index (ARCH-0044 H202).
+        vault.backfill_campaign_member_index(false)?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             if seed_content {
                 // The seeded births below stamp the owner's `substrate` FACET,

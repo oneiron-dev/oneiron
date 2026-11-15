@@ -19,14 +19,8 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 const PENDING_ERASES: SideTable<EntityId, PendingErase, Named> =
     SideTable::new(&side_table::LEGAL_HOLD_PENDING_ERASE);
 
-/// Which owner act a waiting erase carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PendingEraseKind {
-    /// The owner's "Lift the hold and erase?" confirm: a hard erase, and an
-    /// audience edit erased as a privacy erase leaves it.
-    LiftAndErase,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::legal_hold::pending::PendingEraseKind;
 
 /// One waiting owner erase.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

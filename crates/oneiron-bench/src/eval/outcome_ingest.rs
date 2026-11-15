@@ -108,26 +108,10 @@ fn parse_run_id(value: &str) -> Result<RetrievalRunId, String> {
 }
 
 fn parse_id_bytes(value: &str, field: &str) -> Result<[u8; ID_LEN], String> {
-    let raw = value.as_bytes();
     let expected = ID_LEN * 2;
-    if raw.len() != expected {
+    if value.len() != expected {
         return Err(format!("{field} must be {expected} hex characters"));
     }
-
-    let mut bytes = [0_u8; ID_LEN];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        let high = decode_hex_nibble(raw[index * 2], field)?;
-        let low = decode_hex_nibble(raw[index * 2 + 1], field)?;
-        *byte = (high << 4) | low;
-    }
-    Ok(bytes)
-}
-
-fn decode_hex_nibble(byte: u8, field: &str) -> Result<u8, String> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(format!("{field} contains a non-hex character")),
-    }
+    oneiron_hex::decode_any_case::<ID_LEN>(value)
+        .ok_or_else(|| format!("{field} contains a non-hex character"))
 }
