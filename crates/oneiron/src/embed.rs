@@ -6,13 +6,13 @@ mod cold_attach;
 mod device;
 mod eligibility;
 mod evidence;
+mod gpu_pod_hours;
 #[cfg(feature = "sync")]
 pub(crate) mod home_vectors;
 #[cfg(feature = "sync")]
 pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
-mod pod_hours;
 mod refusal;
 pub use refusal::is_device_local_row_refusal;
 #[cfg(feature = "sync")]
@@ -44,13 +44,13 @@ pub(crate) use eligibility::{
     turn_text_in_txn,
 };
 pub use evidence::EmbeddingMatchEvidence;
+pub use gpu_pod_hours::{PodHoursClock, PodHoursWait};
 pub(crate) use locality::{clear_embedding_locality_in_txn, stamp_embedding_locality_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use media::text_vector_sources_in_txn;
 pub use media::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
 };
-pub use pod_hours::{PodHoursClock, PodHoursWait};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
     apply_ops_session_projected, discard_repo_derived_index_copy_in_txn,
@@ -221,11 +221,11 @@ struct LeasedPendingEmbedding {
 struct LeaseBatch {
     work: Vec<LeasedPendingEmbedding>,
     active_leases: usize,
+    held_for_pod_hours: usize,
     stale_jobs: usize,
     egress_denied: usize,
     egress_no_verdict: usize,
     device_local: usize,
-    held_for_pod_hours: usize,
 }
 
 /// One actually-filled measured item: the leased source it filled, with the actual
@@ -247,6 +247,10 @@ pub struct MeasuredEmbedFill {
 pub struct PendingEmbeddingReconcileReport {
     pub leased: usize,
     pub active_leases: usize,
+    /// Rows the owner's wait holds pending, unleased and unsent while every
+    /// GPU pod is outside its hours (NIGHT-BACKFILL-HOLD): backfill only, by
+    /// default.
+    pub held_for_pod_hours: usize,
     pub stale_jobs: usize,
     pub embedded: usize,
     pub filled: usize,
@@ -258,10 +262,6 @@ pub struct PendingEmbeddingReconcileReport {
     /// Rows a device-local world keeps (DEC-0005): embedded on device, or
     /// left pending unsent while no embedder on this device takes them.
     pub device_local: usize,
-    /// Rows the owner's wait holds pending, unleased and unsent while every
-    /// GPU pod is outside its hours (NIGHT-BACKFILL-HOLD): backfill only, by
-    /// default.
-    pub held_for_pod_hours: usize,
     /// Actually-filled measured items, in fill order, for the operational
     /// `EmbedTokens` meter. Stale/deferred/reused/skipped/failed fills and
     /// unmeasured remote fills have no entry.
@@ -417,11 +417,11 @@ impl PendingEmbeddingReconciler {
         *report = PendingEmbeddingReconcileReport {
             leased: batch.work.len(),
             active_leases: batch.active_leases,
+            held_for_pod_hours: batch.held_for_pod_hours,
             stale_jobs: batch.stale_jobs,
             egress_denied: batch.egress_denied,
             egress_no_verdict: batch.egress_no_verdict,
             device_local: batch.device_local,
-            held_for_pod_hours: batch.held_for_pod_hours,
             ..PendingEmbeddingReconcileReport::default()
         };
         Ok(batch.work)
