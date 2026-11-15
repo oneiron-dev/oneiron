@@ -72,7 +72,9 @@ pub(super) async fn start_dreamer(
             // An engine refusal logs by kind: its text can quote the vault.
             let kind = match &refusal {
                 RoleRefusal::Refused(error) => Some(error.kind()),
-                RoleRefusal::NoSeat | RoleRefusal::RouteNotServed { .. } => None,
+                RoleRefusal::NoSeat
+                | RoleRefusal::RouteNotServed { .. }
+                | RoleRefusal::FallbackNoLongerAllowed { .. } => None,
             };
             tracing::error!(?kind, role = ?role, "a dreamer role's route could not be resolved");
             return Err(IdleReason::StartFailed);

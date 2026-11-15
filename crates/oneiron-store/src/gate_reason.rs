@@ -223,6 +223,10 @@ pub enum GateReasonCode {
     /// FIX 12542: a campaign-compliance Block is held for the owner's
     /// clearance rather than overriding a would-be Allow or Pending with Deny.
     PendingCampaignCompliance,
+    /// ARCH-0059 #copy-review: a campaign send whose copy failed its review,
+    /// or has none yet, is held for the owner's clearance, as a compliance
+    /// Block is.
+    PendingCampaignCopyReview,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -274,6 +278,7 @@ impl GateReasonCode {
             Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
             Self::PendingDelegationChainCeiling => "gate.pending.delegation_chain_ceiling",
             Self::PendingCampaignCompliance => "gate.pending.campaign_compliance",
+            Self::PendingCampaignCopyReview => "gate.pending.campaign_copy_review",
         }
     }
 
@@ -314,9 +319,11 @@ impl GateReasonCode {
             | Self::PendingConsentBoundExceeded
             | Self::PendingConsentCatastropheFloor
             | Self::PendingConsentWriteClassificationFailed => GateMetricReasonClass::Consent,
-            Self::DenyCampaignCompliance | Self::PendingCampaignCompliance => {
-                GateMetricReasonClass::CampaignCompliance
-            }
+            // A copy-review hold is a campaign send hold: no new metric
+            // class, so the counter width is unchanged.
+            Self::DenyCampaignCompliance
+            | Self::PendingCampaignCompliance
+            | Self::PendingCampaignCopyReview => GateMetricReasonClass::CampaignCompliance,
             Self::DenyDreamerDegenerateOutput
             | Self::DenyDreamerMalformed
             | Self::DenyDreamerNoEvidence => GateMetricReasonClass::DreamerPrecommit,

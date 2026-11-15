@@ -141,6 +141,7 @@ fn wait_on(agents: &[AttemptId], n_of: Option<u32>, step_key: &str) -> TaskWaitA
         agents: agents.iter().copied().map(hex).collect(),
         all: None,
         n_of,
+        until: None,
         step_key: step_key.to_owned(),
     }
 }
@@ -196,8 +197,9 @@ fn the_agents_form_of_tasks_wait_parses() -> TestResult {
         "step_key": "children",
     }))?;
     assert!(matches!(input, TaskWaitInput::Agents(_)));
-    // It names no deadline, and no reader child beside the agents.
-    for extra in ["until", "tasks", "request"] {
+    // It names no reader child and no request beside the agents; its
+    // `until` is tests/run_wait_agents_until.rs's.
+    for extra in ["tasks", "request"] {
         let mut body = serde_json::json!({
             "agents": ["00112233445566778899aabbccddeeff"],
             "step_key": "children",
@@ -361,6 +363,7 @@ fn a_wait_names_only_children_the_callers_run_spawned() -> TestResult {
                 agents: vec!["not-an-attempt".to_owned()],
                 all: None,
                 n_of: None,
+                until: None,
                 step_key: "bad".to_owned(),
             },
         ),

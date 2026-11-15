@@ -171,6 +171,19 @@ impl Spend {
         ) {
             return Ok(failed);
         }
+        // A spent model seat refused the step: the try parks on that seat,
+        // this spend kept (SEAT-PARK-MODEL-STEP-PATH).
+        if let Some((seat, reset_at_s)) =
+            crate::dreamer_runner::dreamer_seat_refusal_of_step(&error)
+        {
+            return Ok(DreamerAttemptExecution::ParkOnSeatWithSpend {
+                reason: error.to_string(),
+                seat: *seat.as_bytes(),
+                reset_at_s,
+                completed_units: self.units,
+                step_bindings: self.step_bindings,
+            });
+        }
         Ok(match error {
             DurableStepError::SpentFinalizeRefused { usage } => {
                 self.units = self.units.saturating_add(units(&usage));

@@ -148,12 +148,19 @@ impl ScopedRead<'_> {
                 .saturating_add(reachability_rows);
             pack.results = results;
             pack.neighbors = neighbors;
+            // The rows a pack says it hydrated are the rows this read keeps:
+            // one hydrated before this filter and withheld here adds nothing,
+            // so no count hints at a row the reader cannot read (ARCH-0052
+            // #e5-read-union-open, ROOM-PACK-MEMBER-COUNT).
+            pack.stats.entities_hydrated = pack.results.len();
+            pack.stats.neighbors_hydrated = pack.neighbors.len();
             pack.stats.claims_suppressed +=
                 result_suppressed + neighbor_suppressed + reachability_claims;
             let mut admitted = PackCriticalAccounting::default();
             for id in &critical.budget_omitted_ids {
                 if self.is_entity_retrievable_held_in(&rtxn, &policy, &filter, id, &held)?
                     && crate::context_pack::disclosure_admits_target(
+                        self.vault,
                         &self.store_read(),
                         &rtxn,
                         disclosure,
@@ -395,8 +402,8 @@ impl ScopedRead<'_> {
             return Ok(true);
         }
         if let Some(clamp) = disclosure
-            && !clamp.admits(
-                &self.vault.store,
+            && !clamp.admits_in(
+                self.vault,
                 rtxn,
                 &entity.id,
                 crate::registry::ENTITY_TYPE_TURN,

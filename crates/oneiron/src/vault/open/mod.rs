@@ -633,6 +633,7 @@ impl Vault {
             )),
             config,
             tagging_arm: Default::default(),
+            payment_credential_release: Default::default(),
             analyzer,
             writer_lease: None,
             secret_use_t1_operations: Default::default(),
@@ -674,6 +675,8 @@ impl Vault {
             home_search: Default::default(),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
+            #[cfg(feature = "sync")]
+            lfs_release_verdicts: Default::default(),
             host_net_floor: Default::default(),
             proposal_spool: Default::default(),
             sandbox_backends: Default::default(),
@@ -713,11 +716,17 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::store::skill_content_index::backfill_content_hash_index_if_needed(&vault)?;
+        // The companion profile grants by principal and PERSON, for a vault
+        // older than their index (ARCH-0044 H424).
+        vault.backfill_companion_grant_index(false)?;
         // The agents owner-agent Grant mints have ever named, for a vault
         // older than their index (PAIR-GRANT-DESIGN Q2 = A).
         crate::federation::backfill_agent_grant_member_index(&vault, false)?;
         vault.backfill_widen_contact_verdict_index(false)?;
+        vault.backfill_standing_outbound_grant_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
+        // The MACHINE rows by endpoint key, for a vault older than the index.
+        vault.backfill_mesh_machine_endpoint_index(false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
@@ -819,6 +828,13 @@ impl Vault {
     #[must_use]
     pub fn is_host_readable(&self) -> bool {
         self.privacy.host_readable()
+    }
+
+    /// Who supplies this vault's data key, as the opener validated it: what
+    /// the recovery preset reads before "Nobody but me" is entered.
+    #[must_use]
+    pub(crate) fn data_key_custody(&self) -> &crate::config::VaultDataKeyCustody {
+        &self.privacy.data_key_custody
     }
 
     /// This vault's content-free diagnostic counters.
@@ -1019,6 +1035,28 @@ impl Vault {
         let manager = self.live_window_manager.lock().ok()?.upgrade();
         match manager {
             Some(manager) => manager.while_window_closed(key, f),
+            None => (!attached).then(f),
+        }
+    }
+
+    /// [`Self::while_window_closed`] for the erasure sweep's compaction: a
+    /// registered window is first taken from its holders, who have until
+    /// `bound` to let it go, then persisted, deregistered and kept closed
+    /// through `f` (census L9-41; `WindowManager::while_window_drained_closed`).
+    /// `None` as the probe answers, and while a handle is held past `bound`.
+    #[cfg(feature = "sync")]
+    pub(crate) fn while_window_drained_closed<T>(
+        &self,
+        key: &crate::window_key::WindowKey,
+        bound: std::time::Duration,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let attached = self
+            .live_window_manager_attached
+            .load(std::sync::atomic::Ordering::Acquire);
+        let manager = self.live_window_manager.lock().ok()?.upgrade();
+        match manager {
+            Some(manager) => manager.while_window_drained_closed(key, bound, f),
             None => (!attached).then(f),
         }
     }

@@ -138,9 +138,13 @@ pub(super) fn mcp_listed_tool_names(body: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// The tool-first names: every verb row exported to MCP (a `mcp: "none"` row,
+/// such as `self.browser.*`, is no tool, 99f171e1e54 #1556), then the native
+/// read table, sorted.
 pub(super) fn mcp_expected_generated_names() -> Vec<&'static str> {
     let mut expected = oneiron::task_verb::sdk::AgentVerb::ALL
         .iter()
+        .filter(|verb| verb.is_mcp())
         .map(|verb| verb.as_str())
         .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter().copied())
         .collect::<Vec<_>>();

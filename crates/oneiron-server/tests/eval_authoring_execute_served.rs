@@ -14,15 +14,18 @@
 //! eval_authoring_execute_served`.
 #![cfg(oneiron_test_support)]
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
 #[path = "support/eval_authoring_fixture.rs"]
 mod eval_authoring_fixture;
 #[path = "support/fake_llm.rs"]
 mod fake_llm;
 
 use axum::http::StatusCode;
+use engine_stack::run_on_engine_stack;
 use eval_authoring_fixture::{
     Fixture, VERB, answer_without_plan, assert_budget_settled, assert_no_eval_authoring_job_queued,
-    echo_plan, run_on_engine_stack,
+    echo_plan,
 };
 use oneiron::skill_optimize::eval_authoring_skill_id;
 use serde_json::{Value, json};

@@ -37,8 +37,8 @@ pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordCreator,
     OffRecordMode, OffRecordNotice, OffRecordNoticeAct, OffRecordSaveSuggestion, OffRecordSession,
     OffRecordSessionRecord, OffRecordSessionVault, OffRecordTalk, OffRecordTalkMessage,
-    OffRecordTalkTurn, RetainedCharge, RoomNoteHandle, SavedTurns, room_entry_bytes,
-    room_session_key,
+    OffRecordTalkTurn, RetainedCharge, RoomNoteHandle, RoomPackRead, RoomPackSession, SavedTurns,
+    room_entry_bytes, room_session_key,
 };
 pub use promote::{
     OffRecordPromoteReceipt, PROMOTE_INITIATOR_OWNER, PROMOTE_INITIATOR_ROOM_HOLDER,

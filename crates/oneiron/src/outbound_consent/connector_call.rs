@@ -15,7 +15,7 @@
 //! again finds the call it held. Once a resume settles a held call, the row
 //! keeps that outcome, without the reply, until a settler lists it
 //! ([`crate::Vault::pending_connector_calls`]), answers the wait the ref names and
-//! acknowledges it ([`crate::Vault::ack_connector_call_delivery`]).
+//! acknowledges it ([`crate::Vault::ack_connector_call_delivery_keeping_caller`]).
 //! [`crate::Vault::connector_tool_schema`] reads a tool's approved schema through
 //! the same resolution a call takes.
 //!
@@ -266,14 +266,6 @@ impl ConnectorCallInvocation {
     pub fn call_ref(self, principal: EntityId) -> Result<EntityId, IntentLedgerError> {
         connector_call_ref(&principal.to_hex(), self)
     }
-}
-
-pub(super) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 /// One held call's principal, connector name and tool, so the owner's

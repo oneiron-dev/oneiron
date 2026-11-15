@@ -234,9 +234,20 @@ pub(crate) async fn execute_context_pack(
         time,
         signals,
     } = pack;
-    let scoped_read = read
-        .into_borrowed(&server.vault)
-        .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
+    // ARCH-0052 #e5-read-union-open (ONE-1729): a pack whose request names a
+    // live stretch reads it beside base, as a turn taken there sees it. The
+    // view borrows the stretch, so it is made here, after the verb hooks.
+    let stretch = context_pack_room(server, auth)?;
+    let stretch_read = stretch
+        .as_ref()
+        .map(oneiron::off_record::RoomPackSession::read)
+        .transpose()
+        .map_err(|error| core_engine_error("context-pack stretch read failed", error))?;
+    let scoped_read = match stretch_read.as_ref() {
+        Some(stretch_read) => read.into_borrowed_in_room(&server.vault, stretch_read),
+        None => read.into_borrowed(&server.vault),
+    }
+    .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
     let query = non_empty_query(req.query.as_deref());
     let (edge_hop, _, max_neighbors, _) =
         resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
@@ -299,8 +310,13 @@ pub(crate) async fn execute_context_pack(
         tracing::error!(kind = ?error.kind(), "core context-pack scoped plan failed");
         core_engine_error("core context-pack scoped read setup failed", error)
     })?;
-    let mut builder = plan
-        .admit(server.vault.context_pack())
+    let admitted = match stretch_read.as_ref() {
+        Some(stretch_read) => plan
+            .admit_in_room(server.vault.context_pack(), stretch_read)
+            .map_err(|error| core_engine_error("context-pack stretch admission failed", error))?,
+        None => plan.admit(server.vault.context_pack()),
+    };
+    let mut builder = admitted
         .media_query_memory(&server.memory)
         .limit(candidate_limit)
         .hydrate(hydrate)
@@ -444,6 +460,69 @@ pub(crate) async fn execute_context_pack(
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     response.limit_clamped = req.limit_clamped;
     Ok((response, memories, cursor))
+}
+
+/// The live stretch a pack reads beside base: the one its request names
+/// (`x-oneiron-session`), so the turn board of a chat turn taken there reads
+/// the stretch's rows. The vault's owner binds it on their proof. A person or
+/// agent on their own live slip binds a room's stretch while on that room's
+/// roster (ARCH-0052 #e5-read-union-open = B, ROOM-PACK-MEMBER-BIND), and
+/// each row is read under that member's own key, so a member's agent gets
+/// what that member's key reads, never more. Any other caller, and a stretch
+/// the reader cannot bind now (gone, closing, closed, a room they are not in,
+/// or, for anyone but the owner, a stretch entered alone), reads base alone,
+/// as a pack did before.
+fn context_pack_room<'v>(
+    server: &'v SyncServer,
+    auth: &CoreAuth,
+) -> Result<Option<oneiron::off_record::RoomPackSession<'v>>, ApiError> {
+    let Some(key) = auth.off_record_session() else {
+        return Ok(None);
+    };
+    let rooms = server.vault.off_record_session_vault();
+    let bound = if let Ok(owner) = crate::api::owner_routes::owner(auth, server) {
+        let owner = owner
+            .revalidate(&server.vault)
+            .map_err(|error| core_engine_error("context-pack owner proof failed", error))?;
+        rooms.bind_pack_reader(key, owner)
+    } else {
+        let Some(member) = context_pack_room_member(server, auth)? else {
+            return Ok(None);
+        };
+        rooms.bind_pack_member(key, member)
+    };
+    bound.map_err(|error| core_engine_error("context-pack stretch bind failed", error))
+}
+
+/// The person or agent a pack's caller is, on their own live slip, who may
+/// read a room's stretch as a member of it, as the off-record doors bind one
+/// (`bound_session`). `None` for a host credential, which names no person, a
+/// managed owner's attestation, which keeps no slip to check again, any other
+/// actor class, and a slip no longer live.
+fn context_pack_room_member(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<Option<oneiron::EntityId>, ApiError> {
+    if auth.is_host_holder() || auth.managed_owner().is_some() {
+        return Ok(None);
+    }
+    let Some(slip) = auth.verified_slip() else {
+        return Ok(None);
+    };
+    let Ok((actor, class)) = crate::api::facade::facade_actor(server, auth) else {
+        return Ok(None);
+    };
+    if !matches!(
+        class,
+        oneiron::EdgeActorClass::Human | oneiron::EdgeActorClass::Agent
+    ) {
+        return Ok(None);
+    }
+    let live = server
+        .vault
+        .capability_slip_is_live(slip)
+        .map_err(|error| core_engine_error("context-pack slip check failed", error))?;
+    Ok(live.then_some(actor))
 }
 
 /// The agent signal feed rides the context pack of the agent's next turn:

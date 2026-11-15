@@ -361,7 +361,7 @@ impl HostSelfDispatcher<'_> {
     /// itself to the gate whatever it asks, so the host's auto checker
     /// reviews its Auto request and its Proposed resubmission keeps that
     /// review's hold as a pending review (review 6908 P1).
-    pub(super) fn dispatch_memory_put_claim_requesting(
+    pub(crate) fn dispatch_memory_put_claim_requesting(
         &self,
         call: SelfMemoryPutClaimCall,
         read_as: Option<ScopedReadActorKey>,

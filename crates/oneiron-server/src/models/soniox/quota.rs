@@ -71,6 +71,7 @@ pub(in crate::models) fn limit_refusal_of(error: &RetryableLlmError) -> Option<R
             kind,
             retry_after,
             resets_at,
+            ..
         } => Some(Refusal {
             retry_after: *retry_after,
             resets_at,

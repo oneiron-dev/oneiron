@@ -39,6 +39,7 @@ use super::super::StartCompaction;
 use super::super::fold_answers::words_withdrawn;
 use super::super::records::{FinishedOutput, REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
+use super::declarations::stored_request_hash;
 use super::erase::actor_gone_in_txn;
 use super::pieces::{PieceScope, RequestPieces, unheld_lens};
 use super::start_pieces::StartPieces;
@@ -277,10 +278,10 @@ fn write_capsule_in_txn(
         request: CapsuleRequest::Kept {
             body: request_ref,
             path: draft.request_path.clone(),
-            stored_hash: *blake3::hash(stored).as_bytes(),
+            stored_hash: stored_request_hash(&request.request, stored)?,
             erased: false,
         },
-        request_hash: *blake3::hash(&draft.request).as_bytes(),
+        request_hash: draft.request_hash,
         messages_digest: draft.messages_digest,
         source_rows: capture.source_rows.clone(),
         exposures: stored_slots(&draft.exposures, capture.request, &request),
@@ -341,7 +342,7 @@ fn write_withheld_in_txn(
         request: CapsuleRequest::Withheld {
             reasons: reasons.iter().map(|reason| (*reason).to_owned()).collect(),
         },
-        request_hash: *blake3::hash(&draft.request).as_bytes(),
+        request_hash: draft.request_hash,
         messages_digest: draft.messages_digest,
         source_rows: capture.source_rows.clone(),
         exposures: draft

@@ -705,6 +705,30 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     raw_for_revision(store, txn, id, &raw, Some(target)).map(admit)
 }
 
+/// Whether the revision the ledger indexes `id` at is a retained state of its
+/// entity document, so that a read there serves the words that document held
+/// then (L9-11). Not when the ledger holds no document for `id`, nor when
+/// that revision is a row the ledger kept from before the document took the
+/// words (a head written around the ledger): a read there serves the row's
+/// old words, or the pointer row with none. A state it cannot prove is not
+/// one.
+pub(crate) fn indexed_revision_is_document_state_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(current) = state(store, txn, id)?.filter(|current| current.has_doc) else {
+        return Ok(false);
+    };
+    let Some(frontier) = FRONTIER.get(store, txn, &(*id, current.indexed.0))? else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        revision_document(store, txn, id, current.indexed, &frontier),
+        Ok(RevisionDocument::Common(_))
+    ))
+}
+
 /// Moves `id`'s short-id rows to the content hash a live read issues its
 /// short reference with, in the writer's transaction (FIX
 /// SUMMARY-SHORT-REF-INDEX). A live read hashes the row it serves

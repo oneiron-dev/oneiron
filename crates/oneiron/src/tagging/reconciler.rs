@@ -15,6 +15,7 @@ mod call;
 mod claim;
 mod coordinator;
 mod history;
+mod older_sets;
 mod recovery;
 mod settle;
 

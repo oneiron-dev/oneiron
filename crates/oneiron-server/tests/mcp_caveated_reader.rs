@@ -9,6 +9,9 @@
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test mcp_caveated_reader`.
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -16,6 +19,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use ed25519_dalek::{Signer, SigningKey};
+use engine_stack::on_engine_stack;
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, MachineRole, SlipCaveat, holder_proof_challenge,
 };
@@ -25,9 +29,7 @@ use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -261,34 +263,6 @@ fn hex(bytes: &[u8]) -> String {
 /// The JSON-RPC error kind of `reply`, if it is an error.
 fn error_kind(reply: &Value) -> Option<&str> {
     reply["error"]["data"]["error_code"].as_str()
-}
-
-/// Runs `test` as the server's binary runs its app: on a multi-thread runtime
-/// whose threads have the engine's stack, driven from a thread that has it
-/// too. The generated dispatch's poll frame does not fit a test thread's
-/// default stack (`ENGINE_THREAD_STACK_BYTES`).
-fn on_engine_stack<F, Fut>(test: F) -> TestResult
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = TestResult>,
-{
-    let driver = std::thread::Builder::new()
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || -> Result<(), String> {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())?
-                .block_on(test())
-                .map_err(|error| error.to_string())
-        })?;
-    match driver.join() {
-        Ok(outcome) => Ok(outcome?),
-        // A failed assertion fails the test with its own message.
-        Err(panic) => std::panic::resume_unwind(panic),
-    }
 }
 
 #[test]

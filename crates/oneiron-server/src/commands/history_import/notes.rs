@@ -303,17 +303,38 @@ mod tests {
     /// folder, so about 100 GiB of notes under the per-file cap were read
     /// into memory before any limit. Past its byte budget a folder is
     /// refused while it is read.
+    ///
+    /// Ruled refusal removed (OF-554, #2591; Rule 5 and OF-520, the Engine's
+    /// 10-18 04:4x ruling on MAX_FOLDER_BYTES): the budget is the
+    /// `limits.import_folder_text_bytes` row, and a folder past it is read and
+    /// imported whole while the row names the crossing.
     #[test]
     fn a_folder_past_its_byte_budget_is_refused_while_it_is_read() {
+        use oneiron::limit_ask::EngineLimit;
+
         let dir = tempfile::tempdir().expect("test fixture");
         for name in ["a.md", "b.md", "c.md"] {
             std::fs::write(dir.path().join(name), "x".repeat(400)).expect("test fixture");
         }
+        let store = tempfile::tempdir().expect("test fixture");
+        let mut config = oneiron::VaultConfig::device();
+        config.limits.set(EngineLimit::ImportFolderTextBytes, 1000);
+        let vault = oneiron::Vault::open(store.path(), config).expect("test fixture");
         let mut counts = NoteCounts::default();
-        // read_folder takes no budget and FolderRefused is gone (OF-554, #2591,
-        // 2ac9e524083): the refusal is any error the read answers (rule D).
-        let refused = read_folder(dir.path(), &mut counts).err();
-        assert!(refused.is_some(), "{refused:?}");
-        assert_eq!(counts.found, 2, "refused at the file past the budget");
+        read_folder(dir.path(), &mut counts).expect("a folder past its budget is read whole");
+        let crossed: Vec<(&str, u64)> = crossed_rows(&vault, &counts)
+            .iter()
+            .filter_map(|warning| match warning {
+                crate::files_intake::ImportWarning::LimitCrossed { row, limit, .. } => {
+                    Some((*row, *limit))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            crossed.contains(&(EngineLimit::ImportFolderTextBytes.key(), 1000)),
+            "{crossed:?}"
+        );
+        assert_eq!(counts.found, 3, "read whole past the budget");
     }
 }

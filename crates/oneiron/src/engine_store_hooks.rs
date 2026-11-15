@@ -968,6 +968,15 @@ impl StoreGateHooks for EngineGateHooks {
     ) -> Result<Option<crate::gate::dispatch_compliance::ComplianceVerdict>> {
         crate::campaign::compliance::campaign_compliance_gate(store, txn, effect, now_utc)
     }
+
+    fn campaign_copy_review_gate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        effect: &crate::gate::ExternalEffectGateInput,
+    ) -> Result<Option<crate::campaign::enrollment::CopyReviewHold>> {
+        crate::campaign::enrollment::campaign_copy_review_gate(store, txn, effect)
+    }
 }
 
 /// The engine's core write operations.

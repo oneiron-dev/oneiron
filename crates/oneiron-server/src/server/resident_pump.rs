@@ -42,7 +42,7 @@ pub(crate) use self::execution::seated_planner;
 use self::settlement::settle;
 
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use oneiron::agent_def::{
@@ -52,8 +52,8 @@ use oneiron::agent_def::{
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, AgentRunFence, AgentRunLeaseReap, HealerSlot,
     LeaderStarterSkills, PlannerSeat, PlannerSkills, ProjectConversationSkills, ResidentAgentSpec,
-    SpendScopeId, agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
-    resident_attempt_wakes_for_room,
+    ResidentMessageClassifier, SpendScopeId, agent_dispatch_actor, agent_dispatch_run_actor,
+    resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ReadSetProducer,
@@ -92,6 +92,7 @@ use oneiron::task_type::TaskTypeRef;
 use oneiron::{
     DreamerRunnerStore, EntityId, LlmError, ModelId, RetryableLlmError, Vault, WriteActor,
 };
+use oneiron_base::unix_seconds_now;
 use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
@@ -105,6 +106,32 @@ use crate::mcp::{
     EngineRunError, McpCodeModeProvider, PlannedModel, ScopeMeter, enter_engine_native_run,
     task_engine_run_seat, task_run_seat,
 };
+
+/// The class question's shipped wording (AGM-2 = C): prompt data beside
+/// this host, never engine prose.
+const MESSAGE_CLASS_WORDING: &str = include_str!("resident_message_class_wording.json");
+
+/// [`MESSAGE_CLASS_WORDING`]'s question, read once; `None`, and no message
+/// is classed past its envelope, when the shipped file does not read.
+fn message_class_wording() -> Option<&'static str> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wording {
+        question: String,
+    }
+    static WORDING: OnceLock<Option<String>> = OnceLock::new();
+    WORDING
+        .get_or_init(
+            || match serde_json::from_str::<Wording>(MESSAGE_CLASS_WORDING) {
+                Ok(wording) => Some(wording.question),
+                Err(error) => {
+                    tracing::warn!(%error, "the message class wording does not read");
+                    None
+                }
+            },
+        )
+        .as_deref()
+}
 
 /// The pump's lease owner, and the owner of the park a run stopped by a
 /// provider outage holds (FIX 3194), which a provider's recovery resumes.
@@ -120,7 +147,8 @@ const RECHECK: Duration = Duration::from_secs(30);
 /// A commit that queues a ready run no pass has seen cuts it short: that
 /// run's pass starts at once (FIX AGENT-RUN-START-LATENCY-4S).
 const PASS_SPACING: Duration = Duration::from_secs(1);
-/// Inbox messages one resident is woken for in one pass.
+/// Wakes one resident's inbox pass dispatches; a held wake carries several
+/// messages (AGM-4).
 const WAKES_PER_PASS: usize = 16;
 /// How long a run whose window is full waits for its compaction before it
 /// enters again, and how many such waits in a row it takes before it ends.
@@ -144,11 +172,14 @@ const FORK_REFUSALS: [&str; 5] = [
 /// What one pass found: the ready runs, and what it could not serve, keyed
 /// by what it was for. `queued` is every ready row of the agent run queue at
 /// the pass's start; a later wake passes at once only for a row outside it.
+/// `held_until` is when the earliest wake a resident's hold keeps falls due
+/// (AGM-4), so the next pass comes by then and not a recheck later.
 #[derive(Default)]
 struct Pass {
     ready: Vec<(AttemptId, RunOf)>,
     faults: BTreeMap<String, String>,
     queued: HashSet<AttemptId>,
+    held_until: Option<u64>,
 }
 
 /// Whose run a ready row is: a settled resident's, or another agent's.
@@ -286,7 +317,7 @@ impl SyncServer {
             let server = Arc::clone(&self);
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                server.resident_pass(unix_now())
+                server.resident_pass(unix_seconds_now())
             })
             .await
             .unwrap_or_else(|error| Pass {
@@ -306,6 +337,9 @@ impl SyncServer {
             }
             failing = pass.faults;
             let seen = pass.queued;
+            let recheck = pass.held_until.map_or(RECHECK, |due| {
+                RECHECK.min(Duration::from_secs(due.saturating_sub(unix_seconds_now())))
+            });
             for (id, of) in pass.ready {
                 if !held(&running).insert(id) {
                     continue;
@@ -321,7 +355,7 @@ impl SyncServer {
             }
             let woke = tokio::select! {
                 signal = wake.recv() => !matches!(signal, Err(broadcast::error::RecvError::Closed)),
-                () = tokio::time::sleep(RECHECK) => true,
+                () = tokio::time::sleep(recheck) => true,
             };
             if !woke || !self.space_after_wake(&mut wake, &seen, &running).await {
                 return;
@@ -370,7 +404,8 @@ impl SyncServer {
     ) -> bool {
         let server = Arc::clone(self);
         let Ok(Ok(ready)) =
-            tokio::task::spawn_blocking(move || ready_run_ids(server.vault(), unix_now())).await
+            tokio::task::spawn_blocking(move || ready_run_ids(server.vault(), unix_seconds_now()))
+                .await
         else {
             return false;
         };
@@ -429,13 +464,31 @@ impl SyncServer {
                 }
             }
         }
-        let dispatcher = AgentDispatcher::new(vault);
+        // AGM-2 = C: a message to a busy resident is classed on this host's
+        // rule and local rungs only, under the bands the Coach tuned.
+        let bands = self.decision_host().bands();
+        let mut dispatcher = AgentDispatcher::new(vault);
+        if let Some(wording) = message_class_wording() {
+            dispatcher = dispatcher.with_message_classifier(ResidentMessageClassifier {
+                ladder: self.decision_ladder(),
+                wording,
+                bands: &bands,
+                band: oneiron::llm::decision::DecisionBand::default(),
+            });
+        }
         if !residents.is_empty() {
             for agent in &residents {
-                if let Err(error) = dispatcher.dispatch_resident_inbox(*agent, WAKES_PER_PASS, now)
-                {
-                    pass.faults
-                        .insert(format!("inbox {}", agent.to_hex()), error.to_string());
+                match dispatcher.dispatch_resident_inbox(*agent, WAKES_PER_PASS, now) {
+                    Ok(inbox) => {
+                        if let Some(due) = inbox.held_until {
+                            pass.held_until =
+                                Some(pass.held_until.map_or(due, |held| held.min(due)));
+                        }
+                    }
+                    Err(error) => {
+                        pass.faults
+                            .insert(format!("inbox {}", agent.to_hex()), error.to_string());
+                    }
                 }
             }
             match dispatcher.ready_resident_runs(&residents, now) {
@@ -603,7 +656,7 @@ fn claim(
     let dispatcher = AgentDispatcher::new(vault);
     let claimed = match of {
         RunOf::Resident(agent) => dispatcher
-            .claim_resident_run(id, LEASE_OWNER, unix_now())?
+            .claim_resident_run(id, LEASE_OWNER, unix_seconds_now())?
             .map(|(status, resident)| {
                 let briefing = briefing(&dispatcher, &status);
                 let claimed = Claimed {
@@ -618,7 +671,7 @@ fn claim(
                 (claimed, briefing)
             }),
         RunOf::Agent(agent) => dispatcher
-            .claim_agent_run(id, LEASE_OWNER, unix_now())?
+            .claim_agent_run(id, LEASE_OWNER, unix_seconds_now())?
             .map(
                 |AgentRun {
                      status,
@@ -675,6 +728,13 @@ fn resident_task(
         None if resident_attempt_wakes_for_room(&status.attempt, resident.agent_def_ref) => {
             ROOM_WAKE_CAUSE.to_owned()
         }
+        // AGM-4: a held wake carries every message its hold joined.
+        None if !status.input.carried_wake_keys.is_empty() => format!(
+            "{} messages reached your inbox (identity {}). Your home conversation is {}.",
+            status.input.carried_wake_keys.len() + 1,
+            resident.inbox_identity_ref.to_hex(),
+            resident.home_conversation_ref.to_hex()
+        ),
         None => format!(
             "A message reached your inbox (identity {}). Your home conversation is {}.",
             resident.inbox_identity_ref.to_hex(),
@@ -922,10 +982,4 @@ fn held(running: &Mutex<HashSet<AttemptId>>) -> MutexGuard<'_, HashSet<AttemptId
 
 fn text(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

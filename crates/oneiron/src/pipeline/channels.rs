@@ -12,15 +12,16 @@ use crate::store::StoreRead;
 use crate::temporal::TemporalAnchorMode;
 
 use super::filters::pipeline_candidate_matches_filters_and_gate;
+use super::params::RetrievalParams;
 use super::support::{
     combine_proximity, compute_radius, effective_range_width, interval_distance,
     learned_anchor_range, midpoint, point_interval_distance, resolve_sigma_secs, sigmoid,
 };
 use super::temporal_bound::{ReadableRows, TemporalCandidates, TemporalWindow, axis_can_grow};
 use super::types::{
-    ADAPTIVE_ROUNDS, ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, ClaimStatusGateCache, EntityMetadata,
-    EntityMetadataCache, MAX_TEMPORAL_SEEK_BUFFER, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
-    RECENCY_DECAY_TAU_SECS, ScoredEntity, TEMPORAL_FLOOR, TemporalSearchConfig,
+    ADAPTIVE_ROUNDS, ClaimStatusGateCache, EntityMetadata, EntityMetadataCache,
+    MAX_TEMPORAL_SEEK_BUFFER, PER_SCAN_CAP_FACTOR, PipelineFilterConfig, ScoredEntity,
+    TemporalSearchConfig,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -41,12 +42,17 @@ pub(super) struct TemporalScoringContext {
     /// `exp` per query instead of one per row; value is bit-identical).
     pub(super) alpha: f64,
     pub(super) one_minus_alpha: f64,
+    /// The call's [`RetrievalParams::temporal_floor`].
+    pub(super) temporal_floor: f64,
+    /// The call's [`RetrievalParams::recency_decay_tau_secs`].
+    pub(super) recency_decay_tau_secs: f64,
 }
 
 impl TemporalScoringContext {
-    pub(super) fn blend_weights(now: u64, anchor_end: u64) -> (f64, f64) {
+    pub(super) fn blend_weights(params: &RetrievalParams, now: u64, anchor_end: u64) -> (f64, f64) {
         let anchor_age = now.abs_diff(anchor_end) as f64;
-        let alpha = ALPHA_BASE + ALPHA_RANGE * (1.0 - (-anchor_age / ALPHA_TAU_SECS).exp());
+        let alpha = params.alpha_base
+            + params.alpha_range * (1.0 - (-anchor_age / params.alpha_tau_secs).exp());
         (alpha, 1.0 - alpha)
     }
 }
@@ -83,12 +89,18 @@ fn checkpoint(deadline: Option<&RetrievalDeadline>) -> Result<()> {
     deadline.map_or(Ok(()), RetrievalDeadline::checkpoint)
 }
 
+/// The phonetic channel. Under a deadline it checks in before each code's
+/// posting and every few hundred ids inside one, so a stage past its share
+/// stops there instead of reading a posting that can name much of the vault.
 pub(super) fn execute_phonetic(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     codes: &[String],
+    deadline: Option<&RetrievalDeadline>,
 ) -> Result<Vec<ScoredEntity>> {
-    crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search(store, rtxn, codes)
+    crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search_with_deadline(
+        store, rtxn, codes, deadline,
+    )
 }
 
 /// The temporal channel. Under a deadline it checks in at every row whose
@@ -98,11 +110,21 @@ pub(super) fn execute_temporal(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
+    params: &RetrievalParams,
     now: u64,
     metadata_cache: &mut EntityMetadataCache,
     deadline: Option<&RetrievalDeadline>,
 ) -> Result<Vec<ScoredEntity>> {
-    let Some(mut held) = temporal_window(store, rtxn, config, now, metadata_cache, deadline, None)?
+    let Some(mut held) = temporal_window(
+        store,
+        rtxn,
+        config,
+        params,
+        now,
+        metadata_cache,
+        deadline,
+        None,
+    )?
     else {
         return Ok(Vec::new());
     };
@@ -114,10 +136,15 @@ pub(super) fn execute_temporal(
 /// Runs a temporal call's rounds and scores what its window holds; `None`
 /// for a call that asks for nothing. With a `reader`, only the rows it may
 /// read count toward either stop ([`ReadableRows`]).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the window reads the call's config, scoring numbers, clock, cache, deadline and reader"
+)]
 pub(super) fn temporal_window(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
+    params: &RetrievalParams,
     now: u64,
     metadata_cache: &mut EntityMetadataCache,
     deadline: Option<&RetrievalDeadline>,
@@ -164,7 +191,8 @@ pub(super) fn temporal_window(
 
     // Query-constant blend weights: one `exp` per query, reused by every
     // scoring-context construction below (bit-identical values).
-    let (alpha, one_minus_alpha) = TemporalScoringContext::blend_weights(now, config.anchor_end);
+    let (alpha, one_minus_alpha) =
+        TemporalScoringContext::blend_weights(params, now, config.anchor_end);
 
     for round in 0..ADAPTIVE_ROUNDS {
         rounds = round + 1;
@@ -185,6 +213,8 @@ pub(super) fn temporal_window(
                 learned_anchor_mid,
                 alpha,
                 one_minus_alpha,
+                temporal_floor: params.temporal_floor,
+                recency_decay_tau_secs: params.recency_decay_tau_secs,
             };
             can_grow = collect_temporal_candidates(
                 store,
@@ -242,6 +272,8 @@ pub(super) fn temporal_window(
         learned_anchor_mid,
         alpha,
         one_minus_alpha,
+        temporal_floor: params.temporal_floor,
+        recency_decay_tau_secs: params.recency_decay_tau_secs,
     };
     let request = TemporalScoringContext {
         sigma: settled_sigma.unwrap_or(sigma),
@@ -422,13 +454,18 @@ pub(super) fn score_temporal_candidate(
         scoring.learned_anchor.1,
     );
 
-    let s_occ_prox = sigmoid(d_occ, scoring.sigma, TEMPORAL_FLOOR);
-    let s_lrn_prox = sigmoid(d_lrn, scoring.sigma, TEMPORAL_FLOOR);
+    let s_occ_prox = sigmoid(d_occ, scoring.sigma, scoring.temporal_floor);
+    let s_lrn_prox = sigmoid(d_lrn, scoring.sigma, scoring.temporal_floor);
 
-    let s_proximity = combine_proximity(config.anchor_mode, s_occ_prox, s_lrn_prox, TEMPORAL_FLOOR);
+    let s_proximity = combine_proximity(
+        config.anchor_mode,
+        s_occ_prox,
+        s_lrn_prox,
+        scoring.temporal_floor,
+    );
 
     let age = scoring.now.saturating_sub(meta.learned_at) as f64;
-    let s_recency = (-age / RECENCY_DECAY_TAU_SECS).exp();
+    let s_recency = (-age / scoring.recency_decay_tau_secs).exp();
 
     let score = (scoring.alpha * s_proximity + scoring.one_minus_alpha * s_recency) as f32;
     let overlap_tiebreak = match config.anchor_mode {

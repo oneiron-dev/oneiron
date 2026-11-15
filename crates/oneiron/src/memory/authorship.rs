@@ -124,6 +124,167 @@ pub(crate) fn require_claim_self_grant_in_txn(
     require_authorship_in_txn(vault, txn, actor, target, author, verb)
 }
 
+/// The supersede check of a memory claim write (`memory.claim.supersede`):
+/// the prior's own author and a System actor's delegated grant pass, as
+/// [`require_claim_self_grant_in_txn`] passes them, and so does the vault's
+/// root owner writing in person over a claim of the owner's own agent
+/// ([`owner_agent_author_in_txn`]; OWNER-SUPERSEDES-OWN-AGENT-CLAIM, the
+/// lead's ruling B, 13 Nov: never gate the owner on their own vault). Every
+/// other author's claim keeps the conflict review path (ARCH-0040, ARCH-0043:
+/// no admin override by default). Only the memory claim write calls this;
+/// edit, retract, demote and the skill verbs keep their own checks.
+pub(crate) fn require_claim_supersede_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    target: EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    let author = crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, &target, body)?;
+    verify_live_actor(vault, txn, actor)?;
+    if let Some(author) = author
+        && owner_agent_author_in_txn(vault, txn, actor, author)?
+    {
+        return Ok(());
+    }
+    require_authorship_in_txn(
+        vault,
+        txn,
+        actor,
+        target,
+        author.map(WriteActor::entity_ref),
+        "memory.claim.supersede",
+    )
+}
+
+/// Whether `author`, the authenticated author of a claim, is the own agent
+/// of `writer`, a human writing in person who is this vault's root owner
+/// (OWNER-SUPERSEDES-OWN-AGENT-CLAIM). Decided from stored facts only, and
+/// closed: an author it cannot place is no one's agent here.
+///
+/// The author is an Agent-class write of a live PERSON or AGENT_DEF (a
+/// MACHINE writes as System, so the Dreamer and the Coach are outside it),
+/// neither an introduced foreign agent nor an identity a counterparty contact
+/// names. Then the first fact that names a person decides:
+/// - the workspace companion map of the author's person (for an AGENT_DEF,
+///   the person its subject anchor names, its own model person included)
+///   must name the owner;
+/// - an AGENT_DEF anchored to a person other than its own model person is
+///   that person's pen, and must be the owner's;
+/// - otherwise every capability slip minted for the author as holder must be
+///   an Agent-class slip whose pairing the owner approved (its signed
+///   `minting_member`, FIX 11713). A slip bound to a guest grant, an
+///   invitation, a share, a support delegation, a trusted contact or a seat
+///   claim names a peer, so it refuses the author. At least one such slip
+///   must exist, or the author is an AGENT_DEF the owner created through the
+///   owner's create door (its creating-owner stamp names the owner,
+///   OWNER-MADE-AGENT-DEF-UNPLACED).
+pub(crate) fn owner_agent_author_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    writer: WriteActor,
+    author: WriteActor,
+) -> Result<bool> {
+    let owner = writer.entity_ref();
+    let agent = author.entity_ref();
+    if writer.actor_class() != EdgeActorClass::Human
+        || author.actor_class() != EdgeActorClass::Agent
+        || agent == owner
+        || !is_root_owner(vault, txn, owner)?
+    {
+        return Ok(false);
+    }
+    let definition = match crate::vault::live_entity_row_in_txn(&vault.store, txn, &agent)? {
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_AGENT_DEF,
+            ..
+        } => true,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            ..
+        } => false,
+        _ => return Ok(false),
+    };
+    if crate::gate::introduced_foreign_agents(&vault.store, txn)?.contains(&agent)
+        || !vault
+            .counterparty_contact_ids_for_identity_in_txn(txn, &agent)?
+            .is_empty()
+    {
+        return Ok(false);
+    }
+    let person = if definition {
+        let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+        crate::workspace_roster::subject_person_of_actor_in_txn(vault, txn, agent, at)?
+    } else {
+        Some(agent)
+    };
+    if let Some(person) = person {
+        if let Some(principal) =
+            crate::workspace_roster::companion_principal_in_txn(vault, txn, person)?
+        {
+            return Ok(principal == owner);
+        }
+        if definition && person != crate::context_board::agent_person_id(agent)? {
+            return Ok(person == owner);
+        }
+    }
+    Ok(match holder_slips_in_txn(vault, txn, agent, owner)? {
+        HolderSlips::OwnerPaired => true,
+        HolderSlips::Other => false,
+        HolderSlips::Unminted => {
+            definition
+                && crate::agent_def::created_by_owner_in_txn(&vault.store, txn, &agent, &owner)?
+        }
+    })
+}
+
+/// What the capability slips minted for an author as holder say of its owner.
+enum HolderSlips {
+    /// No slip names the author as holder.
+    Unminted,
+    /// Every one is an Agent-class slip the owner approved the pairing of,
+    /// with no peer binding.
+    OwnerPaired,
+    /// At least one names a peer, another class or another approving member.
+    Other,
+}
+
+/// What the capability slips the authority fold keeps for `agent` as its
+/// holder (revoked, consumed and expired ones included, as `self.actor`
+/// reads them) say of `owner`.
+fn holder_slips_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    owner: EntityId,
+) -> Result<HolderSlips> {
+    let holder = agent.to_hex();
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    let mut minted = HolderSlips::Unminted;
+    for mint in fold
+        .slips
+        .mints
+        .values()
+        .filter(|mint| mint.action.claims.holder_ref == holder)
+    {
+        let claims = &mint.action.claims;
+        let peer_bound = claims.grant_ref.is_some()
+            || claims.invitation_ref.is_some()
+            || claims.share_ref.is_some()
+            || claims.delegation.is_some()
+            || claims.trusted_contact.is_some()
+            || claims.seat_claim.is_some();
+        if peer_bound
+            || claims.actor_class.as_deref() != Some(EdgeActorClass::Agent.gate_actor_class())
+            || mint.action.minting_member != Some(owner)
+        {
+            return Ok(HolderSlips::Other);
+        }
+        minted = HolderSlips::OwnerPaired;
+    }
+    Ok(minted)
+}
+
 pub(super) fn require_authorship_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
