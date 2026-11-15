@@ -139,10 +139,11 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
 /// to a reader whose grant admits no credential: the one rule of the scoped
 /// export and the contact bundle ([`released_body`]).
 pub(crate) enum ReleasedBody {
-    /// The rule and the raw release check change nothing: the stored body
-    /// goes as it is.
+    /// The rule and the raw release check change nothing, and the body is no
+    /// room body with shared pins: the stored body goes as it is.
     Unchanged,
-    /// The Nulled typed body, and its bytes, which the raw check leaves alone.
+    /// The Nulled typed body, and its bytes, which the raw check leaves alone;
+    /// a room body's without its shared pins.
     Rewritten {
         body: crate::serialize::ExportBody,
         bytes: Vec<u8>,
@@ -151,24 +152,37 @@ pub(crate) enum ReleasedBody {
     Withheld,
 }
 
-/// One stored body under the partial archive's typed Nulled rule. If that
-/// rule and the raw release check change nothing, the body is
-/// [`ReleasedBody::Unchanged`]. Otherwise it is the Nulled typed body, only if
-/// the raw check leaves that body's bytes alone. A changed ASSET or
-/// proof-bound body is withheld, never rewritten. So is a changed body that is
-/// Nulled, is a file reference, cannot encode, or no longer decodes as its
-/// native CLAIM or SKILL record.
+/// One stored body under the partial archive's typed Nulled rule. A room
+/// body is judged without its shared pins, which never leave with it: a
+/// reader gets them only through the room's admitted projection
+/// ([`crate::conversation::body_without_room_pins`]; EXPORTDOORS Q2 = A). If
+/// that rule and the raw release check change nothing, the body is
+/// [`ReleasedBody::Unchanged`], or the room body without its pins when it had
+/// some. Otherwise it is the Nulled typed body, only if the raw check leaves
+/// that body's bytes alone. A changed ASSET or proof-bound body is withheld,
+/// never rewritten. So is a changed body that is Nulled, is a file reference,
+/// cannot encode, or no longer reads as its own kind's record
+/// ([`native_body_refused`]).
 ///
 /// # Errors
-/// A failed raw release check.
+/// A failed raw release check, or a room body that cannot encode without its
+/// pins.
 pub(crate) fn released_body(entity_type: u8, body: &[u8]) -> Result<ReleasedBody> {
     use crate::serialize::{ExportBody, ExportSecrets};
 
+    let unpinned = crate::conversation::body_without_room_pins(entity_type, body)?;
+    let body = unpinned.as_deref().unwrap_or(body);
     let nulled = ExportBody::from_bytes(body, entity_type);
     let included = ExportBody::from_bytes_with(body, entity_type, ExportSecrets::Included);
     let raw_unchanged = redacted_memory_payload(body.to_vec())? == body;
     if nulled == included && raw_unchanged {
-        return Ok(ReleasedBody::Unchanged);
+        return Ok(match unpinned {
+            None => ReleasedBody::Unchanged,
+            Some(bytes) => ReleasedBody::Rewritten {
+                body: nulled,
+                bytes,
+            },
+        });
     }
     if entity_type == crate::registry::ENTITY_TYPE_ASSET
         || proof_bound_body(entity_type, body)
@@ -182,14 +196,7 @@ pub(crate) fn released_body(entity_type: u8, body: &[u8]) -> Result<ReleasedBody
     if redacted_memory_payload(rewritten.clone())? != rewritten {
         return Ok(ReleasedBody::Withheld);
     }
-    if entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && crate::write_envelope::claim_body::decode_claim_body(&rewritten, true).is_err()
-    {
-        return Ok(ReleasedBody::Withheld);
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_SKILL
-        && crate::skill::decode_skill_record(&rewritten).is_err()
-    {
+    if native_body_refused(entity_type, &rewritten) {
         return Ok(ReleasedBody::Withheld);
     }
     Ok(ReleasedBody::Rewritten {
@@ -290,8 +297,9 @@ impl crate::claim::ScopedRead<'_> {
 /// MessagePack body goes as its Nulled typed tree's JSON, only if the JSON
 /// read of that JSON nulls nothing more; a credential was nulled when that
 /// JSON differs from the Included tree's, so a body whose only change is an
-/// opaque binary, which JSON never carries, names none. Any other changed
-/// body goes as null.
+/// opaque binary, which JSON never carries, names none; nor does a room body
+/// whose only change is its dropped pins, whose Included tree is read without
+/// them. Any other changed body goes as null.
 fn released_bundle_body(entity_type: u8, body: &[u8]) -> Result<Option<(Value, bool)>> {
     use crate::serialize::{ExportBody, ExportSecrets};
 
@@ -311,12 +319,63 @@ fn released_bundle_body(entity_type: u8, body: &[u8]) -> Result<Option<(Value, b
     if crate::batch::secret_scan::sanitize_read_credentials(&mut json.clone(), true) {
         return Ok(Some((Value::Null, true)));
     }
-    let included = match ExportBody::from_bytes_with(body, entity_type, ExportSecrets::Included) {
+    let unpinned = crate::conversation::body_without_room_pins(entity_type, body)?;
+    let included = match ExportBody::from_bytes_with(
+        unpinned.as_deref().unwrap_or(body),
+        entity_type,
+        ExportSecrets::Included,
+    ) {
         ExportBody::MessagePack(value) => value.to_released_json().ok(),
         _ => None,
     };
     let nulled = included.as_ref() != Some(&json);
     Ok(Some((json, nulled)))
+}
+
+/// Whether a rewritten body no longer reads as its own kind's record, as a
+/// receiving vault's native admission reads it (`sync/selector/admission`,
+/// `validate_admitted_replicated_body`). Such a row is withheld, never sent
+/// to be refused there, where one refused row can fail the whole update
+/// (EXPORTDOORS-SHAPE Q1 = A, 12 Nov 02:40).
+fn native_body_refused(entity_type: u8, body: &[u8]) -> bool {
+    use crate::registry::{
+        ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM,
+        ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    };
+
+    match entity_type {
+        ENTITY_TYPE_CLAIM => {
+            crate::write_envelope::claim_body::decode_claim_body(body, true).is_err()
+        }
+        ENTITY_TYPE_SKILL => crate::skill::decode_skill_record(body).is_err(),
+        ENTITY_TYPE_TASK => {
+            crate::write_envelope::task_body::task_role_from_body_bytes(body).is_err()
+        }
+        ENTITY_TYPE_CODE_ARTIFACT => {
+            crate::code_artifact::validate_code_artifact_body_bytes(body).is_err()
+        }
+        ENTITY_TYPE_BLOB_ARTIFACT => {
+            crate::blob_artifact::validate_blob_artifact_body_bytes(body).is_err()
+        }
+        ENTITY_TYPE_AGENT_DEF => crate::agent_def::decode_agent_definition(body).is_err(),
+        _ => false,
+    }
+}
+
+/// Whether a file leaves whole under the Nulled rule (SCOPED-EXPORT-RULE = A,
+/// ARCH-0027 :382): only when the typed rule, reading it as an ASSET body,
+/// and the raw release check both leave its bytes unchanged. A file is never
+/// rewritten: the caller withholds it, or the whole that binds it.
+///
+/// # Errors
+/// A failed raw release check.
+pub(crate) fn export_file_body_admitted(bytes: &[u8]) -> Result<bool> {
+    use crate::serialize::{ExportBody, ExportSecrets};
+
+    let asset = crate::registry::ENTITY_TYPE_ASSET;
+    Ok(ExportBody::from_bytes(bytes, asset)
+        == ExportBody::from_bytes_with(bytes, asset, ExportSecrets::Included)
+        && redacted_memory_payload(bytes.to_vec())? == bytes)
 }
 
 fn proof_bound_body(entity_type: u8, body: &[u8]) -> bool {

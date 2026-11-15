@@ -276,28 +276,24 @@ pub enum RoomTrunkItem {
     Result(RoomTrunkHeader),
 }
 
-/// A delivered TASK's durable result, attached to its trunk on a room read.
-/// The TASK terminal register holds the fact; no second row is stored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomTrunkHeader {
-    pub thread: EntityId,
-    pub task: EntityId,
-    pub result_ref: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomThreadPage, RoomTrunkHeader,
+};
 
 /// A trunk turn with the delivered task headers under its thread anchors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomTrunk {
     pub turn: RoomTurn,
     pub headers: Vec<RoomTrunkHeader>,
+    /// The org the turn's speaker ran as its house when it spoke (HOUSE-BIND
+    /// = A, FIX SPEAKER-BYLINE-FOR-ORG): "pr2, for <org>". Read from the
+    /// house link receipts at the turn's `at` on each read, never stored.
+    /// `None` when the speaker ran no org then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_org: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomThreadPage {
-    pub rows: Vec<EntityId>,
-    /// Explicit end marker: `None` means the room has no further page.
-    pub next_after: Option<EntityId>,
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPage {
@@ -305,6 +301,12 @@ pub struct RoomPage {
     pub next_after: Option<String>,
     /// The room Scope this page was read inside (ARCH-0067 §8).
     pub scope: crate::federation::Scope,
+    /// By turn id, the org each row's speaker ran as its house when it
+    /// spoke (HOUSE-BIND = A, FIX SPEAKER-BYLINE-FOR-ORG), as
+    /// [`RoomTrunk::for_org`] reads it. A row whose speaker ran no org then
+    /// has no entry, so the map is empty by default.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub for_org: std::collections::BTreeMap<String, String>,
     /// Who made each row, keyed by the `actor` it names, as this reader may
     /// name them (FIX [UI-GATE-PREVIEW] phase 3): one entry per actor on the
     /// page, `unknown` for one the reader cannot name. `vault.rooms.messages`
@@ -325,22 +327,6 @@ fn turns_readable(scope: &crate::federation::Scope) -> bool {
 fn outside_scope() -> MemoryError {
     MemoryError::bad_request_with("room turn is outside the room scope", &[])
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomClaimReceipt {
-    pub room_id: String,
-    pub turn_id: String,
-    pub actor: String,
-    pub receipt_ref: String,
-    pub at: u64,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RoomClaimOutcome {
-    Claimed(RoomClaimReceipt),
-    HeldBy(RoomClaimReceipt),
-    NotAddressed,
-}
-
 /// Project rooms use the PROJECT roster instead of the ordinary membership
 /// ledger. Return None for other conversations so their historical membership
 /// windows remain authoritative at the ordinary audience door. Each audience

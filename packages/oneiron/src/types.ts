@@ -439,7 +439,7 @@ export type ScopeHonesty = {
   censusCapped: boolean
 }
 
-/** One time phrase read from a recall query. `used` narrowed the window; `unresolved` and `future` were skipped. */
+/** One time phrase read from a recall query. `used` re-anchored the temporal search (a phrase never filters); `unresolved` and `future` were skipped. */
 export type TemporalHint = {
   phrase: string
   status: "used" | "unresolved" | "future"

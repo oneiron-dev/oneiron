@@ -17,7 +17,7 @@ use oneiron::{
     LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, ModelId, RetryableLlmError,
 };
 use oneiron_broker::{CallHeader, Failure, Outcome, Refusal, Shape, StreamPart};
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatConfig, OpenAiCompatProviderStream, OpenAiCompatStreamFrame,
     OpenAiCompatTransportError, OpenAiResponsesChain, OpenAiResponsesLlmStream,
     OpenAiResponsesTurn, RESPONSES_PREVIOUS_NOT_FOUND, RESPONSES_SOCKET_LIMIT,

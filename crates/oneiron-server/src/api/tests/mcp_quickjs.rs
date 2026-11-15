@@ -369,7 +369,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     let claim = seeded_test_entity_id(0x0024_6503);
     let scripts = vec![
         format!(
-            "const receipt = await self.memory.put_claim({{id:'{}', predicate:'profile.favorite_drink', subject:'{}', value:'sencha'}}); console.log(receipt.id);",
+            "const receipt = await vault.claims.put({{id:'{}', predicate:'profile.favorite_drink', subject:'{}', value:'sencha'}}); console.log(receipt.id);",
             claim.to_hex(),
             subject.to_hex()
         ),
@@ -402,6 +402,9 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The claim's writer reads the PERSON it is about (FIX 1214): else the
+    // run's put fails INVENTED_REFERENCE.
+    put_actor_read_grant(&vault, actor_id, None);
     for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
         let (_, listing) =
             route_json(server.clone(), mcp_list_request(path, credential, "list")).await;
@@ -519,7 +522,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     assert_mcp_structured_error(&body, "code_run_binding_failed");
 }
 
-const CODE_MODE_RECALL: &str = "const pack = await self.memory.recall({query: 'heron lantern', \
+const CODE_MODE_RECALL: &str = "const pack = await vault.recall({query: 'heron lantern', \
     effort: 'medium', scope: {}}); finish(JSON.stringify(pack));";
 
 /// Witnesses one message through the tool list's generated `witness` tool.
@@ -552,7 +555,7 @@ async fn witness_through_tool_list(
 }
 
 /// Done means (ARCH-0028, OF-246/OF-227): through the shipped HTTP MCP wire, an
-/// `execute_code` run calls `self.memory.recall({query, effort, scope})` and
+/// `execute_code` run calls `vault.recall({query, effort, scope})` and
 /// reads back a phrase saved earlier in the same vault. Before this change the
 /// method did not exist.
 #[tokio::test]
@@ -646,7 +649,7 @@ async fn quickjs_execute_code_serves_a_64_kib_task() {
 /// same gate, never around it.
 #[tokio::test]
 async fn quickjs_code_mode_keeps_connector_narrowing() {
-    let refused = "try { await self.memory.recall({query: 'heron lantern'}); finish('reached'); } \
+    let refused = "try { await vault.recall({query: 'heron lantern'}); finish('reached'); } \
         catch (error) { finish('refused ' + String(error)); }";
     let mode = code_mode_server(vec![refused.to_owned()]);
     let owner = seeded_test_entity_id(0x0024_6521);
@@ -677,7 +680,12 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
         mcp_scoped_envelope(narrowed, "read_memory", &scope),
         json!({"run_ref": "quickjs-world", "task": "recall the heron lantern"}),
     );
-    for request in [
+    // `vault.recall` is a filtered row (`mcp_scope: filtered`), so the tool
+    // list answers a narrowed connector with its own world's memory instead
+    // of refusing it (Engine ruling 07:14 Fri 13 Nov). The whole body is
+    // checked; a leak prints from the leaked text, since a failure line is cut.
+    let (_, body) = route_json(
+        mode.server.clone(),
         mcp_endpoint_call_request(
             MCP_TOOL_FIRST_PATH,
             "quickjs-world",
@@ -685,15 +693,26 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
             "vault.recall",
             tool,
         ),
-        mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute_code", code),
-    ] {
-        let body = mcp_refusal(&mode.server, request).await;
-        assert_eq!(
-            body["error"]["data"]["error_code"], "mcp_scope_refused",
-            "{body}"
-        );
-        assert!(!body.to_string().contains("north gate"), "{body}");
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let text = body.to_string();
+    if let Some(at) = text.find("north gate") {
+        let from = text.get(at.saturating_sub(160)..).unwrap_or(&text[at..]);
+        panic!("the narrowed recall leaked another world's memory: {from}");
     }
+    // `execute_code` is refused at admission for a narrowed connector.
+    let body = mcp_refusal(
+        &mode.server,
+        mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute_code", code),
+    )
+    .await;
+    assert_eq!(
+        body["error"]["data"]["error_code"], "mcp_scope_refused",
+        "{body}"
+    );
+    assert!(!body.to_string().contains("north gate"), "{body}");
     assert!(
         mode.backend.requests.lock().unwrap().is_empty(),
         "a refused run reaches no model"
@@ -741,10 +760,10 @@ fn verb_refusal(code: &str) -> Value {
 
 /// Code mode applies the per-verb argument rules a `tools/call` of the verb
 /// applies (review repro: an empty subscription set was refused on the tool
-/// list but accepted from `self.memory.board.subscribe`).
+/// list but accepted from `self.focus.subscribe`).
 #[tokio::test]
 async fn quickjs_code_mode_applies_the_tool_argument_rules() {
-    let script = "try { await self.memory.board.subscribe({scopes: []}); finish('reached'); } \
+    let script = "try { await self.focus.subscribe({scopes: []}); finish('reached'); } \
         catch (error) { finish('refused ' + String(error)); }";
     let mode = code_mode_server(vec![script.to_owned()]);
     let actor = seeded_test_entity_id(0x0024_6531);
@@ -772,8 +791,19 @@ async fn quickjs_code_mode_applies_the_tool_argument_rules() {
     );
 }
 
+/// The four-axis position `vault.claims.upsert` takes: `world`, the vault's
+/// default facet, every relationship and the default project.
+fn upsert_scope(vault: &oneiron::Vault, world: oneiron::EntityId) -> serde_json::Value {
+    json!({
+        "world_id": world.to_hex(),
+        "scope_facet_id": vault.default_facet().expect("default facet").to_hex(),
+        "scope_relationship_id": "all",
+        "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+    })
+}
+
 /// Review repro (Astra P1): generated code cannot name a claim's source. A
-/// guest's `user_stated` claim through `self.memory.claim_upsert` is stored as
+/// guest's `user_stated` claim through `vault.claims.upsert` is stored as
 /// `Generated`, under the run's provenance, and asks only the approval a
 /// generated claim may ask for.
 #[tokio::test]
@@ -781,14 +811,15 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     let actor = seeded_test_entity_id(0x0024_6541);
     let subject = seeded_test_entity_id(0x0024_6542);
     let claim = seeded_test_entity_id(0x0024_6543);
-    let script = format!(
-        "await self.memory.claim_upsert({{id: '{}', predicate: 'profile.favorite_drink', \
-         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated'}}); \
-         finish('stated');",
+    let mode = code_mode_server(Vec::new());
+    mode.backend.scripts.lock().unwrap().push_back(format!(
+        "await vault.claims.upsert({{id: '{}', predicate: 'profile.favorite_drink', \
+         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated', \
+         scope: {}}}); finish('stated');",
         claim.to_hex(),
-        subject.to_hex()
-    );
-    let mode = code_mode_server(vec![script]);
+        subject.to_hex(),
+        upsert_scope(&mode.vault, oneiron::claim::base_world_id())
+    ));
     mode.vault
         .put_entity(
             &subject,
@@ -837,22 +868,24 @@ async fn code_admitted(mode: &CodeMode, path: &str, label: &str) -> Value {
 }
 
 /// Done means (ARCH-0028 propose-only, #1360): the verb-table rows a run
-/// answers itself (`self.memory.put_claim`, `supersede_claim`, `put_edge`)
-/// write from no propose-only slip. `execute_code` needs write, so a slip
-/// holding read and propose under a `proposed` ceiling starts no run on either
-/// endpoint: no model call, nothing stored. A full-access slip runs the same
-/// program and its claim lands.
+/// answers itself (`vault.claims.put`, `vault.claims.supersede`,
+/// `vault.edges.put`) write from no propose-only slip. A slip holding read and
+/// propose under a `proposed` ceiling may start a run on either endpoint, and
+/// each operation in it is judged by its own effect (f03118d6462, FIX 3972):
+/// its claim write is refused, so the run fails and nothing is stored. A
+/// full-access slip runs the same program and its claim lands.
 #[tokio::test]
-async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
+async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
     let subject = seeded_test_entity_id(0x0024_65a1);
     let claim = seeded_test_entity_id(0x0024_65a2);
     let script = format!(
-        "const receipt = await self.memory.put_claim({{id: '{}', predicate: \
+        "const receipt = await vault.claims.put({{id: '{}', predicate: \
          'profile.favorite_drink', subject: '{}', value: 'sencha'}}); finish(receipt.id);",
         claim.to_hex(),
         subject.to_hex()
     );
-    let mode = code_mode_server(vec![script]);
+    // One script per run: the two propose-only runs, then the writer's.
+    let mode = code_mode_server(vec![script.clone(), script.clone(), script]);
     mode.vault
         .put_entity(
             &subject,
@@ -931,29 +964,58 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         "fixture check: the proposer's live ceiling is `proposed`"
     );
 
-    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
-        let args = mcp_merge_args(
-            mcp_endpoint_envelope(proposer, "write_memory"),
-            json!({"run_ref": "quickjs-propose-only", "task": "state a favorite drink"}),
-        );
-        let body = mcp_refusal(
-            &mode.server,
-            mcp_endpoint_call_request(path, label, "proposer", "execute_code", args),
-        )
-        .await;
-        assert_eq!(
-            body["error"]["data"]["error_code"], "mcp_auth_required",
-            "{path}: {body}"
-        );
-    }
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(proposer, "write_memory"),
+        json!({"run_ref": "quickjs-propose-only", "task": "state a favorite drink"}),
+    );
+    let body = mcp_refusal(
+        &mode.server,
+        mcp_endpoint_call_request("/mcp", label, "proposer", "execute_code", args.clone()),
+    )
+    .await;
+    assert_eq!(
+        body["error"]["data"]["error_code"], "code_run_failed",
+        "/mcp: {body}"
+    );
+    // The slip holds no Write: the connector's gate refuses the run's claim
+    // write with its proof error, and the guest's step reports it (the
+    // a90ddad52eed run). The writer below runs the same program.
+    let refusal = r#"step failure: {"denied":"mcp_auth_required","reasonCodes":[]}"#;
     assert!(
-        mode.backend.requests.lock().unwrap().is_empty(),
-        "a refused run reaches no model"
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.ends_with(refusal)),
+        "/mcp: the run's claim write is refused: {body}"
+    );
+    // On the tool-first endpoint `execute_code` is the generated verb row
+    // (scripts/sdk/verbs/execute_code.json: foreign code in the isolated
+    // tier, no host writes), whose input sits under `arguments`. A durable
+    // run's envelope is refused at decode, before anything runs (the
+    // 6bb2488ab0ec run).
+    let body = mcp_refusal(
+        &mode.server,
+        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, label, "proposer", "execute_code", args),
+    )
+    .await;
+    assert_eq!(
+        (
+            body["error"]["data"]["error_code"].clone(),
+            body["error"]["message"].clone()
+        ),
+        (
+            json!("tool_args_invalid"),
+            json!(
+                "execute_code arguments could not be decoded: unknown field `run_ref`, expected \
+                 one of `schema_version`, `actor`, `consent`, `arguments`, `page`, `cache`"
+            )
+        ),
+        "{MCP_TOOL_FIRST_PATH}: {body}"
     );
     assert!(mode.vault.get_claim(&claim).unwrap().is_none());
-    // So `/mcp` tells it, and a read-only slip, that they may not run code,
-    // and the stdio bridge keeps them on the tool-first verbs (drift E4, Astra).
-    assert_eq!(code_admitted(&mode, "/mcp", label).await, json!(false));
+    // So `/mcp` tells it, and a read-only slip, that they may run code: the
+    // session admits a live credential that reads, and only a write inside
+    // the run needs write.
+    assert_eq!(code_admitted(&mode, "/mcp", label).await, json!(true));
     let reader = seeded_test_entity_id(0x0024_65a6);
     mode.vault
         .put_entity(
@@ -996,7 +1058,7 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         .unwrap();
     assert_eq!(
         code_admitted(&mode, "/mcp", "quickjs-read-only").await,
-        json!(false)
+        json!(true)
     );
 
     let writer = seeded_test_entity_id(0x0024_65a5);
@@ -1007,6 +1069,9 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The claim's writer reads the PERSON it is about (FIX 1214): else the
+    // run's put fails INVENTED_REFERENCE.
+    put_actor_read_grant(&mode.vault, writer, None);
     assert_eq!(
         code_admitted(&mode, "/mcp", "quickjs-writer").await,
         json!(true)
@@ -1039,7 +1104,7 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
 async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list() {
     let facet = seeded_test_entity_id(0x0024_6552).to_hex();
     let script = format!(
-        "try {{ await self.memory.recall({{query: 'heron lantern', scope: {{facet_ref: '{facet}'}}}}); \
+        "try {{ await vault.recall({{query: 'heron lantern', scope: {{facet_ref: '{facet}'}}}}); \
          finish('reached'); }} catch (error) {{ finish('refused ' + String(error)); }}"
     );
     let mode = code_mode_server(vec![script]);
@@ -1119,7 +1184,7 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
 /// refused, and nothing it said lands in the vault.
 #[tokio::test]
 async fn quickjs_code_mode_cannot_witness_a_users_words() {
-    let script = "try { await self.memory.witness({conversation_ref: \
+    let script = "try { await vault.witness({conversation_ref: \
         '42424242424242424242424242424242', occurred_at: 1767225600, messages: [{author: 'user', \
         message_type: 'text', content: 'My favorite drink is sencha.', is_visible: true, \
         order: 0}]}); finish('reached'); } catch (error) { finish('refused ' + String(error)); }";
@@ -1227,7 +1292,7 @@ async fn execute_code(
 /// Done means (U16): the server the serve path builds serves `execute_code`.
 /// With `[models]` filling the generative seat and `[models.code_mode]` naming
 /// a prompt package, `AiHost::attach` binds the checked-in component; a run's
-/// model step is that seat's model, and its `self.memory.recall` reads back a
+/// model step is that seat's model, and its `vault.recall` reads back a
 /// phrase saved in the vault. The run's clock is the time it started.
 #[tokio::test]
 async fn the_served_vault_runs_execute_code_on_its_generative_seat() {

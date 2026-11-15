@@ -55,16 +55,8 @@ const EXPORT_FORMAT_JSON: &str = "json";
 /// door answers as a vector of records (fix list row 15416).
 const EXPORT_FORMAT_RECORDS: &str = "records";
 
-/// What an export copied (FIX 6427).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExportAuditScope {
-    /// The whole vault: the archive, the OKF bundle, the JSON bundle or the
-    /// Owner's copy of every record.
-    WholeVault,
-    /// An off-record room's talk, as its Owner's membership shows it.
-    OffRecordRoom,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::export_audit::ExportAuditScope;
 
 /// One copy that left the vault, written by the call that made it, so every
 /// owner can see that the vault left, whose copy it was and in what shape.
