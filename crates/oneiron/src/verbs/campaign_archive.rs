@@ -195,8 +195,9 @@ pub fn research_archive_proposal(
 /// pinned on-device embedder instead). The engine records the placement and
 /// score producer records the answer names; the caller never supplies its
 /// own. The caller must read the output and the task, since their words go
-/// to the ladder. An answer the archive does not take records nothing and is
-/// refused with its reason.
+/// to the ladder, and every sample of the pin, since its axes and bins carry
+/// their words (#7966 review round 2). An answer the archive does not take
+/// records nothing and is refused with its reason.
 pub fn research_archive_judge(
     memory: &Memory<'_>,
     input: CampaignArchiveJudge,
@@ -208,6 +209,7 @@ pub fn research_archive_judge(
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         controller_in_txn(memory, &txn, Some(attempt(input.root)?))?;
         let (pin, output_text, rubric) = judge::premises_in_txn(vault, &txn, &input)?;
+        samples_read_in_txn(&lane, &txn, &pin)?;
         if lane
             .entities_readable_in_txn(&txn, &[input.output.entity, pin.task()])?
             .contains(&false)
