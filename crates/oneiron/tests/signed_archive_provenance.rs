@@ -11,8 +11,8 @@
 //! word, not the owner's (Sol r1 P1 on 021b5375), so it proves nothing.
 //!
 //! Two review findings on the first head (Astra r1, 021ad4e5) are pinned too:
-//! the export writes no key state (an install whose keystore slot is empty
-//! exports unsigned and keeps its machine id), and a record member rewritten
+//! the export mints no machine id or seed (an install whose keystore slot is
+//! empty exports unsigned and keeps its machine id), and a record member rewritten
 //! between the reader's digest pass and its row pass is refused, so the
 //! signed manifest never vouches for rows it does not bind.
 //!
@@ -21,7 +21,9 @@
 //! signed row of its `Yours` that this install holds. Nor is a held row his
 //! latest word where a checkpoint image the host attests chose it (Sol r3 P2
 //! on 039d1480): a hosted vault that adopted one proves no owner archive by
-//! his anchor's mark. Those two tests reach the fold through
+//! his anchor's mark. And the verdict rests on one committed state (Astra r2
+//! P2 on 62324e79): a `Yours` row committed after the snapshot the verdict
+//! reads proves nothing there. Those three tests reach the fold through
 //! `test_doors::archive_provenance`. The rest use public doors only, and
 //! classify a whole archive, whose members the door checks against its
 //! manifest first (OPUS-SECREAD-A N1 on 039d1480). Run:
@@ -42,7 +44,8 @@ use oneiron::deletion::parse_hex;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::archive_provenance::{
-    classify_archive_under_pinned_anchor, classify_archive_with_trusted_entry,
+    classify_archive_in_snapshot_before, classify_archive_under_pinned_anchor,
+    classify_archive_with_trusted_entry,
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -453,7 +456,41 @@ fn a_hosted_vault_that_adopted_a_checkpoint_proves_no_owner_archive_by_his_ancho
     Ok(())
 }
 
-/// Astra r1 finding 1: the export writes no key state. An install whose
+/// Astra r2 P2 (on 62324e79): the verdict rests on one committed state, so
+/// the signature's row is read in the snapshot the vault's state is read in.
+/// Here the fold trusts this install's `Yours`, but the snapshot is from
+/// before that `Yours` was signed and holds no row of it: neither state
+/// proves the archive the owner's own. On 62324e79 the row was read in a
+/// later read transaction of its own, and this read
+/// `ByteFaithfulOwnerRestore`.
+#[test]
+fn a_yours_row_committed_after_the_classifying_snapshot_proves_nothing() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let host_secret = b"signed archive provenance snapshot";
+    let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
+    vault.ensure_embedded_owner_actor()?;
+    vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    vault.ensure_host_root_slip(&HostSlipIssuer::from_secret(host_secret)?)?;
+
+    let receipt = classify_archive_in_snapshot_before(&vault, || {
+        vault.ensure_serving_install_profile(&HostSlipIssuer::from_secret(host_secret)?, YOURS)?;
+        Ok(vault.export_whole_vault(true)?.bytes().to_vec())
+    })?;
+    assert_verdict(
+        &classify(&vault, own_archive(&vault)?)?,
+        VaultImportClassification::ByteFaithfulOwnerRestore,
+        &[],
+    );
+
+    assert_verdict(
+        &receipt,
+        VaultImportClassification::ReviewRequired,
+        &[VaultImportMismatch::UnauthenticatedProvenance],
+    );
+    Ok(())
+}
+
+/// Astra r1 finding 1: the export mints no machine id or seed. An install whose
 /// keystore slot is empty while the vault holds its device key's public half
 /// (a lost keychain, a raw copy on another host) exports unsigned and keeps
 /// its machine id. On 021ad4e5 the export's key load forgot that machine,

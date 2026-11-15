@@ -81,25 +81,27 @@ pub fn classify_vault_import_manifest(
 /// speaks for an archive only once each member is checked against this
 /// manifest, as the public door ([`Vault::classify_vault_archive`]) and the
 /// import's reader do (OPUS-SECREAD-A N1).
+///
+/// The fold, the vault's state and the signature's row are read in one
+/// read transaction, so the verdict is the verdict of one committed state
+/// (Astra r2 P2).
 pub(crate) fn classify_vault_archive_manifest(
     vault: &Vault,
     manifest: &WholeVaultDocumentManifest,
     expected_label: Option<&str>,
 ) -> Result<VaultImportReceipt> {
-    let (fold, verifier) = {
-        let rtxn = vault.store.env.read_txn()?;
-        (
-            vault.authority_fold_readonly_in_txn(&rtxn)?,
-            ArchiveVerifierState::in_txn(vault, &rtxn)?,
-        )
-    };
-    classify_vault_archive_manifest_on_fold(vault, &fold, verifier, manifest, expected_label)
+    let rtxn = vault.store.env.read_txn()?;
+    let fold = vault.authority_fold_readonly_in_txn(&rtxn)?;
+    let verifier = ArchiveVerifierState::in_txn(vault, &rtxn)?;
+    classify_vault_archive_manifest_on_fold(vault, &rtxn, &fold, verifier, manifest, expected_label)
 }
 
 /// [`classify_vault_archive_manifest`] on `fold`, the read-only fold of
-/// `vault` that door reads, in the state `verifier`.
+/// `vault` that door reads, in the state `verifier`, both read in `txn`,
+/// where the signature's row is read too.
 pub(crate) fn classify_vault_archive_manifest_on_fold(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     verifier: ArchiveVerifierState,
     manifest: &WholeVaultDocumentManifest,
@@ -115,7 +117,7 @@ pub(crate) fn classify_vault_archive_manifest_on_fold(
         vault,
         fold,
         &manifest.storage,
-        Some((manifest, verifier)),
+        Some((manifest, verifier, txn)),
         manifest_digest,
         expected_label,
     )
@@ -123,13 +125,17 @@ pub(crate) fn classify_vault_archive_manifest_on_fold(
 
 /// The one classification both doors share, on `fold`, the read-only fold of
 /// `vault`: `archive` is the contents manifest whose signature may prove
-/// provenance, with the vault's state the signer is judged in, `None` for a
-/// storage manifest alone.
+/// provenance, with the vault's state the signer is judged in and the read
+/// transaction both were read in, `None` for a storage manifest alone.
 fn classify_manifest(
     vault: &Vault,
     fold: &AuthorityFold,
     manifest: &ExportManifest,
-    archive: Option<(&WholeVaultDocumentManifest, ArchiveVerifierState)>,
+    archive: Option<(
+        &WholeVaultDocumentManifest,
+        ArchiveVerifierState,
+        &heed::RoTxn<'_>,
+    )>,
     manifest_digest: [u8; 32],
     expected_label: Option<&str>,
 ) -> Result<VaultImportReceipt> {
@@ -159,8 +165,8 @@ fn classify_manifest(
     let mut foreign_chain = false;
     if let (Some(exported), Some(local)) = (exported_authority, local_authority) {
         if exported.vault_id == local.vault_id {
-            match archive.map_or(Ok(ArchiveSigner::Unproven), |(archive, verifier)| {
-                archive_signer(vault, fold, verifier, &local.vault_id, archive)
+            match archive.map_or(Ok(ArchiveSigner::Unproven), |(archive, verifier, txn)| {
+                archive_signer(vault, txn, fold, verifier, &local.vault_id, archive)
             })? {
                 ArchiveSigner::OwnerDevice => {}
                 ArchiveSigner::OtherMachine => {

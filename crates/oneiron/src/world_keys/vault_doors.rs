@@ -188,14 +188,20 @@ impl Vault {
         }
     }
 
-    /// This install's signing keys for a door that must write nothing (the
-    /// archive export, L2-23): the keys already loaded for the stored machine
-    /// id, else the ones its keystore slot already holds when the vault's
-    /// device key row names them. Unlike [`Vault::load_install_signing_if_minted`]
-    /// it never mints a machine id or a seed, never forgets a machine whose
-    /// slot is empty, and leaves what it reads off the handle. `None` with no
-    /// keystore, no machine id, an empty slot, or a device key row that is
-    /// absent or names another key.
+    /// This install's signing keys for a door that must write no vault row
+    /// and no slot (the archive export, L2-23): the keys already loaded for
+    /// the stored machine id, else the ones its keystore slot already holds
+    /// when the vault's device key row names them. Unlike
+    /// [`Vault::load_install_signing_if_minted`] it never mints a machine id
+    /// or a seed, never forgets a machine whose slot is empty, and leaves what
+    /// it reads off the handle. `None` with no keystore, no machine id, an
+    /// empty slot, or a device key row that is absent or names another key.
+    ///
+    /// The slot is read with the keystore's own `get`, as every door reads
+    /// one. On an Apple Secure Enclave keystore whose key selector is gone,
+    /// that `get` makes a new enclave key before the old slot fails to open,
+    /// and the export goes out unsigned (Astra r2 finding 2, FIX
+    /// [ENCLAVE-GET-MAKES-SEALING-KEY]).
     pub(crate) fn read_install_signer(
         &self,
     ) -> Result<Option<Arc<crate::identity::InstallSigner>>> {

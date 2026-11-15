@@ -11,12 +11,16 @@
 //!   install holds. The image says which revision heads that chain, so a
 //!   vault that adopted one cannot tell the owner's latest word from an
 //!   older one.
+//! - L2-23 Astra r2 P2: the fold and the signature's row come from two
+//!   committed states, the row's snapshot older than the fold's.
+
+use std::io::Cursor;
 
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityKey, PinnedRoot, RecoveryRootId,
 };
 use crate::batch::export::{
-    ArchiveVerifierState, VaultImportReceipt, WholeVaultDocumentManifest,
+    ArchiveVerifierState, VaultImportReceipt, WholeVaultDocumentManifest, checked_archive_manifest,
     classify_vault_archive_manifest_on_fold,
 };
 use crate::error::{Error, Result};
@@ -37,7 +41,9 @@ pub fn classify_archive_with_trusted_entry(
     entry: AuthorityEntryHash,
 ) -> Result<VaultImportReceipt> {
     let manifest = parsed_manifest(archive_manifest_bytes)?;
-    let (mut fold, verifier) = fold_and_verifier(vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let mut fold = vault.authority_fold_readonly_in_txn(&rtxn)?;
+    let verifier = ArchiveVerifierState::in_txn(vault, &rtxn)?;
     let folded = fold
         .machines
         .get_mut(&machine)
@@ -51,7 +57,7 @@ pub fn classify_archive_with_trusted_entry(
     {
         revision.entry = entry;
     }
-    classify_vault_archive_manifest_on_fold(vault, &fold, verifier, &manifest, None)
+    classify_vault_archive_manifest_on_fold(vault, &rtxn, &fold, verifier, &manifest, None)
 }
 
 /// Classifies the archive manifest `archive_manifest_bytes` as
@@ -74,7 +80,8 @@ pub fn classify_archive_under_pinned_anchor(
     adopted_checkpoint: bool,
 ) -> Result<VaultImportReceipt> {
     let manifest = parsed_manifest(archive_manifest_bytes)?;
-    let (mut fold, _) = fold_and_verifier(vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let mut fold = vault.authority_fold_readonly_in_txn(&rtxn)?;
     let folded = fold
         .machines
         .get_mut(&machine)
@@ -101,7 +108,37 @@ pub fn classify_archive_under_pinned_anchor(
         hosted: true,
         adopted_checkpoint,
     };
-    classify_vault_archive_manifest_on_fold(vault, &fold, verifier, &manifest, None)
+    classify_vault_archive_manifest_on_fold(vault, &rtxn, &fold, verifier, &manifest, None)
+}
+
+/// Classifies the archive `export` writes, as [`Vault::classify_vault_archive`]
+/// does with no expected label, on this vault's read-only fold once `export`
+/// ran, in the snapshot this vault stood in before it ran: there the
+/// classification reads the signature's row and the vault's state. `export`
+/// runs on a thread of its own while this one holds that snapshot, since the
+/// vendored heed has no NOTLS.
+///
+/// # Errors
+/// The snapshot or the fold does not read, `export` fails or panics, the
+/// archive fails its member check, or the classification fails.
+pub fn classify_archive_in_snapshot_before(
+    vault: &Vault,
+    export: impl FnOnce() -> Result<Vec<u8>> + Send,
+) -> Result<VaultImportReceipt> {
+    let rtxn = vault.store.env.read_txn()?;
+    let verifier = ArchiveVerifierState::in_txn(vault, &rtxn)?;
+    let later = std::thread::scope(|scope| {
+        scope
+            .spawn(|| -> Result<(AuthorityFold, WholeVaultDocumentManifest)> {
+                let manifest = checked_archive_manifest(Cursor::new(export()?))?;
+                let txn = vault.store.env.read_txn()?;
+                Ok((vault.authority_fold_readonly_in_txn(&txn)?, manifest))
+            })
+            .join()
+    });
+    let (fold, manifest) =
+        later.map_err(|_| Error::InvariantViolation("the export thread panicked"))??;
+    classify_vault_archive_manifest_on_fold(vault, &rtxn, &fold, verifier, &manifest, None)
 }
 
 fn parsed_manifest(archive_manifest_bytes: &[u8]) -> Result<WholeVaultDocumentManifest> {
@@ -109,12 +146,4 @@ fn parsed_manifest(archive_manifest_bytes: &[u8]) -> Result<WholeVaultDocumentMa
         .map_err(|_| Error::InvalidConfig("unsupported whole-vault archive manifest".to_owned()))?;
     manifest.validate()?;
     Ok(manifest)
-}
-
-fn fold_and_verifier(vault: &Vault) -> Result<(AuthorityFold, ArchiveVerifierState)> {
-    let rtxn = vault.store.env.read_txn()?;
-    Ok((
-        vault.authority_fold_readonly_in_txn(&rtxn)?,
-        ArchiveVerifierState::in_txn(vault, &rtxn)?,
-    ))
 }

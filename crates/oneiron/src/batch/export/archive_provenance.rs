@@ -154,7 +154,10 @@ pub(crate) fn sign_archive_manifest(
 }
 
 /// Judges `manifest`'s provenance on `fold`, the read-only fold of `vault`
-/// whose vault id is `vault_id`, in the state `verifier`.
+/// whose vault id is `vault_id`, in the state `verifier`, both read in
+/// `txn`: the row of the signature is read there too, so the verdict rests
+/// on one snapshot (Astra r2 P2: a row committed after the fold was read,
+/// in one batch with a removal the fold never saw, proves nothing).
 ///
 /// The key must stand as its machine here ([`AuthorityFold::machine_proof_key`]:
 /// the trusted identity's key under this install's pin, else a live roster
@@ -179,6 +182,7 @@ pub(crate) fn sign_archive_manifest(
 /// A store read of the signature's row fails.
 pub(crate) fn archive_signer(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     verifier: ArchiveVerifierState,
     vault_id: &[u8; 32],
@@ -216,7 +220,7 @@ pub(crate) fn archive_signer(
     Ok(
         if owner_signed
             && !head_attested_by_host
-            && owner_signed_row_held(vault, vault_id, revision, machine, &key)?
+            && owner_signed_row_held(vault, txn, vault_id, revision, machine, &key)?
         {
             ArchiveSigner::OwnerDevice
         } else {
@@ -225,12 +229,13 @@ pub(crate) fn archive_signer(
     )
 }
 
-/// Whether `vault` holds the row `revision` stands by as the signature the
-/// fold says it is: the AUTHORITY_LOG row at [`MachineRevision::entry`],
-/// with that hash, this vault's id `vault_id`, a valid shape and signatures,
-/// the revision's signer as its primary signer, and a machine profile equal
-/// to the revision's, which names `machine` and `key`. A row this install
-/// does not hold, and an entry whose id names a row of another kind, prove
+/// Whether `vault` holds, in `txn`, the row `revision` stands by as the
+/// signature the fold says it is: the AUTHORITY_LOG row at
+/// [`MachineRevision::entry`], with that hash, this vault's id `vault_id`, a
+/// valid shape and signatures, the revision's signer as its primary signer,
+/// and a machine profile equal to the revision's, which names `machine` and
+/// `key`. A row this install does not hold in `txn`, and an entry whose id
+/// names a row of another kind, prove
 /// nothing (Sol r2 P1: a checkpoint image the host attests can carry a
 /// revision no owner key signed, under any entry hash). The vault id is
 /// checked here, not left to the doors that store rows (Sol r3 Q1).
@@ -239,6 +244,7 @@ pub(crate) fn archive_signer(
 /// The store read fails, or a stored row there no longer decodes.
 fn owner_signed_row_held(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     vault_id: &[u8; 32],
     revision: &MachineRevision,
     machine: EntityId,
@@ -247,7 +253,7 @@ fn owner_signed_row_held(
     let Ok(id) = authority_log_entity_id_from_hash(&revision.entry) else {
         return Ok(false);
     };
-    let entry = match vault.get_authority_log_entry(&id) {
+    let entry = match vault.get_authority_log_entry_in_txn(txn, &id) {
         Ok(Some(entry)) => entry,
         Ok(None) | Err(Error::InvalidEntityType(_)) => return Ok(false),
         Err(error) => return Err(error),
