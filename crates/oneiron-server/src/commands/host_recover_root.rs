@@ -53,7 +53,9 @@ pub fn host_recover_root(args: HostRecoverRootArgs) -> anyhow::Result<()> {
     // The install gives the recovery its keystore. The recovery itself
     // takes back a seed the vault's custody still escrows for its live root
     // (FIX-LIST 10770) before it reads the slot, and refuses when that step
-    // faults, so a root that is not lost is never moved by the kit.
+    // faults, so the kit never moves a root that an empty slot can still
+    // take back. A slot that holds a retired seed is not refilled: the
+    // escrow is not read for it (FIX-LIST 25945).
     if vault.device_keystore_assurance().is_none() {
         config.keystore.install_on(&vault, &config.vault_path);
     }

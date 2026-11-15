@@ -219,16 +219,17 @@ impl Vault {
     /// nothing is drawn. Refused before any draw when the slot holds the
     /// live root's seed, one the escrow gave back included: that root moves
     /// by re-root. An empty slot is filled create-only; a slot holding a
-    /// retired seed is replaced in place. A recovery that then fails, or
-    /// whose successor write the keystore faulted on, leaves the slot as it
-    /// was: emptied again, or its retired seed put back
-    /// (`put_back_host_issuer_slot`); a slot another seed filled first is
-    /// left to it. One root move runs at a time in this process, this and a
-    /// re-root alike.
+    /// retired seed is replaced in place, and the escrow is not read for it
+    /// (FIX-LIST 25945). A recovery that then fails, or whose successor
+    /// write the keystore faulted on, leaves the slot as it was: emptied
+    /// again, or its retired seed put back (`put_back_host_issuer_slot`); a
+    /// slot another seed filled first is left to it. One root move runs at
+    /// a time in this process, this and a re-root alike.
     pub fn recover_host_root_to_new_seed(&self, secret: RestoredKitSecret) -> Result<HostReRoot> {
         let _moving = lock_host_root_moves()?;
         // Every outcome leaves the slot as the read below judges it: filled
-        // by the escrow, held as it was, or empty with no live seed escrowed.
+        // by the escrow, held as it was, or empty when the escrow gave back
+        // no seed of the live root (it holds none, or none that reads).
         self.recover_host_issuer_seed()?;
         let keystore = self.device_keystore()?;
         let slot = self.host_issuer_slot()?;
