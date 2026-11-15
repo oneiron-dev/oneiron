@@ -28,18 +28,20 @@ use oneiron::authority::{
     AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, MeshMachineAddress,
-    OwnerRootRecord, authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
-    pairing_binding_transcript,
+    OwnerRootRecord, PinnedRoot, authority_entry_hash, authority_transcript,
+    machine_profile_proof_transcript, pairing_binding_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
 use oneiron::registry::ENTITY_TYPE_MACHINE;
 use oneiron::store::GateDecisionId;
 #[cfg(feature = "sync")]
+use oneiron::sync::peer_route::authority_fold_settled;
+#[cfg(feature = "sync")]
 use oneiron::test_doors::carrier_proof::carrier_proof_disproves;
 use oneiron::test_doors::profiles_other_machine::profiles_other_machine;
 use oneiron::world_keys::RecoveryRootSeed;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EntityId, Error, ErrorKind, TimeRange, Vault, VaultConfig};
 use oneiron_authority::authority::machine_answer_revision;
 
 /// The seed of the joining machine's machine key.
@@ -893,4 +895,225 @@ fn a_machine_row_only_a_strangers_chain_profiles_enrols_as_a_machine_identity() 
             |transcript| Ok(node.sign(transcript).to_bytes()),
         )
         .expect("a MACHINE row only a stranger's chain profiles is enrolled as a machine identity");
+}
+
+/// A pinned anchor's removal vetoes this install as an owner-act carrier,
+/// even while its roster head still names its install key live. First enrol
+/// M, mark the carrier Yours under the held anchor, and pin that root; then
+/// remove only the carrier in that anchor's chain and ask it to remove M.
+///
+/// Design 3.2, the doors' pin veto.
+///
+/// RED: the final `expect_err` fails: the base's carrier rule reads the
+/// roster's chain alone, so the owner's removal of M lands.
+/// GREEN: the door refuses with the no-carrier message asserted below, and
+/// M's roster profile stays Yours.
+#[test]
+fn a_removal_in_the_pinned_anchors_chain_stops_the_installs_owner_acts() {
+    let served = ServedVault::self_host();
+    let request = served.joining_machine();
+    served.enrol(&request).expect("guard: the owner enrols M");
+    let roster = served.carrier_roster();
+
+    let (anchor, root) = publish_stranger_root(&served.vault);
+    let anchor_key = anchor.verifying_key().to_bytes();
+    let owned = stranger_mark_cloning(
+        &served.vault,
+        served.vault_id(),
+        root,
+        &anchor,
+        &roster.profile,
+        MachineRole::Owned(MachineOwnership::Yours),
+        1,
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert_eq!(fold.pinned_root, None, "guard: the install starts unpinned");
+    assert!(
+        fold.valid_entries.contains(&owned),
+        "guard: the anchor's Yours mark is valid"
+    );
+    let root_id = fold
+        .root_anchors()
+        .get(&anchor_key)
+        .and_then(|ids| ids.iter().next())
+        .copied()
+        .expect("guard: the fold holds the root signed by the held anchor");
+    let pin = PinnedRoot {
+        id: root_id,
+        anchor_key,
+    };
+    let report = served
+        .vault
+        .pin_owner_root(&served.owner, root_id)
+        .expect("the owner pins the held anchor's stored root");
+    assert_eq!(
+        report.awaiting, None,
+        "guard: pinning is not merely awaiting"
+    );
+
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert_eq!(fold.pinned_root, Some(pin), "guard: the pin is effective");
+    assert_eq!(
+        fold.pinned_root.expect("guard: a pin").anchor_key,
+        anchor.verifying_key().to_bytes(),
+        "guard: the test holds the pinned anchor's signing key"
+    );
+    let anchored = fold
+        .machine(served.carrier)
+        .and_then(|folded| folded.anchored.get(&anchor_key))
+        .expect("guard: the pinned anchor profiles this install");
+    assert_eq!(anchored.entry, owned);
+    assert_eq!(anchored.profile.revision, 1);
+    assert!(
+        anchored.says_yours(),
+        "guard: the carrier is Yours under the pin"
+    );
+    assert_eq!(anchored.profile.machine_key, roster.profile.machine_key);
+    assert_eq!(
+        anchored.profile.encryption_key,
+        roster.profile.encryption_key
+    );
+
+    let removal = signed(
+        served.vault_id(),
+        3,
+        vec![owned],
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::Removed,
+            revision: 2,
+            ..anchored.profile.clone()
+        }),
+        &anchor,
+    );
+    let mark = hash(&removal);
+    served
+        .vault
+        .put_authority_log_entry(&removal, AT, 2)
+        .expect("the pinned anchor's next revision removes the carrier");
+
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert_eq!(fold.pinned_root, Some(pin), "guard: the root still stands");
+    assert!(
+        fold.valid_entries.contains(&mark),
+        "guard: the pinned anchor's removal is valid"
+    );
+    let carrier = fold.machine(served.carrier).expect("guard: the carrier");
+    let anchored = carrier
+        .anchored
+        .get(&anchor_key)
+        .expect("guard: the pinned anchor's chain");
+    assert_eq!(anchored.entry, mark);
+    assert_eq!(anchored.profile.role, MachineRole::Removed);
+    assert_eq!(anchored.profile.revision, 2);
+    assert!(
+        anchored.removed,
+        "guard: only the pinned chain removes the carrier"
+    );
+    let current_roster = carrier.roster.as_ref().expect("guard: the roster head");
+    assert_eq!(
+        current_roster.entry, roster.entry,
+        "guard: the roster head did not move"
+    );
+    assert!(
+        current_roster.is_live(),
+        "guard: the carrier's roster chain stays live"
+    );
+
+    let error = served
+        .vault
+        .set_machine_role(
+            &served.owner,
+            ActSurface::ThisInstall,
+            request.machine,
+            MachineRole::Removed,
+            None,
+        )
+        .expect_err("the pinned anchor's removal must stop this install's owner acts");
+    assert_eq!(error.kind(), ErrorKind::InvalidConfig);
+    match error {
+        Error::InvalidConfig(reason) => assert_eq!(
+            reason,
+            "this install has no live machine profile in the vault to carry the owner's machine \
+             answer; nothing was written"
+        ),
+        other => panic!("unexpected carrier refusal: {other:?}"),
+    }
+    let fold = served
+        .vault
+        .authority_fold()
+        .expect("authority fold after refusal");
+    let target = fold
+        .machine(request.machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("guard: M's roster head");
+    assert_eq!(
+        target.profile.role,
+        MachineRole::Owned(MachineOwnership::Yours)
+    );
+    assert_eq!(target.profile.revision, 1);
+}
+
+/// Row 19 (`sync::peer_route::authority_fold_settled`; Astra on d52dedc9,
+/// Finding 1): a stranger's mark of an install that neither the roster nor
+/// a pin profiles settles no peer route. The install's machine id exists
+/// (its enrolment request made it), and no chain it reads holds it: it is
+/// unsettled, as before the mark.
+///
+/// RED: the last assert fails: the mark gives the fold a machine whose
+/// standing heads are none, and an empty list has no unsettled admitter, so
+/// the route reads settled.
+/// GREEN: a machine with no standing head is unsettled, as an absent one is.
+#[cfg(feature = "sync")]
+#[test]
+fn a_strangers_mark_of_an_unprofiled_install_settles_no_peer_route() {
+    let (vault, _issuer, _dir) = unprofiled_self_host();
+    let vault_id = vault_id_of(&vault);
+    let encryption_key = vault
+        .machine_encryption_key(vault_id)
+        .expect("this install's encryption key");
+    let request = vault
+        .machine_enrolment_request(vault_id, encryption_key)
+        .expect("this install's enrolment request");
+    assert!(
+        vault
+            .authority_missing_history()
+            .expect("the history read")
+            .is_complete(),
+        "guard: this vault holds its whole authority history"
+    );
+    assert!(
+        !authority_fold_settled(&vault).expect("the settled read"),
+        "guard: no chain holds this install, so its route is unsettled"
+    );
+    let (anchor, root) = publish_stranger_root(&vault);
+    let mark = stranger_mark_with_m_keys(
+        &vault,
+        vault_id,
+        root,
+        &anchor,
+        &request,
+        MachineRole::Owned(MachineOwnership::Yours),
+        1,
+    );
+    let fold = vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&mark),
+        "guard: the stranger's mark is in valid_entries"
+    );
+    assert!(
+        fold.machine(request.machine)
+            .is_some_and(|folded| folded.roster.is_none() && !folded.anchored.is_empty()),
+        "guard: only the stranger's chain holds this install"
+    );
+    assert!(
+        vault
+            .authority_missing_history()
+            .expect("the history read")
+            .is_complete(),
+        "guard: the mark leaves the history whole"
+    );
+    assert!(
+        !authority_fold_settled(&vault).expect("the settled read"),
+        "a stranger's mark settled this install's peer route"
+    );
 }
