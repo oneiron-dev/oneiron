@@ -8,7 +8,9 @@
 //! does not own the vault, or to an agent, is refused and the act does not
 //! happen:
 //! - H2 `POST /v1/core/batch` and the `remember` verb commit below owner: an
-//!   agent definition the owner turned off stays off;
+//!   agent definition the owner turned off stays off, and a TURN that calls
+//!   itself a platform announcement is stored as its writer's, not the
+//!   platform's;
 //! - H3 `POST /v1/core/memory/verbs/delete` goes to the delete authority, not
 //!   the owner path: the owner's NOTE stays;
 //! - H4 the voice bank (`GET /v1/ai/voices/{voice}`; its four other routes
@@ -51,7 +53,7 @@ use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::federation::{OrgAdminPolicy, OrgAdminPower, Scope};
 use oneiron::note::TakeTarget;
-use oneiron::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
@@ -428,6 +430,117 @@ fn owner_credentials_turn_an_agent_definition_back_on() {
                 let status = turn_back_on(&fx, &caller, door, &id).await;
                 assert_eq!(status, StatusCode::OK, "{name} over {door}");
                 assert!(is_on(&fx, &id), "{name} turns it back on over {door}");
+            }
+        }
+    });
+}
+
+// H2: a batch TURN publishes as the platform only for the owner (blind
+// review F1 of #8012): one owner proof decides the batch's grade and its
+// announcement authority.
+
+/// A TURN whose body calls itself a platform announcement and bylines its
+/// writer.
+fn announcement_turn(id: &EntityId) -> Value {
+    json!({
+        "id": id.to_hex(),
+        "entity_type": ENTITY_TYPE_TURN,
+        "body": {
+            "txt": "Maintenance begins at 22:00 UTC.",
+            "message_type": "platform_announcement",
+            "spkr": "owen",
+        },
+    })
+}
+
+/// One field of a stored TURN body, `None` when it has none.
+fn turn_field<'a>(body: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
+    body.as_map()?
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value)
+}
+
+/// Whether a stored TURN body speaks as the platform.
+fn platform_styled(body: &rmpv::Value) -> bool {
+    let text = |key: &str| turn_field(body, key).and_then(rmpv::Value::as_str);
+    text("message_type") == Some("platform_announcement")
+        || text("spkr") == Some("platform")
+        || turn_field(body, "platform_voice").and_then(rmpv::Value::as_bool) == Some(true)
+}
+
+/// Puts the announcement TURN over the batch route or the `remember` verb:
+/// the status and the body the vault stored, `None` when it stored none.
+async fn announce(fx: &Fixture, caller: &Caller, door: &str) -> (StatusCode, Option<rmpv::Value>) {
+    let id = EntityId::now();
+    let entity = announcement_turn(&id);
+    let (uri, body) = match door {
+        "batch" => ("/v1/core/batch", json!({ "entities": [entity] })),
+        _ => (
+            "/v1/core/memory/verbs/remember",
+            json!({ "entity": entity }),
+        ),
+    };
+    let (status, reply) = send(fx, caller, "POST", uri, Some(body)).await;
+    let stored = fx
+        .vault
+        .get(&id)
+        .expect("read the TURN")
+        .map(|bytes| rmpv::decode::read_value(&mut bytes.as_slice()).expect("decode the TURN"));
+    assert!(
+        status == StatusCode::OK || stored.is_none(),
+        "{door}: a refused TURN is stored: {status} {reply}"
+    );
+    (status, stored)
+}
+
+#[test]
+fn non_owner_full_scope_slip_cannot_publish_as_the_platform() {
+    run_on_engine_stack("owner-acts-h2-announcement-non-owner", || async {
+        for class in NON_OWNER_CLASSES {
+            let fx = setup().await;
+            let caller = non_owner(&fx, class);
+            for door in ["batch", "remember"] {
+                let (status, stored) = announce(&fx, &caller, door).await;
+                // A person's TURN is an ordinary below-owner put. An agent's
+                // may meet a refusal of its own; either way no TURN of theirs
+                // is stored as the platform's.
+                if class == "human" {
+                    assert_eq!(
+                        status,
+                        StatusCode::OK,
+                        "a non-owner person's TURN is an ordinary write over {door}"
+                    );
+                }
+                if let Some(body) = stored {
+                    assert!(
+                        !platform_styled(&body),
+                        "a non-owner {class}'s full-vault slip published as the platform over {door}: {body}"
+                    );
+                    assert_eq!(
+                        turn_field(&body, "spkr").and_then(rmpv::Value::as_str),
+                        Some("owen"),
+                        "a non-owner {class}'s TURN keeps its own byline over {door}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn owner_credentials_publish_as_the_platform() {
+    run_on_engine_stack("owner-acts-h2-announcement-owner", || async {
+        let fx = setup().await;
+        for (name, caller) in owner_callers(&fx) {
+            for door in ["batch", "remember"] {
+                let (status, stored) = announce(&fx, &caller, door).await;
+                assert_eq!(status, StatusCode::OK, "{name} over {door}");
+                let body = stored.expect("the owner's TURN is stored");
+                assert!(
+                    platform_styled(&body),
+                    "{name}'s announcement speaks as the platform over {door}: {body}"
+                );
             }
         }
     });
