@@ -27,6 +27,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY};
 use crate::store::Store;
 use crate::{HostingPrivacyPosture, Vault};
 
@@ -189,9 +190,8 @@ pub(crate) fn keep_world_rows_out_of_vault_index_in_txn(
 /// follows its picture. A row a world's own text space now takes keeps no vector of the vault's
 /// index; a device space that no longer takes a row keeps no text vector of it. The world's
 /// media pass embeds the row into the space that takes it now. A row that lost a vector and has
-/// no pending embedding is marked for the idle refill, which gives it a vault-index vector
-/// again once no world's space takes it. The worlds' spaces are read only when `sources` is not
-/// empty.
+/// no pending embedding gets its way back to the vault's index ([`queue_way_back_in_txn`]). The
+/// worlds' spaces are read only when `sources` is not empty.
 pub(crate) fn reconcile_world_edge_rows_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -214,10 +214,12 @@ pub(crate) fn reconcile_world_edge_rows_in_txn(
     }
     for id in derived_closure_in_txn(store, txn, sources)? {
         let own = spaces.of_row(store, txn, &id)?;
-        let mut dropped = false;
+        let mut dropped_index = false;
         if !own.is_empty() {
-            dropped = crate::vault::entity_revision::drop_index_vector_in_txn(store, txn, &id)?;
+            dropped_index =
+                crate::vault::entity_revision::drop_index_vector_in_txn(store, txn, &id)?;
         }
+        let mut dropped_space = false;
         for (space, slot_text) in &device_spaces {
             let takes = if own.is_empty() {
                 *slot_text
@@ -225,14 +227,51 @@ pub(crate) fn reconcile_world_edge_rows_in_txn(
                 own.contains(space.id.as_str())
             };
             if !takes && delete_text_media_vector_in_space_in_txn(store, txn, space, &id)? {
-                dropped = true;
+                dropped_space = true;
             }
         }
-        if dropped && !store.has_current_pending_embedding_in_txn(txn, &id)? {
-            crate::vault::entity_revision::mark_vector_refill_in_txn(store, txn, &id)?;
+        if (dropped_index || dropped_space)
+            && !store.has_current_pending_embedding_in_txn(txn, &id)?
+        {
+            queue_way_back_in_txn(store, txn, &id, own.is_empty() && dropped_space)?;
         }
     }
     Ok(())
+}
+
+/// The way back to the vault's index for `id`, which lost a vector as its worlds moved and has
+/// no pending embedding. A row the vault's index takes again (`returned`: no world's space
+/// takes it now, and it held a text vector in one) whose text the pending worker embeds (a
+/// CLAIM, a SUMMARY, a text ASSET) is queued for that worker, as the sweep queues such a row;
+/// any other row is marked for the idle refill, which embeds its published revision once no
+/// world's space takes it (a NOTE, a caption).
+fn queue_way_back_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    returned: bool,
+) -> Result<()> {
+    if returned
+        && let Some(record) = store.port_entity_record(txn, id)?
+        && matches!(
+            record.entity_type,
+            ENTITY_TYPE_CLAIM | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_ASSET
+        )
+    {
+        store.mark_pending_embedding(txn, id, &record.body)?;
+        #[cfg(feature = "sync")]
+        {
+            crate::sync::queue::delete_embed_job_in_txn(store, txn, id)?;
+            crate::sync::queue::push_embed_job_in_txn(
+                store,
+                txn,
+                id,
+                super::EMBED_PRIORITY_BACKFILL,
+            )?;
+        }
+        return Ok(());
+    }
+    crate::vault::entity_revision::mark_vector_refill_in_txn(store, txn, id)
 }
 
 /// `sources` and every row that derives from one of them through DerivedFrom edges,
