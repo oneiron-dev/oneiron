@@ -209,6 +209,7 @@ impl Vault {
             &txn,
         )?;
         request.missing.extend(needed.missing);
+        request.reason = request.reason.or(needed.reason);
         request
             .missing
             .retain(|hash| !resident.contains(hash) && !waiting.contains(hash));

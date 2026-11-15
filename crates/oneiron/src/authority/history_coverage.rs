@@ -171,6 +171,7 @@ pub(crate) fn authority_history_request_in_txn(
         super::history_admission::pending_history_request_in_txn(store, posture, txn)?
     {
         request.missing.extend(pending.missing);
+        request.reason = request.reason.or(pending.reason);
     }
     Ok(request)
 }
@@ -207,11 +208,12 @@ fn held_history_request_in_txn(
         None => None,
     };
     named.retain(|hash| !held.contains(hash));
+    let reason = (!named.is_empty()).then_some(AuthorityHistoryReason::UnheldRows);
     Ok(AuthorityHistoryRequest {
         vault_id,
         checkpoint,
         missing: named,
-        reason: None,
+        reason,
     })
 }
 

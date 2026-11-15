@@ -112,13 +112,13 @@ fn seal_standing_text(seal: Option<&[u8; 32]>, image: Option<&[u8; 32]>) -> Stri
 }
 
 /// Why an authority fold, or a door that reads one, needs history this vault
-/// does not hold ([`RecordError::AuthorityHistoryRequired`]).
-/// [`Self::UnheldRows`] names the rows the fold reads itself: a fetch of them
-/// closes it. The fold reasons after it are cases the fold past an adopted
-/// checkpoint image does not settle: they name every covered row not held,
-/// since only the whole history folds there, so a fetch closes them while
-/// some vault still holds those rows and nothing does once retention has
-/// deleted them everywhere. The last two are doors' refusals.
+/// does not hold ([`RecordError::AuthorityHistoryRequired`]). A fetch of
+/// rows the fold reads itself closes [`Self::UnheldRows`]. The fold reasons
+/// after it are cases the fold past an adopted checkpoint image does not
+/// settle, which only the whole history folds: their requests name every
+/// covered row not held, so a fetch closes them while some vault still holds
+/// those rows, and nothing does once retention has deleted them everywhere.
+/// The last two are doors' refusals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AuthorityHistoryReason {

@@ -846,7 +846,7 @@ fn fold_stored_tail_in_txn(
                 .or_else(|| tail.iter().find_map(|(_, entry)| entry.vault_id)),
             checkpoint: checkpoint.map(|(head, _)| head).or(checkpoint_head),
             missing: named,
-            reason: None,
+            reason: Some(crate::error::AuthorityHistoryReason::UnheldRows),
         }));
     }
     // Read once: all entries in this fold share one snapshot clock and marker.
