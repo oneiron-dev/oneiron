@@ -14,7 +14,7 @@ use super::{
 
 /// `vault.gpu.jobs.quote`: what to run, on which of the host's offers. A
 /// missing maximum takes the host's default.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GpuJobQuoteRequest {
     pub offer: String,
@@ -45,7 +45,7 @@ impl GpuJobQuoteRequest {
 /// One chunk's price as the customer sees it: the rate times the maximum plus
 /// startup, teardown and rounding, frozen until `valid_until_ms`. Starting
 /// on it reserves `units` whole.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GpuJobQuoteTerms {
     /// The job it starts (hex): a new one, or the stopped job it resumes.
@@ -131,7 +131,7 @@ impl TryFrom<GpuJobQuoteTerms> for GpuJobQuote {
 /// `vault.gpu.jobs.start`: the quote the customer saw. With `resume`, it
 /// starts the next chunk of the stopped job the quote names, from the
 /// checkpoint its stop kept; that works once per stop.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GpuJobStartRequest {
     pub quote: GpuJobQuoteTerms,
@@ -140,7 +140,7 @@ pub struct GpuJobStartRequest {
 }
 
 /// `vault.gpu.jobs.status` and `vault.gpu.jobs.cancel`: one job, by id (hex).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GpuJobRef {
     pub job: String,
@@ -158,7 +158,7 @@ impl GpuJobRef {
 }
 
 /// `vault.gpu.jobs.list` takes no input.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GpuJobListRequest {}
 
