@@ -17,10 +17,12 @@
 //! the agent to the other. The same admission now takes a close of a
 //! governing grant only from a live owner, when the door stamped its closer.
 //!
-//! [WORLD-ACCESS-GRANT-DELETE-BY-DELETE-AUTHORITY] (Engine RULING
-//! WORLD-ACCESS-GRANT-DELETE = B, 15 Nov): an agent with a live delete Grant
-//! deleted the owner's grant about itself, and read base reality. The delete
-//! authority now refuses an agent any world-access row, whatever its Grant.
+//! [WORLD-ACCESS-GRANT-DELETE-BY-DELETE-AUTHORITY] (the lead's RULING
+//! WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
+//! widening"): an agent with a live delete Grant, or an Admin in scope,
+//! deleted the owner's grant about an agent, which then read base reality.
+//! The delete authority now leaves a world-access row to a live owner,
+//! whatever role or Grant another caller holds.
 //!
 //! Grants and proposals land through the cfg door #7793 added
 //! (`test_doors::world_access`), stamped with their writer's envelope as the
@@ -35,7 +37,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::agent_def::AgentCeiling;
-use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, VerifiedSlip};
 use oneiron::consent::{AuthenticatedOwner, consent_receipt_grant_ref};
 use oneiron::federation::{FederationGrantRole, InitialSharedMember, Scope, ScopeAxis};
 use oneiron::memory::{
@@ -48,6 +50,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::world_access::put_world_access_row;
+use oneiron::test_support::bind_host_owner;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -66,6 +69,12 @@ const LEARNED_AT: u64 = 1_780_000_000;
 
 /// The shared vault id the former-owner tests share the vault under.
 const SHARED: u64 = 44;
+
+/// The shared vault id the Admin's delete tests share the vault under.
+const SHARED_WITH_ADMIN: u64 = 45;
+
+/// The refusal a delete below the owner gives a record that is authority.
+const AUTHORITY_ROW: &str = "authority_row:";
 
 /// The refusal an approval gives a grant no live owner wrote.
 const NOT_AN_OWNER: &str = "world access grant must be written by a vault owner";
@@ -386,9 +395,64 @@ impl Fixture {
     }
 }
 
+/// The owner's grant confining `agent` to `world`, landed through the cfg
+/// door in `facet`. Returns its id.
+fn confine(vault: &Vault, agent: EntityId, world: EntityId, facet: EntityId) -> EntityId {
+    let mut body = world_access_claim_body(
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &WorldAuthoritySet::new(false, [world]).unwrap(),
+        ClaimSource::UserStated,
+        ClaimApprovalStatus::Approved,
+        None,
+        None,
+    )
+    .unwrap();
+    body.scope_facet = facet;
+    let id = EntityId::now();
+    put_world_access_row(vault, &id, &body, at(LEARNED_AT), LEARNED_AT).expect("the owner's grant");
+    assert_eq!(
+        reads(vault, agent).allowed_set,
+        WorldAuthoritySet::new(false, [world]).unwrap(),
+        "the owner's grant confines the agent"
+    );
+    id
+}
+
+/// An ordinary Auto claim about `subject` in `facet`, on the owner's raw
+/// door. Returns its id.
+fn ordinary_claim(vault: &Vault, subject: EntityId, facet: EntityId) -> EntityId {
+    let mut body = ClaimBody::new(
+        "profile.note",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("a note"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.scope_facet = facet;
+    let id = EntityId::now();
+    vault
+        .put_claim(&id, &body, at(LEARNED_AT), LEARNED_AT)
+        .expect("an ordinary claim");
+    id
+}
+
+/// The tiers `agent`'s reads resolve with no selection.
+fn reads(vault: &Vault, agent: EntityId) -> ResolvedWorldAuthority {
+    vault
+        .board_world_authority(Some(agent), None)
+        .expect("the agent's tiers resolve")
+}
+
+fn deleted(vault: &Vault, id: EntityId) -> bool {
+    vault.is_deleted_shell(&id).expect("shell read")
+}
+
 /// A personal vault whose owner made an enabled agent with a Grant naming
-/// `read` and `delete` (as `tests/delete_authority.rs` makes one), the
-/// owner's confinement grant about that agent, and one WORLD.
+/// `read` and `delete` (as `tests/delete_authority.rs` makes one), and one
+/// WORLD.
 struct DeleteFixture {
     vault: Vault,
     owner: EntityId,
@@ -413,16 +477,7 @@ impl DeleteFixture {
         let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
         let agent = agent_with_delete_grant(&vault, &owner_proof);
         let facet = vault.default_facet().expect("default facet");
-        let world = EntityId::now();
-        vault
-            .put_entity(
-                &world,
-                ENTITY_TYPE_WORLD,
-                at(LEARNED_AT),
-                LEARNED_AT,
-                b"world",
-            )
-            .expect("a WORLD");
+        let world = a_world(&vault);
         Self {
             vault,
             owner,
@@ -433,35 +488,6 @@ impl DeleteFixture {
         }
     }
 
-    /// The owner's grant confining the agent to the WORLD, landed through the
-    /// cfg door. Returns its id.
-    fn confine_the_agent(&self) -> EntityId {
-        let mut body = world_access_claim_body(
-            PREDICATE_WORLD_ACCESS_ALLOWED_SET,
-            self.agent,
-            &self.confinement(),
-            ClaimSource::UserStated,
-            ClaimApprovalStatus::Approved,
-            None,
-            None,
-        )
-        .unwrap();
-        body.scope_facet = self.facet;
-        let id = EntityId::now();
-        put_world_access_row(&self.vault, &id, &body, at(LEARNED_AT), LEARNED_AT)
-            .expect("the owner's grant");
-        assert_eq!(
-            self.agent_reads().allowed_set,
-            self.confinement(),
-            "the owner's grant confines the agent"
-        );
-        id
-    }
-
-    fn confinement(&self) -> WorldAuthoritySet {
-        WorldAuthoritySet::new(false, [self.world]).unwrap()
-    }
-
     /// The agent calls the `vault.delete` verb on `id`.
     fn agent_deletes(&self, id: EntityId) -> Result<Value, MemoryError> {
         invoke(
@@ -470,17 +496,141 @@ impl DeleteFixture {
             json!({ "entity_ref": id.to_hex(), "reason": "user_delete" }),
         )
     }
+}
 
-    fn deleted(&self, id: EntityId) -> bool {
-        self.vault.is_deleted_shell(&id).expect("shell read")
+/// A rooted shared vault (as `tests/delete_authority.rs` shares one): its
+/// owner and an Admin, who acts by the live `human` credential this host
+/// mints it; an agent the owner's grant may confine; and one WORLD.
+struct AdminFixture {
+    vault: Vault,
+    issuer: HostSlipIssuer,
+    admin: EntityId,
+    agent: EntityId,
+    world: EntityId,
+    facet: EntityId,
+    // Dropped after the vault.
+    _directory: tempfile::TempDir,
+}
+
+impl AdminFixture {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().expect("vault dir");
+        let vault = Vault::open(directory.path(), VaultConfig::device()).expect("open vault");
+        // A delete signs its receipt with this install's key.
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        let owner = vault.ensure_embedded_owner_actor().expect("owner");
+        bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+        let admin = EntityId::now();
+        vault
+            .put_entity(
+                &admin,
+                ENTITY_TYPE_PERSON,
+                at(LEARNED_AT),
+                LEARNED_AT,
+                b"human",
+            )
+            .expect("a live person");
+        let owner_proof = vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("the owner's proof");
+        vault
+            .initialize_shared_vault(
+                &owner_proof,
+                SHARED_WITH_ADMIN,
+                None,
+                &[
+                    InitialSharedMember {
+                        member_ref: owner,
+                        role: Some(FederationGrantRole::Owner),
+                    },
+                    InitialSharedMember {
+                        member_ref: admin,
+                        role: Some(FederationGrantRole::Admin),
+                    },
+                ],
+                1,
+            )
+            .expect("a shared vault with an Admin");
+        let admin_proof = vault
+            .authenticate_owner(admin, &admin.to_hex(), true, GateDecisionId::now())
+            .expect("the Admin's person proof");
+        let invitation = vault
+            .shared_invitations(&admin_proof, SHARED_WITH_ADMIN)
+            .expect("the Admin's invitations")
+            .into_iter()
+            .find(|open| open.role == FederationGrantRole::Admin)
+            .expect("the Admin's founding invitation");
+        vault
+            .accept_shared_invitation(&admin_proof, SHARED_WITH_ADMIN, &invitation.id)
+            .expect("the Admin accepts");
+        let agent = vault
+            .ensure_agent_principal("world-state-admin-agent")
+            .expect("agent");
+        let facet = vault.default_facet().expect("default facet");
+        let world = a_world(&vault);
+        Self {
+            vault,
+            issuer,
+            admin,
+            agent,
+            world,
+            facet,
+            _directory: directory,
+        }
     }
 
-    /// The tiers the agent's reads resolve with no selection.
-    fn agent_reads(&self) -> ResolvedWorldAuthority {
+    /// The Admin deletes `id` over the live `human` credential this host
+    /// mints it, verified as a transport verifies the slip a request
+    /// presents.
+    fn admin_deletes(&self, id: EntityId) -> Result<bool, MemoryError> {
+        let root = self
+            .vault
+            .ensure_host_root_slip(&self.issuer)
+            .expect("the host root slip");
+        let issued_at = self.vault.capability_slip_now().expect("slip clock");
+        let mut claims = root.claims;
+        claims.slip_id = [0x5a; 32];
+        claims.holder_ref = self.admin.to_hex();
+        claims.actor_class = Some("human".into());
+        claims.issued_at = issued_at;
+        claims.expires_at = issued_at + 3_600;
+        claims.ttl_secs = 3_600;
+        let slip = self
+            .vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("the Admin's credential");
+        let challenge = b"world-access-state-change";
+        let proof = self
+            .issuer
+            .binding_proof(&slip, challenge)
+            .expect("binding proof");
+        let credential: VerifiedSlip = self
+            .vault
+            .verify_capability_slip(&self.issuer.public_key(), &slip, challenge, &proof)
+            .expect("a verified credential");
         self.vault
-            .board_world_authority(Some(self.agent), None)
-            .expect("the agent's tiers resolve")
+            .memory(self.admin, EdgeActorClass::Human)
+            .with_transport_invocation()
+            .with_read_proof(&credential)
+            .safe_delete(&id.to_hex(), SafeDeleteReason::UserDelete)
+            .map(|receipt| receipt.existed)
     }
+}
+
+/// One WORLD.
+fn a_world(vault: &Vault) -> EntityId {
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            ENTITY_TYPE_WORLD,
+            at(LEARNED_AT),
+            LEARNED_AT,
+            b"world",
+        )
+        .expect("a WORLD");
+    world
 }
 
 /// An enabled agent the owner creates and gives one Grant naming `read` and
@@ -690,55 +840,82 @@ fn a_live_co_owner_retracts_the_grant_it_wrote() {
 
 /// [WORLD-ACCESS-GRANT-DELETE-BY-DELETE-AUTHORITY]: an agent with a live
 /// delete Grant over the whole vault deletes the owner's grant confining it.
-/// Before this change the delete landed and the agent read base reality; the
-/// delete authority now refuses an agent any world-access row.
+/// Before this change the delete landed and the agent read base reality; a
+/// world-access row is now the live owner's alone to delete.
 #[test]
 fn an_agents_delete_grant_never_deletes_its_confinement() {
     let f = DeleteFixture::new();
-    let grant = f.confine_the_agent();
+    let grant = confine(&f.vault, f.agent, f.world, f.facet);
 
-    let deleted = f.agent_deletes(grant);
+    let result = f.agent_deletes(grant);
 
     assert_eq!(
-        f.agent_reads().allowed_set,
-        f.confinement(),
-        "the owner's grant still confines the agent (delete: {deleted:?})"
+        reads(&f.vault, f.agent).allowed_set,
+        WorldAuthoritySet::new(false, [f.world]).unwrap(),
+        "the owner's grant still confines the agent (delete: {result:?})"
     );
-    assert!(!f.deleted(grant), "the refused grant is untouched");
-    let refused = deleted.expect_err("an agent never deletes a world-access row");
+    assert!(!deleted(&f.vault, grant), "the refused grant is untouched");
+    let refused = result.expect_err("an agent never deletes a world-access row");
     assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
     assert!(
-        refused.message.starts_with("world_access_row:"),
+        refused.message.starts_with(AUTHORITY_ROW),
         "the refusal names its reason: {refused:?}"
     );
 }
 
-/// Control, and the red's precondition: the same agent's delete Grant
+/// Control, and the agent red's precondition: the same agent's delete Grant
 /// deletes an ordinary CLAIM about it in the same facet.
 #[test]
 fn the_same_agent_deletes_an_ordinary_claim_in_that_facet() {
     let f = DeleteFixture::new();
-    let mut body = ClaimBody::new(
-        "profile.note",
-        ClaimSubject::Entity(f.agent),
-        rmpv::Value::from("a note"),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    body.scope_facet = f.facet;
-    let note = EntityId::now();
-    f.vault
-        .put_claim(&note, &body, at(LEARNED_AT), LEARNED_AT)
-        .expect("an ordinary claim");
+    let note = ordinary_claim(&f.vault, f.agent, f.facet);
 
     let receipt = f
         .agent_deletes(note)
         .unwrap_or_else(|error| panic!("an agent under a delete Grant deletes: {error:?}"));
 
     assert_eq!(receipt["existed"], true, "{receipt}");
-    assert!(f.deleted(note), "the claim is a deleted shell");
+    assert!(deleted(&f.vault, note), "the claim is a deleted shell");
+}
+
+/// [WORLD-ACCESS-GRANT-DELETE-BY-DELETE-AUTHORITY], the Admin: an Admin of
+/// a shared vault deletes, in scope, the owner's grant confining an agent.
+/// Before this change DEL-2's in-scope delete landed and the agent read base
+/// reality; a world-access row is authority, not an item in scope.
+#[test]
+fn an_admin_never_deletes_the_owners_grant_in_scope() {
+    let f = AdminFixture::new();
+    let grant = confine(&f.vault, f.agent, f.world, f.facet);
+
+    let result = f.admin_deletes(grant);
+
+    assert_eq!(
+        reads(&f.vault, f.agent).allowed_set,
+        WorldAuthoritySet::new(false, [f.world]).unwrap(),
+        "the owner's grant still confines the agent (delete: {result:?})"
+    );
+    assert!(!deleted(&f.vault, grant), "the refused grant is untouched");
+    let refused = result.expect_err("an Admin never deletes a world-access row");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    assert!(
+        refused.message.starts_with(AUTHORITY_ROW),
+        "the refusal names its reason: {refused:?}"
+    );
+}
+
+/// Control, and the Admin red's precondition: the Admin deletes an ordinary
+/// CLAIM in the same facet, in scope, as DEL-2 allows.
+#[test]
+fn the_admin_deletes_an_ordinary_claim_in_scope() {
+    let f = AdminFixture::new();
+    let note = ordinary_claim(&f.vault, f.agent, f.facet);
+
+    let existed = f
+        .admin_deletes(note)
+        .unwrap_or_else(|error| panic!("an Admin deletes in scope: {error:?}"));
+
+    assert!(existed);
+    assert!(deleted(&f.vault, note), "the claim is a deleted shell");
 }
 
 /// Control: the owner deletes its own grant, and the agent reads base
@@ -746,7 +923,7 @@ fn the_same_agent_deletes_an_ordinary_claim_in_that_facet() {
 #[test]
 fn the_owner_deletes_its_grant() {
     let f = DeleteFixture::new();
-    let grant = f.confine_the_agent();
+    let grant = confine(&f.vault, f.agent, f.world, f.facet);
 
     let receipt = f
         .vault
@@ -755,6 +932,6 @@ fn the_owner_deletes_its_grant() {
         .expect("the owner deletes anything");
 
     assert!(receipt.existed);
-    assert!(f.deleted(grant), "the grant is a deleted shell");
-    assert_eq!(f.agent_reads(), ungoverned());
+    assert!(deleted(&f.vault, grant), "the grant is a deleted shell");
+    assert_eq!(reads(&f.vault, f.agent), ungoverned());
 }
