@@ -2181,8 +2181,11 @@ suite.test(test, "FEDERATION-11", "Ending a task stops its answer, while choosin
     await fedInquiryAnswered(fixture, "Out Thursday");
     expect((await engine.client.call("vault.claims.list", { predicate: "profile.statement", limit: 100 })).value).toEqual([]);
     const cancelled = await engine.client.call("cancel", { task_ref: fixture.input.task });
-    expect(cancelled.approval).toBe("auto");
-    expect(cancelled.effected).toBe(true);
+    // The owner ends their own TASK. A proposal would leave it open; name the
+    // whole receipt when that happens (first run, 15 Nov: "proposed").
+    if (cancelled.approval !== "auto") {
+      throw new Error(`Owner cancel of its own TASK did not end it: ${JSON.stringify(cancelled)}`);
+    }
     let ended: unknown;
     try { await fixture.agent.client.call("vault.inquire", { ...fixture.input, inquiry_id: fixture.pending.inquiry_id }); }
     catch (error) { ended = error; }
@@ -2272,6 +2275,8 @@ suite.test(test, "FEDERATION-13", "Revoking an inquiry edge stops new questions 
     const fixture = await fedInquiryStart(engine, engine.peers[0]!);
     await fedInquiryAnswered(fixture, "Out Thursday");
     const before = await fixture.member.client.call("vault.inquiry.scope.list", { grant: fixture.edge.grant });
+    expect(before.items.map(row => row.statement)).toEqual(["Out Thursday"]);
+    const opened = before.items[0]!;
     const revoked = await fixture.member.client.call("vault.inquiry.edge.revoke", { grant: fixture.edge.grant });
     expect(revoked.grant_ref).toBe(fixture.edge.grant);
     expect(revoked.changed).toBe(true);
@@ -2279,9 +2284,19 @@ suite.test(test, "FEDERATION-13", "Revoking an inquiry edge stops new questions 
     expect(status.pacts.find(row => row.pact === fixture.pact)?.status).toBe("Disconnected");
     const next = await fixture.agent.client.call("vault.inquire", fixture.input);
     expect(next).toMatchObject({ outcome: "unavailable", statements: [], held: false });
-    const after = await fixture.member.client.call("vault.inquiry.scope.list", { grant: fixture.edge.grant });
-    expect(after).toEqual(before);
-    expect(after.items.map(row => row.statement)).toEqual(["Out Thursday"]);
+    // The revoked grant is no live inquiry edge, so its scope list refuses; the
+    // opened WORLD and its statements stay the member's (inquiry/edge.rs).
+    let closed: unknown;
+    try { await fixture.member.client.call("vault.inquiry.scope.list", { grant: fixture.edge.grant }); }
+    catch (error) { closed = error; }
+    if (!(closed instanceof PublicHttpError)) throw new Error("A revoked inquiry edge must not list an opened scope");
+    expect(closed.reply.status).toBe(400);
+    expect(closed.error?.code).toBe("BAD_REQUEST");
+    expect(closed.error?.message).toContain("not a live inquiry edge");
+    const kept = await fedInquiryEntity(fixture.member.client, opened.claim);
+    expect(kept.kind).toBe("CLAIM");
+    expect(kept.id_hex).toBe(opened.claim);
+    expect(JSON.stringify(kept.body)).toContain("Out Thursday");
     const log = await fixture.member.client.call("vault.inquiry.list", {});
     expect(log.entries).toHaveLength(1);
     expect(log.entries.some(row => row.inquiry_id === next.inquiry_id)).toBe(false);
