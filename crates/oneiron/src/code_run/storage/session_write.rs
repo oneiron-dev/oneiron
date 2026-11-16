@@ -41,7 +41,8 @@ use crate::entity_id::EntityId;
 use crate::session_overlay::{JournalEntry, OverlayKeyspace};
 use crate::{Error, Result};
 
-use super::records::{REPLAY_RECORDS, replay_generation_matches, stored_replay_generation};
+use super::records::{replay_generation_matches, stored_replay_generation};
+use super::replay_rows;
 use super::routing::SessionBinding;
 
 impl SessionBinding<'_> {
@@ -157,10 +158,10 @@ impl SessionBinding<'_> {
         answered.bridge_calls.push(row);
         self.session.overlay().mark_bookkeeping_row(
             OverlayKeyspace::VaultMeta,
-            &REPLAY_RECORDS.key_bytes(&answered.run_id),
+            &replay_rows::key_bytes(&answered.run_id),
         )?;
         let view = self.session.read_view()?;
-        REPLAY_RECORDS.put(&view, wtxn, &answered.run_id, &answered)
+        replay_rows::put(&view, wtxn, &answered.run_id, &answered)
     }
 
     /// Settles the caller's view on the receipt `receipt` keeps for `call`:
@@ -192,7 +193,7 @@ impl SessionBinding<'_> {
         self.session
             .overlay_write_routed(&self.route, |wtxn, _apply| {
                 let store = self.session.read_view()?;
-                let Some(mut record) = REPLAY_RECORDS.get(&store, wtxn, &receipt)? else {
+                let Some(mut record) = replay_rows::get(&store, wtxn, &receipt)? else {
                     return Err(Error::InvariantViolation("a room write's receipt is gone"));
                 };
                 let Some(first) = record.bridge_calls.first_mut() else {
@@ -201,7 +202,7 @@ impl SessionBinding<'_> {
                     ));
                 };
                 *first = row;
-                REPLAY_RECORDS.put(&store, wtxn, &receipt, &record)
+                replay_rows::put(&store, wtxn, &receipt, &record)
             })
     }
 }
