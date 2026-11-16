@@ -1,31 +1,29 @@
 //! Moved from `crates/oneiron/src/skill_hub/install_transition.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use oneiron_store::write_envelope::skill_record::lifecycle::SkillLifecycle;
 
 /// Lifecycle observed at the end of the install operation, not at source fetch.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("install.lifecycle")]
 pub enum InstallLifecycle {
     Candidate,
     Active,
     Stale,
     Quarantined,
     Superseded,
-}
-
-impl InstallLifecycle {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Candidate => "candidate",
-            Self::Active => "active",
-            Self::Stale => "stale",
-            Self::Quarantined => "quarantined",
-            Self::Superseded => "superseded",
-        }
-    }
 }
 
 impl From<SkillLifecycle> for InstallLifecycle {

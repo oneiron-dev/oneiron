@@ -2,8 +2,12 @@
 //!
 //! The production executable runs only as Linux PID 1. [`serve_localtest`] is
 //! explicitly a local test adapter: it proves neither boot nor JavaScript.
+//! [`serve_batch`] runs one exchange as a transcript on a vendor's sandbox,
+//! which has no live channel to the host (L8-43).
 //! Components use the canonical typed WIT; no WASI or first-party writes link.
 
+/// The transcript channel of a run on a vendor's sandbox (L8-43).
+mod batch;
 mod filesystem;
 mod protocol;
 mod runtime;
@@ -71,6 +75,47 @@ pub fn serve_localtest<T: Read + Write + 'static>(channel: T, workspace: &Path) 
         Err(error) => Err(error),
     };
     let finish = session.finish(if outcome.is_ok() { 0 } else { 1 });
+    outcome.and(finish)
+}
+
+/// Runs one host-protocol exchange as a transcript, on a vendor's sandbox
+/// (L8-43, VENDOR-BOUNDARY = A).
+///
+/// The host's opening frames are read from `input`, and every frame this
+/// guest sends is appended to `output`, a file this call creates (it never
+/// replaces one). Each receipt the guest waits for is answered as the host
+/// answers it when nothing is wrong, and every credential read is refused:
+/// no broker is reachable from a vendor's machine. The host replays the
+/// transcript through its own checks, so nothing here is trusted. `workspace`
+/// is a private, empty directory with no symlink ancestors; the staged files
+/// are copied there, never mounted. The vendor's sandbox is the isolation:
+/// this adapter installs no fence of ours, and the host records the run as
+/// unproven.
+pub fn serve_batch(input: &Path, output: &Path, workspace: &Path) -> Result<()> {
+    let input = std::io::BufReader::new(std::fs::File::open(input)?);
+    let output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    let channel = batch::TranscriptChannel::new(input, output);
+    let mut session = protocol::Session::new(channel);
+    let setup = (|| {
+        let workspace = filesystem::Workspace::open(workspace)?;
+        if !workspace.snapshot()?.is_empty() {
+            return Err(Error::Filesystem("batch workspace must be empty"));
+        }
+        let input = session.receive(&workspace)?;
+        Ok((input, workspace))
+    })();
+    let outcome = match setup {
+        Ok((input, workspace)) => {
+            let (returned, result) = runtime::execute(session, input, workspace);
+            session = returned;
+            result
+        }
+        Err(error) => Err(error),
+    };
+    let finish = session.finish(i32::from(outcome.is_err()));
     outcome.and(finish)
 }
 

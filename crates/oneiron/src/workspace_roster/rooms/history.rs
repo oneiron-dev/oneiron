@@ -4,7 +4,7 @@ use super::*;
 use crate::store::Store;
 
 mod pages;
-pub(in crate::workspace_roster) use pages::served_page_size;
+pub(in crate::workspace_roster) use pages::served_room_page_size;
 
 pub(in crate::workspace_roster) const PAGE_LIMIT: usize = 256;
 
