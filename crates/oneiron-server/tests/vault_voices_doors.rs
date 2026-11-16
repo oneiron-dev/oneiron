@@ -1637,3 +1637,143 @@ fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_consent_and_tells_th
         );
     });
 }
+
+impl Served {
+    /// `person`'s own inbox notices that an agent logged their spoken
+    /// recognition withdrawal, as (result, detail).
+    fn subject_withdrawal_notices(
+        &self,
+        person: EntityId,
+    ) -> Vec<(Option<String>, Option<String>)> {
+        self.vault
+            .memory(person, EdgeActorClass::Human)
+            .inbox_list(None, 100)
+            .expect("the person's inbox")
+            .rows
+            .into_iter()
+            .filter(|row| {
+                serde_json::to_value(row.kind).ok()
+                    == Some(json!("voice_recognition_withdrawal_logged_for_subject"))
+            })
+            .map(|row| (row.source.result, row.source.detail))
+            .collect()
+    }
+}
+
+/// An agent logs recognition consent only for a person who holds no
+/// credential in this vault (VOICE-CONSENT-LOG-MEMBERS, consent = B): a live
+/// member consents on their own proof. The refusal logs nothing and tells
+/// no one, and the member's own consent on their own proof still lands.
+#[test]
+fn an_agent_never_logs_consent_for_a_live_member() {
+    run_on_engine_stack("voices-recognition-consent-member", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+
+        let input = recognition_consent(
+            "member-spoken-consent",
+            now,
+            Some(member),
+            &["meeting_attribution"],
+        );
+        let (status, body) = served.post(Caller::Agent, RECOGNITION_CONSENT, input).await;
+        assert_eq!(
+            error_code(&body),
+            Some("FORBIDDEN"),
+            "the agent on a live member's voice is refused: {status} {body}"
+        );
+        assert!(
+            served.consent_notices().is_empty(),
+            "a refusal tells no one"
+        );
+
+        let own = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent("member-own-consent", now, None, &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(own["subject"], member.to_hex(), "{own}");
+        assert_eq!(own["recorded_by"], member.to_hex(), "{own}");
+    });
+}
+
+/// An agent's logged withdrawal of a live member's voice stands
+/// (VOICE-CONSENT-LOG-MEMBERS, withdrawal = A: it only narrows), and the
+/// member is told in the same write that the agent recorded they asked to
+/// stop voice recognition. The owner is told as before; a counterparty, who
+/// holds no credential here, gets no such notice; a replay tells no one
+/// again.
+#[test]
+fn an_agent_logs_a_live_members_withdrawal_and_tells_the_member() {
+    run_on_engine_stack("voices-recognition-withdraw-member", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let member = served.person.actor;
+        let agent = served.agent.actor;
+        let counterparty = EntityId::now();
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.enroll_print(counterparty, "counterparty-grant", &axis_vector(2), now);
+        let grant = served.grant_agent(&[RECOGNITION_CONSENT]).await;
+
+        let withdrawal = recognition_withdrawal("member-spoken-withdrawal", now, Some(member));
+        let receipt = served
+            .ok(Caller::Agent, RECOGNITION_WITHDRAW, withdrawal.clone())
+            .await;
+        assert_eq!(receipt["subject"], member.to_hex(), "{receipt}");
+        assert_eq!(receipt["recorded_by"], agent.to_hex(), "{receipt}");
+        assert_eq!(receipt["replayed"], false, "{receipt}");
+        assert_eq!(
+            served.recognized("after-member-withdrawal", &axis_vector(1)),
+            None,
+            "recognition of the member stops in the same write"
+        );
+
+        let told = served.subject_withdrawal_notices(member);
+        assert_eq!(told.len(), 1, "one notice for the member: {told:?}");
+        let (result, detail) = &told[0];
+        assert_eq!(result.as_deref(), Some("member-spoken-withdrawal"));
+        let detail = detail.as_deref().expect("the notice says who recorded it");
+        assert!(
+            detail.contains("recorded that you asked to stop voice recognition"),
+            "{detail}"
+        );
+        assert!(
+            detail.contains(&agent.to_hex()) && detail.contains(&grant),
+            "the notice names the agent and its Grant: {detail}"
+        );
+        assert_eq!(
+            served.withdrawal_notices().len(),
+            1,
+            "the owner is told as before"
+        );
+        assert!(
+            served.subject_withdrawal_notices(owner).is_empty(),
+            "the owner's notice is the owner's kind"
+        );
+
+        let counterparty_withdrawal =
+            recognition_withdrawal("counterparty-spoken-withdrawal", now, Some(counterparty));
+        served
+            .ok(Caller::Agent, RECOGNITION_WITHDRAW, counterparty_withdrawal)
+            .await;
+        assert!(
+            served.subject_withdrawal_notices(counterparty).is_empty(),
+            "a counterparty who holds no credential here is not told"
+        );
+
+        let replay = served
+            .ok(Caller::Agent, RECOGNITION_WITHDRAW, withdrawal)
+            .await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+        assert_eq!(
+            served.subject_withdrawal_notices(member).len(),
+            1,
+            "a replay tells no one again"
+        );
+    });
+}
