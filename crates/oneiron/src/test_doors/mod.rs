@@ -11,6 +11,7 @@ pub mod agent_health;
 pub mod agent_run_handover;
 pub mod approval_target_round_trip;
 pub mod archive_import;
+pub mod archive_producers;
 pub mod archive_provenance;
 pub mod ask_answer_proof;
 pub mod authority_stored_damage;
