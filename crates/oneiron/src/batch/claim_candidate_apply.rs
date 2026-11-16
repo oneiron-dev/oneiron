@@ -99,6 +99,12 @@ pub(super) fn apply_claim_candidate(
     }
     let envelope = &resigned;
     let body = candidate.into_claim_body(envelope, default_facet)?;
+    crate::claim::world_access::admit_world_access_write(
+        store,
+        wtxn,
+        Some(actor.entity_ref()),
+        &body,
+    )?;
     // The ClaimOf weight the claim is born with: a signed initial-weight
     // entry, else the default. Both machine-history fold entry points seed
     // from this same value.

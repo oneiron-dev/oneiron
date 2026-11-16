@@ -63,6 +63,13 @@ pub(super) fn admit_claim_put(
             input.allow_reserved_predicate,
             input.replicated,
         )?;
+        // A local generic `channel_identity.*` claim is about a live
+        // identity, born Active, and names its row's own shape; a rewrite of
+        // a family head keeps its predicate, subject and value: no writer can
+        // forge or free a retained address hold.
+        if !input.allow_reserved_predicate && !input.replicated {
+            crate::channel_identity::guard_generic_claim_put_in_txn(store, txn, &id, body)?;
+        }
         crate::authority::verify_machine_claim_in_txn(
             store,
             txn,
@@ -98,6 +105,19 @@ pub(super) fn admit_claim_put(
                     occurred: input.occurred,
                     learned_at: input.learned_at,
                 },
+            )?;
+            // A stored world-access grant starts or stops governing only by
+            // a live owner: its writer at an approval, its closer at a close.
+            // A replicated row never replaces one (`sync::local_claims`).
+            crate::claim::world_access::admit_world_access_transition(
+                store,
+                txn,
+                &id,
+                body,
+                input
+                    .transition
+                    .and_then(crate::batch::VerifiedClaimTransition::closer)
+                    .map(crate::write_envelope::WriteActor::entity_ref),
             )?;
         }
         crate::scope_summary::merge_summary_ref(body)?;
@@ -181,8 +201,14 @@ pub(super) fn validate_witness_message_body(
 /// Whether `reader` may put a row at `id` in `txn` (FIX 6068): an id that
 /// names no stored row is free to take; an occupied one only when its
 /// original row, whatever it holds (a deleted, retained or other-kind row
-/// included), is one `reader` reads. Judged before any incoming body, scope
-/// stamp or edge can change what the row means.
+/// included), is one `reader` reads, and is no world-access grant or default.
+/// Judged before any incoming body, scope stamp or edge can change what the
+/// row means.
+///
+/// FIX [WORLD-ACCESS-GRANT-ROW-OVERWRITE-UNGOVERNS]: only the governed doors
+/// write either world-access tier (`claim::world_access`). A put over an
+/// owner's grant under another predicate would take that grant out of the
+/// fold, and a subject no grant governs reads base reality.
 pub(crate) fn put_target_admitted_in(
     reader: &crate::claim::ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
@@ -190,6 +216,9 @@ pub(crate) fn put_target_admitted_in(
 ) -> Result<bool> {
     if !crate::ports::EntityStoreRead::port_entity_present(&reader.vault().store, txn, id)? {
         return Ok(true);
+    }
+    if crate::claim::world_access::holds_world_access_claim_in(reader.vault(), txn, id)? {
+        return Ok(false);
     }
     match reader.is_entity_readable_in(txn, id) {
         Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),

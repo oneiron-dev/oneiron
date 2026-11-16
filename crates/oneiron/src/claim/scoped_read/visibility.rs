@@ -217,7 +217,11 @@ impl<'v> ScopedRead<'v> {
         if !self.compaction_response_bytes_readable_in(rtxn, id, raw)? {
             return Ok(false);
         }
-        if self.actor_key.vault_owner_ref().is_some() {
+        // An owner key the conversation home binds (a saved outside lane
+        // rebuilt on the owner's floor) judges each source as any reader
+        // does: the shortcut below would carry a stamped claim's words in a
+        // summary that the claim gate withholds on its own.
+        if self.actor_key.vault_owner_ref().is_some() && !self.actor_key.reads_homed_unnamed() {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited
             // source still withholds the derived row (FIX 1496 S8): C6
@@ -318,6 +322,16 @@ impl<'v> ScopedRead<'v> {
                 return self.owner_epoch_sources_use_limited_in(rtxn, id);
             }
         }
+        // A filed compaction step's words came from its `DerivedFrom` targets
+        // through any nested epoch summary, as an epoch summary's did, so the
+        // owner's use-limit conjunct walks that same lineage (review P1 on
+        // #8489): a limit behind a nested epoch summary binds the step too.
+        if crate::llm::is_compaction_step_row(
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )? {
+            return self.owner_epoch_sources_use_limited_in(rtxn, id);
+        }
         // Through this read's own view, so a room step or summary staged in a
         // session names the lineage its overlay holds (Astra r2 on #8489,
         // finding 4).
@@ -406,12 +420,13 @@ impl<'v> ScopedRead<'v> {
         Ok(false)
     }
 
-    /// Whether any record an epoch summary's words came from, through nested
-    /// epoch summaries, carries a standing C6 use limit (FIX 1496 S8). The
-    /// walk skips rows that no longer resolve instead of refusing (owner
-    /// policy), and expands through nested epoch summaries with Yes or
-    /// Unresolved keyframes, mirroring `epoch_sources_admitted_in`'s
-    /// expansion with a use-limit-only predicate.
+    /// Whether any record an epoch summary's or a filed compaction step's
+    /// words came from, through nested epoch summaries, carries a standing C6
+    /// use limit (FIX 1496 S8). The walk skips rows that no longer resolve
+    /// instead of refusing (owner policy), and expands through nested epoch
+    /// summaries with Yes or Unresolved keyframes, mirroring
+    /// `derived_from_sources_admitted_in`'s expansion with a use-limit-only
+    /// predicate.
     fn owner_epoch_sources_use_limited_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -758,8 +773,14 @@ impl<'v> ScopedRead<'v> {
         }
         // A key several of its holder's agent Grants bind reads a row only
         // where one of them alone admits it (FIX AGENT-GRAPHFS-GRANT-WORLDS),
-        // judged per row, outside the access-class cache below.
-        if grant.is_none() && !self.one_grant_alternative_admits_in(rtxn, id, raw, authority)? {
+        // judged per row, outside the access-class cache below. A key that
+        // names its holder is held to that holder's live Grants under
+        // `grant` too: `grant` admitted only the row's position, which names
+        // no facet (`Scope::admits`), and an identity key carries no facet
+        // limit of its own (Astra delta review of #8340, D1).
+        if (grant.is_none() || self.actor_key.agent_grant_holder().is_some())
+            && !self.one_grant_alternative_admits_in(rtxn, id, raw, authority)?
+        {
             return Ok(false);
         }
         // A CLAIM a reader with no record list reads is judged once per
