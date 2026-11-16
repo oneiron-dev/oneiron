@@ -84,9 +84,13 @@ pub(super) fn settle_tail(
     let (pairs, counted_pairs, ancestry) = tail_pairs(image, &judged, &uncounted);
     let memory_floor_bytes =
         crate::authority::log_budget::fold_memory_floor(Some(&log.observations.policy));
-    if crate::authority::log_budget::fold_projected_bytes(image.covered.len() + judged.len(), pairs)
-        > memory_floor_bytes
-    {
+    // The image stores pairs, not runs or merge gain: priced by its pairs,
+    // never below the whole fold's footprint.
+    let footprint = crate::authority::log_budget::AncestryFootprint::of_pairs(
+        image.covered.len() + judged.len(),
+        pairs,
+    );
+    if crate::authority::log_budget::fold_projected_bytes(footprint) > memory_floor_bytes {
         return Ok(None);
     }
     // Each tail row folds on its parents' states as the scheduler folds it,

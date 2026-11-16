@@ -4,7 +4,7 @@ use super::machine_identity::{host, request_for};
 use super::support::*;
 use super::*;
 use crate::authority::log_budget::{
-    authority_signer_label, fold_memory_floor, fold_projected_bytes,
+    AncestryFootprint, authority_signer_label, fold_memory_floor, fold_projected_bytes,
     with_fold_memory_floor_for_test, with_physical_memory_for_test, with_rows_per_signer_for_test,
 };
 
@@ -54,6 +54,17 @@ fn confirm_chain(
     chain
 }
 
+/// The ancestry footprint of a chain of `rows` rows from its genesis: each
+/// row but the genesis holds its ancestors as one run, and no row merges.
+fn chain_footprint(rows: usize) -> AncestryFootprint {
+    AncestryFootprint {
+        ids: rows as u64,
+        pairs: (rows * rows.saturating_sub(1) / 2) as u64,
+        runs: rows.saturating_sub(1) as u64,
+        merge_gain: 0,
+    }
+}
+
 fn assert_folds_closed(fold: &AuthorityFold) {
     assert!(fold.authority_log_past_bound());
     assert!(
@@ -77,7 +88,7 @@ fn a_self_signed_chain_folds_until_its_memory_floor() {
     let fold = fold_authority_log(&entries);
     assert!(!fold.authority_log_past_bound() && fold.vault_id.is_some());
     assert_eq!(fold.valid_entries.len(), 1);
-    let floor = fold_projected_bytes(LEN + 1, (LEN * (LEN + 1) / 2) as u64) - 1;
+    let floor = fold_projected_bytes(chain_footprint(LEN + 1)) - 1;
     let fold = with_fold_memory_floor_for_test(floor, || fold_authority_log(&entries));
     assert_folds_closed(&fold);
     assert_eq!(fold.authority_log_memory_floor(), Some(floor));
@@ -127,7 +138,7 @@ fn a_chain_naming_missing_parents_folds_closed_at_the_memory_floor() {
             })
             .collect()
     };
-    let floor = fold_projected_bytes(LEN + 1, (LEN * (LEN + 1) / 2) as u64);
+    let floor = fold_projected_bytes(chain_footprint(LEN + 1));
     with_fold_memory_floor_for_test(floor, || {
         let mut entries = vec![genesis.clone()];
         entries.extend(confirm_chain(&genesis, 204, LEN, |_| vec![]));
@@ -265,7 +276,7 @@ fn a_log_past_its_memory_floor_names_the_floor_and_raising_the_row_restores_it()
             .memory(person, crate::EdgeActorClass::Human)
             .safe_delete(&subject.to_hex(), crate::SafeDeleteReason::UserDelete)
     };
-    let floor = fold_projected_bytes(1, 0);
+    let floor = fold_projected_bytes(chain_footprint(1));
     host.vault
         .set_authority_observation_policy(AuthorityObservationPolicy {
             log_fold_memory_floor_bytes: Some(floor),

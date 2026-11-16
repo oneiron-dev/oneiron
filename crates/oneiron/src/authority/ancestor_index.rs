@@ -9,28 +9,27 @@
 //! `ancestor_index_door` keeps that set index as the reference and
 //! `tests/ancestor_index_equivalence.rs` compares the two.
 
+use super::log_budget::AncestryFootprint;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Each entry's whole claimed ancestry, and the counted pairs in it; or
 /// None once the fold's projected peak passes `memory_floor` bytes (H72):
-/// the fold then refuses the log rather than build the rest. Every pair
-/// costs memory, but a pair counts toward the headroom check only when
-/// neither end is a slip op of the slip issuer, which no bound counts.
+/// the fold then refuses the log rather than build the rest. The peak is
+/// priced by the ancestry's footprint (`log_budget::AncestryFootprint`), and
+/// a pair counts toward the headroom check only when neither end is a slip
+/// op of the slip issuer, which no bound counts.
 pub(in crate::authority) fn entry_ancestor_index(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     memory_floor: u64,
 ) -> Option<(AncestorIndex, u64)> {
-    if super::log_budget::fold_projected_bytes(by_hash.len(), 0) > memory_floor {
-        return None;
-    }
     let uncounted = super::log_budget::uncounted_rows(by_hash);
     let rows: Vec<_> = by_hash
         .iter()
         .map(|(hash, entry)| (*hash, entry.parent_hashes.as_slice()))
         .collect();
-    AncestorIndex::build(&rows, &uncounted, |pairs| {
-        super::log_budget::fold_projected_bytes(by_hash.len(), pairs) > memory_floor
+    AncestorIndex::build(&rows, &uncounted, |footprint| {
+        super::log_budget::fold_projected_bytes(footprint) > memory_floor
     })
 }
 
@@ -66,15 +65,16 @@ pub(in crate::authority) struct Ancestors<'a> {
 
 impl AncestorIndex {
     /// The index of `rows`, sorted by hash, each with its claimed parents in
-    /// listed order; or None once `refuses` holds for the pairs built so
-    /// far. `refuses` must be monotone in the pairs, as the memory floor is,
-    /// so the verdict is the one the whole log's pairs give. Pairs whose
-    /// descendant or ancestor is in `uncounted` are left out of the counted
-    /// pairs returned beside the index.
+    /// listed order; or None once `refuses` holds for the footprint built so
+    /// far (every id first, then each row's pairs, runs and merge gain).
+    /// `refuses` must be monotone in each part of the footprint, as the
+    /// memory floor is, so the verdict is the one the whole log's footprint
+    /// gives. Pairs whose descendant or ancestor is in `uncounted` are left
+    /// out of the counted pairs returned beside the index.
     pub(in crate::authority) fn build(
         rows: &[(AuthorityEntryHash, &[AuthorityEntryHash])],
         uncounted: &BTreeSet<AuthorityEntryHash>,
-        refuses: impl Fn(u64) -> bool,
+        refuses: impl Fn(AncestryFootprint) -> bool,
     ) -> Option<(Self, u64)> {
         let mut nodes: Vec<_> = rows
             .iter()
@@ -86,6 +86,13 @@ impl AncestorIndex {
         // Ids are u32. A log with more nodes claims at least as many
         // ancestor pairs, past any memory floor a machine can hold.
         let node_count = u32::try_from(nodes.len()).ok()?;
+        let mut footprint = AncestryFootprint {
+            ids: u64::from(node_count),
+            ..AncestryFootprint::default()
+        };
+        if refuses(footprint) {
+            return None;
+        }
         let place = |hash: &AuthorityEntryHash| {
             nodes
                 .binary_search(hash)
@@ -132,7 +139,7 @@ impl AncestorIndex {
 
         let mut runs: Vec<Option<Box<[(u32, u32)]>>> = vec![None; nodes.len()];
         let mut lens = vec![0_u32; nodes.len()];
-        let (mut pairs, mut counted_pairs) = (0_u64, 0_u64);
+        let mut counted_pairs = 0_u64;
         let mut gathered = Vec::new();
         // Components come ancestors first, so every parent outside a
         // component already holds its runs.
@@ -163,8 +170,24 @@ impl AncestorIndex {
                 if !is_row[member as usize] {
                     continue;
                 }
-                pairs += u64::from(len);
-                if refuses(pairs) {
+                // What `merge_states` adds to the first parent's clone: the
+                // ancestors that parent's ancestry lacks (a parent in this
+                // component holds this ancestry; one the log lacks, none).
+                let merge_gain = match parents_of(member) {
+                    [first, _, ..] => {
+                        let first_len = if (start..end).contains(&id_of_node[*first as usize]) {
+                            len
+                        } else {
+                            lens[*first as usize]
+                        };
+                        u64::from(len).saturating_sub(1 + u64::from(first_len))
+                    }
+                    _ => 0,
+                };
+                footprint.pairs += u64::from(len);
+                footprint.runs += merged.len() as u64;
+                footprint.merge_gain += merge_gain;
+                if refuses(footprint) {
                     return None;
                 }
                 if !uncounted.contains(&nodes[member as usize]) {
@@ -181,7 +204,7 @@ impl AncestorIndex {
                 node_of_id,
                 runs,
                 lens,
-                pairs,
+                pairs: footprint.pairs,
             },
             counted_pairs,
         ))

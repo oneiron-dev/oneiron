@@ -54,7 +54,7 @@ pub fn by_runs(
         .map(|(hash, parents)| (*hash, parents.as_slice()))
         .collect();
     let (index, counted_pairs) =
-        AncestorIndex::build(&listed, uncounted, |pairs| pairs > pair_limit)?;
+        AncestorIndex::build(&listed, uncounted, |footprint| footprint.pairs > pair_limit)?;
     let candidates = candidates(rows, probe);
     let mut ancestry = IndexedAncestry {
         indexed: candidates

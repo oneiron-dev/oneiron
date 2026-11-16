@@ -17,7 +17,7 @@ use super::*;
 use crate::HostingPrivacyPosture::Hosted;
 use crate::authority::entry_transition::TRANSITIONED_FOR_TEST;
 use crate::authority::fold_resume::{FoldBase, RESUMED_FOR_TEST, StoredLog, fold_stored_log};
-use crate::authority::log_budget::fold_projected_bytes;
+use crate::authority::log_budget::{AncestryFootprint, fold_projected_bytes};
 use crate::world_keys::{
     FIRST_GENERATION, PolicyRevision, RecoveryRootSeed, WorldKey, WorldKeyBinding, WrapRecipient,
     seal_world_key,
@@ -762,8 +762,10 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
     }
 
     // The memory floor over the whole log, the issuer's uncounted slip rows
-    // included: a row at the floor resumes, a row past it falls back to the
-    // refusal.
+    // included: a row at the resumed gate's floor resumes, a row past it
+    // falls back to the whole fold. The base stores pairs, so the resumed
+    // gate prices them (`AncestryFootprint::of_pairs`); the whole fold
+    // prices the chain's runs and folds it.
     let mut slipped = chain_log.clone();
     let mut chain = Chain::after(&slipped);
     for kind in [5, 4] {
@@ -772,7 +774,10 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
     }
     let row = chain.inert(2, tip(&slipped));
     let rows = slipped.len() + 1;
-    let bytes = fold_projected_bytes(rows, (rows * (rows - 1) / 2) as u64);
+    let bytes = fold_projected_bytes(AncestryFootprint::of_pairs(
+        rows,
+        (rows * (rows - 1) / 2) as u64,
+    ));
     for (case, floor, resumes) in [
         ("a row at the memory floor", bytes, true),
         ("a row past the memory floor", bytes - 1, false),

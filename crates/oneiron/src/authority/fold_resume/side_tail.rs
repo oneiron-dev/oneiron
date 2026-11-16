@@ -155,7 +155,10 @@ pub(super) fn fold_tail(
         ancestry.insert(*hash, (ancestors, counted_ancestors));
         pairs = pairs.saturating_add(ancestors);
         counted_pairs = counted_pairs.saturating_add(counted(hash) * counted_ancestors);
-        if crate::authority::log_budget::fold_projected_bytes(rows, pairs)
+        // The base stores pairs, not runs or merge gain: priced by its
+        // pairs, never below the whole fold's footprint.
+        let footprint = crate::authority::log_budget::AncestryFootprint::of_pairs(rows, pairs);
+        if crate::authority::log_budget::fold_projected_bytes(footprint)
             > context.memory_floor_bytes
         {
             return None;

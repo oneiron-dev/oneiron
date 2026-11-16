@@ -44,13 +44,53 @@ pub const MAX_AUTHORITY_ROWS_PER_SIGNER: usize = 2048;
 /// it; strangers' shared bound and the fold's memory floor stay.
 pub const AUTHORITY_LOG_SIGNER_COUNT_ADVISORY: bool = true;
 
-/// What one fold holds at its peak, per row and per ancestor pair, measured
-/// on the fleet (10-16) and rounded up: at most 11.6 KB a row with no
-/// ancestors, and 252 to 626 bytes a pair (a confirm chain, then one agent
-/// enrolled and bound per row). A row's state holds what its ancestors
-/// added, so the pairs carry the states as well as the ancestry index.
-const FOLD_BYTES_PER_ROW: u64 = 16 * 1024;
-const FOLD_BYTES_PER_ANCESTOR_PAIR: u64 = 640;
+/// What one fold holds at its peak, per ancestry id, per run of ids and per
+/// entry of merge gain (row [ROSTER-KEY-LOG-FLOOD], PR 4; see
+/// [`AncestryFootprint`]). Fold states share what a row did not change (PR
+/// 2) and the ancestry index holds runs (PR 1), so a row's peak no longer
+/// grows with its ancestor count: an id costs its row's state and its node,
+/// a run its two bounds, and a merge gain entry what `merge_states` adds to
+/// its left clone.
+// PENDING the re-measurement (opus-anchorsec/fold-memory-measure-v3
+// ee99d5bdfa20): each constant becomes its largest measured value x 1.25,
+// rounded up, with the families, the job and the log sha named here.
+const FOLD_BYTES_PER_ID: u64 = 16 * 1024;
+const FOLD_BYTES_PER_RUN: u64 = 640;
+const FOLD_BYTES_PER_MERGE_GAIN: u64 = 640;
+
+/// The size of a log's claimed ancestry as the fold's memory floor prices
+/// it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct AncestryFootprint {
+    /// Every row and every claimed parent the log lacks: the ancestor
+    /// index's ids.
+    pub(super) ids: u64,
+    /// The sum of every row's ancestor count. Not priced; the headroom
+    /// advisory and the index's reference door read it.
+    pub(super) pairs: u64,
+    /// The runs of ids that hold every row's ancestry, summed.
+    pub(super) runs: u64,
+    /// For each row with two parents or more, the ancestors its first
+    /// parent's ancestry lacks: its ancestor count, less one, less its first
+    /// parent's ancestor count. 0 on a chain or a star.
+    pub(super) merge_gain: u64,
+}
+
+impl AncestryFootprint {
+    /// The footprint a gate that knows only `rows` and their `pairs` (an
+    /// image stores no runs or merge gain) prices: never below the whole
+    /// fold's, since a row's runs are at most its ancestors plus one and its
+    /// merge gain at most its ancestors.
+    pub(super) fn of_pairs(rows: usize, pairs: u64) -> Self {
+        let rows = rows as u64;
+        Self {
+            ids: rows,
+            pairs,
+            runs: pairs.saturating_add(rows),
+            merge_gain: pairs,
+        }
+    }
+}
 
 #[cfg(test)]
 thread_local! {
@@ -171,12 +211,19 @@ fn physical_memory_bytes() -> Option<u64> {
     }
 }
 
-/// What a fold of `rows` rows indexing `pairs` ancestor pairs holds at its
-/// peak.
-pub(super) fn fold_projected_bytes(rows: usize, pairs: u64) -> u64 {
-    (rows as u64)
-        .saturating_mul(FOLD_BYTES_PER_ROW)
-        .saturating_add(pairs.saturating_mul(FOLD_BYTES_PER_ANCESTOR_PAIR))
+/// What a fold of a log with ancestry `footprint` holds at its peak. It
+/// grows with each part of the footprint, so a check on a partial footprint
+/// refuses no log the whole one admits.
+pub(super) fn fold_projected_bytes(footprint: AncestryFootprint) -> u64 {
+    footprint
+        .ids
+        .saturating_mul(FOLD_BYTES_PER_ID)
+        .saturating_add(footprint.runs.saturating_mul(FOLD_BYTES_PER_RUN))
+        .saturating_add(
+            footprint
+                .merge_gain
+                .saturating_mul(FOLD_BYTES_PER_MERGE_GAIN),
+        )
 }
 
 impl AuthorityFold {
