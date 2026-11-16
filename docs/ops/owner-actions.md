@@ -2429,13 +2429,17 @@ contact offer.
   `once` discloses this once and keeps nothing. `standing` clears the contact for that Scope
   until you narrow or revoke it. `deny` refuses. An offer settles once. It is refused when it
   expired, when the delta differs from what you were shown, when the contact's clearance changed
-  since it was filed, or when the credential line that filed it tries to settle it.
+  since it was filed, or when the credential line that filed it tries to settle it. A stale,
+  settled or changed offer answers 409 with the `consent_widen_proposal` state, as
+  `/entry/confirm` and `/entry/decline` do.
 - `POST /v1/owner/disclosure/narrow` with `{"contact": "<hex>", "scope": {...}}` narrows a
   standing clearance to a Scope inside the current one.
 - `POST /v1/owner/disclosure/revoke` with `{"contact": "<hex>"}` is
   `consent.revoke_contact_disclosure`. The row stays, revoked, and admits nothing.
 - `POST /v1/owner/disclosure/preclear` with `{"set_name": "...", "contacts": [...], "scope": {...}}`
-  clears a named trusted set in advance, 1 to 256 contacts, one receipt each.
+  clears a named trusted set in advance, 1 to 256 contacts, one receipt each. A refused narrow or
+  trusted set (a Scope wider than the current clearance, an inactive contact, a contact named
+  twice) answers 409 with the `consent_refused` state.
 - `GET` and `PUT /v1/owner/disclosure/mode` read and set the mode: `always_ask` (the companion
   never offers), `auto` (the default) or `always_yes` (pre-clear trusted sets; offers stay
   allowed). No mode clears anyone by itself.

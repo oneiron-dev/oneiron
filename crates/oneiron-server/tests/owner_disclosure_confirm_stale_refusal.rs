@@ -12,6 +12,13 @@
 //! The second confirm of a real offer is the row's double-click case; the
 //! unknown-ref confirm is the same arm through the missing-row path.
 //!
+//! A consent refusal on any other owner route names no proposal
+//! ([OWNER-DISCLOSURE-NARROW-STATE-STRING]): `POST /v1/owner/disclosure/preclear`
+//! with one contact named twice answers 409 `INVALID_STATE` with the
+//! `consent_refused` state. On main it answers 500, and on the first fix
+//! (which mapped every owner route's consent refusal to the widen proposal)
+//! it names `consent_widen_proposal`, an offer the trusted set never had.
+//!
 //! Deterministic: in-process vault and router (`oneshot`, no TCP ports, no
 //! sleeps, no models). The offer is filed by the engine itself
 //! (`offer_contact_disclosure_as_engine`), so the test needs no agent slips.
@@ -45,6 +52,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 const CONFIRM: &str = "/v1/owner/disclosure/confirm";
+const PRECLEAR: &str = "/v1/owner/disclosure/preclear";
 
 struct OwnerClient {
     app: Router,
@@ -234,5 +242,34 @@ fn confirm_settled_offer_answers_stale_proposal() {
         // The double-click: the settled offer takes no second answer.
         let (status, body) = client.post(CONFIRM, input).await;
         assert_stale_proposal(status, &body);
+    });
+}
+
+#[test]
+fn preclear_repeated_contact_answers_consent_refused() {
+    run_on_engine_stack("disclosure-preclear-repeated", || async {
+        let dir = tempfile::tempdir().expect("temporary vault directory");
+        let client = OwnerClient::new(dir.path());
+        // One contact named twice: the engine refuses the trusted set whole
+        // (InvalidConsentBound) before it reads any contact. No offer is
+        // involved, so the refusal names no widen proposal.
+        let contact = EntityId::now().to_hex();
+        let scope = serde_json::to_value(Scope::top()).expect("the Scope as JSON");
+        let (status, body) = client
+            .post(
+                PRECLEAR,
+                json!({
+                    "set_name": "reading-group",
+                    "contacts": [contact, contact],
+                    "scope": scope,
+                }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "INVALID_STATE", "{body}");
+        assert_eq!(
+            body["error"]["details"]["state"], "consent_refused",
+            "{body}"
+        );
     });
 }

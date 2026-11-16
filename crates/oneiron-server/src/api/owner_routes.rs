@@ -441,12 +441,15 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
             }
-            // [DISCLOSURE-CONFIRM-STALE-500]: a stale, changed, missing or
-            // resolved consent row the caller named answers as the core widen
-            // route does (`widen_refusal`), never a 500.
+            // [DISCLOSURE-CONFIRM-STALE-500], [OWNER-DISCLOSURE-NARROW-STATE-STRING]:
+            // a consent act the engine refused (a narrowing wider than the
+            // clearance, an inactive contact, a repeated trusted-set contact,
+            // a consent row that failed validation) is a refused state, never
+            // a 500. An answer to one frozen offer names the widen proposal
+            // instead (`disclosure_routes::offer_answer_refusal`).
             oneiron::ErrorKind::InvalidConsentGrantRow
             | oneiron::ErrorKind::InvalidConsentBound => {
-                ApiError::invalid_state(Some("consent_widen_proposal"))
+                ApiError::invalid_state(Some("consent_refused"))
             }
             oneiron::ErrorKind::SecretRefNotFound => ApiError::not_found("secret", None),
             oneiron::ErrorKind::SecretCustodyNotActive => {
@@ -494,10 +497,19 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
 pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
+    blocking_with(owner_error, work).await
+}
+
+/// [`blocking`] with the route's own refusal map in place of
+/// [`owner_error`], for a route whose engine refusal names its own state.
+pub(super) async fn blocking_with<T: Send + 'static>(
+    refusal: fn(OwnerError) -> ApiError,
+    work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
+) -> Result<T, ApiError> {
     super::clock_ingress::run_blocking(work)
         .await
         .map_err(|_| ApiError::internal_server_error("owner action task failed"))?
-        .map_err(owner_error)
+        .map_err(refusal)
 }
 
 /// The status root admin command's answer, at `GET /v1/owner/status` and
