@@ -531,7 +531,7 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
         Err(Error::Record(RecordError::ConnectorCharterMissing))
     ));
     assert!(matches!(
-        vault.discard_connector_charter(&id, 1_001),
+        vault.discard_connector_charter(&id),
         Err(Error::Record(RecordError::ConnectorCharterMissing))
     ));
 
@@ -595,7 +595,7 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
 
     // Discard clears a re-staged proposal without touching approved policy.
     vault.propose_connector_charter(&id, "never call", 1_006)?;
-    let discarded = vault.discard_connector_charter(&id, 1_007)?;
+    let discarded = vault.discard_connector_charter(&id)?;
     assert!(discarded.pending_charter.is_none());
     let retained = discarded.charter.as_ref().expect("retained charter");
     assert_eq!(retained.stamped_aggregate, block.stamped_aggregate);
@@ -670,7 +670,7 @@ fn revoked_key_charter_ops_fail_closed_and_revoke_clears_pending() -> Result<()>
     ));
     // Discard on a revoked key errors too.
     assert!(matches!(
-        vault.discard_connector_charter(&id, 1_004),
+        vault.discard_connector_charter(&id),
         Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     Ok(())

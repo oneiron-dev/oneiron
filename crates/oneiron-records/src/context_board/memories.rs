@@ -1,12 +1,14 @@
 //! Moved from `crates/oneiron/src/context_board/memories.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Stable MEMORIES section slot names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("memory.slot")]
 pub enum MemorySlot {
     Claims,
     Turns,
@@ -16,17 +18,6 @@ pub enum MemorySlot {
 }
 
 impl MemorySlot {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Claims => "claims",
-            Self::Turns => "turns",
-            Self::Summaries => "summaries",
-            Self::Facets => "facets",
-            Self::Other => "other",
-        }
-    }
-
     #[must_use]
     pub const fn sort_rank(self) -> u8 {
         match self {

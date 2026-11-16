@@ -35,6 +35,7 @@ mod broker_context;
 mod broker_media;
 mod broker_rerank;
 mod broker_responses;
+mod broker_stream;
 mod cache_usage;
 mod catalog;
 mod cooldown;
@@ -567,6 +568,7 @@ fn rung(
             backend: Arc::clone(backend),
         },
         media: None,
+        hours: None,
     })
 }
 
@@ -699,6 +701,7 @@ fn native_rung(
         prompt,
         offer,
         media: None,
+        hours: None,
     })
 }
 
