@@ -16,6 +16,7 @@ use oneiron::claim::{
 };
 use oneiron::dreamer_runner::DreamerAttemptBinding;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryResult};
+use oneiron::test_doors::derive::permit_imported_auto;
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
 };
@@ -23,7 +24,10 @@ use oneiron::test_doors::extraction_single_valued::seed_extraction_single_valued
 use oneiron::test_doors::extraction_verdict::dreamer_extraction_verdict_source_version;
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{EntityId, TimeRange, Vault};
+use oneiron::{
+    ClaimCandidate, EdgeActorClass, EntityId, TimeRange, Vault, WriteActor, WriteEnvelope,
+    WriteProvenance,
+};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -339,11 +343,12 @@ fn listed_rows_drive_a_correction_pack_past_the_claim_pins() -> ListingTestResul
 fn single_valued_and_non_widening_facts_match_the_native_policy() -> ListingTestResult<()> {
     let dir = tempfile::tempdir()?;
     let vault = Arc::new(open_listing_vault(&dir)?);
+    let owen = EntityId::now();
+    seed_named_person(&vault, &owen, "owen", vault.now_recorded_at())?;
+    permit_imported_auto(&vault, owen)?;
     seed_extraction_single_valued_predicates(&vault, &["profile.name"])?;
     let actor = dreamer(&vault)?;
     stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
-    let owen = EntityId::now();
-    seed_named_person(&vault, &owen, "owen", vault.now_recorded_at())?;
     let stated = land_food_claim(
         &vault,
         owen,
@@ -358,13 +363,32 @@ fn single_valued_and_non_widening_facts_match_the_native_policy() -> ListingTest
         Some(ClaimSource::Inferred),
         ClaimApprovalStatus::Auto,
     )?;
-    let imported = land_food_claim(
-        &vault,
-        owen,
-        "oolong",
-        Some(ClaimSource::Imported),
+    let imported = EntityId::now();
+    let now = vault.now_recorded_at();
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(owen, EdgeActorClass::Human),
+        ClaimSource::Imported,
+        WriteProvenance::new(RmpValue::from("imported-food-fixture"))?,
         ClaimApprovalStatus::Auto,
-    )?;
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &imported,
+            ClaimCandidate::new(
+                "preference.food",
+                ClaimSubject::Entity(owen),
+                RmpValue::from("oolong"),
+                1.0,
+            ),
+            &envelope,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .commit()?;
     let missing = land_food_claim(&vault, owen, "jasmine", None, ClaimApprovalStatus::Auto)?;
     let witnessed =
         witness_extraction_turns(&vault, &["owen savors green tea", "owen cooks daily"])?;
