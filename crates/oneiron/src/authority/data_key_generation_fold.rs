@@ -42,7 +42,7 @@ pub(super) struct CountedDataKeyGeneration {
 }
 
 /// One generation's delivery as this fold holds it: the commitment every
-/// counted record names, the link and capsules of the first counted entry,
+/// counted record names, every readable counted record's link and capsules,
 /// and whether anything conflicts it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldedDataKeyGeneration {
@@ -55,15 +55,28 @@ pub struct FoldedDataKeyGeneration {
     /// Two counted records disagree, or the eligible chain breaks below:
     /// no device adopts this generation.
     pub conflicted: bool,
-    /// The link bytes of the first counted entry: the old key sealed under
-    /// the new one.
-    pub link: Vec<u8>,
-    /// The capsules of the first counted entry, ascending by machine.
-    pub capsules: Vec<(EntityId, Vec<u8>)>,
+    /// Every counted record whose row reads, ascending by entry hash. Records
+    /// of one eligible generation name one commitment and one previous, so
+    /// each delivers the same key; a receiver tries each, and a copy with
+    /// unreadable capsules never hides the record that carries a good one.
+    pub deliveries: Vec<DataKeyGenerationDelivery>,
     /// The counted entries, ascending by hash.
     pub entries: Vec<AuthorityEntryHash>,
     /// The machines whose install keys signed them.
     pub signers: BTreeSet<EntityId>,
+}
+
+/// One counted record's delivery of its generation's key.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DataKeyGenerationDelivery {
+    /// The carrying entry.
+    pub entry: AuthorityEntryHash,
+    /// The machine whose install key signed it.
+    pub machine: EntityId,
+    /// The link bytes: the old key sealed under the new one.
+    pub link: Vec<u8>,
+    /// The capsules, ascending by machine.
+    pub capsules: Vec<(EntityId, Vec<u8>)>,
 }
 
 impl AuthorityFold {
@@ -156,9 +169,9 @@ pub(super) fn merge_data_key_generations(
 }
 
 /// The fold's public view of every generation with a counted record, in
-/// generation order, with the link and capsules read from the first counted
-/// entry's row. A generation whose rows read as nothing counts as conflicted:
-/// a receiver never adopts what the fold cannot show it.
+/// generation order, with the link and capsules of every counted entry whose
+/// row reads. A generation none of whose rows reads counts as conflicted: a
+/// receiver never adopts what the fold cannot show it.
 pub(super) fn folded_data_key_generations(
     state: &FoldState,
     by_hash: &dyn RowsReadWhole,
@@ -187,19 +200,24 @@ pub(super) fn folded_data_key_generations(
             commitments.iter().next().copied().unwrap_or([0; 32]),
             previous_set.iter().next().copied().unwrap_or([0; 32]),
         );
-        let (link, capsules) = entries
+        let deliveries: Vec<DataKeyGenerationDelivery> = entries
             .iter()
-            .find_map(|hash| {
+            .filter_map(|hash| {
                 let AuthorityOp::DataKeyGeneration(record) = &by_hash.get(hash)?.op else {
                     return None;
                 };
-                Some((record.link.clone(), record.capsules.clone()))
+                // A valid record never carries empty link bytes.
+                (!record.link.is_empty()).then(|| DataKeyGenerationDelivery {
+                    entry: *hash,
+                    machine: record.machine,
+                    link: record.link.clone(),
+                    capsules: record.capsules.clone(),
+                })
             })
-            .unwrap_or_default();
-        // A valid record never carries empty link bytes, so an empty link
-        // means no counted row read: fail closed.
+            .collect();
+        // No counted row read: fail closed.
         let conflicted =
-            commitments.len() != 1 || previous_set.len() != 1 || link.is_empty() || !chained;
+            commitments.len() != 1 || previous_set.len() != 1 || deliveries.is_empty() || !chained;
         if !conflicted {
             eligible.insert(*generation, commitment);
         }
@@ -210,8 +228,7 @@ pub(super) fn folded_data_key_generations(
                 commitment,
                 previous,
                 conflicted,
-                link,
-                capsules,
+                deliveries,
                 entries,
                 signers,
             },

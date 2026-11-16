@@ -202,8 +202,9 @@ fn device_b_reads_a_checkpoint_sealed_on_a_after_as_new_generation_with_no_unloc
     assert!(!folded.conflicted, "one generation counts alone");
     assert!(
         folded
-            .capsules
+            .deliveries
             .iter()
+            .flat_map(|delivery| &delivery.capsules)
             .any(|(to, _)| *to == device_b.machine),
         "the delivery carries a capsule for B"
     );
