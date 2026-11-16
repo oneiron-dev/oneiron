@@ -63,13 +63,16 @@ use serde::Serialize;
 /// 41: a carried machine answer that needed an owner key's proof and carried none is held
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
-/// 42: only the roster's chain admits or removes an owner act's carrier, never an anchor's
+/// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
+/// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
+/// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
+/// 43: only the roster's chain admits or removes an owner act's carrier, never an anchor's
 /// (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1, and FIX
 /// FOREIGN-ANCHOR-ADMIT-SIDE); every other shared judge reads the roster's chain alone too (an
 /// owner key's enrolled machine, a residence result's signer, a one-machine pick, the
 /// names-the-key gates; Fable pass 29 K3), and a one-machine pick needs a live roster head in
 /// any role, not "yours". The train assigns the final number.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

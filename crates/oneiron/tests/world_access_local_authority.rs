@@ -598,11 +598,13 @@ fn a_peers_machine_history_builds_its_row_here() {
 /// A same-vault peer's MACHINE claim history whose target is a grant stored
 /// here never replaces the grant (REVIEW-7793 round 2). Its control rows
 /// carry ids of their own, so the replay door's stored-row check passes
-/// them; the pin exchange they reach adopts nothing over a world-access
-/// tier, so the narrower grant still meets the wider one. Window ingest
-/// reaches the same exchange. Red on #7793's second head 52dc436eda93: the
-/// adopted history put the peer's ordinary claim over the narrower grant,
-/// and the agent read the wider grant's world.
+/// them; the door drops each row whose target is a grant stored here, so
+/// the narrower grant still meets the wider one. Red on #7793's second head
+/// 52dc436eda93: the adopted history put the peer's ordinary claim over the
+/// narrower grant, and the agent read the wider grant's world. Red on main
+/// 04a718a164c4 at "replayed": the exchange adopted nothing and the grant's
+/// bytes stood, but the landed control rows indexed its id as machine
+/// history, so the read predicate quarantined it and the fold dropped it.
 #[test]
 fn a_peers_machine_history_never_replaces_a_local_grant() {
     let here = TestNode::new("here", 4);
@@ -628,4 +630,65 @@ fn a_peers_machine_history_never_replaces_a_local_grant() {
         "the narrower grant stored here stands"
     );
     assert_governed_by_both(&g, narrow, &here.vault, "replayed");
+}
+
+/// The window door drops the same peer's MACHINE claim history: its control
+/// rows target a grant stored here, so none of them lands, and the rest of
+/// the window does. Landed, they would index the grant's id as machine
+/// history and the read predicate would quarantine the narrower grant, as
+/// the replay door's case above shows. Red on main 04a718a164c4: the rows
+/// land (fails at "synced: both grants govern the agent"), or are refused
+/// into quarantine.
+#[test]
+fn a_peers_machine_history_in_a_window_never_replaces_a_local_grant() {
+    let (a, b) = vault_pair();
+    let g = Grant::new();
+    let narrow = EntityId::now();
+    g.put_agent(&b.vault);
+    g.put_grant(&b.vault);
+    put_base_only_grant(&b.vault, g.agent, &narrow);
+    let stored = b
+        .vault
+        .get_raw(&narrow)
+        .unwrap()
+        .expect("narrower grant on B");
+    let (_origin, history) = peer_history_at(narrow);
+    join_peer_vault(&b.vault, &history);
+    assert_governed_by_both(&g, narrow, &b.vault, "joined");
+    let beside = EntityId::now();
+    a.put_entity_in_window(
+        WINDOW,
+        &beside,
+        &make_entity_blob(ENTITY_TYPE_PERSON, T0, b"beside"),
+    );
+    let entities = a.doc(WINDOW).get_map("entities");
+    for (id, raw) in &history.controls {
+        map_insert_bytes(&entities, &id.to_hex(), raw);
+    }
+    a.doc(WINDOW).commit();
+    let quarantined = b.quarantine_rows();
+
+    exchange(&a, &b, WINDOW);
+
+    assert!(
+        b.vault.get_raw(&beside).unwrap().is_some(),
+        "the rest of the peer's window lands"
+    );
+    assert_eq!(
+        b.vault.get_raw(&narrow).unwrap().as_deref(),
+        Some(stored.as_slice()),
+        "the narrower grant stored here stands"
+    );
+    assert_eq!(
+        b.quarantine_rows(),
+        quarantined,
+        "the rows are dropped, not refused into quarantine"
+    );
+    assert_governed_by_both(&g, narrow, &b.vault, "synced");
+    for (id, _) in &history.controls {
+        assert!(
+            b.vault.get_raw(id).unwrap().is_none(),
+            "the control row {id:?} is dropped"
+        );
+    }
 }
