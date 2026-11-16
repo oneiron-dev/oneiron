@@ -827,7 +827,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     }
     let legacy = schema_version == FEDERATION_GRANT_LEGACY_SCHEMA_VERSION;
     validate_body_keys(entries, schema_version)?;
-    if !legacy && optional_value(entries, "authority_scope").is_none() {
+    if !legacy && optional_value(entries, "authority_scope")?.is_none() {
         return Err(invalid_grant());
     }
 
@@ -842,17 +842,17 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         .and_then(FederationGrantPreset::parse)
         .ok_or_else(invalid_grant)?;
 
-    let expires_at = optional_value(entries, KEY_EXPIRES_AT)
+    let expires_at = optional_value(entries, KEY_EXPIRES_AT)?
         .map(|value| value.as_u64().ok_or_else(invalid_grant))
         .transpose()?;
-    let delegated_by = optional_value(entries, KEY_DELEGATED_BY)
+    let delegated_by = optional_value(entries, KEY_DELEGATED_BY)?
         .map(decode_canonical_entity_ref)
         .transpose()?;
-    let guest = optional_value(entries, KEY_GUEST)
+    let guest = optional_value(entries, KEY_GUEST)?
         .map(decode_guest_payload)
         .transpose()?;
     // Present only as `true`: a body states the mark or omits it.
-    let owner_agent = match optional_value(entries, KEY_OWNER_AGENT) {
+    let owner_agent = match optional_value(entries, KEY_OWNER_AGENT)? {
         None => false,
         Some(value) if value.as_bool() == Some(true) => true,
         Some(_) => return Err(invalid_grant()),

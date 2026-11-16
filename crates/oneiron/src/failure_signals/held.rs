@@ -82,20 +82,8 @@ pub(super) struct HeldBatch {
     stage: HeldStage,
 }
 
-/// Where a kept batch stood after its last send. A record: what a pass does
-/// with a carried batch is read from durable facts, and this counts only
-/// where the Gate's decisions on it are gone, to say the Gate held it once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum HeldStage {
-    /// Written before its send.
-    Staged,
-    /// The Gate held it for the owner.
-    Held,
-    /// Admitted on the owner's press and failed definitely: it retries
-    /// under its own ref on that recorded press (CALLS `FIX 6679 held batch
-    /// retry proof`).
-    Admitted,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::failure_signals::held::HeldStage;
 
 /// One batch's send this pass: its custody, its request, and for a carried
 /// batch the approve-once digest the owner's answer to it names.
