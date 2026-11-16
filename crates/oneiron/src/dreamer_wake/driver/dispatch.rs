@@ -200,6 +200,10 @@ impl DreamerWakeDriver<'_> {
                         != crate::dreamer_runner::maintenance::digest::DIGEST_ASSESS_FACET
                     && admitted.status.payload.attempt_type
                         != crate::dreamer_runner::maintenance::CLAIM_SOURCE_RECHECK_FACET
+                    // The strength archive runs in the host's job adapter
+                    // (untangle 6.9c, RULING S69C-DESIGN item 8).
+                    && admitted.status.payload.attempt_type
+                        != crate::dreamer_runner::maintenance::CONSOLIDATION_STRENGTH_FACET
                 {
                     crate::dreamer_runner::maintenance::execute(
                         admitted,

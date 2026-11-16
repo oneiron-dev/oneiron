@@ -43,24 +43,10 @@ use crate::workspace_roster::{
 };
 use crate::{EntityId, Vault, WriteActor};
 
-/// The host's verb on a card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OfferAnswer {
-    Join,
-    NotNow,
-}
-
-/// An answer to one card. It cannot change the card, its payer, thread or
-/// cap: those are read back from the stored card.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferAnswerRequest {
-    pub offer_id: String,
-    pub action: OfferAnswer,
-    /// The answerer's idempotency key: one or more printable bytes.
-    pub intent_key: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::offer_settle::{
+    OfferAnswer, OfferAnswerRequest,
+};
 
 /// What an answer left: the card's state, the join as last decided, and the
 /// turn or diary NOTE it landed.

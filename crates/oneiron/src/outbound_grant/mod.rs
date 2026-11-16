@@ -10,6 +10,7 @@
 mod bound;
 mod consume;
 mod doors;
+mod index;
 mod spelling;
 mod verb_class;
 
@@ -24,9 +25,19 @@ pub(crate) use self::consume::{
     ChannelIdentityGrantAdmission, ChannelIdentityGrantReservation, ChannelIdentityGrantRetention,
     admit_channel_identity_grant_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::doors::{
+    scanned_standing_outbound_grant_in_txn, scanned_standing_outbound_grants_for_principal_in_txn,
+};
 pub(crate) use self::doors::{
     standing_outbound_grant_in_txn, standing_outbound_grants_for_principal_in_txn,
     standing_outbound_grants_in_txn,
+};
+pub(crate) use self::index::index_standing_outbound_grant_row_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::index::{
+    drop_standing_outbound_grant_index, indexed_grants_for_principal_in_txn,
+    indexed_grants_with_id_in_txn, standing_outbound_grant_index_complete,
 };
 
 pub(crate) use self::verb_class::verb_in_class;

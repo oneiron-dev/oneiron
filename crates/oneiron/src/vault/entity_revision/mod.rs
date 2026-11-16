@@ -24,12 +24,21 @@ pub(crate) use pending_index::{
 pub(crate) use phonetic::{defer_phonetic, index_name_phonetic};
 pub(crate) use repo_projection::refresh_repo_revision_projection_in_txn;
 mod storage;
+mod timeline;
 pub(crate) use storage::checkpoint;
+#[cfg_attr(
+    not(oneiron_test_support),
+    allow(
+        unused_imports,
+        reason = "the graph-FS memory fork (L3-39 PR 2) reads the timeline; today only its test door does"
+    )
+)]
+pub(crate) use timeline::{memory_frontier_in_txn, revision_at_frontier_in_txn};
 mod turn_text;
 #[cfg(test)]
 pub(crate) use turn_text::HISTORY_SEARCHES;
 pub(crate) use turn_text::{
-    TurnText, message_has_document_in_txn, served_turn_text_in_txn,
+    TurnText, message_has_document_in_txn, message_words_released, served_turn_text_in_txn,
     turn_row_for_text_revision_in_txn,
 };
 mod types;
@@ -53,7 +62,7 @@ pub(crate) use storage::{
 };
 pub use types::{
     EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder,
-    IndexedRevisionInput, PinnedCitation, ReadMode, ResolvedCitation, RevisionRef,
+    IndexedRevisionInput, MemoryFrontier, PinnedCitation, ReadMode, ResolvedCitation, RevisionRef,
 };
 
 #[cfg(test)]

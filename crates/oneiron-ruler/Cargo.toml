@@ -12,14 +12,16 @@ repository.workspace = true
 doctest = false
 
 [dependencies]
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_json_canonicalizer = { workspace = true }
 sha2 = "0.10"
+tempfile = "3"
 thiserror = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+libc = "0.2"
 
 [lints]
 workspace = true

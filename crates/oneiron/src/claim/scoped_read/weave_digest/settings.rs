@@ -46,23 +46,10 @@ pub struct WeaveDigestSettings {
     pub sections: Vec<WeaveSectionKind>,
 }
 
-/// Where a Coach change to the owner's digest settings stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WeaveDigestSettingChangeStatus {
-    /// Proposed: it waits for the owner's answer, and silence changes nothing.
-    Pending,
-    /// The Coach applied it under a Grant that names digest settings.
-    Applied,
-    /// The owner accepted the proposal, as his own act.
-    Accepted,
-    /// The owner declined the proposal.
-    Declined,
-    /// The owner's own edit came first; nothing applied.
-    Superseded,
-    /// The owner's one tap restored the settings before it.
-    Undone,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::claim::scoped_read::weave_digest::settings::{
+    WeaveDigestSettingAnswer, WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo,
+};
 
 /// One Coach change to the owner's digest rhythm or section order, from his
 /// own behaviour only (FIX 5495). Applied and accepted changes keep a
@@ -103,24 +90,6 @@ pub struct WeaveDigestSettingChange {
     /// pact membership alone had lapsed (FIX 7548). Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_omitted: Option<String>,
-}
-
-/// The owner's answer to one proposed change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveDigestSettingAnswer {
-    /// The change, as 32 hex.
-    pub change_ref: String,
-    /// `true` accepts it as the owner's own act; `false` declines it.
-    pub accept: bool,
-}
-
-/// The owner's one-tap undo of an applied or accepted change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveDigestSettingUndo {
-    /// The change, as 32 hex.
-    pub change_ref: String,
 }
 
 /// What the owner tells the Coach about his own digest. His next own edit of

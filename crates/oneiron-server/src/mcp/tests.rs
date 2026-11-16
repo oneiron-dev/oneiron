@@ -760,6 +760,7 @@ fn page_snapshot(row: &str) -> McpPageSnapshot {
         health: McpRetrievalHealth::Healthy,
         keyframe: None,
         rows: Some(Vec::new()),
+        read_rows: Vec::new(),
     }
 }
 
