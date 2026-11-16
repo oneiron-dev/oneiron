@@ -7,8 +7,8 @@
 //!
 //! * `the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_not`:
 //!   the owner import installs one PROJECT_HISTORY_POLICY row, one
-//!   MESSAGE_STREAM_POLICY row, one DREAMER_ACTION_MODE_POLICY row, one
-//!   MERGE_QUEUE_REVIEW_POLICY row and one owner LEARNING_SETTING pin live
+//!   MESSAGE_STREAM_POLICY row, one MERGE_QUEUE_REVIEW_POLICY row and one
+//!   owner LEARNING_SETTING pin live
 //!   and reports one installed row for each; a repeat owner import reports
 //!   one unchanged live row for each; the actorless import of the same
 //!   archive leaves every read at its default and installs nothing.
@@ -49,7 +49,6 @@ use oneiron::drafter::{
     DrafterPolicySetRequest, DrafterStatusRequest, drafter_status_as_owner,
     set_drafter_policy_as_owner,
 };
-use oneiron::dreamer_runner::maintenance::action_mode::{ActionModePolicy, ActionModeRule};
 use oneiron::federation::EngineControlClass;
 use oneiron::learning_setting::{
     SettingMode, SettingRow, SettingScope, setting_spec, setting_value,
@@ -63,7 +62,6 @@ use oneiron::memory::merge_queue_doors::{
     QueueReviewPolicyState,
 };
 use oneiron::memory::origin_doors::OriginLfsPathPolicySetRequest;
-use oneiron::memory::state_index::StateWindow;
 use oneiron::memory::{MessageStreamPolicy, MessageWriteMode, StreamCadence, StreamSyncVisibility};
 use oneiron::merge_queue::QueueReviewThresholds;
 use oneiron::origin::lfs::{LfsAssetClass, OriginLfsPathMatch, OriginLfsPathRule};
@@ -108,16 +106,15 @@ fn held_back_for_table(summary: &serde_json::Value, table: &str) -> Option<serde
         .cloned()
 }
 
-/// The five owner-policy tables the first test carries through the archive.
-const OWNER_POLICY_TABLES: [&str; 5] = [
+/// The four owner-policy tables the first test carries through the archive.
+const OWNER_POLICY_TABLES: [&str; 4] = [
     "PROJECT_HISTORY_POLICY",
     "MESSAGE_STREAM_POLICY",
-    "DREAMER_ACTION_MODE_POLICY",
     "MERGE_QUEUE_REVIEW_POLICY",
     "LEARNING_SETTING",
 ];
 
-/// The owner restore installs the five owner policies live; the actorless
+/// The owner restore installs the four owner policies live; the actorless
 /// import leaves every read at its default.
 #[test]
 fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_not() {
@@ -160,38 +157,6 @@ fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_n
             .expect("read the source stream policy"),
         stream,
         "the source holds the stream row"
-    );
-
-    let action = ActionModePolicy {
-        window: StateWindow {
-            window_secs: 86_400,
-            expected_goal_completions: 3,
-            expected_engaged_days: 5,
-        },
-        rules: vec![
-            ActionModeRule {
-                mode: "steady".to_owned(),
-                min_index: 0.0,
-                max_index: 0.5,
-                effect: None,
-            },
-            ActionModeRule {
-                mode: "brisk".to_owned(),
-                min_index: 0.5,
-                max_index: 1.0,
-                effect: None,
-            },
-        ],
-    };
-    source
-        .set_action_mode_policy(&source_owner, Some(action.clone()))
-        .expect("the owner stores the source action-mode policy");
-    assert_eq!(
-        source
-            .action_mode_policy()
-            .expect("read the source action-mode policy"),
-        Some(action.clone()),
-        "the source holds the action-mode row"
     );
 
     let catalog = LensCatalog::of366_seed().expect("the seed lens catalog reads");
@@ -265,12 +230,6 @@ fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_n
         stream,
         "the owner import installs the stream row live"
     );
-    assert_eq!(
-        dest.action_mode_policy()
-            .expect("read the restored action-mode policy"),
-        Some(action.clone()),
-        "the owner import installs the action-mode row live"
-    );
     let dest_review = dest_memory
         .merge_queue_review_policy_get_as(&QueueReviewPolicyProof::Owner(dest_owner.clone()))
         .expect("read the restored review policy");
@@ -337,12 +296,6 @@ fn the_owner_restore_installs_the_owner_policies_and_the_actorless_import_does_n
             .expect("read the actorless stream policy"),
         MessageStreamPolicy::default(),
         "the actorless import leaves the stream policy at its default"
-    );
-    assert_eq!(
-        bare.action_mode_policy()
-            .expect("read the actorless action-mode policy"),
-        None,
-        "the actorless import leaves the action-mode policy unset"
     );
     let bare_review = bare_memory
         .merge_queue_review_policy_get_as(&QueueReviewPolicyProof::Owner(bare_owner))
