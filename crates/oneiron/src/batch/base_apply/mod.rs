@@ -354,10 +354,11 @@ pub(super) fn apply_ops_with_authority_beside(
     };
     let asset_file_bodies = asset_file_bodies::restore_manifests(&mut ops.ops, manifests);
     let (masked_files, masked_claim_pre) = masked?;
-    // The pre-mask body of each MACHINE candidate the mask rewrote in this
-    // transaction (FIX 11356), in op order per id: the candidate apply
-    // renews a proof only over its verified pre-mask body. A replayed batch
-    // reports none, so its proofs stay byte for byte.
+    // The pre-mask body of each candidate the mask rewrote in this
+    // transaction, in op order per id: the candidate apply renews a MACHINE
+    // proof only over its verified pre-mask body (FIX 11356), and reads a
+    // preflight receipt against the body it judged. A replayed batch reports
+    // none, so its proofs stay byte for byte.
     let mut masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>> = HashMap::new();
     for (id, pre) in masked_claim_pre {
         masked_claims.entry(id).or_default().push_back(pre);

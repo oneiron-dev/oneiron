@@ -22,9 +22,10 @@ use crate::write_envelope::ClaimCandidate;
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
 /// before. `at` stamps each custody record the batch mints. It also returns
-/// each MACHINE claim candidate the minted pass rewrote with its pre-mask
-/// body, in op order, so the candidate apply can renew its proof over what
-/// is stored (FIX 11356); a replayed batch reports none.
+/// each claim candidate the minted pass rewrote with its pre-mask body, in
+/// op order, so the candidate apply can renew a MACHINE proof over what is
+/// stored (FIX 11356) and read its preflight receipt against the body that
+/// receipt judged; a replayed batch reports none.
 #[expect(
     clippy::too_many_arguments,
     reason = "the batch's own apply parts, its origin and its time"
