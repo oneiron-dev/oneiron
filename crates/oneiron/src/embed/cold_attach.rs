@@ -54,7 +54,8 @@ pub(crate) fn remark_all_embeddable_pending_in_txn(
 /// Queues every record the worker embeds ([`super::embeddable_payload_in_txn`]):
 /// the same rule the worker leases by, so nothing queued here is work it can
 /// only fail on, and nothing it can embed is left out. A TURN is marked at its
-/// messages' text, as the turn doors mark it.
+/// messages' text, as the turn doors mark it, and a PERSON at its public
+/// `about` line, as a landing marks it.
 ///
 /// A replacement (`replace_priority`) also drops what a record the rule does
 /// not embed still carries — a marker, a job, a lease — so none of it is left
@@ -79,6 +80,11 @@ fn remark_pending_in_txn(
         } else if row.entity_type == crate::registry::ENTITY_TYPE_TURN {
             match super::turn_text_in_txn(vault, wtxn, &id)? {
                 Some(text) => embeddable.push((id, text.into_bytes())),
+                None => retired.push(id),
+            }
+        } else if row.entity_type == crate::registry::ENTITY_TYPE_PERSON {
+            match crate::dreamer_consolidation::public_about_line_in_txn(vault, wtxn, &id)? {
+                Some(line) => embeddable.push((id, line.into_bytes())),
                 None => retired.push(id),
             }
         } else if is_embeddable_in_txn(vault, wtxn, &id, row.entity_type, &row.body)? {

@@ -206,7 +206,21 @@ pub(super) fn shipped_policy_with_read_scope(
 ///
 /// The vault's.
 pub fn open_dreamer_vault(path: &std::path::Path, reader: &str) -> Result<Vault> {
-    let vault = Vault::open(path, crate::VaultConfig::device())?;
+    open_dreamer_vault_with(path, reader, crate::VaultConfig::device())
+}
+
+/// [`open_dreamer_vault`] opened with `config`: one that names an embedding
+/// model, for a test of what the Dreamer's writes queue for the embedder.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn open_dreamer_vault_with(
+    path: &std::path::Path,
+    reader: &str,
+    config: crate::VaultConfig,
+) -> Result<Vault> {
+    let vault = Vault::open(path, config)?;
     crate::test_fixtures::provision_engine_machines(&vault);
     allow_own_server_extraction(&vault)?;
     shipped_policy_with_reader(&vault, reader)?;
