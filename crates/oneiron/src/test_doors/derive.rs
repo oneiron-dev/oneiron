@@ -232,7 +232,7 @@ pub fn grant_core_read_beside_derive_rows(
     let policy = crate::gate::default_policy_manifest_id()?;
     let body = vault.get(&policy)?.ok_or(crate::Error::EntityNotFound)?;
     let body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
-    crate::test_support::put_policy_manifest_bytes(vault, policy, &body)
+    crate::test_fixtures::put_policy_manifest_bytes(vault, policy, &body)
 }
 
 /// Whether `reader` of `class` reads `row` on the recorded lane the record
@@ -443,7 +443,7 @@ pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
     for agent in agents {
         body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
     }
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &body,
@@ -558,7 +558,7 @@ pub fn permit_imported_auto(vault: &Vault, actor: EntityId) -> Result<()> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
         .map_err(|_| invalid("encode policy"))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -997,7 +997,7 @@ pub fn grant_topology_seal(vault: &Vault, agent: EntityId) -> Result<EntityId> {
     use crate::federation::{Scope, ScopeAxis};
 
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let issuer = crate::test_support::test_host_issuer();
+    let issuer = crate::test_fixtures::test_host_issuer();
     let owner = super::steward::owner(vault)?;
     vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
     let mut scope = Scope::top();
