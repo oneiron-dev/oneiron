@@ -176,8 +176,6 @@ pub(crate) use self::result_read::{
 pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub use self::run_verb_call::run_verb_call;
 pub use self::storage::ReadWorldUnknown;
-#[cfg(oneiron_test_support)]
-pub(crate) use self::storage::capsule_stored_request_bytes;
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -239,6 +237,8 @@ pub(crate) use self::storage::{bind_owner_pair_ask_in_txn, owner_pair_in_txn};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::{capsule_stored_request_bytes, piece_ref_for_test};
 pub(crate) use self::storage::{
     closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
 };

@@ -26,6 +26,7 @@
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -542,12 +543,20 @@ pub(super) fn release_retired_pieces_in_txn(
     Ok(held)
 }
 
-/// The ref the bytes `bytes` are published under.
+/// The ref the bytes `bytes` are published under: their content hash, which
+/// the run's body row checks, and their length.
 pub(super) fn piece_ref(bytes: &[u8]) -> OutputRef {
     OutputRef {
-        hash: *blake3::hash(bytes).as_bytes(),
+        hash: ContentHash::of(bytes).into_bytes(),
         byte_len: bytes.len() as u64,
     }
+}
+
+/// [`piece_ref`] for the K-proof
+/// (`tests/fingerprint_keep_query_swap_piece_packet_repo_digests.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn piece_ref_for_test(bytes: &[u8]) -> OutputRef {
+    piece_ref(bytes)
 }
 
 /// `value` as canonical JSON: keys sorted, array order kept.

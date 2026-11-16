@@ -50,6 +50,8 @@ use crate::training_pack::{SwapExpectation, TrainingRun};
 use crate::{EntityId, Vault};
 
 mod question;
+#[cfg(oneiron_test_support)]
+pub(crate) use question::swap_question_digest_for_test;
 use question::{candidate_in, swap_question_text};
 
 /// Every training swap ask's intent key starts so:

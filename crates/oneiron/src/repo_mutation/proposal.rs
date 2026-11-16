@@ -35,6 +35,8 @@ mod files;
 mod guards;
 mod owner;
 mod owner_request;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::owner_request::{bundle_content_hash_for_test, owner_request_hash_for_test};
 pub(super) mod persist;
 mod queue_review;
 mod receipts;

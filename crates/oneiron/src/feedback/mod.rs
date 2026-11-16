@@ -158,6 +158,8 @@ pub use self::redaction::{
     FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity,
     apply_recognised_spans,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::report::packet_content_hash_for_test;
 pub use self::report::{
     COACH_FEEDBACK_DELIVERY_FACET, IssueCategory, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
     REPORT_SIGNATURE_VERB, REPORT_VERB, ReportDeliveryHold, ReportDeliveryKey,

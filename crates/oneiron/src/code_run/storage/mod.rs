@@ -72,8 +72,6 @@ pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
     response_erased_error,
 };
-#[cfg(oneiron_test_support)]
-pub(crate) use self::replay_capsule::capsule_stored_request_bytes;
 pub(crate) use self::replay_capsule::retire_replay_bodies_in_rows;
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
@@ -97,6 +95,8 @@ pub(crate) use self::replay_capsule::{
     accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
     judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::replay_capsule::{capsule_stored_request_bytes, piece_ref_for_test};
 pub(crate) use self::response_erase::{
     actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
     soft_delete_actor_responses_in_txn,

@@ -79,11 +79,15 @@ pub(crate) mod tables;
 mod tests;
 
 pub use self::decisions::MembershipDecisions;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::decisions::rubric_digest_for_test;
 pub use self::definition::{
     CreateSavedQueryRequest, EvalMode, EvalPolicy, QueryScope, SAVED_QUERY_SCHEMA_VERSION,
     SAVED_QUERY_SHORT_ID_PREFIX, SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord,
     UpdateSavedQueryRequest, register_saved_query_kind,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::evaluator::derivation_params_hash_for_test;
 pub use self::evaluator::{
     EvaluationRequest, SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE, SAVED_QUERY_WHY_SCOPE_CLOSED,
     SavedQueryEvaluator, SavedQueryJudgeBinding, WakeVisit,

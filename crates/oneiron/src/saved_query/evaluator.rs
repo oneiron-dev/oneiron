@@ -2,8 +2,8 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde_json::{Map as JsonMap, Value};
-use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::claim::{
@@ -899,6 +899,9 @@ pub(super) fn evidence_to_json(evidence: &RelevantEvidence) -> Value {
     Value::Object(root)
 }
 
+/// The envelope a verdict memo derives under. Every memo row stores its params
+/// hash (SHA-256 of the matcher's sorted JSON), so the hash keeps its bytes (K,
+/// PLAN-UC-04 stage 6.4).
 fn derivation_envelope(
     evidence_hash: &[u8; EVIDENCE_HASH_LEN],
     matcher: &MatcherSpec,
@@ -913,8 +916,22 @@ fn derivation_envelope(
         content_hash: hex_lower(evidence_hash),
         model_id,
         version: EVALUATOR_VERSION.to_owned(),
-        params_hash: hex_lower(&Sha256::digest(&params)),
+        params_hash: hex_lower(
+            &LegacyDigest::new(purposes::saved_query::DERIVATION_PARAMS)
+                .raw(&params)
+                .finish(),
+        ),
     })
+}
+
+/// The params hash [`derivation_envelope`] gives `matcher`, or `None` when the
+/// matcher does not encode. For the K-proof
+/// (`tests/fingerprint_keep_query_swap_piece_packet_repo_digests.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn derivation_params_hash_for_test(matcher: &MatcherSpec) -> Option<String> {
+    derivation_envelope(&[0; EVIDENCE_HASH_LEN], matcher)
+        .ok()
+        .map(|envelope| envelope.params_hash)
 }
 
 /// Every judge rejection names ONE tool, so an operator grepping for judge
