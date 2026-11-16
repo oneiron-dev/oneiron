@@ -31,6 +31,7 @@ use oneiron::{EdgeActorClass, EntityId};
 use super::host_doors::hold_weave_digest;
 use super::host_doors::support::{Listed, credential_listing, refused};
 use crate::auth::CoreAuth;
+use crate::lens_frames::HeldCardProof;
 use crate::server::SyncServer;
 
 /// What each adapter names itself as when its worker does not finish.
@@ -40,17 +41,28 @@ const ADMIN_LINK_WRONG: &str = "the weave admin link label";
 const ADMIN_ITEM_WRONG: &str = "the weave admin item label";
 
 /// One person's current Admin proof for the weave, with the person it
-/// stands for: the holder of the verified slip it was built from. Built
-/// only by [`bind_weave_admin`]; never from caller JSON.
+/// stands for: the holder of the verified slip it was built from, and the
+/// Admin membership grant it was bound under. Built only by
+/// [`bind_weave_admin`]; never from caller JSON.
 pub(crate) struct BoundWeaveAdmin {
     proof: AuthenticatedWeaveAdmin,
     person: EntityId,
+    membership_grant: EntityId,
 }
 
 impl BoundWeaveAdmin {
     /// The handle an Admin read runs on: its own person's, as a human.
     const fn caller(&self) -> (EntityId, EdgeActorClass) {
         (self.person, EdgeActorClass::Human)
+    }
+
+    /// The proof a card this Admin's read renders is held under: a reload
+    /// binds the Admin proof again under the same grant
+    /// ([`stepped_up_admin_under`]).
+    const fn held_proof(&self) -> HeldCardProof {
+        HeldCardProof::WeaveAdmin {
+            membership_grant: self.membership_grant,
+        }
     }
 }
 
@@ -87,7 +99,11 @@ pub(crate) fn bind_weave_admin(
     let proof = server
         .vault()
         .authenticate_weave_admin(request, membership_grant, step_up)?;
-    Ok(BoundWeaveAdmin { proof, person })
+    Ok(BoundWeaveAdmin {
+        proof,
+        person,
+        membership_grant,
+    })
 }
 
 /// The Admin's live weave report: a vault-global shape inside its Scope.
@@ -115,10 +131,12 @@ pub(crate) async fn weave_admin_lens(
     client_surface: Option<GeneratedUiSurfaceCapabilities>,
     input: WeaveLensRequest,
 ) -> Listed<LensFrameCard> {
+    let held = admin.held_proof();
     let caller = crate::ai_host::WeaveLensCaller::Admin {
         admin: admin.proof,
         auth: auth.clone(),
         actor: admin.person,
+        held,
     };
     let client_surface = input.surface.or(client_surface);
     let input = WeaveReportRequest {
@@ -136,6 +154,7 @@ pub(crate) async fn weave_admin_digest(
     input: WeaveDigestRequest,
 ) -> Listed<Option<WeaveDigestView>> {
     let caller = admin.caller();
+    let held = admin.held_proof();
     let (framed, listed) =
         credential_listing(server, auth, caller, ADMIN_DIGEST, move |_, _, memory| {
             memory.weave_admin_digest_framed(&admin.proof, &input)
@@ -143,7 +162,7 @@ pub(crate) async fn weave_admin_digest(
         .await;
     let answer = framed.and_then(|framed| {
         framed
-            .map(|framed| hold_weave_digest(server, auth, framed))
+            .map(|framed| hold_weave_digest(server, auth, framed, held))
             .transpose()
     });
     (answer, listed)
@@ -219,6 +238,22 @@ fn stepped_up_admin(
             &["Name your Admin membership grant as vault.members.projection lists it."],
         )
     })?;
+    stepped_up_admin_under(server, auth, grant)
+}
+
+/// [`stepped_up_admin`] under the Admin membership grant `grant` already
+/// read: the proof a served Admin row binds, which a reload of a held Admin
+/// card binds again (GENUI-STATE-PERSIST) from that request's own slip and
+/// the step-up standing on it now.
+///
+/// # Errors
+/// As [`stepped_up_admin`]'s, past its grant id.
+pub(super) fn stepped_up_admin_under(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    grant: EntityId,
+) -> MemoryResult<BoundWeaveAdmin> {
+    super::owner_binding::host_preflight(server, auth)?;
     let request = auth
         .verified_slip()
         .ok_or_else(|| not_admin("on the verified slip its request was admitted on"))?;
