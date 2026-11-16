@@ -213,7 +213,8 @@ impl Vault {
             }
             RootMaterial::Released(signer) => (Some(signer), None, true),
             RootMaterial::ReleasedAfterBoxWait { signer, release_at } => {
-                end = HoldEnd::AtBoxRelease { release_at, wait };
+                // Mutation red: the box's release second is dropped.
+                let _ = (release_at, HoldEnd::AtBoxRelease { release_at, wait });
                 (Some(signer), None, true)
             }
         };
