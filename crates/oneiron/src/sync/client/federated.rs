@@ -751,9 +751,13 @@ fn fail_pending_staged_import(
     vault: &crate::Vault,
     pending: &VaultImportStageReceipt,
 ) -> std::result::Result<(), TransportError> {
+    // A Failed receipt holds no admitted bytes and no staged stamps: the codec
+    // refuses one that names either, so both digests go with the content.
     let mut failed = pending.clone();
     failed.status = VaultImportStageStatus::Failed;
     failed.failure = Some(VaultImportFailure::AdmissionRejected);
+    failed.admitted_update_digest = None;
+    failed.staged_stamps_digest = None;
     crate::batch::export::vault_import_confirm_if_pending(vault, pending, &failed, None)
         .map(|_| ())
         .map_err(|error| TransportError::Storage(error.to_string()))
