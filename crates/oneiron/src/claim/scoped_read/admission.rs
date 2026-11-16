@@ -218,7 +218,9 @@ impl<'a> ScopedRead<'a> {
         let human = crate::edge::EdgeActorClass::Human;
         crate::memory::verify_actor_binding_in_txn(self.vault, txn, owner, human)
             .and_then(|()| {
-                if crate::vault::embedded_owner_actor_id().ok() == Some(owner) {
+                if crate::vault::embedded_owner_actor_id().ok() == Some(owner)
+                    && crate::memory::embedded_owner_shortcut_holds_in_txn(self.vault, txn)?
+                {
                     Ok(())
                 } else {
                     crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner)

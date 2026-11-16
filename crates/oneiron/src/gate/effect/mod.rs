@@ -45,7 +45,7 @@ use crate::connector_key::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::outbound_grant::StandingOutboundGrant;
-use crate::store::{GateDecisionId, GateDecisionRecord, Store};
+use crate::store::{GateDecisionId, Store};
 
 use super::decision::{GateDecision, GateOutcome, GateReasonCode, external_effect_receipt_reasons};
 use super::definition_ceiling::agent_definition_ceiling_for_effect_actor;
