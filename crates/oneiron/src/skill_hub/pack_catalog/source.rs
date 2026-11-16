@@ -4,6 +4,11 @@ use crate::error::Result;
 use crate::skill::{SkillContentHash, canonical_skill_tree_hash};
 use crate::skill_hub::HubFile;
 
+/// A pack's files every bundled skill carries (0053-SKILLSET; ARCH-0053 §14
+/// skillsets): each `skills/<folder>/` package holds them under this same
+/// prefix, so each member's hash covers exactly what it runs.
+pub(super) const SHARED_PREFIX: &str = "shared/";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackSource {
     pub(super) files: Vec<HubFile>,
@@ -13,6 +18,9 @@ pub struct PackSource {
     pub(super) hooks: Vec<super::PackHook>,
     pub(super) organs: Vec<super::PackOrgan>,
     pub(super) lenses: Vec<super::PackLens>,
+    /// The per-API verb-class table the source carries in
+    /// [`super::VERB_CLASS_TABLE_FILE`], checked when the source is read.
+    pub(super) verb_classes: Option<crate::credential_door::ApiVerbClassTable>,
 }
 impl PackSource {
     /// Every file of any size and count is read whole (FIX 8202): no byte,
@@ -52,6 +60,9 @@ impl PackSource {
         {
             return Err(invalid("declared adapter script is absent"));
         }
+        let holds_shared = files
+            .iter()
+            .any(|file| file.path.starts_with(SHARED_PREFIX));
         if manifest.kind == super::PackKind::Agent {
             for required in ["identity.md", "policy.md", "skills.json"] {
                 if !files.iter().any(|file| file.path == required) {
@@ -64,6 +75,14 @@ impl PackSource {
                 .iter()
                 .find(|file| file.path == "policy.md")
                 .expect("checked");
+            // A travelling pack carries each skill whole, its shared files
+            // already inside: a `shared/` of its own would change the hashes
+            // its skills are pinned by.
+            if super::agent_facets::is_travel_policy(&policy.content) && holds_shared {
+                return Err(invalid(
+                    "a travelling agent pack carries each skill whole; it cannot hold shared/",
+                ));
+            }
             // A travelling pack pins its skills by content hash, not by
             // source id; its facet validation reads them.
             if !super::agent_facets::is_travel_policy(&policy.content) {
@@ -87,6 +106,7 @@ impl PackSource {
         if manifest.kind == PackKind::Model {
             super::model_pack::read_source_model_pack(&manifest, &files)?;
         }
+        let verb_classes = super::verb_class_pack::read_source_verb_class_table(&manifest, &files)?;
         let mut sections = Vec::new();
         for file in &files {
             if file.path.starts_with("knowledge/sections/") && file.path.ends_with(".json") {
@@ -127,6 +147,7 @@ impl PackSource {
                     ))
                 && ![
                     "skills/",
+                    SHARED_PREFIX,
                     "knowledge/",
                     "scripts/",
                     "hooks/",
@@ -137,6 +158,25 @@ impl PackSource {
                 .any(|prefix| file.path.starts_with(prefix))
             {
                 return Err(invalid("unknown pack source facet"));
+            }
+            // A member's own `shared` entry would collide with the pack's
+            // `shared/` folded into it, ASCII case folded as the skill tree
+            // hash folds paths. With no pack `shared/` nothing is folded, and
+            // a member keeps its own `shared/` as before; so does a
+            // travelling pack's skill, which arrives whole.
+            if holds_shared
+                && file
+                    .path
+                    .strip_prefix("skills/")
+                    .and_then(|path| path.split_once('/'))
+                    .and_then(|(_, relative)| relative.split('/').next())
+                    .is_some_and(|first| {
+                        first.eq_ignore_ascii_case(SHARED_PREFIX.trim_end_matches('/'))
+                    })
+            {
+                return Err(invalid(
+                    "a bundled skill folder cannot hold shared/ when its pack does; the pack's shared/ rides every skill",
+                ));
             }
         }
         if let Some(facets) = &manifest.agent_facets {
@@ -156,6 +196,7 @@ impl PackSource {
             hooks,
             organs,
             lenses,
+            verb_classes,
         })
     }
     pub fn entity_id(&self) -> Result<crate::EntityId> {
@@ -178,6 +219,11 @@ impl PackSource {
     }
     pub fn lenses(&self) -> &[super::PackLens] {
         &self.lenses
+    }
+    /// The per-API verb-class table this source carries, when it carries one.
+    #[must_use]
+    pub fn verb_class_table(&self) -> Option<&crate::credential_door::ApiVerbClassTable> {
+        self.verb_classes.as_ref()
     }
     /// The lens this source carries in its folder `name`.
     #[must_use]

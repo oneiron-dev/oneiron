@@ -496,13 +496,14 @@ fn park_on_wait(
             "a waiting run parked on no wait",
         ))?;
     let now_ms = now.saturating_mul(1000);
+    let actor = agent_dispatch_run_actor(&status.input, attempt.id)?;
     let trap = open_trap(
         vault,
         &DurableStepContext {
             vault,
             attempt_id: attempt.id,
             run_id: attempt.run_id.clone(),
-            envelope_actor: agent_dispatch_run_actor(&status.input, attempt.id)?,
+            envelope_actor: actor,
             subject: parked.wait.wait_id,
             deadline: None,
             now_ms,
@@ -530,6 +531,20 @@ fn park_on_wait(
         &trap,
         now_ms,
     )?;
+    // L2-37: the prompt prefix the run's last answer left cached gets its
+    // idle call, in its own write. A miss never fails the park: with no due
+    // row the prefix simply expires.
+    if let Some(prefix) = &outcome.cache_horizon
+        && let Err(error) = oneiron::idle_fold::record_cache_horizon(
+            vault,
+            &parked.key,
+            attempt.id,
+            actor.entity_ref(),
+            prefix,
+        )
+    {
+        tracing::warn!(%error, attempt = ?attempt.id, "a parked run's idle call was not recorded");
+    }
     // A signal that landed before register_wait leaves the trap Sent: the
     // delivering commit cannot wake that head again. Now that the park and
     // binding exist, the shared sweep consumes it and queues this same try.
