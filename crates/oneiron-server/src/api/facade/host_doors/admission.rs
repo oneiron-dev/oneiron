@@ -166,6 +166,13 @@ pub(in crate::api::facade) fn door_admits(
         Proof::RunnerContinuer => {
             crate::api::facade::runner_seat_doors::continue_caller(server, auth, verb).map(drop)
         }
+        // `vault.imports.hook_transcript` (census L10-17): the owner's proof, or an actor-bound
+        // credential whose own live Grant naming the verb the engine import checks. A caller
+        // bound to no actor keeps the owner refusal.
+        Proof::TranscriptImporter => {
+            crate::api::facade::hosted_import_doors::transcript_importer(server, auth, verb)
+                .map(drop)
+        }
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }

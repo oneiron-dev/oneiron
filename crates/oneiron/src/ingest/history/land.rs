@@ -27,6 +27,7 @@ use rmpv::Value as Msgpack;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use super::hook_transcript::HistoryImportCaller;
 use super::ledger::{self, LedgerRow, content_hash};
 use super::sharing;
 use super::{
@@ -213,6 +214,15 @@ pub(super) fn derive(domain: &[u8], parts: &[&str]) -> Result<EntityId> {
     EntityId::derive(domain, &parts)
 }
 
+/// The CONVERSATION a conversation of `source` with the source's id
+/// `native_id` lands as.
+pub(super) fn conversation_id(source: HistorySource, native_id: &str) -> Result<EntityId> {
+    derive(
+        derived_domains::HISTORY_CONVERSATION,
+        &[source.source_id(), native_id],
+    )
+}
+
 /// The MESSAGE an imported message lands as. The dry run builds the same one
 /// to scan exactly the bytes the write door would.
 pub(super) fn imported_message(
@@ -395,6 +405,26 @@ impl Vault {
         imported_at: u64,
         facet: Option<EntityId>,
     ) -> MemoryResult<HistoryImportReport> {
+        self.import_history_as(
+            HistoryImportCaller::Owner(owner),
+            source,
+            conversation,
+            imported_at,
+            facet,
+        )
+    }
+
+    /// [`Self::import_history_in_facet`] for `caller`, judged where the
+    /// owner's proof is revalidated: once before the import, and again in
+    /// each of its writers.
+    pub(super) fn import_history_as(
+        &self,
+        caller: HistoryImportCaller<'_>,
+        source: HistorySource,
+        conversation: &HistoryConversation,
+        imported_at: u64,
+        facet: Option<EntityId>,
+    ) -> MemoryResult<HistoryImportReport> {
         if let Some(facet) = &facet
             && self.live_entity_row(facet)?.live_type() != Some(crate::registry::ENTITY_TYPE_FACET)
         {
@@ -403,7 +433,7 @@ impl Vault {
             ));
         }
         let mut report = HistoryImportReport::new(conversation);
-        let memory = self.memory(owner.revalidate(self)?, EdgeActorClass::Human);
+        let memory = self.memory(caller.owner(self)?, EdgeActorClass::Human);
         // The container's readers, as this export names them, are set before
         // any of its rows lands.
         let sharing = conversation
@@ -411,7 +441,7 @@ impl Vault {
             .as_ref()
             .map(|sharing| {
                 memory.with_verified_actor_write_txn(|wtxn| {
-                    let actor = owner.revalidate_in_txn(self, wtxn)?;
+                    let actor = caller.owner_in_txn(self, wtxn)?;
                     sharing::container_policy_in_txn(
                         self,
                         wtxn,
@@ -427,15 +457,12 @@ impl Vault {
         let import = Import {
             vault: self,
             memory,
-            owner,
+            caller,
             source,
             conversation,
             sharing: sharing.map(|(policy, _)| policy),
             facet,
-            conversation_id: derive(
-                derived_domains::HISTORY_CONVERSATION,
-                &[source.source_id(), &conversation.native_id],
-            )?,
+            conversation_id: conversation_id(source, &conversation.native_id)?,
             conversation_body: conversation_body(source, conversation)?,
             fallback_ms: conversation
                 .started_at_ms
@@ -469,7 +496,7 @@ impl Vault {
 struct Import<'v> {
     vault: &'v Vault,
     memory: Memory<'v>,
-    owner: &'v AuthenticatedOwner,
+    caller: HistoryImportCaller<'v>,
     source: HistorySource,
     conversation: &'v HistoryConversation,
     /// The source policy of the conversation's sharing container; `None`
@@ -547,7 +574,7 @@ impl Import<'_> {
             if !changed && occurred == record.occurred {
                 return Ok(());
             }
-            self.owner.revalidate_in_txn(self.vault, wtxn)?;
+            self.caller.owner_in_txn(self.vault, wtxn)?;
             let stamped = source_audience::body_names_obligation(&body);
             let mut out = Vec::new();
             rmpv::encode::write_value(&mut out, &Msgpack::Map(fields))
@@ -753,7 +780,7 @@ impl Import<'_> {
         };
         let moved = Cell::new(false);
         let landed = self.memory.witness_imported(&turn, &stamp, |wtxn| {
-            let actor = self.owner.revalidate_in_txn(self.vault, wtxn)?;
+            let actor = self.caller.owner_in_txn(self.vault, wtxn)?;
             // The rows this turn was built on, read again where they are
             // written: another import may have landed a message since.
             for (message, previous) in &pending {

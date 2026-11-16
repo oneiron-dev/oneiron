@@ -21,6 +21,7 @@ mod claude_code;
 mod codex;
 mod copilot;
 mod cursor;
+mod hook_transcript;
 mod hosted;
 mod hosted_verbs;
 mod land;
@@ -40,6 +41,11 @@ mod workspace_facet;
 #[cfg(test)]
 mod tests;
 
+pub use hook_transcript::{
+    HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HistoryImportCaller,
+    HookSubagentTranscript, HookTranscriptConversation, HookTranscriptImportRequest,
+    HookTranscriptImportView,
+};
 pub use hosted::{
     HOSTED_IMPORT_SKIPS_LISTED, HostedImportCanceller, HostedImportEmbeddings, HostedImportId,
     HostedImportJob, HostedImportParse, HostedImportResumed, HostedImportReview,
@@ -325,6 +331,29 @@ impl HistoryConversation {
             sharing: None,
         }
     }
+}
+
+/// Earliest first, so a session's own lines land in it before a resumed or
+/// forked session's copies of them are seen. A resumed Claude Code session
+/// starts with copies of the original's lines, times and all; the original
+/// ends first.
+pub fn earliest_first(conversations: &mut [HistoryConversation]) {
+    conversations.sort_by_cached_key(order_key);
+}
+
+/// Where [`earliest_first`] puts a conversation: when it started, then when
+/// it ended.
+fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
+    let ended = conversation
+        .messages
+        .iter()
+        .filter_map(|message| message.at_ms)
+        .max();
+    (
+        conversation.started_at_ms.unwrap_or(u64::MAX),
+        ended.unwrap_or(u64::MAX),
+        conversation.native_id.clone(),
+    )
 }
 
 /// What a reader saw and did not keep, by kind.

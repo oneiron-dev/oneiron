@@ -9,6 +9,8 @@
 //! landed words in a TURN is the TURN's source and its newest MESSAGE's
 //! learned time.
 
+use std::time::{Duration, Instant};
+
 use super::HistorySource;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -18,6 +20,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
+use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 use crate::ports::EdgeDirection;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
@@ -33,7 +36,45 @@ pub fn history_import_review_id(source: HistorySource, imported_at: u64) -> Stri
 /// Producer name of a finished history import's inbox row.
 const NOTIFICATION_PRODUCER_HISTORY_IMPORT: &str = "history_import";
 
+/// How long an import waits for the vault's clock to pass the second it
+/// started in.
+const OWN_SECOND_WAIT: Duration = Duration::from_secs(2);
+
+/// How often an import reads the vault's clock while it waits.
+const OWN_SECOND_POLL: Duration = Duration::from_millis(50);
+
+/// A vault clock that did not pass its second within [`OWN_SECOND_WAIT`].
+const ERR_CLOCK_AHEAD: &str = "the vault's clock is ahead of this machine's; import again once \
+     the machine's clock passes it, so this import has a review of its own";
+
 impl Vault {
+    /// The second an import lands at: after every write before it, so no two
+    /// imports share one and each has a review of its own. Waits out the rest
+    /// of the current second; a vault clock more than two seconds ahead of
+    /// this machine's refuses the import rather than share a second with an
+    /// earlier one.
+    ///
+    /// # Errors
+    /// A vault clock that did not pass its second within two seconds.
+    pub fn own_import_second(&self) -> MemoryResult<u64> {
+        let start = self.now_recorded_at();
+        let deadline = Instant::now() + OWN_SECOND_WAIT;
+        loop {
+            let now = self.now_recorded_at();
+            if now > start {
+                return Ok(now);
+            }
+            if Instant::now() >= deadline {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    ERR_CLOCK_AHEAD,
+                    &[],
+                ));
+            }
+            std::thread::sleep(OWN_SECOND_POLL);
+        }
+    }
+
     /// Surfaces one finished history import in the inbox (OF-221): one
     /// `ImportFinished` row for the batch's review of `source`, named by the
     /// review id, never one per conversation. The batch's caller writes it
