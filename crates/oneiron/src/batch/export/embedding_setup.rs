@@ -5,7 +5,7 @@
 //! hashes, a space's physical key, device provenance and locality, refusal caches, moves and
 //! probes, and provider configuration stay home. A space id's `@where` names an offer key,
 //! which the receiving host resolves against its own models.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
@@ -14,10 +14,9 @@ use serde_json::Value;
 
 use super::ArchiveRecordKind;
 use super::archive_index::{IndexedArchive, Tag};
-use crate::config::VectorEvidenceFloors;
 use crate::error::{Error, Result};
 use crate::side_table::SideTableDbs;
-use crate::store::embedding::{EmbeddingSpace, InputKind, KindSlotBindings};
+use crate::store::embedding::{InputKind, KindSlotBindings};
 
 /// Which records an export holds, for [`carries_embedding_setup`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,59 +36,10 @@ pub(super) const fn carries_embedding_setup(scope: ExportScope) -> bool {
     matches!(scope, ExportScope::WholeVault)
 }
 
-/// One declared space as an export carries it: its declaration's five fields, nothing else.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PortableEmbeddingSpace {
-    /// `model@revision@where`, whole: a host without that offer declares it all the same, its
-    /// vectors pending until a model there fills it.
-    pub id: String,
-    pub dimensions: usize,
-    pub accepts: BTreeSet<InputKind>,
-    pub query_towers: BTreeSet<InputKind>,
-    /// The space's own evidence floors; `None` judges it by the receiver's vault floors.
-    pub evidence: Option<PortableEvidenceFloors>,
-}
-
-/// A space's evidence floors as an export carries them.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PortableEvidenceFloors {
-    pub floor: f32,
-    pub strong: f32,
-}
-
-impl From<EmbeddingSpace> for PortableEmbeddingSpace {
-    fn from(space: EmbeddingSpace) -> Self {
-        Self {
-            id: space.id,
-            dimensions: space.dimensions,
-            accepts: space.accepts,
-            query_towers: space.query_towers,
-            evidence: space.evidence.map(|floors| PortableEvidenceFloors {
-                floor: floors.floor,
-                strong: floors.strong,
-            }),
-        }
-    }
-}
-
-impl PortableEmbeddingSpace {
-    /// The declaration this descriptor names.
-    #[must_use]
-    pub fn declaration(&self) -> EmbeddingSpace {
-        EmbeddingSpace {
-            id: self.id.clone(),
-            dimensions: self.dimensions,
-            accepts: self.accepts.clone(),
-            query_towers: self.query_towers.clone(),
-            evidence: self.evidence.map(|floors| VectorEvidenceFloors {
-                floor: floors.floor,
-                strong: floors.strong,
-            }),
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::batch::export::embedding_setup::{
+    EmbeddingSetupWithheld, PortableEmbeddingSpace, PortableEvidenceFloors,
+};
 
 /// The three kind slots as an export carries them: each bound space's id, or an explicit null
 /// for an unbound slot (for text, the receiver's own vector index).
@@ -183,22 +133,6 @@ pub(crate) fn archive_slot_rows(document: &mut Value) -> Vec<Value> {
             .map(|(kind, space)| serde_json::json!({"kind": kind, "space": space}))
             .collect(),
         _ => Vec::new(),
-    }
-}
-
-/// Setup the export's nulling pass would have changed, so the export carries none of it, never
-/// a nulled or substituted id: spaces by count (the text withheld is the id), slots by kind.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSetupWithheld {
-    pub spaces: u64,
-    pub slots: Vec<InputKind>,
-}
-
-impl EmbeddingSetupWithheld {
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.spaces == 0 && self.slots.is_empty()
     }
 }
 

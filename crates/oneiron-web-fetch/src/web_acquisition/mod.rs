@@ -1,4 +1,5 @@
 //! Web acquisition values and the host-supplied acquisition port.
+use oneiron_fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 mod door;
@@ -13,8 +14,9 @@ pub use refusal::{
 use result::FetchResultWire;
 pub(crate) use url::*;
 
-/// Domain prefix for the OF-444 content identity.
-pub const WEB_FETCH_CONTENT_HASH_DOMAIN: &[u8] = b"oneiron.web_fetch.content.v1\0";
+/// Domain prefix for the OF-444 content identity: the tag of
+/// [`purposes::web_fetch::CONTENT_HASH`], which the content hash writes first.
+pub const WEB_FETCH_CONTENT_HASH_DOMAIN: &[u8] = purposes::web_fetch::CONTENT_HASH.tag().as_bytes();
 
 /// Engine default for deciding that a renderer extracted real page content.
 /// This is a test-injectable mechanism dial, not a safety or quality verdict.
@@ -424,10 +426,11 @@ pub struct CrawlResult {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn content_hash(markdown: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(WEB_FETCH_CONTENT_HASH_DOMAIN);
-    hasher.update(markdown.as_bytes());
-    hasher.finalize().to_hex().to_string()
+    oneiron_hex::encode(
+        &LegacyDigest::new(purposes::web_fetch::CONTENT_HASH)
+            .raw(markdown.as_bytes())
+            .finish(),
+    )
 }
 
 /// Acquisition used by actor-bound import. Each method is one ladder operation.

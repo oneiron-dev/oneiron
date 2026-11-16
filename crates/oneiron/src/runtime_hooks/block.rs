@@ -21,23 +21,10 @@ pub(crate) fn hooks_block_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<HookBlock, Named>(bytes)
 }
 
-pub(super) const DEFAULT_TOKEN_CAP: u32 = 512;
-
-/// How long a block lasts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HookBlockLifetime {
-    /// This many board deliveries.
-    Deliveries(u32),
-    /// Until a claim whose predicate matches this glob lands.
-    UntilPredicate(String),
-}
-
-impl Default for HookBlockLifetime {
-    fn default() -> Self {
-        Self::Deliveries(1)
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::runtime_hooks::block::DEFAULT_TOKEN_CAP;
+#[doc(hidden)]
+pub use oneiron_records::runtime_hooks::block::HookBlockLifetime;
 
 /// The host turn a block targets. Pre hooks use the current step; post hooks
 /// use the next completed step in the same run (FIX 10072).
