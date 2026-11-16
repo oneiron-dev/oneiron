@@ -391,7 +391,7 @@ pub(crate) fn drop_seeded_actor_row(
     store.port_remove_entity_row(wtxn, id)?;
     Ok(())
 }
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn deindex_entity_for_test(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,

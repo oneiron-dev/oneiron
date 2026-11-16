@@ -56,6 +56,7 @@ pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
+pub mod external_effect_binding;
 pub mod fanout_admission;
 pub mod feeds;
 pub mod fingerprint_keep_executor_cohort_credit;
