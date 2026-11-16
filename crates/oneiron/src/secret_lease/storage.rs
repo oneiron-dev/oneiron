@@ -190,7 +190,9 @@ pub(super) fn read_live_lease_in_txn(
             lease_id: *lease_id,
         }));
     };
-    if lease.status == SecretLeaseStatus::Active && now >= lease.expires_at {
+    if lease.status == SecretLeaseStatus::Active
+        && oneiron_store::expiry::is_expired(now, lease.expires_at)
+    {
         lease.status = SecretLeaseStatus::Expired;
         write_secret_lease_in_txn(store, wtxn, &lease)?;
         teardown_local_registration_in_txn(store, wtxn, lease_id, now)?;
@@ -263,13 +265,13 @@ pub(super) fn stamp_secret_lease_in_txn(
         // The window closed before the lease could be stamped. Returning
         // here leaves the caller's write txn uncommitted, so no row and no
         // value escape a bound this materialization can no longer honour.
-        Some(bound) if now >= bound => {
+        Some(bound) if oneiron_store::expiry::is_expired(now, bound) => {
             return Err(Error::InvariantViolation(
                 "secret lease expiry bound elapsed before materialization stamped the lease",
             ));
         }
-        Some(bound) => now.saturating_add(ttl_secs).min(bound),
-        None => now.saturating_add(ttl_secs),
+        Some(bound) => oneiron_store::expiry::expires_at_saturating(now, ttl_secs).min(bound),
+        None => oneiron_store::expiry::expires_at_saturating(now, ttl_secs),
     };
     // The dial caps actual exposure, not the caller's pre-bound request. A
     // shorter live not_after may make a larger requested TTL safe; both the
@@ -330,7 +332,7 @@ pub(crate) fn stamp_reveal_lease_in_txn(
         &rec.name,
     )?;
     let now = VaultInstant(vault.store.clock.now_recorded_at()).secs();
-    let expires_at = now.saturating_add(ttl_secs);
+    let expires_at = oneiron_store::expiry::expires_at_saturating(now, ttl_secs);
     crate::credential_door::admit_materialization_in_txn(
         &vault.store,
         wtxn,
@@ -381,7 +383,7 @@ pub(crate) fn stamp_use_lease_in_txn(
     // ONE instant stamps `granted_at`, dates the receipt and bounds the
     // lease. A use carries no authority end, so the TTL alone bounds it.
     let now = VaultInstant(vault.store.clock.now_recorded_at());
-    let expires_at = now.secs().saturating_add(ttl_secs);
+    let expires_at = oneiron_store::expiry::expires_at_saturating(now.secs(), ttl_secs);
     // The dial caps actual exposure, under the committing writer, before
     // the value read or either durable row write.
     crate::credential_door::admit_materialization_in_txn(
@@ -435,7 +437,7 @@ pub(crate) fn reread_reveal_lease_in_txn(
     }
     let now = VaultInstant(vault.store.clock.now_recorded_at()).secs();
     if lease.status != SecretLeaseStatus::Active
-        || now >= lease.expires_at
+        || oneiron_store::expiry::is_expired(now, lease.expires_at)
         || lease.value_generation != rec.rotation_generation
         || rec.class != authority.class()
     {

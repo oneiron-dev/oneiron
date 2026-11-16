@@ -19,6 +19,8 @@ use super::super::edge::refuse_admitted_stamps;
 #[cfg(feature = "sync")]
 use super::super::validators::validate_federated_pack;
 use super::FederationAdmissionRole;
+#[cfg(feature = "sync")]
+use super::blobs::refuse_peer_task_authority_fact;
 use super::refuse_peer_agent_definition_widening;
 
 /// Re-runs federated claim admission over ALREADY-ADMITTED window bytes using
@@ -41,7 +43,9 @@ use super::refuse_peer_agent_definition_widening;
 /// Non-claim rows were admitted by identity/kind rules that do not depend on
 /// resolved policy, so they are left alone here, except an agent definition:
 /// it is judged again against the definition stored now, so one turned off
-/// since the stage does not come back on through the confirmation.
+/// since the stage does not come back on through the confirmation. A TASK
+/// authority fact is refused again too, so bytes staged before the window
+/// door refused one are not confirmed (FIX TASK-FACT-FROM-FEDERATION-PEER).
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn revalidate_admitted_federated_claims(
     vault: &Vault,
@@ -69,7 +73,8 @@ pub(in crate::sync) fn revalidate_admitted_federated_claims(
         result = recheck_admitted_claim_blob(&vault.store, &rtxn, &policy, value).and_then(|()| {
             let id = EntityId::from_hex(key).map_err(|_| Error::InvalidKey)?;
             let blob = value.ok_or(Error::InvalidKey)?;
-            refuse_peer_agent_definition_widening(&vault.store, &rtxn, &id, blob)
+            refuse_peer_agent_definition_widening(&vault.store, &rtxn, &id, blob)?;
+            refuse_peer_task_authority_fact(blob)
         });
     });
     result
