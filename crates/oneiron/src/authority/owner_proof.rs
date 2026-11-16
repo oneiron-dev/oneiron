@@ -255,7 +255,13 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 /// whose binding, live or revoked, is `human` asks the same, whatever class
 /// it binds: else the root alone could turn the owner's binding into an
 /// agent's, or replace a revoked one and so undo the owner's removal (an
-/// owner no binding names reads as live). A self-host or relay fold,
+/// owner no binding names reads as live). So does a bind or rebind of an
+/// owner key no cloud key holds, whatever class it binds and whatever its
+/// parents bind: else the root alone could bind the owner's key as another
+/// actor's at the owner's epoch on parents that bind no person, and the
+/// merge with the owner's own bind marks the key's binding conflicted, which
+/// [`super::owner_act::owner_live_at`] reads as the owner removed (blind
+/// review round 1 of #9137, P1). A self-host or relay fold,
 /// another class and every other op pass: a self-host root is the owner's
 /// own key, and those folds take no cloud key's consent. A revoke never asks
 /// (ONE-REVOKE-DURABILITY), so the root alone can still end a binding an
@@ -285,7 +291,8 @@ pub(super) fn human_bind_proved(
         || state
             .actor_bindings
             .get(authority_key)
-            .is_some_and(|binding| binding.actor_class == ACTOR_CLASS_HUMAN);
+            .is_some_and(|binding| binding.actor_class == ACTOR_CLASS_HUMAN)
+        || owner_key_outside_cloud_custody(state, authority_key);
     !touches_a_person
         || participants
             .iter()
