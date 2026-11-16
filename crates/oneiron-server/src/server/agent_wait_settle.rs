@@ -6,15 +6,7 @@
 use std::sync::Arc;
 
 use oneiron::Vault;
-
-/// Unix milliseconds now, the clock a wait's `until` is on.
-fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+use oneiron_base::unix_millis_now;
 
 /// Settles every wait over AGENT children due now in `vault`, on the tick's
 /// pass and the owner's run-now pass alike. A failure is logged by its kind

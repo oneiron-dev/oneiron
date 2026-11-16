@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::attempt_queue::AttemptId;
 use crate::origin::RepoPortableId;
 
 /// `self.code.snapshots.get`: the manifest of one snapshot of the admitted
@@ -140,30 +139,5 @@ pub type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
 /// its id and expiry unchanged by the read.
 pub type RepoSymbolsObserveOutput = RepoSymbolDeclarationView;
 
-/// The run a work belongs to, bound in the receipt's first write (PREMISE
-/// 2): the leased try, the executor run, the TASK, the repo and ref the
-/// Grant admitted, and the pinned base. Evidence a later door compares with
-/// its own binding, never a lease: no door rebuilds a host binding from it.
-/// The actor is the receipt's own.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RepoRunStamp {
-    pub attempt: AttemptId,
-    pub lease_owner: String,
-    pub generation: u32,
-    pub executor_run: EntityId,
-    pub task: EntityId,
-    pub project: EntityId,
-    pub repo: EntityId,
-    pub grant: EntityId,
-    #[serde(rename = "ref")]
-    pub git_ref: String,
-    pub base_green: String,
-    /// The pinned base snapshot's hash.
-    pub base_snapshot: [u8; 32],
-    /// The work id: the view id the stamp was bound with.
-    pub work: EntityId,
-    /// The run's symbol declaration a proposal was made under (FIX 6867,
-    /// G1 PR2b): `None` on a work's own stamp and on a proposal made with
-    /// none.
-    pub symbol_fence: Option<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::repo_doors::types::RepoRunStamp;

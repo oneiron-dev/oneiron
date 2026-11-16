@@ -5,6 +5,7 @@
 //! files (and the golden vectors in `authority/tests.rs`) or the wire format
 //! silently drifts.
 
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -275,6 +276,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
             super::conversation_training_vault::decode_conversation_training_vault(entries)
         }
         OP_KIND_HOME_CANDIDACY => super::home_candidacy::decode_home_candidacy(entries),
+        OP_KIND_FULL_COPY_MARK => super::full_copy_mark::decode_full_copy_mark(entries),
         OP_KIND_AGENT_GRANT_ACT => super::agent_grant_act::decode_agent_grant_act(entries),
         OP_KIND_POLICY_SETTING => super::policy_setting::decode_policy_setting(entries),
         OP_KIND_EXPORT_ACT => super::export_act::decode_export_act(entries),
@@ -346,7 +348,7 @@ fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<Authorit
             // The two-form discriminator: `effective_scope` present = narrow
             // form; otherwise the repact key set applies. A mix (or neither)
             // fails both forms' strict key sets below.
-            if optional(entries, "effective_scope").is_some() {
+            if optional(entries, "effective_scope")?.is_some() {
                 expected.push("effective_scope");
             } else {
                 expected.extend(["pact_scope", "scope_digest", "gesture"]);
@@ -365,21 +367,21 @@ fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<Authorit
     if grant_ref.to_hex() != grant_ref_hex {
         return Err(invalid_authority());
     }
-    let pact_scope = optional(entries, "pact_scope")
+    let pact_scope = optional(entries, "pact_scope")?
         .map(|value| decode_federation_pact_scope_value(value).map_err(|_| invalid_authority()))
         .transpose()?;
-    let effective_scope = optional(entries, "effective_scope")
+    let effective_scope = optional(entries, "effective_scope")?
         .map(|value| {
             decode_federation_direction_scope_value(value).map_err(|_| invalid_authority())
         })
         .transpose()?;
-    let scope_digest = optional(entries, "scope_digest")
+    let scope_digest = optional(entries, "scope_digest")?
         .map(decode_hash)
         .transpose()?;
-    let gesture = optional(entries, "gesture")
+    let gesture = optional(entries, "gesture")?
         .map(decode_gesture)
         .transpose()?;
-    let successor_vault_id = optional(entries, "successor_vault_id")
+    let successor_vault_id = optional(entries, "successor_vault_id")?
         .map(decode_hash)
         .transpose()?;
     Ok(AuthorityOp::FederationLifecycle(
@@ -522,42 +524,30 @@ pub fn decode_16(value: &Value) -> Result<[u8; 16]> {
 }
 
 pub fn map_entries(value: &Value) -> Result<&[(Value, Value)]> {
-    let Value::Map(entries) = value else {
-        return Err(invalid_authority());
-    };
-    Ok(entries)
+    msgpack::Entries::of(value)
+        .map(msgpack::Entries::as_slice)
+        .map_err(|_| invalid_authority())
 }
 
 pub fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
-    let mut seen = vec![false; expected.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_authority)?;
-        let Some(index) = expected.iter().position(|known| *known == key) else {
-            return Err(invalid_authority());
-        };
-        if seen[index] {
-            return Err(invalid_authority());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(invalid_authority())
-    }
+    msgpack::Entries::new(entries)
+        .exact_keys(expected, &[])
+        .map(|_| ())
+        .map_err(|_| invalid_authority())
 }
 
+/// The value under `name`; a key stored twice is refused.
 pub fn required<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
-        .ok_or_else(invalid_authority)
+    msgpack::Entries::new(entries)
+        .require(name)
+        .map_err(|_| invalid_authority())
 }
 
-fn optional<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+/// The value under `name`, `None` when it is absent; a key stored twice is refused.
+fn optional<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<Option<&'a Value>> {
+    msgpack::Entries::new(entries)
+        .get(name)
+        .map_err(|_| invalid_authority())
 }
 
 fn bytes(value: &Value) -> Result<&[u8]> {
