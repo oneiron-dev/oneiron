@@ -8,7 +8,9 @@
 //! their history into no shared "erased" scope. An offer answer a former
 //! owner gave keeps its row in a scope that is not theirs, and its
 //! `answerer` reads `ERASED_CALL_IDENTITY` once that owner is erased
-//! (review of #7834).
+//! (review of #7834). A floor row written before a floor row carried its
+//! scope (four bytes) still reads, and goes with its scope's other rows
+//! (RAMP-FLOOR-ORPHAN-ERASE).
 //!
 //! The scope's actor is a PERSON, the entity type #7514's erase test already
 //! hard-erases; the scrub matches the id whatever its type. Every ramp table
@@ -36,7 +38,9 @@ use oneiron::receipt::{ERASED_CALL_IDENTITY, ReceiptKind, ReceiptQuery, ReceiptR
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::consent_graduation_ramp_rows::{RampTableRows, ramp_rows_spelling};
+use oneiron::test_doors::consent_graduation_ramp_rows::{
+    RampTableRows, put_four_byte_ramp_floor, ramp_rows_spelling,
+};
 use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 
 const OP_KIND: &str = "send_email";
@@ -166,6 +170,7 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
         named,
         vec![
             "ramp_demotion",
+            "ramp_floor",
             "ramp_outcome",
             "ramp_stats",
             "graduation_answer",
@@ -231,7 +236,13 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
     vault
         .rebuild_ramp_stats_from_receipts()
         .expect("the stats rebuild");
-    let erased = RampScope::new(OP_KIND, TARGET_CLASS, ERASED_CALL_IDENTITY).expect("erased scope");
+    // RampScope::new refuses the erased token as a live scope's actor
+    // (RAMP-SCOPE-ERASED-TOKEN-LIVE), so the shared key is built by hand.
+    let erased = RampScope {
+        op_kind: OP_KIND.to_owned(),
+        target_class: TARGET_CLASS.to_owned(),
+        actor: ERASED_CALL_IDENTITY.to_owned(),
+    };
     assert!(
         vault.scope_stats(&erased).expect("stats read").is_none(),
         "no stats row folds the erased actor's rulings under a shared key"
@@ -248,6 +259,48 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
             .map(|table| table.rows),
         Some(0),
         "the stats table holds no row at all"
+    );
+}
+
+#[test]
+fn a_four_byte_floor_row_still_reads_and_goes_with_its_scope() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let owner = owner(&vault);
+    let actor = person(&vault);
+    let scope = RampScope::new(OP_KIND, TARGET_CLASS, actor.to_hex()).expect("FIXTURE: the scope");
+    let untouched = RampScope::new(OP_KIND, TARGET_CLASS, EntityId::now().to_hex())
+        .expect("FIXTURE: an untouched scope");
+
+    put_four_byte_ramp_floor(&vault, &scope, 3).expect("FIXTURE: a four-byte floor row");
+    assert_eq!(
+        vault.ramp_streak_floor(&scope).expect("floor read"),
+        3,
+        "a four-byte floor row reads as the scope's floor"
+    );
+    // A ruling gives the scope rows that spell its actor.
+    vault
+        .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
+        .expect("FIXTURE: the owner rules in the scope");
+
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .delete_entity_with_reason(&actor, DeleteReason::UserHardDelete)
+        .expect("FIXTURE: the scope's actor is hard-erased");
+
+    assert_eq!(
+        vault.ramp_streak_floor(&scope).expect("floor read"),
+        vault.ramp_streak_floor(&untouched).expect("floor read"),
+        "the four-byte floor goes with its scope's other rows"
+    );
+    assert_eq!(
+        ramp_rows_spelling(&vault, "")
+            .expect("ramp table read")
+            .into_iter()
+            .find(|table| table.table == "ramp_floor")
+            .map(|table| table.rows),
+        Some(0),
+        "the floor table holds no row"
     );
 }
 

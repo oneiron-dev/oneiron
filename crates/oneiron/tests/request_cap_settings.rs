@@ -21,7 +21,7 @@ use oneiron::registry::{
     ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_WORLD,
 };
-use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::snapshot_read::{
     EvidenceRange, EvidenceSpansRequest, PolicyPreflightAct, PolicyPreflightRequest, SnapshotKind,
     SnapshotOpenRequest,
@@ -50,16 +50,7 @@ fn set_vault_u32(vault: &Vault, key: &str, value: u32) -> TestResult {
     let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let outcome = vault.set_setting(
         SettingCaller::Owner(&proof),
-        SetSetting {
-            key: key.to_owned(),
-            item: None,
-            scope: SettingScope::Vault,
-            mode: SettingMode::Value,
-            value: Some(serde_json::json!(value)),
-            expected_revision: None,
-            why: None,
-            check_in_ref: None,
-        },
+        SetSetting::vault_value(key, serde_json::json!(value)),
     )?;
     assert!(
         matches!(outcome, SetSettingOutcome::Applied { .. }),
