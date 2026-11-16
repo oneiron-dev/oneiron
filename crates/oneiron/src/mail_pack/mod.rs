@@ -34,6 +34,9 @@
 //! connector admission, each EVENT bound to its source at birth
 //! ([`calendar`]), read from Google Calendar ([`google_calendar`]), Microsoft 365
 //! ([`microsoft365_calendar`]) or an ICS subscription ([`ics_calendar`]).
+//! A Drive source, an attached folder source with a remote origin
+//! ([`crate::note::DriveSource`]), reads Google Drive through
+//! [`google_drive`] on the same Google REST client.
 //! The owner runs a step on this device through [`local_sync`], and imports
 //! an mbox file or a Google Takeout export through [`mbox_import`], read by
 //! the engine's own MIME reader ([`mime`]).
@@ -48,6 +51,7 @@ mod dav_xml;
 mod doors;
 mod gmail;
 mod google_calendar;
+mod google_drive;
 mod header_retire;
 mod ics_calendar;
 mod imap;
@@ -108,6 +112,7 @@ pub use doors::{
 };
 pub use gmail::HttpGmailMailWire;
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
+pub use google_drive::{GOOGLE_DRIVE_CONNECTOR_EFFECTOR, GOOGLE_DRIVE_QUOTA, HttpGoogleDriveWire};
 pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
 #[cfg(oneiron_test_support)]
 pub(crate) use imap::imap_landed_headers;

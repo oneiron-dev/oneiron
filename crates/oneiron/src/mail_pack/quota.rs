@@ -19,14 +19,13 @@
 
 use std::cell::Cell;
 
-use serde::{Deserialize, Serialize};
-
 use super::rest::{MAX_REST_RESPONSE_BYTES, refused};
 use super::wire::{
     MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryRead, MailIdPage,
     MailListQuery, MailProviderWire, MailSyncSource,
 };
 use crate::memory::MemoryResult;
+use crate::provider_quota::{DayBytes, ProviderQuotaWindow, RATE_LIMIT_REST_SECS, minute_ceiling};
 use crate::{Error, Result};
 
 /// What a wire answers for its provider's rate-limit answer (Gmail's 429,
@@ -37,18 +36,6 @@ pub const MAIL_WIRE_RATE_LIMITED: &str = "mail_wire_rate_limited";
 /// What a metered call answers once its source rests: the step reads it as
 /// its pause, never as its failure.
 const MAIL_WIRE_RESTING: &str = "mail_wire_quota_resting";
-
-/// The minute window's length.
-const MINUTE_SECS: u64 = 60;
-/// The day window's length.
-const DAY_SECS: u64 = 86_400;
-/// How long a source rests after its provider's rate-limit answer: the
-/// provider's minute refills in it.
-const RATE_LIMIT_REST_SECS: u64 = 60;
-/// The share of a minute's units the copy may spend, in percent: the rest
-/// stays for the change feed (RESEARCH-1393 #backfill plans at 75%, to leave
-/// room for live sync and retries).
-const COPY_SHARE_PERCENT: u64 = 75;
 
 /// One kind of provider call a mailbox step makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -159,43 +146,6 @@ pub const GMAIL_MAIL_QUOTA: MailQuota = MailQuota {
     first_call_check: Some(MailCall::Anchor),
 };
 
-/// Where one source's quota windows stand. Each window opens at its first
-/// charge after the last one closed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub(super) struct MailQuotaWindow {
-    /// When the minute window opened, Unix seconds.
-    pub(super) minute_start: u64,
-    /// The units charged in it.
-    pub(super) minute_units: u64,
-    /// When the day window opened, Unix seconds.
-    pub(super) day_start: u64,
-    /// The bytes read in it.
-    pub(super) day_bytes: u64,
-    /// Until when the source rests: no provider call is made before it.
-    #[serde(default)]
-    pub(super) resting_until: Option<u64>,
-}
-
-impl MailQuotaWindow {
-    /// When the source's rest ends, while it still rests at `now`.
-    pub(super) fn resting_at(&self, now: u64) -> Option<u64> {
-        self.resting_until.filter(|until| *until > now)
-    }
-
-    /// Opens a new window for each one closed at `now` (or one a clock set
-    /// back left in the future).
-    fn roll(&mut self, now: u64) {
-        if now < self.minute_start || now >= self.minute_start.saturating_add(MINUTE_SECS) {
-            self.minute_start = now;
-            self.minute_units = 0;
-        }
-        if now < self.day_start || now >= self.day_start.saturating_add(DAY_SECS) {
-            self.day_start = now;
-            self.day_bytes = 0;
-        }
-    }
-}
-
 /// The refusal a metered call answers once its source rests.
 fn resting() -> Error {
     refused(MAIL_WIRE_RESTING)
@@ -223,9 +173,9 @@ pub(super) fn pause_is_no_failure(outcome: MemoryResult<()>) -> MemoryResult<()>
 pub(super) struct MeteredMailWire<'w> {
     inner: &'w dyn MailProviderWire,
     quota: Option<MailQuota>,
-    window: Cell<MailQuotaWindow>,
+    window: Cell<ProviderQuotaWindow>,
     /// Whether the change feed reads now: it may spend the whole minute,
-    /// the copy only [`COPY_SHARE_PERCENT`] of it.
+    /// the copy only its share of it.
     live: Cell<bool>,
     /// Whether a call was charged yet, and with it the wire's credential
     /// check ([`MailQuota::first_call_check`]).
@@ -236,7 +186,7 @@ pub(super) struct MeteredMailWire<'w> {
 }
 
 impl<'w> MeteredMailWire<'w> {
-    pub(super) fn new(inner: &'w dyn MailProviderWire, window: MailQuotaWindow) -> Self {
+    pub(super) fn new(inner: &'w dyn MailProviderWire, window: ProviderQuotaWindow) -> Self {
         Self {
             quota: inner.quota(),
             inner,
@@ -253,7 +203,7 @@ impl<'w> MeteredMailWire<'w> {
     }
 
     /// The source's windows as this step leaves them.
-    pub(super) fn window(&self) -> MailQuotaWindow {
+    pub(super) fn window(&self) -> ProviderQuotaWindow {
         self.window.get()
     }
 
@@ -263,7 +213,7 @@ impl<'w> MeteredMailWire<'w> {
     }
 
     /// Rests the source until `until` and answers the refusal.
-    fn rest(&self, mut window: MailQuotaWindow, until: u64) -> Error {
+    fn rest(&self, mut window: ProviderQuotaWindow, until: u64) -> Error {
         window.resting_until = Some(until);
         self.window.set(window);
         resting()
@@ -271,11 +221,9 @@ impl<'w> MeteredMailWire<'w> {
 
     /// Adds the bytes the wire read since they were last counted to the
     /// day's.
-    fn count_bytes(&self, window: &mut MailQuotaWindow) {
+    fn count_bytes(&self, window: &mut ProviderQuotaWindow) {
         let read = self.inner.bytes_read();
-        window.day_bytes = window
-            .day_bytes
-            .saturating_add(read.saturating_sub(self.counted.get()));
+        window.count_bytes(read.saturating_sub(self.counted.get()));
         self.counted.set(read);
     }
 
@@ -292,27 +240,20 @@ impl<'w> MeteredMailWire<'w> {
         self.count_bytes(&mut window);
         window.roll(now);
         if let Some(quota) = &self.quota {
-            let minute = u64::from(quota.units_per_minute);
-            let ceiling = if self.live.get() {
-                minute
-            } else {
-                minute * COPY_SHARE_PERCENT / 100
-            };
             let check = quota
                 .first_call_check
                 .filter(|check| !self.charged.get() && *check != call)
                 .map_or(0, |check| u64::from(quota.costs.of(check)));
-            let units = window
-                .minute_units
-                .saturating_add(u64::from(quota.costs.of(call)))
-                .saturating_add(check);
-            if units > ceiling {
-                return Err(self.rest(window, window.minute_start + MINUTE_SECS));
+            if let Err(until) = window.charge(
+                u64::from(quota.costs.of(call)).saturating_add(check),
+                minute_ceiling(quota.units_per_minute, self.live.get()),
+                Some(DayBytes {
+                    cap: quota.bytes_per_day,
+                    largest_answer: quota.largest_answer_bytes,
+                }),
+            ) {
+                return Err(self.rest(window, until));
             }
-            if window.day_bytes.saturating_add(quota.largest_answer_bytes) > quota.bytes_per_day {
-                return Err(self.rest(window, window.day_start + DAY_SECS));
-            }
-            window.minute_units = units;
         }
         self.charged.set(true);
         self.window.set(window);

@@ -19,6 +19,10 @@
 //! world, their ids derive from the source's identity rather than the host's
 //! path, and a file with no text is held by its name only, never as text.
 //!
+//! A Google Drive source (ARCH-0027 #mail-drive) is the same source with a
+//! remote origin: the Drive files its owner picked, read through a wire
+//! rather than a host walk, each keyed on its Drive file id ([`drive`]).
+//!
 //! Files only feed the vault. Nothing is written back to the folder: the
 //! vault is the base and files are never it (ENJ-029). A per-file ledger
 //! remembers what each file last held and what the vault took from it.
@@ -36,9 +40,15 @@ use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod drive;
 mod original;
 mod reconcile;
 
+pub(crate) use drive::MAX_DRIVE_DOWNLOAD_BYTES;
+pub use drive::{
+    DRIVE_WIRE_RATE_LIMITED, DriveCall, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin,
+    DriveQuota, DriveSource, DriveStepBudget, DriveStepReport, DriveSyncState, DriveWire,
+};
 pub use original::{FileOriginal, OriginalBytes};
 
 const SOURCES: SideTable<String, FolderSource, Named> = SideTable::new(&side_table::FOLDER_SOURCE);
@@ -104,6 +114,10 @@ pub struct FolderSource {
     /// attached as notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<FilesPlacement>,
+    /// A Drive source's origin and where its import stands; none for a
+    /// folder of this host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drive: Option<DriveSource>,
 }
 
 impl FolderSource {
@@ -194,11 +208,17 @@ pub struct FolderRescanReport {
     /// Why the first of them was refused, or the first folder that would
     /// not open.
     pub first_error: Option<String>,
+    /// The paths of the files the write door refused. A source that reads
+    /// a file only when it changes (Drive) keeps them owed, so its next
+    /// step reads them again (REVIEW-7973 P1).
+    #[serde(skip)]
+    pub(crate) failed_paths: Vec<String>,
 }
 
 impl FolderRescanReport {
-    fn fail(&mut self, error: impl std::fmt::Display) {
+    fn fail(&mut self, path: &str, error: impl std::fmt::Display) {
         self.failed += 1;
+        self.failed_paths.push(path.to_owned());
         self.first_error.get_or_insert_with(|| error.to_string());
     }
 }
@@ -218,11 +238,11 @@ impl Vault {
         include: Vec<String>,
         kind: &str,
     ) -> Result<FolderSource> {
-        self.attach_source(owner, folder, include, kind, None)
+        self.attach_source(owner, folder, include, kind, None, None)
     }
 
     /// [`Self::attach_folder_source`], placed as `files` says when it is a
-    /// Files source.
+    /// Files source, read from `drive` when it is a Drive source.
     pub(in crate::note) fn attach_source(
         &self,
         owner: &AuthenticatedOwner,
@@ -230,6 +250,7 @@ impl Vault {
         include: Vec<String>,
         kind: &str,
         files: Option<FilesPlacement>,
+        drive: Option<DriveSource>,
     ) -> Result<FolderSource> {
         let invalid = super::document::invalid;
         if folder.trim().is_empty() || folder.len() > MAX_FOLDER_BYTES {
@@ -269,6 +290,7 @@ impl Vault {
                 attached_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
                 last_rescan_at: None,
                 files,
+                drive,
             };
             SOURCES.put(&self.store, txn, &key, &source)?;
             Ok(source)
