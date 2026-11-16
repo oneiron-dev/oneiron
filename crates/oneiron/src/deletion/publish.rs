@@ -219,6 +219,13 @@ impl Vault {
             // pin are settled under the lock, before the publish txn opens
             // below: each takes a write txn of its own, which cannot nest
             // inside the publish txn.
+            //
+            // All of it runs inside the live-window turn (L7-45): the
+            // tombstone commit builds a tombstone index over the shared doc,
+            // so no peer import lands in it from the merge to the commit.
+            // The merge's own Observer B runs inside the turn, which is
+            // re-entrant.
+            let turn = materializer.enter_live_window();
             let merged_update_keys =
                 merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
             // The snapshot-mode decision, the gate staging, the tombstone
@@ -319,6 +326,7 @@ impl Vault {
                 self.notify_tombstone_publication(id, &window_key, value);
                 delete_update
             };
+            drop(turn);
             // Outbound routing is the LAST act, after the publish txn
             // committed: a refusal or a failed persist must never put the
             // tombstone on the wire.

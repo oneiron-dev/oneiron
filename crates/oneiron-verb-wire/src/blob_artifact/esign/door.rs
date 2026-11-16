@@ -20,6 +20,12 @@ pub struct EsignCreateRequest {
     /// the document, its trail and its held sign acts to that project, for
     /// one of its members or a vault owner only.
     pub draft: EsignDocument,
+    /// Whether the QR capability the sealed certificate prints also
+    /// downloads the sealed PDF (ARCH-0064a section 6). Off by default: each
+    /// party's own signing link stays the way to the PDF. Only the vault
+    /// owner turns it on; the owner can turn it off again at any time.
+    #[serde(default)]
+    pub qr_pdf_download: bool,
 }
 
 /// A signing document to read.
@@ -87,8 +93,8 @@ pub struct EsignVoidRequest {
 
 /// One ceremony document item to download (`vault.esign.signing.pdf`):
 /// the pinned original while signing, the sealed output after sealing.
-/// The public `POST /sign/pdf` door takes the item alone, under the
-/// `x-oneiron-esign-capability` header.
+/// The public `POST /sign/pdf` door takes the item alone, under the signing
+/// session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningPdfRequest {
@@ -110,7 +116,7 @@ pub struct EsignSigningPdfView {
 /// One signature image to upload for a signature field
 /// (`vault.esign.signing.image`), bound to the capability's recipient.
 /// The public `POST /sign/image` door takes the raw PNG or JPEG bytes as
-/// its body, under the `x-oneiron-esign-capability` header.
+/// its body, under the signing session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningImageRequest {
@@ -129,8 +135,7 @@ pub struct EsignSigningImageView {
 
 /// One stored signature image to read back (`vault.esign.signing.signature`),
 /// under the capability that uploaded it. The public `POST /sign/signature`
-/// door takes the image ref alone, under the `x-oneiron-esign-capability`
-/// header.
+/// door takes the image ref alone, under the signing session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningSignatureRequest {
