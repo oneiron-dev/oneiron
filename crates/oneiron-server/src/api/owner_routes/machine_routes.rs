@@ -552,10 +552,12 @@ async fn confirm_held(
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let held = blocking(move || -> OwnerResult<HeldAnswers> {
-        let confirmed =
-            server
-                .vault()
-                .confirm_held_machine_answers(&owner, surface, &request.parsed()?)?;
+        let confirmed = server.vault().confirm_held_machine_answers(
+            &owner,
+            surface,
+            &request.parsed()?,
+            &std::collections::BTreeMap::new(),
+        )?;
         for machine in &confirmed.removed {
             revoke_removed_mesh(&server, *machine);
         }

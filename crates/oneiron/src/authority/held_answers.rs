@@ -70,6 +70,10 @@ pub struct ListedHeldAnswer {
     pub answer: MachineRevision,
     /// The role the machine stands in now; `None` when no revision names it.
     pub standing: Option<MachineRole>,
+    /// The machine's answer revision as this list read it
+    /// ([`FoldedMachine::answer_revision`]; zero when no revision names the
+    /// machine): what a confirm of this entry presents back as `seen`.
+    pub revision: [u8; 32],
     /// The role the answer's carrier stands in; `None` when no revision
     /// names the carrier.
     pub carrier_role: Option<MachineRole>,
@@ -248,6 +252,9 @@ impl Vault {
                     entry: *entry,
                     answer: answer.clone(),
                     standing: role_of(*machine),
+                    revision: fold
+                        .machine(*machine)
+                        .map_or([0; 32], FoldedMachine::answer_revision),
                     carrier_role: carrier.and_then(role_of),
                     carrier_is_mine: carrier
                         .is_some_and(|carrier| fold.trusted_machine(carrier).is_some()),
@@ -288,6 +295,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         surface: ActSurface,
         entries: &[AuthorityEntryHash],
+        _seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
     ) -> Result<ConfirmedHeldAnswers> {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
