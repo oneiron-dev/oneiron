@@ -439,7 +439,7 @@ pub(crate) fn stored_authority_row(
 /// The row stored as authority history at `hash`'s id, as the fold takes
 /// it: whole when its record opens here, structure only when it does not.
 /// A row of another kind at that id, or one that does not decode, is none.
-fn stored_authority_fold_row(
+pub(super) fn stored_authority_fold_row(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     hash: &AuthorityEntryHash,

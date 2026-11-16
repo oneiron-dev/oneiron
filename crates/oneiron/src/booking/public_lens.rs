@@ -124,8 +124,9 @@ pub fn validate_booking_page_model(
     Ok(())
 }
 
-/// Bounded ranked prefix for the public lens: the first 128 ranked slots.
-/// Query a narrower window for more choices. Never truncate a serialized JSON
+/// Bounded ranked prefix for the public lens: the first 128 ranked slots, and
+/// every full day (one per visitor-local day of the bounded window, so bounded
+/// already). Query a narrower window for more choices. Never truncate a serialized JSON
 /// string or change a slot interval; the lens frames the projection whole,
 /// whatever its length (FIX 20663).
 pub fn bounded_public_slots(
@@ -355,6 +356,7 @@ mod tests {
                 }],
                 flex_used: false,
                 host_bindings: Vec::new(),
+                full_days: Vec::new(),
             },
         );
         BookingPageModel::new(

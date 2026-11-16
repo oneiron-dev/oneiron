@@ -447,6 +447,7 @@ pub mod sync_quarantine;
 pub mod trusted_contact;
 pub mod uncertain_send;
 pub mod voice_bank;
+pub mod voice_recognition;
 pub mod voice_records;
 pub mod weave;
 pub mod wire_health;
