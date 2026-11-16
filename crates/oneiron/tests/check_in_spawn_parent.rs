@@ -15,10 +15,20 @@
 //!   own check-in would let it do, that is no widening. An act its Grant
 //!   does not hold, and a widening (an add to a room), pass up to the owner.
 //! - A root run's ask still pins the owner who granted it.
+//! - The parent's erase takes its id off the child's open ask, as the
+//!   table's actor scrub takes it off every pinned rung (review of
+//!   UNBUILT-09, P3).
+//! - A frozen spawn parent counts only when the attempt's own stored parent
+//!   link derives it again: handover enqueues a replicated run TASK's
+//!   payload as it came (Astra review of UNBUILT-09, F1; Engine RULING
+//!   U09-ASTRA-F1 = A, 16 Nov 10:04).
 //!
 //! On main the first, second and fourth cases fail at their first rung
 //! assert: the child's Grant names the owner as `delegated_by`, so rung 2
-//! pins the owner.
+//! pins the owner. Before the scrub took the spawn parent too, the erase
+//! case failed at its assert on the scrubbed row. Before the reader derived
+//! the parent again, the last case failed at its first assert: the open
+//! stored the forged parent.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_spawn_parent`.
@@ -30,18 +40,25 @@ use std::sync::Arc;
 
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    decode_agent_dispatch_input, encode_agent_dispatch_input,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
+use oneiron::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, EnqueueAttempt,
+    EnqueueOutcome,
+};
 use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::check_in::{HolderAnswer, PendingCheckIn, PendingState, Rung};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron::dreamer_runner::{
+    DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
+};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::Memory;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::HostBinding;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::check_in::{FixedVerdicts, open_as_caller};
+use oneiron::test_doors::inquiry::erase_actor_in_tables_in_order;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -172,6 +189,41 @@ impl Fixture {
             "the attempt runs as the agent itself, not as a narrowed fork"
         );
         status.attempt.id
+    }
+
+    /// A fresh attempt of `agent` whose frozen dispatch input names
+    /// `spawn_parent`, enqueued as handover enqueues a replicated run TASK's
+    /// payload: a root dispatch's payload of `agent`, with `spawn_parent`
+    /// written into its input and `parent_link` as its stored parent attempt.
+    fn forged_child(
+        &self,
+        agent: EntityId,
+        spawn_parent: EntityId,
+        parent_link: Option<AttemptId>,
+    ) -> AttemptId {
+        let queue = AttemptQueue::new(&self.vault);
+        let root = queue
+            .get(self.dispatch(agent, None))
+            .expect("read")
+            .expect("the root's row");
+        let mut payload = decode_dreamer_attempt_payload(&root.payload).expect("a dreamer payload");
+        let mut input = decode_agent_dispatch_input(&payload.input).expect("a dispatch input");
+        input.spawn_parent = Some(spawn_parent);
+        payload.input = encode_agent_dispatch_input(&input).expect("encode the input");
+        payload.parent_attempt = parent_link;
+        let EnqueueOutcome::Enqueued(forged) = queue
+            .enqueue(EnqueueAttempt {
+                kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+                payload: encode_dreamer_attempt_payload(&payload).expect("encode the payload"),
+                dedupe_key: None,
+                run_id: None,
+                now: T0,
+            })
+            .expect("enqueue")
+        else {
+            panic!("expected one fresh attempt");
+        };
+        forged.id
     }
 
     /// `id`, leased to this file's worker. Rows queued before it are leased
@@ -438,4 +490,60 @@ fn a_root_runs_rung_two_still_asks_the_owner_who_granted_it() {
         Some(("grantor", None, vec![fx.owner])),
         "a root run has no spawn parent: rung 2 pins the owner who minted its Grant"
     );
+}
+
+#[test]
+fn erasing_the_spawn_parent_takes_its_id_off_the_open_ask() {
+    let fx = Fixture::rooted();
+    let (parent, child, leased) = fx.spawned(&[SPAWN], &[SPAWN]);
+    let row = open(&fx, &fx.in_run(child, &leased), SPAWN, 0x64);
+    assert_eq!(
+        row.spawn_parent,
+        Some(parent),
+        "the open stores the spawn parent"
+    );
+
+    assert_eq!(
+        erase_actor_in_tables_in_order(&fx.vault, &parent, &["CHECK_IN_PENDING"])
+            .expect("the pending check-in actor erase runs"),
+        1,
+        "the pending check-in table registers an actor erase"
+    );
+    let scrubbed = fx
+        .vault
+        .pending_check_in(&row.id)
+        .expect("read")
+        .expect("the child's ask stays");
+    assert_eq!(
+        (scrubbed.spawn_parent, scrubbed.asker, &scrubbed.state),
+        (None, child, &PendingState::Open),
+        "the erased parent's id is gone from the child's ask, which stays open"
+    );
+    let rungs = rungs(&scrubbed);
+    assert!(
+        rungs
+            .iter()
+            .all(|(_, _, holders)| !holders.contains(&parent)),
+        "no rung pins the erased parent: {rungs:?}"
+    );
+}
+
+#[test]
+fn rung_two_ignores_a_spawn_parent_the_parent_link_does_not_derive() {
+    let fx = Fixture::rooted();
+    let parent = fx.granted_agent("check-in-parent", &[SPAWN]);
+    let child = fx.granted_agent("check-in-child", &[SPAWN]);
+    let other = fx.granted_agent("check-in-other", &[SPAWN]);
+    let other_root = fx.dispatch(other, None);
+    // No parent link, and a link to a live attempt of another agent.
+    for (parent_link, byte) in [(None, 0x65), (Some(other_root), 0x66)] {
+        let leased = fx.claim(fx.forged_child(child, parent, parent_link));
+        let row = open(&fx, &fx.in_run(child, &leased), SPAWN, byte);
+        assert_eq!(
+            (row.spawn_parent, rungs(&row).first().cloned()),
+            (None, Some(("grantor", None, vec![fx.owner]))),
+            "a frozen spawn parent {parent:?} that the parent link {parent_link:?} does not \
+             derive is not stored: rung 2 pins the owner who minted the child's Grant"
+        );
+    }
 }
