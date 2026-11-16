@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
@@ -414,13 +415,12 @@ impl Memory<'_> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
+        let limit = page_limit_zero_refused(request.limit, PAGE_LIMIT, PAGE_LIMIT)
+            .map_err(|ZeroLimitRefused| {
+                MemoryError::bad_request_with("reply strip limit must be positive", &[])
+            })?
+            .rows;
         let requested = request.limit.unwrap_or(PAGE_LIMIT);
-        if requested == 0 {
-            return Err(MemoryError::bad_request_with(
-                "reply strip limit must be positive",
-                &[],
-            ));
-        }
         // A larger ask is served a page at a time through `next_after`; the
         // ask itself is counted against its row (rule 5).
         {
@@ -436,7 +436,6 @@ impl Memory<'_> {
             count.rows(requested);
             count.defer(store);
         }
-        let limit = requested.min(PAGE_LIMIT);
         if self.room_turn().is_some_and(|turn| turn.room != room) {
             return Err(MemoryError::bad_request_with(
                 "room differs from the bound room turn",
