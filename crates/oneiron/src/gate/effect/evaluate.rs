@@ -312,9 +312,16 @@ fn judge_counterparty_policy(
     {
         consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
     }
-    // PLAN L3-35: an agent's send checks in on the vault's send row.
-    let send_check_in =
-        fold_send_check_in(policy, &hydrated_effect, mail_once, &mut consent_grants);
+    // PLAN L3-35: an agent's send checks in on the vault's send row, or with
+    // none, on its role's default.
+    let send_check_in = fold_send_check_in(
+        store,
+        txn,
+        policy,
+        &hydrated_effect,
+        mail_once,
+        &mut consent_grants,
+    )?;
     if let (Some(requirement), Some(effect_ctx)) =
         (requirement, provisional.external_effect.as_ref())
     {
@@ -450,9 +457,9 @@ fn judge_counterparty_policy(
         {
             effect.standing_grant_ref = Some(reservation.consent_grant_ref().to_owned());
         }
-        // PLAN L3-35: a send the vault's send row releases stands on that
-        // row, as the send above stands on its envelope slot; a matched grant
-        // or a slot keeps its own ref.
+        // PLAN L3-35: a send the vault's send row (or the sender's role)
+        // releases stands on that row (or role), as the send above stands on
+        // its envelope slot; a matched grant or a slot keeps its own ref.
         if effect.standing_grant_ref.is_none()
             && let Some(row_ref) = send_check_in
                 .as_ref()
@@ -792,27 +799,39 @@ fn judge_counterparty_policy(
 }
 
 /// PLAN L3-35 (ARCH-0046 #send-grant): `effect`'s check-in on the vault's
-/// send row, when it is an agent's send the row reaches; `delegated_or_cold`:
-/// the Gate found it a member-mailbox send, or a native-mail cold send, or a
-/// recipient of a message that takes one (`mail_once`).
-/// `full-access` covers it in `consent_grants`, as an envelope slot does, and
-/// the caller gives it the row's ref as its authority; any other answer folds
-/// nothing, so the send keeps its other coverage or its press per send.
+/// send row, or with none on its sender's role's default, when it is an
+/// agent's send the row reaches; `delegated_or_cold`: the Gate found it a
+/// member-mailbox send, or a native-mail cold send, or a recipient of a
+/// message that takes one (`mail_once`).
+/// `NeverAsk` covers it in `consent_grants`, as an envelope slot does, and
+/// the caller gives it the row's (or role's) ref as its authority; any other
+/// answer folds nothing, so the send keeps its other coverage or its press
+/// per send.
 fn fold_send_check_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
     effect: &ExternalEffectGateInput,
     delegated_or_cold: bool,
     consent_grants: &mut Vec<crate::consent::StandingConsentGrant>,
-) -> Option<crate::check_in::SendCheckIn> {
-    let check_in =
-        crate::check_in::send_check_in(policy.check_in_policy(), effect, delegated_or_cold)?;
+) -> Result<Option<crate::check_in::SendCheckIn>> {
+    let Some(check_in) = crate::check_in::send_check_in_in_txn(
+        store,
+        txn,
+        policy.check_in_policy(),
+        effect,
+        delegated_or_cold,
+    )?
+    else {
+        return Ok(None);
+    };
     if check_in.releases()
         && let Some(requirement) = external_effect_action_requirement(effect)
         && let Ok(grant) = crate::consent::ActionGrant::new(requirement)
     {
         consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
     }
-    Some(check_in)
+    Ok(Some(check_in))
 }
 
 /// The campaign stages' hold on `effect`, before the approval guards: the

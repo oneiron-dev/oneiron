@@ -103,7 +103,7 @@ pub use resolve::{
     check_in, check_in_with_mode, resolve_mode,
 };
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
-pub(crate) use send::{SendCheckIn, send_check_in};
+pub(crate) use send::{SendCheckIn, send_check_in_in_txn};
 pub use verb_act_class::{VerbActClass, verb_act_class};
 pub use waits::CheckInTransition;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]

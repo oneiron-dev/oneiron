@@ -9,9 +9,13 @@
 //! * `manual` (`AlwaysAsk`) and `auto` (`AskWhenUnsure`, whose unsure test is
 //!   [`AlwaysUnsure`] until a decision model judges agent acts) release
 //!   nothing, so the Gate's other coverage or the press per send decides;
-//! * with no row naming the class, the press-per-send floor decides (Engine
-//!   ruling L3-35-ROLE = A; the role column of ARCH-0082 #role-defaults joins
-//!   with PR 2's role resolver); an unreadable policy counts as `AlwaysAsk`.
+//! * with no row naming the class, the sender's role decides, by its column
+//!   of ARCH-0082 #role-defaults (Engine ruling L3-35-ROLE: the role column
+//!   in PR 2): an agent holding Owner sends with no press, a Deputy's send is
+//!   `AskWhenUnsure`, every other role asks. The role is the agent's
+//!   membership on this vault's shared vault, a house link's among them;
+//!   Member when it records none, as in a vault that is not shared;
+//! * an unreadable policy counts as `AlwaysAsk`.
 //!
 //! The Gate's decision record names the rows that decided and the answer.
 //!
@@ -31,19 +35,29 @@ use super::act_class::ActClass;
 use super::asker::AlwaysUnsure;
 use super::mode::CheckInMode;
 use super::policy::{CheckInPolicyRead, CheckInScope};
-use super::resolve::{CheckInAnswer, GoReason, WaitReason, check_in_with_mode};
+use super::resolve::{
+    CheckInAnswer, CheckInRequest, GoReason, WaitReason, check_in, check_in_with_mode,
+};
+use super::role_preset::RolePreset;
+use crate::EntityId;
+use crate::error::Result;
 use crate::gate::ExternalEffectGateInput;
+use crate::store::Store;
 
 /// The prefix of the covering ref a send row gives, and of its receipt token.
 const SEND_ROW_REF_PREFIX: &str = "check_in:row:";
+
+/// The prefix of the covering ref a role's default gives, and of its receipt
+/// token.
+const SEND_ROLE_REF_PREFIX: &str = "check_in:role:";
 
 /// Where an agent send's mode came from.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SendModeSource {
     /// The `mode` rows that set it, in manifest order.
     Rows(Vec<String>),
-    /// No row names `outbound_send`: the press-per-send floor.
-    ShippedDefault,
+    /// No row names `outbound_send`: the sender's role's shipped default.
+    RoleDefault(RolePreset),
     /// The resolved policy failed closed: `AlwaysAsk`.
     Unreadable,
 }
@@ -71,30 +85,37 @@ impl SendCheckIn {
         matches!(self.answer, SendAnswer::NeverAsk)
     }
 
-    /// The covering ref of a send the row releases: `check_in:row:<ref>` of
-    /// the first row that set its mode. The Gate puts it in the
-    /// standing-grant slot, as it puts an envelope slot's consent grant ref
-    /// there; nothing resolves it as an outbound grant id.
+    /// The covering ref of a send the check-in releases: `check_in:row:<ref>`
+    /// of the first row that set its mode, or `check_in:role:<role>` when the
+    /// sender's role's default did. The Gate puts it in the standing-grant
+    /// slot, as it puts an envelope slot's consent grant ref there; nothing
+    /// resolves it as an outbound grant id.
     pub(crate) fn release_grant_ref(&self) -> Option<String> {
         match (&self.source, self.answer) {
             (SendModeSource::Rows(row_refs), SendAnswer::NeverAsk) => row_refs
                 .first()
                 .map(|row_ref| format!("{SEND_ROW_REF_PREFIX}{row_ref}")),
+            (SendModeSource::RoleDefault(role), SendAnswer::NeverAsk) => {
+                Some(format!("{SEND_ROLE_REF_PREFIX}{}", role.as_str()))
+            }
             _ => None,
         }
     }
 
     /// The Gate decision record's reasons: `check_in:row:<ref>` for each row
-    /// that set the mode (or `check_in:shipped_default`, or
-    /// `check_in:unreadable`), then the answer: `check_in:go:never_ask` or
-    /// `check_in:wait:<reason>`.
+    /// that set the mode (or `check_in:shipped_default` and
+    /// `check_in:role:<role>`, or `check_in:unreadable`), then the answer:
+    /// `check_in:go:never_ask` or `check_in:wait:<reason>`.
     pub(crate) fn receipt_reasons(&self) -> Vec<String> {
         let mut reasons = match &self.source {
             SendModeSource::Rows(row_refs) => row_refs
                 .iter()
                 .map(|row_ref| format!("{SEND_ROW_REF_PREFIX}{row_ref}"))
                 .collect(),
-            SendModeSource::ShippedDefault => vec!["check_in:shipped_default".to_owned()],
+            SendModeSource::RoleDefault(role) => vec![
+                "check_in:shipped_default".to_owned(),
+                format!("{SEND_ROLE_REF_PREFIX}{}", role.as_str()),
+            ],
             SendModeSource::Unreadable => vec!["check_in:unreadable".to_owned()],
         };
         reasons.push(match self.answer {
@@ -108,33 +129,78 @@ impl SendCheckIn {
 /// The check-in of `effect` under `read`, when it is an agent's send the row
 /// reaches; `None` for every other effect (module doc). `delegated_or_cold`:
 /// the Gate found the send from a member mailbox, or a native-mail cold send,
-/// or a recipient of a message that takes one.
-pub(crate) fn send_check_in(
+/// or a recipient of a message that takes one. With no row naming the class,
+/// the sender's role is read in the Gate's `txn` ([`sender_role_in_txn`]).
+///
+/// # Errors
+///
+/// The store's, reading the sender's membership.
+pub(crate) fn send_check_in_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
     read: CheckInPolicyRead<'_>,
     effect: &ExternalEffectGateInput,
     delegated_or_cold: bool,
-) -> Option<SendCheckIn> {
+) -> Result<Option<SendCheckIn>> {
     if effect.actor.actor_class != "agent" || effect.verb != "send" || delegated_or_cold {
-        return None;
+        return Ok(None);
     }
-    let (mode, source) = match read {
-        CheckInPolicyRead::Unreadable => (CheckInMode::AlwaysAsk, SendModeSource::Unreadable),
-        CheckInPolicyRead::NoRow => (CheckInMode::AlwaysAsk, SendModeSource::ShippedDefault),
-        CheckInPolicyRead::Row(policy) => {
-            match policy.explicit_mode(ActClass::OutboundSend, &CheckInScope::default()) {
-                Some(explicit) => (explicit.mode, SendModeSource::Rows(explicit.row_refs)),
-                None => (CheckInMode::AlwaysAsk, SendModeSource::ShippedDefault),
-            }
+    let explicit = match read {
+        CheckInPolicyRead::Unreadable => Some((CheckInMode::AlwaysAsk, SendModeSource::Unreadable)),
+        CheckInPolicyRead::NoRow => None,
+        CheckInPolicyRead::Row(policy) => policy
+            .explicit_mode(ActClass::OutboundSend, &CheckInScope::default())
+            .map(|explicit| (explicit.mode, SendModeSource::Rows(explicit.row_refs))),
+    };
+    let (source, answer) = match explicit {
+        Some((mode, source)) => (
+            source,
+            check_in_with_mode(ActClass::OutboundSend, mode, None, &AlwaysUnsure),
+        ),
+        None => {
+            let role = sender_role_in_txn(store, txn, effect.provenance.actor_entity_ref)?;
+            // The power is the Gate's own check (`has_permission`): a send
+            // that lacks it is refused there whatever its check-in says.
+            let request = CheckInRequest {
+                act: ActClass::OutboundSend,
+                role,
+                holds_power: true,
+                explicit_mode: None,
+                standing_row: None,
+            };
+            (
+                SendModeSource::RoleDefault(role),
+                check_in(&request, &AlwaysUnsure),
+            )
         }
     };
-    let answer = match check_in_with_mode(ActClass::OutboundSend, mode, None, &AlwaysUnsure) {
+    let answer = match answer {
         CheckInAnswer::Go(GoReason::NeverAsk) => SendAnswer::NeverAsk,
         CheckInAnswer::Wait(reason) => SendAnswer::Wait(reason),
-        // No standing row is passed and the unsure test is never sure, so
-        // nothing else goes; any other answer asks.
+        // No standing row is passed, the unsure test is never sure, and no
+        // role acts on its own proof for a send, so nothing else goes; any
+        // other answer asks.
         CheckInAnswer::Go(_) | CheckInAnswer::Propose | CheckInAnswer::Absent => {
             SendAnswer::Wait(WaitReason::AlwaysAsk)
         }
     };
-    Some(SendCheckIn { source, answer })
+    Ok(Some(SendCheckIn { source, answer }))
+}
+
+/// The role `actor` sends in (ARCH-0082 #role-defaults): its membership role
+/// on this vault's shared vault, a house link's among them, as check-in
+/// reads an agent's role (P24-SHAPE Q1 = A); Member when it records none, or
+/// the send names no actor entity.
+fn sender_role_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: Option<EntityId>,
+) -> Result<RolePreset> {
+    let Some(actor) = actor else {
+        return Ok(RolePreset::Member);
+    };
+    Ok(
+        crate::federation::shared_vault_member_role_for_store_in_txn(store, txn, actor)?
+            .map_or(RolePreset::Member, RolePreset::of_grant_role),
+    )
 }

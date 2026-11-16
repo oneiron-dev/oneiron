@@ -27,10 +27,10 @@ pub use member_ask::{
     MemberAskChange, MemberAskStatus, NOTIFICATION_PRODUCER_MEMBER_ASK, SharedMemberAsk,
     SharedMemberChange,
 };
-pub(crate) use membership::SharedMemberDeparture;
 pub use membership::{
     OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
+pub(crate) use membership::{SharedMemberDeparture, shared_vault_member_role_for_store_in_txn};
 pub use owner_add::AddOwnerPlan;
 pub use removal_answer::RemovalExportFile;
 #[cfg(all(unix, feature = "sync"))]

@@ -138,6 +138,118 @@ fn move_revokes_slips(from: Role, to: Option<Role>) -> bool {
     })
 }
 
+/// Every live grant record over `vault_id`, delegates included, read
+/// through the store: [`Vault::vault_grants_in_txn`] for a reader that holds
+/// a `Store` and no `Vault`, as the Gate does (FIX 7461).
+fn vault_grants_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    vault_id: u64,
+) -> Result<Vec<(EntityId, FederationGrant)>> {
+    let mut grants = Vec::new();
+    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        store,
+        txn,
+        ENTITY_TYPE_FEDERATION_GRANT,
+        None,
+    )? {
+        let id = id?;
+        let raw =
+            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or_else(invalid)?;
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
+        {
+            return Err(invalid());
+        }
+        if raw.len() == ENTITY_METADATA_HEADER_LEN
+            || !crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
+        {
+            continue;
+        }
+        let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if grant.scope == FederationGrantScope::vault(vault_id) {
+            grants.push((id, grant));
+        }
+    }
+    Ok(grants)
+}
+
+/// Every live membership grant record over `vault_id`, delegates included:
+/// [`vault_grants_for_store_in_txn`] without the rows that were never minted
+/// as a membership. A base agent's Steward grant is the engine's actor's
+/// reach (untangle 6.3; review of #6913): the host mints it by default, and
+/// only the owner moves it, through its own door, which shows what breaks and
+/// waits for his confirm. An owner's `engine.controls` grant to a principal
+/// that is no Steward member is his grant to that principal (6.6), taken back
+/// through its own door. So no membership door reads either as a role, lists
+/// it on the roster, re-roles it or drops it.
+fn member_grants_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    vault_id: u64,
+) -> Result<Vec<(EntityId, FederationGrant)>> {
+    let mut grants = vault_grants_for_store_in_txn(store, txn, vault_id)?;
+    grants.retain(|(_, grant)| !crate::federation::holds_system_agent_grant(grant.member_ref));
+    // An owner's `engine.controls` grant goes with a Steward's
+    // membership and is none on its own (ruling on FIX
+    // ENGINE-CONTROLS-GRANT-READS-AS-MEMBERSHIP, Engine 11 Nov): beside
+    // a Steward membership row it is read with it, so a demotion or a
+    // removal takes it too; for anyone else it is skipped.
+    let stewards: BTreeSet<EntityId> = grants
+        .iter()
+        .filter(|(_, grant)| {
+            grant.role == Role::Steward && !crate::federation::is_engine_controls_grant(grant)
+        })
+        .map(|(_, grant)| grant.member_ref)
+        .collect();
+    grants.retain(|(_, grant)| {
+        !crate::federation::is_engine_controls_grant(grant) || stewards.contains(&grant.member_ref)
+    });
+    Ok(grants)
+}
+
+/// `member`'s one membership role in the vault, delegate grants aside, read
+/// through the store: [`Vault::member_role_in_txn`] for a reader that holds a
+/// `Store` and no `Vault`.
+fn member_role_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    vault_id: u64,
+    member: EntityId,
+) -> Result<Option<Role>> {
+    let mut roles = member_grants_for_store_in_txn(store, txn, vault_id)?
+        .into_iter()
+        .filter(|(_, grant)| grant.member_ref == member && grant.role != Role::Delegate)
+        .map(|(_, grant)| grant.role);
+    let role = roles.next();
+    if roles.any(|other| Some(other) != role) {
+        return Err(invalid());
+    }
+    Ok(role)
+}
+
+/// `member`'s membership role on this vault's own shared vault, a house
+/// link's among them (`workspace_roster::house_link`: the bind's grant is a
+/// membership over the workspace's shared vault), read through the store, as
+/// the Gate's send check-in reads its sender's role (PLAN L3-35). `None` when
+/// the vault is not shared, its shared vault is deleted, or `member` holds no
+/// membership there.
+pub(crate) fn shared_vault_member_role_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    member: EntityId,
+) -> Result<Option<Role>> {
+    if super::shared_vault_deletion_for_store_in_txn(store, txn)?.is_some() {
+        return Ok(None);
+    }
+    match crate::federation::shared_vault_creation_for_store_in_txn(store, txn)? {
+        Some(creation) if creation.vault_id != 0 => {
+            member_role_for_store_in_txn(store, txn, creation.vault_id, member)
+        }
+        _ => Ok(None),
+    }
+}
+
 impl Vault {
     /// Every live grant record over `vault_id`, delegates included.
     pub(crate) fn vault_grants_in_txn(
@@ -145,66 +257,16 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
     ) -> Result<Vec<(EntityId, FederationGrant)>> {
-        let mut grants = Vec::new();
-        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            &self.store,
-            txn,
-            ENTITY_TYPE_FEDERATION_GRANT,
-            None,
-        )? {
-            let id = id?;
-            let raw = self.get_raw_in(txn, &id)?.ok_or_else(invalid)?;
-            if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
-            {
-                return Err(invalid());
-            }
-            if raw.len() == ENTITY_METADATA_HEADER_LEN
-                || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
-            {
-                continue;
-            }
-            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if grant.scope == FederationGrantScope::vault(vault_id) {
-                grants.push((id, grant));
-            }
-        }
-        Ok(grants)
+        vault_grants_for_store_in_txn(&self.store, txn, vault_id)
     }
-    /// Every live membership grant record over `vault_id`, delegates
-    /// included: [`Self::vault_grants_in_txn`] without the rows that were
-    /// never minted as a membership. A base agent's Steward grant is the
-    /// engine's actor's reach (untangle 6.3; review of #6913): the host
-    /// mints it by default, and only the owner moves it, through its own
-    /// door, which shows what breaks and waits for his confirm. An owner's
-    /// `engine.controls` grant to a principal that is no Steward member is
-    /// his grant to that principal (6.6), taken back through its own door.
-    /// So no membership door reads either as a role, lists it on the
-    /// roster, re-roles it or drops it.
+    /// Every live membership grant record over `vault_id`
+    /// ([`member_grants_for_store_in_txn`]).
     fn member_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
     ) -> Result<Vec<(EntityId, FederationGrant)>> {
-        let mut grants = self.vault_grants_in_txn(txn, vault_id)?;
-        grants.retain(|(_, grant)| !crate::federation::holds_system_agent_grant(grant.member_ref));
-        // An owner's `engine.controls` grant goes with a Steward's
-        // membership and is none on its own (ruling on FIX
-        // ENGINE-CONTROLS-GRANT-READS-AS-MEMBERSHIP, Engine 11 Nov): beside
-        // a Steward membership row it is read with it, so a demotion or a
-        // removal takes it too; for anyone else it is skipped.
-        let stewards: BTreeSet<EntityId> = grants
-            .iter()
-            .filter(|(_, grant)| {
-                grant.role == Role::Steward && !crate::federation::is_engine_controls_grant(grant)
-            })
-            .map(|(_, grant)| grant.member_ref)
-            .collect();
-        grants.retain(|(_, grant)| {
-            !crate::federation::is_engine_controls_grant(grant)
-                || stewards.contains(&grant.member_ref)
-        });
-        Ok(grants)
+        member_grants_for_store_in_txn(&self.store, txn, vault_id)
     }
     /// Steward and Deputy are the owner's to give: a role change or an
     /// invitation that names either needs an Owner of the vault, and an
@@ -239,16 +301,7 @@ impl Vault {
         vault_id: u64,
         member: EntityId,
     ) -> Result<Option<Role>> {
-        let mut roles = self
-            .member_grants_in_txn(txn, vault_id)?
-            .into_iter()
-            .filter(|(_, grant)| grant.member_ref == member && grant.role != Role::Delegate)
-            .map(|(_, grant)| grant.role);
-        let role = roles.next();
-        if roles.any(|other| Some(other) != role) {
-            return Err(invalid());
-        }
-        Ok(role)
+        member_role_for_store_in_txn(&self.store, txn, vault_id, member)
     }
     /// `member`'s membership grant row in the vault and its role, delegate
     /// and `engine.controls` grants aside: the grant a person's pending
