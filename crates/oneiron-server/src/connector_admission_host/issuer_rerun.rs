@@ -18,10 +18,11 @@ use oneiron::EntityId;
 use oneiron::connector_key::qualification::qualify_connector;
 use oneiron::connector_key::{
     ConnectorCredentialBinding, ConnectorIssuerRerunOutcome as Outcome,
-    ConnectorIssuerRerunStage as Stage, ConnectorKeyStatus, ELICITATION_ROW_KEY,
+    ConnectorIssuerRerunStage as Stage, ConnectorKeyRecord, ConnectorKeyStatus,
+    ELICITATION_ROW_KEY,
 };
 
-use super::{HttpQualificationConnector, ListedTool, client, discover, with_credential};
+use super::{HttpQualificationConnector, OwnerScreenChoices, client, discover, with_credential};
 use crate::config::connectors::normalize_name;
 use crate::server::SyncServer;
 
@@ -126,12 +127,33 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
             return Some(Rerun::failed(Stage::Qualification));
         }
     };
+    // The owner's "install it anyway" the routing slate holds: a slate that
+    // cannot be read holds none, so an accepted tool fails the re-run.
+    let slate = catalog
+        .slate_ref
+        .and_then(|id| vault.connector_slate(id).ok().flatten());
+    let choices = OwnerScreenChoices {
+        held: slate
+            .as_ref()
+            .map(|slate| &slate.slate_manifest().owner_accepted),
+        ..OwnerScreenChoices::default()
+    };
     let ran = with_credential(vault, catalog.secret_ref.as_deref(), name, |auth| {
         let client = client().map_err(|_| Stage::Discovery)?;
-        let discovery =
+        let mut discovery =
             discover(&client, &endpoint, auth, Some(&revision)).map_err(|_| Stage::Discovery)?;
-        let screened: Vec<_> = discovery.tools.iter().map(ListedTool::screened).collect();
-        if !matches!(vault.screen_connector_tools(&screened, name), Ok(None)) {
+        // A listed tool the key never admitted and the pack install rules
+        // keep out is left out of the re-run (FIX SCREENING-PER-TOOL-SKIP);
+        // an admitted tool that trips a rule still fails it, as before,
+        // unless the owner's acceptance on the slate still covers it.
+        let Ok(Ok(screen)) = discovery.screen(vault, name, &choices) else {
+            return Err(Stage::Screening);
+        };
+        if screen
+            .skipped
+            .iter()
+            .any(|skip| admitted(&catalog, &skip.tool))
+        {
             return Err(Stage::Screening);
         }
         let listed = discovery.tools.into_iter().map(|tool| tool.name).collect();
@@ -147,7 +169,8 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
             auth,
             &revision,
             &kit.effect_state_uri,
-        );
+        )
+        .keeping_out(&screen);
         qualify_connector(&connector, &kit.plan_for_run(), &kit).map_err(|failure| {
             tracing::warn!(%failure, "issuer revision re-run: qualification failed");
             Stage::Qualification
@@ -165,4 +188,12 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
             Rerun::failed(Stage::Credential)
         }
     })
+}
+
+/// The key admitted `tool`: its approved manifest lists it.
+fn admitted(record: &ConnectorKeyRecord, tool: &str) -> bool {
+    record
+        .retained_manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.tools().iter().any(|row| row.name == tool))
 }

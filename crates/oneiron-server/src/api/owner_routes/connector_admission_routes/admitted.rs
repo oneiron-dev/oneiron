@@ -46,7 +46,7 @@ fn refresh_connector(
             OwnerError::Invalid("the connector pins no protocol revision".to_owned())
         })?;
     // The pinned revision first: a connector that still answers it keeps it.
-    let discovery =
+    let mut discovery =
         host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
             let client = host::client()?;
             host::discover(&client, &endpoint, auth, Some(&pinned))
@@ -63,17 +63,15 @@ fn refresh_connector(
             "the connector lists no tool {unknown}"
         )));
     }
-    let screened: Vec<_> = discovery
-        .tools
-        .iter()
-        .map(host::ListedTool::screened)
-        .collect();
-    if let Some(reason) = vault.screen_connector_tools(&screened, &name)? {
-        return Err(OwnerError::Refused(format!(
-            "the connector's tools failed screening: {reason}"
-        )));
-    }
     let (slate_id, slate) = slate_of(vault, &catalog.record)?;
+    // The acceptances the slate holds carry while their tools are
+    // unchanged; a changed one is kept out and dropped.
+    let choices = host::OwnerScreenChoices {
+        held: Some(&slate.slate_manifest().owner_accepted),
+        install_anyway: Some(&request.install_anyway),
+        ..host::OwnerScreenChoices::default()
+    };
+    let screen = screened(vault, &name, &mut discovery, &request.tools, &choices)?;
     let mut classes: BTreeMap<String, ToolClass> = slate
         .manifest()
         .iter()
@@ -89,9 +87,13 @@ fn refresh_connector(
         })
         .collect();
     classes.extend(request.tools);
-    let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
-    let listed = host::slate_manifest(&resolved, &discovery.tools, &classes);
-    if discovery.revision == pinned && same_manifest(&listed, &slate) {
+    let resolved = host::resolve(&discovery.tools, &screen.accepted).map_err(|_| unresolvable())?;
+    let listed = host::slate_manifest(&resolved, &discovery.tools, &classes)
+        .with_owner_accepted(&screen.accepted);
+    if discovery.revision == pinned
+        && same_manifest(&listed, &slate)
+        && listed.owner_accepted == slate.slate_manifest().owner_accepted
+    {
         // An unchanged refresh drops a staged expansion: the key keeps
         // routing on this slate, and qualify/attest must not target an
         // obsolete one.
@@ -107,6 +109,8 @@ fn refresh_connector(
             reask: Vec::new(),
             carried: Vec::new(),
             dropped: Vec::new(),
+            skipped: screen.skipped,
+            accepted: screen.accepted,
         });
     }
     let delta = with_slate_drafter(server, owner, |drafter| {
@@ -132,6 +136,8 @@ fn refresh_connector(
         reask: delta.reask.into_iter().collect(),
         carried: delta.carried.into_iter().collect(),
         dropped: delta.dropped.into_iter().collect(),
+        skipped: screen.skipped,
+        accepted: screen.accepted,
     })
 }
 

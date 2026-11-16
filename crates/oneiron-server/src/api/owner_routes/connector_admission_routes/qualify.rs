@@ -117,7 +117,9 @@ fn attest_connector(
             "the connector is already admitted".to_owned(),
         ));
     }
-    let resolved =
+    // The tools the screen kept out are in no slate, so attestation
+    // stages none of them.
+    let (resolved, _) =
         host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
             let client = host::client().map_err(engine)?;
             listed_as_stamped(vault, &catalog, &client, &endpoint, &revision, auth)
@@ -149,7 +151,9 @@ fn attest_connector(
 
 /// The connector's tools, listed again at `revision` and resolved, when
 /// they are still the ones the owner stamped on the slate this run admits:
-/// the one staged beside an admitted key's routing slate, if any.
+/// the one staged beside an admitted key's routing slate, if any. A listed
+/// tool outside that slate which the pack install rules keep out is left
+/// out, and the screen naming it comes back (FIX SCREENING-PER-TOOL-SKIP).
 fn listed_as_stamped(
     vault: &Vault,
     catalog: &Catalog,
@@ -157,13 +161,24 @@ fn listed_as_stamped(
     endpoint: &str,
     revision: &str,
     auth: Option<&HeaderValue>,
-) -> OwnerResult<ResolvedConnectorManifest> {
-    let discovery = host::discover(client, endpoint, auth, Some(revision)).map_err(engine)?;
+) -> OwnerResult<(ResolvedConnectorManifest, ConnectorToolScreen)> {
+    let mut discovery = host::discover(client, endpoint, auth, Some(revision)).map_err(engine)?;
     let slate = match staged_slate_of(vault, &catalog.record)? {
         Some((_, staged)) => staged,
         None => slate_of(vault, &catalog.record)?.1,
     };
-    let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
+    // Only a listed tool outside the stamped slate is kept out: the slate's
+    // own tools are compared as before. A fault of the whole listing keeps
+    // every tool, as before the per-tool screen.
+    let choices = host::OwnerScreenChoices {
+        admitted: slate.tool_names(),
+        held: Some(&slate.slate_manifest().owner_accepted),
+        install_anyway: None,
+    };
+    let screen = discovery
+        .screen(vault, &catalog.name, &choices)?
+        .unwrap_or_default();
+    let resolved = host::resolve(&discovery.tools, &screen.accepted).map_err(|_| unresolvable())?;
     let classes = slate
         .manifest()
         .iter()
@@ -184,7 +199,7 @@ fn listed_as_stamped(
             "the connector's tools changed since it was registered".to_owned(),
         ));
     }
-    Ok(resolved)
+    Ok((resolved, screen))
 }
 
 /// Qualifies the resolved manifest and slate on the surface the owner stamped.
@@ -200,14 +215,15 @@ fn probe(
     kit: &QualificationKit,
 ) -> OwnerResult<()> {
     let client = host::client().map_err(engine)?;
-    let resolved = listed_as_stamped(vault, catalog, &client, endpoint, revision, auth)?;
+    let (resolved, screen) = listed_as_stamped(vault, catalog, &client, endpoint, revision, auth)?;
     let connector = host::HttpQualificationConnector::new(
         &client,
         endpoint,
         auth,
         revision,
         &kit.effect_state_uri,
-    );
+    )
+    .keeping_out(&screen);
     let now = unix_seconds_now();
     let staged_plan = kit.plan_for_run();
     let suite = ProbeManifestQualifier {

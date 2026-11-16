@@ -27,7 +27,9 @@ use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
-use oneiron::skill_hub::pack_catalog::PackObservedTool;
+use oneiron::skill_hub::pack_catalog::{
+    ConnectorToolScreen, OwnerAcceptedScreen, PackObservedTool,
+};
 use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::Deserialize;
@@ -267,6 +269,75 @@ pub(crate) struct Discovery {
     pub(crate) tools: Vec<ListedTool>,
 }
 
+/// The owner's choices a screen of the live listing honours (FIX
+/// SCREENING-PER-TOOL-SKIP).
+#[derive(Default)]
+pub(crate) struct OwnerScreenChoices<'a> {
+    /// Tools the owner already admitted on the slate in force: judged where
+    /// they are used, as before, never kept out here.
+    pub(crate) admitted: BTreeSet<&'a str>,
+    /// The owner's "install it anyway" the slate in force holds, by tool
+    /// (PR C): a tool it still covers passes.
+    pub(crate) held: Option<&'a BTreeMap<String, OwnerAcceptedScreen>>,
+    /// The owner's new "install it anyway" in this request, by tool: the
+    /// digest he saw in a `skipped` answer (PR C).
+    pub(crate) install_anyway: Option<&'a BTreeMap<String, String>>,
+}
+
+impl Discovery {
+    /// Screens the listed tools with the pack install rules held for
+    /// `connector` and keeps out each tool that trips one (FIX
+    /// SCREENING-PER-TOOL-SKIP), except a tool `choices` admitted or
+    /// accepted. A tool kept out never enters a slate or a manifest, so it
+    /// stays uncallable. The answer's `skipped` names exactly the tools kept
+    /// out and its `accepted` the tools that pass on an owner acceptance.
+    /// `Err` is a refusal that keeps every tool listed: a fault of the whole
+    /// listing (its `refused`), or a new acceptance the screen refuses (the
+    /// tool changed since the owner saw it, or trips a rule he may not
+    /// lift).
+    pub(crate) fn screen(
+        &mut self,
+        vault: &Vault,
+        connector: &str,
+        choices: &OwnerScreenChoices<'_>,
+    ) -> oneiron::Result<Result<ConnectorToolScreen, String>> {
+        let screened: Vec<_> = self.tools.iter().map(ListedTool::screened).collect();
+        let mut screen = vault.screen_connector_tools_each(&screened, connector)?;
+        if let Some(reason) = screen.refused.take() {
+            return Ok(Err(reason));
+        }
+        // A held acceptance is read first, so an admitted tool it still
+        // covers is named in `accepted` too and its manifest row marked
+        // public where the acceptance lifted a secret-shaped string (PR C2).
+        if let Some(held) = choices.held {
+            screen.keep_owner_accepted(held);
+        }
+        screen
+            .skipped
+            .retain(|skip| !choices.admitted.contains(skip.tool.as_str()));
+        for (tool, seen) in choices.install_anyway.into_iter().flatten() {
+            if let Err(reason) = screen.accept_owner(tool, seen) {
+                return Ok(Err(reason));
+            }
+        }
+        self.tools.retain(|tool| screen.admits(&tool.name));
+        Ok(Ok(screen))
+    }
+}
+
+/// The refusal of a screened listing that keeps no tool: every listed tool
+/// kept out. `None` when a tool passes or the connector lists none.
+pub(crate) fn screen_refusal(screen: &ConnectorToolScreen, kept: usize) -> Option<String> {
+    (kept == 0 && !screen.skipped.is_empty()).then(|| {
+        screen
+            .skipped
+            .iter()
+            .map(|skip| format!("tool {}: {}", skip.tool, skip.reason))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
 /// Lists the connector's tools at `endpoint`: at `pinned` once the key has
 /// pinned a revision, else at the newest one both sides speak.
 pub(crate) fn discover(
@@ -288,9 +359,26 @@ pub(crate) fn discover(
 /// admits (ARCH-0072). Elicitation is a client capability: `initialize`
 /// carries no server flag for it, and the call host decides per revision
 /// whether to declare it on the wire.
-pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnectorManifest> {
-    ResolvedConnectorManifest::resolve(tools.iter().map(ListedTool::schema_row).collect())
-        .map(|manifest| manifest.with_elicitation(true))
+///
+/// Each tool `accepted` names whose acceptance lifted a secret-shaped string
+/// is marked public, owner-accepted at install, at its row as resolved
+/// (RULING SCREENING-SECRET-OVERRIDE = B; PR C2): the secret lift census
+/// does not raise those strings again. `accepted` is a screen's answer, so
+/// it names only tools the owner accepted at the digest listed now.
+pub(crate) fn resolve(
+    tools: &[ListedTool],
+    accepted: &BTreeMap<String, OwnerAcceptedScreen>,
+) -> oneiron::Result<ResolvedConnectorManifest> {
+    ResolvedConnectorManifest::resolve(tools.iter().map(ListedTool::schema_row).collect()).map(
+        |manifest| {
+            manifest.with_elicitation(true).with_public_secret_shape(
+                accepted
+                    .iter()
+                    .filter(|(_, acceptance)| acceptance.public_secret_shape())
+                    .map(|(tool, _)| tool.as_str()),
+            )
+        },
+    )
 }
 
 /// What the owner names for one tool at registration. MCP declares none of it.
@@ -371,6 +459,9 @@ pub(crate) struct HttpQualificationConnector<'a> {
     auth: Option<&'a HeaderValue>,
     revision: &'a str,
     effect_state_uri: &'a str,
+    /// Listed tools the install screen kept out: the suite never lists or
+    /// probes them (FIX SCREENING-PER-TOOL-SKIP).
+    kept_out: BTreeSet<String>,
 }
 
 impl<'a> HttpQualificationConnector<'a> {
@@ -387,7 +478,19 @@ impl<'a> HttpQualificationConnector<'a> {
             auth,
             revision,
             effect_state_uri,
+            kept_out: BTreeSet::new(),
         }
+    }
+
+    /// The same transport, listing none of the tools the install screen
+    /// kept out of this connector's admission.
+    pub(crate) fn keeping_out(mut self, screen: &ConnectorToolScreen) -> Self {
+        self.kept_out = screen
+            .skipped
+            .iter()
+            .map(|skip| skip.tool.clone())
+            .collect();
+        self
     }
 
     fn session(&self) -> Result<Session<'a>, QualificationFailure> {
@@ -400,6 +503,7 @@ impl QualificationConnector for HttpQualificationConnector<'_> {
     fn connect(&self) -> Result<Box<dyn QualificationConnection + '_>, QualificationFailure> {
         Ok(Box::new(HttpQualificationConnection {
             session: self.session()?,
+            kept_out: &self.kept_out,
         }))
     }
 
@@ -422,6 +526,7 @@ impl QualificationConnector for HttpQualificationConnector<'_> {
 
 struct HttpQualificationConnection<'a> {
     session: Session<'a>,
+    kept_out: &'a BTreeSet<String>,
 }
 
 impl QualificationConnection for HttpQualificationConnection<'_> {
@@ -432,12 +537,21 @@ impl QualificationConnection for HttpQualificationConnection<'_> {
             .list_tools(Some(&mut requests))
             .map_err(|_| QualificationFailure::Transport)?;
         Ok(ProbeToolsList {
-            tools: tools.iter().map(ListedTool::probe_tool).collect(),
+            tools: tools
+                .iter()
+                .filter(|tool| !self.kept_out.contains(&tool.name))
+                .map(ListedTool::probe_tool)
+                .collect(),
             requests,
         })
     }
 
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
+        // A tool the screen keeps out is outside the manifest the owner
+        // stamped: no probe calls it, whatever the plan names (review-1 F2).
+        if self.kept_out.contains(&request.name) {
+            return Err(QualificationFailure::Envelope);
+        }
         let body = json!({
             "jsonrpc": "2.0",
             "id": request.id,

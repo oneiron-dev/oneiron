@@ -21,6 +21,7 @@ mod lifecycle;
 mod manifest_drift;
 mod measure;
 mod meter;
+mod public_strings;
 pub mod qualification;
 mod qualification_kit;
 mod record;
@@ -186,6 +187,7 @@ pub(crate) use slate_setting::{
 pub use manifest_drift::{
     ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
 };
+pub(crate) use public_strings::body_without_owner_public_strings;
 
 /// Scoped connector-pack admission reads the key under its own writer txn.
 pub(crate) fn read_key_for_pack_in_txn(

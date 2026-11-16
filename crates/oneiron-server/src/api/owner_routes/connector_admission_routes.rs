@@ -43,6 +43,9 @@ use oneiron::connector_key::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::skill_hub::pack_catalog::{
+    ConnectorToolScreen, OwnerAcceptedScreen, SkippedConnectorTool,
+};
 pub(crate) use oneiron::task_verb::sdk::{
     ConnectorKeyView as KeyView, ConnectorSlateView as SlateView,
 };
@@ -95,6 +98,12 @@ struct RegisterRequest {
     /// personal and spends nothing.
     #[serde(default)]
     tools: BTreeMap<String, ToolClass>,
+    /// The owner's "install it anyway" on tools the pack install screen
+    /// keeps out, by tool name: the `digest` he saw in a `skipped` answer
+    /// (FIX SCREENING-PER-TOOL-SKIP). Refused when the tool changed since,
+    /// or trips a rule he may not lift.
+    #[serde(default)]
+    install_anyway: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +152,12 @@ struct RefreshRequest {
     /// keeps its class, or is personal and spends nothing when new.
     #[serde(default)]
     tools: BTreeMap<String, ToolClass>,
+    /// The owner's "install it anyway" on tools the pack install screen
+    /// keeps out, by tool name: the `digest` he saw in a `skipped` answer
+    /// (FIX SCREENING-PER-TOOL-SKIP). The acceptances the slate already
+    /// holds carry while their tools are unchanged.
+    #[serde(default)]
+    install_anyway: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -169,6 +184,14 @@ struct Refreshed {
     /// 11677): the key stays as it was until the owner stamps the new slate
     /// (`/slate/staged/accept`) and a fresh `/qualify` passes on it.
     staged: bool,
+    /// Listed tools the pack install rules kept out, each with the rule it
+    /// tripped (FIX SCREENING-PER-TOOL-SKIP). A slate tool kept out is also
+    /// in `dropped`.
+    skipped: Vec<SkippedConnectorTool>,
+    /// Listed tools that trip a rule but stay on the slate on the owner's
+    /// "install it anyway", with the acceptance the slate holds: this
+    /// request's and the ones carried from the slate (PR C).
+    accepted: BTreeMap<String, OwnerAcceptedScreen>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -182,6 +205,13 @@ struct Registered {
     /// What registration took on the connector's word and could not check
     /// (TP4, FIX 2607); empty when it took nothing.
     warnings: Vec<String>,
+    /// Listed tools the pack install rules kept out, each with the rule it
+    /// tripped; every other listed tool registered (FIX
+    /// SCREENING-PER-TOOL-SKIP).
+    skipped: Vec<SkippedConnectorTool>,
+    /// Listed tools that trip a rule but registered on the owner's
+    /// "install it anyway", with the acceptance the slate holds (PR C).
+    accepted: BTreeMap<String, OwnerAcceptedScreen>,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,6 +263,8 @@ pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(St
 
 /// The catalog key registered under a name.
 struct Catalog {
+    /// The normalized name it is registered under.
+    name: String,
     key: EntityId,
     record: ConnectorKeyRecord,
     summary: String,
@@ -246,6 +278,7 @@ fn catalog(vault: &Vault, name: &str) -> OwnerResult<Catalog> {
         .get_connector_key(&description.key_ref)?
         .ok_or_else(|| OwnerError::NotFound("connector key", description.key_ref.to_hex()))?;
     Ok(Catalog {
+        name: name.to_owned(),
         key: description.key_ref,
         record,
         summary: description.entry.summary,
@@ -343,11 +376,12 @@ fn register_connector(
             "a connector is already registered under that name".to_owned(),
         ));
     }
-    let discovery = host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
-        host::discover(&host::client()?, &endpoint, auth, None)
-    })
-    .map_err(engine)?
-    .map_err(engine)?;
+    let mut discovery =
+        host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
+            host::discover(&host::client()?, &endpoint, auth, None)
+        })
+        .map_err(engine)?
+        .map_err(engine)?;
     if let Some(unknown) = request
         .tools
         .keys()
@@ -357,18 +391,14 @@ fn register_connector(
             "the connector lists no tool {unknown}"
         )));
     }
-    let screened: Vec<_> = discovery
-        .tools
-        .iter()
-        .map(host::ListedTool::screened)
-        .collect();
-    if let Some(reason) = vault.screen_connector_tools(&screened, &name)? {
-        return Err(OwnerError::Refused(format!(
-            "the connector's tools failed screening: {reason}"
-        )));
-    }
-    let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
-    let manifest = host::slate_manifest(&resolved, &discovery.tools, &request.tools);
+    let choices = host::OwnerScreenChoices {
+        install_anyway: Some(&request.install_anyway),
+        ..host::OwnerScreenChoices::default()
+    };
+    let screen = screened(vault, &name, &mut discovery, &request.tools, &choices)?;
+    let resolved = host::resolve(&discovery.tools, &screen.accepted).map_err(|_| unresolvable())?;
+    let manifest = host::slate_manifest(&resolved, &discovery.tools, &request.tools)
+        .with_owner_accepted(&screen.accepted);
     let slate_id = with_slate_drafter(server, owner, |drafter| {
         vault.draft_connector_admission_slate(&manifest, drafter)
     })
@@ -410,7 +440,53 @@ fn register_connector(
         warnings: host::self_declared_hints_warning(&discovery.tools)
             .into_iter()
             .collect(),
+        skipped: screen.skipped,
+        accepted: screen.accepted,
     })
+}
+
+/// Keeps only the listed tools the pack install rules pass, or the owner
+/// accepted (FIX SCREENING-PER-TOOL-SKIP), and answers which it kept out.
+/// Refused when the listing as a whole fails, when every listed tool is
+/// kept out, when the owner's "install it anyway" names a tool the
+/// connector does not list or one the screen will not admit, or when the
+/// owner classes a tool that is kept out.
+fn screened(
+    vault: &Vault,
+    name: &str,
+    discovery: &mut host::Discovery,
+    classes: &BTreeMap<String, ToolClass>,
+    choices: &host::OwnerScreenChoices<'_>,
+) -> OwnerResult<ConnectorToolScreen> {
+    if let Some(unknown) = choices
+        .install_anyway
+        .into_iter()
+        .flat_map(BTreeMap::keys)
+        .find(|tool| !discovery.tools.iter().any(|listed| &listed.name == *tool))
+    {
+        return Err(OwnerError::Invalid(format!(
+            "the connector lists no tool {unknown}"
+        )));
+    }
+    let screen = discovery.screen(vault, name, choices)?.map_err(|reason| {
+        OwnerError::Refused(format!("the connector's tools failed screening: {reason}"))
+    })?;
+    if let Some(reason) = host::screen_refusal(&screen, discovery.tools.len()) {
+        return Err(OwnerError::Refused(format!(
+            "the connector's tools failed screening: {reason}"
+        )));
+    }
+    if let Some(skip) = screen
+        .skipped
+        .iter()
+        .find(|skip| classes.contains_key(&skip.tool))
+    {
+        return Err(OwnerError::Refused(format!(
+            "the connector's tool {} failed screening: {}",
+            skip.tool, skip.reason
+        )));
+    }
+    Ok(screen)
 }
 
 /// `GET /v1/owner/connectors/setup?connector=`: the connector's key, its
@@ -604,6 +680,8 @@ fn by_name(manifest: &[SlateToolManifest]) -> BTreeMap<&str, &SlateToolManifest>
 
 /// The listed declaration is the slate's: the same tools by name and the
 /// same elicitation declaration.
+/// The listed manifest declares the slate's tools and elicitation as they
+/// stand. The owner's acceptances are compared apart, by refresh.
 fn same_manifest(listed: &SlateManifest, slate: &ConnectorGrantSlate) -> bool {
     by_name(&listed.tools) == by_name(slate.manifest())
         && listed.elicitation.as_ref() == slate.elicitation_manifest()

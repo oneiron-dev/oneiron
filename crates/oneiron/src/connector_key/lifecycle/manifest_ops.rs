@@ -134,7 +134,9 @@ fn ensure_declared(manifest: &ResolvedConnectorManifest, tools: &[ProbeTool]) ->
             .collect(),
     )?
     .with_elicitation(manifest.declares_elicitation());
-    if observed != *manifest {
+    // Nor do listings carry the owner's public marks: the candidate is
+    // compared as declared (review-c2 F2).
+    if observed != manifest.declared() {
         return Err(invalid_body("connector declarations differ from candidate"));
     }
     Ok(())

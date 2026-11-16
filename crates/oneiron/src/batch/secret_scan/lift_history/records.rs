@@ -25,7 +25,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_NOTE, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CONNECTOR_KEY, ENTITY_TYPE_NOTE, ENTITY_TYPE_SECRET_CUSTODY,
+    ENTITY_TYPE_WORLD_KEY_PAD,
 };
 use crate::secret_custody::KeptValues;
 use crate::side_table::{self, Named, SideTable};
@@ -378,7 +379,9 @@ fn materialized<'r>(
 /// The door's reason for a hit in `raw`'s body, in the text it was indexed
 /// with, or in the text it keeps beside them ([`record_text`]); `None` for a
 /// clean record and for one the sweep leaves: a custody record, the value's
-/// home, and a world key's pad.
+/// home, and a world key's pad. A connector key is read without the tool
+/// strings the owner accepted as public at install
+/// ([`crate::connector_key::body_without_owner_public_strings`]).
 fn hit(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<Option<&'static str>> {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(None);
@@ -392,6 +395,13 @@ fn hit(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<Opti
     // A NOTE's text its lift marked is done (FIX 2967).
     let note = header.entity_type == ENTITY_TYPE_NOTE;
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    // A connector key's tool strings the owner accepted as public at
+    // install are not raised again as a leak; every other string of the key
+    // is read as before (RULING SCREENING-SECRET-OVERRIDE = B).
+    let public_taken_out = (header.entity_type == ENTITY_TYPE_CONNECTOR_KEY)
+        .then(|| crate::connector_key::body_without_owner_public_strings(body))
+        .flatten();
+    let body = public_taken_out.as_deref().unwrap_or(body);
     if let Some(reason) = record_text::unmarked_hit(vault, txn, note, body)? {
         return Ok(Some(reason));
     }
@@ -401,6 +411,17 @@ fn hit(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<Opti
         }
     }
     record_text::hit(vault, txn, id, header.entity_type)
+}
+
+/// [`hit`], for the integration tests' door (`test_doors::secret_lift_census`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn census_hit_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Option<&'static str>> {
+    hit(vault, txn, id, raw)
 }
 
 fn index_text(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<(String, String)>> {
