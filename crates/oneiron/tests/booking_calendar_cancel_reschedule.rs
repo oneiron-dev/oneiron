@@ -1,10 +1,19 @@
-//! A booking whose calendar provider cancelled it cannot be moved (FIX 22385).
+//! When a reschedule token can no longer move its booking.
 //!
+//! A booking whose calendar provider cancelled it cannot be moved (FIX 22385).
 //! An inbound provider cancellation lands as a `calendar.status = cancelled`
 //! head on the booking's EVENT and need not change `booking.status`. The cap
 //! and the reminder already read it; the reschedule read only
 //! `booking.status`, so a token still moved the cancelled booking onto a new
 //! slot and attested a Confirmed passport over it.
+//!
+//! A booking whose start has come cannot be moved either (FIX
+//! BOOKING-RESCHEDULE-AFTER-START). The reschedule refused only a cancelled
+//! booking, so a token moved a meeting in progress, a held meeting or a
+//! no-show onto any open slot. The line is the start second itself: a move
+//! one second before it still lands. The host may let visitors move a started
+//! booking (`booking.reschedule.after_start`, default off; the lead's
+//! amendment of BOOKING-RESCHEDULE-AFTER-START = A, 16 Nov 22:40).
 //!
 //! A standalone file with a trimmed copy of the `it` booking fixture
 //! (`tests/it/booking_lifecycle.rs`), because the `it` target does not compile
@@ -20,12 +29,15 @@ use oneiron::booking::{
     enqueue_booking_verb, run_booking_lifecycle_once,
 };
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::store::GateDecisionId;
 use oneiron::{
     CalendarSel, ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject,
     DreamerHomeNodeCandidate, DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault,
     VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use rmpv::Value;
+use serde_json::json;
 
 const MONDAY: u64 = 1_772_409_600;
 const NOW: u64 = MONDAY + 8 * 3_600;
@@ -307,5 +319,122 @@ fn a_provider_cancelled_booking_cannot_be_rescheduled() {
     assert!(
         matches!(moved, Err(BookingError::InvalidConstraint(_))),
         "a booking its calendar provider cancelled must not move; got {moved:?}"
+    );
+}
+
+/// The earliest and the latest slot the fixture day offers: a booking at the
+/// first, and a free target well after it.
+fn earliest_and_latest(slots: &[RankedSlot]) -> (TimeRange, TimeRange) {
+    let earliest = slots
+        .iter()
+        .min_by_key(|slot| slot.start_utc)
+        .expect("the fixture day offers a slot");
+    let latest = slots
+        .iter()
+        .max_by_key(|slot| slot.start_utc)
+        .expect("the fixture day offers a slot");
+    assert!(
+        latest.start_utc >= earliest.end_utc,
+        "the fixture day offers two disjoint slots"
+    );
+    (slot_of(earliest), slot_of(latest))
+}
+
+fn move_booking(
+    fixture: &Fixture,
+    booked: &ConfirmReceipt,
+    new_slot: TimeRange,
+    now: u64,
+) -> Result<BookingVerbReceipt, BookingError> {
+    fixture.run(
+        BookingVerbRequest::Reschedule(RescheduleSpec {
+            token: booked.reschedule_token.clone(),
+            new_slot,
+            visitor_tz: "UTC".to_owned(),
+            constraint: None,
+            idempotency_key: None,
+        }),
+        now,
+    )
+}
+
+fn refused_as_started(moved: &Result<BookingVerbReceipt, BookingError>) -> bool {
+    matches!(moved, Err(BookingError::InvalidConstraint(detail)) if detail.contains("has started"))
+}
+
+#[test]
+fn a_booking_cannot_be_rescheduled_at_its_start_second() {
+    let fixture = Fixture::open();
+    let (first, last) = earliest_and_latest(&fixture.offered_slots());
+    let booked = book(&fixture, SessionKey::derive(b"start-second"), first);
+
+    let moved = move_booking(&fixture, &booked, last, first.start);
+
+    assert!(
+        refused_as_started(&moved),
+        "a booking whose start second has come must not move; got {moved:?}"
+    );
+}
+
+#[test]
+fn a_booking_cannot_be_rescheduled_after_it_ended() {
+    let fixture = Fixture::open();
+    let (first, last) = earliest_and_latest(&fixture.offered_slots());
+    let booked = book(&fixture, SessionKey::derive(b"after-end"), first);
+
+    // A held meeting or a no-show, an hour after its end.
+    let moved = move_booking(&fixture, &booked, last, first.end + 3_600);
+
+    assert!(
+        refused_as_started(&moved),
+        "a meeting that is over must not move; got {moved:?}"
+    );
+}
+
+#[test]
+fn a_booking_still_moves_one_second_before_its_start() {
+    let fixture = Fixture::open();
+    let (first, last) = earliest_and_latest(&fixture.offered_slots());
+    let booked = book(&fixture, SessionKey::derive(b"one-second-before"), first);
+
+    let moved = move_booking(&fixture, &booked, last, first.start - 1);
+
+    assert!(
+        matches!(moved, Ok(BookingVerbReceipt::Rescheduled(_))),
+        "a booking whose start has not come still moves; got {moved:?}"
+    );
+}
+
+#[test]
+fn a_started_booking_moves_once_the_host_lets_visitors_reschedule_after_the_start() {
+    let fixture = Fixture::open();
+    let (first, last) = earliest_and_latest(&fixture.offered_slots());
+    let booked = book(&fixture, SessionKey::derive(b"after-start-allowed"), first);
+    let owner = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let proof = fixture
+        .vault
+        .authenticate_owner(owner, "principal:owner", true, GateDecisionId::now())
+        .expect("owner proof");
+    let outcome = fixture
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&proof),
+            SetSetting::vault_value("booking.reschedule.after_start", json!(true)),
+        )
+        .expect("set the key");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's set applies: {outcome:?}"
+    );
+
+    // A no-show, an hour after its end, moved by the visitor's token.
+    let moved = move_booking(&fixture, &booked, last, first.end + 3_600);
+
+    assert!(
+        matches!(moved, Ok(BookingVerbReceipt::Rescheduled(_))),
+        "with the key on a started booking moves; got {moved:?}"
     );
 }
