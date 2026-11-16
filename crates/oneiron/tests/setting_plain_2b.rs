@@ -244,7 +244,11 @@ fn the_owners_set_is_what_each_reader_returns_and_a_clear_restores_the_default()
 fn the_switch_logs_each_change_and_switching_back_on_queues_the_lift() {
     let fixture = Fixture::rooted();
     let vault = &fixture.vault;
-    let owner = fixture.owner_proof.actor().to_hex();
+    let owner = fixture
+        .owner_proof
+        .actor_for_read(vault)
+        .expect("the proof is this vault's")
+        .to_hex();
     assert!(
         vault.secret_lift_status().unwrap().running.is_none(),
         "a new vault runs no lift"
