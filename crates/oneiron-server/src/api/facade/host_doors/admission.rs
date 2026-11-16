@@ -138,6 +138,12 @@ pub(in crate::api::facade) fn door_admits(
                         .map(drop)
                 })
         }
+        // The continue rows (census L10-17): the owner's proof, or an actor-bound credential
+        // whose own live Grant naming vault.runners.continue the engine door checks. A caller
+        // bound to no actor keeps the owner refusal.
+        Proof::RunnerContinuer => {
+            crate::api::facade::runner_seat_doors::continue_caller(server, auth, verb).map(drop)
+        }
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
