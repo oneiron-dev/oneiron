@@ -203,8 +203,8 @@ pub use self::eval_set::{
     EvalRepairToolEffect, EvalRepairWorld,
 };
 pub use self::eval_set::{
-    EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRead,
-    EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
+    EvalRepairAdjudication, EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs,
+    EvalRepairSeedRead, EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
 };
 pub(crate) use self::eval_set::{
     PairedScores, erase_eval_repair_seeds_in_txn, erase_eval_source_in_txn, estimate_paired,

@@ -34,18 +34,22 @@ pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::{
 /// The most tool calls one grade applies; more grade false.
 const MAX_REPAIR_TOOL_CALLS: usize = 256;
 
-/// What the linked app observed, which the grader compares against.
+/// What the grader compares against: what the linked app observed, or an
+/// adjudicated answer.
 #[derive(Debug, Clone)]
 enum EvalRepairExpected {
     /// A text-response world's exact response.
     Response(String),
     /// A JSON-state-tools world's exact end state.
     State(Value),
+    /// A text-response world's adjudicated answer, held only as the BLAKE3
+    /// of its bytes; `None` until the seed's adjudicated label lands.
+    Adjudicated(Option<[u8; 32]>),
 }
 
 /// A compiled task. The answer and source evidence stay out of the
-/// candidate input, and the answer is not in the task's own workspace or
-/// history, by exact text or, for an end state, by exact JSON. This is not a
+/// candidate input, and the answer is not in that input at all: not as
+/// exact text, nor, for an end state, as a whole JSON value. This is not a
 /// label, a certificate of task quality or a measured pass.
 #[derive(Debug, Clone)]
 pub struct EvalRepairTask {
@@ -73,10 +77,18 @@ impl EvalRepairTask {
 
     /// Exact response equality, without trimming, case folding or a model call.
     /// A true result says only that this response meets this sourced check.
-    /// A tool world's task grades no response.
+    /// A tool world's task grades no response, and an adjudicated task grades
+    /// none until its label lands; then the response's bytes must hash to the
+    /// adjudicated answer's.
     #[must_use]
     pub fn grade_response(&self, response: &str) -> bool {
-        matches!(&self.expected, EvalRepairExpected::Response(expected) if expected == response)
+        match &self.expected {
+            EvalRepairExpected::Response(expected) => expected == response,
+            EvalRepairExpected::Adjudicated(Some(digest)) => {
+                ContentHash::of(response.as_bytes()).as_bytes() == digest
+            }
+            EvalRepairExpected::State(_) | EvalRepairExpected::Adjudicated(None) => false,
+        }
     }
 
     /// The state `calls` leave, applied in order by fixed code to the rebuilt
@@ -109,15 +121,68 @@ impl EvalRepairTask {
     }
 
     /// The BLAKE3 hex of what the grader compares against: the observed
-    /// response's bytes, or the observed end state's JSON text. A seed's
-    /// outcome label names the outcome by this digest, never by its text.
+    /// response's bytes, the observed end state's JSON text, or the
+    /// adjudicated answer's bytes. A seed's case label names the outcome by
+    /// this digest, never by its text. `None` while an adjudicated task waits
+    /// for its label.
     #[must_use]
-    pub(super) fn outcome_digest(&self) -> String {
-        match &self.expected {
-            EvalRepairExpected::Response(answer) => ContentHash::of(answer.as_bytes()),
-            EvalRepairExpected::State(state) => ContentHash::of(state.to_string().as_bytes()),
+    pub(super) fn outcome_digest(&self) -> Option<String> {
+        let digest = match &self.expected {
+            EvalRepairExpected::Response(answer) => ContentHash::of(answer.as_bytes()).into_bytes(),
+            EvalRepairExpected::State(state) => {
+                ContentHash::of(state.to_string().as_bytes()).into_bytes()
+            }
+            EvalRepairExpected::Adjudicated(digest) => (*digest)?,
+        };
+        Some(oneiron_hex::encode(&digest))
+    }
+
+    /// Whether the task's grader is an adjudicated response whose answer has
+    /// not been set.
+    #[must_use]
+    pub(super) fn awaits_adjudication(&self) -> bool {
+        matches!(self.expected, EvalRepairExpected::Adjudicated(None))
+    }
+
+    /// The digest an adjudicated answer is held by, after the checks a
+    /// compiled answer gets: the task's grader is an adjudicated response,
+    /// and the answer is not leaked in the leg's input. Nor is it in the
+    /// text the seed keeps: the source's task pointer, and the label's own
+    /// `reference`, which its case keeps too.
+    pub(super) fn adjudicated_answer_digest(
+        &self,
+        answer: &str,
+        reference: &str,
+    ) -> Result<[u8; 32]> {
+        if !matches!(self.expected, EvalRepairExpected::Adjudicated(_)) {
+            return Err(Error::InvalidClaimBody(
+                "only an adjudicated-response Repair task takes an adjudicated answer",
+            ));
         }
-        .to_hex()
+        if answer_leaks(&self.input, answer) {
+            return Err(Error::InvalidClaimBody(
+                "Repair task answer is leaked in its workspace or history",
+            ));
+        }
+        if answer_leaks(&Value::String(self.source.task_pointer.clone()), answer) {
+            return Err(Error::InvalidClaimBody(
+                "an adjudicated answer is in the task pointer its seed keeps",
+            ));
+        }
+        if answer_leaks(&Value::String(reference.to_owned()), answer) {
+            return Err(Error::InvalidClaimBody(
+                "an adjudicated label's reference holds its answer",
+            ));
+        }
+        Ok(ContentHash::of(answer.as_bytes()).into_bytes())
+    }
+
+    /// Sets the adjudicated answer's digest the grader compares against. A
+    /// task of another grader is left as it is.
+    pub(super) fn adjudicate(&mut self, digest: [u8; 32]) {
+        if let EvalRepairExpected::Adjudicated(slot) = &mut self.expected {
+            *slot = Some(digest);
+        }
     }
 
     /// All task variants from this capture share one family root for this seat.
@@ -133,11 +198,14 @@ pub struct EvalRepairTaskRead {
     pub receipt: ScopedReadReceipt,
 }
 
-/// Whether `answer` sits in `world`, which the candidate is shown: in a string
-/// or an object key, or as a number's or a boolean's whole text. The answer is
-/// trimmed of outer whitespace; an empty one leaks nothing. Exact text only:
-/// a paraphrase passes, and a short answer that recurs by chance refuses.
-fn answer_leaks(world: &Value, answer: &str) -> bool {
+/// Whether `answer` sits in `shown`, a leg's whole input: in a string or an
+/// object key as written, or anywhere in the input's compact JSON text, which
+/// holds every number's and boolean's text and the JSON of every whole value
+/// a leg can copy. The answer is trimmed of outer whitespace; an empty one
+/// leaks nothing. Exact text only: a paraphrase passes, and a short answer
+/// that recurs by chance refuses, in the contract's fixed words (its keys,
+/// the world's kind, the allowed actions) as in its author's text.
+fn answer_leaks(shown: &Value, answer: &str) -> bool {
     fn holds(value: &Value, answer: &str) -> bool {
         match value {
             Value::String(text) => text.contains(answer),
@@ -145,21 +213,21 @@ fn answer_leaks(world: &Value, answer: &str) -> bool {
                 .iter()
                 .any(|(key, value)| key.contains(answer) || holds(value, answer)),
             Value::Array(items) => items.iter().any(|item| holds(item, answer)),
-            Value::Number(number) => number.to_string() == answer,
-            Value::Bool(flag) => flag.to_string() == answer,
-            Value::Null => false,
+            Value::Number(_) | Value::Bool(_) | Value::Null => false,
         }
     }
     let answer = answer.trim();
-    !answer.is_empty() && holds(world, answer)
+    !answer.is_empty() && (holds(shown, answer) || shown.to_string().contains(answer))
 }
 
-/// Whether the end state `state` sits in `world`, which the candidate is
-/// shown: as `world` itself (a task no call needs to solve), as a value
-/// inside it, or, for a text state, as an object key. Exact JSON only.
-fn state_leaks(world: &Value, state: &Value) -> bool {
-    world == state
-        || match world {
+/// Whether the end state `state` sits in `shown`, a leg's whole input, as a
+/// whole JSON value: the rebuilt state (a task no call needs to solve), or
+/// any other value in the input, such as a declared tool, a precondition or
+/// the offered tools' list, which a leg can copy into a call; or, for a text
+/// state, as an object key. Exact JSON only.
+fn state_leaks(shown: &Value, state: &Value) -> bool {
+    shown == state
+        || match shown {
             Value::Object(fields) => fields.iter().any(|(key, value)| {
                 state.as_str() == Some(key.as_str()) || state_leaks(value, state)
             }),
@@ -248,7 +316,11 @@ fn apply_effect(state: &mut Value, effect: &EvalRepairToolEffect, argument: &Val
 /// grader need. A text-response world declares no tool, so it offers none.
 fn offered_tools(spec: &EvalRepairTaskSpec) -> Result<Vec<EvalRepairTool>> {
     match (&spec.world, &spec.grader) {
-        (EvalRepairWorld::TextResponse, EvalRepairGrader::ObservedResponseEquals { .. }) => {
+        (
+            EvalRepairWorld::TextResponse,
+            EvalRepairGrader::ObservedResponseEquals { .. }
+            | EvalRepairGrader::AdjudicatedResponse {},
+        ) => {
             if spec.intent.trim().is_empty()
                 || !spec.tools.is_empty()
                 || spec.allowed_actions.as_slice() != [EvalRepairAction::Respond]
@@ -367,17 +439,18 @@ impl Memory<'_> {
                 return Err(Error::InvalidClaimBody("Repair initial precondition failed").into());
             }
         }
-        let observed = view
-            .observations
-            .iter()
-            .find(|row| row.ordinal == source.outcome_ordinal)
-            .and_then(|row| row.outcome.as_ref())
-            .ok_or(Error::InvalidClaimBody(
-                "Repair observed outcome is missing",
-            ))?;
+        let observed = || {
+            view.observations
+                .iter()
+                .find(|row| row.ordinal == source.outcome_ordinal)
+                .and_then(|row| row.outcome.as_ref())
+                .ok_or(Error::InvalidClaimBody(
+                    "Repair observed outcome is missing",
+                ))
+        };
         let expected = match &spec.grader {
             EvalRepairGrader::ObservedResponseEquals { pointer } => EvalRepairExpected::Response(
-                at_pointer(observed, pointer)?
+                at_pointer(observed()?, pointer)?
                     .as_str()
                     .ok_or(Error::InvalidClaimBody(
                         "Repair response outcome must be text",
@@ -385,32 +458,12 @@ impl Memory<'_> {
                     .to_owned(),
             ),
             EvalRepairGrader::ObservedStateEquals { pointer } => {
-                EvalRepairExpected::State(at_pointer(observed, pointer)?.clone())
+                EvalRepairExpected::State(at_pointer(observed()?, pointer)?.clone())
             }
+            // The app's outcome is no usable answer: the check is the
+            // adjudicated label the task's seed takes later.
+            EvalRepairGrader::AdjudicatedResponse {} => EvalRepairExpected::Adjudicated(None),
         };
-        // A trace is a task only if its answer is not leaked in the workspace
-        // or the history (ARCH-0053 #eval-trace-task): the rebuilt state and
-        // the input. The intent is the task's own words and is not checked.
-        let leaked = match &expected {
-            EvalRepairExpected::Response(answer) => {
-                answer_leaks(&spec.initial_state, answer) || answer_leaks(&spec.input, answer)
-            }
-            EvalRepairExpected::State(state) => {
-                state_leaks(&spec.initial_state, state) || state_leaks(&spec.input, state)
-            }
-        };
-        if leaked {
-            return Err(Error::InvalidClaimBody(
-                "Repair task answer is leaked in its workspace or history",
-            )
-            .into());
-        }
-        // The grader is hashed with the task, but is never part of a leg's input.
-        let bytes = match &expected {
-            EvalRepairExpected::Response(answer) => serde_json::to_vec(&(&source, &spec, answer)),
-            EvalRepairExpected::State(state) => serde_json::to_vec(&(&source, &spec, state)),
-        }
-        .map_err(|_| Error::InvalidClaimBody("Repair task encoding failed"))?;
         let input = serde_json::json!({
             "world": spec.world,
             "initial_state": spec.initial_state,
@@ -420,6 +473,30 @@ impl Memory<'_> {
             "tools": spec.tools,
             "allowed_actions": spec.allowed_actions,
         });
+        // A trace is a task only if its answer is not leaked in the workspace
+        // or the history (ARCH-0053 #eval-trace-task): the rebuilt state and
+        // the input, and the rest of what the candidate is shown with them,
+        // which is the whole input. An adjudicated answer is checked when its
+        // label lands.
+        let leaked = match &expected {
+            EvalRepairExpected::Response(answer) => answer_leaks(&input, answer),
+            EvalRepairExpected::State(state) => state_leaks(&input, state),
+            EvalRepairExpected::Adjudicated(_) => false,
+        };
+        if leaked {
+            return Err(Error::InvalidClaimBody(
+                "Repair task answer is leaked in its workspace or history",
+            )
+            .into());
+        }
+        // The grader is hashed with the task, but is never part of a leg's
+        // input. An adjudicated answer is not known yet: its seed binds it.
+        let bytes = match &expected {
+            EvalRepairExpected::Response(answer) => serde_json::to_vec(&(&source, &spec, answer)),
+            EvalRepairExpected::State(state) => serde_json::to_vec(&(&source, &spec, state)),
+            EvalRepairExpected::Adjudicated(_) => serde_json::to_vec(&(&source, &spec)),
+        }
+        .map_err(|_| Error::InvalidClaimBody("Repair task encoding failed"))?;
         Ok(EvalRepairTaskRead {
             task: Some(EvalRepairTask {
                 source,
