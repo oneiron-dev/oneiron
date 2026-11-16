@@ -1,15 +1,23 @@
 //! Archive impact preview and confirmed ARCH-0038 delete: the owner's door,
 //! and its checked siblings for every other caller's archive-delete
-//! authority (OF-449 L4). The ladder's erase, which also clears backups, is
-//! a different act.
+//! authority (OF-449 L4), each judged by check-in first (ROLES-CHECKIN 2k5c).
+//! The ladder's erase, which also clears backups, is a different act.
 
+use super::entity_delete::{RoleDeleteCheckIn, authority_changed};
 use crate::EntityId;
+use crate::check_in::{self, ActClass};
+use crate::deletion::{AdmittedDeleteDoor, DeleteReason};
+use crate::error::Error;
 use crate::federation::{DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget};
 use crate::memory::support::verify_deletion_authority_in_txn;
 use crate::memory::{
     DeleteReceipt, MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, SafeDeleteReason,
 };
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
+
+/// The saved verb a checked archive delete is: the verb its check-in names
+/// (2k5c).
+const ARCHIVE_DELETE_VERB: &str = "vault.archive.delete.confirm";
 
 /// One archived entity's retained record bytes. Secondary indexes and historical
 /// carriers are handled by ARCH-0038; this is not a filesystem-space estimate.
@@ -39,6 +47,19 @@ pub(crate) type ArchiveExpectation = ([u8; 32], Vec<u8>);
 
 /// A batch's per-record answers, in canonical order.
 pub(crate) type ArchiveDeleteResults<T> = Vec<(EntityId, MemoryResult<T>)>;
+
+/// One archived record a checked confirm deletes: what its preview read,
+/// when the item binds it, and the approved check-in its delete spends,
+/// when the item names one (2k5c).
+#[derive(Debug, Clone)]
+pub(crate) struct ArchiveConfirmItem {
+    /// The archived record.
+    pub(crate) entity: EntityId,
+    /// The record hash and archive marker a preview read.
+    pub(crate) expected: Option<ArchiveExpectation>,
+    /// The approved check-in this record's delete spends.
+    pub(crate) check_in_ref: Option<EntityId>,
+}
 
 /// A snapshot-bound confirmation. Fields are read-only so callers cannot add a
 /// target they did not preview. Restores and changed records invalidate it.
@@ -92,7 +113,9 @@ impl Memory<'_> {
     /// failure must not hide an earlier completed delete. The deletion rail
     /// rechecks both authority and the preview inside its linearizing
     /// transaction, the preview by its scrub-stable identity: the archive
-    /// marker the previewed id holds (FIX 9062, `same_archive_in`).
+    /// marker the previewed id holds (FIX 9062, `same_archive_in`). The
+    /// owner's delete is never gated: each receipt records their own proof
+    /// (ROLES-CHECKIN 2k5c).
     pub fn confirm_archive_purge(
         &self,
         preview: &ArchivePurgePreview,
@@ -101,11 +124,17 @@ impl Memory<'_> {
             .entries
             .iter()
             .map(|row| {
-                let result = self.safe_delete_checked(
-                    &row.entity.to_hex(),
-                    SafeDeleteReason::UserHardDelete,
-                    |txn| same_archive_in(self.vault, txn, row.entity, &row.archive_marker),
-                );
+                let result = self
+                    .safe_delete_checked(
+                        &row.entity.to_hex(),
+                        SafeDeleteReason::UserHardDelete,
+                        |txn| same_archive_in(self.vault, txn, row.entity, &row.archive_marker),
+                    )
+                    .map(|mut receipt| {
+                        receipt.check_in =
+                            Some(check_in::owner_own_proof_decision(ActClass::Delete));
+                        receipt
+                    });
                 (row.entity, result)
             })
             .collect()
@@ -153,35 +182,76 @@ impl Memory<'_> {
     /// before publication then rechecks that authority, the cleanup archive
     /// marker and, when given, the expected marker, the preview's
     /// scrub-stable identity (FIX 9062, `same_archive_in`). One target's
-    /// refusal or failure never hides another's receipt.
+    /// refusal, failure or wait never hides another's receipt.
+    ///
+    /// Each target is judged by check-in first, in a writer of its own
+    /// before its rail, as `vault.delete` judges a delete by role (2k5c;
+    /// P25-SHAPE Q1 = A): the Owner on their own proof, an agent unjudged
+    /// (PR 3's act gate), and a person under their membership role, a
+    /// Steward's delete of another's record in scope waiting on its own
+    /// pending check-in, which that target's item names as `check_in_ref`
+    /// once approved (Engine ruling STEWARD-DELETE-WAIT = B).
     pub(crate) fn confirm_archive_delete(
         &self,
-        items: &[(EntityId, Option<ArchiveExpectation>)],
+        items: &[ArchiveConfirmItem],
     ) -> ArchiveDeleteResults<(DeleteReceipt, DeleteAuthority)> {
         let mut targets = items.to_vec();
-        targets.sort_by_key(|(id, _)| *id);
-        targets.dedup_by_key(|(id, _)| *id);
+        targets.sort_by_key(|item| item.entity);
+        targets.dedup_by_key(|item| item.entity);
         targets
-            .into_iter()
-            .map(|(id, expected)| {
-                let target = DeleteTarget::new(id);
-                let result = self
-                    .expected_archive_holds(id, expected.as_ref())
-                    .and_then(|()| {
-                        self.safe_delete_admitted(
-                            id,
-                            crate::deletion::DeleteReason::UserHardDelete,
-                            crate::deletion::AdmittedDeleteDoor::Archive,
-                            &|txn| self.archive_delete_authority_in(txn, &target),
-                            |txn| match &expected {
-                                Some((_, marker)) => same_archive_in(self.vault, txn, id, marker),
-                                None => archive_marker(self.vault, txn, id).map(drop),
-                            },
-                        )
-                    });
-                (id, result)
-            })
+            .iter()
+            .map(|item| (item.entity, self.confirm_archive_item(item)))
             .collect()
+    }
+
+    /// One target of [`Self::confirm_archive_delete`]: its expectation, its
+    /// check-in judged, then its rail, each write of which must find the
+    /// authority the judge read. A target that waits answers
+    /// `CHECK_IN_PENDING` naming its check-in and deletes nothing.
+    fn confirm_archive_item(
+        &self,
+        item: &ArchiveConfirmItem,
+    ) -> MemoryResult<(DeleteReceipt, DeleteAuthority)> {
+        let id = item.entity;
+        self.expected_archive_holds(id, item.expected.as_ref())?;
+        let target = DeleteTarget::new(id);
+        let authority = |txn: &heed::RoTxn<'_>| -> MemoryResult<DeleteAuthority> {
+            self.archive_delete_authority_in(txn, &target)
+        };
+        let (judged, decision) = match self.role_delete_check_in(
+            &target,
+            DeleteReason::UserHardDelete,
+            ARCHIVE_DELETE_VERB,
+            &authority,
+            item.check_in_ref.as_ref(),
+        )? {
+            RoleDeleteCheckIn::Go {
+                authority: judged,
+                decision,
+            } => (judged, decision),
+            RoleDeleteCheckIn::Waits(check_in) => {
+                return Err(Error::CheckInPending(check_in.to_hex()).into());
+            }
+        };
+        let (mut receipt, admitted) = self.safe_delete_admitted(
+            id,
+            DeleteReason::UserHardDelete,
+            AdmittedDeleteDoor::Archive,
+            &authority,
+            |txn| {
+                match &item.expected {
+                    Some((_, marker)) => same_archive_in(self.vault, txn, id, marker)?,
+                    None => archive_marker(self.vault, txn, id).map(drop)?,
+                }
+                if authority(txn)? == judged {
+                    Ok(())
+                } else {
+                    Err(authority_changed(AdmittedDeleteDoor::Archive))
+                }
+            },
+        )?;
+        receipt.check_in = decision;
+        Ok((receipt, admitted))
     }
 
     /// Whether archived `id` is still what `expected` names, read in one
