@@ -24,7 +24,9 @@
 //! [`RecoveryBoxWait`] (answered by a [`RecoveryBoxKitOnlyAck`]-shaped ack),
 //! and an owner device's cancel voids the box's pending release with
 //! [`RecoveryBoxCancel`] (answered by a [`RecoveryBoxCancelAck`], which says
-//! whether a release was pending).
+//! whether a release was pending). The cancel names who cancelled
+//! ([`RecoveryBoxCancelledBy`]), which the box's receipt and the owner's
+//! notice carry (WAYBACK-COOWNER-CANCEL-OTHER-OWNERS-RECOVERY = B).
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +42,12 @@ pub const RECOVERY_BOX_WAIT_MAX_SECS: u64 = 30 * 24 * 3_600;
 
 /// The longest refusal code an ack may carry.
 pub const RECOVERY_BOX_REFUSAL_MAX: usize = 64;
+
+/// The lowercase hex digits of a canceller's person id (an `EntityId`).
+pub const RECOVERY_BOX_PERSON_HEX_LEN: usize = 32;
+
+/// The lowercase hex digits of a canceller's device key (32 bytes).
+pub const RECOVERY_BOX_DEVICE_KEY_HEX_LEN: usize = 64;
 
 /// Vault → supervisor, on the supervisor socket ledger pushes use: the
 /// owner's kit-only choice for this vault's recovery box. `token` is the
@@ -100,13 +108,48 @@ pub struct RecoveryBoxCancel {
     pub op: String, // "recovery_box_cancel"
     pub vault: String,
     pub token: TokenHex,
+    /// Who cancelled, as the vault proved it.
+    pub cancelled_by: RecoveryBoxCancelledBy,
+    /// The receipt number of the `recovery_started` act the owner's device
+    /// saw: the box voids only the pending release that act started, so a
+    /// replayed cancel voids no later one. Absent: whichever is pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_receipt: Option<u64>,
 }
 
 impl RecoveryBoxCancel {
-    /// As [`RecoveryBoxKitOnly::validate`].
+    /// As [`RecoveryBoxKitOnly::validate`], and the canceller's shape.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(self.op == RECOVERY_BOX_CANCEL_OP, "unknown op");
+        self.cancelled_by.validate()?;
         validate_vault_and_token(&self.vault, &self.token)
+    }
+}
+
+/// Who cancelled a pending release: the owner's person id and the owner
+/// device key whose signed proof the vault checked. The box records both on
+/// its cancel receipt and the owner's notice; it cannot check them itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryBoxCancelledBy {
+    /// [`RECOVERY_BOX_PERSON_HEX_LEN`] lowercase hex digits.
+    pub person: String,
+    /// [`RECOVERY_BOX_DEVICE_KEY_HEX_LEN`] lowercase hex digits.
+    pub device_key: String,
+}
+
+impl RecoveryBoxCancelledBy {
+    /// Reject-not-truncate shape check of both ids.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            oneiron_hex::is_lower_hex(&self.person, Some(RECOVERY_BOX_PERSON_HEX_LEN)),
+            "malformed canceller person"
+        );
+        anyhow::ensure!(
+            oneiron_hex::is_lower_hex(&self.device_key, Some(RECOVERY_BOX_DEVICE_KEY_HEX_LEN)),
+            "malformed canceller device key"
+        );
+        Ok(())
     }
 }
 

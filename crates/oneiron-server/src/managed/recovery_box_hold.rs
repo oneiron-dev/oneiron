@@ -48,11 +48,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use oneiron::EntityId;
 use oneiron::world_keys::RecoveryBoxHold;
 use oneiron_vault_contract::{
     MAX_CTL_LINE, RECOVERY_BOX_CANCEL_OP, RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_WAIT_MAX_SECS,
-    RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck, RecoveryBoxKitOnly,
-    RecoveryBoxKitOnlyAck, RecoveryBoxWait, TokenHex,
+    RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck, RecoveryBoxCancelledBy,
+    RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck, RecoveryBoxWait, TokenHex,
 };
 use rustix::net::{AddressFamily, SocketAddrUnix, SocketType, sockopt};
 use zeroize::Zeroizing;
@@ -258,15 +259,29 @@ impl HypnosRecoveryBoxHold {
 
     /// Carries an owner device's cancel to this vault's recovery box: its
     /// pending release of the recovery-authority seed is voided. The caller
-    /// sends it only for an owner act it proved. `Ok(true)` when a release
-    /// was pending and is now void, `Ok(false)` when none was (or the node
-    /// has no box); an error for any other answer.
-    pub fn cancel_pending_box_release(&self) -> oneiron::Result<bool> {
+    /// sends it only for an owner act it proved: `person` is the owner and
+    /// `device_key` the owner key whose signed proof it checked, which the
+    /// box's receipt and the owner's notice name. With `release_receipt`
+    /// (the `recovery_started` act's receipt the device saw) the box voids
+    /// only that release. `Ok(true)` when a release was pending and is now
+    /// void, `Ok(false)` when none was (or the node has no box); an error
+    /// for any other answer.
+    pub fn cancel_pending_box_release(
+        &self,
+        person: EntityId,
+        device_key: &[u8; 32],
+        release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
         const OP: &str = "cancel of a pending release";
         let request = RecoveryBoxCancel {
             op: RECOVERY_BOX_CANCEL_OP.to_owned(),
             vault: self.vault.clone(),
             token: self.token.clone(),
+            cancelled_by: RecoveryBoxCancelledBy {
+                person: person.to_hex(),
+                device_key: oneiron_hex::encode(device_key),
+            },
+            release_receipt,
         };
         request
             .validate()
