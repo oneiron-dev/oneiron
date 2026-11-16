@@ -187,6 +187,57 @@ pub fn attach_extraction_step_lender(
     }))
 }
 
+/// Witnesses `words` as distinct TURNs of one conversation under one PERSON.
+///
+/// This keeps the existing extraction witness shape while sharing its byline,
+/// so equal co-mentions form one native group large enough to test chunking.
+///
+/// # Errors
+///
+/// The vault's or the production witness's refusals.
+pub fn witness_same_speaker_extraction_turns(
+    vault: &Vault,
+    words: &[&str],
+) -> Result<Vec<EntityId>> {
+    let conversation = EntityId::now();
+    let speaker = EntityId::now();
+    vault.put_entity(
+        &speaker,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"witness",
+    )?;
+    let mut turns = Vec::with_capacity(words.len());
+    for (index, word) in words.iter().enumerate() {
+        let turn = EntityId::now();
+        let message = EntityId::now();
+        vault
+            .memory(speaker, crate::edge::EdgeActorClass::Human)
+            .witness(&crate::memory::WitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                thread_audience: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: Some(message.to_hex()),
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: (*word).to_owned(),
+                    parts: None,
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: 10u64.saturating_add(index as u64),
+                assertions: crate::memory::WitnessAssertions::default(),
+            })
+            .map_err(|error| Error::InvalidConfig(format!("witness: {error:?}")))?;
+        turns.push(turn);
+    }
+    Ok(turns)
+}
+
 /// One native extraction slice over the cited turns: its turns with its exact transcript.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeExtractionSlice {

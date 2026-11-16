@@ -266,7 +266,9 @@ pub struct MemoryError {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtractionLayout {
     /// The cited TURNs grouped exactly as native's `extraction_slices`
-    /// groups them: one row per native slice, in native order.
+    /// groups them: one row per native slice, in native order. A cite of
+    /// more TURNs than one step reads has each group cut at that limit, as
+    /// native cuts it.
     StepSlices {
         /// One row per native slice, in native order.
         slices: Vec<ExtractionStepSlice>,
@@ -288,7 +290,9 @@ pub enum ExtractionLayout {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractionStepSlice {
-    /// The positions in the request's evidence that fall in this slice, ascending.
+    /// The positions in the request's evidence that fall in this slice:
+    /// ascending for a cite within the step's TURN limit, in native's TURN
+    /// order for a cite over it.
     pub evidence: Vec<usize>,
     /// How many listing pages this slice spans.
     pub pages: usize,

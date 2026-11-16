@@ -10,18 +10,22 @@ mod step_support;
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
-use oneiron::memory::{ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST};
+use oneiron::memory::{
+    ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
+};
+use oneiron::test_doors::derive::source_version;
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
 };
 use oneiron::test_doors::extraction_steps::{
     ExtractionStepFixture, NativeExtractionSlice, attach_extraction_step_lender,
-    extraction_step_state_present, native_extraction_slice_transcripts,
+    extraction_step_state_present, fixture_step_charge_units, native_extraction_slice_transcripts,
+    witness_same_speaker_extraction_turns,
 };
 use oneiron::test_doors::extraction_verdict::land_extraction_verdict_listing_claim;
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{AttemptId, EntityId, Vault};
+use oneiron::{AttemptId, EdgeActorClass, EntityId, Vault};
 use serde_json::{Value, json};
 use step_support::{
     CapturingStepBackend, ExtractionStepTestResult, QUEUE_NOW, bind_extraction,
@@ -164,6 +168,63 @@ fn slice_evidence_positions(
                 .collect()
         })
         .collect()
+}
+
+/// Copies the listing fixture with a limit of two and a shared TURN byline.
+fn limited_listing_fixture(words: &[&str]) -> ExtractionStepTestResult<ListingFixture> {
+    let directory = tempfile::tempdir()?;
+    let vault = open_listing_vault(&directory)?;
+    let mut selection = vault.consolidation_selection()?;
+    selection.extraction_turns_per_child = 2;
+    vault.set_consolidation_selection(&selection)?;
+    let (_subject, _claim) = land_extraction_verdict_listing_claim(&vault)?;
+    let turn_ids = witness_same_speaker_extraction_turns(&vault, words)?;
+    let (attempt, admitted) = enqueue_admitted_extraction_attempt(&vault, &turn_ids, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(attempt))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), words.len());
+    assert_eq!(
+        turns
+            .iter()
+            .map(|(turn, _)| turn.as_str())
+            .collect::<Vec<_>>(),
+        turn_ids.iter().map(EntityId::to_hex).collect::<Vec<_>>()
+    );
+    Ok(ListingFixture {
+        _directory: directory,
+        vault,
+        attempt,
+        admitted,
+        turn_ids,
+        turns,
+    })
+}
+
+/// Builds the whole-text evidence entries in the supplied request order.
+fn cited_turn_evidence(turns: &[(String, Value)]) -> Vec<Value> {
+    turns
+        .iter()
+        .map(|(turn, version)| extraction_step_evidence(turn, version.clone(), None))
+        .collect()
+}
+
+/// Collapses native's per-page calls into typed chunk rows without regrouping TURNs.
+fn native_step_slices(
+    native: &[NativeExtractionSlice],
+    turns: &[(String, Value)],
+) -> Vec<ExtractionStepSlice> {
+    let mut slices = Vec::<ExtractionStepSlice>::new();
+    for evidence in slice_evidence_positions(native, turns) {
+        if let Some(previous) = slices.last_mut()
+            && previous.evidence == evidence
+        {
+            previous.pages += 1;
+        } else {
+            slices.push(ExtractionStepSlice { evidence, pages: 1 });
+        }
+    }
+    slices
 }
 
 /// One listed claim renders beside its entity, and a reply naming that entity's label decodes
@@ -587,5 +648,258 @@ fn a_cite_across_two_slices_refuses_naming_both_in_native_order() -> ExtractionS
         Some(Box::new(ExtractionLayout::StepSlices { slices: expected }))
     );
     assert_eq!(backend.call_count(), 0);
+    Ok(())
+}
+
+/// S1: a five-TURN group at limit two must name native's 2/2/1 chunks before
+/// charging or saving state. Wrong admission or cuts would lose the layout,
+/// call the backend early, or make a resubmitted transcript differ from native.
+#[test]
+fn an_over_limit_group_names_native_chunks_and_each_chunk_runs() -> ExtractionStepTestResult<()> {
+    let fixture = limited_listing_fixture(&["owen likes tea"; 5])?;
+    let native = native_extraction_slice_transcripts(
+        &fixture.vault,
+        fixture.attempt,
+        &fixture.turn_ids,
+        &[],
+    )?;
+    assert_eq!(native.len(), 3);
+    assert_eq!(
+        native
+            .iter()
+            .map(|slice| slice.turns.len())
+            .collect::<Vec<_>>(),
+        [2, 2, 1]
+    );
+    let expected = native_step_slices(&native, &fixture.turns);
+    let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
+    let step = ExtractionStepFixture::new(backend.clone())?;
+    let binding = lent_binding(&fixture, &step)?;
+    let request = extraction_step_request(json!(cited_turn_evidence(&fixture.turns)));
+    let Err(refused) = invoke_bound_step(&binding, request) else {
+        panic!("an over-limit cite answers its chunk layout");
+    };
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    let Some(ExtractionLayout::StepSlices { slices }) = refused.extraction_layout.as_deref() else {
+        panic!("the refusal carries typed step slices");
+    };
+    assert_eq!(slices, &expected);
+    assert_eq!(backend.call_count(), 0);
+    assert_eq!(fixture_step_charge_units(&step), 0);
+    assert!(!extraction_step_state_present(
+        &fixture.vault,
+        fixture.attempt
+    )?);
+    for slice in slices {
+        let evidence = slice
+            .evidence
+            .iter()
+            .map(|index| {
+                let (turn, version) = &fixture.turns[*index];
+                extraction_step_evidence(turn, version.clone(), None)
+            })
+            .collect::<Vec<_>>();
+        for page in 0..slice.pages {
+            let submit =
+                invoke_bound_step(&binding, paged_step_request(json!(evidence), Some(page)))?;
+            assert_eq!(submit["result"]["status"], json!("finished"));
+        }
+    }
+    assert_eq!(backend.call_count(), native.len());
+    assert_eq!(
+        backend.request_transcripts(),
+        native
+            .into_iter()
+            .map(|slice| slice.transcript)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+/// S2: two co-mention groups, one holding three TURNs, must retain native key
+/// order and cut that group. Cutting only windows or whole groups would name
+/// different evidence rows from native's slices.
+#[test]
+fn an_over_limit_cite_cuts_each_group_in_native_order() -> ExtractionStepTestResult<()> {
+    let fixture = limited_listing_fixture(&[
+        "owen likes tea",
+        "yuki likes tea",
+        "owen likes tea",
+        "yuki likes tea",
+        "owen likes tea",
+    ])?;
+    let native = native_extraction_slice_transcripts(
+        &fixture.vault,
+        fixture.attempt,
+        &fixture.turn_ids,
+        &[],
+    )?;
+    assert_eq!(native.len(), 3);
+    let mut lengths = native
+        .iter()
+        .map(|slice| slice.turns.len())
+        .collect::<Vec<_>>();
+    lengths.sort_unstable();
+    assert_eq!(lengths, [1, 2, 2]);
+    let expected = native_step_slices(&native, &fixture.turns);
+    // The owen TURNs sit at the even request positions and the yuki TURNs at the odd ones, so
+    // a row of one group holds positions of one parity. One group of five would mix them.
+    for slice in &expected {
+        let parity = slice.evidence[0] % 2;
+        assert!(
+            slice.evidence.iter().all(|position| position % 2 == parity),
+            "a native slice holds TURNs of both groups: {:?}",
+            slice.evidence
+        );
+    }
+    let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
+    let step = ExtractionStepFixture::new(backend.clone())?;
+    let binding = lent_binding(&fixture, &step)?;
+    let request = extraction_step_request(json!(cited_turn_evidence(&fixture.turns)));
+    let Err(refused) = invoke_bound_step(&binding, request) else {
+        panic!("an over-limit two-group cite answers its layout");
+    };
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        refused.extraction_layout,
+        Some(Box::new(ExtractionLayout::StepSlices { slices: expected }))
+    );
+    assert_eq!(backend.call_count(), 0);
+    assert_eq!(fixture_step_charge_units(&step), 0);
+    assert!(!extraction_step_state_present(
+        &fixture.vault,
+        fixture.attempt
+    )?);
+    Ok(())
+}
+
+/// S3: reversing a five-TURN cite must only remap request positions, not move
+/// native's chunk boundary or its TURN order. Request-position cutting would
+/// disagree with the forward native door and the descending row positions.
+#[test]
+fn reversing_an_over_limit_cite_keeps_native_chunk_boundaries() -> ExtractionStepTestResult<()> {
+    let fixture = limited_listing_fixture(&["owen likes tea"; 5])?;
+    let native = native_extraction_slice_transcripts(
+        &fixture.vault,
+        fixture.attempt,
+        &fixture.turn_ids,
+        &[],
+    )?;
+    let mut reversed = fixture.turns.clone();
+    reversed.reverse();
+    let expected = native_step_slices(&native, &reversed);
+    assert_eq!(
+        expected
+            .iter()
+            .map(|slice| slice.evidence.as_slice())
+            .collect::<Vec<_>>(),
+        [&[4, 3][..], &[2, 1][..], &[0][..]]
+    );
+    let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
+    let step = ExtractionStepFixture::new(backend.clone())?;
+    let binding = lent_binding(&fixture, &step)?;
+    let request = extraction_step_request(json!(cited_turn_evidence(&reversed)));
+    let Err(refused) = invoke_bound_step(&binding, request) else {
+        panic!("a reversed over-limit cite answers its layout");
+    };
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        refused.extraction_layout,
+        Some(Box::new(ExtractionLayout::StepSlices { slices: expected }))
+    );
+    assert_eq!(backend.call_count(), 0);
+    assert_eq!(fixture_step_charge_units(&step), 0);
+    assert!(!extraction_step_state_present(
+        &fixture.vault,
+        fixture.attempt
+    )?);
+    Ok(())
+}
+
+/// S4: empty evidence still refuses, and over-limit duplicate or unqueued TURNs
+/// must keep their existing faults with no layout. An early size/layout check
+/// would mask those faults or disclose a layout naming unserved evidence.
+#[test]
+fn invalid_cites_refuse_before_any_over_limit_layout() -> ExtractionStepTestResult<()> {
+    let fixture = limited_listing_fixture(&["owen likes tea"; 5])?;
+    let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
+    let step = ExtractionStepFixture::new(backend.clone())?;
+    let binding = lent_binding(&fixture, &step)?;
+    let Err(empty) = invoke_bound_step(&binding, extraction_step_request(json!([]))) else {
+        panic!("an empty cite is refused");
+    };
+    assert_eq!(empty.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        empty.message,
+        "an extraction step needs at least one evidence entry"
+    );
+    assert!(empty.extraction_layout.is_none());
+    let mut duplicate = cited_turn_evidence(&fixture.turns);
+    duplicate.push(extraction_step_evidence(
+        &fixture.turns[0].0,
+        fixture.turns[0].1.clone(),
+        None,
+    ));
+    let Err(repeated) = invoke_bound_step(&binding, extraction_step_request(json!(duplicate)))
+    else {
+        panic!("a repeated TURN is refused before a layout");
+    };
+    assert_eq!(repeated.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(repeated.message, "an extraction step cites each TURN once");
+    assert!(repeated.extraction_layout.is_none());
+    let outside = witness_extraction_turns(&fixture.vault, &["yuki likes tea"])?;
+    let outside_turn = outside.turns[0];
+    let owner = fixture.vault.ensure_embedded_owner_actor()?;
+    let outside_version =
+        source_version(&fixture.vault, owner, EdgeActorClass::Human, outside_turn)?
+            .expect("the owner reads the unqueued TURN");
+    let mut unserved = cited_turn_evidence(&fixture.turns);
+    unserved.push(extraction_step_evidence(
+        &outside_turn.to_hex(),
+        serde_json::to_value(outside_version)?,
+        None,
+    ));
+    let Err(unserved) = invoke_bound_step(&binding, extraction_step_request(json!(unserved)))
+    else {
+        panic!("an unqueued TURN is refused before a layout");
+    };
+    assert_eq!(unserved.code, MEMORY_CODE_FORBIDDEN);
+    assert_eq!(
+        unserved.message,
+        "every extraction pack row must be served under the Dreamer attempt's live read"
+    );
+    assert!(unserved.extraction_layout.is_none());
+    assert_eq!(backend.call_count(), 0);
+    assert_eq!(fixture_step_charge_units(&step), 0);
+    assert!(!extraction_step_state_present(
+        &fixture.vault,
+        fixture.attempt
+    )?);
+    Ok(())
+}
+
+/// S5: exactly two TURNs of one one-page group run once at limit two. Treating
+/// the edge as over-limit would refuse this request instead of matching native.
+#[test]
+fn a_cite_at_the_turn_limit_runs_once() -> ExtractionStepTestResult<()> {
+    let fixture = limited_listing_fixture(&["owen likes tea"; 2])?;
+    let native = native_extraction_slice_transcripts(
+        &fixture.vault,
+        fixture.attempt,
+        &fixture.turn_ids,
+        &[],
+    )?;
+    assert_eq!(native.len(), 1);
+    let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
+    let step = ExtractionStepFixture::new(backend.clone())?;
+    let binding = lent_binding(&fixture, &step)?;
+    let request = extraction_step_request(json!(cited_turn_evidence(&fixture.turns)));
+    let submit = invoke_bound_step(&binding, request)?;
+    assert_eq!(submit["result"]["status"], json!("finished"));
+    assert_eq!(backend.call_count(), 1);
+    assert_eq!(
+        backend.request_transcripts(),
+        [native[0].transcript.clone()]
+    );
     Ok(())
 }

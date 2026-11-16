@@ -78,8 +78,8 @@ pub(crate) fn render_host_material(material: &[String]) -> String {
 /// Builds the native slice group key for one TURN: its part line with
 /// the known entities it co-mentions.
 ///
-/// Native slices and the bound step group by this key, so a bound cite
-/// spans exactly one native slice.
+/// Native slices and the bound step group by this key before cutting each
+/// group at the extraction TURN limit.
 pub(crate) fn slice_group_key(
     known: &Neighbourhood,
     line: u32,
@@ -102,16 +102,30 @@ pub(crate) struct ExtractionStepPiece {
     pub(crate) version: SourceVersion,
 }
 
-/// Snapshots `pieces` into one native slice transcript with native
+/// The checked pieces and queued order used to prepare one extraction step.
+pub(crate) struct BoundExtractionStepInput<'a> {
+    /// The validated served pieces, in request order.
+    pub(crate) pieces: &'a [ExtractionStepPiece],
+    /// The requested listing page, or the only page when absent.
+    pub(crate) page: Option<usize>,
+    /// All queued TURNs in the same part/TURN order native extraction receives.
+    pub(crate) turn_order: &'a [EntityId],
+    /// The validated, nonzero maximum TURNs per native chunk.
+    pub(crate) turns_per_child: usize,
+}
+
+/// Snapshots the checked pieces into one native slice transcript with native
 /// labels and scope.
 ///
 /// Each piece's TURN must be a queued TURN of `bound`, with its declared
 /// part conversation. The cited TURNs must form exactly one native
 /// slice, grouped by part line and co-mentioned known entities over the
-/// frozen TURN texts, and `page` must name one page of that slice's
-/// listing when it pages. Each TURN's speaker is its checked native body
-/// speaker, or unknown when the body names none, with the source speaker
-/// PERSON label beside the role as native shows it. The transcript lists
+/// frozen TURN texts and holding at most `turns_per_child` pieces. Larger
+/// cites answer a layout cut in queued TURN order, regardless of request
+/// order. `page` must name one page of that slice's listing when it pages.
+/// Each TURN's speaker is its checked native body speaker, or unknown when
+/// the body names none, with the source speaker PERSON label beside the
+/// role as native shows it. The transcript lists
 /// each cited TURN in input order under its conversation header, each
 /// named by its turn label, with the selected listing page after the
 /// first header. The transcript holds no host material; execution
@@ -124,17 +138,21 @@ pub(crate) struct ExtractionStepPiece {
 /// # Errors
 ///
 /// A layout refusal with the typed native slices when the cited TURNs
-/// span slices or name no valid page, an unlisted TURN, an unreadable
-/// TURN body, a wrong TURN type, or the attenuated scope projection's
-/// own failures.
+/// span groups, exceed the TURN limit or name no valid page. Over-limit
+/// layouts cut each group at the limit in queued TURN order before any
+/// backend loan, charge or step write. Other errors are an unlisted TURN,
+/// an unreadable TURN body, a wrong TURN type, or the attenuated scope
+/// projection's own failures.
 pub(crate) fn prepare_bound_step(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,
     bound: &BoundBranchRead,
-    pieces: &[ExtractionStepPiece],
-    page: Option<usize>,
+    input: &BoundExtractionStepInput<'_>,
 ) -> MemoryResult<PreparedExtractionStep> {
+    let pieces = input.pieces;
+    let limit = input.turns_per_child;
+    let page = input.page;
     let cited: Vec<EntityId> = pieces.iter().map(|piece| piece.turn).collect();
     let distinct: BTreeSet<EntityId> = cited.iter().copied().collect();
     let ordered: Vec<EntityId> = distinct.iter().copied().collect();
@@ -170,29 +188,39 @@ pub(crate) fn prepare_bound_step(
         let key = slice_group_key(bound.neighbourhood(), line, body, frozen);
         groups.entry(key).or_default().push(index);
     }
-    if groups.len() != 1 {
-        let slices = layout_slices(bound, &groups);
-        return Err(extraction_layout_refusal(
+    let over_limit = pieces.len() > limit;
+    if over_limit {
+        order_groups_as_queued(&mut groups, pieces, input.turn_order)?;
+    }
+    if groups.len() != 1 || over_limit {
+        let slices = layout_slices(bound, &groups, limit);
+        let message = if over_limit {
+            format!(
+                "an extraction step cites at most {limit} TURNs of one native slice; the cited TURNs cut into {} native slices",
+                slices.len()
+            )
+        } else {
             format!(
                 "an extraction step cites one native slice; the cited TURNs span {} native slices",
                 groups.len()
-            ),
+            )
+        };
+        return Err(extraction_layout_refusal(
+            message,
             ExtractionLayout::StepSlices { slices },
         ));
     }
-    let ((_, entities), positions) = groups
-        .into_iter()
+    let (_, entities) = groups
+        .keys()
         .next()
         .ok_or_else(|| bound_branch_error(invalid_consolidation("unlisted branch turn")))?;
-    let known = bound.neighbourhood().slice(&entities);
+    let known = bound.neighbourhood().slice(entities);
     let pages = known.pages(|id| bound.priors().contains_key(id));
     let page_count = pages.len();
     let selected = match page {
         None if page_count == 1 => 0,
         Some(index) if index < page_count => index,
         _ => {
-            let mut evidence = positions;
-            evidence.sort_unstable();
             let message = if page.is_none() {
                 format!(
                     "an extraction step names its listing page when its slice pages into {page_count} pages"
@@ -205,10 +233,7 @@ pub(crate) fn prepare_bound_step(
             return Err(extraction_layout_refusal(
                 message,
                 ExtractionLayout::StepSlices {
-                    slices: vec![ExtractionStepSlice {
-                        evidence,
-                        pages: page_count,
-                    }],
+                    slices: layout_slices(bound, &groups, limit),
                 },
             ));
         }
@@ -276,24 +301,61 @@ pub(crate) fn prepare_bound_step(
     })
 }
 
+/// Orders each group's request positions as `turn_order` lists their TURNs.
+///
+/// Native's pass fills each group in the queued TURN order before it cuts the
+/// group, so a group ordered this way cuts at native's chunk boundaries
+/// whatever order the request cited the TURNs in.
+///
+/// # Errors
+///
+/// A cited TURN that `turn_order` does not list.
+fn order_groups_as_queued(
+    groups: &mut BTreeMap<(u32, Vec<EntityId>), Vec<usize>>,
+    pieces: &[ExtractionStepPiece],
+    turn_order: &[EntityId],
+) -> MemoryResult<()> {
+    let queued: BTreeMap<EntityId, usize> = turn_order
+        .iter()
+        .enumerate()
+        .map(|(rank, turn)| (*turn, rank))
+        .collect();
+    let ranks = pieces
+        .iter()
+        .map(|piece| {
+            queued
+                .get(&piece.turn)
+                .copied()
+                .ok_or_else(|| bound_branch_error(invalid_consolidation("unlisted branch turn")))
+        })
+        .collect::<MemoryResult<Vec<usize>>>()?;
+    for positions in groups.values_mut() {
+        positions.sort_unstable_by_key(|position| ranks[*position]);
+    }
+    Ok(())
+}
+
 /// Builds the typed layout rows for `groups` in native key order.
 ///
-/// Each row names its request positions ascending with its slice page count.
+/// Each group's positions are already in request order for a within-limit cite,
+/// or queued TURN order for an over-limit cite. Native's slice chunking cuts
+/// that same group order at `limit`; every chunk keeps the group's page count.
 fn layout_slices(
     bound: &BoundBranchRead,
     groups: &BTreeMap<(u32, Vec<EntityId>), Vec<usize>>,
+    limit: usize,
 ) -> Vec<ExtractionStepSlice> {
     groups
         .iter()
-        .map(|((_, entities), positions)| {
+        .flat_map(|((_, entities), positions)| {
             let known = bound.neighbourhood().slice(entities);
-            let pages = known.pages(|id| bound.priors().contains_key(id));
-            let mut evidence = positions.clone();
-            evidence.sort_unstable();
-            ExtractionStepSlice {
-                evidence,
-                pages: pages.len(),
-            }
+            let pages = known.pages(|id| bound.priors().contains_key(id)).len();
+            positions
+                .chunks(limit)
+                .map(move |evidence| ExtractionStepSlice {
+                    evidence: evidence.to_vec(),
+                    pages,
+                })
         })
         .collect()
 }

@@ -9,7 +9,7 @@ use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::dreamer_consolidation::extraction_pack::{BoundBranchInput, project_bound_branch};
 use crate::dreamer_consolidation::extraction_step::{
-    ExtractionStepPiece, PreparedExtractionStep, prepare_bound_step,
+    BoundExtractionStepInput, ExtractionStepPiece, PreparedExtractionStep, prepare_bound_step,
 };
 use crate::memory::{MemoryError, MemoryResult};
 use crate::snapshot_read::{
@@ -18,6 +18,10 @@ use crate::snapshot_read::{
 
 impl DreamerAttemptBinding {
     /// Checks every locator and retains only its served words before borrowing a backend.
+    ///
+    /// Empty cites refuse before evidence reads. Every nonempty cite proves each TURN
+    /// and its version before preparation can answer a native, limit-cut slice layout;
+    /// no layout refusal borrows a backend, charges a call or writes step state.
     pub(super) fn checked_extraction_step(
         &self,
         input: &ExtractionStepRequest,
@@ -36,15 +40,15 @@ impl DreamerAttemptBinding {
         self.check_in_txn(&txn)?;
         memory.prove_read_authority_in_txn(&txn)?;
         let reader_scope = extraction_reader_scope_in_txn(&memory, &txn, None)?;
-        let checked = read.read_projected_in_txn(&txn, &[], None, |txn, _| {
+        let checked = read.read_projected_in_txn(&txn, &[], None, |txn, _| -> MemoryResult<_> {
             let (scope, branch) = queued_extraction_branch_in_txn(vault, txn, self.attempt())?;
             let limit = vault
                 .consolidation_selection_in_txn(txn)?
                 .extraction_turns_per_child;
-            if input.evidence.is_empty() || input.evidence.len() > limit {
-                return Err(MemoryError::bad_request(format!(
-                    "an extraction step needs between 1 and {limit} evidence entries"
-                )));
+            if input.evidence.is_empty() {
+                return Err(MemoryError::bad_request(
+                    "an extraction step needs at least one evidence entry",
+                ));
             }
             let mut pieces = Vec::with_capacity(input.evidence.len());
             let mut turns = BTreeSet::new();
@@ -85,7 +89,19 @@ impl DreamerAttemptBinding {
                 },
             )
             .map_err(bound_branch_error)?;
-            let prepared = prepare_bound_step(vault, txn, &read, &bound, &pieces, input.page)?;
+            let turn_order = branch.turn_ids();
+            let prepared = prepare_bound_step(
+                vault,
+                txn,
+                &read,
+                &bound,
+                &BoundExtractionStepInput {
+                    pieces: &pieces,
+                    page: input.page,
+                    turn_order: &turn_order,
+                    turns_per_child: limit,
+                },
+            )?;
             Ok((prepared, branch.subject().unwrap_or_else(|| self.attempt())))
         })?;
         Ok(checked.value)
