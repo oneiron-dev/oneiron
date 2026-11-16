@@ -12,7 +12,9 @@ use std::collections::BTreeSet;
 use serde::Deserialize;
 
 use super::lookup::lookup_bool;
-use crate::feedback_delivery::{FeedbackDeliveryConfig, FeedbackDestination, check_endpoint};
+use crate::feedback_delivery::{
+    FeedbackDeliveryConfig, FeedbackDestination, check_endpoint, check_endpoint_with,
+};
 
 /// Resolved feedback destination.
 #[derive(Clone, Default, Eq, PartialEq)]
@@ -163,12 +165,15 @@ impl FeedbackConfig {
                 anyhow::bail!("feedback.triage.github_sources binds one repository twice");
             }
         }
+        // The scheme is the owner's rule (feedback.delivery.require_https),
+        // read in the vault at each send; the file is checked for the rest.
         match (&self.destination, &self.endpoint) {
             (None, None) => Ok(()),
-            (Some(_), Some(endpoint)) => check_endpoint(endpoint).map_err(|_| {
+            (Some(_), Some(endpoint)) => check_endpoint_with(endpoint, false).map_err(|_| {
                 anyhow::anyhow!(
-                    "feedback.endpoint must be an HTTPS URL (HTTP only on loopback) with no \
-                     credentials, query or fragment"
+                    "feedback.endpoint must be an HTTP(S) URL with no credentials, query or \
+                     fragment; off loopback a plain-HTTP endpoint sends only once the owner \
+                     turns off feedback.delivery.require_https"
                 )
             }),
             _ => anyhow::bail!("set feedback.destination and feedback.endpoint together"),

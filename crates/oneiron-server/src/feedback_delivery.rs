@@ -38,7 +38,9 @@ pub struct FeedbackHost {
 }
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum FeedbackDeliveryError {
-    #[error("feedback endpoint must be HTTPS (or a loopback test endpoint)")]
+    #[error(
+        "feedback endpoint must be HTTPS (plain HTTP only on loopback, or anywhere once the owner turns off feedback.delivery.require_https), with no credentials, query or fragment"
+    )]
     InvalidEndpoint,
     #[error("transport destination differs from the approved route")]
     RouteMismatch,
@@ -71,6 +73,16 @@ pub struct HttpFeedbackTransport {
 /// An endpoint a send can use: HTTPS (HTTP only on loopback), with no
 /// credentials, query or fragment in the URL.
 pub fn check_endpoint(endpoint: &str) -> Result<(), FeedbackDeliveryError> {
+    check_endpoint_with(endpoint, true)
+}
+
+/// [`check_endpoint`] under the owner's `feedback.delivery.require_https`:
+/// with `require_https` false, plain HTTP passes off loopback too. Any other
+/// scheme, and credentials, a query or a fragment, never pass.
+pub fn check_endpoint_with(
+    endpoint: &str,
+    require_https: bool,
+) -> Result<(), FeedbackDeliveryError> {
     let url = reqwest::Url::parse(endpoint).map_err(|_| FeedbackDeliveryError::InvalidEndpoint)?;
     let loopback = url.host_str().is_some_and(|host| {
         host == "localhost"
@@ -78,7 +90,12 @@ pub fn check_endpoint(endpoint: &str) -> Result<(), FeedbackDeliveryError> {
                 .parse::<std::net::IpAddr>()
                 .is_ok_and(|ip| ip.is_loopback())
     });
-    if (url.scheme() != "https" && !(url.scheme() == "http" && loopback))
+    let scheme_passes = match url.scheme() {
+        "https" => true,
+        "http" => loopback || !require_https,
+        _ => false,
+    };
+    if !scheme_passes
         || !url.username().is_empty()
         || url.password().is_some()
         || url.fragment().is_some()
@@ -89,11 +106,41 @@ pub fn check_endpoint(endpoint: &str) -> Result<(), FeedbackDeliveryError> {
     Ok(())
 }
 impl HttpFeedbackTransport {
+    /// A transport to `config`'s endpoint, which must be HTTPS (HTTP only on
+    /// loopback).
     pub fn new(
         config: FeedbackDeliveryConfig,
         bearer: Option<Zeroizing<String>>,
     ) -> Result<Self, FeedbackDeliveryError> {
-        check_endpoint(&config.endpoint)?;
+        Self::build(config, bearer, true)
+    }
+
+    /// A transport to `config`'s endpoint under `vault`'s owner rule
+    /// (`feedback.delivery.require_https`), read now: every send builds its
+    /// transport here, so the owner's change holds from the next send. A key
+    /// that cannot be read keeps HTTPS required.
+    pub fn for_vault(
+        vault: &oneiron::Vault,
+        config: FeedbackDeliveryConfig,
+        bearer: Option<Zeroizing<String>>,
+    ) -> Result<Self, FeedbackDeliveryError> {
+        let require_https = oneiron::feedback::feedback_delivery_requires_https(vault)
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    %error,
+                    "feedback.delivery.require_https did not read; the feedback send requires HTTPS"
+                );
+                true
+            });
+        Self::build(config, bearer, require_https)
+    }
+
+    fn build(
+        config: FeedbackDeliveryConfig,
+        bearer: Option<Zeroizing<String>>,
+        require_https: bool,
+    ) -> Result<Self, FeedbackDeliveryError> {
+        check_endpoint_with(&config.endpoint, require_https)?;
         let client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(30))
@@ -302,7 +349,7 @@ pub fn send_approved_feedback(
     }
     // Validate before building a client or reading transport credentials.
     oneiron::feedback::feedback_dispatch_request(preview, &context, evaluation)?;
-    let mut transport = HttpFeedbackTransport::new(config, bearer)?;
+    let mut transport = HttpFeedbackTransport::for_vault(vault, config, bearer)?;
     let result =
         oneiron::feedback::send_feedback(vault, preview, &context, evaluation, &mut transport)?;
     if let Some(error) = transport.last_error {

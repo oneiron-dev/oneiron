@@ -26,7 +26,12 @@ impl ReportPublisherResolver {
     /// transport cannot be built resolves to none, so every send holds.
     pub(super) fn for_server(server: &SyncServer) -> Self {
         let transport = server.feedback.as_ref().and_then(|host| {
-            HttpFeedbackTransport::new(host.config.clone(), host.bearer.clone()).ok()
+            HttpFeedbackTransport::for_vault(
+                server.vault(),
+                host.config.clone(),
+                host.bearer.clone(),
+            )
+            .ok()
         });
         Self { transport }
     }
