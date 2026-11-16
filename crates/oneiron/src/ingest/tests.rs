@@ -423,8 +423,9 @@ fn named_speaker_file_drop_turns_decode_to_gate_10_admissible_roles() {
         let role = persisted_turn_role(&vault, turn);
         assert_eq!(
             role,
-            crate::dreamer_runner::DreamerTurnRole::User,
-            "the GATE-10 keys carry the role, never the display label"
+            crate::dreamer_runner::DreamerTurnRole::Counterparty,
+            "the GATE-10 keys carry the role, never the display label; words from a file \
+             are a counterparty's (FIX 15412)"
         );
         assert!(
             crate::dreamer_runner::dreamer_extraction_role_admissible(role),

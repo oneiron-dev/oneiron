@@ -56,7 +56,7 @@ impl Memory<'_> {
                 _ => {}
             }
             changes.push(RunChangeOutcome {
-                change: member.change().to_owned(),
+                change: member.change(),
                 verdict,
                 receipt,
             });
@@ -79,7 +79,6 @@ impl Memory<'_> {
             &review,
             run,
             approve,
-            now,
             &decision_members,
         )?;
         let reference = format!("gate:{}", record.decision_id.to_hex());

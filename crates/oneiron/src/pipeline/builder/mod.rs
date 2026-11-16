@@ -2,7 +2,11 @@
 mod capture;
 #[path = "../builder_effort.rs"]
 mod effort;
+#[path = "../builder_eval.rs"]
+mod eval;
 mod terminal;
+
+pub use self::eval::{BlendWeightsSource, RetrievalEvalSpec};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,6 +41,10 @@ pub struct PipelineBuilder<'a> {
     pub(super) vector_search: Option<(Vec<f32>, usize)>,
     pub(super) text_search: Option<(String, usize)>,
     pub(super) rank_profile: Option<crate::config::Bm25RankProfile>,
+    /// The scoring numbers this call reads:
+    /// [`RetrievalParams::shipped`](super::params::RetrievalParams::shipped)
+    /// unless the caller passed a set ([`Self::retrieval_params`]).
+    pub(super) params: super::params::RetrievalParams,
     pub(super) blend_weights_override: Option<crate::store::RetrievalBlendWeights>,
     pub(super) phonetic_search: Option<Vec<String>>,
     /// Typed media queries, one ranked list per declared space (OF-370).
@@ -136,6 +144,8 @@ pub struct PipelineBuilder<'a> {
     /// overlay `VaultMeta` while it is off record, and under the same route's
     /// refusal once it is not. Retrieval SCORING is untouched by this field.
     pub(super) session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
+    /// Eval mode ([`Self::eval_spec`]): pinned clock and weights, no nondeterminism, no writes.
+    pub(super) eval: bool,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -146,6 +156,7 @@ impl<'a> PipelineBuilder<'a> {
             vector_search: None,
             text_search: None,
             rank_profile: None,
+            params: super::params::RetrievalParams::shipped(),
             blend_weights_override: None,
             phonetic_search: None,
             media_search: Default::default(),
@@ -212,6 +223,7 @@ impl<'a> PipelineBuilder<'a> {
             skip_vector_rescore: false,
             no_match_floors: None,
             session: None,
+            eval: false,
         }
     }
 
@@ -429,6 +441,20 @@ impl<'a> PipelineBuilder<'a> {
     /// no text search is configured.
     pub fn rank_profile(mut self, profile: crate::config::Bm25RankProfile) -> Self {
         self.rank_profile = Some(profile);
+        self
+    }
+
+    /// Scores this call with `params` in place of
+    /// [`RetrievalParams::shipped`](super::params::RetrievalParams::shipped)
+    /// (RESEARCH-0651 contract item 1). The set is this call's alone: no
+    /// verb, setting or stored row keeps it, so the next call scores with
+    /// the shipped numbers again. The run's fork hash names the set by its
+    /// digest. The set is validated fail-closed when the pipeline runs: a
+    /// knob outside its range returns
+    /// [`Error::InvalidConfig`](crate::error::Error::InvalidConfig) before
+    /// any read.
+    pub fn retrieval_params(mut self, params: super::params::RetrievalParams) -> Self {
+        self.params = params;
         self
     }
 

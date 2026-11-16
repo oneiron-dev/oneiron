@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::runtime_hooks::verb::{InvocationOutcome, InvocationRelease};
@@ -16,6 +16,7 @@ use oneiron::store::{
     IdempotencyEntry, InvocationClaimEntry, InvocationClaimRelease, ResponseStamps,
     StoredPeerMachine,
 };
+use oneiron_base::unix_seconds_now;
 
 const INVOCATION_CLAIM_PREFIX: &str = "http:invocation:";
 pub(crate) const INVOCATION_CLAIM_TTL: Duration = Duration::from_secs(86_400);
@@ -51,7 +52,7 @@ impl InvocationClaimStore {
         request_body: &[u8],
     ) -> Result<InvocationClaimLookup, InvocationClaimStoreError> {
         loop {
-            let now = now_secs();
+            let now = unix_seconds_now();
             let Some(raw) = self
                 .vault
                 .sync_state_get(store_key)
@@ -117,7 +118,7 @@ impl InvocationClaimStore {
         actor: Option<oneiron::EntityId>,
     ) -> Result<(), InvocationClaimStoreError> {
         let intent = InvocationClaimEntry {
-            created_at_secs: now_secs(),
+            created_at_secs: unix_seconds_now(),
             request_body: request_body.to_vec(),
             status: IdempotencyEntry::INTENT_STATUS,
             stamps: ResponseStamps {
@@ -194,7 +195,7 @@ impl InvocationClaimStore {
     /// terminalized by the engine method, never deleted into a fresh run.
     pub(crate) async fn reclaim_expired_page(&self) {
         let mut cursor = self.locks.sweep.0.lock().await;
-        let now = now_secs();
+        let now = unix_seconds_now();
         let mut expired_keys = Vec::new();
         let page = self.vault.sync_state_prefix_page(
             INVOCATION_CLAIM_PREFIX,
@@ -327,12 +328,6 @@ impl Drop for InvocationClaimKeyGuard {
 
 #[derive(Default)]
 struct SweepCursor(tokio::sync::Mutex<Option<String>>);
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
-}
 
 #[derive(Debug)]
 pub(crate) struct InvocationClaimStoreError {

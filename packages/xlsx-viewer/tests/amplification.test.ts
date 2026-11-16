@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { deflateRawSync } from "node:zlib";
 import type { ICellData, IWorksheetData } from "@univerjs/core";
 import { PREVIEW_BUDGET, WorkbookBudgetError, preflightPackage, type BudgetLine } from "../src/bridge/budget";
-import { checkSheetExpansion } from "../src/bridge/expansion";
-import { readSheet, readWorkbook, readWorkbookOutline } from "../src/bridge/parse";
+import { checkSheetExpansion, partTexts } from "../src/bridge/expansion";
+import { readSheet, readWorkbookOutline } from "../src/bridge/parse";
+import { readInChild, TEST_LIMIT_MS } from "./child-read";
 import {
   FAR_COLUMN_FOLLOWER_SHEET,
   FULL_GRID_HYPERLINK_SHEET,
@@ -12,35 +13,9 @@ import {
   fanOutSheet,
   sheetsPackage,
   worksheet,
-  type CraftedKind,
 } from "./crafted-packages";
 import { makeXlsxBytes } from "./helpers";
 import { deflated, text } from "./package-writer";
-
-/** How long a child may read before its test counts the read as one that never ends. */
-const CHILD_LIMIT_MS = 30_000;
-/** The test's own limit: the child's, then the time to start it and build its package. */
-const TEST_LIMIT_MS = 90_000;
-
-/**
- * Reads S1 of a crafted package in a child process ({@link ./read-in-child.ts}):
- * its answer, or how it ended without one.
- */
-function readInChild(kind: CraftedKind): unknown {
-  const run = Bun.spawnSync({
-    cmd: [process.execPath, `${import.meta.dir}/read-in-child.ts`, kind],
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: CHILD_LIMIT_MS,
-  });
-  if ((run as { exitedDueToTimeout?: boolean }).exitedDueToTimeout) {
-    return { unfinished: `still reading after ${CHILD_LIMIT_MS / 1000} s` };
-  }
-  if (!run.success) {
-    return { ended: run.signalCode ?? run.exitCode, stderr: run.stderr.toString().slice(-400) };
-  }
-  return JSON.parse(run.stdout.toString().trim().split("\n").at(-1)!);
-}
 
 function refusedWith(line: BudgetLine, run: () => unknown): void {
   let caught: unknown;
@@ -71,7 +46,7 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
   it(
     "refuses a deflated entry that never finishes, which SheetJS inflates for ever",
     () => {
-      expect(readInChild("unfinished-deflate")).toEqual({ refused: "structure" });
+      expect(readInChild("unfinished-deflate").answer).toEqual({ refused: "structure" });
     },
     TEST_LIMIT_MS,
   );
@@ -79,7 +54,7 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
   it(
     "refuses a sheet whose one hyperlink names every cell of the grid",
     () => {
-      expect(readInChild("full-grid-hyperlink")).toEqual({ refused: "sheetCells" });
+      expect(readInChild("full-grid-hyperlink").answer).toEqual({ refused: "sheetCells" });
     },
     TEST_LIMIT_MS,
   );
@@ -87,7 +62,7 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
   it(
     "refuses a sheet whose shared formula copies a long master to many cells",
     () => {
-      expect(readInChild("shared-formula-fan-out")).toEqual({ refused: "sheetTextChars" });
+      expect(readInChild("shared-formula-fan-out").answer).toEqual({ refused: "sheetTextChars" });
     },
     TEST_LIMIT_MS,
   );
@@ -95,7 +70,7 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
   it(
     "refuses a hyperlink whose one address lies past 2^53, where SheetJS's loop cannot step",
     () => {
-      expect(readInChild("huge-row-hyperlink")).toEqual({ refused: "sheetCells" });
+      expect(readInChild("huge-row-hyperlink").answer).toEqual({ refused: "sheetCells" });
     },
     TEST_LIMIT_MS,
   );
@@ -103,7 +78,7 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
   it(
     "refuses a shared formula copied through SheetJS's fallback formula reader",
     () => {
-      expect(readInChild("fallback-formula-fan-out")).toEqual({ refused: "sheetTextChars" });
+      expect(readInChild("fallback-formula-fan-out").answer).toEqual({ refused: "sheetTextChars" });
     },
     TEST_LIMIT_MS,
   );
@@ -111,7 +86,7 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
   it(
     "refuses a shared formula whose master names its index inside its text",
     () => {
-      expect(readInChild("hidden-index-fan-out")).toEqual({ refused: "sheetTextChars" });
+      expect(readInChild("hidden-index-fan-out").answer).toEqual({ refused: "sheetTextChars" });
     },
     TEST_LIMIT_MS,
   );
@@ -119,15 +94,14 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
   it(
     "refuses a shared formula follower whose column decodes past the safe integers",
     () => {
-      expect(readInChild("far-column-follower")).toEqual({ refused: "sheetCells" });
+      expect(readInChild("far-column-follower").answer).toEqual({ refused: "sheetCells" });
     },
     TEST_LIMIT_MS,
   );
 
   it("counts what SheetJS would expand before it reads: far addresses, browser-decoded ranges, fallback followers", () => {
-    const sheetPart = "xl/worksheets/sheet1.xml";
     const check = (bytes: Uint8Array, formulaText = false, budget = PREVIEW_BUDGET) => () =>
-      checkSheetExpansion(sheetPart, bytes, budget, formulaText);
+      checkSheetExpansion(partTexts(bytes), budget, formulaText);
     // One address at row 2^53, alone or as both ends of a range.
     refusedWith("sheetCells", check(text(HUGE_ROW_HYPERLINK_SHEET)));
     refusedWith(
@@ -192,7 +166,7 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
       expect(readSheet(bytes, "S1").rowCount).toBe(400);
     }
     const written = makeXlsxBytes({ sheets: 2, rows: 300, cols: 12, formulaCell: true });
-    expect(readWorkbook(written).sheetOrder).toHaveLength(2);
+    expect(readWorkbookOutline(written).sheetOrder).toHaveLength(2);
     expect(readSheet(written, "S2").rowCount).toBe(300);
   });
 
@@ -208,7 +182,7 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
     expect(read.rowCount).toBe(3);
     expect(cell(read, 2, 0)).toEqual({ v: 5, t: 2 } as ICellData);
     expect(cell(read, 2, 1)).toEqual({ v: 10, t: 2, custom: { oneironFormula: "=A3*2" } } as ICellData);
-    expect(readWorkbook(bytes).sheets[read.id!]).toEqual(read);
+    expect(readWorkbookOutline(bytes).sheetOrder).toEqual([read.id!]);
   });
 
   it("checks only the sheet it reads, and shared formulas only when it keeps formula text", () => {

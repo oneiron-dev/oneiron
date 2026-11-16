@@ -1,32 +1,14 @@
 //! Each triage source's state beside its continuation: what stopped its
 //! last walk, and the retry time the source named. A source that fails
 //! records it on its own row, and the sweep goes on to the next source.
-use serde::{Deserialize, Serialize};
 
 use super::{FeedbackTriageContinuation, SOURCES};
 use crate::{EntityId, Error, Result, Vault};
 
-/// What stopped a source's walk.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedbackTriageSourceErrorKind {
-    /// The repository refused the deployment's credential, or wants one
-    /// the deployment does not have: a 401, a 403 that is not a rate limit,
-    /// or a 404. A managed vault has no credential for a private repository.
-    AuthUnavailable,
-    /// The source's rate limit: a 429, or a 403 with no requests left or
-    /// with a `Retry-After`.
-    RateLimited,
-    /// Any other answer that is not a page.
-    Upstream,
-    /// No answer: the request did not complete.
-    Transport,
-    /// An answer the sweep cannot read: a page that does not parse, or a
-    /// next page off the bound repository's listing.
-    Unreadable,
-    /// The engine's own failure while it walked the source.
-    Engine,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::feedback::triage::source::{
+    FeedbackTriageSourceError, FeedbackTriageSourceErrorKind,
+};
 
 /// What a source answered in place of a page, as the host read it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,20 +19,6 @@ pub struct FeedbackTriageSourceFault {
     pub status: Option<u16>,
     /// Vault seconds the source named for a retry, when it named one.
     pub retry_after: Option<u64>,
-}
-
-/// What stopped a source's last walk.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FeedbackTriageSourceError {
-    /// What it was.
-    pub kind: FeedbackTriageSourceErrorKind,
-    /// The HTTP status, when the source answered.
-    pub status: Option<u16>,
-    /// 32 hex: the sweep that met it.
-    pub sweep: EntityId,
-    /// Vault seconds it was met.
-    pub at: u64,
 }
 
 /// `source`'s row as `txn` reads it, or a fresh one `sweep` writes first.

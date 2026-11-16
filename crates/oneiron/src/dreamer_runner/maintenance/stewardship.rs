@@ -89,18 +89,10 @@ pub struct StewardshipRule {
     pub draft: Option<StewardshipDraftRoute>,
 }
 
-/// Where a drafted follow-up would go, and how the owner wants it written.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StewardshipDraftRoute {
-    pub verb: String,
-    pub channel: String,
-    pub target: String,
-    /// The owner's own stated claims the draft's voice follows.
-    pub voice: Vec<RepresentationSourceRef>,
-    /// The owner's drafting instruction, handed to the host's model as is.
-    pub instruction: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::stewardship::StewardshipDraftRoute;
+#[doc(hidden)]
+use oneiron_verb_wire::dreamer_runner::maintenance::stewardship::bad_text;
 
 /// One standing reach-out the host may draft a follow-up for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,10 +128,6 @@ pub enum StewardshipDraftOutcome {
     /// or it was drafted meanwhile. Its text is not used; the host drafts
     /// again against [`Vault::stewardship_draft_request`], when there is one.
     Stale,
-}
-
-fn bad_text(text: &str) -> bool {
-    text.trim().is_empty() || text.chars().any(char::is_control)
 }
 
 /// Measures a rule set where the owner sets it against the `[limits]` rows

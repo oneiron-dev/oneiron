@@ -4,40 +4,11 @@
 
 use super::*;
 
-/// What an escrow add warns of (FIX 2857). The wrap is sealed either way;
-/// a warning names labels only, never a key or a value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "warning")]
-pub enum EscrowAddWarning {
-    /// The recipient's key is one an escrow label was released to and then
-    /// retired under: a released recipient is not meant to be sealed to
-    /// again. Seal to a new key, and remove this wrap.
-    RetiredRecipient { retired_label: String },
-}
+#[doc(hidden)]
+pub use oneiron_records::world_keys::vault_key::escrow::{EscrowAddWarning, EscrowAdded};
 
-/// One escrow wrap added, and what the add warns of.
-#[derive(Debug, Clone, Serialize)]
-pub struct EscrowAdded {
-    pub wrap: VaultKeyWrapInfo,
-    /// Empty when nothing warns.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<EscrowAddWarning>,
-}
-
-/// One escrow recipient retired after its secret was released, and the
-/// owner's receipt for it ([`Vault::retire_vault_key_escrow_as`]). Ids and
-/// times only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EscrowRetirement {
-    pub receipt_id: String,
-    pub label: String,
-    /// The vault still carried the wrap `escrow:<label>`, and the retirement
-    /// removed it.
-    pub removed_wrap: bool,
-    /// The vault clock, in seconds, when it was retired.
-    pub retired_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::world_keys::vault_key::escrow::EscrowRetirement;
 
 /// An escrow capsule resealed to a fresh recipient ([`reseal_escrow_capsule`]).
 /// None of it is secret.

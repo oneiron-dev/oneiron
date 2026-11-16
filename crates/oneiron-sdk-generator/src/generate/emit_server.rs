@@ -496,7 +496,7 @@ pub(crate) fn facade_dispatch(
                 "let producers = oneiron::memory::ProducerRows::default();\n"
             };
             let output = if door {
-                result.clone()
+                result
             } else {
                 format!("let output = {result}")
             };

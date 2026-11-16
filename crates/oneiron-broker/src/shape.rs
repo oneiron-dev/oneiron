@@ -126,6 +126,52 @@ pub enum Shape {
     /// Sheets v4 structural requests:
     /// `POST …/v4/spreadsheets/{id}:batchUpdate`, JSON, Bearer.
     SheetsBatchUpdate,
+    /// Google Workspace REST, Docs v1 (L3-17): one document,
+    /// `GET …/v1/documents/{id}`, no body, Bearer. The query holds only
+    /// `suggestionsViewMode` and `includeTabsContent`.
+    DocsDocumentGet,
+    /// Docs v1 edits: `POST …/v1/documents/{id}:batchUpdate`, JSON, Bearer.
+    DocsBatchUpdate,
+    /// Google Workspace REST, Slides v1 (L3-17): one presentation,
+    /// `GET …/v1/presentations/{id}`, no body, no query, Bearer.
+    SlidesPresentationGet,
+    /// Slides v1 edits: `POST …/v1/presentations/{id}:batchUpdate`, JSON,
+    /// Bearer.
+    SlidesBatchUpdate,
+    /// Google Drive v3 (L3-17), read only: the change log's present page
+    /// token, `GET …/drive/v3/changes/startPageToken`, no body, Bearer. The
+    /// query holds only `supportsAllDrives` and `driveId`.
+    DriveChangesStartPageToken,
+    /// One page of Drive's change log, `GET …/drive/v3/changes`, no body,
+    /// Bearer. The query holds only `pageToken`, `pageSize`,
+    /// `includeRemoved`, `restrictToMyDrive`, `driveId`,
+    /// `supportsAllDrives`, `includeItemsFromAllDrives` and `fields`.
+    DriveChangesList,
+    /// One file's metadata, `GET …/drive/v3/files/{id}`, no body, Bearer.
+    /// The query holds only `supportsAllDrives` and `fields`, so no `alt`
+    /// asks for the file's content.
+    DriveFileGet,
+    /// One stored file's content, `GET …/drive/v3/files/{id}`, no body,
+    /// Bearer, with the one query `alt=media&supportsAllDrives=true` and no
+    /// other: no `acknowledgeAbuse` fetches a file Google flagged. The reply
+    /// is the file's bytes, buffered up to [`crate::MAX_BODY`].
+    DriveFileDownload,
+    /// One Google file's content in one format,
+    /// `GET …/drive/v3/files/{id}/export`, no body, Bearer. The query holds
+    /// only `mimeType`. The reply is the export's bytes, buffered as above.
+    DriveFileExport,
+    /// Microsoft Graph v1.0, Excel workbooks (L3-17): a workbook session,
+    /// `POST …/v1.0/me/drive/items/{id}/workbook/createSession`, JSON, Bearer.
+    ExcelCreateSession,
+    /// One range of one worksheet:
+    /// `GET …/workbook/worksheets/{name}/range(address='{a1}')`, Bearer. The
+    /// name is letters, digits, `-`, `_` and `%20`; the address letters,
+    /// digits, `$` and `:`.
+    ExcelRangeGet,
+    /// A range write: `PATCH` the same path, JSON, Bearer.
+    ExcelRangeUpdate,
+    /// A session's end: `POST …/workbook/closeSession`, JSON, Bearer.
+    ExcelCloseSession,
     /// [`Self::AnthropicMessages`] asking for server-sent events (FIX
     /// 15702): the body's top-level `stream` is exactly `true`, and the
     /// events are relayed as they come.
@@ -137,6 +183,12 @@ pub enum Shape {
     /// [`Self::OpenAiChatUnversioned`] asking for server-sent events (FIX
     /// 15702), as [`Self::OpenAiChatStream`].
     OpenAiChatUnversionedStream,
+    /// [`Self::GeminiGenerate`] asking for server-sent events (census L6-29):
+    /// `POST …/v1beta/models/{model}:streamGenerateContent?alt=sse`, JSON,
+    /// the model in the path, `x-goog-api-key`. Gemini asks for events by
+    /// that endpoint and its fixed query, not by a body flag, and the events
+    /// are relayed as they come.
+    GeminiGenerateStream,
 }
 
 struct Row {
@@ -236,8 +288,9 @@ const fn gemini(
     }
 }
 
-/// A Google Workspace REST row: the user's OAuth access token as Bearer, no
-/// model on the wire, a buffered JSON reply.
+/// A workspace REST row (Google Workspace, Microsoft Graph): the user's
+/// OAuth access token as Bearer, no model on the wire, a buffered reply: JSON,
+/// or a Drive file's content.
 const fn workspace(
     method: &'static str,
     endpoint: &'static [&'static str],
@@ -397,6 +450,19 @@ const GEMINI_GENERATE: Row = Row {
     )
 };
 
+/// [`GEMINI_GENERATE`]'s event request: its own endpoint and the one query
+/// `alt=sse`, which the path must end in.
+const GEMINI_GENERATE_STREAM: Row = Row {
+    query: Some("alt=sse"),
+    streams: true,
+    ..gemini(
+        "POST",
+        &["v1beta", "models", "{model}:streamGenerateContent"],
+        Body::Json,
+        Selector::Path,
+    )
+};
+
 const GEMINI_PREDICT: Row = Row {
     streams: true,
     ..gemini(
@@ -521,6 +587,156 @@ const SHEETS_BATCH_UPDATE: Row = workspace(
     Body::Json,
 );
 
+const DOCS_DOCUMENT_GET: Row = workspace(
+    "GET",
+    &["v1", "documents", "{id}"],
+    None,
+    &["suggestionsViewMode", "includeTabsContent"],
+    Body::Empty,
+);
+
+const DOCS_BATCH_UPDATE: Row = workspace(
+    "POST",
+    &["v1", "documents", "{id}:batchUpdate"],
+    None,
+    &[],
+    Body::Json,
+);
+
+const SLIDES_PRESENTATION_GET: Row = workspace(
+    "GET",
+    &["v1", "presentations", "{id}"],
+    None,
+    &[],
+    Body::Empty,
+);
+
+const SLIDES_BATCH_UPDATE: Row = workspace(
+    "POST",
+    &["v1", "presentations", "{id}:batchUpdate"],
+    None,
+    &[],
+    Body::Json,
+);
+
+const DRIVE_CHANGES_START_PAGE_TOKEN: Row = workspace(
+    "GET",
+    &["drive", "v3", "changes", "startPageToken"],
+    None,
+    &["supportsAllDrives", "driveId"],
+    Body::Empty,
+);
+
+const DRIVE_CHANGES_LIST: Row = workspace(
+    "GET",
+    &["drive", "v3", "changes"],
+    None,
+    &[
+        "pageToken",
+        "pageSize",
+        "includeRemoved",
+        "restrictToMyDrive",
+        "driveId",
+        "supportsAllDrives",
+        "includeItemsFromAllDrives",
+        "fields",
+    ],
+    Body::Empty,
+);
+
+const DRIVE_FILE_GET: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}"],
+    None,
+    &["supportsAllDrives", "fields"],
+    Body::Empty,
+);
+
+const DRIVE_FILE_DOWNLOAD: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}"],
+    Some("alt=media&supportsAllDrives=true"),
+    &[],
+    Body::Empty,
+);
+
+const DRIVE_FILE_EXPORT: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}", "export"],
+    None,
+    &["mimeType"],
+    Body::Empty,
+);
+
+/// The workbook of one drive item, under the signed-in user's drive.
+const EXCEL_CREATE_SESSION: Row = workspace(
+    "POST",
+    &[
+        "v1.0",
+        "me",
+        "drive",
+        "items",
+        "{id}",
+        "workbook",
+        "createSession",
+    ],
+    None,
+    &[],
+    Body::Json,
+);
+
+const EXCEL_RANGE_GET: Row = workspace(
+    "GET",
+    &[
+        "v1.0",
+        "me",
+        "drive",
+        "items",
+        "{id}",
+        "workbook",
+        "worksheets",
+        "{worksheet}",
+        "{range}",
+    ],
+    None,
+    &[],
+    Body::Empty,
+);
+
+const EXCEL_RANGE_UPDATE: Row = workspace(
+    "PATCH",
+    &[
+        "v1.0",
+        "me",
+        "drive",
+        "items",
+        "{id}",
+        "workbook",
+        "worksheets",
+        "{worksheet}",
+        "{range}",
+    ],
+    None,
+    &[],
+    Body::Json,
+);
+
+const EXCEL_CLOSE_SESSION: Row = workspace(
+    "POST",
+    &[
+        "v1.0",
+        "me",
+        "drive",
+        "items",
+        "{id}",
+        "workbook",
+        "closeSession",
+    ],
+    None,
+    &[],
+    Body::Json,
+);
+
 pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
@@ -563,16 +779,29 @@ impl Shape {
             Self::SheetsValuesBatchGet => &SHEETS_VALUES_BATCH_GET,
             Self::SheetsValuesBatchUpdate => &SHEETS_VALUES_BATCH_UPDATE,
             Self::SheetsBatchUpdate => &SHEETS_BATCH_UPDATE,
+            Self::DocsDocumentGet => &DOCS_DOCUMENT_GET,
+            Self::DocsBatchUpdate => &DOCS_BATCH_UPDATE,
+            Self::SlidesPresentationGet => &SLIDES_PRESENTATION_GET,
+            Self::SlidesBatchUpdate => &SLIDES_BATCH_UPDATE,
+            Self::DriveChangesStartPageToken => &DRIVE_CHANGES_START_PAGE_TOKEN,
+            Self::DriveChangesList => &DRIVE_CHANGES_LIST,
+            Self::DriveFileGet => &DRIVE_FILE_GET,
+            Self::DriveFileDownload => &DRIVE_FILE_DOWNLOAD,
+            Self::DriveFileExport => &DRIVE_FILE_EXPORT,
+            Self::ExcelCreateSession => &EXCEL_CREATE_SESSION,
+            Self::ExcelRangeGet => &EXCEL_RANGE_GET,
+            Self::ExcelRangeUpdate => &EXCEL_RANGE_UPDATE,
+            Self::ExcelCloseSession => &EXCEL_CLOSE_SESSION,
             Self::AnthropicMessagesStream => &ANTHROPIC_MESSAGES_STREAM,
             Self::OpenAiChatStream => &OPENAI_CHAT_STREAM,
             Self::OpenAiChatUnversionedStream => &OPENAI_CHAT_UNVERSIONED_STREAM,
+            Self::GeminiGenerateStream => &GEMINI_GENERATE_STREAM,
         }
     }
 
     /// Whether the shape relays a provider's server-sent events (FIX
-    /// 15702): its request asks for them with a top-level `stream: true`,
-    /// and each batch of its reply is sent on as soon as it is cleared of
-    /// the key, not gathered first.
+    /// 15702): its request asks for them, and each batch of its reply is
+    /// sent on as soon as it is cleared of the key, not gathered first.
     #[must_use]
     pub const fn relays_events(self) -> bool {
         matches!(
@@ -580,7 +809,15 @@ impl Shape {
             Self::AnthropicMessagesStream
                 | Self::OpenAiChatStream
                 | Self::OpenAiChatUnversionedStream
+                | Self::GeminiGenerateStream
         )
+    }
+
+    /// Whether the shape's request asks for events with its body's top-level
+    /// `stream: true`, as OpenAI chat and Anthropic Messages do. Gemini's
+    /// asks by its endpoint and its fixed query instead, which its row binds.
+    const fn asks_events_in_body(self) -> bool {
+        self.relays_events() && !matches!(self, Self::GeminiGenerateStream)
     }
 
     /// The shape of the same endpoint for a request that asks for
@@ -591,6 +828,7 @@ impl Shape {
             Self::AnthropicMessages => Some(Self::AnthropicMessagesStream),
             Self::OpenAiChat => Some(Self::OpenAiChatStream),
             Self::OpenAiChatUnversioned => Some(Self::OpenAiChatUnversionedStream),
+            Self::GeminiGenerate => Some(Self::GeminiGenerateStream),
             _ => None,
         }
     }
@@ -634,6 +872,15 @@ impl Shape {
         self.row().streams
     }
 
+    /// Whether the reply is one file's content, answered whole or not at
+    /// all: Drive's download and export. The strip would hand back other
+    /// bytes as the file, so a reply it would change fails with
+    /// [`crate::Failure::ReplyHoldsKey`] instead of being redacted.
+    #[must_use]
+    pub const fn answers_file_content(self) -> bool {
+        matches!(self, Self::DriveFileDownload | Self::DriveFileExport)
+    }
+
     /// The path prefix of the one redirect this shape follows, under the same
     /// origin and with the key.
     pub(crate) const fn redirect(self) -> Option<&'static str> {
@@ -645,7 +892,8 @@ impl Shape {
     /// dot segment, and no query but the endpoint's own, so no parser between
     /// here and the provider can read it as another path. A row whose query
     /// is data takes only its named parameters, each value plain or
-    /// percent-encoded.
+    /// percent-encoded. The one escape a path holds is a Graph worksheet
+    /// name's `%20`.
     pub fn check_path(self, path: &str) -> Result<(), Refusal> {
         self.match_path(path).map(drop)
     }
@@ -727,8 +975,9 @@ impl Shape {
             _ => return Err(Refusal::Body),
         };
         // An event-relaying shape carries exactly the request that asks for
-        // events, so its reply is the stream it is framed for.
-        if self.relays_events()
+        // events, so its reply is the stream it is framed for. Gemini's row
+        // binds that by its endpoint and query.
+        if self.asks_events_in_body()
             && json_member(body, "stream")? != Some(serde_json::Value::Bool(true))
         {
             return Err(Refusal::Body);
@@ -758,10 +1007,18 @@ fn plain_segment(segment: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte))
 }
 
-/// Matches one endpoint segment to its template: a literal, or `{model}` or
-/// `{id}` before a literal tail. A model segment is kept in `model`.
+/// Matches one endpoint segment to its template: a literal, `{model}` or
+/// `{id}` before a literal tail, or a whole Graph `{worksheet}` or `{range}`
+/// segment. A model segment is kept in `model`.
 fn matches<'p>(template: &str, segment: &'p str, model: &mut Option<&'p str>) -> bool {
-    if let Some(tail) = template.strip_prefix("{model}") {
+    if template == "{worksheet}" {
+        plain_worksheet(segment)
+    } else if template == "{range}" {
+        segment
+            .strip_prefix("range(address='")
+            .and_then(|rest| rest.strip_suffix("')"))
+            .is_some_and(plain_address)
+    } else if let Some(tail) = template.strip_prefix("{model}") {
         let name = segment.strip_suffix(tail).filter(|name| plain_model(name));
         *model = name;
         name.is_some()
@@ -789,6 +1046,34 @@ fn plain_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
+}
+
+/// The longest worksheet name: Excel's 31 characters.
+const MAX_WORKSHEET: usize = 31;
+
+/// The longest A1 address a range segment holds.
+const MAX_ADDRESS: usize = 64;
+
+/// An Excel worksheet name as its path segment: 1 to [`MAX_WORKSHEET`]
+/// words of letters, digits, `-` and `_`, joined by single `%20` escapes.
+/// No other escape, and so no `/`, `.` or quote, reaches Graph's parser.
+fn plain_worksheet(segment: &str) -> bool {
+    let mut chars = 0_usize;
+    for (index, word) in segment.split("%20").enumerate() {
+        if !plain_id(word) {
+            return false;
+        }
+        chars += word.len() + usize::from(index > 0);
+    }
+    chars <= MAX_WORKSHEET
+}
+
+/// An A1 address: 1 to [`MAX_ADDRESS`] letters, digits, `$` and `:`.
+fn plain_address(address: &str) -> bool {
+    (1..=MAX_ADDRESS).contains(&address.len())
+        && address
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'$' || byte == b':')
 }
 
 /// A data query in plain form: `name=value` pairs joined by `&`, each name
