@@ -7,6 +7,7 @@
 pub mod big_rung;
 pub mod booking_turn_line;
 pub mod build_server;
+pub mod calendar_ics_egress;
 pub mod coach_round;
 #[cfg(unix)]
 pub mod hosted_import;
@@ -19,6 +20,7 @@ pub mod mcp_page_mint;
 pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod native_board;
+pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod pre_idle_reuse;
 pub mod replay_admission;
