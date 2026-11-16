@@ -33,6 +33,13 @@
 //! its second version over a claim outside that version's worlds, pairs
 //! nothing.
 //!
+//! ERASED-QUESTION-KEEPS-PERSON-CHANGED-PAIRS: once a question version is
+//! torn down, no person-changed record of it pairs. The owner's standing
+//! question erased whole (as a torn review's dissent erases its question),
+//! the agent's task ask whose answer claim the owner deletes, and the same
+//! task ask erased with the person it was answered over each pair the
+//! owner's changed answer before the teardown and nothing after it.
+//!
 //! STORED-OUTCOME-READS-SKIP-SAVED-LANE: a stored outcome label and a closed
 //! outcome window read only while what they record still stands under the
 //! lane their question's version was saved under, as a calibration pair is
@@ -42,6 +49,15 @@
 //! owner's own question over the same unit reads each as before. A window
 //! that closed unknown reads as it closed, even after a fact recorded later
 //! labels its answer.
+//!
+//! PERSON-CHANGED-PAIRS-SKIP-DEVICE-LOCAL-WORLDS and
+//! PERSON-PAIRS-IN-LANE-JUDGE-ASK-ID: a person-changed pair is judged on the
+//! rows its ask was put over. Read through a base-world lane, the owner's
+//! own-lane question keeps the pair of its ask over a base-world claim and
+//! not the one over a claim in another world. Read from another machine, it
+//! keeps no pair of an ask over a claim in a world kept on this machine,
+//! and, while any world is kept here, no pair of a record with no ask of
+//! its own.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,9 +71,9 @@ use oneiron::llm::decision::questions::{
     AnswerRecord, CalibrationPair, GraphAnswerer, GraphPrediction, GraphUnitContext,
     OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation,
     QuestionDefinitionInput, RefreshPolicy, SILENCE_OUTCOME, WindowOutcome, calibration_pairs,
-    close_due_outcome_windows, closed_outcome_windows, create_question, create_question_with_lane,
-    edit_question_with_lane, outcome_labels, person_changed_pairs, project_bound_outcomes,
-    read_question, refresh_standing_question_with,
+    calibration_pairs_in_lane, close_due_outcome_windows, closed_outcome_windows, create_question,
+    create_question_with_lane, edit_question_with_lane, outcome_labels, person_changed_pairs,
+    project_bound_outcomes, read_question, refresh_standing_question_with,
 };
 use oneiron::llm::decision::{
     AnswerContract, AskTo, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
@@ -74,7 +90,10 @@ use oneiron::task_verb::{
 };
 use oneiron::test_doors::derive::{define_auto_agent, grant_derive_rows};
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::{EdgeActorClass, EntityId, Result, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::test_doors::question_teardown::erase_standing_question;
+use oneiron::{
+    DeleteReason, EdgeActorClass, EntityId, Result, TimeRange, Vault, VaultConfig, WriteActor,
+};
 use serde_json::json;
 
 const OUTCOME_PREDICATE: &str = "profile.saved_lane.outcome";
@@ -1459,6 +1478,198 @@ fn a_person_changed_record_naming_an_earlier_version_under_an_open_ask_pairs_not
     );
 }
 
+/// The owner's two changed answers to its own-lane question: one over the
+/// unit and a base-world claim, one over the unit and a claim in the
+/// fixture's second world. The base-world lane reads the first claim and not
+/// the second; the owner reads both.
+struct TwoWorldAsks {
+    inside: EntityId,
+    outside: EntityId,
+    over_inside: EntityId,
+    over_outside: EntityId,
+}
+
+fn two_world_asks(fixture: &Fixture) -> TwoWorldAsks {
+    let claim_in = |world: EntityId| {
+        write_owner_claim(
+            &fixture.vault,
+            fixture.owner,
+            &fixture.proof,
+            fixture.unit,
+            REFERENCE_PREDICATE,
+            fixture.fact_at(),
+            world,
+            all_relationships(),
+        )
+    };
+    let inside = claim_in(base_world_id());
+    let outside = claim_in(fixture.other_world);
+    assert!(
+        fixture.owner_reads(&outside)
+            && fixture.bound_lane_reads(&inside)
+            && !fixture.bound_lane_reads(&outside),
+        "precondition: the owner reads claim {outside:?} in world {:?}, and the base-world lane \
+         reads claim {inside:?} and not that one",
+        fixture.other_world
+    );
+    let over_inside = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.control,
+        vec![fixture.unit, inside],
+    );
+    let over_outside = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.control,
+        vec![fixture.unit, outside],
+    );
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("the owner's question person-changed pairs on this device");
+    assert_eq!(
+        paired_asks(&pairs).into_iter().collect::<BTreeSet<_>>(),
+        BTreeSet::from([over_inside, over_outside]),
+        "precondition: on this device the owner's own-lane question pairs both changed answers"
+    );
+    TwoWorldAsks {
+        inside,
+        outside,
+        over_inside,
+        over_outside,
+    }
+}
+
+#[test]
+fn a_base_world_lane_reads_the_person_changed_pair_over_a_base_world_claim_and_not_one_outside_its_worlds()
+ {
+    let fixture = fixture();
+    let asks = two_world_asks(&fixture);
+    let pairs = calibration_pairs_in_lane(
+        &fixture.vault,
+        &fixture.bound_lane(),
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("the owner's question calibration pairs through the base-world lane");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![asks.over_inside],
+        "actor=owner reading its own-lane question through the base-world lane; expected the \
+         person-changed pair of its ask over claim {:?} only, none from its ask {:?} over claim \
+         {:?} outside the lane's worlds; seen {pairs:?}",
+        asks.inside,
+        asks.over_outside,
+        asks.outside
+    );
+}
+
+#[test]
+fn a_person_changed_pair_over_a_claim_in_a_world_kept_on_this_machine_reaches_no_other_machine() {
+    let fixture = fixture();
+    let asks = two_world_asks(&fixture);
+    // Kept after the asks are answered: a device-local world is judged at
+    // each read.
+    fixture
+        .vault
+        .keep_world_on_this_machine_for_test(fixture.other_world, true)
+        .expect("precondition: the owner keeps the second world on this machine");
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OffDevice,
+    )
+    .expect("the owner's question person-changed pairs off this device");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![asks.over_inside],
+        "actor=owner reading off this device; expected the person-changed pair of its ask over \
+         base-world claim {:?} only, none from its ask {:?} over claim {:?} in world {:?} kept on \
+         this machine; seen {pairs:?}",
+        asks.inside,
+        asks.over_outside,
+        asks.outside,
+        fixture.other_world
+    );
+    let pairs = calibration_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OffDevice,
+    )
+    .expect("the owner's question calibration pairs off this device");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![asks.over_inside],
+        "actor=owner reading off this device; expected the calibration pair of its ask over \
+         base-world claim {:?} only, none from its ask {:?} over claim {:?} in world {:?} kept on \
+         this machine; seen {pairs:?}",
+        asks.inside,
+        asks.over_outside,
+        asks.outside,
+        fixture.other_world
+    );
+}
+
+#[test]
+fn a_person_changed_record_with_no_ask_of_its_own_reaches_no_other_machine_while_a_world_is_kept_on_this_one()
+ {
+    let fixture = fixture();
+    let saved = read_question(&fixture.vault, fixture.owner, fixture.control, None)
+        .expect("read the owner's question")
+        .expect("precondition: the owner's saved question");
+    // A question no one saved, as a catalogue question is: no head.
+    let mut unsaved = saved.definition.question;
+    unsaved.id = EntityId::now();
+    let record = asked_up(unsaved.clone(), fixture.owner, vec![fixture.unit])
+        .changed_by(DecisionAnswer::Noul(false))
+        .expect("a person's no")
+        .expect("precondition: the no changes the model's yes");
+    let source = EntityId::now();
+    fixture
+        .vault
+        .record_person_changed_answer(source, &record)
+        .expect("precondition: the host keeps a record under a source that is no ask");
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        unsaved.id,
+        CallerLocality::OnDevice,
+    )
+    .expect("the unsaved question person-changed pairs on this device");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![source],
+        "precondition: on this device the unsaved question pairs the record as it is"
+    );
+    fixture
+        .vault
+        .keep_world_on_this_machine_for_test(fixture.other_world, true)
+        .expect("precondition: the owner keeps the second world on this machine");
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        unsaved.id,
+        CallerLocality::OffDevice,
+    )
+    .expect("the unsaved question person-changed pairs off this device");
+    assert!(
+        pairs.is_empty(),
+        "actor=owner reading off this device while world {:?} is kept on this machine; expected \
+         no person-changed pair from record {source:?}, which names no ask and so no row the \
+         person answered over; seen {pairs:?}",
+        fixture.other_world
+    );
+}
+
 #[test]
 fn an_agents_saved_question_takes_no_person_changed_pair_over_an_owner_claim_in_a_relationship_it_is_not_in()
  {
@@ -1551,5 +1762,228 @@ fn an_agents_saved_question_takes_no_person_changed_pair_over_an_owner_claim_in_
          ask over claim {inside:?} only, none from its ask {over_outside:?} over claim \
          {outside:?} scoped to relationship {:?}, which it is not in; seen {pairs:?}",
         reach.relationship
+    );
+}
+
+#[test]
+fn an_erased_standing_question_pairs_no_person_changed_answer() {
+    let fixture = fixture();
+    let over = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.control,
+        vec![fixture.unit],
+    );
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("the owner's question person-changed pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over],
+        "precondition: the owner's saved question pairs the owner's changed answer before the \
+         erase"
+    );
+    let torn = erase_standing_question(&fixture.vault, fixture.control)
+        .expect("precondition: the owner's standing question erases");
+    assert!(
+        torn == vec![fixture.control_answer.claim]
+            && read_question(&fixture.vault, fixture.owner, fixture.control, None)
+                .expect("read the erased question")
+                .is_none(),
+        "precondition: the erase takes the question whole and gives back its answer; seen {torn:?}"
+    );
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("the erased question person-changed pairs");
+    assert!(
+        pairs.is_empty(),
+        "actor=owner's standing question erased whole; expected no person-changed pair from its \
+         ask {over:?}; seen {pairs:?}"
+    );
+}
+
+/// The agent's task ask about the owner's claim, answered by the owner over
+/// the unit, and an ask of that task's question that went up to the owners
+/// with the model's pick of another person, which the owner changed to the
+/// unit's word.
+struct ChangedTaskAsk {
+    reach: AgentVault,
+    /// The task's question: its one version keeps the owner's answer.
+    question: EntityId,
+    /// The `judgment.answer` claim the owner's answer is bound as.
+    answer_claim: EntityId,
+    /// The changed ask, the source its person-changed record is bound to.
+    ask: EntityId,
+}
+
+impl ChangedTaskAsk {
+    fn pairs(&self) -> Vec<CalibrationPair> {
+        person_changed_pairs(
+            &self.reach.base.vault,
+            self.reach.agent,
+            self.question,
+            CallerLocality::OnDevice,
+        )
+        .expect("the agent's task question person-changed pairs")
+    }
+
+    fn question_held(&self) -> bool {
+        read_question(
+            &self.reach.base.vault,
+            self.reach.agent,
+            self.question,
+            None,
+        )
+        .expect("read the agent's task question")
+        .is_some()
+    }
+}
+
+fn changed_task_ask() -> ChangedTaskAsk {
+    let reach = agent_vault();
+    let base = &reach.base;
+    let topic = write_owner_claim(
+        &base.vault,
+        base.owner,
+        &base.proof,
+        base.unit,
+        REFERENCE_PREDICATE,
+        base.now,
+        base_world_id(),
+        all_relationships(),
+    );
+    let agent = base.vault.memory(reach.agent, EdgeActorClass::Agent);
+    let mut ask_question = TaskAskQuestion::new(ConsultPayloadRef::Claim(topic));
+    ask_question.outcome_binding = Some(binding());
+    let spec = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People(BTreeSet::from([base.owner]))),
+        ask_question,
+        None,
+        TaskAskDefault::AskMe,
+    );
+    let handle = agent
+        .tasks_ask(&spec)
+        .expect("precondition: the agent asks the owner about the claim")
+        .handle;
+    base.vault
+        .memory(base.owner, EdgeActorClass::Human)
+        .tasks_answer(&handle, &TaskAskWord::new(base.unit))
+        .expect("precondition: the owner answers the agent's ask about the unit");
+    let TaskAskStatus::Settled(result) = agent
+        .tasks_ask_status(handle)
+        .expect("the agent's ask status")
+    else {
+        panic!("precondition: the owner's answer settles the agent's ask");
+    };
+    let answer_claim = result
+        .settlement
+        .outcome_answer_ref
+        .expect("precondition: the settled answer is bound as a claim");
+    let question = handle.group_ref;
+    let record = read_question(&base.vault, reach.agent, question, None)
+        .expect("read the agent's task question")
+        .expect("precondition: the settled ask keeps its one question version");
+    let AnswerContract::Choice { options } = &record.definition.question.contract else {
+        panic!(
+            "precondition: a task ask answers by a choice; seen {:?}",
+            record.definition.question.contract
+        );
+    };
+    assert!(
+        record.definition.adapter == "tasks.ask"
+            && record.definition.units == vec![base.unit]
+            && options.len() == 1,
+        "precondition: a one-unit tasks.ask version over the unit with one option; seen {:?}",
+        record.definition
+    );
+    let word = DecisionAnswer::Choice(options[0].clone());
+    let mut request = asked_up(record.definition.question, reach.agent, vec![base.unit]);
+    request.prior = Some(ProviderDecision {
+        answer: DecisionAnswer::Choice("another person".into()),
+        probability: Some(0.9),
+        paired: None,
+        person: None,
+        served: None,
+        cost_per_thousand: None,
+    });
+    let seq = base
+        .vault
+        .queue_decision_ask(&request)
+        .expect("precondition: the task question's ask goes up to the owners");
+    let ask = base
+        .vault
+        .answer_decision_ask(&base.proof, seq, word)
+        .expect("precondition: the owner answers the ask");
+    assert!(
+        ask.answer.as_ref().is_some_and(|answer| answer.changed),
+        "precondition: the owner's answer changes the model's pick; seen {ask:?}"
+    );
+    let fixture = ChangedTaskAsk {
+        reach,
+        question,
+        answer_claim,
+        ask: ask.id,
+    };
+    assert_eq!(
+        paired_asks(&fixture.pairs()),
+        vec![fixture.ask],
+        "precondition: the agent's task question pairs the owner's changed answer before any \
+         teardown"
+    );
+    fixture
+}
+
+#[test]
+fn a_task_ask_whose_answer_claim_is_deleted_pairs_no_person_changed_answer() {
+    let fixture = changed_task_ask();
+    let vault = &fixture.reach.base.vault;
+    assert!(
+        vault
+            .delete_entity(&fixture.answer_claim)
+            .expect("the owner deletes the answer claim"),
+        "precondition: the answer claim {:?} existed",
+        fixture.answer_claim
+    );
+    assert!(
+        !fixture.question_held(),
+        "precondition: the delete takes the task's one question version"
+    );
+    let pairs = fixture.pairs();
+    assert!(
+        pairs.is_empty(),
+        "actor=agent's task ask whose answer claim {:?} is deleted; expected no person-changed \
+         pair from its ask {:?}; seen {pairs:?}",
+        fixture.answer_claim,
+        fixture.ask
+    );
+}
+
+#[test]
+fn a_task_ask_erased_with_the_person_it_was_answered_over_pairs_no_person_changed_answer() {
+    let fixture = changed_task_ask();
+    let base = &fixture.reach.base;
+    base.vault
+        .delete_entity_with_reason(&base.unit, DeleteReason::UserHardDelete)
+        .expect("the owner erases the person");
+    assert!(
+        !fixture.question_held(),
+        "precondition: the person's erase takes the one-unit task's question version"
+    );
+    let pairs = fixture.pairs();
+    assert!(
+        pairs.is_empty(),
+        "actor=agent's task ask answered over person {:?}, erased; expected no person-changed \
+         pair from its ask {:?}; seen {pairs:?}",
+        base.unit,
+        fixture.ask
     );
 }
