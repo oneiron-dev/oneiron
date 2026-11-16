@@ -250,7 +250,7 @@ impl ServedConnectorCallHost {
             .connectors
             .get(end.server.as_str())
             .ok_or("connector_not_installed")?;
-        if connector.endpoint != end.endpoint {
+        if connector.http_endpoint() != Some(end.endpoint.as_str()) {
             return Err("connector_endpoint_changed");
         }
         let protocol = HeaderValue::from_str(&end.protocol).map_err(|_| "revision_unreadable")?;
@@ -298,7 +298,8 @@ impl ServedConnectorCallHost {
             .connectors
             .get(view.server())
             .ok_or("connector_not_installed")?;
-        if connector.endpoint != view.endpoint() {
+        // A stdio connector's task keeps no session to poll in.
+        if connector.http_endpoint() != Some(view.endpoint()) {
             return Err("connector_endpoint_changed");
         }
         // The grant that admitted the send still admits it. The owner's stop

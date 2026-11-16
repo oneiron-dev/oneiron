@@ -206,7 +206,9 @@ enum LayeredClock {
 /// the flags set no clock, and doctor reads no settings file. A config path
 /// whose existence cannot be checked, a config file that does not read as
 /// TOML, or one whose `[runtime] clock` is not `"system"` leaves the clock
-/// unknown.
+/// unknown. So does a config file its reader refuses
+/// ([`crate::config::merge::read_config_file`]): a file any user can write
+/// names no clock this report may trust.
 fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
     if let Ok(env) = EnvConfig::from_process()
         && let Ok(layered) = layer_serve_config(serve, env, default_config_path())
@@ -231,7 +233,7 @@ fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
         Ok(false) => return LayeredClock::Host,
         Err(_) => return LayeredClock::Unknown,
     }
-    let Ok(table) = std::fs::read_to_string(&path)
+    let Ok(table) = crate::config::merge::read_config_file(&path)
         .map_err(drop)
         .and_then(|raw| toml::from_str::<toml::Table>(&raw).map_err(drop))
     else {
