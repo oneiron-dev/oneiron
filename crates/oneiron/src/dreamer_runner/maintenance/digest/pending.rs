@@ -2,6 +2,8 @@
 //! Entry: `pending_proposals` and the three `unseen_*` readers.
 //! The digest state and item types are in the parent.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     CLEANUP_VIEW, DigestCleanup, DigestNoteTombstones, DigestOffer, DigestProposal, DigestState,
     NOTE_TOMBSTONE_VIEW, PROACTIVITY_POLICY_REQUEST_PREDICATE, ProactivityCadence,
@@ -116,7 +118,7 @@ pub(super) fn pending_proposals(
         {
             continue;
         }
-        let revision = *blake3::hash(&bytes[ENTITY_METADATA_HEADER_LEN..]).as_bytes();
+        let revision = *ContentHash::of(&bytes[ENTITY_METADATA_HEADER_LEN..]).as_bytes();
         let claim_hex = id.to_hex();
         // An urgent digest's result leaves only its own owner's digests.
         if state.seen.get(&claim_hex) == Some(&revision)

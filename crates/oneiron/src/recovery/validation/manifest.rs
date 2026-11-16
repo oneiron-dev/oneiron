@@ -1,5 +1,7 @@
 //! Owned resumable manifest and order checks over one immutable canonical snapshot.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{EntityMetadataHeader, invalid, strict};
 use crate::error::Result;
 use crate::recovery::canonical::{CanonicalSnapshot, ExpectedContainers};
@@ -233,7 +235,7 @@ impl ManifestValidation {
                         .entity_blobs
                         .binary_search_by_key(&origin.id, |row| row.id)
                         .ok()
-                        .map(|at| *blake3::hash(&snapshot.entity_blobs[at].blob).as_bytes());
+                        .map(|at| *ContentHash::of(&snapshot.entity_blobs[at].blob).as_bytes());
                     if held != Some(origin.digest) {
                         return Err(invalid("peer origin outside the window"));
                     }

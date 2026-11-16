@@ -29,6 +29,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::super::response_rows::row_mut;
@@ -160,7 +161,7 @@ pub(super) fn note_start(
         let mut unbound = false;
         for part in parts.parts {
             let carrier = ResponseFamily::replay_part_carrier(key, part.request);
-            let digest = *blake3::hash(&part.bytes).as_bytes();
+            let digest = *ContentHash::of(&part.bytes).as_bytes();
             match census
                 .responses
                 .note_part(store, txn, carrier.clone(), &digest)?
@@ -489,7 +490,7 @@ fn stripped_digests(image: &CheckpointImage, rows: &[(Vec<u8>, Vec<u8>)]) -> BTr
         .filter_map(|(key, value)| {
             if let Some((digest, body)) = crate::code_run::code_run_inline_body_of_row(key, value) {
                 let held =
-                    carried.contains(key.as_slice()) || *blake3::hash(body).as_bytes() == digest;
+                    carried.contains(key.as_slice()) || *ContentHash::of(body).as_bytes() == digest;
                 return (!held).then_some(digest);
             }
             crate::code_run::code_run_body_file_of_row(key, value)

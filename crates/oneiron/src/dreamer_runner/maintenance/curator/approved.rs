@@ -5,6 +5,8 @@
 //! one write with the target's before-state as its inverse and the Dreamer's
 //! receipt naming the approved revision. It never parks behind a second
 //! consent and never stages the target's transition as the embedded owner.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::applied::{record_approved_in_txn, recorded_in_txn};
 use super::super::{CURATOR_FACET, invalid};
 use super::{PROPOSAL_PREDICATE, apply_in_txn};
@@ -119,7 +121,7 @@ impl Vault {
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
             || raw.len() == ENTITY_METADATA_HEADER_LEN
-            || blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..])
+            || ContentHash::of(&raw[ENTITY_METADATA_HEADER_LEN..])
                 .to_hex()
                 .as_str()
                 != source_hash

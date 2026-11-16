@@ -8,6 +8,7 @@
 //! never read as prose. The time is factual evidence the harm question
 //! reads, never a gate or an expiry.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 
 use super::{DigestNeededBefore, DigestVersionRef};
@@ -126,5 +127,5 @@ pub(super) fn body_hash_in(
     let claim = EntityMetadataHeader::parse(&raw)
         .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM);
     Ok((claim && raw.len() > ENTITY_METADATA_HEADER_LEN)
-        .then(|| *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes()))
+        .then(|| *ContentHash::of(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes()))
 }

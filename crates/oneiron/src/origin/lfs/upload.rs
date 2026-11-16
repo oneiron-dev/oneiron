@@ -9,6 +9,7 @@ use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::{EntityId, TimeRange, Vault};
 use fastcdc::v2020::{Normalization, StreamCDC};
+use oneiron_contracts::fingerprint::ContentHash;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -252,7 +253,7 @@ impl Vault {
             for chunk in &manifest.chunks {
                 let bytes = supply(chunk)?;
                 if bytes.len() != chunk.size as usize
-                    || blake3::hash(&bytes).as_bytes() != &chunk.hash
+                    || ContentHash::of(&bytes).as_bytes() != &chunk.hash
                 {
                     return Err(chunks::invalid("lfs chunk does not match manifest"));
                 }

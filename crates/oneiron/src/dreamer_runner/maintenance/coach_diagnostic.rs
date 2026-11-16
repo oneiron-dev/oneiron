@@ -12,6 +12,7 @@
 //! ([`issue_effective_revision`]), from exact refs of the producer's revision in force.
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -231,7 +232,7 @@ pub(crate) fn bind_producer(
     {
         return Ok(ProducerTarget::PolicyManifest {
             manifest: *manifest,
-            revision: *blake3::hash(body).as_bytes(),
+            revision: *ContentHash::of(body).as_bytes(),
         });
     }
     let mut configs = runs
@@ -623,13 +624,13 @@ fn manifest_in_force(
             continue;
         };
         if crate::gate::manifest_authenticity::manifest_is_trusted(&vault.store, txn, id, body)? {
-            trusted_contributors.push((*id, *blake3::hash(body).as_bytes()));
+            trusted_contributors.push((*id, *ContentHash::of(body).as_bytes()));
         }
     }
     let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
         return Ok(EffectiveRevision::Unknown);
     };
-    let revision = *blake3::hash(body).as_bytes();
+    let revision = *ContentHash::of(body).as_bytes();
     if !trusted_contributors.contains(&(manifest, revision)) {
         return Ok(EffectiveRevision::Unknown);
     }
