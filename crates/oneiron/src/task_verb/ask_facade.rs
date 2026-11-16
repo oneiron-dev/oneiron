@@ -46,6 +46,8 @@ type NoClosure = fn(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>;
 /// spec and one validated member TASK per recipient.
 pub(super) struct AskCensus {
     holders: Vec<EntityId>,
+    /// The role a role ask reached; `None` for every other target.
+    reached_role: Option<crate::llm::decision::AskRole>,
     context_class: Option<TaskAskClass>,
     governed_task: Option<EntityId>,
     effective: TaskAskSpec,
@@ -488,7 +490,18 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         input: &TaskAskSpec,
     ) -> MemoryResult<Vec<EntityId>> {
-        Ok(match &input.who {
+        Ok(self.ask_route_in_txn(txn, input)?.0)
+    }
+
+    /// `input`'s holders, and for a role ask the role it reached, read in
+    /// the same snapshot as its holders (ROLES-EVERYWHERE = A); `None` for
+    /// every other target.
+    pub(super) fn ask_route_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+    ) -> MemoryResult<(Vec<EntityId>, Option<crate::llm::decision::AskRole>)> {
+        let holders = match &input.who {
             Some(TaskAskTarget::Authority(scope)) => {
                 self.vault()
                     .ask_authority_holders_in_txn(txn, &scope.class, &scope.envelope)?
@@ -498,8 +511,14 @@ impl Memory<'_> {
             }
             Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
             Some(TaskAskTarget::Guests(guests)) => guests.keys().copied().collect(),
+            Some(TaskAskTarget::Role(to)) => {
+                let reached = self.vault().ask_role_in_txn(txn, to)?;
+                let holders = reached.holders.iter().map(|holder| holder.actor).collect();
+                return Ok((holders, Some(reached.role)));
+            }
             None => vec![self.short_ask_principal_in_txn(txn)?],
-        })
+        };
+        Ok((holders, None))
     }
 
     /// A human can ask themselves. For an agent, an omitted target is the
@@ -718,6 +737,35 @@ fn ask_request_digest(input: &TaskAskSpec) -> MemoryResult<String> {
     let bytes = rmp_serde::to_vec_named(input)
         .map_err(|_| MemoryError::bad_request("ask request encoding"))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
+}
+
+impl crate::Vault {
+    /// The role a role ask reaches in `txn` (ROLES-EVERYWHERE = A), through
+    /// the decision ladders' own resolver: the first role on `to`'s chain, up
+    /// to its ceiling, with a live holder who may answer for its act. With
+    /// none up to the ceiling the ask is refused: it never goes wider.
+    pub(super) fn ask_role_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        to: &crate::llm::decision::AskTo,
+    ) -> MemoryResult<crate::llm::decision::ResolvedRole> {
+        if to.validate().is_err() {
+            return Err(MemoryError::bad_request(
+                "an ask's role is above its ceiling",
+            ));
+        }
+        // A task ask's answer is a word, checked by who wrote it and not by
+        // what kind of actor wrote it: a judgment. An e-signature or a payment
+        // a person must authorise asks through its own door.
+        if to.act.person_only() {
+            return Err(MemoryError::bad_request(
+                "a task ask by role carries a judgment, not a person-only act",
+            ));
+        }
+        self.next_ask_role_in_txn(txn, to, None)?.ok_or_else(|| {
+            MemoryError::bad_request("no role up to the ask's ceiling has a live holder")
+        })
+    }
 }
 
 /// Both `tasks_ask` and `can(ask)` preserve an explicitly addressed
