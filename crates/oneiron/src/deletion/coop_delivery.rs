@@ -28,7 +28,7 @@ use crate::store::attempt_inputs::FailAttempt;
 use crate::store::attempt_inputs::RetryAttempt;
 use crate::store::attempt_outcomes::ClaimOutcome;
 use crate::store::attempt_record::AttemptRecord;
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Result, Vault};
 use oneiron_authority::authority::FederationPactStatus;
 
 mod answer;
@@ -89,28 +89,13 @@ pub(crate) fn courtesy_retained_pacts_in(
     Ok(pacts)
 }
 
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("courtesy delete: {reason}"))
-}
+#[doc(hidden)]
+use oneiron_records::deletion::coop_delivery::invalid;
+#[doc(hidden)]
+pub use oneiron_records::deletion::coop_delivery::parse_hex;
 
 fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
-}
-
-/// Parses `N` bytes of lowercase or uppercase hex.
-pub fn parse_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
-    if value.len() != N * 2 || !value.is_ascii() {
-        return None;
-    }
-    let mut out = [0; N];
-    for (slot, pair) in out.iter_mut().zip(value.as_bytes().chunks(2)) {
-        *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(out)
+    oneiron_hex::encode(bytes)
 }
 
 /// The pseudonym the sender's ledger keeps for a recipient, in place of its

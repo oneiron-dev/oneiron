@@ -150,12 +150,6 @@ pub(super) fn decode_embed_job_value(value: &[u8]) -> Result<(u8, u64)> {
     Ok((priority, queued_at))
 }
 
-pub(super) fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis().min(u128::from(u64::MAX)) as u64)
-}
-
 pub(super) fn decode_last_update_seq_metadata(raw: &[u8]) -> Result<u64> {
     if raw.len() != 8 {
         return Err(Error::CorruptedIndex("sync queue metadata"));
