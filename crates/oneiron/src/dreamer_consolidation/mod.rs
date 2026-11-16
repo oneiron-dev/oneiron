@@ -56,7 +56,7 @@ mod note_parts;
 mod note_review;
 mod note_text;
 mod note_topics;
-mod open_conflict;
+pub(crate) mod open_conflict;
 mod parallel;
 mod partition;
 mod persistence;
@@ -165,8 +165,8 @@ pub use settle::{
     SettledConflict,
 };
 pub(crate) use settle::{
-    apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
-    revert_settlement_in_txn, settled_answers_in_txn,
+    apply_settlement_in_txn, conflict_answer_standing_in_txn, marker_ids, open_conflict_in_txn,
+    open_conflicts_in_txn, revert_settlement_in_txn, settled_answers_in_txn,
 };
 pub use sieve_ports::{
     ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, PortFuture,

@@ -202,6 +202,21 @@ fn map_masked_range(
     Ok((stored_start, stored_end))
 }
 
+/// Maps a failure of bound evidence verification for its callers.
+/// A claim-domain failure is the operand's and answers `BAD_REQUEST` with its reason.
+/// Any other failure keeps the engine's own mapping, so a storage failure of a row read
+/// answers as internal and never reads as a refusal of the request.
+fn verification_error(error: crate::error::Error) -> MemoryError {
+    if matches!(
+        error,
+        crate::error::Error::Claim(_) | crate::error::Error::InvalidClaimBody(_)
+    ) {
+        MemoryError::bad_request(error.to_string())
+    } else {
+        MemoryError::from(error)
+    }
+}
+
 impl BoundBranchRead {
     /// Verifies one observation operand against this projection in the caller transaction.
     /// Whole turns bind whole stored text while unmasked ranges bind directly.
@@ -239,8 +254,8 @@ impl BoundBranchRead {
         for evidence in &operand.evidence {
             locators.push(self.stored_locator_in_txn(memory, read, txn, evidence)?);
         }
-        let extracted = ExtractedCandidate::new(checked.clone(), locators)
-            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        let extracted =
+            ExtractedCandidate::new(checked.clone(), locators).map_err(verification_error)?;
         let reader = BoundEvidenceReader {
             bound: self,
             read,
@@ -249,7 +264,7 @@ impl BoundBranchRead {
         crate::dreamer_consolidation::evidence::VerifiedCandidate::from_extracted_with_reader(
             &reader, extracted,
         )
-        .map_err(|error| MemoryError::bad_request(error.to_string()))
+        .map_err(verification_error)
     }
     /// Reads a verified candidate's evidence meet and observed-preference qualification in the caller transaction.
     /// The meet folds from the verified evidence set exactly as native verification folds it.

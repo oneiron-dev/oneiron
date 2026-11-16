@@ -5,14 +5,12 @@ use super::extraction_execution::CheckedExtractionCall;
 use crate::EntityId;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::dreamer_consolidation::extraction_pack::{
-    ExtractionRebuildContext, check_extraction_operands_in_txn, evidence_version_for_row,
-    extraction_not_served, map_candidate_alias, rebuild_checked_pack,
+    ExtractionRebuildContext, check_engine_claim_pins, check_extraction_operands_in_txn,
+    evidence_version_for_row, extraction_not_served, map_candidate_alias, rebuild_checked_pack,
 };
 use crate::memory::{MemoryError, MemoryResult};
-use crate::snapshot_read::{
-    extraction_reader_scope_in_txn, extraction_turn_read, source_version_in_txn,
-};
-use crate::verbs::{ExtractionPack, PinnedClaim};
+use crate::snapshot_read::{extraction_reader_scope_in_txn, extraction_turn_read};
+use crate::verbs::ExtractionPack;
 
 pub(super) use crate::dreamer_consolidation::extraction_pack::{
     bound_branch_error, check_turn_evidence,
@@ -93,31 +91,6 @@ impl DreamerAttemptBinding {
         })?;
         Ok(checked.value)
     }
-}
-
-/// Requires the job's ordered claim references and source pins to equal the engine's set.
-fn check_engine_claim_pins(
-    read: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    offered: &[PinnedClaim],
-    expected: &[EntityId],
-) -> MemoryResult<()> {
-    if offered.len() != expected.len() {
-        return Err(MemoryError::bad_request(
-            "the extraction pack claim pins differ from the engine's rebuilt set",
-        ));
-    }
-    for (offered, expected) in offered.iter().zip(expected) {
-        let Some((version, _)) = source_version_in_txn(read, txn, expected)? else {
-            return Err(extraction_not_served());
-        };
-        if offered.claim != expected.to_hex() || offered.version != version {
-            return Err(MemoryError::bad_request(
-                "the extraction pack claim pins differ from the engine's rebuilt order or versions",
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Compares each rebuilt key and Choice contract in its native question order.

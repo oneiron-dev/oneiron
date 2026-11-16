@@ -11,11 +11,11 @@ use rmpv::Value;
 
 /// One open-conflict marker as its conflict, members and decisions make it,
 /// built without a write. [`write_open_marker_in_txn`] lands it.
-struct OpenMarkerParts {
+pub(crate) struct OpenMarkerParts {
     /// The marker's id: its attempt's and its conflict identity's.
-    id: EntityId,
+    pub(crate) id: EntityId,
     /// The marker claim, carrying its members' joined evidence.
-    candidate: ClaimCandidate,
+    pub(crate) candidate: ClaimCandidate,
     /// The provenance every marker carries. The writer adds the import
     /// review when the evidence is imported words.
     provenance: Vec<(Value, Value)>,
@@ -41,7 +41,8 @@ pub(super) fn park_open_conflict(
     fence: &super::resources::ConsolidationFence,
     now: u64,
 ) -> Result<EntityId> {
-    let parts = open_marker_parts(actor, attempt, conflict, members, decisions, now)?;
+    let provenance = native_marker_provenance(attempt, decisions)?;
+    let parts = open_marker_parts(actor, attempt, conflict, members, provenance, now)?;
     let id = parts.id;
     vault.with_write_txn_grouped(|txn| {
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
@@ -51,21 +52,49 @@ pub(super) fn park_open_conflict(
     Ok(id)
 }
 
-/// Builds the marker that leaves `conflict` open for `attempt`: its id, its
-/// claim with the members' joined evidence and retained alternatives, its
-/// provenance with the decisions that left it open, and its birth. It reads
-/// and writes no row.
+/// The provenance every native marker carries: the dreamer surface, the
+/// attempt as its run, and the decisions that left it open beside it
+/// (ARCH-0076) when any shaped the members. The derive stager passes its own
+/// provenance instead; the one builder stamps whatever it is given.
 ///
 /// # Errors
 ///
-/// A conflict with no member evidence, a marker id, scope or decision that
-/// does not encode, and a member whose facts do not decode.
-fn open_marker_parts(
+/// Decisions that do not encode.
+pub(crate) fn native_marker_provenance(
+    attempt: crate::attempt_queue::AttemptId,
+    decisions: &[super::KeptDecision],
+) -> Result<Vec<(Value, Value)>> {
+    let mut provenance = vec![
+        (Value::from("surface"), Value::from("dreamer")),
+        (
+            Value::from("run"),
+            Value::from(crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())),
+        ),
+    ];
+    // The decisions that left it open ride beside it (ARCH-0076).
+    if !decisions.is_empty() {
+        provenance.push((
+            Value::from(crate::dreamer_promotion::PROMOTION_PROVENANCE_DECISIONS_KEY),
+            super::provenance::kept_decisions_value(decisions)?,
+        ));
+    }
+    Ok(provenance)
+}
+
+/// Builds the marker that leaves `conflict` open for `attempt`: its id, its
+/// claim with the members' joined evidence and retained alternatives, its
+/// `provenance`, and its birth. It reads and writes no row.
+///
+/// # Errors
+///
+/// A conflict with no member evidence, a marker id or scope that does not
+/// encode, and a member whose facts do not decode.
+pub(crate) fn open_marker_parts(
     actor: WriteActor,
     attempt: crate::attempt_queue::AttemptId,
     conflict: &ConflictSet,
     members: &[&VerifiedCandidate],
-    decisions: &[super::KeptDecision],
+    provenance: Vec<(Value, Value)>,
     now: u64,
 ) -> Result<OpenMarkerParts> {
     let id = conflict_open_marker_id(conflict, attempt)?;
@@ -94,20 +123,6 @@ fn open_marker_parts(
             None
         }
     };
-    let mut provenance = vec![
-        (Value::from("surface"), Value::from("dreamer")),
-        (
-            Value::from("run"),
-            Value::from(crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())),
-        ),
-    ];
-    // The decisions that left it open ride beside it (ARCH-0076).
-    if !decisions.is_empty() {
-        provenance.push((
-            Value::from(crate::dreamer_promotion::PROMOTION_PROVENANCE_DECISIONS_KEY),
-            super::provenance::kept_decisions_value(decisions)?,
-        ));
-    }
     let mut candidate = ClaimCandidate::new(
         crate::claim::PREDICATE_CONFLICT_OPEN,
         ClaimSubject::Entity(conflict.identity.subject),
@@ -213,7 +228,7 @@ fn open_marker_parts(
 ///
 /// The gate's refusal, a provenance that does not encode, and storage
 /// errors.
-fn write_open_marker_in_txn(
+pub(crate) fn write_open_marker_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: WriteActor,

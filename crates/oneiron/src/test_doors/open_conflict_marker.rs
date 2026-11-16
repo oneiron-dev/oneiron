@@ -1,4 +1,4 @@
-//! Thin wrapper over the native open-conflict marker door.
+//! Thin wrappers over the native open-conflict marker doors.
 
 use serde_json::Value;
 
@@ -21,6 +21,28 @@ pub fn park_native_open_conflict(
     operands: &[Value],
 ) -> Result<Value> {
     crate::dreamer_consolidation::open_conflict_door::park_open_conflict_json(
+        vault, attempt, now_ms, operands,
+    )
+}
+
+/// Builds, without writing, the marker the one native conflict `operands`
+/// form on `attempt` at `now_ms` would park, and returns the marker id, the
+/// member claims, the prior heads, and the marker claim's predicate,
+/// subject, value and evidence envelope.
+///
+/// Calls the real assembly and the shared marker builder with native's
+/// provenance. No model is asked, and nothing is written.
+///
+/// # Errors
+///
+/// As `park_native_open_conflict`, and a marker claim that does not encode.
+pub fn build_native_open_conflict(
+    vault: &Vault,
+    attempt: &str,
+    now_ms: u64,
+    operands: &[Value],
+) -> Result<Value> {
+    crate::dreamer_consolidation::open_conflict_door::build_open_conflict_json(
         vault, attempt, now_ms, operands,
     )
 }

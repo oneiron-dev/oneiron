@@ -17,7 +17,7 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::snapshot_read::{
     EvidenceSourceStatus, EvidenceSpansRequest, SourceVersion, SourceVersionCheck,
     evidence_spans_in_txn, extraction_turn_in_txn, extraction_turn_read,
-    observed_claim_reads_in_txn, queued_extraction_branch_in_txn,
+    observed_claim_reads_in_txn, queued_extraction_branch_in_txn, source_version_in_txn,
 };
 use crate::verbs::{CandidateOperand, PinnedClaim, TurnEvidence};
 
@@ -237,6 +237,31 @@ fn extraction_reference(reference: &str) -> MemoryResult<EntityId> {
         ));
     }
     Ok(id)
+}
+
+/// Requires the job's ordered claim references and source pins to equal the engine's set.
+pub(crate) fn check_engine_claim_pins(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    offered: &[PinnedClaim],
+    expected: &[EntityId],
+) -> MemoryResult<()> {
+    if offered.len() != expected.len() {
+        return Err(MemoryError::bad_request(
+            "the extraction pack claim pins differ from the engine's rebuilt set",
+        ));
+    }
+    for (offered, expected) in offered.iter().zip(expected) {
+        let Some((version, _)) = source_version_in_txn(read, txn, expected)? else {
+            return Err(extraction_not_served());
+        };
+        if offered.claim != expected.to_hex() || offered.version != version {
+            return Err(MemoryError::bad_request(
+                "the extraction pack claim pins differ from the engine's rebuilt order or versions",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Refuses a row the bound page would not serve without revealing its contents.
