@@ -73,10 +73,12 @@
 //! attribution cannot be trusted when any window is unreadable (a corrupt
 //! window might carry anything).
 //!
-//! * OPEN (registry-live) windows are DEFERRED, never compacted in place: a
-//!   live doc holds the full history in memory, and its next
-//!   `persist_state` full-snapshot export would rewrite the history over
-//!   the shallow `d:w:` row — resurrecting the carrier.
+//! * OPEN (registry-live) windows are first taken from their holders, who
+//!   have until the drain bound to let them go (census L9-41). One still held
+//!   then is compacted while its holder keeps it (census L6-05): the window
+//!   is pinned history-free first, so the live doc's next `persist_state`
+//!   stores a history-free snapshot rather than rewriting its full history
+//!   over the shallow `d:w:` row, and every export checks what it ships.
 //! * RACED windows are DEFERRED (anti-clobber): if a `u:w:` row is
 //!   added/removed (full set-equality check) or the `d:w:` snapshot is
 //!   replaced between the read phase and the compaction write txn, the
