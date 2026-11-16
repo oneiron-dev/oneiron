@@ -282,6 +282,12 @@ name = "campaign_one_click_unsubscribe"
 path = "tests/campaign_one_click_unsubscribe.rs"
 required-features = ["oneiron/test-support"]
 
+# The weave doors (enqueue, schedules, digests, labels, setting changes) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_weave_doors"
+path = "tests/vault_weave_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
