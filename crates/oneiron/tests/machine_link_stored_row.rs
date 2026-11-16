@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActSurface, CapabilitySlip, FoldedMachine, HostSlipIssuer, MachineEnrolmentRequest,
-    MachineOwnership, MachineRole, OwnerActKind, PairingLink, PairingPrincipal,
-    pairing_binding_transcript,
+    ActSurface, CapabilitySlip, FoldedMachine, HostSlipIssuer, MachineAnswerLanding,
+    MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerActKind, PairingLink,
+    PairingPrincipal, pairing_binding_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
@@ -61,7 +61,7 @@ fn answered_host() -> Host {
     let owner = vault
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .expect("FIXTURE: the owner's proof");
-    vault
+    let landing = vault
         .set_machine_role(
             &owner,
             ActSurface::ThisInstall,
@@ -70,6 +70,10 @@ fn answered_host() -> Host {
             None,
         )
         .expect("FIXTURE: the owner answers yours for this install");
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the owner's answer for this install stands, not held"
+    );
     let vault_id = vault
         .authority_fold()
         .expect("authority fold")
@@ -126,14 +130,20 @@ fn redeem(
     let transcript = pairing_binding_transcript(&link.code, &device_key, &holder)
         .expect("the binding transcript");
     let proof = pairing_key.sign(&transcript).to_bytes();
-    host.vault.redeem_machine_pairing_link(
+    let (slip, landing) = host.vault.redeem_machine_pairing_link(
         &host.issuer,
         &link.code,
         &holder,
         device_key,
         &proof,
         request,
-    )
+    )?;
+    match landing {
+        MachineAnswerLanding::Stands(machine) => Ok((slip, machine)),
+        MachineAnswerLanding::Held { .. } => {
+            panic!("the link's machine answer is held for an owner key's proof; it must stand")
+        }
+    }
 }
 
 fn sorted_keys(approval: &serde_json::Map<String, serde_json::Value>) -> Vec<&str> {

@@ -69,7 +69,7 @@ pub(super) fn append_resident_craft(
         // Not begun: what an entry cut between two loads left out loads now,
         // once each; what it loaded stays as it loaded.
         let loaded: BTreeSet<EntityId> = manifest_craft(vault, leased)?.into_iter().collect();
-        let at = super::unix_now();
+        let at = super::unix_seconds_now();
         for id in resident_craft_claim_ids(vault, &resident, at)? {
             if !loaded.contains(&id) {
                 vault.load_resident_actor_claim(leased.id, &resident, &id, at)?;
@@ -103,7 +103,9 @@ fn inherit_craft(vault: &Vault, leased: &AttemptRecord, resident: &EntityId) -> 
     if !vault.attempt_craft_supported(source)? {
         return Ok(false);
     }
-    if let Err(error) = vault.inherit_resident_craft(leased, source, resident, super::unix_now()) {
+    if let Err(error) =
+        vault.inherit_resident_craft(leased, source, resident, super::unix_seconds_now())
+    {
         tracing::warn!(kind = ?error.kind(), agent = %resident.to_hex(), "a continued run's craft was not stamped on its own attempt");
     }
     Ok(true)

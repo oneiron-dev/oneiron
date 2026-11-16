@@ -101,6 +101,9 @@ pub(crate) use self::transport::{
     BookingAdmissionContext, booking_payer_verbs, credential_transport_context,
     is_booking_payer_door,
 };
+// The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::turn::Turn as BookingTurn;
 use self::validate::validate_operation_shape;
 
 // The pre-split root path stays callable. Minting and resolution both live in
@@ -247,7 +250,11 @@ pub(crate) async fn booking_agent_instructions(
     let block = booking_agent_instructions_block(&server, &page_token, page_ref)?;
     if wants_html_fragment(&parts.headers) {
         let fragment = render_booking_agent_instructions_block(&block)?;
-        return Ok(([(CONTENT_TYPE, "text/html; charset=utf-8")], fragment).into_response());
+        // First-party HTML on the API's origin (ARCH-0050 #artifact-origin-open).
+        return Ok(super::first_party_html::isolated_html(
+            super::first_party_html::DATA_FRAGMENT_CONTENT_SECURITY_POLICY.to_owned(),
+            fragment,
+        ));
     }
     let document = booking_agent_instructions_json(&block)?;
     Ok(([(CONTENT_TYPE, BOOKING_AGENT_INSTRUCTIONS_MIME)], document).into_response())

@@ -188,7 +188,8 @@ impl Vault {
     }
     /// Redeems a link that adds a machine: the slip and the owner's profile
     /// for `request` land in one transaction, under the answer the owner gave
-    /// when making the link.
+    /// when making the link. An answer this install carried with no owner
+    /// key lands held, and the slip stands.
     pub fn redeem_machine_pairing_link(
         &self,
         issuer: &HostSlipIssuer,
@@ -197,7 +198,7 @@ impl Vault {
         binding_key: [u8; 32],
         signature: &[u8],
         request: &MachineEnrolmentRequest,
-    ) -> Result<(CapabilitySlip, FoldedMachine)> {
+    ) -> Result<(CapabilitySlip, MachineAnswerLanding)> {
         let redeemed = self.redeem_pairing_link_in(
             issuer,
             code,
@@ -208,10 +209,12 @@ impl Vault {
             None,
             None,
         )?;
-        Ok((
-            redeemed.slip,
-            redeemed.machine.ok_or_else(invalid_authority)?,
-        ))
+        let landing = match (redeemed.held_answer, redeemed.machine) {
+            (Some(answer), machine) => MachineAnswerLanding::Held { answer, machine },
+            (None, Some(machine)) => MachineAnswerLanding::Stands(machine),
+            (None, None) => return Err(invalid_authority()),
+        };
+        Ok((redeemed.slip, landing))
     }
     #[allow(clippy::too_many_arguments)]
     fn redeem_pairing_link_in(
@@ -272,6 +275,7 @@ impl Vault {
             return Ok(PairingRedeemed {
                 slip,
                 machine: None,
+                held_answer: None,
                 pin: None,
                 link_owner: None,
                 re_paired: false,
@@ -286,6 +290,10 @@ impl Vault {
             &pending.scope,
             Some(holder_ref),
         )?;
+        // An open link's verbs reach an app backend only under a Grant row
+        // the owner minted (APP-BACKEND-LINK-GRANT = A), judged in the mint
+        // transaction, as issue judges a link that names the backend.
+        self.validate_pairing_backend_verbs_in_txn(&txn, &pending.scope, Some(holder_ref))?;
         let write_facet = pending
             .principal
             .write_facet
@@ -358,23 +366,24 @@ impl Vault {
                 &facet,
             )?;
         }
-        let (machine, re_paired) = match (pending.machine, request) {
+        let (machine, held_answer, re_paired) = match (pending.machine, request) {
             (Some(answer), Some(request)) => {
                 // The owner who answered must still own the vault at redemption.
                 if !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &answer.owner)? {
                     return Err(invalid_authority());
                 }
                 let possession = possession.map(|proof| (proof, transcript.as_slice()));
-                let (machine, re_paired) = self
+                let (landing, re_paired) = self
                     .redeem_machine_answer_in_txn(&mut txn, issuer, answer, request, possession)?;
-                (Some(machine), re_paired)
+                (landing.machine().cloned(), landing.held(), re_paired)
             }
-            _ => (None, false),
+            _ => (None, None, false),
         };
         // The machine this redemption enrols, and no other, has its mesh
-        // endpoint bound with the pairing, or not at all (FIX 3374).
+        // endpoint bound with the pairing, or not at all (FIX 3374). A machine
+        // whose answer is held is not enrolled yet: it binds none.
         let mesh = match (mesh, request, &machine) {
-            (Some((identity, alpn)), Some(request), Some(_)) => {
+            (Some((identity, alpn)), Some(request), Some(_)) if held_answer.is_none() => {
                 Some(self.bind_enrolled_mesh_in_txn(&mut txn, issuer, request, identity, alpn))
             }
             _ => None,
@@ -388,6 +397,7 @@ impl Vault {
         // credential-only re-pairing changed no roster and seals nothing.
         #[cfg(feature = "sync")]
         if machine.is_some()
+            && held_answer.is_none()
             && !re_paired
             && let Err(error) = self.reseal_after_machine_admission()
         {
@@ -399,6 +409,7 @@ impl Vault {
         Ok(PairingRedeemed {
             slip,
             machine,
+            held_answer,
             pin: pending.pin,
             link_owner: pending.owner,
             re_paired,
@@ -417,7 +428,10 @@ impl Vault {
     /// already holds, pairing again under its own identity and class with
     /// its machine key's `possession` proof over this redemption's binding
     /// transcript, takes its credential alone first (FIX 8636). The flag is
-    /// `true` for that re-pairing, which changed no roster.
+    /// `true` for that re-pairing, which changed no roster. An answer this
+    /// install carries with no owner key lands held (row
+    /// CARRIER-OWNER-PROOF); the bootstrap arm's root-signed answer never
+    /// does.
     fn redeem_machine_answer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -425,7 +439,7 @@ impl Vault {
         answer: PendingMachine,
         request: &MachineEnrolmentRequest,
         possession: Option<(&[u8; 64], &[u8])>,
-    ) -> Result<(FoldedMachine, bool)> {
+    ) -> Result<(MachineAnswerLanding, bool)> {
         let role = answer.role();
         let fold = self.authority_view_readonly_in_txn(txn)?;
         // A credential-only re-pairing writes no revision, so it needs no
@@ -433,7 +447,7 @@ impl Vault {
         if let Some((proof, transcript)) = possession
             && let Some(standing) = re_paired_standing(&fold, request, role, proof, transcript)?
         {
-            return Ok((standing, true));
+            return Ok((MachineAnswerLanding::Stands(standing), true));
         }
         // A held machine's class-only revision proves its key over this
         // redemption too (FIX 11715): its logged enrolment proof is no fresh
@@ -444,7 +458,7 @@ impl Vault {
         if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
             return self
                 .enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role)
-                .map(|machine| (machine, false));
+                .map(|machine| (MachineAnswerLanding::Stands(machine), false));
         }
         if self.carrier_in_txn(txn, &fold).is_ok() {
             let act = AnswerAct {
@@ -456,7 +470,7 @@ impl Vault {
             };
             return self
                 .enroll_machine_in_txn(txn, act, request, role)
-                .map(|machine| (machine, false));
+                .map(|landing| (landing, false));
         }
         Err(crate::authority::machine_answers::no_carrier())
     }

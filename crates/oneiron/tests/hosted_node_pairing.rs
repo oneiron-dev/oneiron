@@ -19,9 +19,9 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActSurface, CapabilitySlip, FoldedMachine, HostSlipIssuer, MachineEnrolmentRequest,
-    MachineOwnership, MachineRole, OwnerActKind, PairingLink, PairingPrincipal,
-    pairing_binding_transcript,
+    ActSurface, CapabilitySlip, FoldedMachine, HostSlipIssuer, MachineAnswerLanding,
+    MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerActKind, PairingLink,
+    PairingPrincipal, pairing_binding_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
@@ -80,7 +80,8 @@ fn host() -> Host {
 /// his acts.
 fn answered_host() -> Host {
     let host = host();
-    host.vault
+    let landing = host
+        .vault
         .set_machine_role(
             &host.owner,
             ActSurface::ThisInstall,
@@ -89,6 +90,10 @@ fn answered_host() -> Host {
             None,
         )
         .expect("FIXTURE: the owner answers yours for this install");
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the owner's answer for this install stands, not held"
+    );
     host
 }
 
@@ -133,14 +138,20 @@ fn redeem(
     let transcript = pairing_binding_transcript(&link.code, &device_key, &holder)
         .expect("the binding transcript");
     let proof = pairing_key.sign(&transcript).to_bytes();
-    host.vault.redeem_machine_pairing_link(
+    let (slip, landing) = host.vault.redeem_machine_pairing_link(
         &host.issuer,
         &link.code,
         &holder,
         device_key,
         &proof,
         request,
-    )
+    )?;
+    match landing {
+        MachineAnswerLanding::Stands(machine) => Ok((slip, machine)),
+        MachineAnswerLanding::Held { .. } => {
+            panic!("the link's machine answer is held for an owner key's proof; it must stand")
+        }
+    }
 }
 
 /// `machine`'s roster role, and whether it is mine, as the vault's fold
