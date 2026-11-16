@@ -9,11 +9,15 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use oneiron::dreamer_runner::dreamer_park_cause_of_step;
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::model_step_error::DurableStepError;
 use oneiron::registry::ENTITY_TYPE_RELATIONSHIP;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::consolidation::{invalid_relationship_error, recipe_park_cause};
+use oneiron::test_doors::consolidation::{
+    executor_error_park, invalid_relationship_error, recipe_park_cause,
+};
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::{DreamerParkCause, EntityId, Error, Vault, VaultConfig};
 
@@ -111,5 +115,27 @@ fn a_step_refused_for_a_relationship_with_no_row_parks_where_no_pass_resumes_it(
     assert_eq!(
         recipe_park_cause(&Error::InvalidConfig("a moved scope".to_owned())),
         DreamerParkCause::Retry
+    );
+}
+
+/// The same refusal met by a durable model step parks the same way (the
+/// step layer's own mapping; red on main: Retry).
+#[test]
+fn a_durable_step_refused_for_a_relationship_with_no_row_parks_where_no_pass_resumes_it() {
+    let refused = DurableStepError::Engine(invalid_relationship_error(EntityId::now()));
+    assert_eq!(
+        dreamer_park_cause_of_step(&refused),
+        DreamerParkCause::Other
+    );
+}
+
+/// On the wake driver's executor path the same refusal parks privately and
+/// does not end the pass, so the pass goes on to its other attempts (red
+/// on main: Retry).
+#[test]
+fn an_executor_error_refused_for_a_relationship_with_no_row_parks_and_the_pass_goes_on() {
+    assert_eq!(
+        executor_error_park(&invalid_relationship_error(EntityId::now())),
+        (DreamerParkCause::Other, false)
     );
 }
