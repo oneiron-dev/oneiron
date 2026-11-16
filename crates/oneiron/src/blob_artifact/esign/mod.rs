@@ -68,7 +68,8 @@ pub use door::{
 mod escalation;
 pub(crate) use escalation::erase_held_signing_actor_in_txn;
 pub use escalation::{
-    HOLD_ALLOW, HOLD_DECLINE, HeldAskWait, HeldSigning, HeldSigningAnswer, HeldSigningState,
+    HELD_SIGNING_LAPSE_NOTIFICATION_PRODUCER, HOLD_ALLOW, HOLD_DECLINE, HeldAskWait, HeldSigning,
+    HeldSigningAnswer, HeldSigningState,
 };
 mod principals;
 pub use capability::EsignCapability;
