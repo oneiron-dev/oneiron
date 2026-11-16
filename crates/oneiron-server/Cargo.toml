@@ -348,6 +348,13 @@ name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# FIX OFF-RECORD-RUN-POLICY-REFUSAL-500's session run roots its owner on a
+# `MemoryKeystore` too.
+[[test]]
+name = "off_record_run_refusal_status"
+path = "tests/off_record_run_refusal_status.rs"
+required-features = ["oneiron/test-support"]
+
 # The rerank pair template price cases root their owner on a `MemoryKeystore` too.
 [[test]]
 name = "rerank_pair_template_price"
