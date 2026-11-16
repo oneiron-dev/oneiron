@@ -49,8 +49,6 @@ fn default_proposal_max_choices() -> u16 {
     DEFAULT_PROPOSAL_MAX_CHOICES
 }
 
-// serde's skip_serializing_if hands the field by reference.
-#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_default_proposal_max_choices(count: &u16) -> bool {
     *count == DEFAULT_PROPOSAL_MAX_CHOICES
 }
