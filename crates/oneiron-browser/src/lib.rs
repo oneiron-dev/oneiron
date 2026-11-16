@@ -129,8 +129,8 @@ pub use programs::{
     BatchInput, BatchOutput, BatchStep, BrowserPersonInput, BrowserTab, DecideStep, DesktopWindow,
     EFFECT_ACCOUNT, EFFECT_CLASSES, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND,
     EFFECT_UNKNOWN, HandoverInput, HandoverOutput, NoDecider, PressMode, ROUTINE_LOOKS,
-    ROUTINE_WAIT_MS, RoutineAnswer, RoutineAsk, RoutineDecider, RoutineReply, SendPolicy,
-    SubgoalStatus, WindowInput, WindowsInput, WindowsOutput,
+    ROUTINE_WAIT_MS, RoutineAnswer, RoutineAsk, RoutineDecider, RoutineReply, SEND_CLASSES,
+    SendPolicy, SubgoalStatus, WindowInput, WindowsInput, WindowsOutput,
 };
 pub use verbs::{
     ClickInput, CropInput, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput,

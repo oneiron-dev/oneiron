@@ -197,37 +197,85 @@ pub(crate) fn send_check_in_in_txn(
     {
         return Ok(None);
     }
-    let explicit = match read {
-        CheckInPolicyRead::Unreadable => Some((CheckInMode::AlwaysAsk, SendModeSource::Unreadable)),
-        CheckInPolicyRead::NoRow => None,
-        CheckInPolicyRead::Row(policy) => policy
-            .explicit_mode(ActClass::OutboundSend, &CheckInScope::default())
-            .map(|explicit| (explicit.mode, SendModeSource::Rows(explicit.row_refs))),
-    };
-    let (source, answer) = match explicit {
-        Some((mode, source)) => (
-            source,
-            check_in_with_mode(ActClass::OutboundSend, mode, None, &AlwaysUnsure),
-        ),
-        None if reach == SendGrantReach::RowsOnly => return Ok(None),
-        None => {
-            let role = sender_role_in_txn(store, txn, effect.provenance.actor_entity_ref)?;
-            // The power is the Gate's own check (`has_permission`): a send
-            // that lacks it is refused there whatever its check-in says.
-            let request = CheckInRequest {
-                act: ActClass::OutboundSend,
-                role,
-                holds_power: true,
-                explicit_mode: None,
-                standing_row: None,
-            };
-            (
-                SendModeSource::RoleDefault(role),
-                check_in(&request, &AlwaysUnsure),
-            )
+    match rows_send_check_in(read) {
+        Some(check_in) => Ok(Some(check_in)),
+        None if reach == SendGrantReach::RowsOnly => Ok(None),
+        None => role_send_check_in_in_txn(store, txn, effect.provenance.actor_entity_ref).map(Some),
+    }
+}
+
+/// The check-in of one agent's own send that crosses no Gate judgment: a
+/// classified send of a browser or desktop guest the agent drives (PLAN L4-03
+/// D1). It is composed as [`send_check_in_in_txn`] composes an agent's own
+/// send ([`SendGrantReach::RowsOrRole`]): the vault's rows, else `actor`'s
+/// role's default.
+///
+/// # Errors
+///
+/// The store's, reading the agent's membership and the vault's authority
+/// fold.
+pub(crate) fn agent_send_check_in_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    read: CheckInPolicyRead<'_>,
+    actor: EntityId,
+) -> Result<SendCheckIn> {
+    match rows_send_check_in(read) {
+        Some(check_in) => Ok(check_in),
+        None => role_send_check_in_in_txn(store, txn, Some(actor)),
+    }
+}
+
+/// The check-in the vault's rows give a send under `read`: the `mode` rows
+/// naming `outbound_send`, or `AlwaysAsk` for an unreadable policy; `None`
+/// when no row names the class.
+fn rows_send_check_in(read: CheckInPolicyRead<'_>) -> Option<SendCheckIn> {
+    let (mode, source) = match read {
+        CheckInPolicyRead::Unreadable => (CheckInMode::AlwaysAsk, SendModeSource::Unreadable),
+        CheckInPolicyRead::NoRow => return None,
+        CheckInPolicyRead::Row(policy) => {
+            let explicit =
+                policy.explicit_mode(ActClass::OutboundSend, &CheckInScope::default())?;
+            (explicit.mode, SendModeSource::Rows(explicit.row_refs))
         }
     };
-    let answer = match answer {
+    Some(SendCheckIn {
+        source,
+        answer: send_answer(check_in_with_mode(
+            ActClass::OutboundSend,
+            mode,
+            None,
+            &AlwaysUnsure,
+        )),
+    })
+}
+
+/// The check-in `actor`'s role's default gives its send when no row names
+/// the class ([`sender_role_in_txn`]).
+fn role_send_check_in_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: Option<EntityId>,
+) -> Result<SendCheckIn> {
+    let role = sender_role_in_txn(store, txn, actor)?;
+    // The power is the Gate's own check (`has_permission`): a send that
+    // lacks it is refused there whatever its check-in says.
+    let request = CheckInRequest {
+        act: ActClass::OutboundSend,
+        role,
+        holds_power: true,
+        explicit_mode: None,
+        standing_row: None,
+    };
+    Ok(SendCheckIn {
+        source: SendModeSource::RoleDefault(role),
+        answer: send_answer(check_in(&request, &AlwaysUnsure)),
+    })
+}
+
+/// A send's check-in answer as the Gate reads it.
+fn send_answer(answer: CheckInAnswer) -> SendAnswer {
+    match answer {
         CheckInAnswer::Go(GoReason::NeverAsk) => SendAnswer::NeverAsk,
         CheckInAnswer::Wait(reason) => SendAnswer::Wait(reason),
         // No standing row is passed, the unsure test is never sure, and no
@@ -236,8 +284,7 @@ pub(crate) fn send_check_in_in_txn(
         CheckInAnswer::Go(_) | CheckInAnswer::Propose | CheckInAnswer::Absent => {
             SendAnswer::Wait(WaitReason::AlwaysAsk)
         }
-    };
-    Ok(Some(SendCheckIn { source, answer }))
+    }
 }
 
 /// The role `actor` sends in (ARCH-0082 #role-defaults; ruling L3-35-ROLE =

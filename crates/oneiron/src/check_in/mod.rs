@@ -104,7 +104,8 @@ pub use resolve::{
 };
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
 pub(crate) use send::{
-    SendCheckIn, SendGrantReach, send_check_in_in_txn, send_grant_presses_batch_in_txn,
+    SendCheckIn, SendGrantReach, agent_send_check_in_in_txn, send_check_in_in_txn,
+    send_grant_presses_batch_in_txn,
 };
 pub use verb_act_class::{VerbActClass, verb_act_class};
 pub use waits::CheckInTransition;

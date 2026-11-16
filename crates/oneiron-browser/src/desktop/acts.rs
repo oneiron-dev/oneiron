@@ -212,6 +212,10 @@ impl DesktopSession {
             rebound: None,
             effect_class: effect_class.map(str::to_owned),
             press: press.as_str().to_owned(),
+            press_source: self
+                .policy
+                .source_of(effect_class, press)
+                .map(str::to_owned),
             screenshot,
             capture_id,
             screenshot_evidence: None,
