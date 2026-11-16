@@ -275,20 +275,31 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // Each session is judged on the call's own input (FIX 10344), as a row
     // door's is: a call that serves a room NOTE keeps its records there.
     let at = vault.now_recorded_at();
+    // A retry whose user witness a hook's ask held is that held call: it
+    // takes the first try's stamps, its time and its TURN id, so the resumed
+    // chain checks the call the ask held, and the board below names the TURN
+    // that witness writes (FIX CHAT-WITNESS-ASK-RESUME-ARGS-DRIFT). The reply
+    // keeps its own time.
+    let saved =
+        crate::server::blocking(|| super::hooks::saved_witness_stamps(&vault, &hooked_call()))
+            .map_err(|error| engine(&error))?;
     // The user's TURN id is minted here on the canonical door, so the board
     // below names on its recall the TURN the user's words are witnessed in
     // (FIX RETRIEVAL-TURN-CONVENTION-HOST-STAMP); a session door's witness
     // mints its own. A turn that answers in a thread replies there to the
     // TURN it names, so the reply below answers this one (FIX 3572); a trunk
     // reply answers in the trunk.
-    let user_turn_ref = session_binding.is_none().then(EntityId::now);
+    let user_turn_ref = match &saved {
+        Some(stamps) => stamps.turn_ref,
+        None => session_binding.is_none().then(EntityId::now),
+    };
     let user_turn_id = user_turn_ref.filter(|_| reply_to.is_some());
     let mut user_turn = witness_turn(
         &request.conversation_ref,
         user_turn_ref,
         WitnessAuthor::User,
         request.text.clone(),
-        at,
+        saved.as_ref().map_or(at, |stamps| stamps.occurred_at),
     );
     if let Some(parent) = reply_to {
         stamp_reply(&mut user_turn, parent);
