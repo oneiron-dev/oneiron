@@ -174,7 +174,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 33;
+pub const STORAGE_ABI_VERSION: u16 = 34;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 
