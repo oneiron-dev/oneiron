@@ -30,6 +30,10 @@
 //!   it is admitted; on the actorless destination the same enrollment is refused.
 //! * `the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_leaves_none`:
 //!   the owner import installs one VOICE_REF_RENDER_CONSENT row that reads Granted.
+//! * `a_render_decision_for_a_voice_the_destination_banks_under_another_creator_is_held_back`:
+//!   the destination's bank holds the voice's identity under another creator, so the owner
+//!   import holds the decision back as `inconsistent_companion`, and that creator still
+//!   records her own decision for the voice.
 //! * `a_connector_slate_is_held_back_as_a_non_portable_reference`: a CONNECTOR_GRANT_SLATE
 //!   row installs on no destination (its key binding travels in no disposition).
 //!
@@ -61,7 +65,9 @@ use oneiron::consent::{
 };
 use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice, RoomRole};
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
-use oneiron::voice_identity::ref_bank::{VoiceRefSubjectKind, VoiceRenderDecision};
+use oneiron::voice_identity::ref_bank::{
+    VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip, VoiceRenderDecision,
+};
 use oneiron::voice_identity::{
     VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
     VoiceEmbeddingSpaceV1, VoiceEnrollmentLegalContext, VoiceEnrollmentOrigin,
@@ -687,6 +693,45 @@ fn voice_render_grant(subject: EntityId) -> VoiceRenderDecision {
     }
 }
 
+/// The voice id the source decides for and the destination's bank already holds.
+const DESIGNED_VOICE: &str = "voice-designed";
+
+/// `creator`'s granted render decision for [`DESIGNED_VOICE`], a designed voice: it needs no
+/// consent basis and no live person.
+fn designed_voice_render_grant(creator: EntityId, event_id: &str) -> VoiceRenderDecision {
+    VoiceRenderDecision {
+        event_id: event_id.to_owned(),
+        voice_id: DESIGNED_VOICE.to_owned(),
+        subject: creator,
+        subject_kind: VoiceRefSubjectKind::Designed,
+        recorded_by: creator,
+        occurred_at: 1,
+        reach: ModelLocality::OwnServer,
+        basis: None,
+        state: VoiceConsentState::Granted,
+    }
+}
+
+/// `creator`'s first designed pack for [`DESIGNED_VOICE`]: storing it banks the voice's
+/// identity under `creator`, with no render decision.
+fn designed_voice_pack(creator: EntityId) -> VoiceRefPack {
+    VoiceRefPack {
+        version: 1,
+        id: "designed-pack-1".to_owned(),
+        voice_id: DESIGNED_VOICE.to_owned(),
+        owner: creator,
+        origin: VoiceRefOrigin::Designed {
+            vendor: "design-tool".to_owned(),
+        },
+        clips: vec![VoiceRegisterClip {
+            register: "neutral".to_owned(),
+            media_type: "audio/wav".to_owned(),
+            audio: vec![1, 2, 3],
+            transcript: "reference".to_owned(),
+        }],
+    }
+}
+
 /// A read-only personal-data tool with a resolved input schema.
 fn slate_tool(name: &str) -> SlateToolManifest {
     SlateToolManifest {
@@ -956,6 +1001,80 @@ fn the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_le
         ),
         source_tuple,
         "the actorless destination retains the render tuple byte for byte"
+    );
+}
+
+/// A render decision whose voice the destination banks under another creator stays inert, and
+/// that creator's own decision for the voice still lands.
+#[test]
+fn a_render_decision_for_a_voice_the_destination_banks_under_another_creator_is_held_back() {
+    let (_source_dir, source) = open_source_vault();
+    let source_creator = fixed_id(0x33);
+    source
+        .record_voice_render_consent(&designed_voice_render_grant(
+            source_creator,
+            "grant-source-1",
+        ))
+        .expect("the source records its creator's render grant");
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "VOICE_REF_RENDER_CONSENT").len(),
+        1,
+        "the source archive holds one render-consent tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_creator = fixed_id(0x34);
+    dest.store_voice_ref_pack(&designed_voice_pack(dest_creator))
+        .expect("the destination banks the voice under its own creator");
+    assert!(
+        dest.voice_identity(DESIGNED_VOICE)
+            .expect("read the destination's voice identity")
+            .is_some_and(|identity| identity.owner == dest_creator),
+        "the destination's bank holds the voice under its own creator"
+    );
+    assert!(
+        dest.voice_render_consent(DESIGNED_VOICE)
+            .expect("read the destination's render decision")
+            .is_none(),
+        "the destination holds no render decision for the voice before the import"
+    );
+
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert!(
+        matches!(
+            table_count(&summary, "VOICE_REF_RENDER_CONSENT", "installed_rows"),
+            None | Some(0)
+        ),
+        "a decision for another creator installs nothing beside the banked identity: {summary}"
+    );
+    assert_eq!(
+        held_back_for_table(&summary, "VOICE_REF_RENDER_CONSENT"),
+        Some(serde_json::json!([{"reason": "inconsistent_companion", "rows": 1}])),
+        "the owner import holds back the render row as inconsistent_companion; an absent field means it counted no held-back outcome: {summary}"
+    );
+    assert!(
+        dest.voice_render_consent(DESIGNED_VOICE)
+            .expect("read the destination's render decision after the import")
+            .is_none(),
+        "the destination still holds no render decision for the voice"
+    );
+
+    dest.record_voice_render_consent(&designed_voice_render_grant(dest_creator, "grant-dest-1"))
+        .expect("the destination's creator records her own render decision");
+    assert!(
+        dest.voice_render_consent(DESIGNED_VOICE)
+            .expect("read the creator's render decision")
+            .is_some_and(|row| {
+                row.decision.subject == dest_creator
+                    && row.decision.state == VoiceConsentState::Granted
+            }),
+        "the voice's current decision is its banked creator's grant"
     );
 }
 

@@ -1,12 +1,15 @@
 //! Owner restore of archived voice identity rows (SIDE-4b G8/G9).
 //!
 //! Consent events land only for a live person subject whose key agrees with the event; render
-//! decisions land only for their own voice id with a sound version, sequence and kind, and a
-//! person subject that is a live person. A withdrawn row installs as a row: the landing never
-//! mirrors a withdrawal's deletes, rebuilds no render history, and evicts no targets.
+//! decisions land only for their own voice id with a sound version, sequence and kind, a
+//! person subject that is a live person, and no bank identity that binds the voice to another
+//! subject or kind. A withdrawn row installs as a row: the landing never mirrors a
+//! withdrawal's deletes, rebuilds no render history, and evicts no targets.
 
 use super::math_keys::digest16;
-use super::ref_bank::{VoiceRefSubjectKind, VoiceRenderConsent};
+use super::ref_bank::{
+    VoiceRefSubjectKind, VoiceRenderConsent, banked_identity_admits_decision_in,
+};
 use super::storage_admission::CONSENT;
 use crate::Vault;
 use crate::batch::export::archive_side_install::{
@@ -100,9 +103,11 @@ fn land_archived_voice_consent_row_in_txn(
 /// and must pass the writer's own decision validator (ids, time, kind/basis). Only a person's
 /// voice needs its subject live and a person: a designed voice belongs to its creator of any
 /// kind, present or not. `recorded_by` is audit-only, and a missing bank identity is fine: the
-/// writer records decisions before the identity is banked. An installed decision is indexed
-/// under its subject exactly as the writer indexes it, so erasure finds it; no render history
-/// is rebuilt and no target is evicted.
+/// writer records decisions before the identity is banked. An identity the destination's bank
+/// already holds must admit the decision as the writer's own check has it (the same subject,
+/// the same kind); otherwise the row is held back as an inconsistent companion. An installed
+/// decision is indexed under its subject exactly as the writer indexes it, so erasure finds
+/// it; no render history is rebuilt and no target is evicted.
 fn land_archived_voice_render_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -142,6 +147,15 @@ fn land_archived_voice_render_row_in_txn(
                 ));
             }
         }
+    }
+    // The bank binds a voice to one subject and one kind once it holds the voice's identity,
+    // and its writer refuses every other decision. A restored decision that identity does not
+    // admit stays inert: installed beside it, the two would turn the writer away from both
+    // subjects.
+    if !banked_identity_admits_decision_in(&vault.store, txn, &consent.decision)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InconsistentCompanion,
+        ));
     }
     let outcome = install_archived_row(&RENDER_CONSENT, vault, txn, permit, &key, row)?;
     if matches!(outcome, ArchivedSideRowOutcome::Installed) {
