@@ -195,6 +195,10 @@ pub(crate) fn apply_admitted_passport_revision_in_txn(
         .iter()
         .find(|event| event.uid == passport.uid && event.content_hash == passport.content_hash)
     else {
+        tracing::warn!(
+            claim = %id.to_hex(),
+            "an approved passport revision's source version holds no VEVENT with its content; its EVENT stays as it was"
+        );
         return Ok(());
     };
     if vault.get_entity_type_in_txn(txn, &event_ref)? != Some(ENTITY_TYPE_EVENT) {
