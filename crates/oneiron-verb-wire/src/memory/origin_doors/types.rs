@@ -185,49 +185,8 @@ pub struct OriginRegistered {
     pub default_branch: String,
 }
 
-/// The owner's outbound mirror setup. The token is already in custody,
-/// bound to `origin:mirror-push`; this request never carries its value.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OriginMirrorSetRequest {
-    pub repo: String,
-    /// HTTPS, with no credential, query or fragment.
-    pub url: String,
-    pub secret_ref: String,
-    /// `x-access-token` when absent.
-    pub user: Option<String>,
-    /// At least 60 seconds; the configured cadence is the mirror's RPO.
-    pub every_secs: u64,
-    /// `ask_me`, `schedule` or `full_auto`. Absent: the same URL keeps its
-    /// strategy, and a new mirror or URL asks first (`ask_me`).
-    #[serde(default)]
-    pub sync_strategy: Option<oneiron_store::origin::mirror_strategy::OriginMirrorSyncStrategy>,
-    /// `public`, `private` or `unknown`: who can read the mirror, as the
-    /// owner states it. Absent: the same URL keeps its own, and a new mirror
-    /// or URL is `unknown`, held as public. A public or unknown mirror never
-    /// takes history that holds a marked live key.
-    #[serde(default)]
-    pub visibility: Option<oneiron_store::origin::secret_publication::RepoDestinationVisibility>,
-}
-
-/// The owner's change of one mirror's sync strategy. It changes nothing
-/// else: never the URL, the custody record, the cadence or what was pushed.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OriginMirrorStrategyRequest {
-    pub repo: String,
-    pub sync_strategy: oneiron_store::origin::mirror_strategy::OriginMirrorSyncStrategy,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OriginMirrorView {
     pub repo: String,
     pub mirror: Option<crate::origin::mirror::OriginMirrorTarget>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OriginMirrorCleared {
-    pub repo: String,
-    /// The remote retains the refs and bytes it already holds.
-    pub cleared: bool,
 }

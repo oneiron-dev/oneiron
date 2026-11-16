@@ -1,130 +1,138 @@
 //! NO-DOOR REPO-LFS-PATH-POLICY (tests/e2e/code-custody.test.ts
-//! CODE-CUSTODY-06; Engine CODECUSTODY-LFS Q1 = A): the owner reads and
-//! replaces one served origin's ordered LFS path rules through
-//! `vault.code.origin.lfs_path_policy.get` and `.set`. A fresh origin is at
-//! revision 0 with no rules; a set names the revision it read, and a stale one
-//! is refused with nothing written. Rules are exact paths or directory
-//! prefixes, first match wins, and an unmatched path is repository-large. A
-//! path that is not normalized is refused, a caller that is not the owner is
-//! refused, and the policy survives a reopen.
+//! CODE-CUSTODY-06; Engine CODECUSTODY-LFS Q1 = A), on the catalogue key
+//! `origin.lfs_path_rules` (DESIGN 15-setting-primitive stage 4,
+//! SETTING-KEYED-A K2a): the owner reads and replaces one served origin's
+//! ordered LFS path rules through `vault.settings.get` and `vault.settings.set`
+//! at the repository's scope. A fresh origin is at revision 0 with no rules; a
+//! set names the revision it read, and a stale one is refused with nothing
+//! written. Rules are exact paths or directory prefixes, first match wins, and
+//! an unmatched path is repository-large. A path that is not normalized is
+//! refused, a caller that is not the owner changes nothing, and the rules
+//! survive a reopen.
 //!
 //! `cargo test --locked -p oneiron --all-features --test origin_lfs_path_policy`.
 
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::origin_doors::{
-    OriginLfsPathPolicySetRequest, OriginRegisterRequest, OriginRepoRequest,
-};
-use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE};
-use oneiron::origin::lfs::{LfsAssetClass, LfsPathPolicy, OriginLfsPathMatch, OriginLfsPathRule};
+use std::path::Path;
+
+use oneiron::memory::origin_doors::OriginRegisterRequest;
+use oneiron::origin::lfs::{LfsAssetClass, LfsPathPolicy, OriginLfsPathPolicy};
 use oneiron::store::GateDecisionId;
+use oneiron::task_verb::sdk::invoke;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use serde_json::{Value, json};
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
+const GET: &str = "vault.settings.get";
+const SET: &str = "vault.settings.set";
+const KEY: &str = "origin.lfs_path_rules";
 const REPO: &str = "assets";
 
-fn owner(vault: &Vault) -> TestResult<(EntityId, AuthenticatedOwner)> {
-    let id = vault.ensure_embedded_owner_actor()?;
-    let proof = vault.authenticate_owner(id, "principal:owner", true, GateDecisionId::now())?;
-    Ok((id, proof))
+/// Opens the vault this process owns (the writer lease), as an embedded host
+/// does at each start, so the owner's handle carries the owner's proof.
+fn open_owned(path: &Path) -> (Vault, EntityId) {
+    let vault = Vault::open_owned(path, VaultConfig::device()).expect("an owned vault");
+    oneiron::test_support::provision_engine_machines(&vault);
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    (vault, owner)
 }
 
-fn rule(path_match: OriginLfsPathMatch, class: LfsAssetClass) -> OriginLfsPathRule {
-    OriginLfsPathRule { path_match, class }
+/// A change of the rules at `repo_id`, naming the revision the caller read.
+fn set(repo_id: EntityId, expected_revision: u64, rules: Value) -> Value {
+    json!({
+        "key": KEY,
+        "scope": { "kind": "repo", "id": repo_id.to_hex() },
+        "value": rules,
+        "expected_revision": expected_revision,
+    })
 }
 
-fn set(expected_revision: u64, rules: Vec<OriginLfsPathRule>) -> OriginLfsPathPolicySetRequest {
-    OriginLfsPathPolicySetRequest {
-        repo: REPO.to_owned(),
-        expected_revision,
-        rules,
-    }
-}
-
-fn get() -> OriginRepoRequest {
-    OriginRepoRequest {
-        repo: REPO.to_owned(),
+/// The rules and their revision as `vault.settings.get` reads them at `repo_id`.
+fn read(vault: &Vault, owner: EntityId, repo_id: EntityId) -> OriginLfsPathPolicy {
+    let read = invoke(
+        &vault.memory(owner, EdgeActorClass::Human),
+        GET,
+        json!({ "key": KEY, "at": [{ "kind": "repo", "id": repo_id.to_hex() }] }),
+    )
+    .unwrap_or_else(|error| panic!("{GET} answers: {error:?}"));
+    OriginLfsPathPolicy {
+        revision: read["revision"].as_u64().expect("a revision"),
+        rules: serde_json::from_value(read["value"].clone()).expect("the rules"),
     }
 }
 
 #[test]
-fn the_owner_sets_and_reads_an_origins_lfs_path_policy() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::device())?;
-    let (owner_id, proof) = owner(&vault)?;
-    let memory = vault.memory(owner_id, EdgeActorClass::Human);
-    memory.origin_register_as(
-        &proof,
-        OriginRegisterRequest {
-            repo: REPO.to_owned(),
-            default_branch: "main".to_owned(),
-        },
-    )?;
+fn the_owner_sets_and_reads_an_origins_lfs_path_rules() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (vault, owner) = open_owned(dir.path());
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    let me = vault.memory(owner, EdgeActorClass::Human);
+    let repo_id = me
+        .origin_register_as(
+            &proof,
+            OriginRegisterRequest {
+                repo: REPO.to_owned(),
+                default_branch: "main".to_owned(),
+            },
+        )
+        .expect("the owner registers the origin")
+        .repo_id;
 
-    let fresh = memory.origin_lfs_path_policy_get_as(&proof, get())?;
+    let fresh = read(&vault, owner, repo_id);
+    assert_eq!((fresh.revision, fresh.rules.is_empty()), (0, true));
     assert_eq!(
-        (fresh.revision, fresh.rules.is_empty(), fresh.default_class),
-        (0, true, LfsAssetClass::RepositoryLarge)
+        fresh
+            .classify(repo_id, b"docs/manual.pdf")
+            .expect("classify"),
+        LfsAssetClass::RepositoryLarge
     );
 
     // An exact override before the broader prefix wins: first match.
-    let rules = vec![
-        rule(
-            OriginLfsPathMatch::Exact("vendor/keep-large.bin".to_owned()),
-            LfsAssetClass::RepositoryLarge,
-        ),
-        rule(
-            OriginLfsPathMatch::Prefix("vendor".to_owned()),
-            LfsAssetClass::BuildRequired,
-        ),
-        rule(
-            OriginLfsPathMatch::Exact("assets/logo.bin".to_owned()),
-            LfsAssetClass::BuildRequired,
-        ),
-    ];
-    let first = memory.origin_lfs_path_policy_set_as(&proof, set(0, rules.clone()))?;
-    assert_eq!((first.revision, &first.rules), (1, &rules));
-    assert_eq!(first.repo_id, fresh.repo_id);
+    let rules = json!([
+        { "match": { "exact": "vendor/keep-large.bin" }, "class": "repository-large" },
+        { "match": { "prefix": "vendor" }, "class": "build-required" },
+        { "match": { "exact": "assets/logo.bin" }, "class": "build-required" },
+    ]);
+    let applied = invoke(&me, SET, set(repo_id, 0, rules.clone())).expect("the owner's set");
+    assert_eq!(applied["status"], json!("applied"), "{applied}");
+    let first = read(&vault, owner, repo_id);
+    assert_eq!(first.revision, 1);
     assert_eq!(
-        memory.origin_lfs_path_policy_get_as(&proof, get())?.rules,
+        serde_json::to_value(&first.rules).expect("rules as JSON"),
         rules
     );
 
-    // A set at a revision the policy moved past is refused; nothing changes.
-    let stale = memory
-        .origin_lfs_path_policy_set_as(&proof, set(0, Vec::new()))
-        .expect_err("a stale revision is refused");
-    assert_eq!(stale.code, MEMORY_CODE_INVALID_STATE, "{stale:?}");
+    // A set at a revision the rules moved past is refused; nothing changes.
+    invoke(&me, SET, set(repo_id, 0, json!([]))).expect_err("a stale revision is refused");
     // A path that is not a normalized repository-relative path is refused.
     for bad in ["/abs.bin", "a/../b.bin", "dir/", ""] {
-        let refused = memory
-            .origin_lfs_path_policy_set_as(
-                &proof,
-                set(
-                    1,
-                    vec![rule(
-                        OriginLfsPathMatch::Exact(bad.to_owned()),
-                        LfsAssetClass::BuildRequired,
-                    )],
-                ),
-            )
-            .expect_err("an unnormalized path is refused");
-        assert_eq!(
-            refused.code, MEMORY_CODE_BAD_REQUEST,
-            "{bad:?}: {refused:?}"
-        );
+        invoke(
+            &me,
+            SET,
+            set(
+                repo_id,
+                1,
+                json!([{ "match": { "exact": bad }, "class": "build-required" }]),
+            ),
+        )
+        .expect_err("an unnormalized path is refused");
     }
-    // Another caller cannot borrow the owner's proof.
-    let forbidden = vault
-        .memory(EntityId::now(), EdgeActorClass::Human)
-        .origin_lfs_path_policy_set_as(&proof, set(1, Vec::new()))
-        .expect_err("a caller that is not the owner is refused");
-    assert_eq!(forbidden.code, MEMORY_CODE_FORBIDDEN, "{forbidden:?}");
+    // A caller that is not the owner changes nothing.
+    let stranger = invoke(
+        &vault.memory(EntityId::now(), EdgeActorClass::Human),
+        SET,
+        set(repo_id, 1, json!([])),
+    );
+    assert!(
+        !stranger
+            .as_ref()
+            .is_ok_and(|answer| answer["status"] == json!("applied")),
+        "{stranger:?}"
+    );
+    assert_eq!(read(&vault, owner, repo_id), first, "nothing was written");
 
-    // The stored policy classifies: exact, prefix at a `/` boundary, first
+    // The rules as read classify: exact, prefix at a `/` boundary, first
     // match, and repository-large for every other path.
-    let (repo_id, stored) = vault.served_origin_lfs_path_policy(REPO)?;
-    assert_eq!((repo_id, stored.revision), (fresh.repo_id, 1));
     for (path, class) in [
         ("assets/logo.bin", LfsAssetClass::BuildRequired),
         ("vendor/lib/model.bin", LfsAssetClass::BuildRequired),
@@ -133,19 +141,26 @@ fn the_owner_sets_and_reads_an_origins_lfs_path_policy() -> TestResult {
         ("vendor", LfsAssetClass::RepositoryLarge),
         ("docs/manual.pdf", LfsAssetClass::RepositoryLarge),
     ] {
-        assert_eq!(stored.classify(repo_id, path.as_bytes())?, class, "{path}");
+        assert_eq!(
+            first.classify(repo_id, path.as_bytes()).expect("classify"),
+            class,
+            "{path}"
+        );
     }
 
-    // The policy survives a reopen; an empty set restores the default and
-    // still advances the revision.
-    drop(memory);
+    // The rules survive a reopen; an empty set restores the default and still
+    // advances the revision.
+    drop(me);
     drop(vault);
-    let vault = Vault::open(dir.path(), VaultConfig::device())?;
-    let (owner_id, proof) = owner(&vault)?;
-    let memory = vault.memory(owner_id, EdgeActorClass::Human);
-    let reopened = memory.origin_lfs_path_policy_get_as(&proof, get())?;
-    assert_eq!((reopened.revision, reopened.rules), (1, rules));
-    let cleared = memory.origin_lfs_path_policy_set_as(&proof, set(1, Vec::new()))?;
-    assert_eq!((cleared.revision, cleared.rules.is_empty()), (2, true));
-    Ok(())
+    let (vault, owner) = open_owned(dir.path());
+    assert_eq!(read(&vault, owner, repo_id), first, "the rules survive");
+    let cleared = invoke(
+        &vault.memory(owner, EdgeActorClass::Human),
+        SET,
+        set(repo_id, 1, json!([])),
+    )
+    .expect("the owner clears the rules");
+    assert_eq!(cleared["status"], json!("applied"), "{cleared}");
+    let after = read(&vault, owner, repo_id);
+    assert_eq!((after.revision, after.rules.is_empty()), (2, true));
 }

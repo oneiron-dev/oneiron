@@ -1148,8 +1148,13 @@ fn git_smart_http_large_push_streams_without_buffering() {
 /// bytes read back, as a repository-large pointer's do.
 #[test]
 fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() {
-    use oneiron::memory::origin_doors::OriginLfsPathPolicySetRequest;
-    use oneiron::origin::lfs::{LfsAssetClass, LfsOid, OriginLfsPathMatch, OriginLfsPathRule};
+    use oneiron::memory::origin_doors::OriginPublicationsRequest;
+    use oneiron::origin::lfs::{
+        LfsAssetClass, LfsOid, OriginLfsPathMatch, OriginLfsPathRule, OriginLfsPathRules,
+    };
+    use oneiron::setting::{
+        SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope,
+    };
 
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
@@ -1164,20 +1169,48 @@ fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() 
             oneiron::store::GateDecisionId::now(),
         )
         .expect("owner proof");
-    let policy = vault
+    // The repository's id, read from the seed's publication: the rules are the
+    // catalogue key `origin.lfs_path_rules` at that repository's scope.
+    let seed = git(source.path(), &["rev-parse", "--verify", "refs/heads/main"]);
+    let repo_id = vault
         .memory(owner, oneiron::EdgeActorClass::Human)
-        .origin_lfs_path_policy_set_as(
+        .origin_publications_as(
             &proof,
-            OriginLfsPathPolicySetRequest {
+            OriginPublicationsRequest {
                 repo: "demo".to_owned(),
-                expected_revision: 0,
-                rules: vec![OriginLfsPathRule {
-                    path_match: OriginLfsPathMatch::Prefix("assets".to_owned()),
-                    class: LfsAssetClass::BuildRequired,
-                }],
+                ref_name: "refs/heads/main".to_owned(),
+                git_commit: seed,
             },
         )
-        .expect("the owner sets the origin's LFS path policy");
+        .expect("the seed's publication")
+        .publications
+        .first()
+        .expect("the seed was published")
+        .repo_id;
+    let rules = OriginLfsPathRules(vec![OriginLfsPathRule {
+        path_match: OriginLfsPathMatch::Prefix("assets".to_owned()),
+        class: LfsAssetClass::BuildRequired,
+    }]);
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&proof),
+            SetSetting {
+                key: "origin.lfs_path_rules".to_owned(),
+                item: None,
+                scope: SettingScope::Repo(repo_id),
+                mode: SettingMode::Value,
+                value: Some(serde_json::to_value(rules).expect("rules as JSON")),
+                expected_revision: Some(0),
+                why: None,
+                check_in_ref: None,
+                weight_runs: None,
+            },
+        )
+        .expect("the owner sets the origin's LFS path rules");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "{outcome:?}"
+    );
 
     let bytes = b"bytes a build of this repository needs".to_vec();
     let oid = LfsOid::digest(&bytes);
@@ -1207,7 +1240,7 @@ fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() 
     );
     assert_eq!(
         vault
-            .lfs_git_ref_objects(policy.repo_id, "refs/heads/main")
+            .lfs_git_ref_objects(repo_id, "refs/heads/main")
             .expect("read the ref's LFS objects"),
         vec![oid],
         "the build-required pointer's object is attached to the ref"
