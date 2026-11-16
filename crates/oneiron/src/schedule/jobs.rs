@@ -48,10 +48,18 @@ static JOBS: &[&JobSpec] = &[
     &crate::test_doors::schedule::TEST_FAIL_ONCE,
     #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_REARM,
+    #[cfg(oneiron_test_support)]
+    &crate::test_doors::schedule::TEST_WITHDRAWN,
 ];
 
 /// The job kind whose code is `code`.
 pub(crate) fn job_named(code: &str) -> Option<&'static JobSpec> {
+    #[cfg(oneiron_test_support)]
+    {
+        if crate::test_doors::schedule::withdrawn(code) {
+            return None;
+        }
+    }
     JOBS.iter().copied().find(|job| job.code == code)
 }
 
