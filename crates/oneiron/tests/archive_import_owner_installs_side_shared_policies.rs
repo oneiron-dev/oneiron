@@ -788,6 +788,7 @@ fn the_owner_restore_installs_the_mail_compliance_setting() {
         .mail_compliance_set(&MailComplianceSetRequest {
             enabled: true,
             purpose: "owen audits the shared mailbox".to_owned(),
+            check_in_ref: None,
         })
         .expect("the owner turns compliance search on");
     assert!(source_setting.enabled, "the source reads the setting on");
@@ -799,6 +800,24 @@ fn the_owner_restore_installs_the_mail_compliance_setting() {
     assert!(
         source_setting.set_at.is_some(),
         "the source stamps the change"
+    );
+    // The change's own answer names the check-in decision it ran on; a read
+    // names none, so the restored setting is compared with the source's read.
+    let source_read = memory
+        .mail_compliance_setting()
+        .expect("read the source setting");
+    assert_eq!(
+        (
+            source_read.enabled,
+            &source_read.set_by_ref,
+            source_read.set_at
+        ),
+        (
+            source_setting.enabled,
+            &source_setting.set_by_ref,
+            source_setting.set_at
+        ),
+        "the source reads the setting its change left"
     );
     let archive = export_whole(&source);
     assert_eq!(
@@ -834,7 +853,7 @@ fn the_owner_restore_installs_the_mail_compliance_setting() {
         dest_memory
             .mail_compliance_setting()
             .expect("read the restored setting"),
-        source_setting,
+        source_read,
         "the owner import installs the setting live"
     );
 }
