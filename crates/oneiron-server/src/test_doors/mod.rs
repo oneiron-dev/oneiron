@@ -32,5 +32,6 @@ pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
 pub mod voice_call;
+pub mod voice_room_turn;
 pub mod wire_health_sweep;
 pub mod workflow_park;
