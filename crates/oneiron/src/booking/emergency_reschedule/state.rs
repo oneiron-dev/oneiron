@@ -167,11 +167,37 @@ pub(super) fn effect_ref(
     ))
 }
 
-pub(super) fn apology_bytes(item: &EmergencyItem) -> Result<Vec<u8>, BookingError> {
-    serde_json::to_vec(&serde_json::json!({ "reason": item.plan.request.reason,
-        "actions": item.actions.iter().zip(&item.plan.proposals).map(|(token, slot)| serde_json::json!({
+fn apology_bytes(
+    plan: &EmergencyPlan,
+    actions: &[crate::booking::OpaqueLifecycleToken],
+) -> Result<Vec<u8>, BookingError> {
+    serde_json::to_vec(&serde_json::json!({ "reason": plan.request.reason,
+        "actions": actions.iter().zip(&plan.proposals).map(|(token, slot)| serde_json::json!({
             "action": format!("booking:emergency-pick:{}", token.0), "proposal": slot
-        })).collect::<Vec<_>>() })).map_err(storage_failure)
+        })).collect::<Vec<_>>() }))
+    .map_err(storage_failure)
+}
+
+/// Renders the visitor's apology while the commit's writer still holds the
+/// freshly minted actions, and stores it as a blob in that writer. The item
+/// keeps only the actions' digests and the returned reference.
+pub(crate) fn persist_apology_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    plan: &EmergencyPlan,
+    actions: &[crate::booking::OpaqueLifecycleToken],
+    now: u64,
+) -> Result<String, BookingError> {
+    let bytes = apology_bytes(plan, actions)?;
+    persist_content_in(
+        vault,
+        txn,
+        &plan.request,
+        &plan.booking.event_type.0,
+        "application/json",
+        &bytes,
+        now,
+    )
 }
 
 fn verify_content_head_in(
@@ -307,9 +333,9 @@ pub(crate) fn verify_frozen_effect_in(
             }
         }
         "apology" => {
-            let content = format!("blob:{}", blob_id(&apology_bytes(&item)?)?.to_hex());
-            verify_content_head_in(vault, txn, &content)?;
-            if value["content_ref"].as_str() != Some(content.as_str())
+            let content = item.apology_content_ref.as_str();
+            verify_content_head_in(vault, txn, content)?;
+            if value["content_ref"].as_str() != Some(content)
                 || value["verb"] != "send"
                 || value["channel"] != "email"
             {

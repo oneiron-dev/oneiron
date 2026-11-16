@@ -41,23 +41,13 @@ pub fn execute_emergency_plan(
         mark_delivered(vault, &mut item, true)?;
     }
     if !item.apology_delivered {
-        let bytes = state::apology_bytes(&item)?;
-        let content = booking_writer(vault, |txn| {
-            verify_plan_in(vault, txn, plan)?;
-            persist_content_in(
-                vault,
-                txn,
-                request,
-                &plan.booking.event_type.0,
-                "application/json",
-                &bytes,
-                item.committed_at,
-            )
-        })?;
+        // The commit stored the rendered apology: the item keeps only the
+        // actions' digests, so every attempt sends those stored bytes.
+        booking_writer(vault, |txn| verify_plan_in(vault, txn, plan))?;
         dispatch_item_effect(
             vault,
             &item,
-            EmergencyEffect::Apology(content),
+            EmergencyEffect::Apology(item.apology_content_ref.clone()),
             sink,
             input.now_utc,
         )?;

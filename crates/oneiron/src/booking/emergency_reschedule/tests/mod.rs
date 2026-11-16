@@ -69,6 +69,37 @@ fn meta(vault: &Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
         .collect()
 }
 
+/// The pick actions the visitor's apology carries, read back from the blob
+/// the commit stored: the item itself keeps only their digests.
+fn released_actions(
+    vault: &Vault,
+    item: &EmergencyItem,
+) -> Vec<crate::booking::OpaqueLifecycleToken> {
+    let artifact =
+        EntityId::from_hex(item.apology_content_ref.strip_prefix("blob:").unwrap()).unwrap();
+    let head = vault.blob_artifact_head(&artifact).unwrap().unwrap();
+    let bytes = vault
+        .read_blob_artifact_version(&artifact, head.version)
+        .unwrap()
+        .unwrap();
+    let apology: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    apology["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|action| {
+            crate::booking::OpaqueLifecycleToken(
+                action["action"]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix("booking:emergency-pick:")
+                    .unwrap()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
 fn entities(vault: &Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
     let rtxn = vault.store.env.read_txn().unwrap();
     vault

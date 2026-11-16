@@ -136,7 +136,7 @@ fn malformed_emergency_recovery_bytes_never_reach_transport() {
             assert!(
                 counterparty_pick(
                     &vault,
-                    &item.actions[1],
+                    &released_actions(&vault, &item)[1],
                     &calendars(),
                     &consumer(&vault, NOW + 1),
                     &mut sink,
@@ -382,7 +382,8 @@ fn damaged_request_plan_rows_refuse_only_the_indexed_event() {
                         calendar: plan.booking.calendar.clone(),
                         basis: EmergencyLocalBasis::PreStartCancellation,
                         committed_at: NOW,
-                        actions: Vec::new(),
+                        action_digests: Vec::new(),
+                        apology_content_ref: String::new(),
                         calendar_delivered: true,
                         apology_delivered: true,
                         picked: None,
@@ -540,7 +541,7 @@ fn checkpoint_indexes_commit_abort_reconnect_and_retry_with_the_item() {
     assert!(
         counterparty_pick(
             &vault,
-            &completed.actions[1],
+            &released_actions(&vault, &completed)[1],
             &calendars(),
             &consumer(&vault, NOW + 3),
             &mut sink,
@@ -550,7 +551,7 @@ fn checkpoint_indexes_commit_abort_reconnect_and_retry_with_the_item() {
     assert_pending_event(&vault, item.calendar.event_ref, true);
     let picked = counterparty_pick(
         &vault,
-        &completed.actions[1],
+        &released_actions(&vault, &completed)[1],
         &calendars(),
         &consumer(&vault, NOW + 4),
         &mut sink,

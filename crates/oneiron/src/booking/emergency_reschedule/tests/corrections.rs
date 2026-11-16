@@ -48,7 +48,7 @@ fn normal_unsent_confirmation_uses_no_fake_cancel_and_first_pick_request_zero() 
         );
         let picked = memory
             .pick_emergency_reschedule(
-                &item.actions[1],
+                &released_actions(&vault, &item)[1],
                 &calendars(),
                 &consumer(&vault, NOW + 1),
                 &mut sink,
@@ -228,7 +228,7 @@ fn newer_held_and_no_show_survive_cancel_and_pick_in_the_lifecycle_transaction()
         assert_eq!(read_event_outcome(&vault, event).unwrap(), Some(value));
         counterparty_pick(
             &vault,
-            &item.actions[1],
+            &released_actions(&vault, &item)[1],
             &calendars(),
             &consumer(&vault, NOW + 1),
             &mut spy(&vault, &plan),
@@ -358,7 +358,7 @@ fn verified_effect_chokepoint_rejects_deleted_owner_even_on_frozen_pick_retry() 
             assert!(
                 counterparty_pick(
                     &vault,
-                    &item.actions[1],
+                    &released_actions(&vault, &item)[1],
                     &calendars(),
                     &consumer(&vault, NOW + 1),
                     &mut sink
