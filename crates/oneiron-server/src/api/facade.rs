@@ -200,7 +200,7 @@ pub(super) mod role_picks;
 // FIX 13274: the owner reviews and settles a retained document-copy edit.
 mod repo_copy_edit_doors;
 mod root_request_doors;
-mod run_read_doors;
+pub(super) mod run_read_doors;
 mod run_review_doors;
 pub(crate) mod run_write_polls;
 mod runner_seat_doors;
@@ -213,6 +213,8 @@ mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
 mod self_actor_doors;
+// The Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1).
+mod setting_catalogue_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
