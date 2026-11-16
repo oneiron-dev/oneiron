@@ -309,8 +309,6 @@ pub enum ApiErrorDetails {
     HostActionRequiresSupportGrant { required_scope: Option<String> },
     #[serde(rename = "OWNER_BINDING_REQUIRED", rename_all = "camelCase")]
     OwnerBindingRequired { required_scope: Option<String> },
-    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
-    OwnerConfirmRequired,
     #[serde(rename = "COURTESY_DELETE_UNAUTHENTICATED", rename_all = "camelCase")]
     CourtesyDeleteUnauthenticated { required_scope: Option<String> },
     #[serde(rename = "CONTROL_SCOPE_DENIED", rename_all = "camelCase")]
@@ -331,6 +329,8 @@ pub enum ApiErrorDetails {
         expected_version: Option<u16>,
         received_version: Option<u16>,
     },
+    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
+    OwnerConfirmRequired,
 }
 
 impl ApiErrorDetails {
