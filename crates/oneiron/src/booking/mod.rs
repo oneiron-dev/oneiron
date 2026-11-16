@@ -46,8 +46,8 @@ pub use config::{
     event_type_index_key, is_booking_claim_predicate,
 };
 pub use constraint::{
-    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotHostBinding, SlotMask,
-    SlotOracle, SolveRequest, SolveResult,
+    BookingCapKind, BookingError, ConstraintObject, EventTypeKey, FullDay, RankedSlot,
+    SlotHostBinding, SlotMask, SlotOracle, SolveRequest, SolveResult,
 };
 pub use conversion::{
     BookingConversionPolicy, BookingConversionPolicyRow, BookingFaq, BookingIntakeStages,
@@ -79,26 +79,28 @@ pub use invite_grant::{
     mint_publish_page_invite_grant,
 };
 pub use lifecycle::{
-    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,
-    BOOKING_LIFECYCLE_ATTEMPT_KIND, BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM,
-    BOOKING_RECEIPT_META_PREFIX, BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE,
-    BOOKING_TOKEN_META_PREFIX, BOOKING_VERBS, BookingBookerContactValue, BookingEventTypeRefValue,
-    BookingLifecycleAttempt, BookingLifecycleConsumerInput, BookingLifecycleTurn,
-    BookingOracleRequest, BookingSourcePageValue, BookingStatus, BookingStatusValue, BookingVerb,
-    BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec, ConfirmReceipt,
-    ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldLeaseSpec, HoldReceipt, HoldSpec, LifecycleTokenScope,
-    MAX_CHECKOUT_HOLD_TTL_SECS, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, RescheduleSpec,
-    RevisionReceipt, SessionKey, SoftHoldRow, VaultActiveHoldSource, WAITLIST_OFFER_TTL_SECS,
-    WaitlistAction, WaitlistClaim, WaitlistJoin, WaitlistReceipt, WaitlistSpec,
-    booking_claim_class_descriptors, enqueue_booking_verb, is_booking_family_claim_predicate,
-    is_booking_lifecycle_claim_predicate, issue_checkout_lease, run_booking_lifecycle_attempt,
+    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_CAP_OVERRIDE_PREDICATE,
+    BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX, BOOKING_LIFECYCLE_ATTEMPT_KIND,
+    BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM, BOOKING_RECEIPT_META_PREFIX,
+    BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE, BOOKING_TOKEN_META_PREFIX,
+    BOOKING_VERBS, BookingBookerContactValue, BookingCapOverride, BookingCapOverrideValue,
+    BookingEventTypeRefValue, BookingLifecycleAttempt, BookingLifecycleConsumerInput,
+    BookingLifecycleTurn, BookingOracleRequest, BookingSourcePageValue, BookingStatus,
+    BookingStatusValue, BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision,
+    CancelSpec, ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldLeaseSpec, HoldReceipt,
+    HoldSpec, LifecycleTokenScope, MAX_CAP_OVERRIDE_REASON_BYTES, MAX_CHECKOUT_HOLD_TTL_SECS,
+    OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, RescheduleSpec, RevisionReceipt, SessionKey,
+    SoftHoldRow, VaultActiveHoldSource, WAITLIST_OFFER_TTL_SECS, WaitlistAction, WaitlistClaim,
+    WaitlistJoin, WaitlistReceipt, WaitlistSpec, booking_claim_class_descriptors,
+    enqueue_booking_verb, is_booking_family_claim_predicate, is_booking_lifecycle_claim_predicate,
+    issue_checkout_lease, run_booking_lifecycle_attempt,
     run_booking_lifecycle_attempt_with_invites, run_booking_lifecycle_once, token_page_ref,
     validate_booking_family_claim,
 };
 pub use public_lens::{
-    BookingPageLens, BookingPageModel, BookingPageModelError, ConstraintFieldConfig, EventTypeCard,
-    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, ThemeTokens,
-    bounded_public_slots, validate_booking_page_model,
+    BookingPageLens, BookingPageModel, BookingPageModelError, BookingPagePresentation,
+    ConstraintFieldConfig, EventTypeCard, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction,
+    PublicBookingPageToken, ThemeTokens, bounded_public_slots, validate_booking_page_model,
 };
 pub use publication::{
     BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingPagePublication,

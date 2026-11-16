@@ -200,6 +200,10 @@ impl SlotOracle for ServerBookingOracle<'_> {
     fn minimum_notice_secs(&self, event_type: &EventTypeKey) -> Result<u64, BookingError> {
         self.with_solver(|solver| solver.minimum_notice_secs(event_type))
     }
+
+    fn solve_past_caps(&self, request: &SolveRequest) -> Result<SolveResult, BookingError> {
+        self.with_solver(|solver| solver.solve_past_caps_listing(request, self.producers))
+    }
 }
 
 impl ServerBookingOracle<'_> {

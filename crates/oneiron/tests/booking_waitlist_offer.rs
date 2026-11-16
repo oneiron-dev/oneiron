@@ -422,6 +422,7 @@ impl Fixture {
                     constraint: None,
                     lease: HoldLeaseSpec::Ordinary,
                     idempotency_key: None,
+                    cap_override: None,
                 }),
                 now,
             )

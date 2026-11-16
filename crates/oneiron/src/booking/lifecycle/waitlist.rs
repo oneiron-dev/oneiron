@@ -883,6 +883,7 @@ fn offer_pass_in_writer(
                 token_hash: entry.claim_hold_hash,
                 expires_at: offered_until,
                 checkout_lease_hash: None,
+                cap_override: None,
             },
         )
         .map_err(|error| engine_failure("meta write", error))?;
@@ -983,7 +984,7 @@ pub(crate) fn parse_waitlist_offer_content_ref(content_ref: &str) -> Option<(Ent
         .strip_prefix(WAITLIST_OFFER_CONTENT_PREFIX)?
         .split_once(':')?;
     let page_ref = EntityId::from_hex(page_hex).ok()?;
-    Some((page_ref, super::digest_from_hex(digest_hex)?))
+    Some((page_ref, oneiron_hex::decode::<32>(digest_hex)?))
 }
 
 /// An instant as RFC 3339 UTC to the second.
