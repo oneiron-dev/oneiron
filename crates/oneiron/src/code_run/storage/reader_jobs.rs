@@ -1155,8 +1155,9 @@ impl ExecutorStorage<'_> {
 
     /// Every member of summary job `task`, read as a child's `src` read is
     /// while the job is live at `generation`: in its owner's committed
-    /// record, clean now, inside its range. Members past `max_bytes`
-    /// together are refused unread.
+    /// record, inside its range, as its reads show it now (a tainted body
+    /// through its redacted view). Members past `max_bytes` together are
+    /// refused unread.
     pub(crate) fn summary_job_members(
         &self,
         task: EntityId,
