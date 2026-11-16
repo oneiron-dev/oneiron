@@ -348,6 +348,7 @@ impl SyncServer {
             renderer_scratch: Default::default(),
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
+            process_readiness: Default::default(),
             invocation_claims: crate::invocation_claims::InvocationClaimStore::new(vault.clone()),
             vault,
             root_doc,

@@ -205,6 +205,11 @@ pub(super) async fn serve_anchored(
     let mesh_server = Arc::clone(&sync_server);
     // Each socket upgraded on the API listener or the mesh sees the stop, and
     // the stop waits for it and the calls it admitted (FIX 4757).
+    // The event-loop watchdog (L8-11) reports this process's readiness on
+    // `/api/health` and sheds nothing: a self-hosted owner's requests are
+    // never refused for it. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::default());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_app(sync_server).layer(cors_layer),
         stopped.clone(),
