@@ -13,6 +13,8 @@ pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_provenance;
 pub mod ask_answer_proof;
+pub mod authority_ancestor_index;
+pub mod authority_sequence_floor;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
@@ -212,6 +214,7 @@ pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]
 pub mod world_follow;
+pub mod world_key_record_signature;
 #[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
 
