@@ -42,7 +42,7 @@ pub use learning_setting_args::{
     LearningSettingPutArgs, LearningSettingsCommand,
 };
 pub use owner_args::{
-    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
+    ArchiveSpeakers, BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
     ImportArchiveArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportFolderAttachArgs,
     ImportFolderCommand, ImportFolderListArgs, ImportFolderPathArgs, ImportFolderRescanArgs,
     ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
@@ -60,8 +60,9 @@ pub use owner_args::{
 };
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
-    LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
-    VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
+    LegalHoldsCommand, RecoveryPresetArg, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs,
+    VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs, VaultKeyRecoveryPresetArgs,
+    VaultKeyResealArgs,
 };
 pub use owner_args::{
     PackRemoveArgs, PacksCommand, SubscriptionListArgs, SubscriptionPutArgs,

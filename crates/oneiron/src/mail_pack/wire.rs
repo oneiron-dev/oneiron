@@ -152,7 +152,13 @@ pub enum MailHistoryChange {
     /// A message's labels changed, from a feed that names the labels it
     /// changed, not where the message stands now (Gmail): the importer
     /// reads its headers, one call of the step like any other.
-    Relabeled { provider_id: String },
+    /// `history_id` is the id of the page's last record that changed them,
+    /// so a page read again after a later change to the message differs
+    /// from the page read before.
+    Relabeled {
+        provider_id: String,
+        history_id: String,
+    },
 }
 
 /// One page of changes since an anchor.

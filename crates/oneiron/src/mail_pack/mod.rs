@@ -110,7 +110,7 @@ pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
 };
-pub use gmail::HttpGmailMailWire;
+pub use gmail::{HttpGmailMailWire, gmail_history_page};
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
 pub use google_drive::{GOOGLE_DRIVE_CONNECTOR_EFFECTOR, GOOGLE_DRIVE_QUOTA, HttpGoogleDriveWire};
 pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};

@@ -3,18 +3,9 @@
 //! delegates to that host. This keeps socket state out of the vault.
 
 use super::{Memory, MemoryError};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-/// Scope and retrieval constraints for a live memory view.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ScopedView {
-    pub world_ref: Option<String>,
-    pub facet: Option<String>,
-    pub filter: Option<Value>,
-    pub query: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::subscriptions::ScopedView;
 
 /// The transport owns subscription IDs, snapshots, delivery, and cleanup.
 /// An implementation must bind the same actor and authority to every read.
