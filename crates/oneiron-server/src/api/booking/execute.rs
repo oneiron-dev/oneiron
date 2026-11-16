@@ -80,8 +80,11 @@ async fn execute(
     // credential caller, a stale owner sign-in: FIX 5327) never reaches the
     // owner's own page resolver below.
     let (public_authority, listed) = if transport.requires_publication {
-        let (page_ref, publication, rows) =
-            public::resolve_public_booking_page_listing(server, page_token)?;
+        let (page_ref, publication, rows) = public::resolve_public_booking_page_listing(
+            server,
+            page_token,
+            &transport.destination,
+        )?;
         let authority = oneiron::booking::publication::PublicBookingAuthority {
             page_ref,
             publication,
@@ -123,7 +126,14 @@ async fn execute(
     });
     // An authenticated caller past a window waits for it and is admitted
     // again (`turn::Turn`), so the clock and the facts are read each time.
-    let mut turn = turn::Turn::new(server, &transport);
+    // A hold, the one request that can wait, first takes its place in its
+    // page session's line: it runs admission only once every hold on that
+    // session that came first is answered (ARCH-0062 #booking-turn-divergence).
+    let mut turn = turn::Turn::new(server, transport.credential.is_some());
+    if let BookingOperationRequest::Book(BookingBookInput::Hold(input)) = &request {
+        turn.line_up(session_key(page_ref, &input.session_ref))
+            .await?;
+    }
     let caller = transport.caller();
     // A confirm's email domain is looked up once per request, not per turn.
     let mut email_domain = None;
@@ -223,8 +233,15 @@ async fn execute(
             Ok((response, listed))
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
-            let (response, sources) =
-                execute_hold(server, page_ref, input, now, public_authority).await?;
+            let (response, sources) = execute_hold(
+                server,
+                page_ref,
+                input,
+                now,
+                public_authority,
+                transport.owner_verified,
+            )
+            .await?;
             let listed = listed.map(|mut rows| {
                 rows.extend(sources);
                 rows
