@@ -53,9 +53,12 @@ use serde::Serialize;
 /// 37: an image's revoke facts carry each device revocation proved on its own signed branch,
 /// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
 /// 34 to 36 are taken by open PRs (OPUS-SPLIT-6's carrier stack, #8449).
-/// 38: each covered row's summary marks its kind and whether it is sealed, and an image that
+/// 39: two concurrent federation confirmations that share an id or a nonce both stay valid as
+/// spent evidence, and settlement removes neither nor any row above it (FIX
+/// CONFIRM-COLLISION-SUBTREE-ROLLBACK). 38 is an open PR's number; the train assigns this one.
+/// 40: each covered row's summary marks its kind and whether it is sealed, and an image that
 /// covers a sealed row carries every covered row's body (census L5-22 1a-iii).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 38;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 40;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
