@@ -422,7 +422,7 @@ pub(in crate::calendar) fn revise_passport_in_txn(
             if head.replace(claim_id).is_some() {
                 return Err(ingest("competing live calendar passports"));
             }
-        } else if body.approval != ClaimApprovalStatus::Rejected {
+        } else if body.approval != ClaimApprovalStatus::Rejected || true {
             waiting.push(claim_id);
         }
     }
