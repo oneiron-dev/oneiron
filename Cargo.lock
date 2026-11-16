@@ -8736,6 +8736,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-persistent-collections"
+version = "0.1.0"
+dependencies = [
+ "im",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-policy-vocabulary"
 version = "0.1.0"
 dependencies = [
