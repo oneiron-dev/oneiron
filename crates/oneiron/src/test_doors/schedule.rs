@@ -544,6 +544,30 @@ pub fn due_at(vault: &Vault, job: &str, subject: Option<EntityId>) -> Result<Opt
     crate::schedule::due_at_in_txn(&vault.store, &txn, job, subject)
 }
 
+/// Fails its first run about a subject; every later run is done.
+fn run_fail_once(_vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    Ok(JobResult::of(if count(armed) == 1 {
+        Ran::Failed
+    } else {
+        Ran::Done
+    }))
+}
+
+/// A job whose first run about a subject fails, and whose retry is done.
+pub static TEST_FAIL_ONCE: JobSpec = JobSpec {
+    code: "test.fail_once",
+    when: When::PerArming,
+    arm_by: ArmBy::Actor,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: false,
+    runs_here: crate::schedule::any_node,
+    run: run_fail_once,
+};
+
 /// The engine arms `job` about `subject`, as its own doors do.
 ///
 /// # Errors
