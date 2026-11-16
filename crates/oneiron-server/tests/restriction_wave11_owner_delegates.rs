@@ -321,6 +321,7 @@ fn set_row(vault: &Vault, key: &str, item: Option<&str>, scope: SettingScope, va
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         }],
         false,
     )
