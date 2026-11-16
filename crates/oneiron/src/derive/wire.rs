@@ -30,12 +30,11 @@ use crate::snapshot_read::SourceVersion;
 use crate::verbs::IdentityProposedOp;
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::derive::wire::DerivePsychProfileInput;
-#[doc(hidden)]
 pub use oneiron_verb_wire::derive::wire::{
     DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveEvidenceInput, DeriveItemView,
-    DeriveLeftItemView, DeriveRef, DeriveRevertInput, DeriveRevertView, DeriveSameAsInput,
-    DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput,
+    DeriveLeftItemView, DerivePsychProfileInput, DeriveRef, DeriveRevertInput, DeriveRevertView,
+    DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals,
+    DeriveSupersedeInput,
 };
 
 impl From<DeriveRef> for ItemRef {

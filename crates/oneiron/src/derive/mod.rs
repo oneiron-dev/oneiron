@@ -68,9 +68,9 @@ pub use supersede::{
 };
 pub use wire::{
     DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveEvidenceInput,
-    DeriveItemInput, DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput,
-    DeriveRevertView, DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput,
-    DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
+    DeriveItemInput, DeriveItemView, DeriveLeftItemView, DerivePsychProfileInput, DeriveRef,
+    DeriveRevertInput, DeriveRevertView, DeriveSameAsInput, DeriveSettleInput,
+    DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it
