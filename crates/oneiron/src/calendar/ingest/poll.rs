@@ -13,6 +13,7 @@ use crate::attempt_queue::{
 use crate::calendar::CalendarError;
 use crate::calendar::ics::parse_ics_feed;
 use crate::calendar::safeguard::CalendarBodyScreener;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CALENDAR_ICS_FEED_EXCEPTION;
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -54,6 +55,16 @@ pub struct IcsFeedPollConfig {
     pub cadence_min_seconds: u32,
     /// Upper bound of the re-enqueue cadence window, seconds.
     pub cadence_max_seconds: u32,
+}
+
+/// The value of the `calendar.ics_feed` setting at the feed's system: its check is the feed's
+/// own structural validation.
+impl crate::setting::SettingValue for IcsFeedPollConfig {
+    fn check(self) -> crate::Result<Self> {
+        self.validate()
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        Ok(self)
+    }
 }
 
 impl IcsFeedPollConfig {
@@ -149,6 +160,13 @@ pub enum IcsPollRunState {
         /// Stable ref of the derived inbox exception row.
         inbox_exception_ref: EntityId,
     },
+    /// An installed feed's first completed poll: its imported claims wait on
+    /// the owner's one review (CAL-02), and no further poll is scheduled
+    /// until the owner approves it.
+    AwaitingReview {
+        /// How many imported claims the review holds.
+        claims: u32,
+    },
 }
 
 /// One derived inbox exception row for a paused feed. Derived, never stored:
@@ -229,25 +247,35 @@ pub fn enqueue_ics_feed_poll(
     now: u64,
 ) -> Result<EnqueueOutcome, CalendarError> {
     config.validate()?;
-    if let Some(record) = pending_poll_record(vault, &config)? {
+    Ok(vault
+        .with_write_txn_grouped(|txn| enqueue_ics_feed_poll_in_txn(vault, txn, &config, now))?)
+}
+
+/// [`enqueue_ics_feed_poll`] inside the caller's write, for a feed `config` already checked:
+/// the `calendar.ics_feed` setting's hook starts the chain in the write that installs the feed.
+pub(crate) fn enqueue_ics_feed_poll_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    config: &IcsFeedPollConfig,
+    now: u64,
+) -> crate::Result<EnqueueOutcome> {
+    if let Some(record) = pending_poll_record_in_txn(vault, &*txn, config)? {
         return Ok(EnqueueOutcome::Existing(record));
     }
-    let dedupe_key = ics_feed_poll_dedupe_key(&config);
-    enqueue_poll_attempt(vault, &config, now, dedupe_key, now)
+    let dedupe_key = ics_feed_poll_dedupe_key(config);
+    enqueue_poll_attempt_in_txn(vault, txn, config, now, dedupe_key, now)
 }
 
 /// The feed's live chain row, if any: one pending attempt carrying the bare
 /// setup key or any generation-scoped key.
-fn pending_poll_record(
+fn pending_poll_record_in_txn(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     config: &IcsFeedPollConfig,
-) -> Result<Option<AttemptRecord>, CalendarError> {
+) -> crate::Result<Option<AttemptRecord>> {
     let dedupe_key = ics_feed_poll_dedupe_key(config);
     // Only the poll kind's rows are read, not the whole ledger (FIX 11940).
-    let rows = {
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        AttemptQueue::new(vault).kind_working_rows_in_txn(&txn, ICS_POLL_ATTEMPT_KIND)?
-    };
+    let rows = AttemptQueue::new(vault).kind_working_rows_in_txn(txn, ICS_POLL_ATTEMPT_KIND)?;
     for record in rows {
         let pending = matches!(
             record.state,
@@ -316,6 +344,38 @@ pub fn run_ics_feed_poll_with_screener(
     now: u64,
     jitter_seed: u64,
 ) -> Result<IcsPollRunState, CalendarError> {
+    run_feed_poll(
+        vault,
+        fetcher,
+        screener,
+        safeguard_enabled,
+        config,
+        now,
+        jitter_seed,
+        None,
+    )
+}
+
+/// [`run_ics_feed_poll_with_screener`] for an installed feed when
+/// `installed_owner` names its owner: a complete body applies only while the
+/// feed's import consent (CAL-02) does not hold it, and the claims it admits
+/// settle under that consent as `installed_owner`. Its first completed poll's
+/// open the feed's review and end the poll chain. `None` leaves every
+/// admitted claim Proposed and the chain running.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one poll run, its screen, and the installed feed's owner"
+)]
+pub(super) fn run_feed_poll(
+    vault: &Vault,
+    fetcher: &dyn IcsFeedFetcher,
+    screener: Option<&dyn CalendarBodyScreener>,
+    safeguard_enabled: bool,
+    config: &IcsFeedPollConfig,
+    now: u64,
+    jitter_seed: u64,
+    installed_owner: Option<&AuthenticatedOwner>,
+) -> Result<IcsPollRunState, CalendarError> {
     config.validate()?;
     let cursor_digest = ics_feed_cursor_digest(config);
     let prior_cursor =
@@ -355,6 +415,13 @@ pub fn run_ics_feed_poll_with_screener(
             Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
         IcsFetchResponse::Complete { etag, body } => {
+            // Read again under the turn: another poll of this feed may have
+            // opened its review since this one was let through.
+            if installed_owner.is_some()
+                && let Some(hold) = super::consent::poll_hold(vault, config)?
+            {
+                return Err(ingest(hold));
+            }
             let source = archive_raw_feed(vault, config, &body, now)?;
             let blob_ref = source.blob_ref();
             let feed = parse_ics_feed(&body)?;
@@ -370,9 +437,21 @@ pub fn run_ics_feed_poll_with_screener(
                 verdict_fold: VerdictFold::default(),
                 continuations: Some(Vec::new()),
                 owed_booking_moves: 0,
+                admitted_claims: Vec::new(),
             };
             admission.apply_feed(&feed)?;
             admission.sweep_absent_sources(&feed)?;
+            let consent = installed_owner
+                .map(|owner| {
+                    super::consent::settle_completed_poll(
+                        vault,
+                        owner,
+                        config,
+                        &admission.admitted_claims,
+                        now,
+                    )
+                })
+                .transpose()?;
             // A booking move a pending emergency delivery held back stays
             // owed (FIX 22385): the cursor keeps no ETag, so the next poll
             // reads the whole feed again rather than a not-modified answer,
@@ -393,6 +472,9 @@ pub fn run_ics_feed_poll_with_screener(
                     ..IcsFeedCursor::new(config)
                 },
             )?;
+            if let Some(super::consent::CompletedPollConsent::OpenedReview { claims }) = consent {
+                return Ok(IcsPollRunState::AwaitingReview { claims });
+            }
             let next_not_before = reenqueue(vault, config, now, jitter_seed)?;
             Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
@@ -516,33 +598,44 @@ fn enqueue_poll_attempt(
     dedupe_key: String,
     now: u64,
 ) -> Result<EnqueueOutcome, CalendarError> {
+    Ok(vault.with_write_txn_grouped(|txn| {
+        enqueue_poll_attempt_in_txn(vault, txn, config, not_before, dedupe_key, now)
+    })?)
+}
+
+fn enqueue_poll_attempt_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    config: &IcsFeedPollConfig,
+    not_before: u64,
+    dedupe_key: String,
+    now: u64,
+) -> crate::Result<EnqueueOutcome> {
     let payload = serde_json::to_vec(&IcsFeedPollPayload {
         config: config.clone(),
         not_before,
     })
-    .map_err(|_| ingest("poll payload did not encode"))?;
-    Ok(vault.with_write_txn_grouped(|txn| {
-        let outcome = crate::ports::JobQueue::port_job_enqueue(
-            vault,
-            txn,
-            EnqueueAttempt {
-                kind: ICS_POLL_ATTEMPT_KIND.to_owned(),
-                payload,
-                dedupe_key: Some(dedupe_key),
-                run_id: None,
-                now,
-            },
-        )?;
-        // The feed's cadence holds at the queue (FIX 5957): a poll due later
-        // waits for `not_before`, so no claim runs it early, and it still
-        // runs then.
-        match outcome {
-            EnqueueOutcome::Enqueued(record) => Ok(EnqueueOutcome::Enqueued(
-                AttemptQueue::new(vault).defer_enqueued_in_txn(txn, record, not_before)?,
-            )),
-            existing => Ok(existing),
-        }
-    })?)
+    .map_err(|_| crate::Error::InvariantViolation("ICS poll payload did not encode"))?;
+    let outcome = crate::ports::JobQueue::port_job_enqueue(
+        vault,
+        txn,
+        EnqueueAttempt {
+            kind: ICS_POLL_ATTEMPT_KIND.to_owned(),
+            payload,
+            dedupe_key: Some(dedupe_key),
+            run_id: None,
+            now,
+        },
+    )?;
+    // The feed's cadence holds at the queue (FIX 5957): a poll due later
+    // waits for `not_before`, so no claim runs it early, and it still
+    // runs then.
+    match outcome {
+        EnqueueOutcome::Enqueued(record) => Ok(EnqueueOutcome::Enqueued(
+            AttemptQueue::new(vault).defer_enqueued_in_txn(txn, record, not_before)?,
+        )),
+        existing => Ok(existing),
+    }
 }
 
 fn ics_feed_cursor_digest(config: &IcsFeedPollConfig) -> [u8; 32] {

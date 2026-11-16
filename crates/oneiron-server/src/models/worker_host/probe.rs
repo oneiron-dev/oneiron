@@ -44,6 +44,7 @@ use super::super::http::{
     KeyStyle, MAX_REPLY_BYTES, ProviderHttp, charge_read, holding_chat_replies,
 };
 use super::super::llama_identity::verify_llama_header;
+use super::super::voxcpm2_speech::socket::VoiceSocketDialer;
 use super::launch_manifest::{LaunchRecord, LaunchSlot};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
@@ -69,6 +70,7 @@ pub(super) struct HouseProbe {
     wire_model: String,
     /// A managed worker's current launch; `None` for an external worker.
     slot: Option<Arc<LaunchSlot>>,
+    voice: Option<VoiceSocketDialer>,
 }
 
 impl HouseProbe {
@@ -96,10 +98,22 @@ impl HouseProbe {
             tracing::warn!(model = %wire_model, %error, "model worker probe unavailable");
             error.to_string()
         });
+        let voice = if provider.kind == ProviderKind::Voxcpm2 {
+            match VoiceSocketDialer::new(&provider) {
+                Ok(voice) => Some(voice),
+                Err(error) => {
+                    tracing::warn!(model = %wire_model, %error, "model worker probe unavailable");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Self {
             http,
             wire_model: wire_model.to_owned(),
             slot,
+            voice,
         }
     }
 
@@ -283,8 +297,14 @@ impl WorkerProbe for HouseProbe {
                 }
                 WorkerKind::VoxCpm2 | WorkerKind::Asr => {
                     let launch = self.launch();
-                    super::media_worker::probe(http, &self.wire_model, expected, launch.as_ref())
-                        .await
+                    super::media_worker::probe(
+                        http,
+                        &self.wire_model,
+                        expected,
+                        launch.as_ref(),
+                        self.voice.as_ref(),
+                    )
+                    .await
                 }
                 _ => WorkerReadiness::Unverified { observed: None },
             }
