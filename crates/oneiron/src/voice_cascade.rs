@@ -71,6 +71,7 @@ mod protocol;
 mod retrieval;
 mod safeguard;
 mod session;
+pub(crate) mod setting_keys;
 mod speakable;
 mod stream;
 pub use stream::{VoiceStreamConfig, VoiceStreamFailure, drive_voice_stream};
@@ -90,8 +91,8 @@ pub use retrieval::{PartialRetrieval, SpeculativeRetrievalBridge, UtteranceHandl
 pub use safeguard::{SafeguardRequest, SentenceEnforcement, SentenceWork};
 pub use session::{
     AsrUpdate, AudienceRefresh, FloorWords, PreparedAsr, SUSTAINED_INTERRUPTION_HOLD,
-    SafeguardUpdate, VOICE_IDENTITY_ASK_SECONDS, VoiceCascadeSession, VoiceContainerBinding,
-    VoiceSessionConfig,
+    SafeguardUpdate, VOICE_IDENTITY_ASK_SECONDS, VOICE_ROOM_CANDIDATES_MAX, VoiceCascadeSession,
+    VoiceContainerBinding, VoiceSessionConfig,
 };
 pub use speakable::{first_piece as speakable_first_piece, pieces as speakable_pieces};
 

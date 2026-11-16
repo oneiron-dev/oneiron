@@ -275,7 +275,9 @@ pub use rooms::{
     OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferReopenRequest, OfferSettlement,
     OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
 };
-pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
+pub(crate) use rooms::{
+    ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn, room_offer_idle_secs_in_txn,
+};
 pub use rooms::{RoomMemberRoleReceipt, RoomMemberRoleSet};
 pub use rooms::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};

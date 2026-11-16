@@ -13,6 +13,7 @@ mod project_proposal;
 pub(crate) use failure_card_validation::require_diagnosed_route;
 mod protocol;
 mod receipt_view;
+pub(crate) mod setting_keys;
 mod shape_plan;
 mod voice_offer;
 

@@ -186,6 +186,10 @@ pub struct RoomSection {
     /// The room's own open offer cards (OF-530 ruling A), read fresh: each
     /// stays listed while it is open.
     pub offers: Vec<crate::workspace_roster::OfferCard>,
+    /// How long a listed card with no fixed deadline stays open with no
+    /// engagement, in seconds: the owner's `genui.room_offer.idle_secs` as
+    /// the board was built.
+    pub offer_idle_secs: u64,
     /// The caller's read of the room's rules. Rules the caller could read but
     /// a present peer could not are counted as withheld rows.
     pub receipt: crate::claim::ScopedReadReceipt,
@@ -386,10 +390,9 @@ impl RoomSection {
                 || "none".to_owned(),
                 |cap| format!("{} {}", cap.units, cap.unit.as_str()),
             );
-            let ends = card.until.unwrap_or_else(|| {
-                card.last_engaged_at
-                    .saturating_add(crate::context_board::room_offer::ROOM_OFFER_IDLE_SECS)
-            });
+            let ends = card
+                .until
+                .unwrap_or_else(|| card.last_engaged_at.saturating_add(self.offer_idle_secs));
             format!(
                 "offer: {} agent={} what={} artifact={} cost={} until={} vote=vault.rooms.offer.vote answer=vault.rooms.offer.answer",
                 card.offer_id,

@@ -119,7 +119,9 @@ pub(in crate::workspace_roster) use liveness::{
 };
 pub use member_role::{RoomMemberRoleReceipt, RoomMemberRoleSet};
 pub use offer_activity::OfferVoteRequest;
-pub(crate) use offer_activity::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
+pub(crate) use offer_activity::{
+    ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn, room_offer_idle_secs_in_txn,
+};
 pub(in crate::workspace_roster) use offer_erase::drop_open_offer_in_txn;
 pub(crate) use offer_erase::erase_offer_actor_in_txn;
 pub use offer_history::ACTOR_ERASE_OFFER_BINDING;

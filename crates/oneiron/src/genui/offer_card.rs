@@ -12,10 +12,8 @@ use super::protocol::Of336ActionDescriptor;
 use crate::error::GateError;
 use crate::llm::run_admission::DeclaredMaximum;
 use crate::memory::{Memory, MemoryResult};
-use crate::workspace_roster::{
-    OfferAnswer, OfferCard, OfferSettlement, OfferState, ROOM_OFFER_IDLE_SECS,
-};
-use crate::{EntityId, Error, Result};
+use crate::workspace_roster::{OfferAnswer, OfferCard, OfferSettlement, OfferState};
+use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
@@ -72,8 +70,10 @@ pub enum OfferCardOutcome {
 impl OfferCardPayload {
     /// The payload of an open card, or of a room-wide card that aged out
     /// (its one verb is the host's reopening). A card answered, declined or
-    /// replaced asks nothing, and a thread card that ended is not drawn.
-    pub fn of(card: &OfferCard) -> Result<Self> {
+    /// replaced asks nothing, and a thread card that ended is not drawn. A
+    /// room-wide card with no fixed deadline ends `vault`'s
+    /// `genui.room_offer.idle_secs` after its last engagement.
+    pub fn of(vault: &Vault, card: &OfferCard) -> Result<Self> {
         let room_wide = card.branch.is_none();
         let phase = match card.state {
             OfferState::Open { .. } => OfferCardPhase::Open,
@@ -89,9 +89,13 @@ impl OfferCardPayload {
             }
         };
         let (until, last_engaged_at, ends_at) = if room_wide {
+            let idle = {
+                let txn = vault.store.env.read_txn()?;
+                crate::workspace_roster::room_offer_idle_secs_in_txn(vault, &txn)?
+            };
             let ends_at = card
                 .until
-                .unwrap_or_else(|| card.last_engaged_at.saturating_add(ROOM_OFFER_IDLE_SECS));
+                .unwrap_or_else(|| card.last_engaged_at.saturating_add(idle));
             (card.until, Some(card.last_engaged_at), Some(ends_at))
         } else {
             (None, None, None)

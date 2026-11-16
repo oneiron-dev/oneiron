@@ -23,6 +23,7 @@ use super::offers::{
 use crate::conversation_dag::AppendRecord;
 use crate::edge::EdgeKind;
 use crate::error::{ClaimError, Error, Result};
+use crate::genui::setting_keys::ROOM_OFFER_IDLE;
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessTurn};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -38,14 +39,25 @@ const OFFER_REFS: &str = "room_offer_refs";
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::rooms::offer_activity::OfferVoteRequest;
 
+/// How long a room-wide card with no fixed deadline stays open with no
+/// engagement, in seconds: the owner's `genui.room_offer.idle_secs`, the
+/// ruled day ([`ROOM_OFFER_IDLE_SECS`], OF-530 = A) by default.
+///
+/// # Errors
+///
+/// Storage errors reading the key.
+pub(crate) fn room_offer_idle_secs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
+    Ok(ROOM_OFFER_IDLE.read_in_txn(vault, txn, &[], None)?.value.0)
+}
+
 /// Whether `card`, a room-wide card open in store, has aged out at `now`:
-/// past its fixed deadline, or a day past its last engagement when it has
-/// none.
-pub(super) fn room_offer_expired(card: &OfferCard, now: u64) -> bool {
+/// past its fixed deadline, or `idle_secs` past its last engagement when it
+/// has none ([`room_offer_idle_secs_in_txn`]).
+pub(super) fn room_offer_expired(card: &OfferCard, now: u64, idle_secs: u64) -> bool {
     card.branch.is_none()
         && matches!(card.state, OfferState::Open { .. })
         && card.until.map_or_else(
-            || now.saturating_sub(card.last_engaged_at) >= ROOM_OFFER_IDLE_SECS,
+            || now.saturating_sub(card.last_engaged_at) >= idle_secs,
             |until| now >= until,
         )
 }
@@ -273,6 +285,7 @@ fn engage_in_txn(
         }
     }
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let idle = room_offer_idle_secs_in_txn(vault, txn)?;
     for mut stored in cards {
         // A replaced or answered card stays ordinary prose.
         if !matches!(stored.card.state, OfferState::Open { .. })
@@ -280,7 +293,7 @@ fn engage_in_txn(
         {
             continue;
         }
-        if room_offer_expired(&stored.card, now) {
+        if room_offer_expired(&stored.card, now, idle) {
             stored.card.state = OfferState::AgedOut;
         } else if stored.card.last_engaged_at < now {
             stored.card.last_engaged_at = now;
@@ -431,7 +444,7 @@ impl Memory<'_> {
                 return Ok(stored.into_card());
             }
             let held = stored.votes.get(&caller.entity_ref()).copied();
-            if room_offer_expired(&stored.card, now) {
+            if room_offer_expired(&stored.card, now, room_offer_idle_secs_in_txn(vault, txn)?) {
                 stored.card.state = OfferState::AgedOut;
             } else if held.is_some_and(|ballot| ballot.action == request.action) {
                 return Ok(stored.into_card());

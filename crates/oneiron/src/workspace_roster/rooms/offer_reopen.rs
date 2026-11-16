@@ -13,7 +13,7 @@
 //! second click on the same card, or one on a card that has moved since,
 //! returns the card as it stands and renews nothing.
 
-use super::offer_activity::{is_current_in_txn, room_offer_expired};
+use super::offer_activity::{is_current_in_txn, room_offer_expired, room_offer_idle_secs_in_txn};
 use super::offer_history::live_offer;
 use super::offers::{OFFERS, OfferCard, OfferState, is_offer_id, join_refused};
 use crate::error::Error;
@@ -47,7 +47,8 @@ impl Memory<'_> {
                     "only the current room-wide card reopens",
                 ));
             }
-            let expired = room_offer_expired(&stored.card, now);
+            let idle = room_offer_idle_secs_in_txn(vault, txn)?;
+            let expired = room_offer_expired(&stored.card, now, idle);
             match stored.card.state {
                 OfferState::AgedOut => {}
                 OfferState::Open { .. } if expired => {}
