@@ -19,22 +19,17 @@ use std::sync::Arc;
 use loro::{LoroDoc, ValueOrContainer};
 use oneiron::authority::{HostSlipIssuer, PeerMachine};
 use oneiron::federation::{FederationGrantRole, FederationGrantScope};
-use oneiron::habit::TaskRole;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
-use oneiron::sync::client::ImportTier;
 use oneiron::sync::manager::WindowManager;
-use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, filtered_window_doc, filtered_window_doc_for_peer,
 };
+use oneiron::task_verb::TaskCreateSpec;
 use oneiron::test_doors::membership::stand_member_grant;
-use oneiron::{
-    EntityId, Result, TASK_AUTHORITY_FACT_SCHEMA_VERSION, TASK_AUTHORITY_FACT_SUBKIND,
-    TaskAuthorityFactKind, TimeRange, Vault, VaultConfig,
-};
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, Result, TimeRange, Vault, VaultConfig};
 use rmpv::Value;
 
 /// March 2026, the window every row here is written in.
@@ -50,57 +45,6 @@ fn encode(value: &Value) -> Vec<u8> {
     bytes
 }
 
-/// An ordinary TASK row (role 1).
-fn task_body() -> Vec<u8> {
-    encode(&Value::Map(vec![(
-        Value::from("role"),
-        Value::from(TaskRole::Task.role_byte()),
-    )]))
-}
-
-/// One strict-v1 authority fact body about `task_ref`.
-fn authority_fact_body(
-    task_ref: EntityId,
-    kind: TaskAuthorityFactKind,
-    actor: EntityId,
-) -> Vec<u8> {
-    encode(&Value::Map(vec![
-        (
-            Value::from("role"),
-            Value::from(TaskRole::AuthorityFact.role_byte()),
-        ),
-        (
-            Value::from("schema_version"),
-            Value::from(TASK_AUTHORITY_FACT_SCHEMA_VERSION),
-        ),
-        (
-            Value::from("subkind"),
-            Value::from(TASK_AUTHORITY_FACT_SUBKIND),
-        ),
-        (Value::from("task_ref"), Value::from(task_ref.to_hex())),
-        (Value::from("kind"), Value::from(kind.as_byte())),
-        (Value::from("actor_ref"), Value::from(actor.to_hex())),
-        (Value::from("occurred_at"), Value::from(T0)),
-    ]))
-}
-
-/// Lands one TASK row as this vault's own machine wrote it: the own-device
-/// replay door admits role 6 like any other TASK row.
-fn land_own_task_row(vault: &Vault, id: EntityId, body: &[u8]) -> Result<()> {
-    replay_entity(
-        vault,
-        ReplicatedEntity {
-            id,
-            entity_type: ENTITY_TYPE_TASK,
-            occurred: TimeRange { start: T0, end: T0 },
-            learned_at: T0,
-            row_version: 0,
-            body,
-        },
-        ImportTier::OwnDevice,
-    )
-}
-
 fn has_entity(doc: &LoroDoc, id: EntityId) -> bool {
     matches!(
         doc.get_map("entities").get(&id.to_hex()),
@@ -108,21 +52,60 @@ fn has_entity(doc: &LoroDoc, id: EntityId) -> bool {
     )
 }
 
+/// The TASK rows scoped to `task`: the authority facts about it.
+fn authority_facts(vault: &Vault, task: EntityId) -> Result<Vec<EntityId>> {
+    let tasks = vault.entities_by_type(ENTITY_TYPE_TASK)?;
+    Ok(vault
+        .edges_in(&task)?
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::ScopedTo && tasks.contains(&edge.target))
+        .map(|edge| edge.target)
+        .collect())
+}
+
 struct Fixture {
-    _dir: tempfile::TempDir,
     _issuer: HostSlipIssuer,
     vault: Arc<Vault>,
     manager: Arc<WindowManager>,
     selector: SyncSelector,
     task: EntityId,
     fact: EntityId,
+    // Last, so every vault handle closes before its directory goes.
+    _dir: tempfile::TempDir,
 }
 
-/// A shared vault with a member grant, one TASK and its Owner fact.
+/// A shared vault with a member grant, one TASK and its Owner fact. Both rows
+/// come from the task door, as a real TASK does: a row landed by replay takes
+/// no birth stamp, and a selector export withholds an unstamped row that is
+/// not a CLAIM, so a replayed TASK would cross no window at all.
 fn fixture() -> Result<Fixture> {
     let dir = tempfile::tempdir().expect("temp dir");
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default())?);
+    let vault = Arc::new(Vault::open_owned(dir.path(), VaultConfig::default())?);
     let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let task = vault
+        .memory(owner_id, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            Value::from("review the shared roadmap"),
+            None,
+            Some(owner_id),
+            Some(T0),
+        ))
+        .expect("the task door")
+        .task_ref
+        .expect("the TASK creation took effect");
+    let facts = authority_facts(&vault, task)?;
+    assert_eq!(
+        facts.len(),
+        1,
+        "the task door writes exactly the Owner fact beside the TASK"
+    );
+    let fact = facts[0];
+    for (name, row) in [("TASK", task), ("Owner fact", fact)] {
+        assert!(
+            vault.record_scope(&row)?.is_some(),
+            "the {name} carries a birth stamp, which a selector export needs"
+        );
+    }
     let owner =
         vault.authenticate_owner(owner_id, "owen@example.com", true, GateDecisionId::now())?;
     let issuer = HostSlipIssuer::from_secret(b"task-fact-member-window")?;
@@ -145,27 +128,19 @@ fn fixture() -> Result<Fixture> {
         .commit()?;
     let grant = stand_member_grant(&vault, member, SHARED, FederationGrantRole::Member)?;
     let selector = SyncSelector::new(grant, member, SyncSelectorWorld::Base, vec![], vec![]);
-    let task = EntityId::now();
-    let fact = EntityId::now();
-    land_own_task_row(&vault, task, &task_body())?;
-    land_own_task_row(
-        &vault,
-        fact,
-        &authority_fact_body(task, TaskAuthorityFactKind::Owner, owner_id),
-    )?;
     let manager = Arc::new(WindowManager::new(
         Arc::clone(&vault),
         Arc::new(Materializer::new()),
         "owen",
     ));
     Ok(Fixture {
-        _dir: dir,
         _issuer: issuer,
         vault,
         manager,
         selector,
         task,
         fact,
+        _dir: dir,
     })
 }
 
@@ -174,6 +149,12 @@ fn a_member_window_withholds_task_authority_facts() -> Result<()> {
     let fixture = fixture()?;
     let key = WindowKey::new(WINDOW);
     let window = fixture.manager.open_window(&key)?;
+    // The fact is in the window the export filters, so its absence below is
+    // the export's doing, not a gap in the window itself.
+    assert!(
+        has_entity(&window.doc, fixture.fact),
+        "the Owner fact is in the unfiltered window"
+    );
     let doc = filtered_window_doc_for_peer(
         &fixture.vault,
         &window.doc,
