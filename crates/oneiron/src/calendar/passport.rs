@@ -35,7 +35,8 @@ use crate::vault::Vault;
 
 /// The reason code on the tray resolution of a waiting passport revision
 /// that a later revision replaced.
-const REVISION_REPLACED_REASON: &str = "calendar.passport.revision_replaced";
+/// The gate decision ledger takes only `gate.` reason codes.
+const REVISION_REPLACED_REASON: &str = "gate.calendar.passport.revision_replaced";
 
 /// UID-to-EVENT lookup cache. Key: `sha256(uid)`. Node-local cache; the live
 /// passport claims are the synced truth.
@@ -520,8 +521,10 @@ pub(super) fn event_ref_for_indexed_uid(
 /// several live claims. This view takes the latest filed of them, admitted or
 /// not: the diff files neither a waiting revision nor a rejected one again,
 /// and once a later revision is admitted, an older rejected one no longer
-/// steers the diff. Claim ids are the store clock's monotonic ULIDs, so the
-/// larger id is the later filing. Authority reads the admitted head
+/// steers the diff. The larger claim id is the later filing: ids are ULIDs in
+/// minting order, so a claim filed under an id minted earlier (a synced claim,
+/// or a raw [`Vault::put_claim`] with a reserved id) counts at its minting
+/// time. Authority reads the admitted head
 /// ([`admitted_passports_for_event_in_txn`]).
 ///
 /// # Errors
