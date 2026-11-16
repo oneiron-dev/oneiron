@@ -730,12 +730,19 @@ pub(crate) fn trial_unit_context_in_txn(
     locality: crate::claim::CallerLocality,
     answer: &AnswerRecord,
 ) -> Result<GraphUnitContext> {
+    // An answer kept with no source pins (a host's own backfill saved before
+    // the engine pinned it, a refresh answer whose answerer was shown no
+    // graph context) names no version to re-read, and none is invented.
+    if answer.decision.receipt.evidence_versions.is_empty() {
+        return Err(invalid("held-out answer has no source pins"));
+    }
     // A trial reads inside the lane the answered version was saved under.
     let read_lane = super::saved_reader::answer_lane_in_txn(vault, txn, principal, answer)?;
     let key = super::saved_reader::saved_reader_in_txn(vault, txn, principal, &read_lane)?;
     let lane = super::reader_authority::question_lane(vault, key.at(locality));
     let reads_stored = lane.reads_stored_bodies_in(txn)?;
     let mut sources = Vec::new();
+    let mut served = Vec::new();
     for pin in &answer.decision.receipt.evidence_versions {
         let raw = lane
             .graph_ask_raw_in_txn(txn, &pin.id)?
@@ -754,12 +761,17 @@ pub(crate) fn trial_unit_context_in_txn(
             ));
         }
         sources.push(source(reads_stored, pin.id, header.entity_type, body)?);
+        served.push((pin.id, raw));
     }
+    // The frontier is checked in the form its writer saved it: a refresh
+    // hashed the unit's live row, the standing writer the unit then its
+    // evidence. Each matches only while no source it hashed has moved.
     if sources
         .first()
         .is_none_or(|source| source.id != answer.unit)
-        || super::refresh::trial_source_frontier(vault, txn, principal, &read_lane, answer.unit)?
+        || (super::refresh::trial_source_frontier(vault, txn, principal, &read_lane, answer.unit)?
             != Some(answer.frontier)
+            && !super::standing::standing_frontier_holds_in_txn(vault, txn, answer, &served)?)
     {
         return Err(Error::ConcurrentWrite(
             "model trial source frontier changed",
