@@ -74,6 +74,18 @@ answered, walk the person through these steps.
    ```
 
    `oneiron user-service remove` stops the service and deletes its unit.
+6. Optional, for a hosted vault: sign in to it from this machine. The command
+   opens the vault's sign-in page in a browser on this machine; allow the
+   request in the Oneiron inbox when its match code is the same. A session
+   then binds the hosted vault when none is pinned and no local vault is
+   running.
+
+   ```bash
+   oneiron hosted login --origin https://vault.example.com
+   ```
+
+   Use the hosted vault's own origin. `oneiron hosted logout` signs out and
+   revokes the sign-in.
 
 Setup details, the vault each session binds, and what lands:
 `docs/ops/claude-code-hooks.md` and `docs/ops/connect-an-agent.md` in the

@@ -104,6 +104,8 @@ mod esign_qr;
 mod first_party_html;
 mod inquiry_peer;
 mod oauth_server;
+// The vault's own sign-in routes, which `oneiron hosted login` calls as a
+// native app (L1-14).
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 pub(crate) use self::esign::notice_worker::dispatch_due_notices as dispatch_esign_due_notices;
@@ -113,6 +115,9 @@ pub(crate) use self::esign::page_inspector::EsignOrganPageInspector;
 pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
+pub(crate) use self::oauth_server::{
+    AUTHORIZE_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
+};
 pub(crate) mod off_record_rooms;
 mod one_click_unsubscribe;
 pub(crate) use self::one_click_unsubscribe::install_one_click_unsubscribe_origin;
