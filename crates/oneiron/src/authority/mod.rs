@@ -45,6 +45,8 @@ mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
 mod ancestor_index;
+#[cfg(oneiron_test_support)]
+pub(crate) mod ancestor_index_door;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;

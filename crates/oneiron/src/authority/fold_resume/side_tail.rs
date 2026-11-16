@@ -31,7 +31,7 @@ pub(super) struct FrontierPoint {
 pub(super) fn frontier_of(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    entry_ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    entry_ancestors: &AncestorIndex,
     uncounted: &BTreeSet<AuthorityEntryHash>,
     head: AuthorityEntryHash,
 ) -> Option<BTreeMap<AuthorityEntryHash, FrontierPoint>> {
@@ -50,8 +50,10 @@ pub(super) fn frontier_of(
             let point = FrontierPoint {
                 state: Arc::new(states.get(&hash)?.clone()),
                 ancestors: past.len() as u64,
-                counted_ancestors: past.iter().filter(|row| !uncounted.contains(*row)).count()
-                    as u64,
+                counted_ancestors: past
+                    .iter_unordered()
+                    .filter(|row| !uncounted.contains(*row))
+                    .count() as u64,
             };
             Some((hash, point))
         })

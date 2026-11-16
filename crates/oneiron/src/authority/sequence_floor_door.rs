@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::ancestor_index::AncestorIndex;
 use super::fold_engine::{FoldContext, OnceFloors};
 use super::{AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityVaultId};
 
@@ -162,7 +163,7 @@ fn effective(
 
 fn single_chain(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
 ) -> bool {
     let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
     for (hash, entry) in by_hash {
@@ -193,7 +194,7 @@ fn single_chain(
 /// `sequence_ancestry` ran on arrival floors, kept here alone.
 fn arrival_lifted_floors(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> OnceFloors {
     let original = context.sequence_floors.cloned().unwrap_or_default();
@@ -207,8 +208,11 @@ fn arrival_lifted_floors(
             if rollback_tip && !roster_tip {
                 continue;
             }
-            let covered: Vec<_> = ancestors[tip_hash]
-                .iter()
+            // `covered` is only taken out of `trial`, so its order is free.
+            let covered: Vec<_> = ancestors
+                .get(tip_hash)
+                .expect("the index holds every row")
+                .iter_unordered()
                 .filter(|hash| {
                     by_hash.get(*hash).is_some_and(|entry| {
                         let in_flight =
