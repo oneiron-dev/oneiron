@@ -36,6 +36,7 @@ mod recovery;
 mod result_scrub;
 mod scope;
 mod scoped_prepared_effect;
+pub(crate) mod setting_keys;
 pub mod tool_call;
 mod tool_schema;
 mod zeroizing_wire;
@@ -67,7 +68,11 @@ pub use self::connector_call_input::ConnectorCallInput;
 pub use self::connector_call_input_resume::{
     ConnectorResumeProtocol, ConnectorResumeState, OpenedConnectorResume,
 };
-pub(crate) use self::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
+pub(crate) use self::connector_call_pending::connector_call_pending_ttl_secs_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::connector_call_pending::{
+    held_connector_call_settled, put_held_connector_call,
+};
 pub(crate) use self::connector_call_rebind::{
     code_wait_rebind_effects_in_txn, code_wait_retry_approval_in_txn,
 };
