@@ -411,7 +411,7 @@ fn every_generator_pattern_is_in_the_subset() {
             if path.is_dir() {
                 dirs.push(path);
             } else if path.extension().is_some_and(|extension| extension == "rs")
-                && !path.ends_with("py/re.rs")
+                && !path.ends_with("py/re/tests.rs")
             {
                 files.push(path);
             }
