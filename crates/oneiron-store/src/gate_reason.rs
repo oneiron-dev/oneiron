@@ -1,5 +1,7 @@
 //! Gate outcomes, stable reason codes, and pure metric classification.
 
+use oneiron_contracts::register::Register;
+
 pub const GATE_METRIC_OUTCOME_COUNT: usize = 3;
 pub const GATE_METRIC_REASON_CLASS_COUNT: usize = 18;
 
@@ -40,10 +42,16 @@ impl GateOutcome {
 /// a row written with one of the 11 words before `Noted` holds the same bytes
 /// as the plain string it held before this type.
 ///
+/// A Register (`gate.outcome`): each word's stored token is its serde name (`as_str`, and
+/// `Register::named` to read one back), and `ROWS` lists the 12 in declaration order.
+///
 /// [`GateOutcome`] stays the verdict of one gate evaluation: an evaluation can
 /// never return [`Self::Approved`], and the metrics arrays index by it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("gate.outcome")]
 pub enum GateReceiptOutcome {
     /// The engine's own rule let it go ahead.
     Allow,
@@ -72,54 +80,11 @@ pub enum GateReceiptOutcome {
 }
 
 impl GateReceiptOutcome {
-    /// Every outcome, in declaration order.
-    pub const ALL: [Self; 12] = [
-        Self::Allow,
-        Self::Pending,
-        Self::Deny,
-        Self::Approved,
-        Self::ApprovedAmended,
-        Self::Rejected,
-        Self::LetGo,
-        Self::Superseded,
-        Self::Retracted,
-        Self::Invalidated,
-        Self::Revoked,
-        Self::Noted,
-    ];
-
-    /// The stored token, the same string `serde` writes.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Pending => "pending",
-            Self::Deny => "deny",
-            Self::Approved => "approved",
-            Self::ApprovedAmended => "approved_amended",
-            Self::Rejected => "rejected",
-            Self::LetGo => "let_go",
-            Self::Superseded => "superseded",
-            Self::Retracted => "retracted",
-            Self::Invalidated => "invalidated",
-            Self::Revoked => "revoked",
-            Self::Noted => "noted",
-        }
-    }
-
     /// The thing this row is about went ahead with authority: the rule let it
     /// go, or the one who answered said yes.
     #[must_use]
     pub const fn admits(self) -> bool {
         matches!(self, Self::Allow | Self::Approved | Self::ApprovedAmended)
-    }
-
-    /// The outcome a stored token names: one of the 12 words, or `None`.
-    #[must_use]
-    pub fn from_token(token: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|outcome| outcome.as_str() == token)
     }
 
     /// The outcome a stored Gate row records, from its `outcome` word and its
@@ -134,7 +99,7 @@ impl GateReceiptOutcome {
     /// word in neither table.
     #[must_use]
     pub fn from_stored(outcome: &str, content_kind: &str) -> Option<Self> {
-        Self::from_token(outcome).or_else(|| Self::from_held_word(outcome, content_kind))
+        Self::named(outcome).or_else(|| Self::from_held_word(outcome, content_kind))
     }
 
     /// A word a writer recorded before stage 1f, read by its family's mapping.
