@@ -214,17 +214,22 @@ pub(super) fn admission_short_circuit(
             Ok(Some(benign_response(request)))
         }
         BookingHttpDisposition::PromptCorrection { body } => Err(prompt_correction_error(&body)),
-        BookingHttpDisposition::RetryAfter { seconds, .. } => {
-            let state = format!("booking_retry_after_{seconds}s");
-            Err(ApiError::new(
-                format!("booking admission is rate limited; retry after {seconds} seconds"),
-                crate::error::ApiErrorDetails::InvalidState { state: Some(state) },
-                [format!(
-                    "Wait {seconds} seconds before retrying this booking request."
-                )],
-            ))
-        }
+        BookingHttpDisposition::RetryAfter { seconds, .. } => Err(retry_after(seconds)),
     }
+}
+
+/// The typed refusal an anonymous request past a window gets
+/// (`booking_retry_after_<n>s`, ARCH-0062 #rate-wait-built): pre-auth work
+/// is never made to wait.
+pub(super) fn retry_after(seconds: u64) -> ApiError {
+    let state = format!("booking_retry_after_{seconds}s");
+    ApiError::new(
+        format!("booking admission is rate limited; retry after {seconds} seconds"),
+        crate::error::ApiErrorDetails::InvalidState { state: Some(state) },
+        [format!(
+            "Wait {seconds} seconds before retrying this booking request."
+        )],
+    )
 }
 
 /// The success-shaped answer a silent rejection returns.

@@ -37,6 +37,6 @@ pub(crate) use self::cache::{cached_slot_list_body, remember_slot_list_body};
 #[allow(unused_imports)]
 pub(crate) use self::guards::enforce_book;
 pub(crate) use self::guards::{
-    BookingCaller, BookingHttpDisposition, enforce_amend, enforce_book_restorable, enforce_hold,
-    enforce_slot_list,
+    BookingCaller, BookingHttpDisposition, SESSION_HOLD_RETRY_SECS, enforce_amend,
+    enforce_book_restorable, enforce_hold, enforce_slot_list,
 };

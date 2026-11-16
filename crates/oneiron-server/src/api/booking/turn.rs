@@ -6,13 +6,16 @@
 //! on is a hold's one-active-per-session rule. Its wait keeps its arrival
 //! place (ARCH-0062 #booking-turn-divergence): a hold waits in its page
 //! session's line, first in, first out, behind every hold that came first.
+//! An anonymous hold never waits there, and never goes ahead of a hold that
+//! does: it takes the line only when nobody is in it.
 
 use std::time::Duration;
 
 use oneiron::booking::SessionKey;
 use tokio::time::Instant;
 
-use crate::api::booking_anti_abuse::BookingHttpDisposition;
+use super::admission::retry_after;
+use crate::api::booking_anti_abuse::{BookingHttpDisposition, SESSION_HOLD_RETRY_SECS};
 use crate::error::ApiError;
 use crate::server::{LinePlace, SyncServer};
 use crate::wire_telemetry::LimitRow;
@@ -50,12 +53,27 @@ impl<'a> Turn<'a> {
     }
 
     /// Takes this request's place in `window`'s line and waits there for
-    /// every authenticated request on that window that came first, until the
-    /// deadline. An anonymous request keeps no place: it is never made to
-    /// wait. Past the deadline it is answered `booking_turn_waited_out`
-    /// before any admission ran, so nothing was spent.
+    /// every request on that window that came first, until the deadline.
+    /// Past the deadline it is answered `booking_turn_waited_out` before any
+    /// admission ran, so nothing was spent.
+    ///
+    /// An anonymous request is never made to wait (ARCH-0062
+    /// #rate-wait-built): it takes the head of an empty line and holds it as
+    /// an authenticated request does, and a line someone is in answers it
+    /// `booking_retry_after_60s`, the session hold cap's own hint, before any
+    /// admission ran. So it never takes the window ahead of a request that
+    /// waits for it (FIX BOOKING-ANON-HOLD-OVERTAKES-LINE).
     pub(crate) async fn line_up(&mut self, window: SessionKey) -> Result<(), ApiError> {
-        if !self.authenticated || self.place.is_some() {
+        if self.place.is_some() {
+            return Ok(());
+        }
+        if !self.authenticated {
+            self.place = Some(
+                self.server
+                    .booking_turn_lines
+                    .try_join(window)
+                    .ok_or_else(|| retry_after(SESSION_HOLD_RETRY_SECS))?,
+            );
             return Ok(());
         }
         match self
