@@ -25,8 +25,12 @@ pub(super) struct DeleteAuthority {
     pub(super) role: &'static str,
     /// The Admin's live vault grant and its membership role, an Admin or a
     /// Deputy (check-in judges the confirm under it, 2k5e); none for the
-    /// Owner.
+    /// Owner and for an agent.
     pub(super) grant: Option<(EntityId, FederationGrantRole)>,
+    /// An agent's live owner Grant that names [`AGENT_DELETE_LINE`]; none
+    /// for a person. Check-in does not judge an agent at this door: PR 3's
+    /// act gate judges agents.
+    pub(super) agent_grant: Option<EntityId>,
 }
 
 pub(super) fn require_delete_in_txn(
@@ -44,6 +48,7 @@ pub(super) fn require_delete_in_txn(
             actor,
             role: "owner",
             grant: None,
+            agent_grant: None,
         });
     }
     if memory.actor_class() != EdgeActorClass::Human {
@@ -82,6 +87,7 @@ pub(super) fn require_delete_in_txn(
                 actor,
                 role: "admin",
                 grant: Some((id, role)),
+                agent_grant: None,
             });
         }
     }
@@ -114,7 +120,8 @@ fn agent_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResult<Dele
         Ok(grant) => Ok(DeleteAuthority {
             actor,
             role: "agent",
-            grant: Some(grant),
+            grant: None,
+            agent_grant: Some(grant),
         }),
         Err(_) => Err(forbidden("attempt_delete_no_standing")),
     }

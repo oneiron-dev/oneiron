@@ -274,6 +274,8 @@ fn an_agent_deletes_a_cleanup_archived_attempt_once_the_owner_turns_the_admin_ru
     assert_eq!(receipt["role"], "agent", "{receipt}");
     assert_eq!(receipt["deleted_by"], granted.to_hex(), "{receipt}");
     assert!(receipt["grant_ref"].is_string(), "{receipt}");
+    // Check-in does not judge an agent at this door (PR 3's act gate does).
+    assert!(receipt["check_in"].is_null(), "{receipt}");
     assert!(
         !fx.vault.archived_attempt(fx.attempt).expect("archive read"),
         "the archived attempt is gone"
