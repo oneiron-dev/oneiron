@@ -2,7 +2,7 @@
 //! acts say of a FEDERATION_GRANT row, and whether the row stands on them.
 
 use crate::authority::GrantFamily;
-use crate::federation::ScopeAxis;
+use crate::federation::{Scope, ScopeAxis};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Result, Vault};
@@ -97,6 +97,27 @@ pub fn grant_row_verbs(vault: &Vault, id: EntityId) -> Result<Option<Vec<String>
             ScopeAxis::Bottom => Vec::new(),
         }
     }))
+}
+
+/// The authority scope the live Grant row `id` confers at the vault clock as this vault's readers
+/// read it (`Vault::grant_row_at_in_txn`); `None` when the row stands for nothing (pass 28 R4).
+///
+/// # Errors
+///
+/// A store, authority-fold or owner-census read failure.
+pub fn grant_row_scope(vault: &Vault, id: EntityId) -> Result<Option<Scope>> {
+    let txn = vault.store.env.read_txn()?;
+    let LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+        body,
+    } = live_entity_row_in_txn(&vault.store, &txn, &id)?
+    else {
+        return Ok(None);
+    };
+    let now = vault.store.clock.now_recorded_at();
+    Ok(vault
+        .grant_row_at_in_txn(&txn, id, &body, now)?
+        .map(|row| row.grant().authority_scope.clone()))
 }
 
 /// The ids of the Grant rows over shared vault `vault_id` that confer to a membership reader at

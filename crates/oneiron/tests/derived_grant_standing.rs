@@ -14,6 +14,8 @@
 //! R4-DEFAULT-END-AFTER-WHOLE-REVOKE = C). Before it, a default-shape row put after the owner
 //! revoked the Dreamer's Grant whole, or narrowed it, read with every default verb at each fold
 //! reader. The engine's own default still reads with its default verbs before any revoke.
+//! The meet holds the data axes too (FIX ENGINE-DEFAULT-DERIVED-LIMITS (b)): a default-shape
+//! row reaches no record the agent's standing rows do not reach together.
 //!
 //! Runs on public paths and the test doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
@@ -27,7 +29,7 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     EngineControlActor, EngineControlClass, FederationGrant, FederationGrantPreset as Preset,
-    FederationGrantRole as Role, FederationGrantScope, InitialSharedMember,
+    FederationGrantRole as Role, FederationGrantScope, InitialSharedMember, ScopeAxis,
     SystemAgentGrantNarrowing, own_device_residence_scope,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -37,8 +39,11 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::coach::{
     ENGINE_CONTROLS_WORK_BUDGET_VERB, coach, read_and_engine_controls,
 };
+use oneiron::test_doors::derive::narrow_steward_grant_to_project;
 use oneiron::test_doors::grant_act::put_unkeyed_member_grant;
-use oneiron::test_doors::grant_standing::{grant_row_verbs, shared_vault_grant_ids};
+use oneiron::test_doors::grant_standing::{
+    grant_row_scope, grant_row_verbs, shared_vault_grant_ids,
+};
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, STEWARD_VERBS, dreamer, open_owner_carrier_vault, receive_steward_grant_row,
 };
@@ -355,5 +360,38 @@ fn the_engine_default_row_reads_with_its_default_verbs_before_any_revoke() {
         grant_row_verbs(&vault, default).expect("the fold reader"),
         Some(verbs),
         "the engine's default row reads with the verbs it was stood with"
+    );
+}
+
+/// The Dreamer's engine-default Grant, as its receipt names it, and the verbs it was stood with.
+fn dreamer_default(vault: &Vault, owner: EntityId, dreamer: EntityId) -> (EntityId, Vec<String>) {
+    vault
+        .engine_default_grants(&proof(vault, owner))
+        .expect("the engine-defaults door")
+        .into_iter()
+        .find(|(_, receipt)| receipt.agent == dreamer)
+        .map(|(grant, receipt)| (grant, receipt.verbs.into_iter().collect()))
+        .expect("the engine stood the Dreamer's default")
+}
+
+#[test]
+fn a_default_shape_row_reaches_no_record_the_agents_standing_rows_do_not_reach() {
+    let (_dir, vault, owner, dreamer) = defaults_vault();
+    let (default, _) = dreamer_default(&vault, owner, dreamer);
+    narrow_steward_grant_to_project(&vault, default, EntityId::now())
+        .expect("the default row held to one project");
+    let held = grant_row_scope(&vault, default)
+        .expect("the fold reader")
+        .expect("the default row stands")
+        .audience;
+    assert_ne!(held, ScopeAxis::All, "the default row holds one project");
+    let forged = receive_steward_grant_row(&vault, dreamer, &STEWARD_VERBS).expect("the row lands");
+
+    assert_eq!(
+        grant_row_scope(&vault, forged)
+            .expect("the fold reader")
+            .map(|scope| scope.audience),
+        Some(held),
+        "a row no act gives reaches only the projects the agent's standing rows reach together"
     );
 }
