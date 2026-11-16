@@ -4,7 +4,9 @@
 //! - the owner's table lands, the defaults reader reads it (every reader goes through
 //!   `read_effective_defaults`), and a clear brings back the shipped table;
 //! - a person who holds the policy power over `settings.inference_defaults` (an Admin whose
-//!   Owner-minted `policy.change` grant names its target) widens and narrows at once;
+//!   Owner-minted `policy.change` grant names its target, and whose membership the Owner's grant
+//!   rows let carry the `policy.change` verb class, which the shipped rows give to no role) widens
+//!   and narrows at once;
 //! - a member without that power asks, and the defaults stay as they are;
 //! - over a table the owner set, a policy holder's change asks (a key that reads one row keeps a
 //!   holder clear of the owner's row);
@@ -36,6 +38,7 @@ use oneiron::verbs::{
     mint_agent_grant_as,
 };
 use oneiron::{CallPurpose, EntityId, ModelLocality, Vault, VaultConfig};
+use oneiron_authority::federation::scope_codec;
 use oneiron_keystore::MemoryKeystore;
 use serde_json::json;
 
@@ -97,6 +100,60 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
         .expect("a person proof")
 }
 
+/// The Owner's grant rows let an Admin's membership carry the `policy.change` verb class
+/// (the shipped rows give it to no role). A person holder's membership scope must admit it
+/// beside the Owner's named `policy.change` grant (`holders_for_in_txn`'s rule).
+/// Run this before the Admin's membership grant is minted.
+fn admit_policy_change_for_admins(vault: &Vault, owner: &AuthenticatedOwner) {
+    let id = oneiron_store::policy_record::default_policy_manifest_id()
+        .expect("the default policy manifest id");
+    let body = vault
+        .get(&id)
+        .expect("read the default policy manifest")
+        .expect("the default policy manifest is stored");
+    let rmpv::Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("decode the default policy manifest")
+    else {
+        panic!("the default policy manifest is a map");
+    };
+    let Some((_, rmpv::Value::Array(rows))) = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("federation_grant_rows"))
+    else {
+        panic!("the default policy manifest has a federation_grant_rows array");
+    };
+    let mut changed = 0;
+    for row in rows {
+        let rmpv::Value::Map(fields) = row else {
+            panic!("a federation grant row is a map");
+        };
+        if !fields.iter().any(|(key, value)| {
+            key.as_str() == Some("kind") && value.as_str() == Some("role_default")
+        }) || !fields.iter().any(|(key, value)| {
+            key.as_str() == Some("role") && value.as_str() == Some(Role::Admin.as_str())
+        }) {
+            continue;
+        }
+        let (_, value) = fields
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("scope"))
+            .expect("the Admin role_default row has a scope");
+        let mut scope = scope_codec::decode_scope_value(value).expect("the Admin's scope decodes");
+        if let ScopeAxis::Some(verbs) = &mut scope.verbs {
+            verbs.insert("policy.change".to_owned());
+            *value = scope_codec::encode_scope_value(&scope).expect("the Admin's scope encodes");
+            changed += 1;
+        }
+    }
+    assert_eq!(changed, 1, "one Admin role_default row was changed");
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(fields))
+        .expect("encode the default policy manifest");
+    vault
+        .install_owner_policy_manifest(owner, id, bytes, vault.now_recorded_at())
+        .expect("the Owner admits policy.change in future Admin memberships");
+}
+
 /// A shared vault whose roster holds its embedded owner as Owner and an Admin who accepted its
 /// founding invitation.
 struct Shared {
@@ -112,6 +169,7 @@ impl Shared {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
+        admit_policy_change_for_admins(&vault, &proof(&vault, owner));
         let admin = EntityId::now();
         vault
             .put_entity(
