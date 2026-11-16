@@ -14,6 +14,9 @@
 //! delete door deletes the PERSON that holds the vault's last Active owner
 //! binding, and the refusal names both ways out (another owner first, or
 //! erasing the vault). A person no live binding names is deleted as before.
+//! FIX OWNER-DELETE-GUARD-RECOVERY: the refusal no longer calls binding
+//! another owner "not yet available", since an added Owner's first owner key
+//! binds them; red before it: the guard's refusal test (the old text).
 //!
 //! Round-1 regressions of #7900: a hard-deleted embedded owner (its row
 //! purged, the `dt:` marker recorded) is no vault owner through the same
@@ -211,16 +214,15 @@ fn a_deleted_owner_holding_its_binding_takes_no_task_verb() {
     );
 }
 
-/// The guard's refusal names both ways out as they stand (Engine
-/// L9-52-OWNER-GUARD-COOWNER, 14 Nov 2026): erasing the vault, available now,
-/// and binding another owner, which waits on the owner enrollment ceremony.
-/// It never sends the owner to a door that is not there yet.
+/// The guard's refusal names both ways out (Engine L9-52-OWNER-GUARD-COOWNER,
+/// 14 Nov 2026): erasing the vault, and binding another owner, which an
+/// added Owner's first owner key enrolment does (tests/owner_enrol.rs). Both
+/// are there now, so neither is marked unavailable (FIX
+/// OWNER-DELETE-GUARD-RECOVERY).
 fn names_both_ways_out(message: &str) -> bool {
-    message.contains("erase the vault if ending it is the goal (available now)")
-        && message.contains(
-            "bind another owner first (needs the owner enrollment ceremony, not yet available)",
-        )
-        && !message.contains("add another owner first")
+    message.contains("erase the vault if ending it is the goal")
+        && message.contains("bind another owner first")
+        && !message.contains("not yet available")
 }
 
 #[test]
@@ -235,8 +237,8 @@ fn the_last_bound_owners_person_is_not_deleted_and_the_refusal_names_both_ways_o
     assert_eq!(
         refused.suggestions,
         [
-            "Erase the vault if ending it is the goal; that is available now.",
-            "Binding another owner first needs the owner enrollment ceremony, which is not yet available; after it, this person can be deleted.",
+            "Erase the vault if ending it is the goal.",
+            "To keep the vault, bind another owner first: add an Owner, who enrols an owner signing key of their own, which binds them; then this person can be deleted.",
         ],
         "the hints name the same two ways out"
     );

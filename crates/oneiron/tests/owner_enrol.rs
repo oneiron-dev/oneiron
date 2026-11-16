@@ -31,7 +31,10 @@
 //! 16:23; KEY-ORIGIN = A, the lead 16:2x). Red before it:
 //! `an_added_owners_first_owner_key_binds_them` (the added Owner's owner verb
 //! answers OWNER_BINDING_REQUIRED). Guard: an Owner a binding names already,
-//! the embedded owner included, gains no second one.
+//! the embedded owner included, gains no second one. That binding is the
+//! last-owner delete guard's second way out (FIX OWNER-DELETE-GUARD-RECOVERY):
+//! `a_co_owners_first_owner_key_lifts_the_last_owner_delete_guard`, a guard
+//! that passes on its base too.
 //!
 //! Part 3 (REVOKED-OWNER-ROOT-SIBLING-ENROL, Engine RULING 14 Nov 19:50): a
 //! revoked key's rows count only inside its revocation's own ancestry. A
@@ -343,6 +346,36 @@ fn an_added_owners_first_owner_key_binds_them() {
         shared.bound_to(second),
         None,
         "an Owner a live binding names gains no second one"
+    );
+}
+
+/// The way out the last-owner delete guard names: while the owner holds the
+/// vault's only `human` binding, their PERSON is not deleted; once the
+/// co-Owner's first owner key binds them, the same delete passes.
+#[test]
+fn a_co_owners_first_owner_key_lifts_the_last_owner_delete_guard() {
+    let shared = shared();
+    let refused = shared
+        .vault
+        .delete_entity(&shared.owner)
+        .expect_err("the owner holds the vault's last owner binding");
+    assert_eq!(refused.kind(), ErrorKind::LastBoundOwnerDelete, "{refused}");
+
+    shared.bound_co_owner_key();
+
+    assert!(
+        shared
+            .vault
+            .delete_entity(&shared.owner)
+            .expect("with the co-Owner bound, the owner's person is deleted"),
+        "the owner's person existed"
+    );
+    assert!(
+        shared
+            .vault
+            .is_deleted_shell(&shared.owner)
+            .expect("shell read"),
+        "the owner's person is a deleted shell"
     );
 }
 
