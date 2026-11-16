@@ -5,8 +5,8 @@
 //! manifest's cold-start outcome floor the ledger falls back to generic
 //! regulation priors at low confidence"). Every call enters through
 //! `oneiron_testkit::door::invoke`; the owner rows run on a vault opened
-//! with the process writer lease. The fixtures follow
-//! `tests/vault_affect_doors.rs` (#8737).
+//! with the process writer lease. The fixtures follow #8737's
+//! `tests/vault_affect_doors.rs` (open, not yet on main).
 //!
 //! - L1 the nearest state's outcomes come first, and within one state a
 //!   worked outcome comes before one that did not work.
@@ -296,19 +296,23 @@ fn a_thin_ledger_answers_generic_priors_at_low_confidence() {
     );
 }
 
-/// L3. A turn the person did not speak in, a turn with no VAD, and a row
-/// that is no turn are each refused; the person's annotated turn answers.
+/// L3. A turn the person did not speak in (a counterparty's), a turn with
+/// no VAD, and a row that is no turn are each refused; the person's
+/// annotated turn answers.
 #[test]
 fn the_current_state_is_an_annotated_turn_the_person_spoke_in() {
     let (_dir, vault) = owned_vault();
     let owner = door::owner(&vault).expect("the owner");
     let conversation = EntityId::now().to_hex();
-    let system = witness(&owner, &conversation, "system", "a system notice");
+    // A counterparty row carries no AuthoredBy edge: the owner did not
+    // speak in its turn. (A `system` row needs an actor-bound ceiling the
+    // fixture has not, and a system-only turn never mints.)
+    let counterparty = witness(&owner, &conversation, "counterparty", "their reply");
     let unannotated = witness(&owner, &conversation, "user", "no mood read yet");
     let felt = felt_turn(&owner, &vault, &conversation, "felt", (0.2, 0.4, 0.6));
 
     let rows = [
-        ("a system turn", system, "spoke in"),
+        ("a counterparty turn", counterparty, "spoke in"),
         ("a turn with no VAD", unannotated, "VAD"),
         ("a PERSON for the turn", owner_person(&vault), "spoke in"),
     ];

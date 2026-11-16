@@ -18,8 +18,10 @@ use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::write_envelope::coping_outcome::CopingStrategy;
 use crate::{EntityId, Error};
 
-/// The outcome count below which the ledger answers generic priors: the
-/// starting value of the manifest's `affect_lookup.cold_start_min_outcomes`.
+/// The outcome count below which the ledger answers generic priors. Canon
+/// makes it a manifest row (`affect_lookup.cold_start_min_outcomes`, a
+/// tunable starting value); no row reads it yet, so this is that starting
+/// value.
 pub(crate) const COPING_COLD_START_MIN_OUTCOMES: u64 = 3;
 
 /// The confidence every generic regulation prior carries: the Low band of
