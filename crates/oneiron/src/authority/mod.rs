@@ -526,7 +526,7 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 // Module-internal only: nothing here leaves `authority`.
 use ancestor_index::*;
 pub(crate) use anchor_marks::anchor_mark_stands;
-pub use data_key_generation_fold::FoldedDataKeyGeneration;
+pub use data_key_generation_fold::{DataKeyGenerationDelivery, FoldedDataKeyGeneration};
 use entry_transition::*;
 use machine_profile::{
     KeyClaim, MachineChain, MarkProof, apply_anchor_profile, apply_machine_profile,

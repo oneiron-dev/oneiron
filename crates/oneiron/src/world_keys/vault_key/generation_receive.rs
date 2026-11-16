@@ -2,12 +2,13 @@
 //!
 //! After an authority ingest, this replica adopts every current-eligible
 //! generation above its stored one, in order, with no owner unlock: the
-//! capsule and the link give it both keys. For each generation it opens its
-//! capsule with the machine secret, checks the commitment and that the link
-//! reaches its own stored key, seals its own device wrap, and in one write
-//! stores the wrap, the link row and the new state. It stops at the first
-//! generation with no capsule for this machine, a conflicted one, or a link
-//! that does not reach this replica's key. A host-managed or
+//! capsule and the link give it both keys. For each generation it tries each
+//! counted record's capsule for this machine: it opens the capsule with the
+//! machine secret, checks the commitment and that the link reaches its own
+//! stored key, seals its own device wrap, and in one write stores the wrap,
+//! the link row and the new state. It stops at the first generation with no
+//! capsule for this machine, a conflicted one, or no record whose capsule
+//! opens here and whose link reaches this replica's key. A host-managed or
 //! supervisor-delivered vault adopts nothing, and a page-sealed replica
 //! waits for a later change.
 
@@ -37,8 +38,9 @@ struct PendingGeneration {
 impl Vault {
     /// Adopts the folded data-key generations above this replica's stored
     /// one, in order, with no owner unlock. Stops at the first generation
-    /// with no capsule for this machine, a conflicted one, or a link that
-    /// does not reach this replica's key. A page-sealed replica and a
+    /// with no capsule for this machine, a conflicted one, or no counted
+    /// record whose capsule opens here and whose link reaches this
+    /// replica's key. A page-sealed replica and a
     /// host-managed or supervisor-delivered vault adopt nothing. Runs
     /// outside every transaction; each generation commits in its own write,
     /// with snapshot admission paused from before the write until the new
@@ -66,12 +68,6 @@ impl Vault {
                 );
                 break;
             }
-            let Some((_, capsule)) = folded.capsules.iter().find(|(to, _)| *to == install) else {
-                break;
-            };
-            let Ok(envelope) = Envelope::parse(capsule) else {
-                break;
-            };
             let secret = self.machine_secret_outside_txn()?;
             if secret.machine != install {
                 break;
@@ -82,20 +78,30 @@ impl Vault {
                 generation,
                 commitment: folded.commitment,
             };
-            let opened = open_data_key_capsule(&binding, install, &secret.secret, &envelope)?;
+            // Every counted record of an eligible generation names one key;
+            // the first whose capsule opens here and whose link reaches the
+            // stored key delivers it.
+            let Some((delivery, opened)) = folded.deliveries.iter().find_map(|delivery| {
+                let (_, capsule) = delivery.capsules.iter().find(|(to, _)| *to == install)?;
+                let envelope = Envelope::parse(capsule).ok()?;
+                let opened =
+                    open_data_key_capsule(&binding, install, &secret.secret, &envelope).ok()?;
+                let link = KeyHeaderLink {
+                    generation,
+                    previous: folded.previous,
+                    envelope: delivery.link.clone(),
+                };
+                let older = open_link(&data_vault_id, &opened, &link).ok()?;
+                (older.commitment(&data_vault_id) == state.commitment).then_some((delivery, opened))
+            }) else {
+                tracing::warn!(
+                    generation,
+                    "no delivery of the new data-key generation opens on this machine and reaches its stored key"
+                );
+                break;
+            };
             let next_commitment = opened.commitment(&data_vault_id);
-            let link = KeyHeaderLink {
-                generation,
-                previous: folded.previous,
-                envelope: folded.link.clone(),
-            };
-            let Ok(older) = open_link(&data_vault_id, &opened, &link) else {
-                break;
-            };
-            if older.commitment(&data_vault_id) != state.commitment {
-                break;
-            }
-            drop(older);
+            let (entry, signer) = (delivery.entry, delivery.machine);
             let (device_kek, device_kind) = self.device_kek()?;
             let device_envelope = seal_wrap(
                 &data_vault_id,
@@ -111,7 +117,7 @@ impl Vault {
             let held_matches = self
                 .held_vault_key()
                 .is_some_and(|held| held.commitment(&data_vault_id) == state.commitment);
-            let link_bytes = link.envelope;
+            let link_bytes = delivery.link.clone();
             self.with_write_txn(|txn| {
                 let current = STATE
                     .get(&self.store, txn, &())?
@@ -185,6 +191,12 @@ impl Vault {
                 }
             }
             drop(snapshot_pause);
+            tracing::info!(
+                generation,
+                entry = %oneiron_hex::encode(&entry),
+                signer = %signer.to_hex(),
+                "this device received a new data-key generation"
+            );
             adopted.push(generation);
         }
         Ok(DataKeyGenerationAdoption { adopted })
@@ -214,7 +226,11 @@ impl Vault {
         let Some(install) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
             return Ok(None);
         };
-        if !folded.capsules.iter().any(|(to, _)| *to == install) {
+        if !folded
+            .deliveries
+            .iter()
+            .any(|delivery| delivery.capsules.iter().any(|(to, _)| *to == install))
+        {
             return Ok(None);
         }
         Ok(Some(PendingGeneration {
