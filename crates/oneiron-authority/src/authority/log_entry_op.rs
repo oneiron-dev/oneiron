@@ -243,7 +243,10 @@ pub struct AuthorityLogEntry {
     pub signer: AuthoritySignature,
     /// Optional quorum co-signatures.
     pub cosigns: Vec<AuthoritySignature>,
-    /// Advisory timestamp. Fold semantics must never branch on this value.
+    /// Advisory timestamp: the author's word for the act's moment. Fold
+    /// semantics never branch on it, but for a time-bound proof judged at the
+    /// act's moment (a person proof's slip lifetime), where it can only take
+    /// the proof's power away.
     pub ts: u64,
 }
 
