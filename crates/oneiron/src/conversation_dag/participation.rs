@@ -63,6 +63,7 @@ pub(super) fn admit_append_in_txn(
         JoinCause::Wrote { turn: record },
         reply_to,
         None,
+        None,
         vault.store.clock.now_recorded_at(),
     )
 }

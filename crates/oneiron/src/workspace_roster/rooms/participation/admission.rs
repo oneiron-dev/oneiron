@@ -170,11 +170,14 @@ pub(in crate::workspace_roster::rooms) fn person_stands_in_txn(
 /// records nothing here, and its speech, claims and reads stand on
 /// [`agent_standing_in_txn`]. A write is no authority for an agent either
 /// (ARCH-0006a, ruled 2026-09-23): it must stand there now and be spoken to
-/// for the turn the write `answers`, by [`agent_spoken_to_in_txn`]. For any
-/// other cause an agent must stand there now.
+/// for the turn the write `answers`, by [`agent_spoken_to_in_txn`], or be
+/// addressed there by a Retry's press: `pressed` is the parent a proven room
+/// regeneration permit's claim, one a Retry took, holds for it
+/// (HOMERETRY-AUTHORITY = C). For any other cause an agent must stand there
+/// now.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the place, the writer, its cause, what it answers and paid scope, and the decision time"
+    reason = "the place, the writer, its cause, what it answers, a Retry's press, paid scope, and the decision time"
 )]
 pub(crate) fn admit_participation_in_txn(
     vault: &Vault,
@@ -184,6 +187,7 @@ pub(crate) fn admit_participation_in_txn(
     actor: WriteActor,
     cause: JoinCause,
     answers: Option<EntityId>,
+    pressed: Option<EntityId>,
     scope: Option<&SpendScopeId>,
     now: u64,
 ) -> Result<Admitted> {
@@ -209,7 +213,10 @@ pub(crate) fn admit_participation_in_txn(
             let standing = agent_standing_in_txn(vault, txn, room, branch, agent, scope)?
                 .ok_or_else(|| lacks("the agent has no Ready join in this room or thread"))?;
             if let JoinCause::Wrote { turn } = admitted.cause {
-                if !agent_spoken_to_in_txn(vault, txn, room, branch, agent, turn, answers)? {
+                let pressed = answers.is_some() && pressed == answers;
+                if !pressed
+                    && !agent_spoken_to_in_txn(vault, txn, room, branch, agent, turn, answers)?
+                {
                     return Err(lacks(
                         "an agent speaks only when it is addressed, holds a task there, or lands an accepted offer",
                     ));

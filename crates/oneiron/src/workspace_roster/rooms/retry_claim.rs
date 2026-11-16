@@ -6,7 +6,10 @@
 //! write that lands the Retry's reply, so a refused Retry leaves no claim.
 //! RESPONSE takes the source, the agent's first answer to that parent, as
 //! the claim's slot; the reply then answers it again under the room's
-//! regeneration permit (FIX 3149), as a claimed turn's Retry does.
+//! regeneration permit (FIX 3149), as a claimed turn's Retry does. Each
+//! Retry on that claim presses again: its press, not a naming on the
+//! parent, addresses the agent there in the participation gate
+//! (REVIEW-9153 round 2).
 use super::participation::{Claimant, addressable_agent_in_txn, participant_in_txn};
 use super::*;
 use crate::conversation::TurnActionAttempt;
@@ -15,6 +18,44 @@ use crate::workspace_roster::JoinSubject;
 /// The receipt prefix of a claim a Retry took; the rest is the id of the
 /// person who pressed it.
 pub(super) const RETRY_CLAIM_RECEIPT_PREFIX: &str = "vault.conversations.turn.retry:";
+
+/// Admits `action`'s press as its requester's address to `agent` on
+/// `parent_row`, in the action's room: the requester is a person who stands
+/// in the parent's thread from its seat or its own Ready join, speaks there
+/// as a persona, and `agent` is a member of the room or may be named in it.
+/// An agent's press addresses no one, since an agent speaks only on its own
+/// claim or task. Each Retry of an answer on a claim a Retry took is tried
+/// here again, and its press addresses the agent only when admitted.
+pub(super) fn admit_press_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    action: &TurnActionAttempt,
+    agent: EntityId,
+    parent_row: &RoomTurn,
+) -> Result<()> {
+    let room = action.conversation;
+    let requester = action.actor;
+    let now = vault.store.clock.now_recorded_at();
+    if matches!(
+        participant_in_txn(vault, txn, requester, now)?,
+        Some(JoinSubject::Agent(_))
+    ) {
+        return Err(invalid());
+    }
+    let person = Claimant::admit_in_txn(vault, txn, room, parent_row, requester)?;
+    if person.is_agent() {
+        return Err(invalid());
+    }
+    person.admit_speech_in(vault, txn)?;
+    if !room_access_in(vault, txn, room)?
+        .member_ids
+        .contains(&agent.to_hex())
+        && !addressable_agent_in_txn(vault, txn, agent, now)?
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
 
 /// The claim one Retry takes, admitted and not yet written.
 pub(super) struct RetryClaim {
@@ -34,14 +75,11 @@ pub(super) struct RetryClaim {
 
 impl RetryClaim {
     /// Admits the claim `action`'s Retry takes for `agent` on `parent`, its
-    /// source's parent, which holds no claim and no answer. The requester
-    /// must be a person who may address `agent` in the room: it stands in
-    /// the parent's thread from its seat or its own Ready join, speaks there
-    /// as a persona, and `agent` is a member of the room or may be named in
-    /// it. An agent's press addresses no one, since an agent speaks only on
-    /// its own claim or task. `agent` must then claim the parent as the
-    /// claim door admits an agent, the press standing for its address. A
-    /// parent that names other agents is theirs to answer.
+    /// source's parent, which holds no claim and no answer. The requester's
+    /// press must address `agent` there ([`admit_press_in`]). `agent` must
+    /// then claim the parent as the claim door admits an agent, the press
+    /// standing for its address. A parent that names other agents is theirs
+    /// to answer.
     pub(super) fn admit_in(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
@@ -58,26 +96,7 @@ impl RetryClaim {
         {
             return Err(invalid());
         }
-        let requester = action.actor;
-        let now = vault.store.clock.now_recorded_at();
-        if matches!(
-            participant_in_txn(vault, txn, requester, now)?,
-            Some(JoinSubject::Agent(_))
-        ) {
-            return Err(invalid());
-        }
-        let person = Claimant::admit_in_txn(vault, txn, room, parent_row, requester)?;
-        if person.is_agent() {
-            return Err(invalid());
-        }
-        person.admit_speech_in(vault, txn)?;
-        if !room_access_in(vault, txn, room)?
-            .member_ids
-            .contains(&agent.to_hex())
-            && !addressable_agent_in_txn(vault, txn, agent, now)?
-        {
-            return Err(invalid());
-        }
+        admit_press_in(vault, txn, action, agent, parent_row)?;
         let claimant = Claimant::admit_in_txn(vault, txn, room, parent_row, agent)?;
         if !claimant.is_agent() {
             return Err(invalid());
@@ -89,7 +108,7 @@ impl RetryClaim {
             agent,
             parent,
             slot: action.assistant_turn,
-            requester,
+            requester: action.actor,
             claimant,
             task,
         })

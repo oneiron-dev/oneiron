@@ -38,7 +38,9 @@ pub(crate) struct RoomWitness {
 /// RESPONSE keeps the claim's first answer as its slot: a regenerated
 /// answer answers the same parent, in the same thread, naming the same
 /// agents, and its `regenerates` lineage reaches that slot. It bypasses no
-/// audience, participation, speaking role, write ceiling or claim check.
+/// audience, participation, speaking role, write ceiling or claim check. On
+/// a claim a Retry took, the participation gate takes the requester's press
+/// as the agent's address on the parent (HOMERETRY-AUTHORITY = C).
 pub(crate) struct RoomRegenerationPermit {
     /// The room row of the turn the Retry answers again.
     pub(crate) source: RoomTurn,
@@ -49,6 +51,9 @@ pub(crate) struct RoomRegenerationPermit {
     takes: Option<super::retry_claim::RetryClaim>,
     /// The parent whose claim this permit's write took.
     took: Option<EntityId>,
+    /// The parent the requester's press addresses the agent on, when its
+    /// claim is one a Retry takes or took (REVIEW-9153 round 2).
+    pressed_parent: Option<EntityId>,
 }
 
 impl RoomRegenerationPermit {
@@ -60,7 +65,10 @@ impl RoomRegenerationPermit {
     /// answer to the same parent in the same thread, reaches the slot. A
     /// parent that holds no claim is claimed by the Retry itself when the
     /// claim door's checks admit it (HOMERETRY-AUTHORITY = C): the source is
-    /// then the slot, and [`Self::take_claim_in_txn`] writes the claim.
+    /// then the slot, and [`Self::take_claim_in_txn`] writes the claim. On a
+    /// parent whose claim a Retry took, a press admitted as the first one
+    /// was addresses the agent there; without one, the agent answers again
+    /// only where it is named or holds a task, as on any other claim.
     pub(crate) fn prove_in(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
@@ -86,15 +94,21 @@ impl RoomRegenerationPermit {
         if parent_row.room_id != old.room_id {
             return Err(invalid());
         }
-        let (slot, takes) = match CLAIMS.get(&vault.store, txn, &parent)? {
+        let (slot, takes, pressed) = match CLAIMS.get(&vault.store, txn, &parent)? {
             Some(claim) => {
                 if claim.room_id != old.room_id || claim.actor != old.actor {
                     return Err(invalid());
                 }
+                // The press only adds an address: a press that is not
+                // admitted (an agent's, say) leaves the participation gate
+                // to read a naming or a task, as for any other claim.
+                let pressed = claim.receipt_ref.starts_with(RETRY_CLAIM_RECEIPT_PREFIX)
+                    && super::retry_claim::admit_press_in(vault, txn, action, actor, &parent_row)
+                        .is_ok();
                 let slot = RESPONSE
                     .get(&vault.store, txn, &parent)?
                     .ok_or_else(invalid)?;
-                (slot, None)
+                (slot, None, pressed)
             }
             None => {
                 let claim = super::retry_claim::RetryClaim::admit_in(
@@ -105,7 +119,7 @@ impl RoomRegenerationPermit {
                     parent,
                     &parent_row,
                 )?;
-                (claim.slot(), Some(claim))
+                (claim.slot(), Some(claim), true)
             }
         };
         let edge = |message: &EntityId, kind: EdgeKind| {
@@ -148,6 +162,7 @@ impl RoomRegenerationPermit {
                     slot,
                     takes,
                     took: None,
+                    pressed_parent: pressed.then_some(parent),
                 });
             }
             cursor = edge(&cursor, EdgeKind::Regenerates)?.ok_or_else(invalid)?;
@@ -161,6 +176,14 @@ impl RoomRegenerationPermit {
         self.takes
             .as_ref()
             .map(super::retry_claim::RetryClaim::parent)
+    }
+
+    /// The parent the requester's press addresses the agent on, when the
+    /// parent's claim is one a Retry takes or took: the participation gate
+    /// takes it in place of a naming on that parent or a thread task
+    /// (HOMERETRY-AUTHORITY = C; REVIEW-9153 round 2).
+    pub(crate) const fn pressed_parent(&self) -> Option<EntityId> {
+        self.pressed_parent
     }
 
     /// The parent whose claim this permit's write took, once
@@ -621,6 +644,7 @@ pub(crate) fn admit_witness(
         writer,
         JoinCause::Wrote { turn: turn_id },
         reply_to,
+        regeneration.and_then(RoomRegenerationPermit::pressed_parent),
         None,
         now,
     )?;

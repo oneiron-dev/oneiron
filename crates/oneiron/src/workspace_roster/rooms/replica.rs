@@ -638,8 +638,12 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                 // forms meet here; the erased form wins where the copies
                 // meet, as a carried turn's actor does, whether or not
                 // this vault holds the actor's marker. A Retry's author
-                // merges the same way.
+                // merges the same way. Once the two copies are one receipt,
+                // the merge holds it or writes the merged form; the order
+                // below is for two receipts, where "erased" would sort after
+                // an id and give back a name (REVIEW-9153 round 2).
                 if held.at == claim.at
+                    && held.room_id == claim.room_id
                     && let Some(receipt_ref) =
                         super::witness::merged_receipt_ref(&held.receipt_ref, &claim.receipt_ref)
                     && let Some(actor) = crate::deletion::carrier_actor_merged(
@@ -648,8 +652,10 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                         crate::receipt::ERASED_CALL_IDENTITY,
                     )
                     .map(str::to_owned)
-                    && (actor != held.actor || receipt_ref != held.receipt_ref)
                 {
+                    if actor == held.actor && receipt_ref == held.receipt_ref {
+                        return Ok(SideMerge::Held);
+                    }
                     let mut merged = held.clone();
                     merged.actor = actor;
                     merged.receipt_ref = receipt_ref;
