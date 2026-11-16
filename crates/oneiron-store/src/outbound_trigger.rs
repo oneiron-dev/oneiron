@@ -16,6 +16,8 @@ pub enum OutboundIntentSource {
     RecordTransition,
     /// A campaign program step's send (FIX 11513).
     Campaign,
+    /// The send of a meeting follow-up draft the owner approved (CAL-08).
+    MeetingFollowUp,
 }
 
 impl OutboundIntentSource {
@@ -27,6 +29,7 @@ impl OutboundIntentSource {
             Self::AgentImmediate => "agent_immediate",
             Self::RecordTransition => "record_transition",
             Self::Campaign => "campaign",
+            Self::MeetingFollowUp => "meeting_follow_up",
         }
     }
 
@@ -38,6 +41,7 @@ impl OutboundIntentSource {
             "agent_immediate" => Some(Self::AgentImmediate),
             "record_transition" => Some(Self::RecordTransition),
             "campaign" => Some(Self::Campaign),
+            "meeting_follow_up" => Some(Self::MeetingFollowUp),
             _ => None,
         }
     }
@@ -91,6 +95,15 @@ impl OutboundIntentTrigger {
     pub fn campaign(trigger_ref: impl Into<String>) -> Self {
         Self {
             source: OutboundIntentSource::Campaign,
+            trigger_ref: trigger_ref.into(),
+            job_ref: None,
+        }
+    }
+
+    #[must_use]
+    pub fn meeting_follow_up(trigger_ref: impl Into<String>) -> Self {
+        Self {
+            source: OutboundIntentSource::MeetingFollowUp,
             trigger_ref: trigger_ref.into(),
             job_ref: None,
         }
