@@ -43,8 +43,9 @@ pub struct HistoryMessage {
     pub at_ms: Option<u64>,
     /// Who spoke on the user side when it was not the owner: in a subagent's
     /// log that is the agent that delegated the task ([`DELEGATING_AGENT`]);
-    /// [`UNKNOWN_SPEAKER`] when the source does not say.
-    pub said_by: Option<&'static str>,
+    /// in a shared source, the member who spoke (`slack:<member id>`,
+    /// `slack::said_by`); [`UNKNOWN_SPEAKER`] when the source does not say.
+    pub said_by: Option<String>,
     /// Names of the tools this assistant message went on to call. The calls
     /// and their results are counted in [`HistorySkips`], not kept.
     pub tools: Vec<String>,
@@ -100,9 +101,15 @@ pub struct HistorySharing {
 pub struct HistoryMember {
     /// The source's own id for the person.
     pub provider_id: String,
-    /// The vault PERSON the owner says the member is. A member with none
-    /// reads nothing.
+    /// The name the source shows for the person.
+    pub name: Option<String>,
+    /// The vault PERSON the owner says the member is. A member with none,
+    /// and not the importer, is a contact: its name and words are kept and
+    /// it reads nothing.
     pub person: Option<EntityId>,
+    /// The importer's own member on the source: it reads as the importer,
+    /// who reads every conversation it imports.
+    pub importer: bool,
 }
 
 /// What a reader saw and did not keep, by kind.
@@ -157,4 +164,3 @@ impl HistorySkips {
     }
 }
 pub mod land;
-pub mod ledger;

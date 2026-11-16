@@ -9,6 +9,9 @@
 //! nothing is dropped silently. Readers are pure: the host chooses the files
 //! and reads them, and nothing here touches a filesystem.
 //!
+//! A Slack workspace export is read whole ([`slack::decode`]): its
+//! conversations, and the members each is shared with.
+//!
 //! [`crate::Vault::import_history`] lands a decoded conversation as an imported
 //! transcript, with a ledger that makes a re-import add nothing.
 
@@ -22,12 +25,15 @@ mod hosted;
 mod hosted_verbs;
 mod land;
 mod ledger;
+mod members;
 mod plan;
 mod review;
 mod sharing;
+pub mod slack;
 mod speakers;
 mod text;
 mod tree;
+mod workspace_facet;
 
 // FIX [LIBTEST-QUARANTINE-INGEST-HISTORY-TESTS]: the lib test target's type check fails here (4 errors: E0063 x4); port it, then drop this gate
 #[cfg(any())]
@@ -79,15 +85,18 @@ pub enum HistorySource {
     /// A coding agent's session log a hook handed over: GitHub Copilot's (VS
     /// Code or the CLI) or Cursor's, each read by its own reader.
     HookTranscript,
+    /// A Slack workspace export, read whole by [`slack::decode`].
+    Slack,
 }
 
 impl HistorySource {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Chatgpt,
         Self::Claude,
         Self::ClaudeCode,
         Self::Codex,
         Self::HookTranscript,
+        Self::Slack,
     ];
 
     /// The ingest registry id.
@@ -99,6 +108,7 @@ impl HistorySource {
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
             Self::HookTranscript => "hook-transcript",
+            Self::Slack => "slack",
         }
     }
 
@@ -117,7 +127,8 @@ impl HistorySource {
     /// [`super::IngestError`] when an export is not the source's layout, or a
     /// hook transcript is neither reader's. A session log's unreadable line is
     /// counted, not fatal: the last line of a live session is often
-    /// half-written.
+    /// half-written. A Slack export is many files, read whole by
+    /// [`slack::decode`], so one file of it is refused here.
     pub fn decode(self, text: &str, file: &HistoryFile) -> IngestResult<Vec<HistoryConversation>> {
         match self {
             Self::Chatgpt => chatgpt::decode(text),
@@ -125,6 +136,11 @@ impl HistorySource {
             Self::ClaudeCode => Ok(claude_code::decode(text, file)),
             Self::Codex => Ok(codex::decode(text, file)),
             Self::HookTranscript => hook_transcript(text, file),
+            Self::Slack => Err(IngestError::UnsupportedSchema {
+                source_id: self.source_id(),
+                expected: "a whole Slack workspace export, read by slack::decode",
+                found: format!("one file ({})", file.stem),
+            }),
         }
     }
 }
@@ -178,6 +194,17 @@ pub struct HistoryConversation {
     /// one (ARCH-0027 #import-audience). `None` lands it private to the
     /// importer, as every source without sharing data does.
     pub sharing: Option<HistorySharing>,
+}
+
+/// Who reads a conversation the source shared, as an import report counts
+/// it: no names.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct HistorySharingCounts {
+    /// The PERSONs that read it: the members the owner mapped, and the
+    /// importer.
+    pub readers: u32,
+    /// Members the owner mapped to no PERSON: contacts, who read nothing.
+    pub unmapped: u32,
 }
 
 impl HistoryConversation {

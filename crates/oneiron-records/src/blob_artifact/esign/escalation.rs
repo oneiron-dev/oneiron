@@ -18,9 +18,10 @@ pub enum HeldSigningState {
     /// Held; the host's next pass asks its first role.
     Held,
     /// Waits in the role ask queue under `question` (hex). `wait` is the
-    /// role the ask's wait is timed at and since when, set at each climb;
-    /// none while it waits at the role it was first asked at, timed from
-    /// the ask.
+    /// role the ask's wait is timed at and since when: the role its ask was
+    /// put to, from the ask, then set at each climb. A hold asked before
+    /// that first role was recorded has none: its climb times it from the
+    /// ask, and its lapse from when a pass first sees it at the owners.
     Asked {
         question: String,
         wait: Option<HeldAskWait>,
@@ -32,6 +33,11 @@ pub enum HeldSigningState {
     /// The document moved on before the answer could land: the recipient's
     /// turn passed or the document ended.
     Superseded { at: u64 },
+    /// No vault owner answered its ask within the vault's
+    /// `esign.held_signing.owner_lapse`: the signature did not land, the ask
+    /// left the owners' queue, and the recipient's turn stays open for the
+    /// document's sender, as after a decline.
+    Lapsed { at: u64 },
 }
 
 /// The rung a held sign act's ask waits at, and since when: each rung of a

@@ -304,13 +304,13 @@ impl Memory<'_> {
                 "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
             ));
         }
-        // A consult past its deadline is the expiry sweep's to settle, even
+        // A consult at or past its deadline is the expiry sweep's to settle, even
         // before the sweep has run: the engine's clock decides, never the
         // reported completion time. An identical replay was answered above.
         if consult_kind.is_some()
             && body
                 .ttl
-                .is_some_and(|ttl| ttl.deadline_at < self.vault().store.clock.now_recorded_at())
+                .is_some_and(|ttl| ttl.deadline_at <= self.vault().store.clock.now_recorded_at())
         {
             return Err(consult_refusal(
                 MEMORY_CODE_INVALID_STATE,
@@ -558,9 +558,9 @@ pub(super) fn complete_ask_member_in_txn(
     now: u64,
 ) -> MemoryResult<()> {
     let mut body = consult_body_in_txn(vault, txn, answer.task_ref)?;
-    // A member consult past its deadline on the engine clock is the expiry
+    // A member consult at or past its deadline on the engine clock is the expiry
     // sweep's to settle. The word still counts under the ask's own cutoff.
-    let overdue = body.ttl.is_some_and(|ttl| ttl.deadline_at < now);
+    let overdue = body.ttl.is_some_and(|ttl| ttl.deadline_at <= now);
     if !overdue && body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
         body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
             disposition: TaskTerminalDisposition::Completed,
