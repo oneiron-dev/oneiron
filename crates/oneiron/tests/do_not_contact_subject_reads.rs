@@ -17,10 +17,11 @@ use oneiron::comm::resolve_or_create_comm_party;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::do_not_contact_subject_reads::{
     backfill_person_party_key_index, do_not_contact_subjects, forget_person_party_key_index,
-    take_person_party_key_reads,
+    replace_person_party_key_index, take_person_party_key_reads,
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use rmpv::Value;
+use sha2::{Digest, Sha256};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -173,6 +174,47 @@ fn a_vault_older_than_the_index_reads_every_person_until_the_open_rebuild() -> T
     assert!(
         reads > usize::from(DECOYS),
         "with no complete index the scan reads every PERSON; it read {reads}"
+    );
+
+    backfill_person_party_key_index(&vault)?;
+    let (subjects, reads) = subjects_and_reads(&vault, PARTY)?;
+    assert_eq!(subjects, expected);
+    assert!(
+        reads <= expected.len(),
+        "after the rebuild the scan read {reads} PERSON rows"
+    );
+    Ok(())
+}
+
+/// The index key digest of the first index recipe (version 1): SHA-256 of the
+/// party key's bytes.
+fn first_recipe_digest(party_key: &str) -> [u8; 32] {
+    Sha256::digest(party_key.as_bytes()).into()
+}
+
+#[test]
+fn an_index_the_first_recipe_wrote_reads_every_person_until_the_open_rebuild() -> TestResult {
+    let (_dir, vault) = open_unseeded()?;
+    for n in 0..DECOYS {
+        put_person(&vault, &person_id(n)?, &person_body(&[("name", "decoy")])?)?;
+    }
+    let party = resolve_or_create_comm_party(&vault, PARTY)?;
+    let twin = person_id(DECOYS)?;
+    put_person(&vault, &twin, &person_body(&[("party_key", PARTY)])?)?;
+    let expected = sorted(vec![party, twin]);
+
+    // The rows and the stamp a vault file holds when the first recipe built
+    // its index: SHA-256 keys, version 1.
+    let digest = first_recipe_digest(PARTY);
+    replace_person_party_key_index(&vault, &[(digest, party), (digest, twin)], 1)?;
+    let (subjects, reads) = subjects_and_reads(&vault, PARTY)?;
+    assert_eq!(
+        subjects, expected,
+        "the walk of every PERSON gives the same list"
+    );
+    assert!(
+        reads > usize::from(DECOYS),
+        "an index the first recipe stamped is not complete, so the scan reads every PERSON; it read {reads}"
     );
 
     backfill_person_party_key_index(&vault)?;

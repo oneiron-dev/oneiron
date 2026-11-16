@@ -114,6 +114,8 @@ pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
 pub(crate) mod off_record_rooms;
+mod one_click_unsubscribe;
+pub(crate) use self::one_click_unsubscribe::install_one_click_unsubscribe_origin;
 mod org_admin;
 mod pairing;
 // FIX 12477: the redeem door's per-address failure backoff, held by the server.
