@@ -330,7 +330,6 @@ pub(super) fn stage_in_txn(
                 candidate: &candidate,
                 evidence: &evidence,
                 fence: &fence,
-                read,
                 provenance,
                 extraction_binding_commit: context.extraction_binding_commit,
             },

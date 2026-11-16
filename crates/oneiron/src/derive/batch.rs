@@ -393,7 +393,9 @@ impl DerivationItem {
     /// before it (a supersession's replacement, an archived claim, a PERSON's
     /// `about` lines) or may replay one (an evidence record, a profile at its
     /// address), and a name for such a row would cite it with no version and
-    /// no read of its own.
+    /// no read of its own. A candidate that attached its evidence to a
+    /// standing head created no claim: the commit refuses a later item that
+    /// names it.
     pub(super) const fn creates_row(&self) -> bool {
         matches!(
             self,

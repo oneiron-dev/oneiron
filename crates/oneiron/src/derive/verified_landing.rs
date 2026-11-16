@@ -151,13 +151,15 @@ pub(super) fn land_verified_candidate(
     }
 }
 
-/// A verified equal restatement, with the attempt's gated reader and provenance.
-pub(super) struct VerifiedAttachment<'a, 'v> {
+/// A verified equal restatement, with its provenance. The stager verified the
+/// candidate's evidence and the head under the attempt's gated read; the
+/// support record's references then resolve under the fence's reader, the
+/// Dreamer's own read, as in native's attach and in a landing.
+pub(super) struct VerifiedAttachment<'a> {
     pub(super) head: crate::EntityId,
     pub(super) candidate: &'a PromotionCandidate,
     pub(super) evidence: &'a VerifiedEvidenceSet,
     pub(super) fence: &'a ConsolidationFence,
-    pub(super) read: &'a crate::claim::ScopedRead<'v>,
     pub(super) provenance: rmpv::Value,
     pub(super) extraction_binding_commit: bool,
 }
@@ -168,7 +170,7 @@ pub(super) fn attach_verified_candidate(
     vault: &Vault,
     run: &DreamerRunContext,
     txn: &mut heed::RwTxn<'_>,
-    attachment: VerifiedAttachment<'_, '_>,
+    attachment: VerifiedAttachment<'_>,
 ) -> std::result::Result<Vec<crate::EntityId>, LandingError> {
     use crate::dreamer_promotion::{AttachmentWrite, EvidenceAssertion, attach_evidence_in_txn};
     use crate::write_envelope::{SourceLineage, WriteEnvelope, WriteProvenance};
@@ -194,6 +196,7 @@ pub(super) fn attach_verified_candidate(
         .fence
         .validate_in_txn(vault, txn)
         .map_err(landing_error)?;
+    let reader = attachment.fence.reader(vault).map_err(landing_error)?;
     let asserted = attach_evidence_in_txn(
         vault,
         txn,
@@ -213,7 +216,7 @@ pub(super) fn attach_verified_candidate(
             record_outputs: attachment.extraction_binding_commit,
         },
         None,
-        attachment.read,
+        &reader,
         crate::own_rate::auto_write_rate(),
         &mut None,
     )

@@ -162,7 +162,9 @@ pub struct DeriveItemView {
     pub landed: bool,
     /// The rows it wrote or changed.
     pub rows: Vec<EntityId>,
-    /// The approval a claim item landed at: `auto` or `proposed`.
+    /// The approval a claim item landed at: `auto` or `proposed`. Absent for
+    /// an item that landed no claim of its own, such as a candidate that
+    /// attached its evidence to a standing head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<String>,
     /// The item's receipt in the gate decision ledger, hex: a refusal's, or
