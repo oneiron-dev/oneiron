@@ -28,7 +28,7 @@ pub fn create_sealed_owner_vault(
     let mut config = crate::VaultConfig::device();
     config.page_seal = Some(seal);
     let vault = Vault::open(path, config)?;
-    let issuer = crate::test_support::provision_engine_machines(&vault);
+    let issuer = crate::test_fixtures::provision_engine_machines(&vault);
     vault
         .ensure_embedded_owner_actor()
         .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
