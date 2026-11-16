@@ -8033,6 +8033,7 @@ dependencies = [
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
  "oneiron-sdk-build",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
@@ -8378,6 +8379,15 @@ dependencies = [
  "oneiron-contracts",
  "schemars 0.8.22",
  "serde",
+]
+
+[[package]]
+name = "oneiron-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -9011,6 +9021,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-setting-contract"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "rmp-serde",
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
 name = "oneiron-skill-attribution"
 version = "0.1.0"
 dependencies = [
@@ -9031,6 +9051,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-llm",
+ "serde",
  "serde_json",
 ]
 
@@ -9054,6 +9075,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-derive",
  "oneiron-docedit",
  "oneiron-hex",
  "oneiron-model",
@@ -9123,6 +9145,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "libc",
+ "oneiron-fingerprint",
  "oneiron-hex",
  "serde",
  "serde_json",
