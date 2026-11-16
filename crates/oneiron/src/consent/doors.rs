@@ -344,6 +344,13 @@ impl AuthenticatedOwner {
             .is_some_and(|credential| credential.claims().delegation.is_some())
     }
 
+    /// Whether this is a person's own proof, carried by their person
+    /// credential ([`Vault::bind_person_credential`]): it carries no owner
+    /// authority, even an owner's (FIX 4707).
+    pub(crate) const fn is_person_tier(&self) -> bool {
+        self.person_credential.is_some()
+    }
+
     /// Whether the owner authenticated on this install itself: no transport
     /// bound a capability, a person's or a request's credential to the proof,
     /// and no host authenticated it from a host action. The root appointment
