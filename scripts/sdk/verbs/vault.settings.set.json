@@ -4,8 +4,9 @@
   "input": "crate::task_verb::sdk::SettingSetRequest",
   "output": "crate::setting::SetSettingOutcome",
   "call": "crate::task_verb::sdk::setting_set_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "caller",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Write",
   "act_class": "unstated",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "facade_actor"
+  "openapi": true
 }
