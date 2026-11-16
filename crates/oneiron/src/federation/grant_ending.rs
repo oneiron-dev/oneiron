@@ -7,9 +7,11 @@
 //! otherwise it stays owed, value-free, under the Grant's id, and is carried by the next pass that
 //! can: the moment the install key loads, and the owner work pickup (Engine RULING
 //! GRANT-ACT-FAILURE-POLICY = A, 16 Nov 03:42). A batch delete, which runs below any vault door,
-//! owes the end of every Grant row it tears; the pass then ends the line by the line's own family,
-//! or drops the debt when a counted act already ended it (the writer's own end: a membership
-//! record, an owner's revoke, a slip revoke) or when no counted act names the Grant at all.
+//! owes the end of every Grant row it tears that an act may give; the pass then ends the line by
+//! the line's own family, or drops the debt when a counted act already ended it (the writer's own
+//! end: a membership record, an owner's revoke, a slip revoke). A torn row whose giving has not
+//! reached this install yet stays owed until it does (Astra r1-r2d F3): no act naming the Grant
+//! here is no proof that none exists.
 //!
 //! An owed end keeps the deciding person only until their erase: the erase rewrites it, and each
 //! owed membership record naming them, into a person-free end by rule.
@@ -44,13 +46,13 @@ pub(crate) enum GrantEndRecord {
     Signed,
     /// This install cannot carry it now; it stays owed.
     Owed,
-    /// Nothing is left to end: a counted act already ended the line, or none names it.
+    /// Nothing is left to end: a counted act already ended the line, or it stands on no family.
     Settled,
 }
 
 /// A batch delete's debt, below any vault door: the FEDERATION_GRANT row `grant`, about to be
 /// torn in `wtxn`, is owed a counted end unless a writer already owes it a fuller one. Any other
-/// kind, or no row, owes nothing.
+/// kind, no row, or a row no act may give ([`torn_row_takes_acts`]) owes nothing.
 ///
 /// # Errors
 /// The row read, or the debt's write.
@@ -59,9 +61,12 @@ pub(crate) fn owe_torn_grant_end_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     grant: EntityId,
 ) -> Result<()> {
-    let is_grant = crate::ports::EntityStoreRead::port_entity_record(store, &*wtxn, &grant)?
-        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT);
-    if !is_grant || OWED_GRANT_END.get(store, wtxn, &HexId(grant))?.is_some() {
+    let takes_acts = crate::ports::EntityStoreRead::port_entity_record(store, &*wtxn, &grant)?
+        .is_some_and(|row| {
+            row.entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT
+                && torn_row_takes_acts(&row.body)
+        });
+    if !takes_acts || OWED_GRANT_END.get(store, wtxn, &HexId(grant))?.is_some() {
         return Ok(());
     }
     OWED_GRANT_END.put(
@@ -73,6 +78,18 @@ pub(crate) fn owe_torn_grant_end_in_txn(
             family: None,
         },
     )
+}
+
+/// Whether the torn Grant row `body` is of a kind an act may give. An own-device grant, a base
+/// agent's engine-default Steward grant and a guest's grant have no act before their own pass 28
+/// steps (R4, R3c), and a body that does not decode never stands, so none of them owes an end:
+/// its debt would wait for a giving that never comes.
+fn torn_row_takes_acts(body: &[u8]) -> bool {
+    super::decode_federation_grant_body(body).is_ok_and(|grant| {
+        !super::is_own_device_grant(&grant)
+            && !super::is_system_agent_steward_grant(&grant)
+            && grant.role != super::FederationGrantRole::Guest
+    })
 }
 
 impl Vault {
@@ -154,7 +171,7 @@ impl Vault {
     /// Signs the end owed for `grant` in `txn` and clears the debt there once the fold counted
     /// it, by the line's own family (a writer's family when no counted act names the Grant). A
     /// debt with nothing left to end clears with no act. `None`, with nothing written, for no
-    /// debt or an install that cannot carry now.
+    /// debt, a torn row's debt whose giving has not arrived, or an install that cannot carry now.
     fn carry_owed_grant_end_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -168,7 +185,13 @@ impl Vault {
             Some(line) if line.ended => None,
             // A line in no one family (two branches named it in two) stands on neither.
             Some(line) => line.family,
-            None => owed.family,
+            // No counted act names the Grant here yet: its writer's family ends it before its
+            // giving arrives. A torn row's debt knows no family, so it waits for the giving to
+            // name one (Astra r1-r2d F3).
+            None => match owed.family {
+                Some(family) => Some(family),
+                None => return Ok(None),
+            },
         };
         let Some(family) = family else {
             OWED_GRANT_END.delete(&self.store, txn, &HexId(grant))?;

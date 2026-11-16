@@ -1,14 +1,15 @@
 //! Pass 28 R2c ends, for integration tests: a lapsed sign-in's withdrawal of the owner's
-//! agent Grant, a batch delete of a Grant row, the install carrier's load, and the Grant
-//! standing read in any grant family.
+//! agent Grant, a batch delete of a Grant row, the install carrier's load, the Grant
+//! standing read in any grant family, and a member row's giving that lands with no row.
 //!
 //! Every door calls only items that also exist at the parent commit, so the red run can lay
 //! this file onto it: no R2c ending item (`end_grant_in_txn`, `carry_owed_grant_ends_logged`,
 //! `owe_torn_grant_end_in_txn`, ...) is called here.
 
-use crate::authority::GrantFamily;
+use crate::authority::{ActSurface, GrantActBy, GrantActChange, GrantFamily};
 use crate::batch::{BatchOp, apply_ops};
 use crate::error::{Error, Result};
+use crate::federation::{FederationGrant, GrantTermsKey, federation_grant_terms};
 use crate::{EntityId, Vault};
 
 /// Withdraws the owner's agent Grant `grant` naming `agent` for a sign-in that lapsed before
@@ -74,4 +75,34 @@ pub fn standing_grant_in_family(
     Ok(vault
         .standing_grant_in_txn(&txn, grant, family, now)?
         .map(|standing| *standing.act()))
+}
+
+/// `person`'s giving of the member row `id` with the terms `grant` states under `terms_key`,
+/// the act alone, with no row put: a giving that reaches this install after its row did.
+/// Returns the act.
+///
+/// # Errors
+///
+/// The act's refusal (no carrier, an act the fold did not count) or a store failure; nothing
+/// is written then.
+pub fn give_member_grant_act_alone(
+    vault: &Vault,
+    id: EntityId,
+    grant: &FederationGrant,
+    terms_key: &GrantTermsKey,
+    person: EntityId,
+) -> Result<[u8; 32]> {
+    vault.with_write_txn(|txn| {
+        let terms = federation_grant_terms(id, grant, terms_key)?;
+        vault.append_grant_act_in_txn(
+            txn,
+            GrantActBy::Person {
+                person,
+                surface: ActSurface::ThisInstall,
+            },
+            id,
+            GrantFamily::SharedMember,
+            GrantActChange::Give { terms },
+        )
+    })
 }
