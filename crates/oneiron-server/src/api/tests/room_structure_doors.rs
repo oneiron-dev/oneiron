@@ -475,3 +475,125 @@ async fn a_direct_conversations_turn_reads_by_its_lane() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
+
+/// L9-52 (Engine RULING L9-52-ROOM-STRUCTURE = A; FIX
+/// [ROOM-STRUCTURE-RETRIEVAL-HITS]): a room's TURN found by search, a
+/// context pack or a timeline shows only to a reader the room itself admits,
+/// as every door that serves it does. The member (the vault's own agent,
+/// seated in the room) finds the turn on each route, so each route serves
+/// TURN hits. The outsider, whose lane reads TURN, CONVERSATION and MESSAGE
+/// rows but who has no seat and no grant that opens the room's
+/// relationship, finds none, and its timeline of the turn answers as a
+/// missing row's does. Every retrieval route admits its hits through one
+/// check, which judges a CONVERSATION hit the same way.
+#[tokio::test]
+async fn an_outsider_finds_no_room_turn_by_search_or_timeline() {
+    let room = room();
+    let needle = "zorblaxneedle";
+    // A TURN whose words are its own, as the core batch writes one (a
+    // witnessed turn's words index under its messages), bound to the room by
+    // its one ChildOf edge, which names its room (`named_room`).
+    let (status, written) = route_json_auth(
+        room.server.clone(),
+        json_request(
+            "POST",
+            "/v1/core/batch",
+            json!({
+                "entities": [{
+                    "entity_type": oneiron::registry::ENTITY_TYPE_TURN,
+                    "learned_at": 100_u64,
+                    "occurred_start": 100_u64,
+                    "occurred_end": 100_u64,
+                    "body": {
+                        "txt": format!("a room turn {needle}"),
+                        "spkr": "user",
+                        "at": 100_u64
+                    }
+                }]
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{written}");
+    let turn_hex = written["entities"][0]["id"]
+        .as_str()
+        .expect("the written turn's id")
+        .to_owned();
+    let turn = oneiron::EntityId::from_hex(&turn_hex).expect("turn id");
+    room.server
+        .vault
+        .batch()
+        .edge(&turn, oneiron::EdgeKind::ChildOf, &room.room, 1.0)
+        .commit()
+        .expect("bind the turn to the room");
+    let outsider = seeded_test_entity_id(0x2401_0060);
+    super::context_board_history::restrict_principal_read_types(
+        &room.server,
+        outsider,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::registry::ENTITY_TYPE_MESSAGE,
+        ],
+    );
+    let outsider = test_bearer(&format!(
+        "scope=core:read;principal_ref={}",
+        outsider.to_hex()
+    ));
+    let member = test_bearer(&room.agent_recipe(None));
+    let search = format!("/api/search/text?query={needle}&limit=20");
+    let routes = [
+        ("core query", "POST", "/v1/core/query"),
+        ("text search", "GET", search.as_str()),
+        ("context pack", "POST", "/v1/core/context-pack"),
+    ];
+    let request = json!({ "query": needle, "limit": 20 });
+    for (route, method, uri) in routes {
+        let body = (method == "POST").then_some(&request);
+        let (status, served) = route_json(
+            room.server.clone(),
+            core_request_with_authz(method, uri, member.clone(), body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{route}: {served}");
+        assert!(
+            served.to_string().contains(&turn_hex),
+            "{route}: the member finds the room's turn: {served}"
+        );
+        let (status, found) = route_json(
+            room.server.clone(),
+            core_request_with_authz(method, uri, outsider.clone(), body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{route}: {found}");
+        assert!(
+            !found.to_string().contains(&turn_hex),
+            "{route}: the outsider finds no turn of the room: {found}"
+        );
+    }
+    let timeline = format!("/v1/core/memory/{turn_hex}/timeline");
+    let (status, served) = route_json(
+        room.server.clone(),
+        core_request_with_authz("GET", &timeline, member, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    assert!(
+        served["records"]
+            .as_array()
+            .expect("the member's timeline records")
+            .iter()
+            .any(|record| record["id"].as_str() == Some(turn_hex.as_str())),
+        "the member's timeline holds the turn: {served}"
+    );
+    let (status, found) = route_json(
+        room.server.clone(),
+        core_request_with_authz("GET", &timeline, outsider, None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "the outsider's timeline of a room's turn answers as a missing row's: {found}"
+    );
+}
