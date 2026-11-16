@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::agent_dispatch::AttemptLineageLink;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
@@ -18,6 +19,22 @@ struct Deletion {
     deleted_by: Option<EntityId>,
     deleted_at: u64,
     run_id: Option<String>,
+    /// The deleted try's links on a settling lineage, read off its row before
+    /// the delete. A receipt written before the field, or for a row whose
+    /// payload did not decode, has none: a lineage through that try stays
+    /// unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lineage: Option<DeletedLineage>,
+}
+
+/// [`AttemptLineageLink`] as a deletion receipt stores it: ids only, no
+/// payload. An actor erase leaves it as it is: it names an agent definition
+/// and a try, never a person, and a lineage that lost a link would let a fork
+/// settle its own lineage's proposal.
+#[derive(Serialize, Deserialize)]
+struct DeletedLineage {
+    dispatched_agent: Option<EntityId>,
+    parent_attempt: Option<AttemptId>,
 }
 
 pub(super) fn stamp_in_txn(
@@ -27,6 +44,7 @@ pub(super) fn stamp_in_txn(
     actor: EntityId,
     at: u64,
     run: Option<&str>,
+    lineage: Option<AttemptLineageLink>,
 ) -> Result<String> {
     DELETIONS.put(
         &vault.store,
@@ -36,12 +54,37 @@ pub(super) fn stamp_in_txn(
             deleted_by: Some(actor),
             deleted_at: at,
             run_id: run.map(str::to_owned),
+            lineage: lineage.map(|link| DeletedLineage {
+                dispatched_agent: link.dispatched_agent,
+                parent_attempt: link.parent_attempt,
+            }),
         },
     )?;
     Ok(format!(
         "attempt_delete:{}",
         bytes_to_hex_lower(attempt.as_bytes())
     ))
+}
+
+/// The settling-lineage links `attempt` held when the owner deleted it from
+/// the archive, as its deletion receipt keeps them. `None` when no receipt
+/// names the try, its receipt does not decode, or it keeps no links.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn deleted_attempt_lineage_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<AttemptLineageLink>> {
+    Ok(DELETIONS
+        .get_lenient(store, txn, &attempt)?
+        .and_then(|deletion| deletion.lineage)
+        .map(|link| AttemptLineageLink {
+            dispatched_agent: link.dispatched_agent,
+            parent_attempt: link.parent_attempt,
+        }))
 }
 
 /// The run's deletion lines in time/id order, read beside its remaining rows.

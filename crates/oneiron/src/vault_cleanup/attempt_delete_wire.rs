@@ -48,6 +48,8 @@ pub fn confirm_attempt_archive_delete_wire(
         }
         let record = AttemptQueue::new(vault).delete_archived_completed_in_txn(txn, id)?;
         let at = vault.now_recorded_at();
+        // The receipt keeps the row's lineage links, so a settling lineage
+        // through this try stays whole once the row is gone.
         let receipt_ref = stamp_in_txn(
             vault,
             txn,
@@ -55,6 +57,7 @@ pub fn confirm_attempt_archive_delete_wire(
             authority.actor,
             at,
             record.run_id.as_deref(),
+            crate::agent_dispatch::attempt_lineage_link(&record),
         )?;
         Ok(AttemptArchiveDeleteReceiptView {
             attempt: bytes_to_hex_lower(id.as_bytes()),

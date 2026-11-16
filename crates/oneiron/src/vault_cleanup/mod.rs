@@ -179,7 +179,7 @@ pub use self::tripwire::{
 };
 
 pub(crate) use self::attempt_delete_receipts::{
-    deletions_for_run_in_txn, erase_attempt_delete_actor_in_txn,
+    deleted_attempt_lineage_in_txn, deletions_for_run_in_txn, erase_attempt_delete_actor_in_txn,
 };
 pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
 pub(crate) use self::erase::{erase_attempt_references_in_txn, erase_in_txn};

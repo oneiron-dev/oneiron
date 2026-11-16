@@ -48,6 +48,29 @@ fn recorded_parent(row: &AttemptRecord) -> Option<AttemptId> {
         .and_then(|payload| payload.parent_attempt)
 }
 
+/// The two links a try holds on a settling lineage, as its row records them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AttemptLineageLink {
+    /// The agent definition the try dispatched, when it was an agent dispatch.
+    pub(crate) dispatched_agent: Option<EntityId>,
+    /// The try its payload records above it.
+    pub(crate) parent_attempt: Option<AttemptId>,
+}
+
+/// `row`'s links on a settling lineage: the agent it dispatched and the try
+/// its payload records above it. `None` when its payload does not decode,
+/// which leaves a lineage through it unknown. The walk reads a live row with
+/// it, and the archive delete keeps it on the deleted row's receipt, so both
+/// read one try the same way.
+pub(crate) fn attempt_lineage_link(row: &AttemptRecord) -> Option<AttemptLineageLink> {
+    let payload = decode_dreamer_attempt_payload(&row.payload).ok()?;
+    Some(AttemptLineageLink {
+        dispatched_agent: super::record_dispatch_input(row)
+            .and_then(|input| input.target.agent_definition_ref().ok()),
+        parent_attempt: payload.parent_attempt,
+    })
+}
+
 /// Where a settling-lineage walk starts: an actor, or a try.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LineageStart {
@@ -72,11 +95,17 @@ const SETTLING_LINEAGE_LIMIT: usize = 256;
 /// meet. No agent's chain reaches the owner, so the owner's lineage is the
 /// owner alone.
 ///
+/// A try the queue no longer holds is read off the link its deletion receipt
+/// keeps ([`attempt_lineage_link`] of the row the owner deleted), so a fork
+/// whose spawning try left the archive still names the agent that try ran and
+/// the try above it.
+///
 /// `None` when the engine cannot read the lineage whole: a shell's pin that
-/// has not named its parent, a try the chain names that the queue no longer
-/// holds or whose payload does not decode, or more than
-/// [`SETTLING_LINEAGE_LIMIT`] actors and tries. A caller counts an unknown
-/// lineage as the opener's, as FIX 10693 does for frozen credential chains.
+/// has not named its parent, a try the chain names whose payload does not
+/// decode, or that the queue no longer holds and no deletion receipt links,
+/// or more than [`SETTLING_LINEAGE_LIMIT`] actors and tries. A caller counts
+/// an unknown lineage as the opener's, as FIX 10693 does for frozen
+/// credential chains.
 ///
 /// # Errors
 ///
@@ -113,18 +142,21 @@ pub(crate) fn settling_lineage_in_txn(
                 if !tries.insert(attempt) {
                     continue;
                 }
-                let Some(row) = queue.get_in_txn(txn, attempt)? else {
+                let link = match queue.get_in_txn(txn, attempt)? {
+                    Some(row) => attempt_lineage_link(&row),
+                    // A try deleted from the archive left its link on its
+                    // deletion receipt.
+                    None => crate::vault_cleanup::deleted_attempt_lineage_in_txn(
+                        &vault.store,
+                        txn,
+                        attempt,
+                    )?,
+                };
+                let Some(link) = link else {
                     return Ok(None);
                 };
-                let Ok(payload) = decode_dreamer_attempt_payload(&row.payload) else {
-                    return Ok(None);
-                };
-                if let Some(target) = super::record_dispatch_input(&row)
-                    .and_then(|input| input.target.agent_definition_ref().ok())
-                {
-                    pending.push(LineageStart::Actor(target));
-                }
-                pending.extend(payload.parent_attempt.map(LineageStart::Attempt));
+                pending.extend(link.dispatched_agent.map(LineageStart::Actor));
+                pending.extend(link.parent_attempt.map(LineageStart::Attempt));
             }
         }
         if actors.len() + tries.len() > SETTLING_LINEAGE_LIMIT {
