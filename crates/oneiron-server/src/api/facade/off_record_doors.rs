@@ -611,6 +611,10 @@ fn run_refusal(error: &McpCodeExecutionError) -> MemoryError {
             MEMORY_CODE_INTERNAL,
             "Call again with the same run_ref; the run goes on from its last step.",
         ),
+        // The session's own refusal of the run's act, as its other doors
+        // answer it (FIX OFF-RECORD-RUN-POLICY-REFUSAL-500): calling again
+        // meets it again.
+        McpCodeExecutionError::Refused(refusal) => return (**refusal).clone(),
     };
     MemoryError::new(code, error.to_string(), &[suggestion])
 }

@@ -25,6 +25,7 @@ pub mod reply_evidence;
 mod run_position;
 mod run_signals;
 mod self_brief;
+mod session_refusal;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
@@ -57,6 +58,8 @@ pub use self::run_position::{CodeRunPosition, code_run_position};
 pub use self::self_brief::{
     BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
 };
+// FIX OFF-RECORD-RUN-POLICY-REFUSAL-500: a session's refusal of a run's act.
+pub use self::session_refusal::is_session_act_refusal;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
