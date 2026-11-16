@@ -47,6 +47,7 @@ pub use oneiron_base::host_descriptors;
 pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
+pub mod idle_fold;
 pub mod limit_ask;
 pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
@@ -458,6 +459,11 @@ pub use crate::context_pack::{
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
 };
 pub use crate::corpus::CorpusScope;
+// `credential_door` is crate-only; what an API call does and the per-API
+// verb-class tables are public (L8-57), for the server's door and the tests.
+pub use crate::credential_door::{
+    ApiAction, ApiProtocol, ApiVerbClassRow, ApiVerbClassTable, read_api_actions,
+};
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecordState,

@@ -63,11 +63,19 @@ pub(super) enum RawPutDoor {
     ///
     /// Reachable only by presenting a source landing's
     /// `source_audience::SourceAudienceBirth`, whose one constructor reads a
-    /// live source policy: a capability, like the witness arm. It is the one
-    /// raw door besides the witness arm whose early check lets the
-    /// source-audience key through; the write transaction admits it only on
-    /// a row the landing marked born.
+    /// live source policy: a capability, like the witness arm. Its early
+    /// check lets the source-audience key through, as the witness arm's and
+    /// [`Self::KeptStoredStamp`]'s do; the write transaction admits it only
+    /// on a row the landing marked born.
     SourceBound,
+    /// The stored-stamp door (census L6-32,
+    /// [`super::BatchBuilder::put_keeping_stored_stamp`]): a rewrite of a
+    /// stored row that keeps the source-audience stamp its stored bytes
+    /// carry, as a host's taint mark rewrites a mail attachment. Its early
+    /// check lets the key through; the write transaction admits it only when
+    /// the stored row states the same stamp, so the door keeps a stamp and
+    /// never births one.
+    KeptStoredStamp,
     /// The phone keep's TURN, CONVERSATION and SESSION door
     /// (VOICE-PHONE-AGENT-REACH R2 review F1,
     /// [`super::BatchBuilder::put_phone_bound`]).
@@ -118,8 +126,13 @@ pub(super) fn validate_public_raw_put(
 ) -> Result<()> {
     // Fix list row 16256: a raw body never carries the source-audience key,
     // whatever its value, but through the two doors a source landing writes
-    // its stamped rows by, each reached only with that landing's proof.
-    if !matches!(door, RawPutDoor::WitnessMessage | RawPutDoor::SourceBound) {
+    // its stamped rows by, each reached only with that landing's proof, and
+    // the stored-stamp door, which the write transaction holds to the stamp
+    // the stored row already states.
+    if !matches!(
+        door,
+        RawPutDoor::WitnessMessage | RawPutDoor::SourceBound | RawPutDoor::KeptStoredStamp
+    ) {
         crate::source_audience::refuse_written_obligation(entity_type, data)?;
     }
     // VOICE-PHONE-AGENT-REACH R2 review F1: under the default reach a row's
