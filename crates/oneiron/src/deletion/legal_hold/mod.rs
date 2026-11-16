@@ -257,6 +257,10 @@ impl Vault {
         targets: Vec<LegalHoldTarget>,
     ) -> Result<LegalHold> {
         let targets = distinct(targets)?;
+        // This call's own captures: a concurrent widen of the same hold
+        // writes its files into the same directory, so a failed commit
+        // removes only these.
+        let mut written: Vec<HoldCloneCapture> = Vec::new();
         let outcome = self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let mut hold = hold_store::hold_in_txn(&self.store, txn, &hold_id)?
@@ -272,6 +276,7 @@ impl Vault {
             self.refuse_erased_targets_in_txn(txn, &added)?;
             let captures =
                 clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &added)?;
+            written.extend(captures.iter().copied());
             let widened = (|| -> Result<LegalHold> {
                 let fingerprint = captures.first().map(|capture| capture.fingerprint).ok_or(
                     Error::InvariantViolation("a legal hold widening wrote no sealed capture"),
@@ -300,9 +305,12 @@ impl Vault {
             widened
         });
         if outcome.is_err() {
-            // A commit that failed after its files were written leaves them
-            // unreferenced; they go too.
-            clone::legal_hold_store::remove_unreferenced_captures_best_effort(self, &hold_id);
+            // A commit that failed after this call's files were written
+            // leaves them unreferenced; they go too. Another widen's files
+            // stay, committed or not.
+            clone::legal_hold_store::remove_unreferenced_captures_best_effort(
+                self, &hold_id, &written,
+            );
         }
         outcome
     }
