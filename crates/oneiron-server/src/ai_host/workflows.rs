@@ -51,6 +51,7 @@ use oneiron::failure_ladder::FailureLadderOutcome;
 use oneiron::llm::run_admission::forget_work_parent;
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::task_verb::RunnerDoneAnswer;
+use oneiron_base::unix_seconds_now;
 use tokio::sync::{Notify, broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
@@ -194,7 +195,7 @@ fn pump(
         // One sleep to the next real instant, armed anew after every pass.
         let until_due = wake
             .due
-            .map(|due| Duration::from_secs(due.saturating_sub(now_secs())));
+            .map(|due| Duration::from_secs(due.saturating_sub(unix_seconds_now())));
         let mut recovered = false;
         let woke = runtime.block_on(async {
             tokio::select! {
@@ -217,7 +218,7 @@ fn pump(
             return;
         }
         if recovered {
-            match AgentDispatcher::new(vault).wake_workflow_retries(now_secs()) {
+            match AgentDispatcher::new(vault).wake_workflow_retries(unix_seconds_now()) {
                 Ok(0) => {}
                 Ok(woke) => {
                     tracing::info!(woke, "a provider recovered; waiting workflow steps run now")
@@ -258,7 +259,7 @@ fn pump_once(
     recheck |= super::payer_funding::resume_payer_parks(
         vault,
         LEASE_OWNER,
-        now_secs(),
+        unix_seconds_now(),
         Some(&runner.spent),
     ) > 0;
     let dispatcher = AgentDispatcher::new(vault);
@@ -266,9 +267,9 @@ fn pump_once(
     for root in &roots {
         // Existing wakes and the existing slow recheck also revisit native
         // hook waits. This hint never authorizes the retained verb body.
-        recheck |= dispatcher.resume_workflow_tool(*root, now_secs())?;
+        recheck |= dispatcher.resume_workflow_tool(*root, unix_seconds_now())?;
         // A notice a crash or a refusal left owed goes out first.
-        recheck |= deliver_hold_notice(&dispatcher, *root, now_secs());
+        recheck |= deliver_hold_notice(&dispatcher, *root, unix_seconds_now());
         loop {
             if *stopped.borrow() {
                 return Ok(PumpWake {
@@ -284,7 +285,7 @@ fn pump_once(
             let progress = dispatcher.run_workflow_step_output_with_confession(
                 *root,
                 LEASE_OWNER,
-                now_secs(),
+                unix_seconds_now(),
                 |step, context| {
                     claimed = Some((step.attempt.id, step.attempt.attempt_count));
                     status.update(|status| {
@@ -305,7 +306,7 @@ fn pump_once(
                         && let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)?
                     {
                         let read = dispatcher.spend_read(&scope)?;
-                        let now = now_secs();
+                        let now = unix_seconds_now();
                         let reason = format!("workflow spend cap under scope {scope}");
                         dispatcher.budget_signal(
                             *root,
@@ -383,7 +384,7 @@ fn pump_once(
                         // at the boundary, from the checkpoint before the
                         // call it could not pay for.
                         Err(fault) if fault.exhausted => {
-                            let now = now_secs();
+                            let now = unix_seconds_now();
                             held = Some(dispatcher.hold_for_budget(
                                 *root,
                                 BudgetHoldLease {
@@ -420,7 +421,7 @@ fn pump_once(
                                     .expect("step spend mutex poisoned")
                                     .get(&step.attempt.id)
                                     .copied(),
-                                now_secs(),
+                                unix_seconds_now(),
                             )?;
                             parked = true;
                             Err(error)
@@ -445,12 +446,16 @@ fn pump_once(
                 }
             });
             // FIX 11532: the solo leaf's team receipt, after its own settle;
-            // a receipt failure logs and the workflow goes on.
+            // a receipt failure logs and the workflow goes on. No retry
+            // follows a completed leaf, so the spend it carried goes too.
             if let Some((leaf, _)) = claimed
                 && progress.is_ok()
                 && leaf_completed(vault, leaf)
             {
-                if let Err(error) = oneiron::team::record_solo_receipt(vault, leaf, now_secs()) {
+                super::step::drop_carried_spend(vault, leaf);
+                if let Err(error) =
+                    oneiron::team::record_solo_receipt(vault, leaf, unix_seconds_now())
+                {
                     tracing::warn!(kind = ?error.kind(), ?leaf, "a workflow leaf's solo receipt was not recorded");
                 }
             }
@@ -463,7 +468,7 @@ fn pump_once(
             // goes to the owners now.
             if held.is_some() {
                 tracing::info!(?root, "a workflow is held at its spend cap");
-                recheck |= deliver_hold_notice(&dispatcher, *root, now_secs());
+                recheck |= deliver_hold_notice(&dispatcher, *root, unix_seconds_now());
                 break;
             }
             // The parked step's workflow waits with it; the owners' ask is
@@ -504,15 +509,17 @@ fn pump_once(
                     let mut released = !failed.is_empty();
                     for step in &failed {
                         let backoff = runner.retry_backoff_secs;
-                        match settle(vault, *root, step, LEASE_OWNER, backoff, now_secs()) {
+                        match settle(vault, *root, step, LEASE_OWNER, backoff, unix_seconds_now()) {
                             Ok(FailureLadderOutcome::Retried { .. }) => {}
                             Ok(_) => {
-                                runner.forget(step.leaf);
+                                runner.forget(vault, step.leaf);
                                 // FIX 11532: the solo leaf's team receipt, after its
                                 // own end; a receipt failure logs and the stop stands.
-                                if let Err(error) =
-                                    oneiron::team::record_solo_receipt(vault, step.leaf, now_secs())
-                                {
+                                if let Err(error) = oneiron::team::record_solo_receipt(
+                                    vault,
+                                    step.leaf,
+                                    unix_seconds_now(),
+                                ) {
                                     tracing::warn!(kind = ?error.kind(), leaf = ?step.leaf, "a workflow leaf's solo receipt was not recorded");
                                 }
                                 tracing::warn!(?root, "a workflow step ended; its workflow stops");
@@ -538,7 +545,7 @@ fn pump_once(
     recheck |= settle_workflow_tasks(vault, decisions);
     let attempts = AttemptQueue::new(vault)
         .pump_wake_rows(oneiron::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND)?;
-    let now = now_secs();
+    let now = unix_seconds_now();
     // A scheduled or backing-off try wakes the pump at its own instant, the
     // readiness instant its claim reads.
     let instant = |attempt: &oneiron::attempt_queue::AttemptRecord| {
@@ -587,7 +594,7 @@ fn settle_workflow_tasks(vault: &Vault, decisions: Option<&DecisionHost>) -> boo
     let mut owed = false;
     for root in roots {
         let judged = judge_workflow_done(&dispatcher, root, decisions);
-        if let Err(error) = dispatcher.settle_workflow_task(root, judged, now_secs()) {
+        if let Err(error) = dispatcher.settle_workflow_task(root, judged, unix_seconds_now()) {
             owed = true;
             tracing::warn!(kind = ?error.kind(), ?root, "a workflow's TASK did not settle; the next pass tries again");
         }
@@ -632,7 +639,8 @@ fn ask_project_questions(
     };
     let dispatcher = AgentDispatcher::new(vault);
     while !*stopped.borrow() {
-        match dispatcher.run_project_detection(detection, DETECTION_LEASE_OWNER, now_secs()) {
+        match dispatcher.run_project_detection(detection, DETECTION_LEASE_OWNER, unix_seconds_now())
+        {
             Ok(ProjectDetectionRun::Idle) => return,
             Ok(_) => {}
             Err(error) => {
@@ -676,10 +684,4 @@ fn bind_attribution(vault: &Vault, attempt: AttemptId) {
     {
         tracing::warn!(%error, ?attempt, "a workflow leaf's pack attribution did not bind");
     }
-}
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
