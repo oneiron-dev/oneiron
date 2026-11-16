@@ -3,7 +3,9 @@
 //! `/esign/verify#<capability>`; the page scrubs the fragment and sends the
 //! capability only in the `x-oneiron-esign-qr-capability` header of its
 //! report POST. Keyless: the capability is checked in the vault on each
-//! report, and an unusable one gets one refusal.
+//! report, and an unusable one gets one refusal. `/esign/verify/pdf` serves
+//! a sealed item under the same header only when the vault owner turned on
+//! the document's QR PDF download.
 
 use serde_json::{Value, json};
 
@@ -31,7 +33,7 @@ pub(super) fn merge_qr_page_paths(spec: &mut Value) {
         json!({"post": {
             "tags": ["signing"],
             "operationId": "esign_qr_report",
-            "summary": "What the seal the QR was printed in proved: the document's title and outcome, the seal time, the audit chain head, who signed and when (names and roles only), and each item's sealed version, SHA-256 file identifier, seal profile evidence and seal-time self-verification. Never the PDF, an email, an IP or a user agent.",
+            "summary": "What the seal the QR was printed in proved: the document's title and outcome, the seal time, the audit chain head, who signed and when (names and roles only), each item's sealed version, SHA-256 file identifier, seal profile evidence and seal-time self-verification, and whether the owner lets this QR download the sealed PDF (pdf_download). Never the PDF, an email, an IP or a user agent.",
             "security": [],
             "parameters": [{
                 "name": "x-oneiron-esign-qr-capability",
@@ -47,6 +49,40 @@ pub(super) fn merge_qr_page_paths(spec: &mut Value) {
                 },
                 "404": {
                     "description": "One refusal for an unknown, revoked, expired or erased capability. No call is refused for its rate."
+                }
+            }
+        }}),
+    );
+    paths.insert(
+        "/esign/verify/pdf".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "esign_qr_pdf",
+            "summary": "One sealed item the QR was printed in, as a hash-checked PDF attachment, only when the vault owner turned on the document's QR PDF download. Off by default: each party's own signing link is the way to the PDF.",
+            "security": [],
+            "parameters": [{
+                "name": "x-oneiron-esign-qr-capability",
+                "in": "header",
+                "required": true,
+                "description": "The QR capability from the certificate URL's fragment: 64 lower-hex characters.",
+                "schema": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }],
+            "requestBody": {
+                "required": true,
+                "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["item"],
+                    "properties": {"item": {"type": "integer", "minimum": 0, "description": "The item's position in the sealed document."}}
+                }}}
+            },
+            "responses": {
+                "200": {
+                    "description": "The sealed PDF, served no-store, no-referrer and noindex as an attachment.",
+                    "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}
+                },
+                "404": {
+                    "description": "One refusal for an unknown, revoked, expired or erased capability, a document whose QR PDF download is off, or an item the seal did not print. No call is refused for its rate."
                 }
             }
         }}),

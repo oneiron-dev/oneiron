@@ -14,25 +14,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
-/// The owner's change to an access grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AccessGrantActChange {
-    Grant,
-    Revoke,
-}
-
-impl AccessGrantActChange {
-    /// The stable receipt word for this change, used as the outcome and the
-    /// receipt-id event word.
-    #[must_use]
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Grant => "granted",
-            Self::Revoke => "revoked",
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::access_grant::owner_act::AccessGrantActChange;
 
 /// One owner act on an access grant, as this install recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
