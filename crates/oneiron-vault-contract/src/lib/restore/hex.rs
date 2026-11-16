@@ -7,10 +7,7 @@ use serde::{Deserialize, Deserializer, Serializer};
 
 /// The bytes `text` spells, when it is lowercase hex.
 fn decode(text: &str) -> Option<Vec<u8>> {
-    text.bytes()
-        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        .then(|| crate::from_hex(text))
-        .flatten()
+    oneiron_hex::decode_vec(text)
 }
 
 /// The refusal of a field that is not the bytes it should be.
