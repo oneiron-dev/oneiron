@@ -9,8 +9,10 @@
 //! `Vault::sieve_pass` and `Vault::sieve_queue`.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test sieve_secret_body_release`.
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_model::SecretScanMode;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
@@ -53,7 +55,7 @@ fn a_message_the_write_door_refuses_gives_the_sieve_no_span() -> TestResult {
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
     let at = vault.now_recorded_at();
     // The owner's scan off: the phrase is stored as written.
-    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, at)?;
+    switch_secret_scan_off(&vault, &owner);
 
     let turn = EntityId::now();
     let clean = EntityId::now();
@@ -108,4 +110,27 @@ fn a_message_the_write_door_refuses_gives_the_sieve_no_span() -> TestResult {
         "a message whose body the write door refuses gave the sieve spans: {spans:?}"
     );
     Ok(())
+}
+
+/// The owner switches the write door's secret scan off: the Setting key
+/// `secret_scan.mode` through `Vault::set_setting` (SETTING-PLAIN PLAIN-2b
+/// deleted `Vault::set_secret_scan_mode` and its receipt table).
+fn switch_secret_scan_off(vault: &Vault, owner: &AuthenticatedOwner) {
+    let mode = serde_json::to_value(SecretScanMode::Off).expect("the mode as JSON");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value("secret_scan.mode", mode),
+        )
+        .expect("the owner switches the scan off");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's switch applies: {outcome:?}"
+    );
 }

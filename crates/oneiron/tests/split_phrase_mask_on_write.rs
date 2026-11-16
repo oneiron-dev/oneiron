@@ -8,9 +8,11 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY};
 use oneiron::secret_custody::SecretSight;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
@@ -341,7 +343,7 @@ fn a_held_phrase_split_in_a_file_is_marked_with_the_switch_off() -> TestResult {
     let held = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
     let owner = vault.ensure_embedded_owner_actor()?;
     let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
-    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, 10)?;
+    switch_secret_scan_off(&vault, &owner);
     for (name, body) in rest {
         let id = put_asset(&vault, body)?;
         let stored = vault.get(&id)?.expect("stored file");
@@ -519,7 +521,7 @@ fn a_held_phrase_beside_an_unheld_one_takes_its_handle_with_the_switch_off() -> 
     let held = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
     let owner = vault.ensure_embedded_owner_actor()?;
     let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
-    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, 10)?;
+    switch_secret_scan_off(&vault, &owner);
     let id = put(&vault, ENTITY_TYPE_PERSON, &two_phrases_body()?)?;
     let stored = vault.get(&id)?.expect("stored body");
     let text = String::from_utf8_lossy(&stored);
@@ -641,4 +643,27 @@ mod carrier {
         );
         Ok(())
     }
+}
+
+/// The owner switches the write door's secret scan off: the Setting key
+/// `secret_scan.mode` through `Vault::set_setting` (SETTING-PLAIN PLAIN-2b
+/// deleted `Vault::set_secret_scan_mode` and its receipt table).
+fn switch_secret_scan_off(vault: &Vault, owner: &AuthenticatedOwner) {
+    let mode = serde_json::to_value(SecretScanMode::Off).expect("the mode as JSON");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value("secret_scan.mode", mode),
+        )
+        .expect("the owner switches the scan off");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's switch applies: {outcome:?}"
+    );
 }
