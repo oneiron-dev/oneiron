@@ -66,6 +66,47 @@ pub enum ReadMode {
     Pinned(RevisionRef),
 }
 
+/// A point in the vault's memory history (L3-39): how many live-revision
+/// moves this store had committed when it was handed out, and the store's
+/// recording-clock instant then. A position, not a content hash: an erase
+/// leaves no hash of its row in one. A graph-FS memory fork names one by its
+/// hex form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MemoryFrontier {
+    /// The live-revision moves committed at the frontier.
+    pub sequence: u64,
+    /// The recording clock (Unix seconds, the clock edges and learned times
+    /// are stamped with) when the frontier was handed out.
+    pub recorded_at: u64,
+}
+
+impl MemoryFrontier {
+    /// Stable wire form: 32 lowercase hex characters, `sequence` then
+    /// `recorded_at`, each eight bytes big-endian.
+    pub fn to_hex(self) -> String {
+        format!("{:016x}{:016x}", self.sequence, self.recorded_at)
+    }
+
+    /// Parses exactly the form [`Self::to_hex`] writes. Uppercase is refused,
+    /// so one frontier has one spelling.
+    pub fn from_hex(value: &str) -> Result<Self> {
+        if value.len() != 32
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(oneiron_base::error::Error::InvalidKey);
+        }
+        let half = |part: &str| {
+            u64::from_str_radix(part, 16).map_err(|_| oneiron_base::error::Error::InvalidKey)
+        };
+        Ok(Self {
+            sequence: half(&value[..16])?,
+            recorded_at: half(&value[16..])?,
+        })
+    }
+}
+
 /// Refresh receipts name only revisions actually published into the index.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct IndexedRefreshReport {

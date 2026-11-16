@@ -18,9 +18,6 @@ use super::storage::{PROPOSAL, companion_token_hash, participant_token_hash, ref
 // -------------------------------------------------------------------------
 /// `vault_meta` prefix for the ephemeral proposal row.
 pub const COMPANION_PROPOSAL_META_PREFIX: &[u8] = b"booking:companion_proposal:v1:";
-/// How many curated choices one proposal offers. A shortlist, not a grid: the
-/// companion asks friends to tap, and a wall of buttons is a poll.
-const MAX_PROPOSAL_CHOICES: u16 = 5;
 /// The participant count past which a proposal's creation is logged: an
 /// advisory measurement, never a refusal. Every participant gets a token,
 /// up to what the ordinal's own width counts.
@@ -148,7 +145,7 @@ pub fn create_companion_proposal(
 
     let request = companion_solve_request(preset, window, constraint, visitor_tz);
     let solved = oracle.solve(&request)?;
-    let choices = curated_shortlist(&solved.slots, &request.visitor_tz);
+    let choices = curated_shortlist(&solved.slots, &request.visitor_tz, preset.max_choices);
     if choices.is_empty() {
         return Err(BookingError::SlotOracle(
             "the oracle offered no slot to propose in this window".to_owned(),
@@ -223,11 +220,15 @@ pub fn create_companion_proposal(
         companion_token,
     })
 }
-/// The shortlist: highest-ranked first, ties broken by the earlier start so two
-/// equally-ranked slots order deterministically. The oracle's ranks and times
-/// are read, never rewritten; each label shows the slot in the stored visitor
-/// zone, named (FIX 9632).
-fn curated_shortlist(slots: &[RankedSlot], visitor_tz: &str) -> Vec<ProposalChoice> {
+/// The shortlist: the `max_choices` highest-ranked (the preset row's count),
+/// ties broken by the earlier start so two equally-ranked slots order
+/// deterministically. The oracle's ranks and times are read, never rewritten;
+/// each label shows the slot in the stored visitor zone, named (FIX 9632).
+fn curated_shortlist(
+    slots: &[RankedSlot],
+    visitor_tz: &str,
+    max_choices: u16,
+) -> Vec<ProposalChoice> {
     let mut ordered = slots.to_vec();
     ordered.sort_by(|left, right| {
         right
@@ -235,7 +236,7 @@ fn curated_shortlist(slots: &[RankedSlot], visitor_tz: &str) -> Vec<ProposalChoi
             .total_cmp(&left.rank)
             .then(left.start_utc.cmp(&right.start_utc))
     });
-    ordered.truncate(usize::from(MAX_PROPOSAL_CHOICES));
+    ordered.truncate(usize::from(max_choices));
     // Counting in the id's own width: the truncation above is what makes that
     // safe, so no conversion is needed and none can fail.
     ordered
