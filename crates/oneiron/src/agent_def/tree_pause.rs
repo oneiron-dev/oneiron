@@ -654,7 +654,7 @@ impl Vault {
             format!("members_digest:{}", digest.to_hex()),
         ];
         let mut receipt = GateReceipt::new(
-            GateReceiptOutcome::Allow,
+            GateReceiptOutcome::Approved,
             TREE_PAUSE_CONTENT_KIND,
             reason,
             ReceiptActor::human(owner_id),

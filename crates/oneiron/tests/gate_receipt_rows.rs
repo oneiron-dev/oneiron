@@ -16,8 +16,9 @@
 //!   caller binds), and the owner's delete of a NOTE (`deletion/gate.rs`; added by UC-03 PR
 //!   1h-ii, a row built before its write transaction opens).
 //!
-//! The foreign grant and the plan-doc approval are two of the owner's yeses that D2 (UC-03 PR 5)
-//! respells from `allow` to `approved`; PR 5 moves those two pins with its behaviour change.
+//! The foreign grant and the owner's correction are owner yeses that D2 (UC-03 PR 5) respells from
+//! `allow` to `approved`, so their pins read `approved`. The plan-doc approval (n52) keeps `allow`
+//! until its literal moves after #8178, and its pin moves with it.
 //! Fields are copied out of the row rather than compared against a built record, because UC-03
 //! PR 3 seals the record so that only the mint can build one.
 
@@ -257,7 +258,7 @@ fn a_foreign_grant_row_keeps_its_fields() -> TestResult {
         fields(&row),
         Fields {
             version: 0,
-            outcome: "allow".to_owned(),
+            outcome: "approved".to_owned(),
             reason_codes: strings(&["gate.allow.owner_foreign_grant"]),
             receipt_reasons: Vec::new(),
             system_notices: Vec::new(),
@@ -627,7 +628,7 @@ fn an_owner_correction_row_keeps_its_fields() -> TestResult {
         fields(&rows[0]),
         Fields {
             version: 0,
-            outcome: "allow".to_owned(),
+            outcome: "approved".to_owned(),
             reason_codes: strings(&["gate.supersede.owner_correction"]),
             receipt_reasons: Vec::new(),
             system_notices: Vec::new(),

@@ -156,7 +156,7 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("lens slot receipt encoding failed"))?;
         digest.update(&bytes);
         let mut gate_receipt = GateReceipt::new(
-            GateReceiptOutcome::Allow,
+            GateReceiptOutcome::Approved,
             "lens_slot",
             reason,
             ReceiptActor::human(actor),

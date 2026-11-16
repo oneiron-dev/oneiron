@@ -91,7 +91,7 @@ pub(super) fn record_owner_archive_restore_in_txn(
 ) -> Result<GateDecisionId> {
     let digest = blake3::Hash::from_bytes(manifest_digest).to_hex();
     let mut receipt = GateReceipt::new(
-        GateReceiptOutcome::Allow,
+        GateReceiptOutcome::Approved,
         OWNER_ARCHIVE_RESTORE_CONTENT_KIND,
         "gate.allow",
         ReceiptActor::Row(actor),
@@ -104,6 +104,29 @@ pub(super) fn record_owner_archive_restore_in_txn(
         .store
         .record_gate_receipt_in_txn(txn, receipt)?
         .decision_id)
+}
+
+/// Whether a stored owner archive-restore receipt records the owner's yes. A receipt written
+/// since UC-03 PR 5 says `approved` (D2: an owner's answer is never a rule's `allow`); one
+/// written before it says `allow`, and a vault keeps those rows as they are (M-1), so a restore
+/// approved before PR 5 still settles.
+fn owner_restore_answered_yes(outcome: Option<GateReceiptOutcome>) -> bool {
+    match outcome {
+        Some(GateReceiptOutcome::Approved | GateReceiptOutcome::Allow) => true,
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    }
 }
 
 /// Digest of the parsed full document manifest, which lists every member's digest;
@@ -237,8 +260,8 @@ pub(super) fn without_owner_restore_receipt(body: &[u8]) -> Result<Vec<u8>> {
 
 /// Whether the owner's whole-vault restore opened the proposal `body`, whose envelope
 /// names `actor` (D5): the claim is Imported, and its evidence's
-/// [`OWNER_RESTORE_RECEIPT_KEY`] names a stored, allowed owner archive-restore receipt
-/// whose actor is `actor`. Settle then leaves `actor` out of the proposal's openers: the
+/// [`OWNER_RESTORE_RECEIPT_KEY`] names a stored owner archive-restore receipt that
+/// records the owner's yes, whose actor is `actor`. Settle then leaves `actor` out of the proposal's openers: the
 /// restore act opened it, not the owner. No agent can forge this: the receipt is a gate
 /// row only the owner door mints, for the bound owner, and an agent's write stamps the
 /// agent as its actor. The owner gains nothing new, since the owner may write the claim
@@ -274,23 +297,7 @@ pub(crate) fn owner_restore_opened_claim_in_txn(
         .gate_decision_in_txn(txn, decision)?
         .is_some_and(|record| {
             record.content_kind == OWNER_ARCHIVE_RESTORE_CONTENT_KIND
-                && match record.gate_outcome() {
-                    Some(GateReceiptOutcome::Allow) => true,
-                    Some(
-                        GateReceiptOutcome::Pending
-                        | GateReceiptOutcome::Deny
-                        | GateReceiptOutcome::Approved
-                        | GateReceiptOutcome::ApprovedAmended
-                        | GateReceiptOutcome::Rejected
-                        | GateReceiptOutcome::LetGo
-                        | GateReceiptOutcome::Superseded
-                        | GateReceiptOutcome::Retracted
-                        | GateReceiptOutcome::Invalidated
-                        | GateReceiptOutcome::Revoked
-                        | GateReceiptOutcome::Noted,
-                    )
-                    | None => false,
-                }
+                && owner_restore_answered_yes(record.gate_outcome())
                 && record.actor_ref.as_deref() == Some(actor.to_hex().as_str())
         }))
 }
@@ -358,8 +365,8 @@ pub(super) fn record_restored_member_in_txn(
     )
 }
 
-/// The owner restore receipt `group_key` (32 hex) names: a stored, allowed owner
-/// archive-restore receipt; `None` for anything else.
+/// The owner restore receipt `group_key` (32 hex) names: a stored owner
+/// archive-restore receipt that records the owner's yes; `None` for anything else.
 pub(crate) fn owner_restore_receipt_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -375,23 +382,7 @@ pub(crate) fn owner_restore_receipt_in_txn(
         .gate_decision_in_txn(txn, GateDecisionId::from_bytes(*id.as_bytes()))?
         .filter(|record| {
             record.content_kind == OWNER_ARCHIVE_RESTORE_CONTENT_KIND
-                && match record.gate_outcome() {
-                    Some(GateReceiptOutcome::Allow) => true,
-                    Some(
-                        GateReceiptOutcome::Pending
-                        | GateReceiptOutcome::Deny
-                        | GateReceiptOutcome::Approved
-                        | GateReceiptOutcome::ApprovedAmended
-                        | GateReceiptOutcome::Rejected
-                        | GateReceiptOutcome::LetGo
-                        | GateReceiptOutcome::Superseded
-                        | GateReceiptOutcome::Retracted
-                        | GateReceiptOutcome::Invalidated
-                        | GateReceiptOutcome::Revoked
-                        | GateReceiptOutcome::Noted,
-                    )
-                    | None => false,
-                }
+                && owner_restore_answered_yes(record.gate_outcome())
                 && record.redacted_at.is_none()
         }))
 }
