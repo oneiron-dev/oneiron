@@ -26,6 +26,7 @@ use crate::limit_ask::EngineLimit;
 use crate::memory::{Memory, verify_actor_binding_in_txn};
 use crate::ports::ClaimReadStatus;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
+use crate::request_limits::{PageLimit, ZeroLimitRefused, page_limit_zero_refused};
 use crate::store::Callback;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
@@ -72,8 +73,10 @@ pub struct NotificationPage {
     /// The rows this page could hold: the caller's limit.
     #[serde(default)]
     pub effective_limit: usize,
-    /// Whether the request was larger than one page (always false: the page
-    /// holds the caller's limit; `next_after` continues when more rows remain).
+    /// Whether the caller's limit was over the page's maximum and cut to it,
+    /// as the inbox's limit rule reports it. The inbox has no maximum (#5059),
+    /// so this is false: the page holds the caller's limit, and `next_after`
+    /// continues when more rows remain.
     #[serde(default)]
     pub limit_clamped: bool,
 }
@@ -199,13 +202,19 @@ impl Memory<'_> {
     /// `next_after` means the inbox ended. A limit is served a page of that
     /// many at a time.
     pub fn inbox_list(&self, after: Option<&str>, limit: usize) -> MemoryResult<NotificationPage> {
-        if limit == 0 {
-            return Err(MemoryError::bad_request_with(
-                "limit must be at least 1",
-                &["Request one row or more and continue from next_after."],
-            ));
-        }
-        let limit_clamped = false;
+        // The inbox's limit rule: zero is refused, and no ceiling cuts the
+        // ask (#5059), so the page reports no clamp.
+        let PageLimit {
+            rows: limit,
+            clamped: limit_clamped,
+        } = page_limit_zero_refused(Some(limit), INBOX_PAGE_DEFAULT, usize::MAX).map_err(
+            |ZeroLimitRefused| {
+                MemoryError::bad_request_with(
+                    "limit must be at least 1",
+                    &["Request one row or more and continue from next_after."],
+                )
+            },
+        )?;
         let mut start = after
             .map(EntityId::from_hex)
             .transpose()

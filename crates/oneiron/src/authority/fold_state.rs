@@ -61,6 +61,9 @@ pub struct AuthorityFold {
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     /// Consumed federation confirmation ids and nonces, bound to signed entries.
+    /// Concurrent entries may share an id or a nonce: each stays here as spent
+    /// evidence (RULING COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39), so no
+    /// reader may take one entry here as the single use of its id or nonce.
     pub federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
     pub consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
