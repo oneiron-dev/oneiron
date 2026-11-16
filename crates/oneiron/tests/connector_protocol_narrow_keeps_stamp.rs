@@ -72,6 +72,7 @@ fn tool(name: &str) -> SlateToolManifest {
         read_only: true,
         idempotent: true,
         price: None,
+        http: None,
     }
 }
 

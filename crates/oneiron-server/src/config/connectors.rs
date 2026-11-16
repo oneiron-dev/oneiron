@@ -22,6 +22,11 @@
 //! transport = "mcp_stdio"
 //! command = ["issues-mcp", "stdio"]
 //! upstream = { origin = "https://api.example.com", base_url_env = "ISSUES_API_URL", token_env = "ISSUES_TOKEN" }
+//!
+//! [connectors.billing]
+//! transport = "http_api"
+//! endpoint = "https://api.example.com/v1"
+//! document = "/etc/oneiron/billing-openapi.json"
 //! ```
 //!
 //! An `mcp_stdio` connector is a child process this host starts under the
@@ -42,12 +47,17 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-/// How the host reaches a connector: MCP streamable HTTP, or MCP over the
-/// standard streams of a child process it starts.
+/// How the host reaches a connector: MCP streamable HTTP, MCP over the
+/// standard streams of a child process it starts, or a plain HTTP API its
+/// OpenAPI document describes.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectorTransport {
+    /// MCP streamable HTTP.
     McpHttp,
+    /// A plain HTTP API its OpenAPI document describes (L8-31): each
+    /// operation is a tool, and each call is one request to the endpoint.
+    HttpApi,
     McpStdio,
 }
 
@@ -55,10 +65,16 @@ pub enum ConnectorTransport {
 #[serde(deny_unknown_fields)]
 pub struct ConnectorHostConfig {
     pub transport: ConnectorTransport,
-    /// The MCP endpoint of an `mcp_http` connector: https, or http on
-    /// loopback. An `mcp_stdio` connector names none.
+    /// The MCP endpoint of an `mcp_http` connector, or the base URL every
+    /// call of an `http_api` one goes under: https, or http on loopback. An
+    /// `mcp_stdio` connector names none.
     #[serde(default)]
     pub endpoint: Option<String>,
+    /// `http_api` only: the API's document, an absolute file path on this
+    /// host or a URL (https, or http on loopback). The host reads it at
+    /// register and refresh; a call never does.
+    #[serde(default)]
+    pub document: Option<String>,
     /// An `mcp_stdio` connector's program and its arguments.
     #[serde(default)]
     pub command: Vec<String>,
@@ -108,18 +124,25 @@ impl ConnectorHostConfig {
     /// names an endpoint, no command, a part or variable that cannot be
     /// set, a variable that reads as a credential, a relative `cwd`, or an
     /// upstream whose origin is not https (or loopback http) alone or whose
-    /// variables cannot be set apart from the rest.
+    /// variables cannot be set apart from the rest; an `http_api` one has no
+    /// such endpoint, no document, a document that is neither an absolute
+    /// path nor such a URL, or names stdio settings; any other names a
+    /// document.
     pub fn validate(&self, name: &str) -> anyhow::Result<()> {
         if normalize_name(name).is_empty() {
             anyhow::bail!("[connectors]: a connector section needs a name");
         }
         match self.transport {
             ConnectorTransport::McpHttp => self.validate_http(name),
+            ConnectorTransport::HttpApi => self.validate_http_api(name),
             ConnectorTransport::McpStdio => self.validate_stdio(name),
         }
     }
 
     fn validate_http(&self, name: &str) -> anyhow::Result<()> {
+        if self.document.is_some() {
+            anyhow::bail!("[connectors.{name}]: document is for transport = \"http_api\" only");
+        }
         if !self.command.is_empty()
             || !self.env.is_empty()
             || self.cwd.is_some()
@@ -142,12 +165,41 @@ impl ConnectorHostConfig {
         Ok(())
     }
 
+    /// An `http_api` section: an endpoint as an `mcp_http` one names, the
+    /// API's document, and no stdio settings (L8-31).
+    fn validate_http_api(&self, name: &str) -> anyhow::Result<()> {
+        if !self.command.is_empty()
+            || !self.env.is_empty()
+            || self.cwd.is_some()
+            || self.upstream.is_some()
+        {
+            anyhow::bail!(
+                "[connectors.{name}]: command, env, cwd and upstream belong to an mcp_stdio \
+                 connector"
+            );
+        }
+        let Some(endpoint) = self.endpoint.as_deref() else {
+            anyhow::bail!("[connectors.{name}]: an http_api connector needs an endpoint");
+        };
+        checked_url(name, "endpoint", endpoint)?;
+        let Some(document) = self.document.as_deref() else {
+            anyhow::bail!("[connectors.{name}]: transport = \"http_api\" needs a document");
+        };
+        if !document.starts_with('/') {
+            checked_url(name, "document", document)?;
+        }
+        Ok(())
+    }
+
     fn validate_stdio(&self, name: &str) -> anyhow::Result<()> {
         if self.endpoint.is_some() {
             anyhow::bail!(
                 "[connectors.{name}]: an mcp_stdio connector names no endpoint; its command is \
                  its transport"
             );
+        }
+        if self.document.is_some() {
+            anyhow::bail!("[connectors.{name}]: document is for transport = \"http_api\" only");
         }
         if self
             .command
@@ -216,13 +268,15 @@ impl ConnectorHostConfig {
     }
 
     /// The endpoint this host installed for the connector `name`: the URL of
-    /// an `mcp_http` connector, and `stdio:<name>:<16 hex>` for an
-    /// `mcp_stdio` one. A grant's endpoint allowlist names exactly this, and
+    /// an `mcp_http` connector, the base URL of an `http_api` one, and
+    /// `stdio:<name>:<16 hex>` for an `mcp_stdio` one. A grant's endpoint allowlist names exactly this, and
     /// a send goes only where its frozen call's endpoint still equals it.
     #[must_use]
     pub fn installed_endpoint(&self, name: &str) -> String {
         match self.transport {
-            ConnectorTransport::McpHttp => self.endpoint.clone().unwrap_or_default(),
+            ConnectorTransport::McpHttp | ConnectorTransport::HttpApi => {
+                self.endpoint.clone().unwrap_or_default()
+            }
             ConnectorTransport::McpStdio => format!(
                 "{STDIO_ENDPOINT_SCHEME}:{}:{}",
                 normalize_name(name),
@@ -237,12 +291,13 @@ impl ConnectorHostConfig {
     }
 
     /// The URL an `mcp_http` connector is installed at; `None` for an
-    /// `mcp_stdio` one, which has no HTTP session to take up, poll or end.
+    /// `mcp_stdio` or `http_api` one, which has no MCP session over HTTP to
+    /// take up, poll or end.
     #[must_use]
     pub fn http_endpoint(&self) -> Option<&str> {
         match self.transport {
             ConnectorTransport::McpHttp => self.endpoint.as_deref(),
-            ConnectorTransport::McpStdio => None,
+            ConnectorTransport::HttpApi | ConnectorTransport::McpStdio => None,
         }
     }
 }
@@ -334,6 +389,18 @@ fn sendable_url(text: &str) -> Option<reqwest::Url> {
         && url.password().is_none()
         && url.fragment().is_none();
     sendable.then_some(url)
+}
+
+/// The section's `field`, `value`, is a URL this host sends to
+/// ([`sendable_url`]).
+fn checked_url(name: &str, field: &str, value: &str) -> anyhow::Result<()> {
+    if sendable_url(value).is_none() {
+        anyhow::bail!(
+            "[connectors.{name}]: {field} must be https, or http on loopback, with no \
+             credentials or fragment"
+        );
+    }
+    Ok(())
 }
 
 /// A section name spelled as the engine stores catalog names.

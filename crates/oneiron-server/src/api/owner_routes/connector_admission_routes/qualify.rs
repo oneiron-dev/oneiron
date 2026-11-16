@@ -33,7 +33,20 @@ pub(crate) fn qualify_connector(
     request: &QualifyRequest,
 ) -> OwnerResult<KeyView> {
     let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
+    let (name, installed) = installed_host(server, &request.connector)?;
+    // The suite grades MCP probe evidence, which an HTTP API never answers
+    // with (L8-31, CONNECTOR-QUALIFY = A): the owner attests one instead.
+    if installed.transport == ConnectorTransport::HttpApi {
+        return Err(OwnerError::Invalid(
+            "the connector is an HTTP API, which the probe suite cannot qualify; activate it \
+             with POST /v1/owner/connectors/attest"
+                .to_owned(),
+        ));
+    }
+    let endpoint = installed
+        .http_endpoint()
+        .ok_or_else(not_installed)?
+        .to_owned();
     let catalog = catalog(vault, &name)?;
     let revision =
         catalog.record.protocol_revision.clone().ok_or_else(|| {
@@ -154,7 +167,8 @@ fn attest_connector(
 /// The connector's tools, as `discovery` listed them again at the pinned
 /// revision, resolved, when they are still the ones the owner stamped on
 /// the slate this run admits: the one staged beside an admitted key's
-/// routing slate, if any.
+/// routing slate, if any. An HTTP API's are its document translated again
+/// (L8-31).
 fn listed_as_stamped(
     vault: &Vault,
     catalog: &Catalog,

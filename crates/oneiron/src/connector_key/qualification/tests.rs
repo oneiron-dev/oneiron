@@ -381,6 +381,7 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     }];
     let slate_id = vault.store_connector_slate(
         &manifest,
@@ -565,6 +566,7 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     };
     let make_slate = |manifest: &[SlateToolManifest]| -> crate::error::Result<EntityId> {
         vault.store_connector_slate(
@@ -772,6 +774,7 @@ fn mid_probe_revision_round_trip_cannot_activate_stale_attempt() -> crate::error
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     };
     let slate = vault.store_connector_slate(
         std::slice::from_ref(&tool),
@@ -887,6 +890,7 @@ fn resolved_schema_delta_is_bound_before_effectful_probes() -> crate::error::Res
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     };
     let make_slate = |tool: &SlateToolManifest| -> crate::error::Result<EntityId> {
         let tools = std::slice::from_ref(tool);
@@ -1041,6 +1045,7 @@ fn reordered_rows_cannot_enable_tool_without_owner_stamp() -> crate::error::Resu
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     };
     let manifest = vec![tool("A"), tool("B")];
     let mut old_rows = draft_connector_slate(&manifest);

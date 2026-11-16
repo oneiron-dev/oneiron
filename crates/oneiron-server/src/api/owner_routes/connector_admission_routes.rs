@@ -58,6 +58,7 @@ use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
 use crate::config::ConnectorHostConfig;
 use crate::config::connectors::normalize_name;
+use crate::config::{ConnectorHostConfig, ConnectorTransport};
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -183,6 +184,10 @@ struct Registered {
     /// What registration took on the connector's word and could not check
     /// (TP4, FIX 2607); empty when it took nothing.
     warnings: Vec<String>,
+    /// What an HTTP API's document holds that became no tool, each with
+    /// why (L8-31); absent for an MCP connector.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    skipped: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,32 +238,50 @@ fn not_installed() -> OwnerError {
     OwnerError::Invalid("this host installed no transport for the connector".to_owned())
 }
 
-/// The connector's name as the engine stores it, and the HTTP endpoint it
-/// is installed at. A stdio connector is refused here: a refresh, a probe
-/// run and a pack check speak MCP over HTTP; a stdio connector is
+/// The connector's name as the engine stores it, and the section of a
+/// connector this host reaches over HTTP: an MCP endpoint, or an HTTP API
+/// and its document (L8-31). A stdio connector is refused here: a refresh,
+/// a probe run and a pack check speak HTTP; a stdio connector is
 /// registered and attested (row L8-27).
-pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
+pub(crate) fn installed_host(
+    server: &SyncServer,
+    connector: &str,
+) -> OwnerResult<(String, ConnectorHostConfig)> {
     let name = normalize_name(connector);
-    let endpoint = installed_config(server, &name)
-        .ok_or_else(not_installed)?
-        .http_endpoint()
-        .ok_or_else(|| {
-            OwnerError::Invalid(
-                "this connector is installed as mcp_stdio: this step speaks MCP over HTTP; a \
-                 stdio connector is registered and attested"
-                    .to_owned(),
-            )
-        })?
-        .to_owned();
-    Ok((name, endpoint))
+    let installed = installed_config(server, &name).ok_or_else(not_installed)?;
+    if installed.transport == ConnectorTransport::McpStdio {
+        return Err(OwnerError::Invalid(
+            "this connector is installed as mcp_stdio: this step speaks MCP over HTTP; a stdio \
+             connector is registered and attested"
+                .to_owned(),
+        ));
+    }
+    Ok((name, installed.clone()))
+}
+
+/// The connector's name as the engine stores it, and the HTTP endpoint its
+/// MCP server is installed at, for a door that speaks MCP over HTTP alone
+/// (a probe run, a connector pack's check). An HTTP API connector (L8-31)
+/// and a stdio one (L8-27) refuse there.
+pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
+    let (name, installed) = installed_host(server, connector)?;
+    if installed.transport == ConnectorTransport::HttpApi {
+        return Err(OwnerError::Invalid(
+            "the connector is an HTTP API (transport = \"http_api\"); this door takes MCP \
+             connectors only"
+                .to_owned(),
+        ));
+    }
+    let endpoint = installed.http_endpoint().ok_or_else(not_installed)?;
+    Ok((name, endpoint.to_owned()))
 }
 
 /// Lists the connector `name`'s tools where this host installed it, at
-/// `pinned` as [`host::discover`] takes it: over HTTP with the credential
-/// `secret_ref` names, or from a fenced stdio child, which presents it only
-/// through its upstream door, so only when its connector names an upstream
-/// (B2, row L8-27). Either way the connector's issuer bindings are read
-/// first (FIX 9303).
+/// `pinned` as [`host::list_tools`] takes it: over HTTP (an MCP endpoint, or
+/// an HTTP API's document) with the credential `secret_ref` names, or from
+/// a fenced stdio child, which presents it only through its upstream door,
+/// so only when its connector names an upstream (B2, row L8-27). Either way
+/// the connector's issuer bindings are read first (FIX 9303).
 fn discover_installed(
     server: &SyncServer,
     name: &str,
@@ -266,8 +289,8 @@ fn discover_installed(
     secret_ref: Option<&str>,
     pinned: Option<&str>,
 ) -> OwnerResult<host::Discovery> {
-    let endpoint = installed.http_endpoint();
-    if endpoint.is_none() && installed.upstream.is_none() && secret_ref.is_some() {
+    let stdio = installed.transport == ConnectorTransport::McpStdio;
+    if stdio && installed.upstream.is_none() && secret_ref.is_some() {
         return Err(OwnerError::Invalid(
             "a stdio connector presents a credential only through its upstream door, and this \
              one names no upstream"
@@ -279,9 +302,10 @@ fn discover_installed(
         server.vault(),
         secret_ref,
         name,
-        |auth, value| match endpoint {
-            Some(endpoint) => host::discover(&host::client()?, endpoint, auth, pinned),
-            None => host::discover_stdio(
+        |auth, value| match stdio {
+            // An MCP endpoint's `tools/list`, or an HTTP API's document.
+            false => host::list_tools(&host::client()?, installed, auth, pinned),
+            true => host::discover_stdio(
                 server.runner_fence().as_deref(),
                 name,
                 installed,
@@ -414,13 +438,14 @@ fn register_connector(
             "a connector is already registered under that name".to_owned(),
         ));
     }
-    let discovery = discover_installed(
+    let mut discovery = discover_installed(
         server,
         &name,
         installed,
         request.secret_ref.as_deref(),
         None,
     )?;
+    let skipped = std::mem::take(&mut discovery.skipped);
     if let Some(unknown) = request
         .tools
         .keys()
@@ -483,6 +508,7 @@ fn register_connector(
         warnings: host::self_declared_hints_warning(&discovery.tools)
             .into_iter()
             .collect(),
+        skipped,
     })
 }
 

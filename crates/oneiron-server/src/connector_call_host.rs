@@ -79,6 +79,7 @@ use crate::connector_elicitation::{
 use crate::runtime::runner_fence::HostRunnerFence;
 use crate::server::SyncServer;
 
+mod http_api;
 mod json_wire;
 mod live_exchange;
 mod presenting;
@@ -284,7 +285,7 @@ impl ServedConnectorCallHost {
             return Sent::not_sent(OutboundFailureKind::EndpointChanged, None);
         }
         match connector.transport {
-            ConnectorTransport::McpHttp => {}
+            ConnectorTransport::McpHttp | ConnectorTransport::HttpApi => {}
             ConnectorTransport::McpStdio => return self.send_stdio(connector, &view, presented),
         }
         // The route and the credential its send presents are known before
@@ -293,6 +294,10 @@ impl ServedConnectorCallHost {
             Ok(Some(route)) => Some(self.presenting(route)),
             _ => None,
         };
+        // One request to the API (L8-31 D7): no session, no question.
+        if connector.transport == ConnectorTransport::HttpApi {
+            return self.send_http_operation(call, &view, presenting, presented);
+        }
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
         let Some(mut exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation)

@@ -21,7 +21,8 @@ use oneiron::connector_key::{
     ConnectorIssuerRerunStage as Stage, ConnectorKeyStatus, ELICITATION_ROW_KEY,
 };
 
-use super::{HttpQualificationConnector, ListedTool, client, discover, with_credential};
+use super::{HttpQualificationConnector, ListedTool, client, list_tools, with_credential};
+use crate::config::ConnectorTransport;
 use crate::config::connectors::normalize_name;
 use crate::server::SyncServer;
 
@@ -117,8 +118,13 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
         return Some(Rerun::failed(Stage::NotInstalled));
     };
     // A stdio connector presents no credential until the broker path (B2),
-    // so no issuer binds it (row L8-27).
-    let Some(endpoint) = installed.http_endpoint().map(str::to_owned) else {
+    // so no issuer binds it (row L8-27). An HTTP API's calls go under its
+    // endpoint, as an MCP connector's do.
+    let Some(endpoint) = installed
+        .endpoint
+        .clone()
+        .filter(|_| installed.transport != ConnectorTransport::McpStdio)
+    else {
         return Some(Rerun::failed(Stage::Credential));
     };
     let Some(revision) = catalog.protocol_revision.clone() else {
@@ -133,8 +139,9 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
     };
     let ran = with_credential(vault, catalog.secret_ref.as_deref(), name, |auth| {
         let client = client().map_err(|_| Stage::Discovery)?;
+        // An HTTP API's document is listed again; it keeps no kit.
         let discovery =
-            discover(&client, &endpoint, auth, Some(&revision)).map_err(|_| Stage::Discovery)?;
+            list_tools(&client, installed, auth, Some(&revision)).map_err(|_| Stage::Discovery)?;
         let screened: Vec<_> = discovery.tools.iter().map(ListedTool::screened).collect();
         if !matches!(vault.screen_connector_tools(&screened, name), Ok(None)) {
             return Err(Stage::Screening);

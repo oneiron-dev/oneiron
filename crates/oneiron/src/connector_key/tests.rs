@@ -31,6 +31,7 @@ fn register_catalog(
             read_only: false,
             idempotent: false,
             price: None,
+            http: None,
         })
         .collect();
     let manifest = if manifest.is_empty() {
@@ -48,6 +49,7 @@ fn register_catalog(
             read_only: false,
             idempotent: false,
             price: None,
+            http: None,
         }]
     } else {
         manifest
@@ -2230,6 +2232,7 @@ mod foreign_owner_proof {
             read_only: false,
             idempotent: false,
             price: None,
+            http: None,
         }];
         let rows = draft_connector_slate(&manifest);
         let id = vault.store_connector_slate(
