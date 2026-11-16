@@ -9,7 +9,7 @@ use oneiron::{
         registry::{ModelRegistryRow, ModelWireFormat},
     },
 };
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatBackend, OpenAiCompatConfig, OpenAiCompatFuture, OpenAiCompatHttpRequest,
     OpenAiCompatHttpResponse, OpenAiCompatProviderStream, OpenAiCompatTransport,
     OpenAiCompatTransportError,
