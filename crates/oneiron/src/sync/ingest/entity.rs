@@ -153,7 +153,7 @@ pub(in crate::sync) enum RefusalRetry {
     Terminal,
     /// A later pass may admit them: the quota window rolls over, the pack kind is installed
     /// (`pack_sync::pack_rejection_keeps_retry_marker`), or the owner raises the authority log's
-    /// signer bound (H72, rule 5).
+    /// signer bound (H72, rule 5) or its fold memory floor past the owner's reserve.
     Retry,
     /// Admission waits on another replicated row this vault has not seen yet.
     DependencyPending,
@@ -508,9 +508,12 @@ fn admit(
     }
     // A world-access grant or default stands only on the node that wrote it (RULING
     // L2-53-CEILING): an older peer's row is dropped, and the rest of its window lands. So is a
-    // peer's row of any kind under the id of a grant or default stored here.
+    // peer's row of any kind under the id of a grant or default stored here, and a peer's MACHINE
+    // claim history row whose target is one: it would index the grant as machine history, and the
+    // read predicate would quarantine it.
     if (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && crate::sync::local_claims::world_access_claim(data))
+        && (crate::sync::local_claims::world_access_claim(data)
+            || crate::sync::local_claims::targets_world_access_claim_in(vault, wtxn, data)?))
         || crate::sync::local_claims::holds_world_access_claim_in(vault, wtxn, &id)?
     {
         return Ok(EntityStep::Skip);
