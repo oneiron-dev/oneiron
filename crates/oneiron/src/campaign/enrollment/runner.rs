@@ -660,9 +660,9 @@ pub(super) fn enrollment_intent_id(
     // outward leg (same settlement, lost warn logs, divergent path).
     let payload_bytes = match campaign_envelope_bytes(vault, event, step, outbound)? {
         CampaignEnvelopeBytes::Resolved(bytes) => bytes,
-        CampaignEnvelopeBytes::UnresolvableTarget | CampaignEnvelopeBytes::BodyUnpinned => {
-            outbound.payload.clone()
-        }
+        CampaignEnvelopeBytes::UnresolvableTarget
+        | CampaignEnvelopeBytes::BodyUnpinned
+        | CampaignEnvelopeBytes::ListUnsubscribeUnminted => outbound.payload.clone(),
     };
     derive_intent_id(
         enrollment_consequence_id(event, step)?,
@@ -723,9 +723,9 @@ pub fn derive_enrollment_outbound_request(
     // `enrollment_intent_id`, keeping the two consistent.
     let request_payload = match campaign_envelope_bytes(vault, event, &step, outbound)? {
         CampaignEnvelopeBytes::Resolved(bytes) => bytes,
-        CampaignEnvelopeBytes::UnresolvableTarget | CampaignEnvelopeBytes::BodyUnpinned => {
-            outbound.payload.clone()
-        }
+        CampaignEnvelopeBytes::UnresolvableTarget
+        | CampaignEnvelopeBytes::BodyUnpinned
+        | CampaignEnvelopeBytes::ListUnsubscribeUnminted => outbound.payload.clone(),
     };
     Ok(Some(OutboundCallRequest::new(
         consequence_id,
