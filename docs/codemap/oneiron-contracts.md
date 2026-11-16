@@ -15,9 +15,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/affect/vad.rs` | src | s | 3 struct · 2 enum · 6 fn · 1 const | DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
 | `src/authority.rs` | src | s | 1 type · 1 const | — | Authority-log hash vocabulary the write path shares |
 | `src/claim.rs` | src | s | 1 fn · 3 re-export | — | Claim status axes and the scoped-read receipt |
-| `src/claim/confidence.rs` | src | s | 1 struct · 2 enum · 8 fn | ConfidenceBand, ConfidenceDetails, VerdictBasis | What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and… |
+| `src/claim/confidence.rs` | src | s | 1 struct · 2 enum · 6 fn | ConfidenceBand, ConfidenceDetails, VerdictBasis | What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and… |
 | `src/claim/receipt.rs` | src | s | 2 struct · 6 fn | ReadScope, ScopedReadReceipt | Mandatory read receipts: the requested / actor-ceiling / applied scope triple and the axes a read narrowed |
-| `src/claim/status.rs` | src | s | 3 enum · 7 fn | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |
+| `src/claim/status.rs` | src | s | 3 enum · 5 fn | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |
 | `src/code_run.rs` | src | s | 1 mod | — | Shared vocabulary of the code-run vault-read contract |
 | `src/code_run/vault_read.rs` | src | s | 4 re-export | — | The vault-read contract table, the method vocabulary it generates, the request shapes and the error taxonomy… |
 | `src/code_run/vault_read/context_pack.rs` | src | s | 6 struct · 1 enum · 1 fn | ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery, ContextPackRetrievalBudgetControls, ContextPackTypeRef, CoreContextPackRequest, MediaQueryKind | The vault-read context-pack request and its depth / budget controls |
@@ -34,11 +34,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/code.rs` | src | m | 1 enum · 1 crate-vis | CodeError | Code-domain errors: codebase snapshots and symbol manifests, repo mutations, the micro-VM backend, code… |
 | `src/error/gate.rs` | src | m | 1 struct · 3 enum · 7 fn · 2 crate-vis | GateDenial, GateDenialOutcome, GateDenialReason, GateError | Gate-domain errors: consent grants and bounds, disclosure scope and clamps, and the Gate write refusal with… |
 | `src/error/hook.rs` | src | s | 1 enum | VerbHookStop | A verb hook's stop (ARCH-0080 §3): the typed answer a caller gets when a pre-hook skipped or asked, a… |
-| `src/error/legal_hold.rs` | src | s | 2 struct · 2 enum · 1 fn · 1 const | LegalHoldBound, LegalHoldBoundKind, LegalHoldNotice, LegalHoldState | A legal order's typed refusal (OF-470; WILL-PLAN L01 rows 01 and 03) |
+| `src/error/legal_hold.rs` | src | s | 2 struct · 2 enum · 1 const | LegalHoldBound, LegalHoldBoundKind, LegalHoldNotice, LegalHoldState | A legal order's typed refusal (OF-470; WILL-PLAN L01 rows 01 and 03) |
 | `src/error/maintenance.rs` | src | s | 2 enum · 1 crate-vis | CompactionPacketError, MaintenanceError | Maintenance-domain errors: the compaction handoff refusal with its per-axis taxonomy, and the vault-cleanup… |
 | `src/error/mod.rs` | src | L | 2 enum · 7 fn · 1 type · 1 const · 15 re-export | Error, ErrorKind | — |
 | `src/error/off_record.rs` | src | s | 1 enum · 1 crate-vis | OffRecordError | Off-record-domain errors: the kill switch, off-record session lifecycle, the overlay and its leases, and the… |
-| `src/error/record.rs` | src | m | 1 struct · 2 enum · 1 fn · 2 const · 2 crate-vis | ErasedHoldTarget, RecordError, RoomLiveSpeakersHold | Record-domain errors: body validation and identity-collision refusals for the stored record families —… |
+| `src/error/record.rs` | src | m | 1 struct · 2 enum · 1 fn · 3 const · 2 crate-vis | ErasedHoldTarget, RecordError, RoomLiveSpeakersHold | Record-domain errors: body validation and identity-collision refusals for the stored record families —… |
 | `src/error/registry.rs` | src | s | 1 enum · 1 crate-vis | RegistryError | Registry-domain errors: structural-kind registration, entity-type and edge-kind refusals raised by the… |
 | `src/error/relay.rs` | src | s | 1 enum · 1 crate-vis | RelayError | Relay-domain errors: relay attestation refusals, vault-receipt trust, and the hosted policy manifest and… |
 | `src/error/secret.rs` | src | m | 2 enum · 1 crate-vis | KitRecord, SecretError | Secret-domain errors: secret custody, binding and tier refusals, and the secret-lease doors with their… |
@@ -73,14 +73,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retrieval_quality.rs` | src | m | 3 struct · 3 enum · 4 fn · 4 const | ConfidenceAdjustment, PprCacheOutcome, RetrievalDegradation, RetrievalDiagnostics, RetrievalQuality, RetrievalQualityReport | Shared retrieval execution quality, independent of result counts and ranking |
 | `src/retrieval_telemetry.rs` | src | s | 2 struct · 2 enum · 6 fn | RetrievalBlendSignal, RetrievalBlendWeights, RetrievalScoreComponent, RetrievalSignal | The retrieval signal and blend-weight vocabulary: what retrieval's fusion scores with, what the retrieval… |
 | `src/room_join.rs` | src | s | 2 struct · 3 enum · 1 fn | ConsentNeed, ConsentPart, JoinSubject, RequiredParty, RoomJoinHold | The consent vocabulary of a room join (OF-531): who asks, which consents a join collects, and the party each… |
-| `src/secret_custody.rs` | src | s | 2 enum · 4 fn | CustodyClass, CustodyTier | ARCH-0069 S1 custody classes and tiers |
+| `src/secret_custody.rs` | src | s | 2 enum · 3 fn | CustodyClass, CustodyTier | ARCH-0069 S1 custody classes and tiers |
 | `src/secret_lease.rs` | src | s | 1 enum · 2 fn | SecretLeaseStatus | Secret lease status |
 | `src/serialize.rs` | src | s | 2 mod | — | Serde adapters shared by the engine crates' serialized envelopes |
 | `src/serialize/entity_ref.rs` | src | s | 8 fn · 3 mod | — | Hex adapters for typed entity references in host-side serialized envelopes |
 | `src/serialize/type_kinds.rs` | src | s | 3 fn | — | The wire spelling of a scope's entity types (FIX 10762): each type byte as its registry kind, and a byte the… |
-| `src/temporal.rs` | src | L | 6 struct · 6 enum · 8 fn · 1 const | OpenPhrase, QueryTemporalHints, TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus, TemporalPhraseSpan +4 | `TimeRange`, temporal expressions/parsing, granularity |
+| `src/temporal.rs` | src | L | 6 struct · 6 enum · 7 fn · 1 const | OpenPhrase, QueryTemporalHints, TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus, TemporalPhraseSpan +4 | `TimeRange`, temporal expressions/parsing, granularity |
 | `src/wallet.rs` | src | s | 1 struct · 1 fn | WalletRef | The host wallet an owner's agent Grant names (FIX 7766, ARCH-0011 billing): the host owns the money, a Grant… |
 | `src/write_envelope.rs` | src | s | 1 struct · 7 fn | WriteActor | The write actor every write path stamps |
+| `tests/contracts_register_names.rs` | test | s | — | — | The names of 8 name lists in `oneiron-contracts`, one line per row, generated from… |
 | `tests/cursor_text.rs` | test | s | — | — | The `{at}:{id}` cursor (UC-13 PR 1): written byte for byte as the mail inbox and the conversation transcript… |
 | `tests/fingerprint_id_prefix.rs` | test | s | — | — | PLAN-UC-04 stage 0: the id rules against the fingerprint door |
 | `tests/msgpack_reader.rs` | test | m | — | — | The one reader for untyped MessagePack rows (`oneiron_contracts::msgpack`, PLAN-UC-08 PR 0): one value and… |

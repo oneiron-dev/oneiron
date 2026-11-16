@@ -15,8 +15,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 5 struct · 20 fn · 1 const · 1 mod · 3 re-export · 1 crate-vis | ContentHash, ContentHasher, Fingerprint, Fingerprinter, Purpose | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) |
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
 | `src/purposes/mod.rs` | src | s | 1 fn · 2 const | — | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
+| `src/purposes/policy_model.rs` | src | s | — | — | Purposes of the policy model (`oneiron-records`' `policy_model` and `crates/oneiron/src/policy_model`) |
 | `src/purposes/restore.rs` | src | s | — | — | Purposes of the managed restore contract (`oneiron-vault-contract` `restore`) |
 | `src/purposes/retrieval.rs` | src | s | — | — | Purposes of the retrieval crate (`oneiron-retrieval`) |
+| `src/purposes/runtime_hooks.rs` | src | s | — | — | Purposes of runtime hooks (`crates/oneiron/src/runtime_hooks`) |
 | `src/purposes/setting.rs` | src | s | — | — | Purposes of the Setting primitive (`crates/oneiron/src/setting/`) |
 | `src/purposes/skill.rs` | src | s | — | — | Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`) |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
