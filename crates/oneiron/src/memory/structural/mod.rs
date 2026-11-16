@@ -8,6 +8,7 @@ mod guards;
 mod productivity;
 mod puts;
 mod raw_prose;
+pub(crate) mod setting_keys;
 mod types;
 
 pub use self::productivity::{
