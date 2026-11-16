@@ -39,8 +39,10 @@
 //! ([`PresenceGate::confirm_with_secret`]) and counts wrong ones. What the
 //! PIN guards, the engine seals; the file tier keeps those sealed bytes
 //! beside its slots ([`SealedBytesStore`], through
-//! [`DeviceKeystore::sealed_bytes`]), and so does the TPM tier. This crate
-//! sees neither a key nor a way to check a PIN.
+//! [`DeviceKeystore::sealed_bytes`]), and so do the TPM tier and the Windows
+//! tier, which seals each of those files with DPAPI as it seals a slot. The
+//! two Apple tiers keep them as keychain items beside their slots' items.
+//! This crate sees neither a key nor a way to check a PIN.
 //!
 //! On the TPM tier the chip itself guards the device PIN key
 //! ([`AuthBoundSecretStore`], through [`DeviceKeystore::auth_bound_secret`]):
@@ -56,7 +58,11 @@ use zeroize::Zeroizing;
 mod apple;
 #[cfg(target_vendor = "apple")]
 mod apple_enclave;
+#[cfg(any(target_vendor = "apple", test))]
+mod apple_names;
 mod auth_bound;
+#[cfg(any(windows, test))]
+mod dpapi_names;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod file;
 #[cfg(target_os = "linux")]
@@ -371,8 +377,10 @@ pub trait DeviceKeystore: Send + Sync + 'static {
     }
     /// This keystore's home for bytes the caller sealed, where the tier has
     /// one: the file tier, the TPM tier (the same files; the chip does not
-    /// seal them), and the process-memory tier of tests. `None` elsewhere,
-    /// never a weaker home.
+    /// seal them), the Windows tier (a file per name, sealed by DPAPI as a
+    /// slot is), the two Apple tiers (a keychain item per name beside the
+    /// slots' items; the Secure Enclave key does not seal them), and the
+    /// process-memory tier of tests. `None` elsewhere, never a weaker home.
     fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
         None
     }

@@ -404,6 +404,18 @@ impl ScopedRead<'_> {
         if mode == ReadMode::Live {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            // A replica holds a NOTE's row before its authority sends the
+            // NOTE's head document (FIX [REPLICA-NOTE-READ-400-BEFORE-DOCUMENT]).
+            // Until any part of that document lands, this host has no live
+            // text to project: the row reads as one it does not hold yet. A
+            // slot with updates and no snapshot, and an erased NOTE, still
+            // refuse in the projection below.
+            if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && !crate::note::documents::head_document_held_in(&self.vault.store, txn, *id)?
+                && !self.vault.local_hard_delete_marker_exists_in_txn(txn, id)?
+            {
+                return Ok(None);
+            }
             #[cfg(feature = "sync")]
             let resolved = crate::entity_doc::resolve_record_body(
                 &self.vault.store,
@@ -537,9 +549,28 @@ impl ScopedRead<'_> {
             // (FIX 5161, Sol R22).
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            // A NOTE revision reads as its logical body, its prose included;
+            // the row gates judge that revision's own core.
+            let note_core_raw = if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+                let Ok(note) = crate::note::decode_note_body_in_txn(
+                    &self.store_read(),
+                    txn,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                ) else {
+                    return Ok(None);
+                };
+                let mut core_raw = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+                core_raw.extend_from_slice(&crate::note::encode_note_core(&note.core())?);
+                Some(core_raw)
+            } else {
+                None
+            };
+            let judged_raw = note_core_raw.as_deref().unwrap_or(raw.as_slice());
+            let body = &judged_raw[ENTITY_METADATA_HEADER_LEN..];
             self.room_row_placed_in(txn, id, header.entity_type, body)?
-                && self.is_entity_raw_readable_held_in(txn, policy, id, &raw, filter, authority)?
+                && self.is_entity_raw_readable_held_in(
+                    txn, policy, id, judged_raw, filter, authority,
+                )?
         };
         Ok(admitted.then_some(raw))
     }
