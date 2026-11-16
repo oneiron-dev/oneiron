@@ -487,8 +487,7 @@ impl Host {
 #[test]
 fn the_retrieval_weights_answer_their_owner_alone() {
     run_on_engine_stack("retrieval-config-weights", || async {
-        let host = host();
-        let other = host();
+        let (host, other) = (host(), host());
         let person = host.person("Ines Varga", 0x31);
         let agent = host.agent("config-agent", 0x32);
         let before = host.owner_reads(WEIGHTS_GET).await;
@@ -572,8 +571,7 @@ fn the_retrieval_weights_answer_their_owner_alone() {
 #[test]
 fn the_claim_aging_profiles_answer_their_owner_alone() {
     run_on_engine_stack("retrieval-config-aging", || async {
-        let host = host();
-        let other = host();
+        let (host, other) = (host(), host());
         let person = host.person("Ines Varga", 0x31);
         let agent = host.agent("config-agent", 0x32);
         let before = host.owner_reads(AGING_GET).await;
@@ -650,8 +648,7 @@ fn the_claim_aging_profiles_answer_their_owner_alone() {
 #[test]
 fn the_hyde_binding_answers_its_owner_alone() {
     run_on_engine_stack("retrieval-config-hyde-binding", || async {
-        let host = host();
-        let other = host();
+        let (host, other) = (host(), host());
         let person = host.person("Ines Varga", 0x31);
         let agent = host.agent("config-agent", 0x32);
         let unbound = host.owner_reads(HYDE_GET).await;
@@ -719,8 +716,7 @@ fn the_hyde_binding_answers_its_owner_alone() {
 #[test]
 fn hyde_work_answers_the_credential_that_recalled_alone() {
     run_on_engine_stack("retrieval-config-hyde-work", || async {
-        let host = host();
-        let other = host();
+        let (host, other) = (host(), host());
         let person = host.person("Ines Varga", 0x31);
         let agent = host.agent("config-agent", 0x32);
         host.claim(&format!("the {WORD} ferry leaves at seven"));
