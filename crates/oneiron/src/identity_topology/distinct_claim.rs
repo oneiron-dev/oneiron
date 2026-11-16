@@ -30,6 +30,20 @@ pub(super) struct DistinctClaimRow {
     pub(super) pair: (EntityId, EntityId),
 }
 
+/// Where a fresh `entity.distinct_from` claim is born when it is derived
+/// from words (OPUS-LEAKS; FIX INTENT-DISTINCT-PROJECT-WORLD): it keeps their
+/// audience, the relationships whose members read them (`None` for every
+/// relationship) and whether they are private, and the project and world
+/// they are read at. Its facet stays its subject's own, as every distinct
+/// claim's. A pair already asserted keeps the place its claim was born at.
+#[derive(Debug, Clone)]
+pub(crate) struct DistinctClaimPlace {
+    pub(crate) relationships: crate::write_envelope::claim_body::RelationshipScope,
+    pub(crate) private: bool,
+    pub(crate) project: EntityId,
+    pub(crate) world: EntityId,
+}
+
 impl Vault {
     /// The CLAIM one `assert_distinct` op asserts through: the live row for
     /// the pair when there already is one, a freshly minted row otherwise.
@@ -62,11 +76,15 @@ impl Vault {
     /// the predicate through [`crate::Vault::put_claim`] instead keeps the
     /// full gate — and until that write is approved it suppresses nothing,
     /// which is exactly the ratified §6 rule.
+    ///
+    /// A freshly minted row is born at `place` when the op names one, in the
+    /// same put, so no reader ever meets it wider than its words.
     pub(super) fn assert_distinct_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         write: &IdentityOpWrite,
         pair: (EntityId, EntityId),
+        place: Option<&DistinctClaimPlace>,
         now: u64,
     ) -> Result<EntityId> {
         let live = self
@@ -93,6 +111,19 @@ impl Vault {
         // Only a PERSON subject has a substrate FACET; any other subject takes
         // the vault default facet (a birth gate refusal otherwise, #4389).
         body.scope_facet = self.claim_put_facet_keeping_in_txn(wtxn, &claim, body.scope_facet)?;
+        if let Some(place) = place {
+            if place.relationships.is_some() {
+                body.rel = place.relationships.clone();
+            }
+            if place.private {
+                body.scope = Some(rmpv::Value::Map(vec![(
+                    rmpv::Value::from("private"),
+                    rmpv::Value::Boolean(true),
+                )]));
+            }
+            body.scope_project = place.project;
+            body.world = (place.world != crate::claim::base_world_id()).then_some(place.world);
+        }
         self.put_reserved_claim_in_txn(
             wtxn,
             &claim,
@@ -129,34 +160,6 @@ impl Vault {
     ) -> Result<()> {
         let (mut body, occurred, learned_at) = self.stored_distinct_claim_in_txn(wtxn, claim)?;
         body.approval = approval;
-        self.put_reserved_claim_in_txn(wtxn, claim, &body, occurred, learned_at)
-    }
-
-    /// Narrows the `entity.distinct_from` claim `claim` to the audience of
-    /// the words it was derived from (OPUS-LEAKS): the relationships whose
-    /// members read it, when `relationships` names some, and private when
-    /// `private`. Rewritten in place, in the write that minted it, as an
-    /// approval ruling is, so no reader ever meets it wider.
-    pub(crate) fn narrow_distinct_claim_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        claim: &EntityId,
-        relationships: crate::write_envelope::claim_body::RelationshipScope,
-        private: bool,
-    ) -> Result<()> {
-        if relationships.is_none() && !private {
-            return Ok(());
-        }
-        let (mut body, occurred, learned_at) = self.stored_distinct_claim_in_txn(wtxn, claim)?;
-        if relationships.is_some() {
-            body.rel = relationships;
-        }
-        if private {
-            body.scope = Some(rmpv::Value::Map(vec![(
-                rmpv::Value::from("private"),
-                rmpv::Value::Boolean(true),
-            )]));
-        }
         self.put_reserved_claim_in_txn(wtxn, claim, &body, occurred, learned_at)
     }
 

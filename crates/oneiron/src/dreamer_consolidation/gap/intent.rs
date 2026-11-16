@@ -144,8 +144,24 @@ fn write_owner_intent_in_txn(
                 source_meet: ClaimSource::UserStated,
             },
         ));
-        // The words keep their MESSAGE's audience (OPUS-LEAKS).
-        let (relationships, private) = message_audience_in_txn(vault, txn, &message)?;
+        // The words keep their MESSAGE's audience (OPUS-LEAKS) and its
+        // place: the intent is born under the facet the MESSAGE was born
+        // under, in the project and world it is read at, so no reader outside
+        // them reads the words through it (ONE-1592 P3; ARCH-0022
+        // #task-facet-not-built; FIX INTENT-DISTINCT-PROJECT-WORLD). A
+        // MESSAGE with no place, a replica stored unstamped, is selected by no
+        // scoped door, so its intent is private.
+        let (relationships, mut private) = message_audience_in_txn(vault, txn, &message)?;
+        match vault.derivation_project_and_world_in_txn(txn, message)? {
+            Some((project, world)) => {
+                let facet = vault.claim_put_facet_of_record_in_txn(txn, &id, message)?;
+                candidate = candidate.with_scope_stamps(facet, project);
+                if world != crate::claim::base_world_id() {
+                    candidate = candidate.with_world(world);
+                }
+            }
+            None => private = true,
+        }
         if relationships.is_some() {
             candidate = candidate.with_relationships(relationships);
         }
@@ -271,12 +287,19 @@ fn intent_question_text(turn: EntityId, (start, end): (usize, usize), words: &st
 }
 
 /// The MESSAGE the words at `start..end` of `record` came from; none for a
-/// TURN's own inline text.
+/// TURN's own inline text. A witnessed TURN joins its MESSAGEs with exactly
+/// `"\n"` (`turn_text`), and a stated sentence ends at a line break
+/// ([`intent_sentence`]), so its words lie in one MESSAGE. Words over more
+/// than one are refused, never read as their first MESSAGE's alone (FIX
+/// INTENT-ASK-FIRST-SPAN).
 fn intent_message(record: &TurnText, start: usize, end: usize) -> Result<Option<EntityId>> {
-    Ok(record
-        .spans(Some((start, end)))?
-        .first()
-        .map(|span| span.message))
+    match record.spans(Some((start, end)))?.as_slice() {
+        [] => Ok(None),
+        [span] => Ok(Some(span.message)),
+        _ => Err(invalid(
+            "a stated intent's words span more than one MESSAGE",
+        )),
+    }
 }
 
 /// Raises the optional intent ask for each stated intent among a scan's new
