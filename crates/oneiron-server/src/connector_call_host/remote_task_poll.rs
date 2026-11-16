@@ -41,7 +41,10 @@
 //! `tasks/cancel` in the task's session, which undoes nothing already done:
 //! the stop is claimed in the ledger (Sending) before its POST, the keyed
 //! call's issuer binding is read again after that writer, and the POST's
-//! outcome is recorded (Sent for a 2xx, Uncertain when unknown or held). A
+//! outcome is recorded (Sent for a 2xx, Uncertain when unknown or held,
+//! Refused for another refusal). A stop that never reached the connector (no
+//! byte left, a 408 or 429, or a session the connector ended that could not
+//! be renewed) is Requested again, and a later pass sends it; any other
 //! claimed stop is never sent again. It carries no content and is the
 //! owner's own act, so it goes out whether or not the grant still admits the
 //! send; the `tasks/get` that follows in the same pass does not. Its answer
@@ -434,12 +437,15 @@ impl ServedConnectorCallHost {
     /// session when the connector ended this one, and how it went is
     /// recorded: Sent when the connector took it (a 2xx), Uncertain when that
     /// is unknown or an issuer hold stood after the claim, during a renewal
-    /// too. A refused or unsent stop stays Sending. None is ever sent again.
-    /// Its answer is not read: a stop undoes nothing already done, and only
-    /// the end a poll reads settles the send. The session the poll goes on
-    /// in; `None` when the row is no longer this task's Deferred send; `Err`
-    /// when an issuer hold stood after the claim, so the pass sends nothing
-    /// more.
+    /// too, Refused when the connector refused it. A stop that never reached
+    /// the connector (no byte left, a 408 or 429, or a session the connector
+    /// ended that could not be renewed) is Requested again, so a later pass
+    /// sends it, still the first the connector takes; no other is ever sent
+    /// again. Its answer is not read: a stop undoes nothing already done, and
+    /// only the end a poll reads settles the send. The session the poll goes
+    /// on in; `None` when the row is no longer this task's Deferred send;
+    /// `Err` when an issuer hold stood after the claim, so the pass sends
+    /// nothing more, or when the stop could not be sent in a renewed session.
     fn cancel_remote_task(
         &self,
         live: LiveSession,
@@ -465,24 +471,41 @@ impl ServedConnectorCallHost {
             "method": "tasks/cancel",
             "params": { "taskId": task.task_id },
         });
-        // A session the connector ended and that could not be renewed: the
-        // stop was not taken, and it stays Sending. A hold that stood while
-        // it was renewed: the stop was not sent after its claim.
+        // A hold that stood while the session was renewed: the stop was not
+        // sent after its claim. A session the connector ended (a 404 takes
+        // nothing) and that could not be renewed: the stop never reached the
+        // connector, so it is Requested again.
         let (live, sent) = match self.post_in_task_session(live, task, &request) {
             Ok(InSession::Answered(live, sent)) => (live, sent),
             Ok(InSession::Gone) => return Ok(None),
             Err(ISSUER_HELD) => return Err(self.cancel_held(task)),
-            Err(reason) => return Err(reason),
+            Err(reason) => {
+                if let Err(error) = self.vault.release_remote_task_cancel(&task.intent) {
+                    tracing::warn!(%error, "a remote task stop's outcome not recorded");
+                }
+                return Err(reason);
+            }
         };
+        // A 408 or 429: the connector asked for the request later and took
+        // nothing.
+        let asked_later = matches!(
+            &sent,
+            Ok(response) if matches!(
+                response.status(),
+                reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS
+            )
+        );
         let recorded = match Posted::of_send(&sent) {
             Posted::Accepted => self.vault.record_remote_task_cancel_sent(&task.intent),
             Posted::Uncertain => self.vault.record_remote_task_cancel_uncertain(&task.intent),
-            Posted::Refused | Posted::Unsent => {
+            Posted::Unsent => self.vault.release_remote_task_cancel(&task.intent),
+            Posted::Refused if asked_later => self.vault.release_remote_task_cancel(&task.intent),
+            Posted::Refused => {
                 tracing::info!(
-                    reason = "remote_task_cancel_not_taken",
-                    "the connector did not take a remote task's stop; it is not sent again"
+                    reason = "remote_task_cancel_refused",
+                    "the connector refused a remote task's stop; it is not sent again"
                 );
-                Ok(())
+                self.vault.record_remote_task_cancel_refused(&task.intent)
             }
         };
         drop(sent);
