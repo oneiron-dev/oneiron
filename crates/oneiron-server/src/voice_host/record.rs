@@ -181,7 +181,8 @@ impl RoomCall {
                 }
             },
             Ok(CallSpeaker::Contact { name, .. }) => name,
-            Ok(CallSpeaker::Unplaced) => self.numbered(key),
+            // Unplaced, or a placement this build does not know: numbered.
+            Ok(_) => self.numbered(key),
             Err(error) => {
                 tracing::warn!(
                     %error,
