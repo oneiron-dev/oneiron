@@ -14,8 +14,8 @@
       "expectedFacts": {
         "planned_tests": 9,
         "oracle": "independently authored synthetic labels",
-        "runnable_flows": 0,
-        "blocked_flows": 9
+        "runnable_flows": 1,
+        "blocked_flows": 8
       },
       "scenarios": [
         "LEARNING-01",
