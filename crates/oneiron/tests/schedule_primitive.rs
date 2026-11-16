@@ -1,0 +1,675 @@
+//! DESIGN 15-setting-primitive, stage 0.2: the Schedule primitive through its public verbs and
+//! its one runner.
+//! - an interval runs when due; one that comes late runs once, then goes on from now;
+//! - a deadline fires once, late; a job that lapses drops a late occurrence unrun;
+//! - a failing job backs off from a minute, doubling; a paged job runs to its end in one pass;
+//! - an agent arms an actor job under its own Grant, re-arms and disarms only its own arming,
+//!   and never an engine job, which only the engine arms;
+//! - "run now" makes a job due at once; the housekeeping pass runs due jobs, and a stopped
+//!   vault's wake time reads the first due job that wakes its host;
+//! - a wall-clock job is due at its next occurrence in its zone; an unknown zone is refused;
+//! - an interval keeps its grid through a run now, a retry and a paged run; a run's result lands
+//!   only on the row it started on; a restore rebuilds the due index (review round 1 of #8026);
+//! - a run reads its row again, so a job armed for later after the pass read the due index
+//!   waits for its new time (review round 2 of #8026).
+//!
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test schedule_primitive`.
+#![cfg(oneiron_test_support)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use oneiron::authority::{ActSurface, MachineRole};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::housekeeping::HousekeepingBudget;
+use oneiron::memory::Memory;
+use oneiron::schedule::{JobOutcome, Trigger};
+use oneiron::store::GateDecisionId;
+use oneiron::task_verb::sdk::invoke;
+use oneiron::test_doors::schedule::{
+    TEST_REARM_AFTER_SECS, arm_as_engine, index_due_at, runs, withdraw_test_job,
+};
+use oneiron::test_doors::steward::open_owner_carrier_vault;
+use oneiron::verbs::{
+    AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
+    mint_agent_grant_as,
+};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron_keystore::MemoryKeystore;
+use oneiron_store::ports::manual_clock::ManualClock;
+use serde_json::{Value, json};
+
+const LIST: &str = "vault.schedules.list";
+const ARM: &str = "vault.schedules.arm";
+const DISARM: &str = "vault.schedules.disarm";
+const RUN: &str = "vault.schedules.run";
+const T0: u64 = 1_790_000_000;
+const HOUR: u64 = 3_600;
+const DAY: u64 = 24 * HOUR;
+
+struct Fixture {
+    vault: Vault,
+    clock: Arc<ManualClock>,
+    _dir: tempfile::TempDir,
+    owner: EntityId,
+    owner_proof: AuthenticatedOwner,
+}
+
+impl Fixture {
+    /// A rooted vault with its install enrolled and its embedded owner bound, opened owned: the
+    /// writer lease is what lets the owner's handle call the owner verbs by name.
+    fn rooted() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let clock = ManualClock::new(T0);
+        let keystore = Arc::new(MemoryKeystore::new());
+        let mut config = VaultConfig::device();
+        config.store_clock = clock.bundle();
+        let vault = Vault::open_owned(dir.path(), config).expect("owned vault");
+        vault.install_device_keystore(Arc::<MemoryKeystore>::clone(&keystore));
+        vault.prepare_install_signing().expect("install signing");
+        let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
+        vault.ensure_host_root_slip(&issuer).expect("host root");
+        vault
+            .provision_engine_machine_identities(&issuer)
+            .expect("engine machine identities");
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("serving install profile");
+        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        let owner_proof = vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("owner proof");
+        Self {
+            vault,
+            clock,
+            _dir: dir,
+            owner,
+            owner_proof,
+        }
+    }
+
+    fn as_owner(&self) -> Memory<'_> {
+        self.vault.memory(self.owner, EdgeActorClass::Human)
+    }
+
+    fn as_agent(&self, agent: EntityId) -> Memory<'_> {
+        self.vault.memory(agent, EdgeActorClass::Agent)
+    }
+
+    /// An enabled, active agent definition the owner creates, with the owner's live Grant
+    /// naming `read` and `verbs`.
+    fn agent(&self, verbs: &[&str]) -> EntityId {
+        let id = self.vault.new_entity_id().expect("agent id");
+        create_agent_definition_as(
+            &self.vault,
+            &self.owner_proof,
+            AgentDefinitionCreateRequest {
+                agent_def_ref: id,
+                definition: serde_json::from_value(json!({
+                    "agent_id": format!("schedule-agent-{}", id.to_hex()),
+                    "desc": "schedule primitive fixture",
+                    "version": "1.0.0",
+                    "ceiling": "auto",
+                    "enabled": true,
+                }))
+                .expect("agent spec"),
+            },
+        )
+        .expect("the owner creates the agent");
+        let mut scope = Scope::top();
+        scope.verbs = ScopeAxis::Some(
+            std::iter::once("read")
+                .chain(verbs.iter().copied())
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>(),
+        );
+        mint_agent_grant_as(
+            &self.vault,
+            &self.owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent: id,
+                authority_scope: scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: BTreeSet::new(),
+                wallet_ref: None,
+                working_view_bounds: None,
+            },
+        )
+        .expect("the owner mints the Grant");
+        id
+    }
+
+    fn at(&self, now: u64) {
+        self.clock.set(now);
+    }
+
+    /// One runner pass; the outcomes of the runs it made.
+    fn run_due(&self) -> Vec<JobOutcome> {
+        self.vault
+            .run_due(HousekeepingBudget::unbounded())
+            .expect("the runner")
+            .runs
+            .into_iter()
+            .map(|run| run.outcome)
+            .collect()
+    }
+
+    /// The owner's view of `job` about `subject`, if armed.
+    fn view(&self, job: &str, subject: EntityId) -> Option<Value> {
+        let listed = call(
+            &self.as_owner(),
+            LIST,
+            json!({ "job": job, "subject": subject.to_hex() }),
+        );
+        listed["schedules"]
+            .as_array()
+            .expect("schedules")
+            .first()
+            .cloned()
+    }
+}
+
+fn call(memory: &Memory<'_>, verb: &str, input: Value) -> Value {
+    invoke(memory, verb, input).unwrap_or_else(|error| panic!("{verb} answers: {error:?}"))
+}
+
+fn refused(memory: &Memory<'_>, verb: &str, input: Value) {
+    invoke(memory, verb, input).expect_err("the call is refused");
+}
+
+fn arm(job: &str, subject: EntityId, trigger: Value) -> Value {
+    json!({ "job": job, "subject": subject.to_hex(), "trigger": trigger })
+}
+
+fn every(secs: u64) -> Value {
+    json!({ "kind": "every", "secs": secs })
+}
+
+#[test]
+fn an_interval_runs_when_due_and_a_late_one_runs_once_then_goes_on_from_now() {
+    let fx = Fixture::rooted();
+    let subject = EntityId::now();
+    let armed = call(&fx.as_owner(), ARM, arm("test.count", subject, every(HOUR)));
+    assert_eq!(armed["due_at"], json!(T0), "{armed}");
+
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(runs("test.count", Some(subject)), 1);
+    assert_eq!(
+        fx.view("test.count", subject).expect("armed")["due_at"],
+        json!(T0 + HOUR)
+    );
+    assert!(fx.run_due().is_empty(), "nothing is due before its time");
+
+    fx.at(T0 + 5 * HOUR + 10);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(
+        runs("test.count", Some(subject)),
+        2,
+        "five missed hours run once"
+    );
+    assert_eq!(
+        fx.view("test.count", subject).expect("armed")["due_at"],
+        json!(T0 + 6 * HOUR),
+        "then it goes on from now"
+    );
+}
+
+#[test]
+fn a_deadline_fires_once_late_and_a_lapsing_job_drops_a_late_occurrence() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let deadline = EntityId::now();
+    call(
+        &me,
+        ARM,
+        arm(
+            "test.count",
+            deadline,
+            json!({ "kind": "at", "at": T0 + 100 }),
+        ),
+    );
+    fx.at(T0 + 1_000);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(
+        runs("test.count", Some(deadline)),
+        1,
+        "the passed deadline fired, late"
+    );
+    assert!(
+        fx.view("test.count", deadline).is_none(),
+        "a deadline is done once it ran"
+    );
+
+    let lapsing = EntityId::now();
+    call(
+        &me,
+        ARM,
+        arm(
+            "test.lapse",
+            lapsing,
+            json!({ "kind": "at", "at": T0 + 1_100 }),
+        ),
+    );
+    fx.at(T0 + 5_000);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Lapsed]);
+    assert_eq!(
+        runs("test.lapse", Some(lapsing)),
+        0,
+        "a lapsed occurrence never runs"
+    );
+    assert!(fx.view("test.lapse", lapsing).is_none());
+}
+
+#[test]
+fn a_failing_job_backs_off_and_a_paged_job_runs_to_its_end() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let failing = EntityId::now();
+    call(&me, ARM, arm("test.fail", failing, every(DAY)));
+    assert!(matches!(fx.run_due()[..], [JobOutcome::Failed { .. }]));
+    let backing_off = fx.view("test.fail", failing).expect("armed");
+    assert_eq!(backing_off["failures"], json!(1));
+    assert_eq!(
+        backing_off["due_at"],
+        json!(T0 + 60),
+        "a minute after the first failure"
+    );
+    fx.at(T0 + 60);
+    assert!(matches!(fx.run_due()[..], [JobOutcome::Failed { .. }]));
+    let doubled = fx.view("test.fail", failing).expect("armed");
+    assert_eq!(doubled["failures"], json!(2));
+    assert_eq!(doubled["due_at"], json!(T0 + 60 + 120), "then two minutes");
+
+    let paged = EntityId::now();
+    call(&me, ARM, arm("test.paged", paged, every(DAY)));
+    assert_eq!(
+        fx.run_due(),
+        vec![JobOutcome::More, JobOutcome::More, JobOutcome::Done],
+        "a run that stopped at its budget is due again at once and keeps its cursor"
+    );
+    assert_eq!(runs("test.paged", Some(paged)), 3);
+    let done = fx.view("test.paged", paged).expect("armed");
+    assert_eq!(done["due_at"], json!(T0 + 60 + DAY));
+    assert_eq!(done["failures"], json!(0));
+}
+
+#[test]
+fn an_agent_arms_under_its_grant_and_only_the_engine_arms_an_engine_job() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let agent = fx.agent(&[ARM, LIST, DISARM, RUN]);
+    let them = fx.as_agent(agent);
+    let own = EntityId::now();
+
+    let armed = call(&them, ARM, arm("test.count", own, every(DAY)));
+    assert_eq!(armed["armed_by"], json!(agent.to_hex()), "{armed}");
+    let listed = call(&them, LIST, json!({}));
+    assert_eq!(listed["schedules"].as_array().expect("schedules").len(), 1);
+
+    refused(&them, ARM, arm("test.engine", own, every(DAY)));
+    refused(&me, ARM, arm("test.engine", own, every(DAY)));
+    let engine = EntityId::now();
+    arm_as_engine(
+        &fx.vault,
+        "test.engine",
+        Some(engine),
+        Trigger::Every {
+            secs: DAY,
+            first_at: None,
+        },
+    )
+    .expect("the engine arms its own job");
+    assert!(fx.view("test.engine", engine).is_some());
+    refused(
+        &them,
+        DISARM,
+        json!({ "job": "test.engine", "subject": engine.to_hex() }),
+    );
+    refused(
+        &me,
+        DISARM,
+        json!({ "job": "test.engine", "subject": engine.to_hex() }),
+    );
+
+    let owners = EntityId::now();
+    call(&me, ARM, arm("test.count", owners, every(DAY)));
+    refused(&them, ARM, arm("test.count", owners, every(HOUR)));
+    refused(
+        &them,
+        DISARM,
+        json!({ "job": "test.count", "subject": owners.to_hex() }),
+    );
+    refused(
+        &them,
+        RUN,
+        json!({ "job": "test.count", "subject": owners.to_hex() }),
+    );
+
+    let ungranted = fx.agent(&[LIST]);
+    refused(
+        &fx.as_agent(ungranted),
+        ARM,
+        arm("test.count", EntityId::now(), every(DAY)),
+    );
+
+    let disarmed = call(
+        &them,
+        DISARM,
+        json!({ "job": "test.count", "subject": own.to_hex() }),
+    );
+    assert_eq!(disarmed, json!({ "disarmed": true }));
+    assert!(fx.view("test.count", own).is_none());
+}
+
+#[test]
+fn run_now_makes_a_job_due_and_the_housekeeping_pass_runs_it() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let subject = EntityId::now();
+    call(
+        &me,
+        ARM,
+        arm(
+            "test.count",
+            subject,
+            json!({ "kind": "every", "secs": DAY, "first_at": T0 + DAY }),
+        ),
+    );
+    let wake = fx
+        .vault
+        .housekeeping_wake_at()
+        .expect("wake time")
+        .expect("a job that wakes its host is armed");
+    assert!(wake <= T0 + DAY, "{wake}");
+    assert!(fx.run_due().is_empty(), "due tomorrow");
+
+    let asked = call(
+        &me,
+        RUN,
+        json!({ "job": "test.count", "subject": subject.to_hex() }),
+    );
+    assert_eq!(asked["due_at"], json!(T0), "{asked}");
+    fx.vault
+        .housekeeping(HousekeepingBudget::unbounded())
+        .expect("the pass");
+    assert_eq!(
+        runs("test.count", Some(subject)),
+        1,
+        "the pass ran the due job"
+    );
+    assert_eq!(
+        fx.view("test.count", subject).expect("armed")["due_at"],
+        json!(T0 + DAY)
+    );
+}
+
+#[test]
+fn a_wall_clock_job_is_due_at_its_next_occurrence_in_its_zone() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let subject = EntityId::now();
+    let armed = call(
+        &me,
+        ARM,
+        arm(
+            "test.count",
+            subject,
+            json!({ "kind": "civil", "hour": 9, "minute": 0, "zone": "Asia/Tokyo" }),
+        ),
+    );
+    // 09:00 in Tokyo is 00:00 UTC: the next midnight after T0.
+    assert_eq!(armed["due_at"], json!(T0.div_ceil(DAY) * DAY), "{armed}");
+    refused(
+        &me,
+        ARM,
+        arm(
+            "test.count",
+            subject,
+            json!({ "kind": "civil", "hour": 9, "minute": 0, "zone": "Mars/Olympus" }),
+        ),
+    );
+}
+
+/// A run now, a retry and a paged run each serve an occurrence and never move the interval's
+/// grid: the next occurrence is counted from the one served (review round 1 of #8026, P1 on
+/// `run.rs:310`). Red before the fix: each counted from the run's own due time, so a run now at
+/// half past skipped the next hour's run, and a retry or a late paged run shifted every later one.
+#[test]
+fn an_interval_keeps_its_grid_through_a_run_now_a_retry_and_a_paged_run() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let hourly = EntityId::now();
+    call(
+        &me,
+        ARM,
+        arm(
+            "test.count",
+            hourly,
+            json!({ "kind": "every", "secs": HOUR, "first_at": T0 }),
+        ),
+    );
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    fx.at(T0 + HOUR / 2);
+    let asked = call(
+        &me,
+        RUN,
+        json!({ "job": "test.count", "subject": hourly.to_hex() }),
+    );
+    assert_eq!(asked["due_at"], json!(T0 + HOUR / 2), "{asked}");
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(runs("test.count", Some(hourly)), 2);
+    assert_eq!(
+        fx.view("test.count", hourly).expect("armed")["due_at"],
+        json!(T0 + HOUR),
+        "a run now leaves the next occurrence where it was"
+    );
+
+    let flaky = EntityId::now();
+    call(&me, ARM, arm("test.fail_once", flaky, every(HOUR)));
+    assert!(matches!(fx.run_due()[..], [JobOutcome::Failed { .. }]));
+    assert_eq!(
+        fx.view("test.fail_once", flaky).expect("armed")["due_at"],
+        json!(T0 + HOUR / 2 + 60),
+        "the retry is due a minute on"
+    );
+    fx.at(T0 + HOUR / 2 + 60);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    let retried = fx.view("test.fail_once", flaky).expect("armed");
+    assert_eq!(
+        retried["due_at"],
+        json!(T0 + HOUR / 2 + HOUR),
+        "a retry serves its occurrence and leaves the grid where it was"
+    );
+    assert_eq!(retried["failures"], json!(0));
+
+    let paged = EntityId::now();
+    call(
+        &me,
+        ARM,
+        arm(
+            "test.paged",
+            paged,
+            json!({ "kind": "every", "secs": HOUR, "first_at": T0 }),
+        ),
+    );
+    assert_eq!(
+        fx.run_due(),
+        vec![JobOutcome::More, JobOutcome::More, JobOutcome::Done]
+    );
+    assert_eq!(
+        fx.view("test.paged", paged).expect("armed")["due_at"],
+        json!(T0 + HOUR),
+        "a late paged run serves the occurrence it started on"
+    );
+}
+
+/// A row armed again while its run runs keeps the new arming, and runs then: the run's result
+/// write lands only on the row the run started on (review round 1 of #8026, P1 on `run.rs:192`).
+/// Here the test job's first run arms its own row an hour on, in its own write, and answers done,
+/// which ends the deadline it started on. Red before the fix: that answer took the new arming too,
+/// and the row went. The new arming also records that run's end as its last run (review of #8026
+/// by OPUS-SETTING-SCHEDULE, 16 Nov 10:20, P3): before, it kept the end of the run before.
+#[test]
+fn a_row_armed_again_while_its_run_runs_keeps_its_new_arming() {
+    const JOB: &str = "test.rearm";
+    let fx = Fixture::rooted();
+    let subject = EntityId::now();
+    arm_as_engine(&fx.vault, JOB, Some(subject), Trigger::At { at: T0 + 10 }).expect("armed");
+
+    fx.at(T0 + 10);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(runs(JOB, Some(subject)), 1, "the row ran at its due time");
+    let armed = fx
+        .view(JOB, subject)
+        .expect("the arming its run made stands");
+    assert_eq!(armed["due_at"], json!(T0 + 10 + TEST_REARM_AFTER_SECS));
+    assert_eq!(
+        armed["finished_at"],
+        json!(T0 + 10),
+        "its last run is the one that ended at T0 + 10"
+    );
+
+    fx.at(T0 + 10 + TEST_REARM_AFTER_SECS);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(
+        runs(JOB, Some(subject)),
+        2,
+        "the new arming ran at its time"
+    );
+    assert!(
+        fx.view(JOB, subject).is_none(),
+        "the second run ended the row it started on"
+    );
+}
+
+/// A row whose job this build does not know is parked for a day once in a pass, also when a
+/// newer build left it waiting on a retry, and it keeps its occurrence and failures for the build
+/// that knows the job (review of #8026 by OPUS-SETTING-SCHEDULE, 16 Nov 10:20, P2 on `run.rs`'s
+/// park). Here the test job fails once, so its row waits on a retry, then leaves the registry.
+/// Red before the fix: the park moved only the occurrence, the retry time kept the row due, and
+/// the pass parked it again on every turn up to its cap of runs.
+#[test]
+fn a_job_this_build_does_not_know_is_parked_once_a_pass_and_runs_when_known_again() {
+    const JOB: &str = "test.withdrawn";
+    const DAY: u64 = 24 * 60 * 60;
+    let fx = Fixture::rooted();
+    let subject = EntityId::now();
+    arm_as_engine(&fx.vault, JOB, Some(subject), Trigger::At { at: T0 + 10 }).expect("armed");
+    fx.at(T0 + 10);
+    let first = fx.run_due();
+    assert!(
+        matches!(first.as_slice(), [JobOutcome::Failed { .. }]),
+        "the first run fails: {first:?}"
+    );
+    let retry_at = fx.view(JOB, subject).expect("the row waits on its retry")["due_at"]
+        .as_u64()
+        .expect("due_at");
+    assert!(retry_at > T0 + 10, "the retry is after the run");
+
+    withdraw_test_job(true);
+    fx.at(retry_at);
+    let parked = fx.run_due();
+    withdraw_test_job(false);
+    assert_eq!(parked.len(), 1, "one park in the pass, not one per turn");
+    assert_eq!(parked[0], JobOutcome::UnknownJob);
+    let row = fx.view(JOB, subject).expect("the parked row stays");
+    assert_eq!(row["due_at"], json!(retry_at + DAY), "parked for a day");
+    assert_eq!(row["failures"], json!(1), "its failures stay");
+
+    fx.at(retry_at + DAY);
+    let again = fx.run_due();
+    assert!(
+        matches!(again.as_slice(), [JobOutcome::Failed { .. }]),
+        "the build that knows the job runs it: {again:?}"
+    );
+    assert_eq!(runs(JOB, Some(subject)), 2, "it ran again once known");
+}
+
+/// A restore lands the armed rows and rebuilds their due index from them, so an armed job still
+/// runs on the restored vault (review round 1 of #8026, P1 on `tables.rs:15`). Red before the fix:
+/// the copy held the row, but its due index, which no image carries, was empty, and the runner
+/// never found the job.
+#[test]
+fn a_restore_rebuilds_the_due_index_so_an_armed_job_still_runs() {
+    let directory = oneiron::test_support::restore_tempdir();
+    let live = open_owner_carrier_vault(&directory.path().join("vault")).expect("owner vault");
+    live.ensure_vault_key().expect("mint the vault data key");
+    let key = live.checkpoint_key().expect("derive the checkpoint key");
+    let subject = EntityId::now();
+    arm_as_engine(&live, "test.count", Some(subject), Trigger::At { at: 1 })
+        .expect("the engine arms a passed deadline");
+    let image = directory.path().join("image");
+    live.snapshot_checkpoint(&image, 100)
+        .expect("snapshot with the job armed");
+    assert_eq!(runs("test.count", Some(subject)), 0, "nothing ran it yet");
+
+    let (copy, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &key,
+        &directory.path().join("restored"),
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .expect("restore the checkpoint over the live vault");
+    let outcomes: Vec<JobOutcome> = copy
+        .run_due(HousekeepingBudget::unbounded())
+        .expect("the runner on the copy")
+        .runs
+        .into_iter()
+        .map(|run| run.outcome)
+        .collect();
+    assert_eq!(
+        outcomes,
+        vec![JobOutcome::Done],
+        "the copy's runner finds the armed job"
+    );
+    assert_eq!(runs("test.count", Some(subject)), 1);
+}
+
+#[test]
+fn a_job_armed_for_later_after_the_pass_read_the_due_index_waits_for_its_new_time() {
+    // Review round 2 of #8026 (P1 on run.rs): a pass read a job's due-index entry, and another
+    // write armed the job again for later before the run's own write. The door leaves the entry
+    // that pass read beside the row's own.
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let counted = EntityId::now();
+    let lapsing = EntityId::now();
+    for (job, subject) in [("test.count", counted), ("test.lapse", lapsing)] {
+        call(
+            &me,
+            ARM,
+            arm(job, subject, json!({ "kind": "at", "at": T0 + 3_000 })),
+        );
+        index_due_at(&fx.vault, job, Some(subject), T0 + 1_000).expect("the entry the pass read");
+    }
+    fx.at(T0 + 2_000);
+    assert_eq!(
+        fx.run_due(),
+        Vec::<JobOutcome>::new(),
+        "neither job is due before its new time: no early run, no lapse"
+    );
+    assert_eq!(runs("test.count", Some(counted)), 0);
+    for (job, subject) in [("test.count", counted), ("test.lapse", lapsing)] {
+        let view = fx.view(job, subject).expect("still armed");
+        assert_eq!(view["due_at"], json!(T0 + 3_000), "{view}");
+    }
+
+    fx.at(T0 + 3_000);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done, JobOutcome::Done]);
+    assert_eq!(
+        runs("test.count", Some(counted)),
+        1,
+        "it ran once, at its own time"
+    );
+    assert_eq!(
+        runs("test.lapse", Some(lapsing)),
+        1,
+        "the deadline ran at its time"
+    );
+}
