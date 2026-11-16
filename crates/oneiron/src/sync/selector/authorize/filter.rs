@@ -538,7 +538,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // its key: a case-shifted alias still names the row (ONE-1158), so the
     // label fallback below judges each body the window holds of it.
     let mut tombstoned_bodies = HashMap::<EntityId, Vec<Vec<u8>>>::new();
-    if member_access.is_some() {
+    if member_access.labels.is_some() {
         map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
             if let Some(blob) = maybe_blob.filter(|blob| blob.len() > ENTITY_METADATA_HEADER_LEN)
                 && let Ok(id) = EntityId::from_hex(raw_key)
@@ -567,8 +567,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // request, every body the window still holds of the row decides by its
         // bytes, under whichever casing of the id it is keyed: one the member
         // does not read withholds the tombstone. A read that fails withholds
-        // it too.
-        let member = member_access.as_ref();
+        // it too. A tombstone carries no content, so the conversation home
+        // ([`member_reads_row`]) does not hold it back: a member homed
+        // elsewhere still learns that a row it may hold was deleted.
+        let member = member_access.labels.as_ref();
         let reads =
             super::super::tombstones::member_reads_by_capture(vault, &ttxn, member, &id, value)
                 .unwrap_or_else(|| {
@@ -666,11 +668,28 @@ pub(in crate::sync::selector) fn member_reads_row(
     if !member.homed_here && stamped_claim(raw) {
         return Ok(false);
     }
-    let Some(labels) = &member.labels else {
+    member_reads_labels(vault, rtxn, member.labels.as_ref(), id, raw)
+}
+
+/// Whether the selector's member reads the row `raw` of `id` at the
+/// relationship gate alone (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is an
+/// Owner's member (the vault owner, or a co-Owner on an Owner-role grant),
+/// which reads every row. A CLAIM body that does not decode is withheld, as
+/// the causal check withholds it. [`member_reads_row`] adds the conversation
+/// home for a row the export carries; a tombstone, which carries no content,
+/// takes this gate alone.
+fn member_reads_labels(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    member: Option<&crate::access_grant::AccessContext<'_>>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let Some(member) = member else {
         return Ok(true);
     };
     match crate::claim::relationship_label_read(&vault.store, rtxn, id, raw) {
-        Ok(read) => Ok(read.allowed_by(labels)),
+        Ok(read) => Ok(read.allowed_by(member)),
         Err(Error::InvalidClaimBody(_)) => Ok(false),
         Err(error) => Err(error),
     }
@@ -692,13 +711,16 @@ fn stamped_claim(raw: &[u8]) -> bool {
 
 /// Whether the selector's member reads, at the member gate
 /// ([`member_reads_row`]), every source the words of the row `raw` of `id`
-/// came from (FIX
-/// SELECTOR-SCOPE-SUMMARY-WORDS): the sources
-/// `scope_summary::word_sources_in` names, as the scoped read admits a
-/// derived row (`claim/scoped_read/visibility.rs`). A row with words of its
-/// own passes; one whose sources no longer resolve, or name a row not held
-/// here, is withheld. An Owner's member reads every row: only a member the
-/// label gate binds pays for the lookup.
+/// came from (FIX SELECTOR-SCOPE-SUMMARY-WORDS): the sources
+/// `scope_summary::word_sources_in` names, and through each of them every
+/// source of its own words in turn (a nested epoch summary, a scope summary,
+/// a merge header), as the scoped read walks a derived row's sources
+/// (`claim/scoped_read/visibility.rs`: `epoch_sources_readable_in`,
+/// `derived_sources_readable_in`). A row with words of its own passes; one
+/// whose sources, at any depth, no longer resolve or name a row not held
+/// here is withheld. Each row is judged once, so a cycle of sources ends. An
+/// Owner's member reads every row: only a member the label gate binds pays
+/// for the walk.
 pub(in crate::sync::selector) fn member_reads_word_sources(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -709,21 +731,44 @@ pub(in crate::sync::selector) fn member_reads_word_sources(
     if member.labels.is_none() {
         return Ok(true);
     }
-    let sources = match crate::scope_summary::word_sources_in(vault, rtxn, id, raw) {
-        Ok(crate::scope_summary::WordSources::Own) => return Ok(true),
-        Ok(crate::scope_summary::WordSources::Unresolved) => return Ok(false),
-        Ok(crate::scope_summary::WordSources::From(sources)) => sources,
-        // A CLAIM body that does not decode is withheld, as at the label gate.
-        Err(Error::InvalidClaimBody(_)) => return Ok(false),
-        Err(error) => return Err(error),
+    let Some(mut pending) = word_sources_of(vault, rtxn, id, raw)? else {
+        return Ok(false);
     };
-    for source in &sources {
-        let Some(source_raw) = vault.get_raw_in(rtxn, source)? else {
+    let mut judged = BTreeSet::from([*id]);
+    while let Some(source) = pending.pop() {
+        if !judged.insert(source) {
+            continue;
+        }
+        let Some(source_raw) = vault.get_raw_in(rtxn, &source)? else {
             return Ok(false);
         };
-        if !member_reads_row(vault, rtxn, member, source, &source_raw)? {
+        if !member_reads_row(vault, rtxn, member, &source, &source_raw)? {
             return Ok(false);
         }
+        let Some(nested) = word_sources_of(vault, rtxn, &source, &source_raw)? else {
+            return Ok(false);
+        };
+        pending.extend(nested);
     }
     Ok(true)
+}
+
+/// The rows the words of the row `raw` of `id` came from
+/// (`scope_summary::word_sources_in`): none for a row with words of its own,
+/// `None` for one whose sources no longer resolve or a CLAIM body that does
+/// not decode, which the export withholds, as at the label gate.
+fn word_sources_of(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Option<Vec<EntityId>>> {
+    match crate::scope_summary::word_sources_in(vault, rtxn, id, raw) {
+        Ok(crate::scope_summary::WordSources::Own) => Ok(Some(Vec::new())),
+        Ok(crate::scope_summary::WordSources::From(sources)) => Ok(Some(sources)),
+        Ok(crate::scope_summary::WordSources::Unresolved) | Err(Error::InvalidClaimBody(_)) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
