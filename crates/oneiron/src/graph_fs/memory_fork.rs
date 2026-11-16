@@ -7,9 +7,14 @@
 //! bytes at the frontier. A row born after the frontier reads as no file, and
 //! so does one erased, deleted or withdrawn since, as at every selected
 //! version. Every listing walks the index the live head walks and keeps a
-//! row only as it stood at the fork. Edges keep no history: a link stands at
-//! the fork when it stands now, was recorded before the frontier's instant,
-//! and its far end reads there.
+//! row only as it stood at the fork, with one change: an entity's claims
+//! walk every claim, because the live `ClaimOf` edges name each claim's
+//! subject now. The learned-time listings (the days, `ls -t`) file and order
+//! rows by their live learned time, so a row a re-put restamped after the
+//! frontier lists under no day there and sorts at its live time
+//! (PLAN-L3-39 Design 7). Edges keep no history: a link stands at the fork
+//! when it stands now, was recorded before the frontier's instant, and its
+//! far end reads there.
 //!
 //! A row the reader's live read admits, whose revision at the frontier this
 //! machine no longer holds, is left out of every listing, and a direct read

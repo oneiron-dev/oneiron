@@ -386,6 +386,20 @@ impl GraphFsResolver<'_, '_> {
         let vault = self.scoped_read.vault();
         let rtxn = vault.store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        // A memory fork judges each claim as it stood there, the subject it
+        // named included, so it walks the timeline: the live `ClaimOf` edges
+        // name each claim's subject now.
+        if self.memory_fork().is_some() {
+            let (bytes, next, total) =
+                self.claims_by_time_walk(&rtxn, &policy, cursor, max_scan_rows, |claim| {
+                    self.listed_at_fork_in(&rtxn, claim, |row| {
+                        Ok(row
+                            .claim()
+                            .is_some_and(|body| claim_names_subject(&body, subject)))
+                    })
+                })?;
+            return Ok((bytes, next.map(|cursor| scope.seal(&cursor)), total));
+        }
         // The subject's claims, while they fit one scan. Off this device
         // the walk's rows count against the edge-peer row (rule 5).
         let mut count = ScanCount::start(
@@ -423,9 +437,7 @@ impl GraphFsResolver<'_, '_> {
             }
         };
         count.finish(vault);
-        // A memory fork judges each claim as it stood there, so it walks
-        // the timeline: the live learned times order the subject's own list.
-        let (bytes, next, total) = if fits && self.memory_fork().is_none() {
+        let (bytes, next, total) = if fits {
             let mut timed = Vec::with_capacity(members.len());
             for id in members {
                 if let Some(record) = vault.store.port_entity_record(&rtxn, &id)? {
@@ -470,12 +482,7 @@ impl GraphFsResolver<'_, '_> {
                     EdgeKind::ClaimOf,
                     subject,
                 )?
-                .is_some()
-                    && self.listed_at_fork_in(&rtxn, claim, |row| {
-                        Ok(row
-                            .claim()
-                            .is_some_and(|body| claim_names_subject(&body, subject)))
-                    })?)
+                .is_some())
             })?
         };
         Ok((bytes, next.map(|cursor| scope.seal(&cursor)), total))
@@ -562,8 +569,10 @@ impl GraphFsResolver<'_, '_> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        // At a memory fork the live learned times bound nothing: a row's
+        // learned time there may lie on either side of its live one.
         let query = crate::ports::TimelineQuery {
-            start: if cursor.is_some() {
+            start: if cursor.is_some() || self.memory_fork().is_some() {
                 Bound::Unbounded
             } else {
                 Bound::Included(newer_than.saturating_add(1))
@@ -590,7 +599,8 @@ impl GraphFsResolver<'_, '_> {
             last_scanned = Some(temporal);
             // At a memory fork, the learned time the row had there.
             if !sealed_is_absent(self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id))?
-                || !self.listed_at_fork_in(&rtxn, &temporal.id, |row| Ok(row.learned_at > newer_than))?
+                || !self
+                    .listed_at_fork_in(&rtxn, &temporal.id, |row| Ok(row.learned_at > newer_than))?
             {
                 continue;
             }

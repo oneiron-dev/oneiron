@@ -43,20 +43,26 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
         fetch: usize,
     ) -> Result<GraphFsPage> {
-        let vault = self.scoped_read.vault();
         let count = self.claim_walk_count(EngineScan::TypeIndexRows, &[ENTITY_TYPE_CLAIM])?;
         self.claim_id_page(
             path,
             cursor,
             fetch,
             count,
-            |after, limit| {
-                let ids = vault.entities_by_type_page(ENTITY_TYPE_CLAIM, after, limit)?;
-                let resume_after = (ids.len() >= limit).then(|| ids.last().copied()).flatten();
-                Ok(IdScanPage { ids, resume_after })
-            },
+            |after, limit| self.claim_type_run(after, limit),
             |_| true,
         )
+    }
+
+    /// Up to `limit` claim ids after `after`, in id order, from the CLAIM
+    /// type index.
+    fn claim_type_run(&self, after: Option<&EntityId>, limit: usize) -> Result<IdScanPage> {
+        let ids =
+            self.scoped_read
+                .vault()
+                .entities_by_type_page(ENTITY_TYPE_CLAIM, after, limit)?;
+        let resume_after = (ids.len() >= limit).then(|| ids.last().copied()).flatten();
+        Ok(IdScanPage { ids, resume_after })
     }
 
     pub(super) fn listdir_claims_for_subject(
@@ -68,9 +74,22 @@ impl GraphFsResolver<'_, '_> {
         if !self.scoped_read.is_entity_readable(subject)? || !self.target_at_fork(subject)? {
             return Ok(empty_page(path, self.options.mount));
         }
+        // At a memory fork a claim is about the subject it named there. The
+        // live `ClaimOf` edges name its subject now, so the fork walks every
+        // claim in id order and keeps those about this subject as they stood.
+        if self.memory_fork().is_some() {
+            let count = self.claim_walk_count(EngineScan::TypeIndexRows, &[ENTITY_TYPE_CLAIM])?;
+            return self.claim_id_page(
+                path,
+                cursor,
+                GRAPH_FS_MAX_PAGE_ENTRIES,
+                count,
+                |after, limit| self.claim_type_run(after, limit),
+                |row| served_claim(row).is_some_and(|body| claim_names_subject(&body, subject)),
+            );
+        }
         let vault = self.scoped_read.vault();
         let count = self.claim_walk_count(EngineScan::EdgePeerRows, &claim_edge_scope(subject))?;
-        let at_fork = self.memory_fork().is_some();
         self.claim_id_page(
             path,
             cursor,
@@ -85,10 +104,7 @@ impl GraphFsResolver<'_, '_> {
                     limit,
                 )
             },
-            // At a memory fork, a claim about this subject as it stood there.
-            |row| {
-                !at_fork || served_claim(row).is_some_and(|body| claim_names_subject(&body, subject))
-            },
+            |_| true,
         )
     }
 

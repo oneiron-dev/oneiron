@@ -204,11 +204,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 let at_fork = self.memory_fork().is_some();
                 Ok(self
                     .read_listed_claim_file(&normalized, &claim, |row| {
-                        if at_fork
-                            && !served_claim(row)
-                                .is_some_and(|body| claim_names_subject(&body, &subject))
-                        {
-                            return Ok(false);
+                        // At a memory fork, the subject the claim named there.
+                        if at_fork {
+                            return Ok(served_claim(row)
+                                .is_some_and(|body| claim_names_subject(&body, &subject)));
                         }
                         let rtxn = store.env.read_txn()?;
                         Ok(crate::ports::EdgeStoreRead::port_edge_get(

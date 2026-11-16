@@ -38,9 +38,15 @@ impl GraphFsResolver<'_, '_> {
             return Ok(no_read);
         };
         let claim_id = parse_entity_id(claim_hex)?;
-        // At a memory fork the target reads as it stood at the frontier.
+        // At a memory fork the target reads as it stood at the frontier, and
+        // a target whose bytes there this machine no longer holds answers
+        // `HistoryNotHeld`, as a direct read of its path does.
         let read = if self.memory_fork().is_some() {
-            self.file_row(claim_id)?
+            let read = self.file_row(claim_id)?;
+            if read.value.is_none() {
+                self.refuse_history_not_held(&claim_id)?;
+            }
+            read
         } else {
             self.scoped_read
                 .read(&[PointRead::id(claim_id)], None)?

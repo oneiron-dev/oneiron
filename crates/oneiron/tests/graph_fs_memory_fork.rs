@@ -2,8 +2,8 @@
 //! that reads the vault's memory as it stood at a frontier the engine handed
 //! out. Each test mounts a live head, takes its frontier, moves the live rows,
 //! then mounts the fork and proves the fork still reads the old revisions, the
-//! old worlds, and only the links recorded before the frontier's instant, while
-//! the live head reads the new ones.
+//! old worlds and subjects, and only the links recorded before the frontier's
+//! instant, while the live head reads the new ones.
 //!
 //! Run line:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test graph_fs_memory_fork`
@@ -246,6 +246,19 @@ fn grep_output(
         .expect("grep the graph tree")
 }
 
+/// The text `ls -t` prints for `path` on `mount`: one id a line, newest
+/// learned first.
+fn ls_by_time_text(memory: &Memory<'_>, mount: &GraphFsMountRequest, path: &str) -> String {
+    let mount_value = serde_json::to_value(mount).expect("the mount request encodes");
+    let request =
+        serde_json::from_value(json!({"mount": mount_value, "path": path, "by_time": true}))
+            .expect("a graph file ls request decodes");
+    let output = memory
+        .graph_fs_ls(request)
+        .expect("ls -t the graph directory");
+    decoded_output_text(&output)
+}
+
 /// The fork answer names plan walk. (The memory door's answer carries the
 /// plan alone; the fork walk reason lives on the engine's command output.)
 fn assert_fork_walk_plan(output: &GraphFsOutput) {
@@ -373,6 +386,62 @@ fn a_claim_lists_in_the_world_it_stood_in_at_the_fork() {
     assert!(
         live_b.contains(&claim.to_hex()),
         "the live head lists the claim in its later world: {live_b:?}"
+    );
+}
+
+#[test]
+fn a_claim_lists_under_the_subject_it_named_at_the_fork() {
+    let (_dir, vault) = open_vault();
+    let owner = owner_id(&vault);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let subject_a = put_person(&vault);
+    let subject_b = put_person(&vault);
+    let claim = EntityId::now();
+    put_claim_in_world(&vault, &claim, &subject_a, None, "about a");
+    let frontier = mount_frontier_hex(&memory, live_mount_request());
+    // Move the claim to B as a candidate overwrite does: the put adds its
+    // edge to B, and its edge to A goes.
+    put_claim_in_world(&vault, &claim, &subject_b, None, "about b");
+    assert!(
+        vault
+            .delete_edge(&claim, EdgeKind::ClaimOf, &subject_a)
+            .expect("remove the claim's edge to its former subject"),
+        "the claim's edge to its former subject existed"
+    );
+
+    let fork = fork_mount_request(&frontier);
+    let live = live_mount_request();
+    let path_a = format!("/entities/{}/claims", subject_a.to_hex());
+    let path_b = format!("/entities/{}/claims", subject_b.to_hex());
+    let fork_a = readdir_names(&memory, &fork, &path_a);
+    assert!(
+        fork_a.contains(&claim.to_hex()),
+        "at the fork the claim lists under the subject it named there: {fork_a:?}"
+    );
+    let fork_b = readdir_names(&memory, &fork, &path_b);
+    assert!(
+        !fork_b.contains(&claim.to_hex()),
+        "at the fork the claim lists under no later subject: {fork_b:?}"
+    );
+    let fork_file = cat_text(&memory, &fork, &format!("{path_a}/{}", claim.to_hex()));
+    assert!(
+        fork_file.contains(&utf8_hex("about a")),
+        "at the fork the claim reads under the subject it named there: {fork_file}"
+    );
+    let fork_by_time = ls_by_time_text(&memory, &fork, &path_a);
+    assert!(
+        fork_by_time.contains(&claim.to_hex()),
+        "at the fork ls -t lists the claim under the subject it named there: {fork_by_time}"
+    );
+    let live_a = readdir_names(&memory, &live, &path_a);
+    assert!(
+        !live_a.contains(&claim.to_hex()),
+        "the live head lists the claim under no former subject: {live_a:?}"
+    );
+    let live_b = readdir_names(&memory, &live, &path_b);
+    assert!(
+        live_b.contains(&claim.to_hex()),
+        "the live head lists the claim under its later subject: {live_b:?}"
     );
 }
 
@@ -595,6 +664,18 @@ fn a_row_this_machine_holds_no_bytes_of_at_the_fork_says_so() {
     assert_eq!(
         refused.code, "HISTORY_NOT_HELD",
         "a fork read without bytes says so: {refused:?}"
+    );
+    let mount_value = serde_json::to_value(&fork).expect("the mount request encodes");
+    let link = serde_json::from_value(
+        json!({"mount": mount_value, "path": format!("/[[claim:{}]]", claim.to_hex())}),
+    )
+    .expect("a graph file link request decodes");
+    let refused_link = memory
+        .graph_fs_read_link(link)
+        .expect_err("a fork link read without bytes is refused");
+    assert_eq!(
+        refused_link.code, "HISTORY_NOT_HELD",
+        "a fork link read without bytes says so: {refused_link:?}"
     );
     let listed = readdir_names(&memory, &fork, "/claims/by-id");
     assert!(
