@@ -1,0 +1,76 @@
+{
+  "schema": "oneiron.deck-create-office/1",
+  "case_set": "deck-create-v1",
+  "run": "deck-create-20261115-474effa8c4e5",
+  "source": "474effa8c4e5b91093911eb6489117e0faa20ea7",
+  "case_manifest_sha256": "bed43798aebb9b067607d0d0a8eac4e6e21ab926c0190d0f50dc61341df46f5c",
+  "seat": "mac-mini",
+  "account_role": "owner",
+  "environment": {
+    "harness": "one-2531-v1",
+    "powerpoint": "16.113.2",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "pdfkit": "27.0",
+    "raster_scale": 2,
+    "font_account": "owner-console",
+    "font_role": "owner",
+    "font_inventory_sha256": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637",
+    "observer": "system-events",
+    "locale": ""
+  },
+  "font_inventory_sha256": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637",
+  "started_at": 1794679788.791592,
+  "finished_at": 1794679921.958416,
+  "stopped": null,
+  "candidates": {
+    "board-review": {
+      "sha256": "1fdf0f5727afe3abe3eec187fb94dff0d29a5d62d22ee9e89ad067cd3c996b8e",
+      "status": "clean",
+      "detail": "PDFKit rasterized 7 page(s)",
+      "fits": 15,
+      "overflows": 0,
+      "inconclusive": 3
+    },
+    "long-title": {
+      "sha256": "cf6523d693f90d996e6039307f1b31c98928e300a0b16119e56316c395bdd073",
+      "status": "clean",
+      "detail": "PDFKit rasterized 1 page(s)",
+      "fits": 2,
+      "overflows": 0,
+      "inconclusive": 0
+    },
+    "cjk-body": {
+      "sha256": "59469ad3fc70abe152f212cba674434764b1814b2ab0b30cd6cce55bfd88e5f4",
+      "status": "clean",
+      "detail": "PDFKit rasterized 1 page(s)",
+      "fits": 4,
+      "overflows": 0,
+      "inconclusive": 0
+    },
+    "dense-findings": {
+      "sha256": "b0014d0ca05105b65355c828572ee19f0689674e144cdff8d3dbc7dc1e8ad092",
+      "status": "clean",
+      "detail": "PDFKit rasterized 2 page(s)",
+      "fits": 7,
+      "overflows": 0,
+      "inconclusive": 0
+    },
+    "wide-table": {
+      "sha256": "3026edbe4290d6e3512758879394a67f340d85e581cc6e424d8f545b6006fb51",
+      "status": "clean",
+      "detail": "PDFKit rasterized 1 page(s)",
+      "fits": 1,
+      "overflows": 0,
+      "inconclusive": 1
+    },
+    "quarter-chart": {
+      "sha256": "39818facae423f6519d58436dee3a4ea6a9841a8508a532f0a66676b5d6471e8",
+      "status": "clean",
+      "detail": "PDFKit rasterized 1 page(s)",
+      "fits": 2,
+      "overflows": 0,
+      "inconclusive": 1
+    }
+  }
+}

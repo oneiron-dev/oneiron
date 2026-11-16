@@ -19,7 +19,7 @@ const CHANGES: SideTable<u64, SettingChange, Named> = SideTable::new(&side_table
 const CHANGE_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::SETTING_CHANGE_NEXT);
 
 /// One change to one setting row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingChange {
     /// Its id: what the change feed names it by.
@@ -42,6 +42,10 @@ pub struct SettingChange {
     pub at: u64,
     /// The setter's reason, when it gave one.
     pub why: Option<String>,
+    /// A learned key's seed: the row's weight in runs after the change. Absent on every other
+    /// change, whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight_runs: Option<f64>,
 }
 
 /// Writes `change` under the next sequence, in the caller's write; returns its sequence.
@@ -59,6 +63,24 @@ pub(super) fn record_change_in_txn(
     change.sequence = sequence;
     CHANGES.put(store, txn, &sequence, &change)?;
     Ok(change)
+}
+
+/// The change of sequence `sequence`, while it stands: the record of the act that wrote the row a
+/// read's `revision` names, for a reader that cites the row it read.
+///
+/// # Errors
+///
+/// A change row that does not decode; storage errors.
+#[cfg_attr(
+    not(all(oneiron_test_support, feature = "test-support")),
+    allow(dead_code)
+)]
+pub(crate) fn change_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    sequence: u64,
+) -> Result<Option<SettingChange>> {
+    CHANGES.get(store, txn, &sequence)
 }
 
 /// The last change sequence handed out, or `None` before the first.

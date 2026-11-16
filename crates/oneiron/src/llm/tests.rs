@@ -354,6 +354,7 @@ fn the_auto_checker_reads_the_candidate_the_gate_saw() {
         wording: "May this write approve itself?".into(),
         notes: Arc::new(NoNotes),
         calibrated: None,
+        world_hold: None,
     });
     let candidate = AutoCheckCandidateOwned {
         signals: crate::llm::AutoCheckSignals::default(),
@@ -367,6 +368,7 @@ fn the_auto_checker_reads_the_candidate_the_gate_saw() {
             rate_ratio: 2.5,
             streak: 3,
         }),
+        world: crate::claim::base_world_id(),
     };
     checker.check(&candidate.borrowed());
     let state = capture

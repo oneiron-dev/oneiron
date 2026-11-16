@@ -4,7 +4,7 @@
 
 use super::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
-    GrantAskedRow, hex_opt, hex_ref, unix_ms,
+    GrantAskedRow, hex_opt, hex_ref,
 };
 use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
 use crate::memory::{Memory, MemoryResult};
@@ -57,7 +57,7 @@ impl Memory<'_> {
                 capability: scope.required_capability(),
                 scope,
                 status: AccessGrantStatus::Active,
-                created_at: unix_ms() / 1_000,
+                created_at: crate::unix_millis_now() / 1_000,
                 revoked_at: None,
                 expires_at: None,
                 companion_bounds: None,

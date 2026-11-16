@@ -2,7 +2,6 @@
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, Named, Raw, SideTable};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub(super) const MEMBERSHIP_ROW_VERSION: u8 = 2;
@@ -15,37 +14,11 @@ pub(super) const MEMBERSHIP_ROWS: SideTable<(EntityId, u64), MembershipRow, Name
 pub(super) const MEMBERSHIP_SEQ: SideTable<EntityId, u64, Raw> =
     SideTable::new(&side_table::CONVERSATION_MEMBERSHIP_SEQ);
 
-/// How much of a room's past a joining member sees.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HistoryChoice {
-    /// The room's own rule ([`ConversationBody::shares_history`]): from the
-    /// join when the room sets none (ILDF2 P5, "the default is from now").
-    #[default]
-    Inherit,
-    /// The whole past.
-    Share,
-    /// From the join on.
-    None,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MembershipAction {
-    Join,
-    Leave,
-    History,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MembershipRow {
-    pub v: u8,
-    pub person: EntityId,
-    pub action: MembershipAction,
-    pub at: u64,
-    pub actor: EntityId,
-    pub visible_from: Option<u64>,
-    /// The exact receipt of the speaker handoff that created this Join.
-    pub handoff: Option<SpeakerHandoffReceipt>,
-}
+#[doc(hidden)]
+pub use oneiron_records::conversation::membership::{
+    HistoryChoice, MembershipAction, MembershipRow,
+};
+
 pub use crate::memory::conversation_membership::MembershipWindow;
 
 pub(super) fn revision_in(
