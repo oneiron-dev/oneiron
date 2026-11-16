@@ -30,8 +30,9 @@ fn the_hosts_node_is_never_mine_and_never_returns_once_removed() {
     let issuer = crate::test_support::test_host_issuer();
     let vault = open_hosted(dir.path());
     vault.ensure_host_root_slip(&issuer).unwrap();
+    // No binding: on a hosted vault the custodial root alone binds no person,
+    // and the fold takes the unbound owner as live on the carrier's word.
     let person = crate::vault::embedded_owner_actor_id().unwrap();
-    vault.bind_host_owner_for_test(&issuer, person).unwrap();
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
     own_encryption_key(&vault, vault_id);
 

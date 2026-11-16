@@ -577,6 +577,48 @@ fn a_custodial_root_alone_does_not_rebind_an_owner_key() {
     );
 }
 
+/// Main: the root's rebind of the owner key to an agent counts, so the
+/// owner's binding turns into an agent's and the owner key speaks for no
+/// person.
+#[test]
+fn a_custodial_root_alone_does_not_rebind_the_owners_binding_to_an_agent() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let owner_key = key_of(&key);
+    let enrolment = vault.enrol(2, registration, &key);
+    let owners_bind = vault.append(
+        1,
+        enrolment,
+        human_bind(owner_key.clone(), owner(), 1),
+        &key,
+        &[],
+    );
+    let root = vault.root.clone();
+    let rebind = vault.append(
+        3,
+        owners_bind,
+        AuthorityOp::RebindActor {
+            authority_key: owner_key.clone(),
+            actor_ref: owner(),
+            actor_class: "agent".to_owned(),
+            epoch: 2,
+        },
+        &root,
+        &[],
+    );
+    let fold = vault.fold();
+    assert!(
+        !fold.valid_entries.contains(&rebind),
+        "the custodial root's rebind of the owner's binding alone does not count: {rebind:?}"
+    );
+    assert!(
+        binds_active(&fold, &owner_key, owner()),
+        "the owner key still speaks for the owner as a person: {:?}",
+        fold.actor_bindings
+    );
+}
+
 /// Passes on main too: the allowed path the gate keeps.
 #[test]
 fn an_owner_key_binds_the_owner_on_a_hosted_vault() {

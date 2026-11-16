@@ -30,14 +30,15 @@ pub(super) fn hosted() -> VaultConfig {
     config
 }
 
-/// A hosted vault under the host's stamped root, with the owner bound.
+/// A hosted vault under the host's stamped root, with the owner unbound: the
+/// custodial root alone binds no person there, and the fold takes the
+/// unbound owner as live on the carrier's word.
 pub(super) fn hosted_host() -> Host {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), hosted()).unwrap();
     let issuer = crate::test_support::test_host_issuer();
     vault.ensure_host_root_slip(&issuer).unwrap();
     let person = crate::vault::embedded_owner_actor_id().unwrap();
-    vault.bind_host_owner_for_test(&issuer, person).unwrap();
     let owner = vault
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
