@@ -28,9 +28,10 @@ use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincip
 use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::code_run::{
     AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher,
-    RunCall, SelfAgentVerbCall, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect,
-    SelfFailedResult, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
-    SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfMemoryWriteResult,
+    RunCall, SELF_MEMORY_SEARCH_MAX_RESULTS, SelfAgentVerbCall, SelfCall, SelfDispatchOutcome,
+    SelfDispatcher, SelfEffect, SelfFailedResult, SelfMemoryEdgeWriteResult,
+    SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
+    SelfMemorySupersedeClaimCall, SelfMemoryWriteResult,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
@@ -46,8 +47,8 @@ use oneiron::verbs::{
     mint_agent_grant_as,
 };
 use oneiron::{
-    ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind,
-    EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -58,8 +59,6 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const RUN_REF: &str = "run-row-door-run";
 /// The one word every indexed row's text holds, so one search scores them all.
 const WORD: &str = "lighthouse";
-/// The most hits one `vault.search` call serves.
-const SEARCH_LIMIT: usize = 16;
 /// When the Grant fixture's rows were written and learned.
 const OCCURRED_AT: u64 = 1_769_947_200;
 const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:run-row-door-scoped-reads";
@@ -138,7 +137,7 @@ fn searched_ids(dispatcher: &HostSelfDispatcher<'_>) -> TestResult<Vec<EntityId>
     let outcome = dispatcher
         .dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
             WORD,
-            SEARCH_LIMIT,
+            SELF_MEMORY_SEARCH_MAX_RESULTS,
         )))
         .map_err(at("the run's search"))?;
     match outcome {
@@ -153,7 +152,7 @@ fn searched_ids(dispatcher: &HostSelfDispatcher<'_>) -> TestResult<Vec<EntityId>
 /// before any reader's lane.
 fn indexed_ids(vault: &Vault) -> TestResult<Vec<EntityId>> {
     Ok(vault
-        .search_text(WORD, SEARCH_LIMIT)
+        .search_text(WORD, SELF_MEMORY_SEARCH_MAX_RESULTS)
         .map_err(at("the unkeyed text search"))?
         .iter()
         .map(|hit| hit.id)
@@ -248,13 +247,13 @@ fn person(vault: &Vault) -> TestResult<EntityId> {
 
 /// The owner's vault after its code run wrote two claims about one PERSON.
 struct OwnerRun {
-    _dir: tempfile::TempDir,
     vault: Vault,
     owner: EntityId,
     subject: EntityId,
     edge_target: EntityId,
     earlier_claim: EntityId,
     later_claim: EntityId,
+    _dir: tempfile::TempDir,
 }
 
 impl OwnerRun {
@@ -270,10 +269,11 @@ impl OwnerRun {
             .map_err(at("the owner's read key"))
     }
 
-    /// A key that names an agent of this vault and reads no row.
+    /// A key that reads no row: its holder is a fresh PERSON row of this
+    /// vault, classed as an agent.
     fn key_that_reads_nothing(&self) -> TestResult<ScopedReadActorKey> {
-        let agent = person(&self.vault)?;
-        Ok(ScopedReadActorKey::read_nothing(agent.to_hex(), "agent")
+        let holder = person(&self.vault)?;
+        Ok(ScopedReadActorKey::read_nothing(holder.to_hex(), "agent")
             .ok_or("a key that reads nothing")?)
     }
 
@@ -345,13 +345,13 @@ fn owner_run() -> TestResult<OwnerRun> {
         }
     }
     Ok(OwnerRun {
-        _dir: dir,
         vault,
         owner,
         subject,
         edge_target,
         earlier_claim,
         later_claim,
+        _dir: dir,
     })
 }
 
@@ -512,18 +512,23 @@ fn a_keyed_edge_naming_a_record_its_door_key_does_not_read_puts_no_edge() -> Tes
 }
 
 #[test]
-fn a_keyed_search_keeps_a_superseded_claim_only_on_a_door_that_reads_every_status() -> TestResult {
+fn a_keyed_search_keeps_a_proposed_claim_only_on_a_door_that_reads_every_status() -> TestResult {
     let run = owner_run()?;
-    let superseded = run
-        .unkeyed()?
-        .dispatch(run.supersede_later_over_earlier())
-        .map_err(at("the run's supersede"))?;
-    assert_eq!(
-        superseded,
-        SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
-            id: run.later_claim
-        })
-    );
+    // Code mode asks Proposed of the gates, so the run's own claims are
+    // recorded and not surfaceable. (A superseded claim cannot stand in: its
+    // text leaves the index at the supersede.)
+    for claim in [run.earlier_claim, run.later_claim] {
+        let body = run
+            .vault
+            .get_claim(&claim)
+            .map_err(at("read the run's claim"))?
+            .ok_or("the run's claim reads nothing")?;
+        assert_eq!(
+            body.approval,
+            ClaimApprovalStatus::Proposed,
+            "the run's own claim is proposed"
+        );
+    }
     index_text(
         &run.vault,
         &[
@@ -550,11 +555,11 @@ fn a_keyed_search_keeps_a_superseded_claim_only_on_a_door_that_reads_every_statu
 
     assert!(
         every_status.contains(&run.earlier_claim) && every_status.contains(&run.later_claim),
-        "the door that reads every status keeps the superseded claim and its successor; seen {every_status:?}"
+        "the door that reads every status keeps the run's proposed claims; seen {every_status:?}"
     );
     assert!(
-        !surfaceable.contains(&run.earlier_claim),
-        "the default door keeps no superseded claim; seen {surfaceable:?}"
+        !surfaceable.contains(&run.earlier_claim) && !surfaceable.contains(&run.later_claim),
+        "the default door keeps no proposed claim; seen {surfaceable:?}"
     );
     Ok(())
 }
@@ -595,12 +600,12 @@ fn a_keyed_search_serves_nothing_to_a_key_that_reads_nothing() -> TestResult {
 /// A vault whose owner wrote one claim in the base world and one in a second
 /// world, and whose agent holds a read Grant for the base world alone.
 struct GrantRun {
-    _dir: tempfile::TempDir,
     vault: Vault,
     agent: EntityId,
     base_claim: EntityId,
     other_claim: EntityId,
     agent_key: ScopedReadActorKey,
+    _dir: tempfile::TempDir,
 }
 
 impl GrantRun {
@@ -800,12 +805,12 @@ fn grant_run() -> TestResult<GrantRun> {
         .map_err(at("agent credential read key"))?
         .ok_or("the agent's credential grants no read")?;
     Ok(GrantRun {
-        _dir: dir,
         vault,
         agent,
         base_claim,
         other_claim,
         agent_key,
+        _dir: dir,
     })
 }
 
@@ -831,30 +836,50 @@ fn a_keyed_search_serves_only_the_claims_the_readers_grant_covers() -> TestResul
     Ok(())
 }
 
+/// Whether `reply` is the invented-reference refusal.
+fn is_invented_reference(reply: &oneiron::Result<SelfDispatchOutcome>) -> bool {
+    matches!(
+        reply,
+        Ok(SelfDispatchOutcome::Failed(failed)) if failed.error == MEMORY_CODE_INVENTED_REFERENCE
+    )
+}
+
 #[test]
 fn a_keyed_supersede_naming_a_claim_outside_the_readers_grant_supersedes_nothing() -> TestResult {
     let run = grant_run()?;
-    let dispatcher = run.dispatcher()?;
-    // The key reads the new claim, so the refusal is the old claim's.
-    let served = searched_ids(&dispatcher)?;
-    assert!(
-        served.contains(&run.base_claim),
-        "the agent's key reads the base-world claim; seen {served:?}"
-    );
     let before = run
         .vault
         .get_claim(&run.other_claim)
         .map_err(at("read the second-world claim"))?;
     assert!(before.is_some(), "the owner's second-world claim landed");
+    let supersede = |new_id: EntityId, old_id: EntityId| -> TestResult<SelfDispatchOutcome> {
+        run.dispatcher()?
+            .dispatch(SelfCall::MemorySupersedeClaim(
+                SelfMemorySupersedeClaimCall::new(new_id, old_id, OCCURRED_AT + 1),
+            ))
+            .map_err(at("the keyed supersede"))
+    };
 
-    let refused = dispatcher
-        .dispatch(SelfCall::MemorySupersedeClaim(
-            SelfMemorySupersedeClaimCall::new(run.base_claim, run.other_claim, OCCURRED_AT + 1),
-        ))
-        .map_err(at("the supersede of a claim outside the Grant"))?;
+    // The control: on the same key, a call that names only the claim the
+    // Grant covers passes the reference check, whatever the gates then rule
+    // on the write. So each refusal below is the second-world claim's.
+    let covered = run.dispatcher()?.dispatch(SelfCall::MemorySupersedeClaim(
+        SelfMemorySupersedeClaimCall::new(run.base_claim, run.base_claim, OCCURRED_AT + 1),
+    ));
+    assert!(
+        !is_invented_reference(&covered),
+        "a supersede naming only the claim the Grant covers resolves its references; seen {covered:?}"
+    );
+
+    let as_old_claim = supersede(run.base_claim, run.other_claim)?;
+    let as_new_claim = supersede(run.other_claim, run.base_claim)?;
 
     assert_eq!(
-        refused,
+        as_old_claim,
+        invented_reference(SelfEffect::MemorySupersedeClaim)
+    );
+    assert_eq!(
+        as_new_claim,
         invented_reference(SelfEffect::MemorySupersedeClaim)
     );
     assert_eq!(
@@ -865,11 +890,18 @@ fn a_keyed_supersede_naming_a_claim_outside_the_readers_grant_supersedes_nothing
         "a refused supersede leaves the claim outside the Grant as it was"
     );
     assert!(
-        run.vault
+        !run.vault
             .targets(&run.base_claim, EdgeKind::Supersedes, None)
-            .map_err(at("read the supersedes edge"))?
+            .map_err(at("read the base claim's supersedes edges"))?
+            .contains(&run.other_claim),
+        "a refused supersede writes no supersedes edge to the claim outside the Grant"
+    );
+    assert!(
+        run.vault
+            .targets(&run.other_claim, EdgeKind::Supersedes, None)
+            .map_err(at("read the second-world claim's supersedes edges"))?
             .is_empty(),
-        "a refused supersede writes no supersedes edge"
+        "a refused supersede writes no supersedes edge from the claim outside the Grant"
     );
     Ok(())
 }
@@ -877,30 +909,51 @@ fn a_keyed_supersede_naming_a_claim_outside_the_readers_grant_supersedes_nothing
 #[test]
 fn a_keyed_edge_naming_a_claim_outside_the_readers_grant_puts_no_edge() -> TestResult {
     let run = grant_run()?;
-    let dispatcher = run.dispatcher()?;
-    // The key reads the source, so the refusal is the target's.
-    let served = searched_ids(&dispatcher)?;
-    assert!(
-        served.contains(&run.base_claim),
-        "the agent's key reads the base-world claim; seen {served:?}"
-    );
+    let put_edge = |src: EntityId, tgt: EntityId| -> TestResult<SelfDispatchOutcome> {
+        run.dispatcher()?
+            .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                src,
+                EdgeKind::Mentions,
+                tgt,
+                0.7,
+            )))
+            .map_err(at("the keyed edge put"))
+    };
 
-    let refused = dispatcher
+    // The control: on the same key, an edge whose two ends are the claim the
+    // Grant covers passes the reference check, whatever the gates then rule
+    // on the write. So each refusal below is the second-world claim's.
+    let covered = run
+        .dispatcher()?
         .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
             run.base_claim,
             EdgeKind::Mentions,
-            run.other_claim,
+            run.base_claim,
             0.7,
-        )))
-        .map_err(at("the edge put to a claim outside the Grant"))?;
+        )));
+    assert!(
+        !is_invented_reference(&covered),
+        "an edge naming only the claim the Grant covers resolves its references; seen {covered:?}"
+    );
 
-    assert_eq!(refused, invented_reference(SelfEffect::MemoryPutEdge));
+    let as_target = put_edge(run.base_claim, run.other_claim)?;
+    let as_source = put_edge(run.other_claim, run.base_claim)?;
+
+    assert_eq!(as_target, invented_reference(SelfEffect::MemoryPutEdge));
+    assert_eq!(as_source, invented_reference(SelfEffect::MemoryPutEdge));
+    assert!(
+        !run.vault
+            .targets(&run.base_claim, EdgeKind::Mentions, None)
+            .map_err(at("read the base claim's edges"))?
+            .contains(&run.other_claim),
+        "a refused edge put writes no edge to the claim outside the Grant"
+    );
     assert!(
         run.vault
-            .targets(&run.base_claim, EdgeKind::Mentions, None)
-            .map_err(at("read the edge"))?
+            .targets(&run.other_claim, EdgeKind::Mentions, None)
+            .map_err(at("read the second-world claim's edges"))?
             .is_empty(),
-        "a refused edge put writes no edge"
+        "a refused edge put writes no edge from the claim outside the Grant"
     );
     Ok(())
 }
