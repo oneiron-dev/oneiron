@@ -49,10 +49,9 @@ pub(crate) async fn ai_ask_image(
 /// under the same code with the same status.
 ///
 /// The facade asks its engine arms first (`facade/errors.rs`), and they also
-/// name six of these codes: `invalid_request`, `budget_denied`,
-/// `rate_limited` and `quota_spent` with this table's status, and
-/// `kept_on_device` and `world_route_not_admitted` with 503, which the
-/// facade answers in place of this table's 409.
+/// name six of these codes, each with this table's status: `invalid_request`,
+/// `budget_denied`, `rate_limited`, `quota_spent`, `kept_on_device` and
+/// `world_route_not_admitted`.
 pub(crate) fn ask_image_refusal_status(code: &str) -> Option<StatusCode> {
     Some(match code {
         "empty_question"
@@ -62,14 +61,16 @@ pub(crate) fn ask_image_refusal_status(code: &str) -> Option<StatusCode> {
         | "invalid_request" => StatusCode::BAD_REQUEST,
         "principal_required" => StatusCode::FORBIDDEN,
         "call_not_admitted" | "budget_denied" => StatusCode::PAYMENT_REQUIRED,
-        "kept_on_device" | "world_route_not_admitted" => StatusCode::CONFLICT,
         "content_filtered" => StatusCode::UNPROCESSABLE_ENTITY,
         "rate_limited" | "quota_spent" => StatusCode::TOO_MANY_REQUESTS,
         "pixels_missing" => StatusCode::INTERNAL_SERVER_ERROR,
         "decision_failed" | "provider_auth" | "empty_response" | "provider_unavailable" => {
             StatusCode::BAD_GATEWAY
         }
-        "no_model_configured" | "model_route_not_served" => StatusCode::SERVICE_UNAVAILABLE,
+        "no_model_configured"
+        | "model_route_not_served"
+        | "kept_on_device"
+        | "world_route_not_admitted" => StatusCode::SERVICE_UNAVAILABLE,
         _ => return None,
     })
 }

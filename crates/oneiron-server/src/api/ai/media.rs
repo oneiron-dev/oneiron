@@ -525,11 +525,15 @@ pub(super) fn failure(error: &LlmError) -> Response {
         LlmError::Retryable(RetryableLlmError::QuotaSpent { .. }) => {
             (StatusCode::TOO_MANY_REQUESTS, "quota_spent")
         }
+        // A privacy hold, not a rate refusal: no offer the call may use on
+        // this device answered. 503 on every door that answers it, as
+        // `/v1/llm` and the OpenAI wire do (UC-11, ruling
+        // UC11-KEPT-ON-DEVICE-STATUS = C).
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
-            (StatusCode::CONFLICT, "kept_on_device")
+            (StatusCode::SERVICE_UNAVAILABLE, "kept_on_device")
         }
         LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => {
-            (StatusCode::CONFLICT, "world_route_not_admitted")
+            (StatusCode::SERVICE_UNAVAILABLE, "world_route_not_admitted")
         }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "provider_unavailable"),
     };
@@ -538,6 +542,13 @@ pub(super) fn failure(error: &LlmError) -> Response {
         Json(serde_json::json!({"error": {"code": code, "llm": error}})),
     )
         .into_response()
+}
+
+/// The status [`failure`] answers `error` with: the integration tests' door
+/// (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) fn failure_status_for_test(error: &LlmError) -> StatusCode {
+    failure(error).status()
 }
 
 /// The replay key a call's `Idempotency-Key` header names (FIX 2962),
