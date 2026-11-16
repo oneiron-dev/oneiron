@@ -292,10 +292,8 @@ impl RoomSideRow {
     }
 }
 
-/// `hex` as an id, when it is one's canonical spelling.
-fn named(hex: &str) -> Option<EntityId> {
-    EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex)
-}
+#[doc(hidden)]
+use oneiron_records::workspace_roster::rooms::replica::named;
 
 /// Where a room turn sits, for the side rows that ride beside it (FIX 3094).
 enum TurnPlace {
