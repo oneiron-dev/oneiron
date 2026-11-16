@@ -12,10 +12,9 @@
 //!   [TASKS-REFUSE-REASON-REF-NOT-READ-CHECKED]). A refusal that only objects
 //!   releases nothing.
 //!
-//! The fixture is the repo run tests' (`repo_run/fixture.rs`): an owner-rooted
-//! vault, a paired agent, and the owner's TASK for that agent on a claimed
-//! try. The agent's Grant names one world of two, as in
-//! `agent_grant_read_ceiling.rs`.
+//! The fixture joins two of main's: the owner's TASK for a paired agent on a
+//! claimed try (`repo_run/fixture.rs`), in an owner-rooted vault whose agent
+//! holds a Grant that names one world of two (`agent_grant_read_ceiling.rs`).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test run_row_door_scoped_reads_tasks`
@@ -224,8 +223,9 @@ fn leased_try(
     Err("the TASK's agent try is ready to claim".into())
 }
 
-/// An owner-rooted vault whose paired agent holds a read Grant for the base
-/// world alone; `other_world` is a second world that Grant does not name.
+/// An owner-rooted vault whose paired agent holds one Grant, to read and
+/// write in the base world alone; `other_world` is a second world that Grant
+/// does not name.
 struct TaskRun {
     vault: Vault,
     owner: EntityId,
@@ -258,7 +258,10 @@ fn task_run() -> TestResult<TaskRun> {
     let agent = create_enabled_agent(&vault, &owner_proof, "run_row_door_task_reader");
     let mut authority_scope = Scope::top();
     authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())]));
-    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    // The agent acts in these tests (a refusal writes her diary note), so
+    // the Grant carries both verbs; only its world axis decides the reads.
+    authority_scope.verbs =
+        ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "write".to_owned()]));
     let minted = mint_agent_grant_as(
         &vault,
         &owner_proof,
@@ -273,11 +276,8 @@ fn task_run() -> TestResult<TaskRun> {
             working_view_bounds: None,
         },
     )
-    .map_err(at("owner mints the agent a read Grant"))?;
-    assert!(
-        minted.grant.confers,
-        "the agent's base-world read Grant is live"
-    );
+    .map_err(at("owner mints the agent a base-world Grant"))?;
+    assert!(minted.grant.confers, "the agent's base-world Grant is live");
     let slip = paired_agent_slip(&vault, &issuer, &owner_proof, agent, 0x47);
     let agent_key = vault
         .credential_read_key(&slip)
@@ -433,7 +433,7 @@ fn a_declining_refusal_releases_its_reason_to_a_door_key_that_reads_it() -> Test
 }
 
 #[test]
-fn a_declining_refusal_releases_a_reason_in_any_world_its_door_key_reads() -> TestResult {
+fn a_declining_refusal_releases_a_second_world_reason_to_a_door_key_that_reads_it() -> TestResult {
     let run = task_run()?;
     let reason = run.owner_claim(run.other_world, "a reason in the grant-excluded world");
 
@@ -455,6 +455,11 @@ fn a_declining_refusal_releases_a_reason_in_any_world_its_door_key_reads() -> Te
         json!(ConsultPayloadRef::Claim(reason).short_ref()),
         "the released row is the reason the refusal named: {row}"
     );
+    assert_eq!(
+        row["val"],
+        json!("a reason in the grant-excluded world"),
+        "the released row carries the reason's own value: {row}"
+    );
     Ok(())
 }
 
@@ -467,7 +472,7 @@ fn a_declining_refusal_releases_no_reason_its_door_keys_grant_leaves_out() -> Te
 
     // The landing checks that the reason exists, under no reader, so the
     // refusal lands as it does for a reason the key reads
-    // (`a_declining_refusal_releases_a_reason_in_any_world_its_door_key_reads`
+    // (`a_declining_refusal_releases_a_second_world_reason_to_a_door_key_that_reads_it`
     // is this test on the owner's key).
     assert_eq!(
         refused.reply,

@@ -7,9 +7,10 @@
 use crate::code_run::HostSelfDispatcher;
 
 /// Takes the reason body `dispatcher`'s last call released: the bytes a
-/// declining `tasks.refuse` read on the key its door admitted the call with,
-/// or `None` when that key did not read the reason. A second take reads
-/// `None`.
+/// declining `tasks.refuse` read on the key its door admitted the call with.
+/// `None` when the call released none: its key did not read the reason, its
+/// door admitted it on no key, or the refusal declined nothing or replayed an
+/// earlier one. A second take reads `None`.
 #[must_use]
 pub fn take_released_reason(dispatcher: &HostSelfDispatcher<'_>) -> Option<Vec<u8>> {
     dispatcher.take_task_refusal_output()
