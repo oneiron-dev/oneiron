@@ -602,7 +602,6 @@ fn fold_public_row_state(
     }
     if seq_past_floor(hash, scaffold.seq, context)
         && !floor_vouched(hash, context)
-        && !standing_changes_roster(standing)
     {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
