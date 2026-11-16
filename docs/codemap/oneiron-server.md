@@ -903,6 +903,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mcp_quickjs.rs` | test | L | 2 crate-vis | — | Production execute_code uses real JS through the vault-owned host and wire |
 | `src/api/tests/mcp_quickjs/call_mode.rs` | test | s | — | — | Call mode through code mode's `vault.recall` (retrieval hub #call-mode) |
 | `src/api/tests/mcp_quickjs/device_local.rs` | test | m | — | — | DEC-0005 in code mode: a run's result is an MCP result, judged at release by the rows its verb calls served… |
+| `src/api/tests/mcp_quickjs/graph_fs_walk.rs` | test | s | — | — | A code-mode guest reaches the read-only graph-FS rows through the verb-call import (census L3-38… |
 | `src/api/tests/mcp_quickjs/run_rows.rs` | test | m | — | — | The rows a code run serves itself (`self.memory.search`, `put_claim`, `supersede_claim`, `put_edge`) meet… |
 | `src/api/tests/mcp_results_carrier.rs` | test | m | — | — | Negotiated result content, board omission/health axes, discover vocabulary, carrier drain, skills-pack onramp |
 | `src/api/tests/mcp_scoping.rs` | test | m | — | — | Legacy catalog retirement, actor-derived effective scopes, world/facet ceilings, board epoch monotonicity |
@@ -1338,7 +1339,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/window_row_tests.rs` | test | L | 1 crate-vis | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |
 | `src/handler/window_sync.rs` | src | L | 6 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
 | `src/home_candidacy.rs` | src | s | 1 crate-vis | — | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… |
-| `src/hook_verdict.rs` | src | s | 3 crate-vis | — | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
+| `src/hook_decisions.rs` | src | s | 2 crate-vis | — | The hook `ai.verdict` decisions one thread collects while it runs its row's hooks (FIX 8042): a browser… |
+| `src/hook_verdict.rs` | src | s | 2 crate-vis | — | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
 | `src/http_listener.rs` | src | m | 13 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/body_revocation.rs` | src | s | 13 crate-vis | — | Explicit revocation of the credential accepted on one counted TCP body |
 | `src/http_listener/host_floor.rs` | src | s | 1 crate-vis | — | A vault server's host floor (FIX 5978, FIX 5979, FIX 6299), attached in the server's construction before any… |
@@ -2165,6 +2167,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/run_settlements_own_agent.rs` | test | m | — | — | RUN-SETTLEMENTS-OWN-AGENT-READ: `vault.budgets.settlements` over the facade |
 | `tests/run_step_live_run.rs` | test | m | — | — | [RUN-STEP-DOOR-SERVER-TEST] (FIX-LIST 23040, 23150, 23621): `ai.steps.submit` on an agent's attached live… |
 | `tests/runtime_clock.rs` | test | m | — | — | The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and… |
+| `tests/self_secrets_doors.rs` | test | m | — | — | Public-door promise tests for the `self.secrets` family (ruling L4-23 = A: each test proves a promise at the… |
 | `tests/serve_usage_metering.rs` | test | s | — | — | A self-hosted serve binds its usage meter before any work starts (FIX 11011, FIX 22868): to the vault's own… |
 | `tests/siwc_seat_login.rs` | test | s | — | — | SEAT-PARK-MODEL-STEP-PATH, server leg: an SIWC offer's refusals name its model seat, and the housekeeping… |
 | `tests/skill_judge_goal_privacy.rs` | test | s | — | — | FIX 22437 [GOAL-PRIVACY]: a project goal's text never leaves its project's audience through the skill judge |
@@ -2173,6 +2176,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/support/fake_llm.rs` | test | m | 11 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
 | `tests/unauthenticated_embedder_peer.rs` | test | s | — | — | An app made by `build_app` keeps the unauthenticated development hatch on this device, however its embedder… |
+| `tests/vault_budgets_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.budgets` family (ARCH-0079 #budget: the runtime enforces only the… |
+| `tests/vault_consent_doors.rs` | test | m | — | — | Public-door promise tests for the `vault.consent` family (ruling L4-23 = A: each test proves a promise at… |
+| `tests/vault_courtesy_delete_doors.rs` | test | m | — | — | Public-door promise tests for the `vault.courtesy_delete` family (ruling L4-23 = A: each test proves a… |
+| `tests/vault_export_doors.rs` | test | L | — | — | Public-door promise tests for the scoped and kept `vault.export` family (ruling L4-23 = A: each test proves… |
+| `tests/vault_members_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.members` family: an Admin invites through `vault.members.add`, the… |
+| `tests/vault_seal_doors.rs` | test | L | — | — | Owner-door promise tests for the `vault.seal` family (ARCH-0079 P1/P2/P3) |
+| `tests/vault_secrets_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.secrets` family (ruling L4-23 = A: each test proves a promise at… |
+| `tests/vault_shared_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.shared` family (ARCH-0043 = A: each test proves a promise at the… |
+| `tests/vault_support_grants_doors.rs` | test | m | — | — | Public-door promise tests for the `vault.support_grants` family (ruling L4-23 = A: each test proves a… |
+| `tests/vault_usage_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.usage` repair family: the stored usage rows of this server's… |
+| `tests/vault_voices_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.voices` family (ruling L4-23 = A: each test proves a promise at the… |
 | `tests/window_sync_ask_drain.rs` | test | m | — | — | FIX 20468 (last part): the server drains the relayed ask intents a window update landed, as the client lane… |
 | `tests/workflow_park_save_retry.rs` | test | s | — | — | [WORKFLOW-PARK-FAIL-RETRYABLE] (the Engine's ruling of 13 Nov 01:22): a workflow step whose `self.use` call… |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |
