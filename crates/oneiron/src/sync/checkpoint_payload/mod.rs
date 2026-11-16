@@ -41,6 +41,7 @@
 )]
 
 mod author_carrier;
+mod binding;
 mod classify;
 mod documents;
 mod frame;
@@ -57,6 +58,7 @@ use heed::RoTxn;
 use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 
+pub(in crate::sync) use self::binding::PartedRows;
 pub(crate) use self::owners::WINDOW_ROOTS;
 #[allow(unused_imports, reason = "KS7-5 drives them")]
 pub(crate) use self::owners::root_entry;

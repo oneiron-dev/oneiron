@@ -25,6 +25,13 @@ impl GenerationEpoch {
     pub fn value(self) -> u64 {
         self.value
     }
+
+    /// The token a session would mint, for `test_doors::voice_generation_epoch`
+    /// only: adapter unit tests outside this crate echo it as a session's.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn minted_for_test_door(session: uuid::Uuid, value: u64) -> Self {
+        Self { session, value }
+    }
 }
 
 #[doc(hidden)]
@@ -45,7 +52,7 @@ pub struct AsrEvent {
 
 impl AsrEvent {
     /// Validate before the session consumes a revision or performs any work.
-    pub(super) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.kind == AsrEventKind::Final && self.text.trim().is_empty() {
             return Err(invalid("final ASR transcript must be nonempty"));
         }
