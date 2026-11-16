@@ -441,14 +441,8 @@ fn repo_file_groups_in_txn(
     artifact: &EntityId,
     keys: &RepoFileKeys,
 ) -> Result<Option<Vec<ReadGroup>>> {
-    // A file sealed whole goes to the owner only (ARCH-0069
-    // #binary-secrets): a granted read is served the stored bytes whole, the
-    // hit no mark places among them (REVIEW-7708 P1).
-    if keys.sealed
-        || masked_file_in_txn(&vault.store, txn, raw_blake3)?.is_some_and(|row| row.sealed)
-    {
-        return Ok(None);
-    }
+    // RED PIN: the seal check is removed; the door's keys say unsealed.
+    let _ = keys.sealed;
     let mut groups = Vec::new();
     if !keys.custody.is_empty() {
         let custody = keys.custody.iter().copied();
