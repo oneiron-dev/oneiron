@@ -15,15 +15,17 @@ use crate::dreamer_promotion::{
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
-/// The completed item's context, landed outputs and close inputs. The marker
-/// belongs to the original rebuilt set, before a kept merge changes identity.
+/// The completed item's context, landed outputs and close inputs.
 pub(super) struct CompletionRequest<'a> {
     pub(super) context: &'a ItemContext<'a>,
     pub(super) run: DreamerRunContext,
     pub(super) fence: ConsolidationFence,
     pub(super) provenance: rmpv::Value,
     pub(super) landed: Vec<LandedOutput>,
-    pub(super) marker: EntityId,
+    /// The id of the first try's marker: that of the original rebuilt set,
+    /// before a kept merge changes identity. `None` when an accumulate left a
+    /// member out: the set is answered only in part and its marker stays open.
+    pub(super) first_try_marker: Option<EntityId>,
     pub(super) resolution: &'static str,
 }
 
@@ -69,13 +71,16 @@ pub(super) fn grant_and_close_in_txn<'txn>(
 }
 
 /// Binds only an eligible first-try marker, as native does, and closes it only
-/// when at least one output landed and all outputs are Auto after grants.
+/// when every member's output landed and all outputs are Auto after grants.
 /// Read/domain refusals leave the item intact; a store error aborts the commit.
 fn close_first_try_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     request: &CompletionRequest<'_>,
 ) -> Result<()> {
+    let Some(marker_id) = request.first_try_marker else {
+        return Ok(());
+    };
     if request.landed.is_empty()
         || request
             .landed
@@ -85,7 +90,7 @@ fn close_first_try_in_txn(
         return Ok(());
     }
     let inputs = (|| -> Result<ResolvedClose> {
-        let Some(marker) = vault.get_claim_in_txn(txn, &request.marker)? else {
+        let Some(marker) = vault.get_claim_in_txn(txn, &marker_id)? else {
             return Ok(ResolvedClose::Nothing);
         };
         if marker.predicate != PREDICATE_CONFLICT_OPEN
@@ -95,7 +100,7 @@ fn close_first_try_in_txn(
             return Ok(ResolvedClose::Nothing);
         }
         let answer = ResolvedConflictOutput {
-            marker: request.marker,
+            marker: marker_id,
             outputs: request.landed.iter().map(|output| output.claim).collect(),
             resolution: request.resolution.to_owned(),
         };
@@ -109,12 +114,12 @@ fn close_first_try_in_txn(
     let inputs = match inputs {
         Ok(ResolvedClose::Nothing) => return Ok(()),
         Ok(ResolvedClose::Refused(reason)) => {
-            tracing::warn!(reason, marker = %request.marker.to_hex(), "an open conflict a retried try answered stayed open");
+            tracing::warn!(reason, marker = %marker_id.to_hex(), "an open conflict a retried try answered stayed open");
             return Ok(());
         }
         Ok(ResolvedClose::Ready(inputs)) => inputs,
         Err(error @ (Error::Gate(_) | Error::Claim(_) | Error::InvalidClaimBody(_))) => {
-            tracing::warn!(reason = "close_read_failed", error_kind = ?error.kind(), marker = %request.marker.to_hex(), "an open conflict a retried try answered stayed open");
+            tracing::warn!(reason = "close_read_failed", error_kind = ?error.kind(), marker = %marker_id.to_hex(), "an open conflict a retried try answered stayed open");
             return Ok(());
         }
         Err(error) => return Err(error),
@@ -128,7 +133,7 @@ fn close_first_try_in_txn(
         &CloseMarkerRequest {
             run: &request.run,
             fence: &request.fence,
-            marker: request.marker,
+            marker: marker_id,
             resolution: inputs.resolution,
             evidence: &inputs.evidence,
             provenance: request.provenance.clone(),
