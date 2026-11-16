@@ -186,22 +186,65 @@ pub(crate) fn judge_ask_in_txn(
             VerbActClass::Act(act),
         ) => judge_act(agent, grant, role, holds_power, act),
         (Asker::Unpowered { roles, why }, VerbActClass::Act(act)) => {
-            let proposes = roles.iter().any(|&role| {
-                resolve_mode(&CheckInRequest {
-                    act,
-                    role,
-                    holds_power: false,
-                    explicit_mode: None,
-                    standing_row: None,
-                }) == ResolvedMode::Propose
-            });
-            if proposes || act == ActClass::Erase {
-                AskVerdict::Propose { act }
-            } else {
-                AskVerdict::Absent { why }
-            }
+            unpowered_act(&roles, why, act)
         }
     })
+}
+
+/// Judges an agent's act at a door that names the act's class itself
+/// (ROLES-CHECKIN P2.6a, room_add; P25-SHAPE Q4 = A: the door names the
+/// typed class), in `txn`: [`judge_ask_in_txn`]'s judgment of a verb row of
+/// class `act`, with the role it read. The power is the agent's live owner
+/// Grant that lists `verb`, as there (P26-AGENT-GRANT = A). Writes nothing.
+///
+/// # Errors
+///
+/// As [`judge_ask_in_txn`], but for the verb row's name.
+pub(crate) fn judge_door_act_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    verb: &str,
+    act: ActClass,
+    scope: &CheckInScope,
+) -> MemoryResult<(AskVerdict, RolePreset)> {
+    Ok(match asker_in_txn(memory, txn, verb, scope)? {
+        Asker::Owner => (
+            AskVerdict::Go {
+                reason: AskGo::OwnProof,
+                act: Some(act),
+            },
+            RolePreset::Owner,
+        ),
+        Asker::Agent {
+            agent,
+            grant,
+            role,
+            holds_power,
+        } => (judge_act(agent, grant, role, holds_power, act), role),
+        Asker::Unpowered { roles, why } => (
+            unpowered_act(&roles, why, act),
+            roles.first().copied().unwrap_or(RolePreset::Delegate),
+        ),
+    })
+}
+
+/// An agent's act with no Grant that gives it the power: a proposal where
+/// a role it reads may propose the act (an erase always may), else absent.
+fn unpowered_act(roles: &[RolePreset], why: &'static str, act: ActClass) -> AskVerdict {
+    let proposes = roles.iter().any(|&role| {
+        resolve_mode(&CheckInRequest {
+            act,
+            role,
+            holds_power: false,
+            explicit_mode: None,
+            standing_row: None,
+        }) == ResolvedMode::Propose
+    });
+    if proposes || act == ActClass::Erase {
+        AskVerdict::Propose { act }
+    } else {
+        AskVerdict::Absent { why }
+    }
 }
 
 /// An agent's act under its Grant's `role`: the role's default (no explicit

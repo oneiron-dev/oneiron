@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/audience_doors.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::check_in::effect::CheckInDecision;
 use crate::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
 use serde::Deserialize;
 use serde::Serialize;
@@ -18,6 +19,12 @@ pub struct ThreadAudienceAddRequest {
     /// so does an Admin's add from outside the thread; a self re-add, and an
     /// Admin's outside add for someone already in, change nothing.
     pub history: ThreadAudienceHistory,
+    /// The check-in an earlier call's `CHECK_IN_PENDING` named, 32 hex: an
+    /// agent's add of someone else waits on a holder's answer (ARCH-0082
+    /// #agent-room-add), and the call that names the approved check-in
+    /// spends it and lands the add.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.rooms.thread_audience.remove`'s input.
@@ -42,4 +49,9 @@ pub struct ThreadAudienceReceipt {
     /// Absent on a remove.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<ThreadAudienceHistory>,
+    /// The check-in decision an add of someone else ran on (ROLES-CHECKIN
+    /// P2.6a); absent on a remove, a walk-in, a self re-add and an add no
+    /// role judges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
