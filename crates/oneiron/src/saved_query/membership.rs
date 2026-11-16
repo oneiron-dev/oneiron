@@ -1,6 +1,5 @@
 use crate::ports::EntityStoreRead;
-use sha2::Digest;
-use sha2::Sha256;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -26,7 +25,6 @@ use super::storage::{
     MEMBERSHIP_EVENTS, WATERMARK, Watermark, encode_event, encode_member_value_bytes,
     event_pair_prefix, read_watermark,
 };
-use super::support::hash_bytes;
 
 #[doc(hidden)]
 pub use oneiron_records::saved_query::membership::{MembershipCause, MembershipTransition};
@@ -337,12 +335,19 @@ fn validate_plan_coherence(plan: &MembershipWritePlan) -> Result<()> {
 /// Digest over everything a replay must reproduce EXACTLY to count as the same
 /// plan. Two plans that differ anywhere here are different plans at the same
 /// epoch, which is a conflict rather than a retry.
-fn plan_content_digest(plan: &MembershipWritePlan) -> Result<[u8; EVIDENCE_HASH_LEN]> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"oneiron.saved_query.plan.v1");
-    hash_bytes(&mut hasher, &encode_event(&plan.event)?);
-    hash_bytes(&mut hasher, &encode_member_value_bytes(&plan.value)?);
-    Ok(hasher.finalize().into())
+///
+/// The watermark keeps it, so it keeps its bytes (K): SHA-256, the tag
+/// `oneiron.saved_query.plan.v1` first, each encoding framed by a u64
+/// big-endian length.
+pub(crate) fn plan_content_digest(plan: &MembershipWritePlan) -> Result<[u8; EVIDENCE_HASH_LEN]> {
+    let event = encode_event(&plan.event)?;
+    let value = encode_member_value_bytes(&plan.value)?;
+    Ok(LegacyDigest::new(purposes::saved_query::PLAN_CONTENT)
+        .len_u64_be(event.len())
+        .raw(&event)
+        .len_u64_be(value.len())
+        .raw(&value)
+        .finish())
 }
 
 /// Builds the CA-01 member value for a derived membership.

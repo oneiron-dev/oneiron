@@ -505,9 +505,25 @@ impl Vault {
     /// root key itself stays: only its binding ends. Each entry must count,
     /// or the move commits nothing. A person with neither writes no entry.
     ///
+    /// A revoke of an owner key counts only with an owner key's proof (row
+    /// HOSTED-ROOT-REVOKES-OWNER-KEY; the lead, 15 Nov 20:41: "never only the
+    /// custodial root"). A self-host root proves for the owner itself. Where
+    /// `issuer` does not (a managed host's custodial root), each
+    /// `RevokeDevice` carries the cosign of an owner key this install holds
+    /// ([`Vault::owner_proof_signer`]), and a proof key among the revoked
+    /// ends last, after it proved the others. That key is the install's,
+    /// not the acting person's: the fold cannot tell who is at the device.
+    /// No managed host holds an owner key today (its serving install's
+    /// enrolment refuses on a Hosted vault), so there the move refuses until
+    /// a device can confirm it (FIX HOSTED-OWNER-MOVE-TWO-PHASE).
+    ///
     /// # Errors
-    /// The log's: an `issuer` that is not this vault's live host root, or an
-    /// entry the fold does not count.
+    /// An `issuer` that is not this vault's live host root, as the log
+    /// refuses it; [`RecordError::OwnerKeyMoveRefused`], before this writes
+    /// any authority entry, when the member holds a live owner key and
+    /// neither `issuer` nor any key this install holds proves for the owner
+    /// (the caller's writer, which holds the move's other changes, drops with
+    /// it); an entry the fold does not count.
     pub(crate) fn revoke_owner_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -515,15 +531,39 @@ impl Vault {
         person: EntityId,
     ) -> Result<()> {
         let root = issuer.public_key();
-        let keys: Vec<AuthorityKey> = self
+        let mut keys: Vec<AuthorityKey> = self
             .enrolled_owner_keys_in_txn(txn)?
             .into_iter()
             .filter(|key| key.live && key.owner == person)
             .map(|key| AuthorityKey::Ed25519(key.public_key))
             .filter(|key| *key != root)
             .collect();
-        for revoked_key in keys {
-            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::RevokeDevice { revoked_key })?;
+        if !keys.is_empty() {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            super::slip_vault::require_host(&fold, issuer)?;
+            let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+            let proof = if fold.proves_owner_acts(&root, hosted) {
+                None
+            } else {
+                let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
+                    RecordError::OwnerKeyMoveRefused { member: person },
+                ))?;
+                let proof_key = proof.root();
+                keys.sort_by_key(|key| *key == proof_key);
+                Some(proof)
+            };
+            for revoked_key in keys {
+                let op = AuthorityOp::RevokeDevice { revoked_key };
+                match &proof {
+                    Some(proof) => self.append_slip_op_with_owner_proof_in_txn(
+                        txn,
+                        issuer,
+                        op,
+                        proof.as_ref(),
+                    )?,
+                    None => self.append_slip_op_in_txn(txn, issuer, op)?,
+                }
+            }
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let bindings: Vec<(AuthorityKey, u64)> = fold
