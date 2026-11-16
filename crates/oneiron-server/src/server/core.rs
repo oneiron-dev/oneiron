@@ -831,6 +831,7 @@ impl SyncServer {
     /// Marks that a device link this process runs over this vault opened
     /// (SERVE-DEVICE-PEER-STALE-ROOT): called by the link's opening, before its
     /// client persists any root it learns from its home.
+    #[cfg(feature = "mesh")]
     pub(crate) fn mark_device_link_opened(&self) {
         self.device_link_opened.store(true, Ordering::Release);
     }

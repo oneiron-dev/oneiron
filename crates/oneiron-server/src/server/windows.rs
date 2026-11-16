@@ -48,10 +48,13 @@ impl SyncServer {
     ///
     /// The caller holds `lease_registrar`, the root writers' lock. Each root
     /// write (a window added, a lease revoked or expired) merges first, under
-    /// it and before it takes the version a failed persist reverts to, so the
-    /// root it persists over `d:root` keeps what the link persisted there, and
-    /// its revert never undoes the merge. A read merges through
-    /// [`Self::merge_link_root_for_read`].
+    /// it, so the root it persists over `d:root` keeps what the link had
+    /// persisted there when the write began. A lease write takes the version
+    /// a failed persist reverts to after the merge, so its revert never undoes
+    /// it; a window add has no revert, and cuts its delta after the merge. A
+    /// link persist that lands between a write's merge and its persist is
+    /// still overwritten (FIX-LIST DEVICE-LINK-ROOT-PERSIST-DROPS-SERVER-ROOT-OPS).
+    /// A read merges through [`Self::merge_link_root_for_read`].
     pub(super) fn merge_link_root(&self) {
         if !self.device_link_opened() {
             return;

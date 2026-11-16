@@ -84,13 +84,15 @@ pub fn persist_link_learned_window(vault: &oneiron::Vault, window: &str) -> anyh
 /// The server `serve` builds over a device vault, with its link to home.
 pub struct ServedDeviceLink {
     server: Arc<SyncServer>,
+    ai: Option<crate::ai_host::AiHost>,
     host: Option<DeviceSyncHost>,
 }
 
 /// Builds the server `serve` builds over `vault` with `config` (`commands::build_server`; no
-/// listener binds and no worker starts), then starts its link to home as serve does, with no
-/// mesh. `config` must resolve an enrolled home, as
-/// [`enrolled_device`](super::embedded_peer_fixture::enrolled_device) builds.
+/// listener binds), attaches its AI host as serve's workers do, a device when the config dials a
+/// home (`commands/serve/workers.rs`; with no `[models]` it starts no Dreamer and no model
+/// worker), then starts its link to home as serve does, with no mesh. `config` must resolve an
+/// enrolled home, as [`enrolled_device`](super::embedded_peer_fixture::enrolled_device) builds.
 ///
 /// # Errors
 ///
@@ -109,9 +111,16 @@ pub async fn start_served_device_link(
         &crate::config::ServeArgs::default(),
     )
     .await?;
+    let device = crate::device_sync::dials_home(config, server.vault());
+    let (server, ai) =
+        crate::ai_host::AiHost::attach_device(server, config.models.as_ref(), device).await;
     let server = Arc::new(server);
     let host = DeviceSyncHost::start(&server, config, None).await;
-    Ok(ServedDeviceLink { server, host })
+    Ok(ServedDeviceLink {
+        server,
+        ai: Some(ai),
+        host,
+    })
 }
 
 impl ServedDeviceLink {
@@ -174,10 +183,13 @@ impl ServedDeviceLink {
         RootNotices(self.server.broadcast_tx.subscribe())
     }
 
-    /// Stops the link and waits for it to end.
+    /// Stops the link and waits for it to end, then the AI host.
     pub async fn stop(mut self) {
         if let Some(host) = self.host.take() {
             host.stop().await;
+        }
+        if let Some(ai) = self.ai.take() {
+            ai.shutdown().await;
         }
     }
 }
