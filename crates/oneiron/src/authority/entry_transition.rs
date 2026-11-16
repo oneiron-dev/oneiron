@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 
 pub(super) use super::entry_transition_predicates::{
-    active_participant_keys, entry_is_retired, has_authority_consent, lands_restriction_only,
-    op_is_retired_device_op,
+    active_participant_keys, changes_roster, entry_is_retired, floor_refuses,
+    has_authority_consent, lands_restriction_only, op_is_retired_device_op,
 };
 
 #[expect(clippy::large_enum_variant, reason = "transient per-entry fold value")]
@@ -67,7 +67,10 @@ pub(super) fn fold_entry_state(
     // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
     // #1430b). A row a handoff or a removal vouches for is never refused, and
     // still lands restriction only, as does every row the fold with no vouch
-    // holds back or only the vouch admits (`install_fold::NoVouch`).
+    // holds back or only the vouch admits (`install_fold::NoVouch`). No floor
+    // refuses a roster row, which vouches for its own signer's rows below it
+    // that a floor refuses (`changes_roster`, `floor_refuses`); its signer's
+    // own order binds it below.
     let past_floor = context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))
@@ -75,7 +78,7 @@ pub(super) fn fold_entry_state(
     let vouched = context
         .floor_vouched
         .is_some_and(|vouched| vouched.contains(&hash));
-    if past_floor && !vouched && !lands_restriction_only(&entry.op) {
+    if past_floor && !vouched && floor_refuses(&entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     let restriction_only = lands_restriction_only(&entry.op)
@@ -137,6 +140,7 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            held_machine_answers: BTreeMap::new(),
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
