@@ -65,6 +65,7 @@ mod files_intake;
 mod gpu_host;
 mod handler;
 mod home_candidacy;
+mod hook_decisions;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod hook_verdict;
 mod http_listener;

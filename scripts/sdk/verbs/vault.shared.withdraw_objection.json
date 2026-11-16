@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::SharedActRequest",
   "output": "crate::federation::PendingAuthorityAct",
   "call": "crate::task_verb::sdk::withdraw_shared_act_objection(memory.vault(), &memory.embedded_owner(\"vault.shared.withdraw_objection\")?, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

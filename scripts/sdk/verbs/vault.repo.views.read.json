@@ -11,9 +11,9 @@
   },
   "mcp_scope": "filtered",
   "section": false,
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "host_door_session": true,
   "openapi": true

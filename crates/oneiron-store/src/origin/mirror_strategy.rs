@@ -26,6 +26,7 @@
 //! sends nothing more whole; a running push settles first), and every
 //! automatic batch's claim fences the strategy, revision and generation.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use oneiron_base::error::Error;
@@ -33,8 +34,11 @@ use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 
 /// How one mirror sends what this vault publishes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("origin.mirror.sync.strategy")]
 pub enum OriginMirrorSyncStrategy {
     /// Nothing goes out until an exact publish request is approved; each
     /// request pushes one commit to one branch, once.
@@ -71,16 +75,6 @@ impl OriginMirrorSyncStrategy {
     #[must_use]
     pub const fn pushes_whole_refs(self) -> bool {
         matches!(self, Self::Schedule | Self::FullAuto)
-    }
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AskMe => "ask_me",
-            Self::Schedule => "schedule",
-            Self::FullAuto => "full_auto",
-        }
     }
 }
 

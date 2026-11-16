@@ -4,9 +4,9 @@
   "input": "crate::task_verb::sdk::BriefCitationFollowRequest",
   "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefCitation>>",
   "call": "crate::task_verb::sdk::follow_brief_citation_as_caller(memory, input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "caller",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {

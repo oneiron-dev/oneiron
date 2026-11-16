@@ -2,7 +2,9 @@
 //! (`host_door_rows`), and the door tables both they and the MCP dispatch read.
 
 use super::emit_mcp::{TASK_PRODUCER_BRANCHES, takes_task_decisions, takes_task_work_turn};
-use super::row_access::{flag, flag_in, get_in, get_is, item, json, method_name, variant_name};
+use super::row_access::{
+    flag, flag_in, get_in, get_is, has_door, item, json, method_name, variant_name,
+};
 use super::{Generator, HEADER, RowId};
 use crate::error::GenerateError;
 use crate::py::json::dumps_str;
@@ -12,9 +14,9 @@ use crate::py::value::{Dict, Value, set_add};
 pub(crate) const HOST_DOOR_ROWS_DOC: &str =
     "// The host-door rows whose door checks its caller before the row's verb
 // hooks run (FIX 1763), one variant each, named as `AgentVerb` names it, and
-// the proof each names (`host_door_proof`), which `host_doors::door_admits`
-// matches with no catch-all arm. A row whose table entry says
-// `\"host_door_precheck\": false` checks nothing before its hooks; those rows:
+// `HostDoorRow::admits`, which runs the proof rule each row names (`proof`)
+// from `host_doors::proofs`. A row whose `proof` is `in_door` checks nothing
+// before its hooks: its door proves its caller itself. Those rows:
 ";
 
 /// A row's `AgentVerb` variant.
@@ -24,15 +26,15 @@ fn row_variant(row: &crate::py::value::Dict) -> Result<String, GenerateError> {
     )?))
 }
 
-/// `''.join(part.title() for part in kind.split('_'))`: a proof kind's `HostDoorProof` variant.
-fn proof_variant(kind: &Value) -> Result<String, GenerateError> {
-    Ok(super::common::str_receiver(kind, "split")?
+/// `''.join(part.title() for part in rule.split('_'))`: a proof rule's type in `host_doors::proofs`.
+fn proof_variant(rule: &Value) -> Result<String, GenerateError> {
+    Ok(super::common::str_receiver(rule, "split")?
         .split('_')
         .map(crate::py::text::title)
         .collect())
 }
 
-/// The `HostDoorRow` enum `door_admits` matches, and the host doors it leaves out.
+/// The `HostDoorRow` enum `door_admits` reads, its `admits`, and the host doors it leaves out.
 pub(crate) fn host_door_rows(
     generator: &Generator,
     facade_rows: &[RowId],
@@ -41,13 +43,13 @@ pub(crate) fn host_door_rows(
     let doors: Vec<RowId> = facade_rows
         .iter()
         .copied()
-        .filter(|&id| flag(&rows[id], "host_door"))
+        .filter(|&id| has_door(&rows[id]))
         .collect();
-    // `r.get('host_door_precheck', True)`.
+    // A door that proves its caller itself is not checked before its hooks.
     let checked: Vec<RowId> = doors
         .iter()
         .copied()
-        .filter(|&id| rows[id].get("host_door_precheck").is_none_or(Value::truthy))
+        .filter(|&id| !get_is(&rows[id], "proof", super::rows::IN_DOOR))
         .collect();
     let mut out = HEADER.to_owned() + HOST_DOOR_ROWS_DOC;
     // `r not in checked` compares rows by value; facade rows are distinct by name, so by identity here.
@@ -72,40 +74,29 @@ pub(crate) fn host_door_rows(
         );
     }
     out += "            _ => return None,\n        })\n    }\n}\n";
-    // VERB-METADATA (untangle slice 4.1): every checked row names the proof its door runs first.
-    let mut unnamed = Vec::new();
+    // `list(dict.fromkeys(r['proof'] for r in checked))`: first-seen order, equal rules once.
+    let mut rules: Vec<Value> = Vec::new();
     for &id in &checked {
-        if !flag(&rows[id], "host_door_proof") {
-            unnamed.push(item(&rows[id], "name")?.clone());
+        let rule = item(&rows[id], "proof")?.clone();
+        rule.check_hashable("a dict key")?;
+        set_add(&mut rules, rule)?;
+    }
+    out += "impl HostDoorRow {\n";
+    out += "    /// Admits this request for the row's verb `verb` under the proof rule the row names (`proof`),\n";
+    out += "    /// or refuses it, as the facade runs it before the row's pre hooks.\n";
+    out += "    pub(in crate::api::facade) fn admits(\n        self,\n        server: &crate::server::SyncServer,\n        auth: &crate::auth::CoreAuth,\n        verb: &str,\n    ) -> oneiron::memory::MemoryResult<()> {\n";
+    out += "        use super::host_doors::proofs::{self, ProofRule};\n        match self {\n";
+    for rule in &rules {
+        let mut variants = Vec::new();
+        for &id in &checked {
+            if item(&rows[id], "proof")?.py_eq(rule) {
+                variants.push(format!("Self::{}", row_variant(&rows[id])?));
+            }
         }
-    }
-    if !unnamed.is_empty() {
-        return Err(GenerateError::value(format!(
-            "checked host doors without `host_door_proof`: {}",
-            Value::List(unnamed).repr()
-        )));
-    }
-    // `list(dict.fromkeys(r['host_door_proof'] for r in checked))`: first-seen order, equal kinds once.
-    let mut kinds: Vec<Value> = Vec::new();
-    for &id in &checked {
-        let kind = item(&rows[id], "host_door_proof")?.clone();
-        kind.check_hashable("a dict key")?;
-        set_add(&mut kinds, kind)?;
-    }
-    out +=
-        "/// The proof a checked host door runs before its hooks (`host_door_proof` on the row).\n";
-    out += "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorProof {\n";
-    for kind in &kinds {
-        out += &format!("    {},\n", proof_variant(kind)?);
-    }
-    out += "}\n";
-    out += "impl HostDoorRow {\n    /// The proof this row's door runs first.\n";
-    out += "    pub(in crate::api::facade) const fn proof(self) -> HostDoorProof {\n        match self {\n";
-    for &id in &checked {
         out += &format!(
-            "            Self::{} => HostDoorProof::{},\n",
-            row_variant(&rows[id])?,
-            proof_variant(item(&rows[id], "host_door_proof")?)?
+            "            {} => proofs::{}::prove(server, auth, verb).map(drop),\n",
+            variants.join(" | "),
+            proof_variant(rule)?
         );
     }
     out += "        }\n    }\n}\n";
@@ -116,7 +107,7 @@ pub(crate) fn host_door_rows(
         let name = item(row, "name")?;
         if !name.is_str("ai.anonymous_chat")
             && !get_is(row, "context", "board")
-            && (flag_in(row, "admission", "owner_grade")? || flag(row, "host_door"))
+            && (flag_in(row, "admission", "owner_grade")? || has_door(row))
         {
             credential.push(name.clone());
         }
@@ -331,7 +322,7 @@ pub(crate) fn facade_dispatch(
             dispatch += &owner_grade_door(row)?;
             continue;
         }
-        if flag(row, "host_door") {
+        if has_door(row) {
             dispatch += &head;
             dispatch += &host_door(row, &method)?;
             continue;
@@ -768,7 +759,7 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
     } else {
         "output?"
     };
-    let answer = if flag(row, "host_door_lists") {
+    let answer = if flag(row, "lists") {
         format!(
             "let ran = async {{
                     let (output, listed) = {door};

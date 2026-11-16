@@ -4,8 +4,9 @@
   "input": "crate::dreamer_runner::FreeTimePolicySetRequest",
   "output": "crate::dreamer_runner::FreeTimePolicyView",
   "call": "crate::dreamer_runner::free_time_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.set\")?, crate::authority::ActSurface::ThisInstall, &input).map_err(crate::memory::MemoryError::from)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "host_door_surface": true,
   "scope": "Write",
   "act_class": "unstated",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

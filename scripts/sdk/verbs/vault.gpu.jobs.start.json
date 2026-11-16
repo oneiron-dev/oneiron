@@ -4,13 +4,13 @@
   "input": "crate::gpu_job::GpuJobStartRequest",
   "output": "crate::gpu_job::GpuJobStatus",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.jobs.start\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "gpu_job_caller",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "gpu_job_caller"
+  "section": false
 }

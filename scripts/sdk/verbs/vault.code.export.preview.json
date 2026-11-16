@@ -11,9 +11,9 @@
   },
   "mcp_scope": "filtered",
   "section": false,
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "lane_caller",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
-  "openapi": true,
-  "host_door_proof": "code_export_preview"
+  "openapi": true
 }

@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::SharedEraseAskCloseRequest",
   "output": "crate::federation::SharedEraseAsk",
   "call": "crate::task_verb::sdk::close_shared_erase_ask_as(memory.vault(), &memory.embedded_owner(\"vault.shared.close_erase_ask\")?, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

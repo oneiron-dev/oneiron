@@ -11,8 +11,8 @@
   },
   "section": false,
   "openapi": true,
-  "host_door": true,
+  "proof": "owner",
+  "door": "hand",
   "host_door_caller": true,
-  "host_door_lists": true,
-  "host_door_proof": "owner"
+  "lists": true
 }
