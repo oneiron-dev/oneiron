@@ -144,23 +144,21 @@ fn write_owner_intent_in_txn(
                 source_meet: ClaimSource::UserStated,
             },
         ));
-        // The words keep their MESSAGE's audience (OPUS-LEAKS) and its
-        // place: the intent is born under the facet the MESSAGE was born
-        // under, in the project and world it is read at, so no reader outside
-        // them reads the words through it (ONE-1592 P3; ARCH-0022
-        // #task-facet-not-built; FIX INTENT-DISTINCT-PROJECT-WORLD). A
-        // MESSAGE with no place, a replica stored unstamped, is selected by no
-        // scoped door, so its intent is private.
-        let (relationships, mut private) = message_audience_in_txn(vault, txn, &message)?;
-        match vault.derivation_project_and_world_in_txn(txn, message)? {
-            Some((project, world)) => {
-                let facet = vault.claim_put_facet_of_record_in_txn(txn, &id, message)?;
-                candidate = candidate.with_scope_stamps(facet, project);
-                if world != crate::claim::base_world_id() {
-                    candidate = candidate.with_world(world);
-                }
-            }
-            None => private = true,
+        // The words keep their MESSAGE's audience (OPUS-LEAKS) and the
+        // project and world it is read at (ONE-1592 P3; FIX
+        // INTENT-DISTINCT-PROJECT-WORLD). A MESSAGE with no place has no
+        // audience either, and is refused above. The facet stays the vault
+        // default: a MESSAGE has no stored FACET of its own (ONE-1645).
+        let (relationships, private) = message_audience_in_txn(vault, txn, &message)?;
+        let (project, world) = vault
+            .derivation_project_and_world_in_txn(txn, message)?
+            .ok_or_else(|| {
+                invalid("a stated intent cites a MESSAGE whose place does not resolve")
+            })?;
+        let facet = vault.claim_put_facet_in_txn(txn, &id)?;
+        candidate = candidate.with_scope_stamps(facet, project);
+        if world != crate::claim::base_world_id() {
+            candidate = candidate.with_world(world);
         }
         if relationships.is_some() {
             candidate = candidate.with_relationships(relationships);
@@ -200,7 +198,11 @@ fn write_owner_intent_in_txn(
 /// The audience the words of `message` carry, as the read gate judges a
 /// MESSAGE: the relationships whose members read them (`None` for an open
 /// MESSAGE), and whether they are private. A MESSAGE whose audience does
-/// not resolve reads to no gated reader, so no intent lands from it.
+/// not resolve reads to no gated reader, so no intent lands from it. A gated
+/// MESSAGE that names no relationship reads only through a grant on its
+/// conversation, which a CLAIM never carries, so its intent is private, as
+/// the distinct fact an identity answer derives from it is (review round 2
+/// of #6971).
 fn message_audience_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -214,6 +216,7 @@ fn message_audience_in_txn(
         RelationshipRead::Decided(false) => Err(invalid(
             "a stated intent cites a MESSAGE whose audience does not resolve",
         )),
+        RelationshipRead::Gated { space: None, .. } => Ok((None, true)),
         RelationshipRead::Gated { space, private, .. } => Ok((space, private)),
     }
 }

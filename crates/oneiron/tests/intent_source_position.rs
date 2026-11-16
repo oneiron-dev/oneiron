@@ -10,6 +10,12 @@
 //! default project (a selector window, a project-bound Grant) does not read
 //! the words through it. Before the fix it landed in the default project.
 //!
+//! The second test quotes a MESSAGE that names no relationship and is not
+//! private, which a member reads only through a grant on its conversation
+//! (review round 2 of #6971). A CLAIM carries no such grant, so the intent
+//! must be private, as the distinct fact an identity answer derives from the
+//! same MESSAGE is. Before the fix a member with no grant read the intent.
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the fix. The last
 //! assertion is the check.
 //!
@@ -21,6 +27,8 @@ use std::collections::BTreeSet;
 
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::temporal::TimeRange;
 use oneiron::test_doors::derivation_position::settle_into_project;
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -125,5 +133,55 @@ fn an_intent_from_a_project_message_stands_in_that_project() {
         (read, stamped),
         (Some(project), project),
         "LEAK: the intent quoting a MESSAGE of project P is read in {read:?} (stamped {stamped:?}), not P"
+    );
+}
+
+#[test]
+fn an_intent_from_a_message_naming_no_relationship_is_not_read_without_a_grant_on_its_conversation()
+{
+    let dir = tempfile::tempdir().expect("tempdir");
+    let outsider = EntityId::now();
+    let vault = open_member_vault(dir.path(), VaultConfig::device(), &[outsider.to_hex()])
+        .expect("fixture vault");
+    vault
+        .put_entity(
+            &outsider,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"outsider",
+        )
+        .expect("a member with no grant on the conversation");
+    let (owner, proof) = embedded_owner(&vault).expect("the owner");
+    let reads = |id: EntityId| {
+        vault
+            .memory(outsider, EdgeActorClass::Human)
+            .get_entity(&id.to_hex())
+            .expect("outsider read")
+            .value
+            .is_some()
+    };
+
+    let (_, message) = witness_owner_words(&vault, owner, WORDS);
+    assert!(
+        !reads(message),
+        "FIXTURE: the member does not read a MESSAGE of a conversation it holds no grant on"
+    );
+    // The same writer, citing no MESSAGE: the member reads it, so a withheld
+    // intent is withheld for its source, not for its shape.
+    let open_intent = vault
+        .record_owner_intent(&proof, "I will water the plants.", None, None)
+        .expect("an intent citing no MESSAGE");
+    assert!(
+        reads(open_intent),
+        "FIXTURE: the member reads an intent citing no MESSAGE"
+    );
+
+    let intent = vault
+        .record_owner_intent(&proof, WORDS, None, Some(message))
+        .expect("the owner states his intent");
+    assert!(
+        !reads(intent),
+        "LEAK: a member with no grant on the conversation reads the intent quoting its MESSAGE"
     );
 }

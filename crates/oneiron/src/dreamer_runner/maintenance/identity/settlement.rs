@@ -102,23 +102,21 @@ fn assert_distinct_in_txn(
     }
     // The fact is derived from the ask's MESSAGE: it is born with that
     // MESSAGE's audience (OPUS-LEAKS), in the project and world the MESSAGE
-    // is read at (FIX INTENT-DISTINCT-PROJECT-WORLD). A MESSAGE with no
-    // place, a replica stored unstamped, is selected by no scoped door, so
-    // the fact is private.
+    // is read at (FIX INTENT-DISTINCT-PROJECT-WORLD). A MESSAGE with no place
+    // has no audience either, and is refused above.
     let (relationships, private) = message_audience_in_txn(vault, txn, &ask.message)?;
-    let place = match vault.derivation_project_and_world_in_txn(txn, ask.message)? {
-        Some((project, world)) => DistinctClaimPlace {
-            relationships,
-            private,
-            project,
-            world,
-        },
-        None => DistinctClaimPlace {
-            relationships,
-            private: true,
-            project: crate::claim::default_project_id(),
-            world: crate::claim::base_world_id(),
-        },
+    let (project, world) = vault
+        .derivation_project_and_world_in_txn(txn, ask.message)?
+        .ok_or_else(|| {
+            crate::Error::InvalidConfig(
+                "an identity ask's MESSAGE has no place a reader resolves".into(),
+            )
+        })?;
+    let place = DistinctClaimPlace {
+        relationships,
+        private,
+        project,
+        world,
     };
     let write = IdentityOpWrite::auto(source);
     for head in real {
