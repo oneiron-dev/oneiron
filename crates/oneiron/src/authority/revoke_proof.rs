@@ -47,9 +47,11 @@ enum Restriction {
         chain: Box<MachineChain>,
     },
     /// A verified `RevokeDevice`: the revoked key (FIX
-    /// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]). A confirmation collision's
-    /// loser goes with every row after it, so a key's revocation below a
-    /// losing confirmation would leave the key live again.
+    /// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]). The fold can refuse a
+    /// revocation whose ancestry holds a permissive row it refused
+    /// (InvalidAncestry); the proof crosses that row (`skippable_permissive`),
+    /// so the key stays revoked. A confirmation collision refuses no row
+    /// (RULING COLLISION-SETTLEMENT-SHAPE = A).
     DeviceRevoke(AuthorityKey),
 }
 
@@ -103,9 +105,10 @@ impl RevokeFacts {
     }
 
     /// The rows of the verified device revocations scoped to `vault_id`. A
-    /// fact stands where its row may not (a losing confirmation's branch),
-    /// so the stale-roster window times a revoked key's approvals from these
-    /// rows as from a valid revocation (Sol review F1 on #8608).
+    /// fact stands where its row may not (a revocation above a refused
+    /// permissive row), so the stale-roster window times a revoked key's
+    /// approvals from these rows as from a valid revocation (Sol review F1
+    /// on #8608).
     pub(super) fn device_revocations(
         &self,
         vault_id: AuthorityVaultId,
@@ -244,8 +247,8 @@ pub(super) fn derive_revoke_facts(
 }
 
 impl RevokeFacts {
-    /// Adds the slip withdrawals and burns the projection dropped. Selecting
-    /// one of two colliding confirmations removes the loser and every entry
+    /// Adds the slip withdrawals and burns the projection dropped. Settling a
+    /// handoff removes a fenced row or an unsettled handoff and every entry
     /// after it, a `SlipRevoke`, `SlipConsume` or membership execution
     /// record's Grant withdrawals (FIX 12335) among them, and a revoked or
     /// spent slip would live again. An entry in `survivors` already applied
