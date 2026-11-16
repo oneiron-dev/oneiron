@@ -213,7 +213,7 @@ fn vault_route_uri(uri: &Uri, artifact: Option<&str>) -> Option<Uri> {
         return None;
     }
     match artifact {
-        Some(artifact) => format!("/a/{artifact}{path_and_query}").parse().ok(),
+        Some(_artifact) => format!("/a{path_and_query}").parse().ok(),
         None if uri.path() == "/" => None,
         None => format!("/a{path_and_query}").parse().ok(),
     }
