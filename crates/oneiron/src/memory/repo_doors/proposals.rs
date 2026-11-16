@@ -441,7 +441,9 @@ impl Memory<'_> {
 
     /// `self.code.merge_queue.enqueue` for a run: its own stored proposals of
     /// one work, exactly as stored, queued as one batch at the work's green
-    /// through the queue's one batch formation. The batch writer judges the
+    /// through the queue's one batch formation (more than 63 form
+    /// consecutive batches, the answer the first; each is an entry of the
+    /// work). The batch writer judges the
     /// run, each proposal and the declaration again, and keeps the live
     /// declarations of other TASKs that overlapped it then, which it waits
     /// behind; it is never refused for them. A proposal another run made, or
