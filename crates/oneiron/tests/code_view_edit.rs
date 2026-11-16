@@ -616,6 +616,10 @@ fn a_view_bound_grant_reads_its_view_within_its_globs() -> TestResult {
     let view = fixture.agent_get(editor, fixture.view(one))?;
     assert_eq!(view.view, one);
     assert_eq!(view.revision, 0);
+    assert!(
+        view.host_path.is_empty(),
+        "the owner's view folder is not the agent's"
+    );
     assert_eq!(listed(&view), (vec!["math.rs"], vec![]));
     let file = fixture.agent_read(editor, one, "math.rs")?;
     assert_eq!(file.bytes, MATH_RS.as_bytes());
@@ -769,5 +773,31 @@ fn a_view_bound_grant_reads_no_other_view_and_nothing_once_revoked() -> TestResu
         ),
         "repo_no_membership"
     );
+    Ok(())
+}
+
+#[test]
+fn a_view_bound_grant_reads_a_masked_copy_as_its_projection() -> TestResult {
+    let fixture = Fixture::new()?;
+    let one = fixture.one;
+    let editor = create_enabled_agent(
+        &fixture.repo.vault,
+        &fixture.repo.owner_proof,
+        "view-reader",
+    )?;
+    fixture.mint(editor, &["math.rs", "label.rs"], Some(fixture.bound(one)))?;
+    hold_masked_copy(&fixture.repo.vault, one, "math.rs")?;
+
+    // The masked copy answers with the label its materializer recorded.
+    let masked = fixture.agent_read(editor, one, "math.rs")?;
+    let projection = masked
+        .projection
+        .expect("a masked copy reads as its projection");
+    assert_eq!(projection.way_out, "vault.code.views.read with why");
+    assert_eq!(masked.sha256, sha256(MATH_RS), "the copy's own bytes");
+    // A file the view holds as stored reads as stored.
+    let stored = fixture.agent_read(editor, one, "label.rs")?;
+    assert!(stored.projection.is_none());
+    assert_eq!(stored.bytes, LABEL_RS.as_bytes());
     Ok(())
 }
