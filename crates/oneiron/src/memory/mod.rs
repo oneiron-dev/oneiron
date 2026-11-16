@@ -72,6 +72,7 @@ mod edge_provenance;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
+mod say;
 mod settled_vad;
 mod skill_authoring;
 pub mod wellness_doors;
@@ -295,6 +296,11 @@ pub use plugin_sections::{
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
     PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
+};
+pub(crate) use say::MessageMarks;
+pub use say::{
+    SAY_NEEDS_A_DESTINATION, SAY_TASK_UNASSIGNED, SAY_UNKNOWN_DESTINATION, SayAnswer, SayKind,
+    SayReceipt, SayRequest,
 };
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
