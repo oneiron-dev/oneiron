@@ -25,7 +25,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, VerifiedSlip};
+use oneiron::authority::{
+    CapabilitySlip, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole, VerifiedSlip,
+};
 use oneiron::claim::{FrozenReadLane, PointRead, ScopedRead};
 use oneiron::conversation::{ConversationBody, ConversationKind};
 use oneiron::counterparty_contact::CounterpartyContactRecord;
@@ -39,6 +41,8 @@ use oneiron::{
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+/// The fixed seed of the test host's issuer.
+const HOST_SEED: u8 = 0x7a;
 /// When the seeded claims and their subject were learned and hold.
 const LEARNED_AT: u64 = 1_780_000_000;
 /// The word every seeded claim holds, which no other row holds.
@@ -195,8 +199,12 @@ impl Fixture {
             &format!("{SHARED_WORD} {SENSITIVE_WORD}"),
             Some("sensitive"),
         )?;
-        let issuer = vault.load_host_slip_issuer()?;
+        // The host issuer from a fixed seed, rooted with the engine machines
+        // provisioned, as delegation_expiry_wall_clock.rs roots its vault: a
+        // fresh install's keystore holds no host issuer seed to load.
+        let issuer = HostSlipIssuer::from_seed(&[HOST_SEED; HOST_ISSUER_SEED_BYTES])?;
         let owner_slip = vault.ensure_host_root_slip(&issuer)?;
+        vault.provision_engine_machine_identities(&issuer)?;
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
         // A room of this vault seating the owner and one more member. It
         // carries no signed facets, so reading inside it lifts only the home.

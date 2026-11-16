@@ -21,7 +21,8 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::access_grant::AccessGrantStatus;
 use oneiron::authority::{
-    CapabilitySlip, HostSlipIssuer, MachineRole, VerifiedSlip, pairing_binding_transcript_pinned,
+    CapabilitySlip, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole, VerifiedSlip,
+    pairing_binding_transcript_pinned,
 };
 use oneiron::claim::{PointRead, ScopedRead};
 use oneiron::edge::EdgeActorClass;
@@ -45,6 +46,8 @@ use oneiron::{
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+/// The fixed seed of the test host's issuer.
+const HOST_SEED: u8 = 0x7a;
 /// When the seeded claims and their subject were learned and hold.
 const LEARNED_AT: u64 = 1_780_000_000;
 /// The seeded claims' predicate, which is not Tier A.
@@ -233,8 +236,12 @@ impl Fixture {
             "lanternwick lark",
             Some("sensitive"),
         )?;
-        let issuer = vault.load_host_slip_issuer()?;
+        // The host issuer from a fixed seed, rooted with the engine machines
+        // provisioned, as delegation_expiry_wall_clock.rs roots its vault: a
+        // fresh install's keystore holds no host issuer seed to load.
+        let issuer = HostSlipIssuer::from_seed(&[HOST_SEED; HOST_ISSUER_SEED_BYTES])?;
         let owner_slip = vault.ensure_host_root_slip(&issuer)?;
+        vault.provision_engine_machine_identities(&issuer)?;
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
         let owner_memory = vault.memory(owner, EdgeActorClass::Human);
         owner_memory.bless_brief_kind()?;

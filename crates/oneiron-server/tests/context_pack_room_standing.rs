@@ -8,8 +8,10 @@
 //! (a readable room lifted the home for any reader) and green on the head.
 //!
 //! Fixture: `context_pack_conversation_home.rs`'s host (four claims about
-//! one PERSON, a room seating the owner and one more member, an outside
-//! precleared contact's read-only slip that is not a member). Deterministic:
+//! one PERSON, an outside precleared contact's read-only slip that is not a
+//! member), with a room seating one member whose own contact is precleared
+//! too and not the owner, so the room's audience admits every claim and the
+//! home alone decides. Deterministic:
 //! in-process vault and router (`oneshot`, no TCP ports, no sleeps, no
 //! models, no embedder).
 //!
@@ -207,20 +209,25 @@ impl Host {
         let owner_slip = vault.ensure_host_root_slip(&issuer)?;
         let owner_token = owner_slip.to_token()?;
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
-        // A room of this vault seating the owner and one more member.
+        // A room of this vault seating one member, a contact cleared for the
+        // vault's full scope (below), and not the owner. The owner's host
+        // credential names no PERSON in a room, so a seated owner meets as an
+        // unknown party and clamps every reader's pack to the public claim.
+        // With only cleared parties in the room, the home alone decides.
         let room = EntityId::now();
         vault.create_conversation(
             room,
             &ConversationBody {
                 kind: ConversationKind::Group,
-                member_ids: vec![owner, other],
+                member_ids: vec![other],
                 ..Default::default()
             },
             WriteActor::new(owner, EdgeActorClass::Human),
             vault.now_recorded_at(),
         )?;
-        // The outside reader's contact, cleared for the vault's full scope,
-        // so the audience clamp admits the sensitive claim on main.
+        // The outside reader's contact and the room member's, each About its
+        // PERSON alone and cleared for the vault's full scope, so the
+        // audience clamp admits the sensitive claim on main.
         let contact = EntityId::now();
         vault.create_counterparty_contact(
             &contact,
@@ -230,13 +237,22 @@ impl Host {
                 vault.now_recorded_at(),
             )?,
         )?;
+        let member_contact = EntityId::now();
+        vault.create_counterparty_contact(
+            &member_contact,
+            &CounterpartyContactRecord::public(
+                other,
+                "member@example.com",
+                vault.now_recorded_at(),
+            )?,
+        )?;
         let proof = vault
             .memory(owner, EdgeActorClass::Human)
             .embedded_owner("vault.disclosure.home.set")?;
         let _ = vault.preclear_contact_disclosure(
             &proof,
             "outside-reader",
-            &[contact],
+            &[contact, member_contact],
             Scope::top(),
         )?;
         // The outside reader's delegated credential: read-only, so not
