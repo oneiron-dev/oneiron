@@ -123,6 +123,25 @@ pub(crate) fn check_commitment_text_in_txn(
     )
 }
 
+/// [`check_commitment_text_in_txn`] for a claim value a generic door is about to write: the generic
+/// claim commit, an import batch and a docs deep review. A `commitment.record` value is decoded and
+/// its text checked; any other predicate passes. A value that does not decode passes here too, so
+/// the door's own claim-body check refuses it as it always has.
+pub(crate) fn check_claim_commitment_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    value: &rmpv::Value,
+) -> Result<()> {
+    if predicate != super::PREDICATE_COMMITMENT_RECORD {
+        return Ok(());
+    }
+    match super::decode_commitment_value(value) {
+        Ok(record) => check_commitment_text_in_txn(vault, txn, &record.content),
+        Err(_) => Ok(()),
+    }
+}
+
 /// The reminder quote cap in force, in `txn`: how many chars of the promise a reminder quotes.
 pub(crate) fn reminder_quote_cap_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<usize> {
     Ok(REMINDER_MAX_QUOTED_CHARS
