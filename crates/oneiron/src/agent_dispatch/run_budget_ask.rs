@@ -248,11 +248,12 @@ fn run_funds_price_in_txn(
         .and_then(|scope| funds_price_in_txn(vault, txn, &scope.unit)))
 }
 
-/// The root scope of the run rooted at `root`: the hard scope whose cap binds
-/// the run's own scope (keyed by `root`). That is the run's own scope when it
-/// is hard, as a pinned budget's or a carve's is; for a run that reserved a
-/// soft scope under a spend scope, the nearest hard scope above it, such as
-/// the owner's root the launch projected against. `None` for a run with no
+/// The root scope of the run rooted at `root`. That is the run's own scope
+/// (keyed by `root`) when it is hard or carved from no parent, as a pinned
+/// budget's or a carve's is. For a soft scope the run reserved under a spend
+/// scope, it is the hard scope whose cap binds what the run draws there: the
+/// scope its launch statement named ([`super::LaunchStatement::scope`]), such
+/// as the owner's root the launch projected against. `None` for a run with no
 /// spend scope. The early ask, the hold's ask and their answers all resolve
 /// this one scope, so a hold asks what its early ask promised (review round 2
 /// of #8217).
@@ -264,9 +265,13 @@ fn run_root_scope_in_txn(
     let Some(own) = SCOPE.get(&vault.store, txn, &SpendScopeId::for_attempt(&root).0)? else {
         return Ok(None);
     };
+    let parent = match &own.parent {
+        Some(parent) if !own.hard => parent.clone(),
+        _ => return Ok(Some(own)),
+    };
     AgentDispatcher::new(vault)
-        .binding_cap_in_txn(txn, &own)
-        .map(Some)
+        .reservable_in_txn(txn, &parent)
+        .map(|(_, binding)| Some(binding))
 }
 
 /// One amount the owner added to a run or a parked try.
