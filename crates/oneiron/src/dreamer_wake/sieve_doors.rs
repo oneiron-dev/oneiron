@@ -1,13 +1,14 @@
 //! Typed owner doors over the sieve interest queue, its retained spans,
-//! its consumed-span receipts, the sieve and recipe policy rows, and the
-//! wake-budget lease that pays for spending the queue. No queue logic
+//! its consumed-span receipts, the sieve policy row, and the wake-budget
+//! lease that pays for spending the queue (the recipe policy is the setting
+//! `dreamer.wake.recipe_policy`). No queue logic
 //! lives here: reads project the sieve's own rows, policy writes go
 //! through the owner-authenticated setters, and a refill only raises a
 //! counter's total.
 
 use serde::{Deserialize, Serialize};
 
-use super::{SievePolicy, SieveSpan, SpanBand, SpanKind, WakeRecipePolicy};
+use super::{SievePolicy, SieveSpan, SpanBand, SpanKind};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::bytes_to_hex_lower;
@@ -19,7 +20,7 @@ const MAX_PAGE: u32 = 1000;
 pub use oneiron_verb_wire::dreamer_wake::sieve_doors::{
     SieveLeaseCounter, SieveLeaseRefillRequest, SieveLeaseRequest, SieveLeaseView,
     SievePageRequest, SievePolicyRequest, SieveQueuePage, SieveReceiptView, SieveReceiptsPage,
-    SieveRecipePolicySetRequest, SieveRetainedPage, SieveSpanView,
+    SieveRetainedPage, SieveSpanView,
 };
 
 /// The owner's replacement sieve policy row.
@@ -137,24 +138,6 @@ pub fn sieve_policy_set_as_owner(
 ) -> Result<SievePolicy> {
     vault.set_dreamer_sieve_policy(owner, input.policy)?;
     vault.dreamer_sieve_policy()
-}
-
-pub fn sieve_recipe_policy_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    _input: &SievePolicyRequest,
-) -> Result<WakeRecipePolicy> {
-    owner.revalidate(vault)?;
-    vault.dreamer_recipe_policy()
-}
-
-pub fn sieve_recipe_policy_set_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: &SieveRecipePolicySetRequest,
-) -> Result<WakeRecipePolicy> {
-    vault.set_dreamer_recipe_policy(owner, input.policy.clone())?;
-    vault.dreamer_recipe_policy()
 }
 
 fn lease_view(
