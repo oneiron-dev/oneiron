@@ -127,16 +127,13 @@ pub fn skill_library_list_as_reader(
     memory: &Memory<'_>,
     input: &SkillLibraryListRequest,
 ) -> MemoryResult<SkillLibraryPage> {
-    if input.limit == 0 {
-        return Err(MemoryError::bad_request("limit must be positive"));
-    }
+    let page_size = crate::verbs::skill_library_page_size(input.limit)?;
     let vault = memory.vault();
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     read.persist_grant_clock()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let policy = read.live_policy_manifest_in(&txn)?;
     let sight = memory.secret_sight_in_txn(&txn)?;
-    let page_size = input.limit.min(crate::vault::MAX_TYPE_QUERY_RESULTS);
     let mut skills = Vec::new();
     let mut scanned_after = input.after;
     loop {
