@@ -2,10 +2,11 @@
 //! the hold store outside the vault (ARCH-0038 #legal-hold, LEGAL-HOLD-USE =
 //! B as a clone): the hold row carries its captures, the `Placed` event the
 //! first capture's fingerprint, and each `.clone` file opens to exactly the
-//! held records. Widening copies only the added records. Without a store
-//! set, or with one inside the vault, placing is refused. Lifting destroys
-//! the copy and erases nothing; producing re-seals it to a named recipient
-//! and logs the access.
+//! held records. Widening copies only the added records, and a failed
+//! widen removes only its own files. Without a store set, or with one
+//! inside the vault, placing is refused. Lifting destroys the copy and
+//! erases nothing; producing re-seals it to a named recipient and logs the
+//! access.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -194,6 +195,39 @@ fn widening_copies_only_the_added_records() -> TestResult {
         changed.clone_fingerprint,
         Some(second.fingerprint),
         "the ScopeChanged event carries the second capture's fingerprint"
+    );
+    Ok(())
+}
+
+/// A widen that fails removes only its own files: a capture another widen
+/// of the same hold wrote into the hold's directory, not yet named by the
+/// committed row when this one fails, stays in place.
+#[test]
+fn a_failed_widen_keeps_another_widens_capture() -> TestResult {
+    let fixture = fixture()?;
+    let vault = &fixture.vault;
+    let a = named_row(vault, "held record a")?;
+    let c = named_row(vault, "widened record c")?;
+    let hold = vault
+        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(a)], None)
+        .map_err(at("the owner's legal hold"))?;
+    let dir = hold_dir(vault, hold.hold_id).map_err(at("the hold's directory"))?;
+    // Another widen's capture: written inside its writer, not yet committed.
+    let pending = dir.join(format!("{}.clone", EntityId::now().to_hex()));
+    std::fs::write(&pending, b"another widen's capture").map_err(at("write the capture"))?;
+    // An owner proof of another vault: this widen fails before it writes.
+    let other_dir = tempfile::tempdir()?;
+    let other = Vault::open_owned(other_dir.path(), VaultConfig::device())
+        .map_err(at("open the other vault"))?;
+    let (_other_actor, foreign) = owner_on(&other)?;
+    let refused = vault.widen_legal_hold(&foreign, hold.hold_id, vec![LegalHoldTarget::Record(c)]);
+    assert!(
+        refused.is_err(),
+        "another vault's owner proof widens nothing"
+    );
+    assert!(
+        pending.exists(),
+        "the failed widen leaves another widen's capture in place"
     );
     Ok(())
 }
