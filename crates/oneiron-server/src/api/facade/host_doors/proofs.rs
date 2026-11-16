@@ -5,12 +5,13 @@
 //! door runs it again for the proof it acts under. A row whose rule is `in_door` names no rule here:
 //! its door proves its caller itself, after the hooks.
 //!
-//! The 49 proof kinds the rows named are 29 rules. Two kinds share a rule only where their admit
-//! fns admitted the same callers; a shared rule keeps one refusal text, with the verb in it. Each
-//! rule runs the fn its kinds ran, or the same calls in the same order. The old hand list of verb
-//! names went into the rows: `share_doors::principal` and `weave_doors::own_caller` are
-//! [`Caller`], `graph_ask_doors::asker` is [`VerdictAsker`], and `weave_doors::person_lens` is
-//! [`LensPerson`] (FIX-LIST HOST-DOOR-HAND-LIST-PRECHECK-MISMATCH).
+//! Each proof kind the rows named maps to one rule (`KIND_RULES` in the row script,
+//! scripts/refactor/tools/door_rule_rows.py). Two kinds share a rule only where their admit fns
+//! admitted the same callers; a shared rule keeps one refusal text, with the verb in it. Each rule
+//! runs the fn its kinds ran, or the same calls in the same order. The old hand list of verb names
+//! went into the rows: `share_doors::principal` and `weave_doors::own_caller` are [`Caller`],
+//! `graph_ask_doors::asker` is [`VerdictAsker`], and `weave_doors::person_lens` is [`LensPerson`]
+//! (FIX-LIST HOST-DOOR-HAND-LIST-PRECHECK-MISMATCH).
 
 use oneiron::authority::VerifiedSlip;
 use oneiron::consent::AuthenticatedOwner;
