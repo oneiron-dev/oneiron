@@ -39,7 +39,7 @@ impl Default for TaggingBackoff {
 }
 
 impl TaggingBackoff {
-    pub(super) fn delay_secs(self, prior_retries: u32) -> u64 {
+    pub(crate) fn delay_secs(self, prior_retries: u32) -> u64 {
         let factor = 1_u64.checked_shl(prior_retries).unwrap_or(u64::MAX);
         self.first_secs.saturating_mul(factor).min(self.max_secs)
     }
