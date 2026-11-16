@@ -140,9 +140,10 @@ fn one_hot(text: &str) -> Vec<f32> {
 }
 
 /// A CLAIM body with the full v2 scope stamp the raw write door asks for,
-/// its value `text`.
-fn claim_body(text: &str) -> TestResult<Vec<u8>> {
-    let subject = EntityId::from_bytes([0x7d; 16])?;
+/// its value `text`, about `subject`. The CLAIM birth needs the subject's
+/// substrate FACET stored, so the caller passes the vault owner, whose
+/// FACET the open stored.
+fn claim_body(subject: EntityId, text: &str) -> TestResult<Vec<u8>> {
     let mut body = Vec::new();
     rmpv::encode::write_value(
         &mut body,
@@ -195,6 +196,7 @@ fn row_id(seed: u8) -> TestResult<EntityId> {
 /// vector.
 fn put_row(vault: &Vault, id: EntityId, seed: u8) -> TestResult {
     let text: String = std::iter::repeat_n(char::from(b'a' + seed % 26), ROW_TEXT_BYTES).collect();
+    let subject = vault.ensure_embedded_owner_actor()?;
     vault
         .batch()
         .put(
@@ -202,7 +204,7 @@ fn put_row(vault: &Vault, id: EntityId, seed: u8) -> TestResult {
             oneiron::registry::ENTITY_TYPE_CLAIM,
             oneiron::temporal::TimeRange { start: 1, end: 1 },
             1,
-            &claim_body(&text)?,
+            &claim_body(subject, &text)?,
         )
         .commit()?;
     Ok(())
@@ -239,6 +241,9 @@ fn cap_manifest(principal: EntityId) -> TestResult<Vec<u8>> {
                 (Value::from("axes"), axes()),
             ])]),
         ),
+        // A pack must carry this key, or it does not decode and the vault's
+        // gate fails closed. No row: the shipped pack's rows still apply.
+        (Value::from("actor_ceilings"), Value::Array(Vec::new())),
         (
             Value::from("budget_policy"),
             Value::Array(vec![Value::Map(vec![
