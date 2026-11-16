@@ -6,7 +6,9 @@
 //! settles as `Lapsed`, the ask leaves the owners' queue so a later answer is
 //! refused, the document stays unsigned with the recipient's turn still open,
 //! and each owner gets one inbox notice. The owner rules the wait: `"never"`
-//! keeps the ask waiting, and a shorter `after_secs` lapses it sooner.
+//! keeps the ask waiting, and a shorter `after_secs` lapses it sooner. An
+//! ask its first holder passes on to the owners waits its lapse from there:
+//! the time it waited below the owners never counts.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test pack_keys_esign_lapse`.
 //! The fixture's host owner and sent mark come from `oneiron::test_support` (feature `test-support`).
@@ -17,16 +19,16 @@ use std::sync::Arc;
 
 use oneiron::blob_artifact::esign::{
     DocumentKind, DocumentStatus, EsignAuditActor, EsignDocument, EsignItem, EsignRecipient,
-    HELD_SIGNING_LAPSE_NOTIFICATION_PRODUCER, HOLD_ALLOW, HeldSigning, HeldSigningState,
-    RecipientRole, SigningAction, SigningCaller, SigningOutcome, SigningStatus,
+    HELD_SIGNING_LAPSE_NOTIFICATION_PRODUCER, HOLD_ALLOW, HeldAskWait, HeldSigning,
+    HeldSigningState, RecipientRole, SigningAction, SigningCaller, SigningOutcome, SigningStatus,
 };
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::inbox::INBOX_PAGE_DEFAULT;
 use oneiron::llm::decision::{
-    AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionRung, HolderKind, HumanAskReason,
-    HumanDecisionRequest, ProviderPin, RoleRank,
+    AnswerActor, AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionRung, HolderKind,
+    HumanAskReason, HumanDecisionRequest, ProviderPin, RoleRank,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
@@ -46,8 +48,17 @@ const THIRTY_DAYS_SECS: u64 = 30 * DAY_SECS;
 /// The lapse key under test.
 const LAPSE_KEY: &str = "esign.held_signing.owner_lapse";
 
-/// A vault whose one automated sign act is held and whose ask waits at the
-/// vault owners, on a clock the test moves.
+/// Who the fixture's ask is first put to.
+#[derive(Clone, Copy)]
+enum FirstAsked {
+    /// The vault owners.
+    Owners,
+    /// A live natural person below the owners, as the agent's principal is.
+    Signer,
+}
+
+/// A vault whose one automated sign act is held and whose ask waits at its
+/// first role, on a clock the test moves.
 struct Fixture {
     vault: Vault,
     clock: Arc<ManualClock>,
@@ -55,6 +66,7 @@ struct Fixture {
     owner_proof: AuthenticatedOwner,
     document: EntityId,
     recipient: String,
+    first_role: AskRole,
     asked_at: u64,
     ask_seq: u64,
     _dir: tempfile::TempDir,
@@ -127,6 +139,11 @@ fn queued_ask(fixture: &Fixture) -> TestResult<DecisionAsk> {
 /// A vault on a manual clock whose agent's Complete was held and whose ask
 /// waits at the vault owners, as the server worker would have put it.
 fn fixture() -> TestResult<Fixture> {
+    fixture_first_asked(FirstAsked::Owners)
+}
+
+/// [`fixture`] with the ask first put to `first`.
+fn fixture_first_asked(first: FirstAsked) -> TestResult<Fixture> {
     let dir = tempfile::tempdir()?;
     let clock = ManualClock::new(T0);
     let mut config = VaultConfig::device();
@@ -140,6 +157,18 @@ fn fixture() -> TestResult<Fixture> {
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
     let owner_proof =
         vault.authenticate_owner(owner, "principal:owner", true, GateDecisionId::now())?;
+    let (first_role, first_holder) = match first {
+        FirstAsked::Owners => (AskRole::Owner, owner),
+        FirstAsked::Signer => {
+            let signer = EntityId::now();
+            vault.put_entity(&signer, ENTITY_TYPE_PERSON, at, T0, b"signer")?;
+            let role = AskRole::Responsible {
+                actor: AnswerActor::Actor(signer),
+                project: None,
+            };
+            (role, signer)
+        }
+    };
     let id = EntityId::now();
     vault.put_blob_artifact(
         &id,
@@ -212,7 +241,7 @@ fn fixture() -> TestResult<Fixture> {
             version: "v1".to_owned(),
         },
         to: AskTo {
-            role: AskRole::Owner,
+            role: first_role.clone(),
             ceiling: RoleRank::Owner,
             act: AskAct::ESignature,
         },
@@ -233,7 +262,7 @@ fn fixture() -> TestResult<Fixture> {
     );
     let HeldSigningState::Asked {
         question: asked_question,
-        wait,
+        ..
     } = &held.state
     else {
         unreachable!("FIXTURE: the hold is Asked");
@@ -243,20 +272,18 @@ fn fixture() -> TestResult<Fixture> {
         question.id.to_hex(),
         "FIXTURE: the hold names the queued ask"
     );
-    assert!(wait.is_none(), "FIXTURE: the wait runs from the ask");
     let ask = vault.decision_ask(ask_seq)?.expect("the ask is kept");
     let at_role = ask.role.as_ref().expect("the ask resolved to a role");
     assert_eq!(
-        at_role.role.rank(),
-        RoleRank::Owner,
-        "FIXTURE: the ask waits at the vault owners"
+        at_role.role, first_role,
+        "FIXTURE: the ask waits at its first role"
     );
     assert!(
         at_role
             .holders
             .iter()
-            .any(|holder| holder.actor == owner && holder.kind == HolderKind::Person),
-        "FIXTURE: a live owner holds the ask as a person"
+            .any(|holder| holder.actor == first_holder && holder.kind == HolderKind::Person),
+        "FIXTURE: a live person holds the ask's first role"
     );
     let asked_at = ask.asked_at;
     Ok(Fixture {
@@ -266,6 +293,7 @@ fn fixture() -> TestResult<Fixture> {
         owner_proof,
         document: id,
         recipient,
+        first_role,
         asked_at,
         ask_seq,
         _dir: dir,
@@ -415,6 +443,79 @@ fn the_owners_shorter_lapse_applies() -> TestResult {
     assert!(
         fixture.vault.lapse_stale_esign_ask(&held, &ask)?,
         "at the hour the ask lapses"
+    );
+    Ok(())
+}
+
+/// An ask its first holder passes on to the owners waits the owners' lapse
+/// from there (review of #8968): with a one-hour lapse, an ask that waited
+/// two hours at the signer before the signer passed it on does not lapse on
+/// arrival. The hold times its wait at the signer from the ask; the pass that
+/// first sees the ask at the owners starts its wait there, and it lapses one
+/// hour after that.
+#[test]
+fn an_ask_passed_on_to_the_owners_waits_its_lapse_from_there() -> TestResult {
+    let fixture = fixture_first_asked(FirstAsked::Signer)?;
+    let HeldSigningState::Asked { wait, .. } = open_hold(&fixture)?.state else {
+        return Err("the hold is not Asked".into());
+    };
+    assert_eq!(
+        wait,
+        Some(HeldAskWait {
+            role: fixture.first_role.clone(),
+            since: fixture.asked_at,
+        }),
+        "the hold times its wait at the signer from the ask"
+    );
+    let outcome = fixture.vault.set_setting(
+        SettingCaller::Owner(&fixture.owner_proof),
+        SetSetting::vault_value(LAPSE_KEY, json!({ "after_secs": 3600 })),
+    )?;
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's row applies"
+    );
+    let passed_on_at = fixture.asked_at + 7200;
+    fixture.clock.set(passed_on_at);
+    let climbed = fixture
+        .vault
+        .climb_decision_ask(fixture.ask_seq)?
+        .expect("the signer passes the ask on");
+    assert_eq!(
+        climbed.role,
+        AskRole::Owner,
+        "the ask climbs to the vault owners"
+    );
+    let held = open_hold(&fixture)?;
+    let ask = queued_ask(&fixture)?;
+    assert!(
+        !fixture.vault.lapse_stale_esign_ask(&held, &ask)?,
+        "the ask does not lapse on arrival at the owners"
+    );
+    let HeldSigningState::Asked { wait, .. } = open_hold(&fixture)?.state else {
+        return Err("the hold is no longer Asked on arrival".into());
+    };
+    assert_eq!(
+        wait,
+        Some(HeldAskWait {
+            role: AskRole::Owner,
+            since: passed_on_at,
+        }),
+        "the ask's wait at the owners starts when the pass first sees it there"
+    );
+    fixture.clock.set(passed_on_at + 3599);
+    let held = open_hold(&fixture)?;
+    let ask = queued_ask(&fixture)?;
+    assert!(
+        !fixture.vault.lapse_stale_esign_ask(&held, &ask)?,
+        "one second short of an hour at the owners the ask still waits"
+    );
+    fixture.clock.set(passed_on_at + 3600);
+    let held = open_hold(&fixture)?;
+    let ask = queued_ask(&fixture)?;
+    assert!(
+        fixture.vault.lapse_stale_esign_ask(&held, &ask)?,
+        "an hour at the owners the ask lapses"
     );
     Ok(())
 }
