@@ -1,6 +1,7 @@
 //! A diagnostics organ for the host's own checks: the runtime's built-in
 //! verbs (`organ.touch`, `organ.echo`) plus `probe.sleep`, `probe.crash`,
-//! `probe.fork`, `probe.outputs`, `probe.ask` and `probe.ptrace` (Linux).
+//! `probe.fork`, `probe.outputs`, `probe.ask`, and `probe.ptrace` and
+//! `probe.inet_socket` (Linux).
 //! Hostile modes stand in for
 //! a broken organ: `--deaf` answers the handshake and then never reads its
 //! socket, `--drip` sends its `hello_ack` one byte at a time, `--ask-twice`
@@ -35,6 +36,7 @@ mod probe {
                 "probe.outputs",
                 "probe.ask",
                 "probe.ptrace",
+                "probe.inet_socket",
             ]
             .map(|name| VerbSpec {
                 name: name.into(),
@@ -52,7 +54,9 @@ mod probe {
         /// past refusals, and reports each answer (its value, the length and
         /// fold of its bytes) or refusal code; a cancel ends it as cancelled.
         /// With `fail`, it ends in an error once it has asked.
-        /// `probe.ptrace {in_child}` makes one ptrace call (`ptrace` below).
+        /// `probe.ptrace {in_child}` makes one ptrace call and
+        /// `probe.inet_socket {in_child}` opens one inet socket (`ptrace`
+        /// and `inet_socket` below).
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
             let field = |key: &str| {
                 call.args
@@ -81,6 +85,14 @@ mod probe {
                     let in_child = field("in_child").and_then(|v| v.as_bool()).unwrap_or(false);
                     Ok(Answer {
                         report: ptrace(in_child),
+                        ..Answer::default()
+                    })
+                }
+                #[cfg(target_os = "linux")]
+                "probe.inet_socket" => {
+                    let in_child = field("in_child").and_then(|v| v.as_bool()).unwrap_or(false);
+                    Ok(Answer {
+                        report: inet_socket(in_child),
                         ..Answer::default()
                     })
                 }
@@ -164,19 +176,55 @@ mod probe {
 
     /// One ptrace call, as an organ escaping its sandbox would make:
     /// `PTRACE_PEEKDATA` of pid 0, which nothing traces, so where the call
-    /// is allowed it fails with ESRCH and changes nothing. In the organ
-    /// itself it answers the call's return and errno. With `in_child`, a
-    /// forked child makes the call and exits 0, and the answer is how the
-    /// child ended: `signal` (0 if it exited) and `exit` (-1 if a signal
-    /// ended it).
+    /// is allowed it fails with ESRCH and changes nothing. Answered as
+    /// [`one_call`] answers.
     #[cfg(target_os = "linux")]
     fn ptrace(in_child: bool) -> Value {
-        let request = libc::c_long::from(libc::PTRACE_PEEKDATA);
-        let zero: libc::c_long = 0;
-        if !in_child {
+        one_call(in_child, || {
+            let request = libc::c_long::from(libc::PTRACE_PEEKDATA);
+            let zero: libc::c_long = 0;
             // SAFETY: PTRACE_PEEKDATA of pid 0 reads nothing: no process
             // is pid 0's tracee, so the kernel answers ESRCH.
-            let returned = unsafe { libc::syscall(libc::SYS_ptrace, request, zero, zero, zero) };
+            unsafe { libc::syscall(libc::SYS_ptrace, request, zero, zero, zero) }
+        })
+    }
+
+    /// One inet socket, as an organ reaching for the network would open
+    /// one: the host hands an organ its one socket on fd 3, so no organ's
+    /// syscall allow-list holds `socket`. Where the call is allowed, the
+    /// socket is closed at once. Answered as [`one_call`] answers.
+    #[cfg(target_os = "linux")]
+    fn inet_socket(in_child: bool) -> Value {
+        one_call(in_child, || {
+            let protocol: libc::c_long = 0;
+            // SAFETY: socket(2) with constant arguments; close(2) of the
+            // descriptor it just returned, which nothing else holds.
+            unsafe {
+                let fd = libc::syscall(
+                    libc::SYS_socket,
+                    libc::c_long::from(libc::AF_INET),
+                    libc::c_long::from(libc::SOCK_STREAM | libc::SOCK_CLOEXEC),
+                    protocol,
+                );
+                if let Ok(fd) = libc::c_int::try_from(fd)
+                    && fd >= 0
+                {
+                    libc::close(fd);
+                }
+                fd
+            }
+        })
+    }
+
+    /// `make`'s one call. In the organ itself it answers the call's return
+    /// and errno. With `in_child`, a forked child makes the call and exits
+    /// 0, and the answer is how the child ended: `signal` (0 if it exited)
+    /// and `exit` (-1 if a signal ended it). `make` makes only
+    /// async-signal-safe calls.
+    #[cfg(target_os = "linux")]
+    fn one_call(in_child: bool, make: fn() -> libc::c_long) -> Value {
+        if !in_child {
+            let returned = make();
             let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return Value::Map(vec![
                 ("returned".into(), i64::from(returned).into()),
@@ -187,16 +235,14 @@ mod probe {
             clippy::disallowed_methods,
             reason = "a hostile organ's own fork, outside the server"
         )]
-        // SAFETY: the child makes one ptrace syscall and _exit(2), both
-        // async-signal-safe, and touches no memory of the parent's.
+        // SAFETY: the child makes `make`'s async-signal-safe call and
+        // _exit(2), and touches no memory of the parent's.
         let pid = unsafe { libc::fork() };
         if pid == 0 {
-            // SAFETY: as above; _exit(2) ends the child without running
-            // the parent's exit handlers.
-            unsafe {
-                libc::syscall(libc::SYS_ptrace, request, zero, zero, zero);
-                libc::_exit(0);
-            }
+            make();
+            // SAFETY: _exit(2) ends the child without running the
+            // parent's exit handlers.
+            unsafe { libc::_exit(0) };
         }
         let mut status: libc::c_int = 0;
         // SAFETY: waitpid on the child just forked, into a local.

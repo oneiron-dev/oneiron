@@ -1,8 +1,10 @@
-//! The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls"): an
-//! organ that calls ptrace dies by the seccomp kill, SIGSYS, and so does a
-//! process it forked; an organ under the filter still answers its ordinary
-//! calls, inputs read through regions included. Linux only: macOS has no
-//! seccomp.
+//! The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls", FIX
+//! [ORGAN-SECCOMP-ALLOW-LIST]): an organ that calls ptrace dies by the
+//! seccomp kill, SIGSYS, and so does a process it forked; so does a call
+//! its allow-list does not name (an inet socket). An organ under the filter
+//! still answers its ordinary calls, inputs read through regions included,
+//! and every verb of the probe answers under its list. Linux only: macOS
+//! has no seccomp.
 #![cfg(target_os = "linux")]
 
 use std::time::Duration;
@@ -65,9 +67,17 @@ fn put_blob(vault: &Vault, bytes: &[u8]) -> OrganInput {
 fn host() -> OrganHost {
     let host = OrganHost::new(HostConfig::default());
     let mut spec = OrganSpec::first_party("probe", PROBE);
-    spec.verbs = ["organ.touch", "organ.echo", "probe.ptrace"]
-        .map(String::from)
-        .into();
+    spec.verbs = [
+        "organ.touch",
+        "organ.echo",
+        "probe.ptrace",
+        "probe.inet_socket",
+        "probe.sleep",
+        "probe.outputs",
+        "probe.fork",
+    ]
+    .map(String::from)
+    .into();
     spec.media_types = vec![BIN.to_owned()];
     host.install(spec);
     host
@@ -94,8 +104,9 @@ fn call(verb: &str, args: Value, inputs: Vec<OrganInput>) -> OrganCall {
     }
 }
 
-fn ptrace_args(in_child: bool) -> Value {
-    Value::Map(vec![("in_child".into(), in_child.into())])
+/// The args of a call that the organ makes in a child it forks, or itself.
+fn in_child(child: bool) -> Value {
+    Value::Map(vec![("in_child".into(), child.into())])
 }
 
 fn report_i64(report: &Value, key: &str) -> Option<i64> {
@@ -114,7 +125,7 @@ fn an_organ_that_calls_ptrace_dies_by_the_syscall_filter() {
     // A process the organ forked holds the filter too: its ptrace call ends
     // it by SIGSYS, the seccomp kill, before the call returns.
     let child = host
-        .call(&vault, call("probe.ptrace", ptrace_args(true), Vec::new()))
+        .call(&vault, call("probe.ptrace", in_child(true), Vec::new()))
         .expect("the organ itself made no denied call and answers");
     assert_eq!(
         (
@@ -126,7 +137,7 @@ fn an_organ_that_calls_ptrace_dies_by_the_syscall_filter() {
         child.report,
     );
     // The organ's own ptrace call kills the organ under its call.
-    let organ = host.call(&vault, call("probe.ptrace", ptrace_args(false), Vec::new()));
+    let organ = host.call(&vault, call("probe.ptrace", in_child(false), Vec::new()));
     assert!(
         matches!(organ, Err(HostError::Crashed(_))),
         "an organ's own ptrace call ends it: {organ:?}",
@@ -162,4 +173,82 @@ fn an_organ_under_the_syscall_filter_answers_its_ordinary_calls() {
         Some(touch_fold(&big) ^ touch_fold(&small)),
         "the filtered organ mapped and read every input byte",
     );
+}
+
+#[test]
+fn an_organ_call_outside_its_allow_list_dies_by_the_syscall_filter() {
+    let (_dir, vault) = vault();
+    let host = host();
+    // The host hands an organ its one socket on fd 3, so no organ's list
+    // names `socket`: a process the organ forked dies by SIGSYS at an inet
+    // socket, before the call returns.
+    let child = host
+        .call(
+            &vault,
+            call("probe.inet_socket", in_child(true), Vec::new()),
+        )
+        .expect("the organ itself made no call outside its list and answers");
+    assert_eq!(
+        (
+            report_i64(&child.report, "signal"),
+            report_i64(&child.report, "exit")
+        ),
+        (Some(i64::from(libc::SIGSYS)), Some(-1)),
+        "the organ's forked child ended by SIGSYS at its inet socket: {:?}",
+        child.report,
+    );
+    // The organ's own inet socket kills the organ under its call.
+    let organ = host.call(
+        &vault,
+        call("probe.inet_socket", in_child(false), Vec::new()),
+    );
+    assert!(
+        matches!(organ, Err(HostError::Crashed(_))),
+        "an organ's own inet socket ends it: {organ:?}",
+    );
+}
+
+#[test]
+fn every_probe_verb_answers_under_its_allow_list() {
+    let (_dir, vault) = vault();
+    let host = host();
+    let slept = host.call(
+        &vault,
+        call(
+            "probe.sleep",
+            Value::Map(vec![("ms".into(), 5u64.into())]),
+            Vec::new(),
+        ),
+    );
+    assert!(slept.is_ok(), "sleep: {slept:?}");
+    // One output inline, one past the inline bound, which crosses as a
+    // sealed region the organ made.
+    for bytes in [16u64, 256 * 1024] {
+        let made = host
+            .call(
+                &vault,
+                call(
+                    "probe.outputs",
+                    Value::Map(vec![
+                        ("count".into(), 2u64.into()),
+                        ("bytes".into(), bytes.into()),
+                    ]),
+                    Vec::new(),
+                ),
+            )
+            .expect("outputs");
+        assert_eq!(made.outputs.len(), 2, "{bytes}-byte outputs");
+    }
+    let forked = host
+        .call(&vault, call("probe.fork", Value::Nil, Vec::new()))
+        .expect("fork");
+    assert!(
+        forked.report.as_i64().is_some_and(|pid| pid > 0),
+        "fork answers its child's pid: {:?}",
+        forked.report,
+    );
+    let echoed = host
+        .call(&vault, call("organ.echo", "still here".into(), Vec::new()))
+        .expect("echo after every verb");
+    assert_eq!(echoed.report, Value::from("still here"));
 }
