@@ -43,6 +43,10 @@
 //! Like [`outcome`] it owns no clock — it hands the host an exact wake and a
 //! small home-node job payload, and itself persists no prep artifact.
 //!
+//! CAL-08 adds [`follow_up`]: a follow-up a meeting transcript yields is a
+//! draft in the owner's inbox, and only the owner's approval of its run sends
+//! it, to the recipient's native route.
+//!
 //! [`inbox_card`] delivers both cards to the owners' INBOX (FIX 12004): the
 //! host's home-node pass fires each due prep wake and check-in, keeps the
 //! lens the owners were shown, and asks an unanswered check-in once more on
@@ -61,6 +65,7 @@ pub mod caldav;
 pub mod claims;
 pub mod connectors;
 pub mod door;
+pub mod follow_up;
 pub mod freebusy;
 mod generic_put;
 pub mod google_internal;
@@ -251,11 +256,11 @@ pub use invite::{
 pub use outcome::{
     CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DueOutcomeCheckIn,
     EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue, MachineOutcomeEvidence,
-    MeetingClassSignals, OUTCOME_CHECK_IN_REASON_TAG, OutcomeCheckInWake,
-    PREDICATE_CALENDAR_EVENT_OUTCOME, accept_check_in_recording, build_check_in_lens,
-    check_in_is_still_due, check_in_recording_artifact_id, is_meeting_class,
-    outcome_from_machine_evidence, outcome_grace_secs, plan_outcome_check_in,
-    project_event_outcome, read_event_outcome, record_event_outcome, resolve_owner_check_in,
+    MeetingClassSignals, OUTCOME_CHECK_IN_REASON_TAG, PREDICATE_CALENDAR_EVENT_OUTCOME,
+    accept_check_in_recording, build_check_in_lens, check_in_is_still_due,
+    check_in_recording_artifact_id, is_meeting_class, outcome_from_machine_evidence,
+    outcome_grace_secs, plan_outcome_check_in, project_event_outcome, read_event_outcome,
+    record_event_outcome, resolve_owner_check_in,
 };
 pub use passport::{
     PassportDecision, all_live_inbound_passports_absent, classify_passport, index_passport_uid,
@@ -263,10 +268,9 @@ pub use passport::{
 };
 pub use prep::{
     CHECK_IN_RE_ASK_LOCAL_HOUR, DEFAULT_PREP_LEAD_SECS, DEFAULT_PREP_MAX_WORDS,
-    PREP_WAKE_REASON_TAG, PREP_WAKE_SCHEDULE_KIND, PrepBuildRequest, PrepEvent, PrepHomeNodeJob,
-    PrepItem, PrepLensCopy, PrepPack, PrepPolicy, PrepSection, PrepSectionKind, PrepWake,
-    build_prep_pack, plan_check_in_re_ask, plan_prep_wake, prep_is_eligible, prep_wake_id,
-    render_prep_lens, run_due_home_node_prep,
+    PREP_WAKE_REASON_TAG, PrepBuildRequest, PrepEvent, PrepHomeNodeJob, PrepItem, PrepLensCopy,
+    PrepPack, PrepPolicy, PrepSection, PrepSectionKind, build_prep_pack, plan_check_in_re_ask,
+    plan_prep_wake, prep_is_eligible, prep_wake_id, render_prep_lens, run_due_home_node_prep,
 };
 pub use query::{
     CalendarEventView, CalendarRangeDto, CalendarRead, CalendarReadRequest, CalendarSearchRequest,
