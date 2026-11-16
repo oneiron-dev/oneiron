@@ -55,6 +55,14 @@ pub struct WholeVaultDocumentManifest {
     pub embedding_setup_withheld: EmbeddingSetupWithheld,
     /// FIX 2768: side rows this archive holds out, and why.
     pub side_rows_withheld: Vec<super::ArchiveSideWithheld>,
+    /// L2-23: the exporting install's signature over this manifest, set last
+    /// (`super::archive_provenance`). `None` on an archive no loaded machine
+    /// key signed, which proves no provenance. The field is additive, so the
+    /// version stays: an archive written before L2-23 has no such key and
+    /// reads as an unsigned one, and an unsigned archive is written as before
+    /// (STORED-CHANGE-RULE keep: a vault holds archives for its removals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<super::ArchiveProvenance>,
 }
 
 impl WholeVaultDocumentManifest {
@@ -262,12 +270,31 @@ pub struct ExportDerivationEnvelope {
     pub receipts: Vec<super::ExportReceiptSource>,
 }
 
+/// Whose words a whole-vault archive's conversations hold (FIX 15412). The
+/// import door names it; nothing in the archive (its source vault, its
+/// entity ids) and not the importer decides it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveSpeakers {
+    /// This vault's own person and companion spoke them: every MESSAGE keeps
+    /// its author and every TURN its speaker.
+    Own,
+    /// They came from outside, and neither this vault's own person nor its
+    /// own companion spoke them: each `user` or `companion` MESSAGE, its
+    /// TURN and each conversational TURN with no MESSAGE speak as a
+    /// `counterparty`, the original author and speaker kept inert; a
+    /// `system` row stays one. No PERSON is minted and no author linked.
+    Foreign,
+}
+
 #[derive(Debug, Clone)]
 pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
     /// Durable `gate:<32 hex>` owner-act receipt naming this archive's full document-manifest
     /// digest. Present only for the owner-authenticated restore entry, not a reusable grant.
     pub owner_restore_receipt_ref: Option<String>,
+    /// Whose words the import took the archive's conversations to hold
+    /// (FIX 15412), beside the manifest verdict it ran with.
+    pub speakers: ArchiveSpeakers,
     pub inserted_entities: usize,
     pub unchanged_entities: usize,
     /// Engine seed rows an owner restore into a fresh vault replaced with the archive's owner-edited row.
