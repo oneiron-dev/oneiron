@@ -297,7 +297,7 @@ pub(crate) async fn vault_files_sources_search(
                 .recall_home_listing(
                     actor,
                     class,
-                    auth.verified_slip().cloned(),
+                    Some(auth),
                     auth.destination(),
                     None,
                     request,
