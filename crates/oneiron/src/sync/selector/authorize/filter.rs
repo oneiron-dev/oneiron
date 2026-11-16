@@ -29,13 +29,14 @@ pub(in crate::sync::selector) fn filter_window_doc(
         reverse_rematerialize_with(vault, &refreshed, key, withhold)?;
     }
     let source = &refreshed;
-    let grant_raw = live_federation_grant(vault, &selector.grant_id)?;
+    // Every bound below reads this grant's own terms, so they must be the terms
+    // its counted act gives (pass 28 R3d).
+    let grant = standing_federation_grant(vault, &selector.grant_id)?;
     if withhold.withholds_window(vault, key)? {
         let out = create_window_doc("selector", key);
         out.commit();
         return Ok(out);
     }
-    let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
     // One read snapshot for the whole export: withheld claims, facet scope, coreference
     // consent, causal admission, and record stamps all read through this
     // `rtxn`. Opening nested read txns on this thread would fail with

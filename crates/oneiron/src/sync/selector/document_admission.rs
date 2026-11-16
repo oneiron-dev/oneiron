@@ -96,6 +96,17 @@ pub(super) fn authorize_at_in_txn(
     }
     // A readonly fold uses exactly this writer snapshot and cannot open a nested writer.
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    // A row gives nothing by itself (pass 28 R3d): every admission below reads
+    // this row's terms, so the counted act that gives it must state them, and
+    // no counted act may have ended its line, pact or no pact.
+    if !vault.grant_row_stands_in_txn(
+        txn,
+        &fold,
+        selector.grant_id,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    )? {
+        return Err(selector_err(SelectorError::GrantInactive));
+    }
     if !crate::federation::pact_admits_grant(&fold, &selector.grant_id, &grant) {
         return Err(selector_err(SelectorError::GrantInactive));
     }

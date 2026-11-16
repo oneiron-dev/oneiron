@@ -6,9 +6,7 @@ use crate::authority::{HostSlipIssuer, VerifiedSlip};
 use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, LocalWorldId, bytes_to_hex_lower};
-use crate::federation::{
-    FederationGrant, FederationGrantScope, ScopeId, decode_federation_grant_body,
-};
+use crate::federation::{FederationGrant, FederationGrantScope, ScopeId};
 pub use crate::guest_document_share::GuestDocumentShareRequest;
 use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_WORLD};
 use crate::sync::{SyncSelector, SyncSelectorWorld, WindowKey, WindowManager};
@@ -36,10 +34,17 @@ fn context(
     else {
         return Err(Error::EntityNotFound);
     };
-    let grant = decode_federation_grant_body(&body)?;
-    if !grant.role.is_guest()
-        || !matches!(grant.scope, FederationGrantScope::Connect { .. })
-        || !grant.confers_at(vault.store.clock.now_recorded_at())
+    let now = vault.store.clock.now_recorded_at();
+    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+    // The guest's Grant as the fold stands behind it (pass 28 R3d): its counted
+    // giving, no counted end, its act's terms, unexpired, and one Active
+    // operative pact with its peer. The disclosure below carries those terms
+    // as its record ceiling.
+    let grant = crate::federation::guest_grant_in_fold(&fold, input.grant_ref, &body, now)
+        .ok_or_else(refused)?
+        .into_grant();
+    if !matches!(grant.scope, FederationGrantScope::Connect { .. })
+        || !grant.confers_at(now)
         || input.world_ref == crate::claim::base_world_id()
         || LocalWorldId::try_from(input.world_ref).is_err()
         || !grant
@@ -49,10 +54,6 @@ fn context(
         || live_entity_row_in_txn(&vault.store, &txn, &input.world_ref)?.live_type()
             != Some(ENTITY_TYPE_WORLD)
     {
-        return Err(refused());
-    }
-    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
-    if !crate::federation::pact_admits_grant(&fold, &input.grant_ref, &grant) {
         return Err(refused());
     }
     let (pact, epoch) = fold.active_pact_delivery_context(&input.grant_ref)?;

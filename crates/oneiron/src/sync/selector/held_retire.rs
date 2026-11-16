@@ -14,8 +14,9 @@ use crate::federation::decode_federation_grant_body;
 use super::authorize::live_federation_grant_in;
 
 /// The grants among `grants` that still confer at `now_secs`, judged in
-/// `txn`: stored, live, not made inactive by a pact, and not expired. Scope
-/// and member checks belong to the selector a peer sends, not to the grant.
+/// `txn`: stored, live, standing on the counted act that gives the row (pass
+/// 28 R3d), not made inactive by a pact, and not expired. Scope and member
+/// checks belong to the selector a peer sends, not to the grant.
 fn grants_conferring_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -33,10 +34,12 @@ fn grants_conferring_in(
             Err(Error::Sync(SyncError::SyncProtocolError { .. })) => continue,
             Err(local) => return Err(local),
         };
-        let Ok(grant) = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]) else {
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let Ok(grant) = decode_federation_grant_body(body) else {
             continue;
         };
         if grant.confers_at(now_secs)
+            && vault.grant_row_stands_in_txn(txn, &fold, *grant_id, body)?
             && !matches!(
                 federation_grant_activation(&fold, grant_id),
                 FederationGrantActivation::Inactive(_)

@@ -12,8 +12,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncSelectorValidation as SelectorError};
 use crate::federation::record_scope::note_world;
 use crate::federation::{
-    Ceiling, FederationDirectionScope, FederationGrantScope, Position, ScopeAxis, ScopeId,
-    base_world_axis, decode_federation_grant_body,
+    Ceiling, FederationDirectionScope, FederationGrant, FederationGrantScope, Position, ScopeAxis,
+    ScopeId, base_world_axis, decode_federation_grant_body,
 };
 use crate::provenance::birth::WithheldKey;
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
@@ -68,16 +68,24 @@ pub(super) fn authorize_sync_selector_at(
     authorize_selector_export(vault, grant_scope, selector, now_secs).map(|_| ())
 }
 
-/// The stored FederationGrant row `id` names, read with its liveness in one
-/// transaction. A deleted grant is no grant, even while an unapplied delete
-/// leaves its body stored. The transaction closes before the caller folds
-/// authority on its own.
-fn live_federation_grant(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+/// The FederationGrant row `id` names, read with its liveness and the fold
+/// that stands behind it in one transaction. A deleted grant is no grant, even
+/// while an unapplied delete leaves its body stored, and a row the fold does
+/// not stand behind gives nothing (pass 28 R3d,
+/// [`Vault::grant_row_stands_in_txn`]). The transaction closes before the
+/// caller folds authority on its own.
+fn standing_federation_grant(vault: &Vault, id: &EntityId) -> Result<FederationGrant> {
     let txn = vault.store.env.read_txn()?;
-    live_federation_grant_in(vault, &txn, id)
+    let raw = live_federation_grant_in(vault, &txn, id)?;
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let fold = vault.authority_view_readonly_in_txn(&txn)?;
+    if !vault.grant_row_stands_in_txn(&txn, &fold, *id, body)? {
+        return Err(selector_err(SelectorError::GrantInactive));
+    }
+    decode_federation_grant_body(body)
 }
 
-// [`live_federation_grant`], read in `txn`: the shared federation helper the
+// The live row a FederationGrant id names, read in `txn`: the shared federation helper the
 // grant travel door reads too (FIX 2998).
 pub(super) use crate::federation::live_federation_grant_in;
 
@@ -125,13 +133,25 @@ fn authorize_selector_export_in_txn(
     if grant.member_ref != selector.member_ref {
         return Err(selector_err(SelectorError::MemberNotGranted));
     }
-    // Pact activation gate (ONE-1408): grants without lifecycle entries stay
-    // authorized (Unpacted legacy-allow — shipped guest grants must not
-    // brick); pact-bound grants confer access only while Active. A Connect
-    // grant is inert until one Active pact with its peer binds it (FIX 3016).
     // The fold is recomputed on every call by design (no caching in this
     // chain).
     let fold = vault.authority_view_readonly_in_txn(txn)?;
+    // A row gives nothing by itself (pass 28 R3d): the export stands on the
+    // counted act that gives this row, term for term, while no counted act
+    // ended its line. A row no act gives, one put back after its end and one
+    // widened in place back no selector, pact or no pact. Expiry stays the
+    // door's last arm, below.
+    if !vault.grant_row_stands_in_txn(
+        txn,
+        &fold,
+        selector.grant_id,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    )? {
+        return Err(selector_err(SelectorError::GrantInactive));
+    }
+    // Pact activation gate (ONE-1408): a pact-bound grant confers only while
+    // Active; a grant no pact binds keeps the act that gives it. A Connect
+    // grant is inert until one Active pact with its peer binds it (FIX 3016).
     if !crate::federation::pact_admits_grant(&fold, &selector.grant_id, &grant) {
         return Err(selector_err(SelectorError::GrantInactive));
     }
@@ -146,8 +166,7 @@ fn authorize_selector_export_in_txn(
     // first. Expiry is checked here rather than at mint time because a stored
     // grant outlives the process that wrote it; the expiry second itself
     // denies, and a non-delegate grant carries no expiry and confers at any
-    // age. Unpacted delegates are gated too — legacy-allow covers the missing
-    // PACT, never a lapsed delegation.
+    // age. A delegate no pact binds is gated too.
     if !grant.confers_at(now_secs) {
         return Err(selector_err(SelectorError::GrantExpired));
     }

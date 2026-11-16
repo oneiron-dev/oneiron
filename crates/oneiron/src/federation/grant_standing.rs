@@ -67,25 +67,26 @@ impl StandingGrant {
         now: u64,
     ) -> Option<Self> {
         let (grant, terms_key) = decode_federation_grant_body_keyed(body).ok()?;
-        Self::decoded_in_fold(fold, id, grant, terms_key, families, now)
+        Self::decoded_in_fold(fold, id, grant, terms_key, families, Some(now))
     }
 
     /// [`Self::in_fold`] for a body already decoded. A Connect guest's Grant stands only
     /// while one Active operative pact with its own peer binds it, beside its counted giving
     /// ([`super::pact_admits_grant`]): its owner's mint gives it, and the pact both owners
-    /// signed puts it to use.
+    /// signed puts it to use. Expiry is read at `now`; `None` reads none, for a door that
+    /// judges expiry itself.
     fn decoded_in_fold(
         fold: &AuthorityFold,
         id: EntityId,
         grant: FederationGrant,
         terms_key: Option<GrantTermsKey>,
         families: &[GrantFamily],
-        now: u64,
+        now: Option<u64>,
     ) -> Option<Self> {
         // Expiry alone: what a live Grant then confers (a verb, a class, a git push) is
         // its reader's, so `FederationGrant::is_live_at`, Access's predicate, is not
         // asked here (it refuses every git push Grant and a class-only scope).
-        if grant.expires_at.is_some_and(|expires_at| now >= expires_at) {
+        if now.is_some_and(|now| expired(&grant, now)) {
             return None;
         }
         let act = given_in_fold(fold, id, &grant, terms_key.as_ref(), families)?;
@@ -96,6 +97,11 @@ impl StandingGrant {
         }
         Some(Self { id, grant, act })
     }
+}
+
+/// Whether `grant` has expired at `now`: from its expiry second on.
+fn expired(grant: &FederationGrant, now: u64) -> bool {
+    grant.expires_at.is_some_and(|expires_at| now >= expires_at)
 }
 
 /// The counted act that gives the Grant row `id`, holding `grant` under `terms_key`, in one
@@ -207,7 +213,7 @@ pub(crate) fn guest_grant_in_fold(
         return None;
     }
     let families = guest_row_families(&grant);
-    StandingGrant::decoded_in_fold(fold, id, grant, terms_key, families, now)
+    StandingGrant::decoded_in_fold(fold, id, grant, terms_key, families, Some(now))
 }
 
 /// What a Grant row over a shared vault confers to a membership reader: a row the fold
@@ -288,7 +294,13 @@ pub(crate) fn shared_vault_grants_for_store_in_txn(
         if grant.scope != scope {
             continue;
         }
-        rows.extend(shared_grant_row_decoded(fold, id, grant, terms_key, now));
+        rows.extend(shared_grant_row_decoded(
+            fold,
+            id,
+            grant,
+            terms_key,
+            Some(now),
+        ));
     }
     Ok(rows)
 }
@@ -305,7 +317,7 @@ pub(crate) fn shared_grant_row_in_fold(
     now: u64,
 ) -> Option<SharedGrantRow> {
     let (grant, terms_key) = decode_federation_grant_body_keyed(body).ok()?;
-    shared_grant_row_decoded(fold, id, grant, terms_key, now)
+    shared_grant_row_decoded(fold, id, grant, terms_key, Some(now))
 }
 
 /// What the live Grant row `id` of this vault's own store, whose stored body is `body`,
@@ -323,6 +335,17 @@ pub(crate) fn grant_row_in_fold(
     body: &[u8],
     shared_scope: Option<&FederationGrantScope>,
     now: u64,
+) -> Option<SharedGrantRow> {
+    grant_row_at(fold, id, body, shared_scope, Some(now))
+}
+
+/// [`grant_row_in_fold`] with expiry read at `now`, or none read (`None`).
+fn grant_row_at(
+    fold: &AuthorityFold,
+    id: EntityId,
+    body: &[u8],
+    shared_scope: Option<&FederationGrantScope>,
+    now: Option<u64>,
 ) -> Option<SharedGrantRow> {
     let (grant, terms_key) = decode_federation_grant_body_keyed(body).ok()?;
     // The own-device residence is a `Vault` scope too, so the row's scope shape alone never
@@ -355,17 +378,14 @@ fn unacted_row(
     id: EntityId,
     grant: FederationGrant,
     terms_key: Option<GrantTermsKey>,
-    now: u64,
+    now: Option<u64>,
 ) -> Option<SharedGrantRow> {
     if let Some(line) = fold.grant_line(id) {
         let family = line.family?;
         return StandingGrant::decoded_in_fold(fold, id, grant, terms_key, &[family], now)
             .map(SharedGrantRow::Standing);
     }
-    grant
-        .expires_at
-        .is_none_or(|expires_at| now < expires_at)
-        .then_some(SharedGrantRow::Unacted(id, grant))
+    (!now.is_some_and(|now| expired(&grant, now))).then_some(SharedGrantRow::Unacted(id, grant))
 }
 
 /// The Grant row `id` of `family` as `fold` stands behind it at `now`, read in `txn`
@@ -398,7 +418,7 @@ fn shared_grant_row_decoded(
     id: EntityId,
     grant: FederationGrant,
     terms_key: Option<GrantTermsKey>,
-    now: u64,
+    now: Option<u64>,
 ) -> Option<SharedGrantRow> {
     match shared_row_families(&grant) {
         None => unacted_row(fold, id, grant, terms_key, now),
@@ -529,6 +549,28 @@ impl Vault {
             shared_grant_row_in_fold(&fold, id, &body, self.store.clock.now_recorded_at())
                 .is_some(),
         )
+    }
+
+    /// Whether `fold` stands behind the live Grant row `id` of this vault's own store, whose
+    /// stored body is `body` ([`grant_row_in_fold`] with this vault's shared scope), with its
+    /// expiry not read: a door that judges expiry itself, after its other refusals, so a
+    /// lapsed delegation still says so (the sync selector's doors, pass 28 R3d). False for a
+    /// row no counted act gives, one put back after its end and one whose terms are not its
+    /// act's; an own-device or engine-default row reads from itself until R4. The caller has
+    /// read the row live.
+    ///
+    /// # Errors
+    ///
+    /// A store read failure.
+    pub(crate) fn grant_row_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        id: EntityId,
+        body: &[u8],
+    ) -> Result<bool> {
+        let shared_scope = self.shared_vault_scope_in_txn(txn)?;
+        Ok(grant_row_at(fold, id, body, shared_scope.as_ref(), None).is_some())
     }
 
     /// The scope of a Grant row over this vault as a shared vault: `Some` only when this vault
