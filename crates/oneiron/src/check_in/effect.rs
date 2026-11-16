@@ -25,6 +25,8 @@
 //! 3). An agent reaches these acts through `vault.check_in.open`; PR 3's act
 //! gate admits agents at these doors.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::act_class::ActClass;
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
@@ -563,7 +565,8 @@ pub fn custody_reenrol_effect_digest(spec: &TargetSpec) -> [u8; 32] {
 /// `vault.check_in.open` names for `vault.policy.owner.row.change`, and the
 /// one the Owner's change spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key
 /// derived from `oneiron check_in policy row change v1`, over the change's
-/// MessagePack encoding with field names, as the change ledger keeps it.
+/// MessagePack encoding with field names, as the change ledger keeps it
+/// (`purposes::check_in::POLICY_ROW_CHANGE`).
 ///
 /// # Errors
 ///
@@ -571,9 +574,9 @@ pub fn custody_reenrol_effect_digest(spec: &TargetSpec) -> [u8; 32] {
 pub fn policy_row_change_effect_digest(change: &PolicyRowChange) -> Result<[u8; 32]> {
     let encoded = rmp_serde::to_vec_named(change)
         .map_err(|_| Error::InvariantViolation("policy row change encode"))?;
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in policy row change v1");
-    hasher.update(&encoded);
-    Ok(*hasher.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::check_in::POLICY_ROW_CHANGE)
+        .raw(&encoded)
+        .finish())
 }
 
 /// The reason code of an agent's act refused at a person's door, naming the
@@ -587,19 +590,14 @@ pub const CHECK_IN_OPEN_ROUTE_REASON: &str = "check_in.route:vault.check_in.open
 /// approved check-in for it spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key
 /// derived from `oneiron check_in mail compliance set v1`, over one byte, 1
 /// to turn it on, the purpose's length as eight big-endian bytes and its
-/// bytes.
+/// bytes (`purposes::check_in::MAIL_COMPLIANCE_SET`).
 #[must_use]
 pub fn mail_compliance_set_effect_digest(enabled: bool, purpose: &str) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in mail compliance set v1");
-    hasher
-        .update(&[u8::from(enabled)])
-        .update(
-            &u64::try_from(purpose.len())
-                .unwrap_or(u64::MAX)
-                .to_be_bytes(),
-        )
-        .update(purpose.as_bytes());
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::check_in::MAIL_COMPLIANCE_SET)
+        .raw(&[u8::from(enabled)])
+        .len_u64_be(purpose.len())
+        .raw(purpose.as_bytes())
+        .finish()
 }
 
 /// `text`'s length as one byte (at most 255; custody ids are at most 128)
@@ -614,29 +612,32 @@ fn update_short_text(hasher: &mut blake3::Hasher, text: &str) {
 /// `vault.delete` judges, and the one an approved check-in for it spends
 /// (2k5; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
 /// record delete v1`, over the record's 16 id bytes and the reason's wire
-/// token, as its length in one byte and its bytes.
+/// token, as its length in one byte and its bytes
+/// (`purposes::check_in::RECORD_DELETE`).
 #[must_use]
 pub fn record_delete_effect_digest(
     record: &EntityId,
     reason: crate::deletion::DeleteReason,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in record delete v1");
-    hasher.update(record.as_bytes());
-    update_short_text(&mut hasher, reason.as_str());
-    *hasher.finalize().as_bytes()
+    let reason = reason.as_str();
+    LegacyDigest::new(purposes::check_in::RECORD_DELETE)
+        .raw(record.as_bytes())
+        .raw(&[u8::try_from(reason.len()).unwrap_or(u8::MAX)])
+        .raw(reason.as_bytes())
+        .finish()
 }
 
 /// The digest of deleting stored embedding space probe `probe`: the effect
 /// an asker's `vault.check_in.open` names for
 /// `vault.embedding_spaces.probes.delete`, and the one the Owner's delete
 /// spends (2k5; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron
-/// check_in embedding space probe delete v1`, over the probe's 16 id bytes.
+/// check_in embedding space probe delete v1`, over the probe's 16 id bytes
+/// (`purposes::check_in::EMBEDDING_SPACE_PROBE_DELETE`).
 #[must_use]
 pub fn embedding_space_probe_delete_effect_digest(probe: &[u8; 16]) -> [u8; 32] {
-    let mut hasher =
-        blake3::Hasher::new_derive_key("oneiron check_in embedding space probe delete v1");
-    hasher.update(probe);
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::check_in::EMBEDDING_SPACE_PROBE_DELETE)
+        .raw(probe)
+        .finish()
 }
 
 /// The digest of deleting the cleanup-archived completed attempt `attempt`:
@@ -644,10 +645,10 @@ pub fn embedding_space_probe_delete_effect_digest(probe: &[u8; 16]) -> [u8; 32] 
 /// is judged over (2k5e; P25-SHAPE Q1 = A). The confirm's own expectation
 /// binds the exact queue bytes in the same writer. BLAKE3, key derived from
 /// `oneiron check_in attempt archive delete v1`, over the attempt's 16 id
-/// bytes.
+/// bytes (`purposes::check_in::ATTEMPT_ARCHIVE_DELETE`).
 #[must_use]
 pub fn attempt_archive_delete_effect_digest(attempt: &[u8; 16]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in attempt archive delete v1");
-    hasher.update(attempt);
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::check_in::ATTEMPT_ARCHIVE_DELETE)
+        .raw(attempt)
+        .finish()
 }
