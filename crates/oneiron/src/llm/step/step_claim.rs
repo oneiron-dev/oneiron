@@ -79,10 +79,12 @@ const STEP_SCOPE_PROJECT_KEY: &str = "scopeProjectId";
 /// not retire on their erase (fix list row 20501, the mail claim re-check's
 /// judge), so the kept reply is the verdict alone, with no reasoning about
 /// those words (FIX CLAIM-RECHECK-REPLY-PARTS; RULING RECHECK-REPLY-ERASE =
-/// A). Only Text parts stay, each without its provider signature; reasoning,
-/// tool and media parts and the token scores go. Role, usage, finish reason
-/// and the host's reply assertions stay. Every other step keeps its whole
-/// reply (ARCH-0026 #llm-backend-seam).
+/// A, which names Reasoning parts, signatures and token scores). Only Text
+/// parts stay, each without its provider signature, so tool and media parts,
+/// which a verdict never carries, go as well. Role, usage, finish reason and
+/// the host's reply assertions stay. Rows filed before this keep what they
+/// hold (M-1 keep). Every other step keeps its whole reply (ARCH-0026
+/// #llm-backend-seam).
 pub(super) fn verdict_only_reply(response: LlmResponse) -> LlmResponse {
     let LlmResponse {
         message,

@@ -14,6 +14,7 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test claim_source_recheck_reply_parts`
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
@@ -187,19 +188,34 @@ fn now_ms() -> Result<u64, Box<dyn std::error::Error>> {
     )?)
 }
 
-/// Every filed `dreamer.step` claim's stored value, rendered as text: its
-/// inline response JSON is in it.
-fn step_claim_values(vault: &Vault) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let mut values = Vec::new();
+/// Every filed `dreamer.step` claim's stored value by claim id, rendered as
+/// text: its inline response JSON is in it. A claim row that does not read
+/// is skipped; the callers assert that the step they drove filed its claim.
+fn step_claim_values(
+    vault: &Vault,
+) -> Result<BTreeMap<EntityId, String>, Box<dyn std::error::Error>> {
+    let mut values = BTreeMap::new();
     for id in vault.entities_by_type(ENTITY_TYPE_CLAIM)? {
-        let Some(body) = vault.get_claim(&id)? else {
+        let Ok(Some(body)) = vault.get_claim(&id) else {
             continue;
         };
         if body.predicate == DREAMER_STEP_PREDICATE {
-            values.push(body.value.to_string());
+            values.insert(id, body.value.to_string());
         }
     }
     Ok(values)
+}
+
+/// The step claims in `after` that `before` did not hold.
+fn filed_since(
+    before: &BTreeMap<EntityId, String>,
+    after: BTreeMap<EntityId, String>,
+) -> Vec<String> {
+    after
+        .into_iter()
+        .filter(|(id, _)| !before.contains_key(id))
+        .map(|(_, value)| value)
+        .collect()
 }
 
 /// The markers `value` carries, by name.
@@ -257,7 +273,7 @@ fn a_recheck_judge_step_keeps_no_reasoning_part() -> TestResult {
         spend_meter: None,
     };
     let held = HeldLadder::unstaffed();
-    let before = step_claim_values(&vault)?.len();
+    let before = step_claim_values(&vault)?;
     let execution = block_on(doors::run(
         &ctx,
         &seeded.attempt,
@@ -288,9 +304,9 @@ fn a_recheck_judge_step_keeps_no_reasoning_part() -> TestResult {
         "the verdict is decided on the ladder: {finding}"
     );
 
-    let values = step_claim_values(&vault)?;
+    let values = filed_since(&before, step_claim_values(&vault)?);
     assert!(
-        values.len() > before,
+        !values.is_empty(),
         "the judge's generation files its step claim"
     );
     for value in &values {
@@ -390,6 +406,7 @@ fn an_ordinary_step_keeps_its_reasoning_part() -> TestResult {
     let backend = ReasoningJudge {
         requests: Mutex::new(0),
     };
+    let before = step_claim_values(&vault)?;
     let outcome = block_on(call_as_step(&ctx, &backend, &guard, request))?;
     let StepOutcome::Finished { response, .. } = outcome else {
         panic!("the ordinary step finishes, got {outcome:?}");
@@ -402,7 +419,7 @@ fn an_ordinary_step_keeps_its_reasoning_part() -> TestResult {
             .any(|part| matches!(part, ContentPart::Reasoning { .. })),
         "the ordinary step's answer keeps its Reasoning part"
     );
-    let values = step_claim_values(&vault)?;
+    let values = filed_since(&before, step_claim_values(&vault)?);
     let [value] = values.as_slice() else {
         panic!("one step claim, found {}", values.len());
     };
