@@ -274,7 +274,23 @@ pub(crate) fn owner_restore_opened_claim_in_txn(
         .gate_decision_in_txn(txn, decision)?
         .is_some_and(|record| {
             record.content_kind == OWNER_ARCHIVE_RESTORE_CONTENT_KIND
-                && record.outcome == "allow"
+                && match record.gate_outcome() {
+                    Some(GateReceiptOutcome::Allow) => true,
+                    Some(
+                        GateReceiptOutcome::Pending
+                        | GateReceiptOutcome::Deny
+                        | GateReceiptOutcome::Approved
+                        | GateReceiptOutcome::ApprovedAmended
+                        | GateReceiptOutcome::Rejected
+                        | GateReceiptOutcome::LetGo
+                        | GateReceiptOutcome::Superseded
+                        | GateReceiptOutcome::Retracted
+                        | GateReceiptOutcome::Invalidated
+                        | GateReceiptOutcome::Revoked
+                        | GateReceiptOutcome::Noted,
+                    )
+                    | None => false,
+                }
                 && record.actor_ref.as_deref() == Some(actor.to_hex().as_str())
         }))
 }
@@ -359,7 +375,23 @@ pub(crate) fn owner_restore_receipt_in_txn(
         .gate_decision_in_txn(txn, GateDecisionId::from_bytes(*id.as_bytes()))?
         .filter(|record| {
             record.content_kind == OWNER_ARCHIVE_RESTORE_CONTENT_KIND
-                && record.outcome == "allow"
+                && match record.gate_outcome() {
+                    Some(GateReceiptOutcome::Allow) => true,
+                    Some(
+                        GateReceiptOutcome::Pending
+                        | GateReceiptOutcome::Deny
+                        | GateReceiptOutcome::Approved
+                        | GateReceiptOutcome::ApprovedAmended
+                        | GateReceiptOutcome::Rejected
+                        | GateReceiptOutcome::LetGo
+                        | GateReceiptOutcome::Superseded
+                        | GateReceiptOutcome::Retracted
+                        | GateReceiptOutcome::Invalidated
+                        | GateReceiptOutcome::Revoked
+                        | GateReceiptOutcome::Noted,
+                    )
+                    | None => false,
+                }
                 && record.redacted_at.is_none()
         }))
 }

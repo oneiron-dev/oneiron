@@ -16,6 +16,7 @@ use crate::outbound::{
     OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{ClaimApprovalStatus, EdgeActorClass, EntityId, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
@@ -348,7 +349,24 @@ fn is_owner_witness(receipt: &GateDecisionRecord, approval: &ApprovalRecord) -> 
     let ApprovalOwner::Actor(owner) = approval.owner else {
         return false;
     };
-    if receipt.outcome != "approved" || receipt.redacted_at.is_some() {
+    let approved = match receipt.gate_outcome() {
+        Some(GateReceiptOutcome::Approved) => true,
+        Some(
+            GateReceiptOutcome::Allow
+            | GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !approved || receipt.redacted_at.is_some() {
         return false;
     }
     match approval.witness {
@@ -396,7 +414,24 @@ pub(crate) fn representation_approval_is_live_in_txn(
     let Some(claim) = receipt.claim_id else {
         return Ok(false);
     };
-    if receipt.outcome != "approved" || receipt.redacted_at.is_some() {
+    let approved = match receipt.gate_outcome() {
+        Some(GateReceiptOutcome::Approved) => true,
+        Some(
+            GateReceiptOutcome::Allow
+            | GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !approved || receipt.redacted_at.is_some() {
         return Ok(false);
     }
     let Some(approval) = APPROVAL.get(&vault.store, txn, &EntityId::from_bytes(claim)?)? else {

@@ -22,6 +22,18 @@
 //!
 //! Red on 1f-2's base: the two rows read `denied`.
 //!
+//! UC-03 PR 2-1a: readers read the outcome through one accessor,
+//! `GateDecisionRecord::gate_outcome` and `ReceiptRecord::gate_outcome`. A row written
+//! before stage 1f keeps its family's word; the accessor reads it as its writer's closed
+//! word now (DESIGN section 2.3), so a reader gives the held row the answer it gave before:
+//!
+//! - a held `owner_plane_block` reads `deny`, on the row and on its receipt;
+//! - `denied` reads `deny` on a secret use and `rejected` on a consent row, a bare `block`
+//!   reads `rejected` on a policy hold and `deny` on another kind, a closed word reads as
+//!   itself, and a word in neither table reads as none.
+//!
+//! Red on 2-1a's base by construction: it has no accessor and no held-row door.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test gate_receipt_closed_outcome`.
 
 #![cfg(oneiron_test_support)]
@@ -32,10 +44,12 @@ use oneiron::consent::{AuthenticatedOwner, CONSENT_REASON_DENIED, EffectDigest};
 use oneiron::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest};
 use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::self_heal::DiagnosticObservation;
-use oneiron::store::GateDecisionId;
+use oneiron::store::{GateDecisionId, GateDecisionRecord};
+use oneiron::test_doors::gate_receipt_rows::{GUARD_KIND, append_held_word_row, gate_row};
 use oneiron::test_doors::payment_credential::register_bound_secret;
 use oneiron::verbs::{SecretUseRequest, use_secret_as_caller};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron_store::gate_reason::GateReceiptOutcome;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -220,5 +234,55 @@ fn a_secret_use_its_binding_refuses_reads_deny() -> TestResult {
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].outcome, "deny", "a closed word, not denied");
     assert!(has_reason(&rows[0], "gate.secret.use"), "{rows:?}");
+    Ok(())
+}
+
+/// The held row's own row and its receipt, each read through its accessor.
+fn held_outcomes(
+    vault: &Vault,
+    held: &GateDecisionRecord,
+) -> Result<(Option<GateReceiptOutcome>, Option<GateReceiptOutcome>), Box<dyn std::error::Error>> {
+    let row = gate_row(vault, held.decision_id)?.ok_or("the held row")?;
+    let receipt_id = format!("gate:{}", held.decision_id.to_hex());
+    let receipt = vault
+        .receipts(ReceiptQuery::new(50).with_kind(ReceiptKind::Gate))?
+        .into_iter()
+        .find(|receipt| receipt.receipt_id == receipt_id)
+        .ok_or("the held row's receipt")?;
+    Ok((row.gate_outcome(), receipt.gate_outcome()))
+}
+
+#[test]
+fn a_held_owner_plane_block_reads_deny_through_the_accessor() -> TestResult {
+    let (_dir, vault) = vault();
+    let held = append_held_word_row(&vault, "owner_plane_block", GUARD_KIND)?;
+    assert_eq!(held.outcome, "owner_plane_block", "the stored word stays");
+
+    let (row, receipt) = held_outcomes(&vault, &held)?;
+    assert_eq!(row, Some(GateReceiptOutcome::Deny), "the row");
+    assert_eq!(receipt, Some(GateReceiptOutcome::Deny), "its receipt");
+    Ok(())
+}
+
+#[test]
+fn a_held_word_with_two_meanings_reads_by_its_kind() -> TestResult {
+    let (_dir, vault) = vault();
+    for (word, kind, outcome) in [
+        ("denied", "secret_use", Some(GateReceiptOutcome::Deny)),
+        (
+            "denied",
+            "consent_grant",
+            Some(GateReceiptOutcome::Rejected),
+        ),
+        ("block", "policy_hold", Some(GateReceiptOutcome::Rejected)),
+        ("block", GUARD_KIND, Some(GateReceiptOutcome::Deny)),
+        ("approved", GUARD_KIND, Some(GateReceiptOutcome::Approved)),
+        ("no_such_word", GUARD_KIND, None),
+    ] {
+        let held = append_held_word_row(&vault, word, kind)?;
+        let (row, receipt) = held_outcomes(&vault, &held)?;
+        assert_eq!(row, outcome, "the row: {word} on {kind}");
+        assert_eq!(receipt, outcome, "its receipt: {word} on {kind}");
+    }
     Ok(())
 }
