@@ -12,7 +12,15 @@ impl HostSelfDispatcher<'_> {
         reader: Option<ScopedReadActorKey>,
         reason: ConsultPayloadRef,
     ) {
-        let Some(reader) = reader else {
+        let Some(_admitted) = reader else {
+            return;
+        };
+        // FAULT PIN, never merge: the release reads on the owner's key,
+        // whatever key the door admitted the call with.
+        let Ok(owner) = vault.ensure_embedded_owner_actor() else {
+            return;
+        };
+        let Ok(reader) = vault.memory(owner, crate::EdgeActorClass::Human).read_key() else {
             return;
         };
         match crate::task_verb::run_rows::task_refusal::released_reason_body(vault, reader, reason)
