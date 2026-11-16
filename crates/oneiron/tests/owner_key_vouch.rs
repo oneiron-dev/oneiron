@@ -6,6 +6,15 @@
 //! On a hosted vault the host's custodial root signs nothing of it, and an
 //! install that holds only that root vouches for nothing.
 //!
+//! Sol xhigh on 060e227ce0ac (F1, F2, F3, F6, F8): the vouching key is the
+//! deciding owner's own, so a co-owner's key vouches no key into another
+//! owner; the request carries its machine's install-key signature, and an
+//! install the owner never answered as theirs makes no owner key; text and
+//! bytes past a request's bound are refused before they are decoded; a label
+//! carries no bidirectional override or invisible character; the host-only
+//! refusal runs on a new device the owner answered as work or school, since
+//! "yours" would wait for the owner key no install there holds.
+//!
 //! Red at the base (OPUS-SPLIT-6's carrier top 6ec8b3b708f0): the file does
 //! not compile, as neither door nor the request exists. Green at the head.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -24,9 +33,14 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
+use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::{EntityId, Error, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
+
+/// The co-Owner fixture's shared vault id.
+const SHARED: u64 = 27;
 
 fn hosted_config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -36,6 +50,25 @@ fn hosted_config() -> VaultConfig {
 
 fn owner_act(proof: &AuthenticatedOwner) -> ActAuthority {
     ActAuthority::Owner(proof.clone(), ActSurface::ThisInstall)
+}
+
+fn person_proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
+    vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("an owner proof")
+}
+
+/// The request `vault`'s door makes for its own key as `authority`'s owner.
+fn request_on(vault: &Vault, authority: &ActAuthority) -> OwnerKeyVouchRequest {
+    match vault
+        .device_owner_key_vouch_request(authority, "Laptop")
+        .expect("the install makes its key's request")
+    {
+        DeviceOwnerKeyVouch::Request(request) => request,
+        DeviceOwnerKeyVouch::Enrolled(receipt) => {
+            panic!("the install's key is not enrolled yet: {receipt:?}")
+        }
+    }
 }
 
 /// The owner's device: an install of a hosted vault rooted under the test
@@ -114,8 +147,8 @@ impl OwnerDevice {
 }
 
 /// The new device: its own install of the vault, enrolled as the owner's
-/// machine by the owner device, holding no owner key. It takes the vault's
-/// authority history from the owner device, as sync does.
+/// machine ("yours") by the owner device, holding no owner key. It takes the
+/// vault's authority history from the owner device, as sync does.
 struct NewDevice {
     vault: Vault,
     machine: EntityId,
@@ -124,6 +157,11 @@ struct NewDevice {
 }
 
 fn new_device(owner: &OwnerDevice) -> NewDevice {
+    new_device_as(owner, MachineRole::Owned(MachineOwnership::Yours))
+}
+
+/// [`new_device`], the owner device answering the new machine as `role`.
+fn new_device_as(owner: &OwnerDevice, role: MachineRole) -> NewDevice {
     let dir = tempfile::tempdir().expect("vault directory");
     let vault = Vault::open(dir.path(), hosted_config()).expect("the new device's install");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
@@ -135,13 +173,7 @@ fn new_device(owner: &OwnerDevice) -> NewDevice {
         .expect("the new device's enrolment request");
     let landing = owner
         .vault
-        .enroll_machine(
-            &owner.proof,
-            ActSurface::ThisInstall,
-            &request,
-            MachineRole::Owned(MachineOwnership::Yours),
-            None,
-        )
+        .enroll_machine(&owner.proof, ActSurface::ThisInstall, &request, role, None)
         .expect("the owner enrols the new device as his");
     assert!(
         matches!(landing, MachineAnswerLanding::Stands(_)),
@@ -191,15 +223,7 @@ impl NewDevice {
     }
 
     fn request(&self) -> OwnerKeyVouchRequest {
-        match self
-            .vouch_request("Laptop")
-            .expect("the new device makes its key's request")
-        {
-            DeviceOwnerKeyVouch::Request(request) => request,
-            DeviceOwnerKeyVouch::Enrolled(receipt) => {
-                panic!("the new device's key is not enrolled yet: {receipt:?}")
-            }
-        }
+        request_on(&self.vault, &owner_act(&self.proof()))
     }
 }
 
@@ -317,14 +341,17 @@ fn a_second_vouch_of_the_same_request_answers_the_first_receipt() {
 }
 
 /// An install that holds only the host's custodial root holds no key the
-/// hosted vault trusts as the owner's, so it vouches for nothing.
+/// hosted vault trusts as the owner's, so it vouches for nothing. The new
+/// device is the owner's work or school machine: answering it "yours" would
+/// wait for an owner key's proof, which no install of this vault holds (Sol
+/// F8).
 #[test]
 fn an_install_that_holds_no_owner_key_vouches_for_nothing() {
     let owner = owner_device(false);
     owner
         .vault
         .hold_checkpoint_root_signer(owner.issuer.clone());
-    let device = new_device(&owner);
+    let device = new_device_as(&owner, MachineRole::Owned(MachineOwnership::WorkSchool));
     let request = device.request();
     let rows = owner.history().len();
     let refused = owner
@@ -341,8 +368,9 @@ fn an_install_that_holds_no_owner_key_vouches_for_nothing() {
     assert_eq!(owner.history().len(), rows, "nothing was written");
 }
 
-/// A request for another vault, or whose proof is not the key's own, is
-/// refused before anything is written.
+/// A request for another vault, whose proof is not the key's own, or that
+/// the install key of the machine it names did not sign, is refused before
+/// anything is written.
 #[test]
 fn a_request_for_another_vault_or_with_a_forged_proof_is_refused() {
     let owner = owner_device(true);
@@ -354,7 +382,13 @@ fn a_request_for_another_vault_or_with_a_forged_proof_is_refused() {
     other_vault.vault_id[0] ^= 1;
     let mut forged = request.clone();
     forged.proof[0] ^= 1;
-    for (case, bad) in [("another vault", other_vault), ("a forged proof", forged)] {
+    let mut forged_machine = request.clone();
+    forged_machine.machine_proof[0] ^= 1;
+    for (case, bad) in [
+        ("another vault", other_vault),
+        ("a forged proof", forged),
+        ("a forged machine proof", forged_machine),
+    ] {
         let refused = owner.vouch(&bad).expect_err(case);
         assert!(
             matches!(
@@ -383,6 +417,7 @@ fn the_request_digest_names_its_bytes_and_survives_its_text_form() {
         machine: EntityId::from_bytes([9; 16]).expect("a machine id"),
         public_key: [2; 32],
         proof: vec![3; 64],
+        machine_proof: vec![4; 64],
         label: "Laptop".to_owned(),
     };
     let text = request.to_text().expect("the request's text");
@@ -413,12 +448,169 @@ fn the_request_digest_names_its_bytes_and_survives_its_text_form() {
         OwnerKeyVouchRequest::from_bytes(&short_proof.to_bytes().unwrap()).is_err(),
         "a proof of another length is refused"
     );
-    let mut long_label = request;
+    let mut long_label = request.clone();
     long_label.label = "x".repeat(OWNER_KEY_VOUCH_LABEL_MAX + 1);
     assert!(
         OwnerKeyVouchRequest::from_bytes(&long_label.to_bytes().unwrap()).is_err(),
         "a label over its bound is refused"
     );
+    for (case, label) in [
+        ("a right-to-left override", "Lap\u{202E}pot"),
+        ("a zero-width space", "Lap\u{200B}top"),
+        ("a line separator", "Lap\u{2028}top"),
+    ] {
+        let mut hidden = request.clone();
+        hidden.label = label.to_owned();
+        assert!(
+            OwnerKeyVouchRequest::from_bytes(&hidden.to_bytes().unwrap()).is_err(),
+            "a label with {case} is refused"
+        );
+    }
+    let mut wide = request;
+    wide.label = "\u{00E9}".repeat(OWNER_KEY_VOUCH_LABEL_MAX / 2);
+    assert_eq!(
+        OwnerKeyVouchRequest::from_bytes(&wide.to_bytes().unwrap()),
+        Ok(wide.clone()),
+        "a label of exactly its bound in two-byte characters reads back"
+    );
+}
+
+/// Text or bytes longer than any request are refused before they are
+/// decoded, and so is a body that is not one flat map (Sol F3).
+#[test]
+fn a_request_past_its_bound_is_refused_before_it_is_decoded() {
+    let long_text = format!(
+        "{}{}",
+        oneiron::authority::OWNER_KEY_VOUCH_TEXT_PREFIX,
+        "A".repeat(1 << 20)
+    );
+    assert!(
+        OwnerKeyVouchRequest::from_text(&long_text).is_err(),
+        "a megabyte of text is refused"
+    );
+    let mut long_bytes = vec![0xc5, 0xff, 0xff];
+    long_bytes.resize(0xffff + 3, 0);
+    assert!(
+        OwnerKeyVouchRequest::from_bytes(&long_bytes).is_err(),
+        "a 64 KiB binary is refused"
+    );
+    let nested = [0x81, 0xa1, b'a', 0x91, 0x90];
+    assert!(
+        OwnerKeyVouchRequest::from_bytes(&nested).is_err(),
+        "a nested body is refused"
+    );
+}
+
+/// A co-owner's key never vouches a key into another owner (Sol F1): on a
+/// self-hosted shared vault whose host root holds the owner's `human`
+/// binding, a co-Owner signed in on that install holds no key of their own
+/// there, so their request for the install's key is refused and nothing is
+/// written; the owner's own request for the same key vouches.
+#[test]
+fn a_co_owners_key_never_vouches_for_another_owner() {
+    let dir = tempfile::tempdir().expect("vault directory");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::SelfHostLocal;
+    let vault = Vault::open(dir.path(), config).expect("the self-hosted install");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = Arc::new(oneiron::test_support::provision_engine_machines(&vault));
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
+        .expect("this install is the owner's machine");
+    vault.hold_checkpoint_root_signer(issuer.clone());
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    oneiron::test_support::bind_host_owner(&vault, issuer.as_ref(), owner)
+        .expect("the host root holds the owner's binding");
+    vault
+        .initialize_shared_vault(
+            &person_proof(&vault, owner),
+            SHARED,
+            None,
+            &[InitialSharedMember {
+                member_ref: owner,
+                role: Some(FederationGrantRole::Owner),
+            }],
+            1,
+        )
+        .expect("a shared vault");
+    let co_owner = EntityId::now();
+    vault
+        .put_entity(
+            &co_owner,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("a live person");
+    let owner_proof = person_proof(&vault, owner);
+    let act = vault
+        .propose_add_owner(&owner_proof, SHARED, co_owner)
+        .expect("the owner starts add_owner");
+    vault
+        .execute_completed_shared_act(&owner_proof, &act.id, Some(issuer.as_ref()))
+        .expect("add_owner runs at once");
+    let history = || {
+        vault
+            .export_signed_authority_history()
+            .expect("the install's history")
+            .len()
+    };
+    let lists = |key: [u8; 32]| {
+        vault
+            .authority_fold()
+            .expect("the fold")
+            .roster
+            .contains_key(&AuthorityKey::Ed25519(key))
+    };
+
+    let co_owner_act = owner_act(&person_proof(&vault, co_owner));
+    let theirs = request_on(&vault, &co_owner_act);
+    let rows = history();
+    let refused = vault
+        .enrol_vouched_owner_signing_key(&co_owner_act, &theirs)
+        .expect_err("the owner's host root is not the co-Owner's key");
+    assert!(
+        matches!(refused, Error::Record(RecordError::OwnerKeyRequired)),
+        "the co-Owner holds no key of their own here: {refused:?}"
+    );
+    assert!(!lists(theirs.public_key), "the key is not enrolled");
+    assert_eq!(history(), rows, "nothing was written");
+
+    let owner_authority = owner_act(&owner_proof);
+    let own = request_on(&vault, &owner_authority);
+    assert_eq!(
+        own.public_key, theirs.public_key,
+        "guard: one key in this install's slot"
+    );
+    let receipt = vault
+        .enrol_vouched_owner_signing_key(&owner_authority, &own)
+        .expect("the owner's own root vouches for the owner's request");
+    assert_eq!(receipt.public_key, own.public_key);
+    assert!(lists(own.public_key), "the owner's key is enrolled");
+}
+
+/// An install the owner never answered as theirs makes no owner key by a
+/// vouch: the hosted vault's own serving install (unanswered) asks for its
+/// key, and the request is refused before anything is written (ruling
+/// CARRIER-HOSTED-SERVER-OWNER-KEY = A; Sol F2).
+#[test]
+fn an_install_the_owner_never_answered_makes_no_owner_key() {
+    let owner = owner_device(false);
+    let request = request_on(&owner.vault, &owner_act(&owner.proof));
+    let rows = owner.history().len();
+    let refused = owner
+        .vouch(&request)
+        .expect_err("an unanswered install holds no owner key");
+    assert!(
+        matches!(refused, Error::Record(RecordError::AuthorityRefused(_))),
+        "an authority refusal: {refused:?}"
+    );
+    assert!(
+        !owner.roster_lists(request.public_key),
+        "the key is not enrolled"
+    );
+    assert_eq!(owner.history().len(), rows, "nothing was written");
 }
 
 /// The new device's door refuses a label over its bound before it makes a
