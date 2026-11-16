@@ -14,7 +14,9 @@ use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{Result, Vault};
 
-const MAX_PAGE: u32 = 1000;
+/// The most rows one sieve page carries while the owner has set no `dreamer_wake.sieve.max_page`
+/// row: that key's default. A request naming no limit, or a larger one, reads the value in force.
+pub(super) const MAX_PAGE: u32 = 1000;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_wake::sieve_doors::{
