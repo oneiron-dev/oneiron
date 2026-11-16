@@ -294,8 +294,8 @@ impl Vault {
             root_key.clone(),
             &mut sign_enrolment,
         )?;
-        let rows =
-            authority_rows_counted_since(&fold, &self.authority_view_readonly_in_txn(&txn)?)?;
+        let after = self.authority_view_readonly_in_txn(&txn)?;
+        let rows = authority_rows_counted_since(&fold, &after)?;
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
