@@ -4,8 +4,9 @@
   "input": "crate::memory::SignalExtractionResultRequest",
   "output": "Option<crate::memory::SignalExtractionResult>",
   "call": "memory.signal_extraction_result_as_owner(&memory.embedded_owner(\"vault.memory.signal_extraction.result\")?, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "host_door_session": true,
   "scope": "Read",
@@ -14,6 +15,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::SharedMemberRemoveRequest",
   "output": "crate::federation::SharedActExecutionReceipt",
   "call": "crate::task_verb::sdk::remove_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.remove\")?, None, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "member_remove",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

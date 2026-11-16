@@ -65,7 +65,11 @@ impl FanoutSurfaceSink for RecordingSink {
         Ok(format!("durable:{}", row.row_ref))
     }
 
-    fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String> {
+    fn persist_choice_receipt(
+        &mut self,
+        _choice: &FanoutApprovalChoice,
+        receipt: &ReceiptRecord,
+    ) -> Result<String> {
         self.receipts.push(receipt.clone());
         Ok(format!("receipt:{}", receipt.receipt_id))
     }

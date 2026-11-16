@@ -15,24 +15,24 @@
 //! the call is the owner's, the vault's inference policy admits its model,
 //! then its seat's ladder admits, sends and settles each rung it reaches.
 
-mod admission;
 mod artifacts_audit;
 mod authority_clock;
 mod diary;
 mod media;
 mod packs;
 mod proactivity;
+pub(in crate::api::facade) mod proofs;
 pub(in crate::api) mod support;
 mod verdict_hooks;
 mod vision;
 
-pub(super) use self::admission::*;
 pub(crate) use self::artifacts_audit::*;
 pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
 pub(crate) use self::proactivity::*;
+pub(super) use self::proofs::door_admits;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;
 
@@ -104,8 +104,10 @@ pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::hosted_import_doors::*;
 pub(crate) use super::identity_doors::*;
-// The image organ's edit door (L4-15) too.
-pub(crate) use super::image_edit_doors::vault_artifacts_image_edit;
+// The image organ's edit and preview doors (L4-15, L4-16) too.
+pub(crate) use super::image_edit_doors::{
+    vault_artifacts_image_edit, vault_artifacts_image_preview,
+};
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
@@ -183,6 +185,7 @@ pub(crate) use super::weave_admin_doors::{
 pub(crate) use super::inbox_group_doors::*;
 // The inquiry rows (INQUIRE-1 PR 5), likewise.
 pub(crate) use super::inquiry_doors::*;
+pub(crate) use super::setting_catalogue_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;

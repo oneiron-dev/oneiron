@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::RecordEraseConfirmRequest",
   "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::RecordEraseOutcome>",
   "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?)",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "erase",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

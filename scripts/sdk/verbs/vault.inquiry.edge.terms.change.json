@@ -4,14 +4,14 @@
   "input": "crate::task_verb::sdk::InquiryEdgeTermsChangeRequest",
   "output": "crate::task_verb::sdk::InquiryEdgeTermsChanged",
   "call": "crate::task_verb::sdk::change_inquiry_edge_terms_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "grant_widen",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

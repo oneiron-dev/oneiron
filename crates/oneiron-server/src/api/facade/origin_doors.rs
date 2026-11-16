@@ -326,14 +326,6 @@ fn preview_lane(auth: &CoreAuth) -> MemoryResult<()> {
     })
 }
 
-/// The check a preview row's door runs before its pre chain
-/// (`door_admits`): the lane guard, then a credential that binds a
-/// principal. A host root alone binds none. Its Grant is the engine's.
-pub(super) fn preview_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
-    preview_lane(auth)?;
-    super::owner_binding::facade_caller_or(server, auth, || not_a_previewer(verb)).map(drop)
-}
-
 /// One preview door: the caller bound from its own credential, the
 /// owner's proof when it carries one, and `act` run on that credential's
 /// own lane.
@@ -400,11 +392,6 @@ pub(crate) async fn vault_code_export_preview_read(
         move |memory, proof| memory.code_export_preview_read_as(proof, input),
     )
     .await
-}
-
-/// The holder door binds its actual credential, never an owner or a run.
-pub(super) fn checkout_holder_admits(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<()> {
-    checkout_holder_caller(server, auth).map(drop)
 }
 
 fn checkout_holder_caller(

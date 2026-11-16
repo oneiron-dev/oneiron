@@ -4,14 +4,14 @@
   "input": "crate::ingest::history::HostedImportLookup",
   "output": "Option<crate::ingest::history::HostedImportView>",
   "call": "crate::ingest::history::hosted_import_get(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_holder",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "substrate_reader"
+  "openapi": true
 }

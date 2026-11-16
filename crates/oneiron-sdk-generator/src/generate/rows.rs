@@ -8,13 +8,16 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::{Generator, MCP_NONE_CONTEXTS, MCP_SCOPES, RowId, RowStore, SESSION_READS};
+use super::row_access::has_door;
+use super::{Generator, MCP_NONE_CONTEXTS, MCP_SCOPES, RowId, RowStore};
 use crate::error::GenerateError;
 use crate::facade_types::{Inventory, type_names};
 use crate::py::re::compile_fullmatch;
-use crate::py::text::{repr_str, repr_str_tuple, strip};
-use crate::py::value::{Dict, Value, set_add};
+use crate::py::text::repr_str;
+use crate::py::value::{Dict, Value};
 use crate::verb_table::load_verbs;
+
+mod sets;
 
 // The `re.fullmatch` patterns, each beside the Python one (all ASCII classes, so Python's and Rust's agree).
 /// An `outputs_by_input` field name: `[A-Za-z_][A-Za-z0-9_]*`
@@ -42,50 +45,57 @@ static ARG_NAME: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[a-z_][a
 /// A row's description: `[ -~]{1,240}\.`
 static DESCRIPTION: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[ -~]{1,240}\."));
 
-/// The keys a host projection may hold.
-const HOST_KEYS: &[&str] = &[
-    "input",
-    "output",
-    "description",
-    "host_door_caller",
-    "host_door_session",
-    "host_door_lists",
-    "host_door_precheck",
-    "host_door_proof",
-    "openapi",
+/// The proof rules of `host_doors/proofs.rs` a host-door row may name in `proof` (UC-01 PR 0a), each the snake case
+/// of its rule's type.
+pub(crate) const PROOF_RULES: &[&str] = &[
+    "owner",
+    "person",
+    "member",
+    "owner_or_holder",
+    "owner_or_caller",
+    "caller",
+    "lane_caller",
+    "owner_grade",
+    "usage_repair",
+    "off_record",
+    "off_record_room",
+    "voice_bank",
+    "booking_owner_act",
+    "packs_setup",
+    "decision_holder",
+    "hyde_caller",
+    "guest_document_reader",
+    "tradeoff_picker",
+    "artifact_publisher",
+    "model_step_caller",
+    "policy_power",
+    "ramp_power",
+    "grants_answer",
+    "credential_holder",
+    "foreign_code",
+    "verdict_asker",
+    "eval_authoring",
+    "training_run_executor",
+    "saved_query",
+    "lens_person",
 ];
-/// The host projection's flags, each a bool.
-const HOST_FLAGS: &[&str] = &[
-    "host_door_caller",
-    "host_door_session",
-    "host_door_lists",
-    "host_door_precheck",
-    "openapi",
+/// The `proof` of a door that proves its caller itself, after the row's hooks: it names no rule, and the facade
+/// checks nothing before the hooks.
+pub(crate) const IN_DOOR: &str = "in_door";
+/// The rules that admit only the owner or a person, so the dispatch refuses an agent's call before the door runs
+/// (FIX-LIST TAKES-PERSON-PROOF-MISSES-THREE-KINDS).
+pub(crate) const PERSON_RULES: &[&str] = &["owner", "person", "member"];
+/// The host-door fields UC-01 PR 0a replaced, each with what replaced it.
+const REPLACED_DOOR_FIELDS: &[(&str, &str)] = &[
+    ("host_door", "`\"proof\": <rule>` with `\"door\": \"hand\"`"),
+    (
+        "host_door_proof",
+        "`proof`, naming a rule of host_doors/proofs.rs",
+    ),
+    ("host_door_precheck", "`\"proof\": \"in_door\"`"),
+    ("host_door_lists", "`lists`"),
 ];
-/// The keys a run row may hold beside its required ones, and the required ones.
-const RUN_OPTIONAL: &[&str] = &[
-    "output",
-    "outputs_by_input",
-    "host",
-    "run_surface",
-    "grant_class",
-    "power",
-];
-/// The agent powers a run row may name as its requirement.
-const POWERS: &[&str] = &["spawn", "save_agent"];
-const RUN_REQUIRED: &[&str] = &["name", "input", "scope", "context", "effect", "act_class"];
-/// A scoped-child row's keys, `description` aside.
-const SCOPED_CHILD_KEYS: &[&str] = &[
-    "name",
-    "input",
-    "output",
-    "call",
-    "scope",
-    "act_class",
-    "context",
-    "mcp",
-    "section",
-];
+
 /// The record-scope admissions `require_granted_scope` excludes.
 const OTHER_RECORD_SCOPES: &[&str] = &[
     "owner_grade",
@@ -175,245 +185,6 @@ fn fullmatch(pattern: &Regex, value: &Value) -> Result<bool, GenerateError> {
     }
 }
 
-/// A run, browser or board row's facade-only host projection. Python evaluates the dict literal left to right, so
-/// `row['output']` is read before the host's own `output`.
-fn host_synthetic(row: &Dict) -> Result<Dict, GenerateError> {
-    let name = item(row, "name")?;
-    let mut out = Dict::new();
-    out.insert("name".into(), name.clone());
-    out.insert("input".into(), item(row, "host")?.getitem("input")?.clone());
-    let row_output = item(row, "output")?;
-    let host = item(row, "host")?;
-    out.insert(
-        "output".into(),
-        host.dict_get("output")?.unwrap_or(row_output).clone(),
-    );
-    out.insert("description".into(), host.getitem("description")?.clone());
-    out.insert("scope".into(), item(row, "scope")?.clone());
-    out.insert("act_class".into(), item(row, "act_class")?.clone());
-    let call = format!(
-        "crate::task_verb::sdk::host_only(memory, \"{}\", &input)?",
-        name.str()
-    );
-    out.insert("call".into(), Value::Str(call));
-    out.insert("host_door".into(), Value::Bool(true));
-    let host_get = |key: &str, default: bool| -> Result<Value, GenerateError> {
-        Ok(host.dict_get(key)?.cloned().unwrap_or(Value::Bool(default)))
-    };
-    out.insert(
-        "host_door_session".into(),
-        host_get("host_door_session", true)?,
-    );
-    out.insert(
-        "host_door_caller".into(),
-        host_get("host_door_caller", false)?,
-    );
-    // `row.get('context') == 'browser' or row['host'].get('host_door_lists', False)`: `or` returns an operand.
-    let lists = if is(row, "context", "browser") {
-        Value::Bool(true)
-    } else {
-        host_get("host_door_lists", false)?
-    };
-    out.insert("host_door_lists".into(), lists);
-    out.insert(
-        "host_door_precheck".into(),
-        host_get("host_door_precheck", true)?,
-    );
-    if host.contains_str("host_door_proof")? {
-        out.insert(
-            "host_door_proof".into(),
-            host.getitem("host_door_proof")?.clone(),
-        );
-    }
-    out.insert("openapi".into(), host_get("openapi", false)?);
-    let mut admission = Dict::new();
-    admission.insert("unrestricted_record_scope".into(), Value::Bool(true));
-    out.insert("admission".into(), Value::Dict(admission));
-    out.insert("section".into(), Value::Bool(false));
-    Ok(out)
-}
-
-/// A host projection names the public input and description, with optional flags.
-fn check_host(row: &Dict) -> Result<(), GenerateError> {
-    let host = item(row, "host")?;
-    let context = row.get("context");
-    let in_set = |set: &[Value], text: &str| set.iter().any(|item| item.is_str(text));
-    let bad = !context.is_some_and(|c| ["run", "browser", "board"].iter().any(|k| c.is_str(k)))
-        || {
-            let keys = host.to_set()?;
-            !(in_set(&keys, "input") && in_set(&keys, "description"))
-        }
-        || host
-            .to_set()?
-            .iter()
-            .any(|key| !key.as_str().is_some_and(|key| HOST_KEYS.contains(&key)))
-        || (host.contains_str("output")? && !context.is_some_and(|c| c.is_str("board")))
-        || {
-            let mut not_bool = false;
-            for key in HOST_FLAGS {
-                if host.contains_str(key)? && !matches!(host.getitem(key)?, Value::Bool(_)) {
-                    not_bool = true;
-                    break;
-                }
-            }
-            not_bool
-        };
-    if bad {
-        return Err(refuse(
-            row,
-            "a host projection names the public input and description, with optional caller, session, lists, \
-             pre-check and OpenAPI flags",
-        ));
-    }
-    Ok(())
-}
-
-/// The role fields (custody, overlay_write, session_read, run_surface).
-fn check_metadata(row: &Dict) -> Result<(), GenerateError> {
-    if let Some(custody) = row.get("custody")
-        && (!is(row, "scope", "Write") || !matches!(custody, Value::Str(_)))
-    {
-        return Err(refuse(
-            row,
-            "`custody` names the input member of a Write row",
-        ));
-    }
-    if let Some(overlay_write) = row.get("overlay_write")
-        && (!overlay_write.is_true() || !is(row, "scope", "Write"))
-    {
-        return Err(refuse(row, "`overlay_write` is `true` on a Write row"));
-    }
-    if let Some(session_read) = row.get("session_read")
-        && (!SESSION_READS.iter().any(|read| session_read.is_str(read))
-            || !is(row, "scope", "Read"))
-    {
-        let message = format!(
-            "`session_read` is one of {} on a Read row",
-            repr_str_tuple(SESSION_READS)
-        );
-        return Err(refuse(row, &message));
-    }
-    if let Some(run_surface) = row.get("run_surface")
-        && (!(run_surface.is_str("memory") || run_surface.is_str("live"))
-            || !is(row, "context", "run"))
-    {
-        return Err(refuse(
-            row,
-            "`run_surface` is `memory` or `live` on a run row",
-        ));
-    }
-    Ok(())
-}
-
-/// A run row's key set.
-fn check_run_row(row: &Dict) -> Result<(), GenerateError> {
-    let keys: BTreeSet<&str> = row
-        .keys()
-        .map(String::as_str)
-        .filter(|key| !RUN_OPTIONAL.contains(key))
-        .collect();
-    if !keys_are(&keys, RUN_REQUIRED) || !item_in(row, "scope", &["Read", "Write"])? {
-        return Err(refuse(
-            row,
-            "a run row names its input, scope, act class, effect, output, per-input outputs, run surface and grant class, and nothing \
-             else",
-        ));
-    }
-    Ok(())
-}
-
-/// A run row's `grant_class` names the authority rule its writer applies (`vault.agents.put`: the author's slice,
-/// ARCH-0053:20). Code mode shows it as the method's JSDoc. It describes the writer's own check; nothing reads it as a
-/// second one. Every run row's key set is checked before any grant class.
-fn check_grant_class(row: &Dict) -> Result<(), GenerateError> {
-    let Some(grant_class) = row.get("grant_class") else {
-        return Ok(());
-    };
-    let phrase = grant_class.as_str().is_some_and(|text| {
-        GRANT_CLASS.is_match(text)
-            && strip(text) == text
-            && !["\\", "\"", "*/"]
-                .into_iter()
-                .any(|mark| text.contains(mark))
-    });
-    if !phrase {
-        return Err(refuse(
-            row,
-            "a grant class is one printable ASCII phrase, with no backslash, double quote or `*/`",
-        ));
-    }
-    Ok(())
-}
-
-/// A run row's `power` names the agent power its writer checks before the act (`spawn` for the two spawn spellings,
-/// `save_agent` for `vault.agents.put`). Like the grant class it describes the writer's own check; nothing reads it as
-/// a second one.
-fn check_power(row: &Dict) -> Result<(), GenerateError> {
-    let Some(power) = row.get("power") else {
-        return Ok(());
-    };
-    if !power.as_str().is_some_and(|text| POWERS.contains(&text)) {
-        return Err(refuse(row, "a power is `spawn` or `save_agent`"));
-    }
-    Ok(())
-}
-
-/// `outputs_by_input` maps input field names to non-empty output types.
-fn check_outputs_by_input(row: &Dict) -> Result<(), GenerateError> {
-    let Some(by_input) = row.get("outputs_by_input") else {
-        return Ok(());
-    };
-    let valid = |dict: &Dict| {
-        dict.iter().all(|(field, output)| {
-            FIELD_NAME.is_match(field)
-                && output
-                    .as_str()
-                    .is_some_and(|output| !strip(output).is_empty())
-        })
-    };
-    if !row.contains_key("output")
-        || !by_input
-            .as_dict()
-            .is_some_and(|dict| !dict.is_empty() && valid(dict))
-    {
-        return Err(refuse(
-            row,
-            "outputs_by_input maps input field names to non-empty output types, beside the row's own output",
-        ));
-    }
-    Ok(())
-}
-
-/// A scoped-child row's shape.
-fn check_scoped_child(row: &Dict) -> Result<(), GenerateError> {
-    if !is(row, "context", "scoped_child") {
-        return Ok(());
-    }
-    let keys: BTreeSet<&str> = row
-        .keys()
-        .map(String::as_str)
-        .filter(|&key| key != "description")
-        .collect();
-    let bad = !keys_are(&keys, SCOPED_CHILD_KEYS)
-        || !item_in(row, "scope", &["Read", "Write"])?
-        || item(row, "section")?.truthy()
-        || {
-            let call = format!(
-                "crate::task_verb::sdk::host_only(memory, \"{}\", &input)?",
-                item(row, "name")?.str()
-            );
-            !item(row, "call")?.is_str(&call)
-        };
-    if bad {
-        return Err(refuse(
-            row,
-            "a scoped-child row names its input, output, scope, act class and description, calls the host-only refusal, and \
-             nothing else",
-        ));
-    }
-    Ok(())
-}
-
 /// The row's MCP scope and fields, after their defaults.
 fn check_mcp(row: &Dict) -> Result<(), GenerateError> {
     let scope = item(row, "mcp_scope")?;
@@ -447,7 +218,35 @@ fn check_doors(row: &Dict) -> Result<(), GenerateError> {
     if flag(row, "lands_turn") && is(row, "context", "board") {
         return Err(refuse(row, "a board verb lands no turn"));
     }
-    let host_door = flag(row, "host_door");
+    for &(field, now) in REPLACED_DOOR_FIELDS {
+        if row.contains_key(field) {
+            return Err(refuse(
+                row,
+                &format!(
+                    "`{field}` is now {now} (UC-01 PR 0a; scripts/refactor/tools/door_rule_rows.py rewrites the row)"
+                ),
+            ));
+        }
+    }
+    let host_door = has_door(row);
+    if let Some(proof) = row.get("proof")
+        && !proof
+            .as_str()
+            .is_some_and(|rule| rule == IN_DOOR || PROOF_RULES.contains(&rule))
+    {
+        return Err(refuse(
+            row,
+            "`proof` names a rule of host_doors/proofs.rs, or `in_door`",
+        ));
+    }
+    if row.get("door").is_some_and(|door| !door.is_str("hand"))
+        || host_door != row.contains_key("door")
+    {
+        return Err(refuse(
+            row,
+            "a host door's row says \"door\": \"hand\" (its door fn is hand-written), and only a host door's",
+        ));
+    }
     if host_door
         && (flag(row, "server_door") || admission_flag(row, "owner_grade")? || not_memory(row))
     {
@@ -459,20 +258,11 @@ fn check_doors(row: &Dict) -> Result<(), GenerateError> {
     for (key, message) in [
         ("host_door_caller", "only a host door takes its caller"),
         ("host_door_session", "only a host door takes its session"),
-        ("host_door_lists", "only a host door lists its rows"),
+        ("lists", "only a host door lists its rows"),
     ] {
         if flag(row, key) && !host_door {
             return Err(refuse(row, message));
         }
-    }
-    if let Some(precheck) = row.get("host_door_precheck")
-        && !precheck.is_true()
-        && (!precheck.is_false() || !host_door)
-    {
-        return Err(refuse(
-            row,
-            "host_door_precheck is only a host door's, and only false",
-        ));
     }
     for (key, message) in [
         ("host_door_paced", "only a host door takes a paced context"),
@@ -547,8 +337,7 @@ fn check_admission(row: &Dict) -> Result<(), GenerateError> {
     if admission_get("require_granted_scope")?
         && (!admission_get("lane_record_scope")?
             || is(row, "scope", "Read")
-            || (flag(row, "host_door")
-                && !(flag(row, "host_door_caller") || flag(row, "host_door_lists")))
+            || (has_door(row) && !(flag(row, "host_door_caller") || flag(row, "lists")))
             || not_memory(row)
             || {
                 let mut any = false;
@@ -570,7 +359,7 @@ fn check_admission(row: &Dict) -> Result<(), GenerateError> {
     if flag(row, "mcp_off_runtime")
         && (flag(row, "task_decisions")
             || flag(row, "task_work")
-            || flag(row, "host_door")
+            || has_door(row)
             || flag(row, "server_door")
             || not_memory(row)
             || admission_flag(row, "owner_grade")?)
@@ -600,7 +389,7 @@ fn check_refs(row: &Dict) -> Result<(), GenerateError> {
         return Ok(());
     };
     if not_memory(row)
-        || flag(row, "host_door")
+        || has_door(row)
         || flag(row, "server_door")
         || admission_flag(row, "owner_grade")?
     {
@@ -625,7 +414,7 @@ fn check_file_call(row: &Dict) -> Result<(), GenerateError> {
     };
     if !matches!(file_call, Value::Str(_))
         || not_memory(row)
-        || flag(row, "host_door")
+        || has_door(row)
         || flag(row, "server_door")
         || row.contains_key("prose_links")
         || !file_call.contains_str("body")?
@@ -663,7 +452,7 @@ fn check_prose_links(row: &Dict) -> Result<(), GenerateError> {
         return Ok(());
     };
     if not_memory(row)
-        || flag(row, "host_door")
+        || has_door(row)
         || flag(row, "server_door")
         || admission_flag(row, "owner_grade")?
     {
@@ -863,115 +652,6 @@ impl Generator {
         Ok(generator)
     }
 
-    /// The host sets, then each host projection's shape.
-    fn host_sets(&mut self) -> Result<(), GenerateError> {
-        let rows = &self.rows;
-        self.host_rows = filter(rows, &self.manifest, |row| row.contains_key("host"));
-        self.host_run_rows = filter(rows, &self.host_rows, |row| is(row, "context", "run"));
-        self.host_browser_rows = filter(rows, &self.host_rows, |row| is(row, "context", "browser"));
-        self.host_board_rows = filter(rows, &self.host_rows, |row| is(row, "context", "board"));
-        self.browser_rows = filter(rows, &self.manifest, |row| is(row, "context", "browser"));
-        for &id in &self.host_rows {
-            check_host(&self.rows[id])?;
-        }
-        Ok(())
-    }
-
-    /// ROWS, BOARD_HOST_ROWS, BOARD_HOST_NAMES, DEFINITIONS, the duplicate check and RUN_ROWS.
-    fn callable_sets(&mut self) -> Result<(), GenerateError> {
-        // `row not in HOST_BROWSER_ROWS` compares rows by value in Python. A manifest row equal to a host-browser
-        // row holds `host` and `context: "browser"` itself, so it is one of them: comparing ids is the same test.
-        let mut callable: Vec<RowId> = self
-            .manifest
-            .iter()
-            .copied()
-            .filter(|id| {
-                self.rows[*id].contains_key("call") && !self.host_browser_rows.contains(id)
-            })
-            .collect();
-        for id in self.host_rows.clone() {
-            if !is(&self.rows[id], "context", "board") {
-                let synthetic = host_synthetic(&self.rows[id])?;
-                callable.push(self.rows.push(synthetic));
-            }
-        }
-        self.callable_rows = callable;
-        for id in self.host_board_rows.clone() {
-            // `dict(host_synthetic(row), board_host=True, board_input=row['input'])`
-            let mut synthetic = host_synthetic(&self.rows[id])?;
-            let input = item(&self.rows[id], "input")?.clone();
-            synthetic.insert("board_host".into(), Value::Bool(true));
-            synthetic.insert("board_input".into(), input);
-            let synthetic = self.rows.push(synthetic);
-            self.board_host_rows.push(synthetic);
-        }
-        let mut names = Vec::new();
-        for &id in &self.board_host_rows {
-            set_add(&mut names, item(&self.rows[id], "name")?.clone())?;
-        }
-        self.board_host_names = names;
-        self.definitions = filter(&self.rows, &self.manifest, |row| {
-            !row.contains_key("call") && !row.contains_key("host")
-        });
-        let mut names = Vec::new();
-        for &id in &self.manifest {
-            set_add(&mut names, item(&self.rows[id], "name")?.clone())?;
-        }
-        if names.len() != self.manifest.len() {
-            return Err(GenerateError::value("duplicate SDK verb"));
-        }
-        self.run_rows = filter(&self.rows, &self.manifest, |row| is(row, "context", "run"));
-        Ok(())
-    }
-
-    /// The role fields, CODE_MODE_ROWS and SCHEMA_ROWS, the run rows' shape, `outputs_by_input` and the scoped-child
-    /// rows.
-    fn checked_sets(&mut self) -> Result<(), GenerateError> {
-        for &id in &self.manifest {
-            check_metadata(&self.rows[id])?;
-        }
-        // Python makes the set of host names again for each row.
-        let mut host_names = Vec::new();
-        for &id in &self.host_rows {
-            host_names.push(item(&self.rows[id], "name")?.clone());
-        }
-        let mut code_mode = Vec::new();
-        for &id in &self.callable_rows {
-            let name = item(&self.rows[id], "name")?;
-            if !host_names
-                .iter()
-                .any(|host_name| same_name(name, host_name))
-            {
-                code_mode.push(id);
-            }
-        }
-        code_mode.extend(&self.host_browser_rows);
-        code_mode.extend(&self.host_board_rows);
-        code_mode.extend(&self.run_rows);
-        self.code_mode_rows = code_mode;
-        let hostless_runs = filter(&self.rows, &self.run_rows, |row| !row.contains_key("host"));
-        self.schema_rows = self
-            .callable_rows
-            .iter()
-            .copied()
-            .chain(hostless_runs)
-            .collect();
-        for &id in &self.run_rows {
-            check_run_row(&self.rows[id])?;
-        }
-        for &id in &self.run_rows {
-            check_grant_class(&self.rows[id])?;
-            check_power(&self.rows[id])?;
-        }
-        for &id in &self.manifest {
-            check_outputs_by_input(&self.rows[id])?;
-        }
-        for &id in &self.manifest {
-            check_scoped_child(&self.rows[id])?;
-        }
-        Ok(())
-    }
-
     /// Each callable row's MCP shape (with its two defaults), door flags and admission, then the record refs, file
     /// calls, readable paths and prose links, loop by loop.
     fn check_callable_rows(&mut self) -> Result<(), GenerateError> {
@@ -1033,278 +713,4 @@ impl Generator {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::path::PathBuf;
-
-    /// A scratch tree whose verb table is `files`.
-    fn tree(name: &str, files: &[(&str, &str)]) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "oneiron-sdk-generator-rows-{name}-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let verbs = root.join("scripts/sdk/verbs");
-        fs::create_dir_all(&verbs).expect("a scratch tree");
-        // The `facade_types` import reads it before any verb file.
-        fs::write(root.join("scripts/sdk/type_names.json"), "{}\n").expect("type_names.json");
-        for (file, text) in files {
-            fs::write(verbs.join(file), text).expect("a verb file");
-        }
-        root
-    }
-
-    const BASE: &str = r#""name": "zz_fixture", "input": "ZzInput", "output": "ZzOutput", "call": "zz_call(memory, &input)?", "scope": "Read", "act_class": "unstated", "section": false"#;
-
-    // Each expected line: the last stderr line of the Python generator's module level (Python 3.14.7 on nelly) over
-    // a tree whose only verb file is the row.
-    #[test]
-    fn refusals_match_python() {
-        let cases: &[(&str, &str)] = &[
-            (
-                r#""host": {"input": "X"}, "context": "run""#,
-                "ValueError: zz_fixture: a host projection names the public input and description, with optional caller, session, lists, pre-check and OpenAPI flags",
-            ),
-            (
-                r#""session_read": "Nope""#,
-                "ValueError: zz_fixture: `session_read` is one of ('Get', 'Hydrate', 'RefsResolve', 'SearchBm25', 'Receipts') on a Read row",
-            ),
-            (
-                r#""overlay_write": 1, "scope": "Write""#,
-                "ValueError: zz_fixture: `overlay_write` is `true` on a Write row",
-            ),
-            (
-                r#""mcp_scope": "nope""#,
-                "ValueError: zz_fixture: mcp_scope must be one of ['addressed', 'born', 'filtered', 'unrestricted']",
-            ),
-            (
-                r#""mcp": "none""#,
-                "ValueError: zz_fixture: only a browser or scoped-child row states \"mcp\": \"none\", and every such row does",
-            ),
-            (
-                r#""host_door": true, "host_door_precheck": 0"#,
-                "ValueError: zz_fixture: host_door_precheck is only a host door's, and only false",
-            ),
-            (
-                r#""admission": {"require_granted_scope": true}"#,
-                "ValueError: zz_fixture: require_granted_scope is only a non-Read lane_record_scope facade row's, with no other record-scope admission, and on a host door only a caller or listing one",
-            ),
-            (
-                r#""refs": "/a""#,
-                "ValueError: zz_fixture: refs are distinct JSON pointers of field names and `*`",
-            ),
-            (
-                r#""binding": {"generic": true, "args": [{"name": "a", "type": "Wrong", "field": "$"}]}"#,
-                "ValueError: zz_fixture: a whole-input parameter is the row's only one, typed as its input",
-            ),
-            (
-                r#""description": "no period""#,
-                "ValueError: zz_fixture: a description is one printable ASCII line of a callable row, ending in a period, with no backslash, double quote or `*/`",
-            ),
-            (
-                r#""admission": [1]"#,
-                "AttributeError: 'list' object has no attribute 'get'",
-            ),
-            (
-                r#""mcp_fields": {"a": 1}"#,
-                "TypeError: argument of type 'int' is not a container or iterable",
-            ),
-            (
-                r#""admission": {"readable": [1]}"#,
-                "TypeError: expected string or bytes-like object, got 'int'",
-            ),
-            (
-                r#""mcp_scope": ["filtered"]"#,
-                "TypeError: cannot use 'list' as a set element (unhashable type: 'list')",
-            ),
-        ];
-        for (at, (fields, expected)) in cases.iter().enumerate() {
-            let root = tree(
-                &format!("refusal-{at}"),
-                &[("zz_fixture.json", &format!("{{{BASE}, {fields}}}"))],
-            );
-            let got =
-                Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
-            assert_eq!(got, *expected, "{fields}");
-            fs::remove_dir_all(&root).expect("cleanup");
-        }
-        let root = tree(
-            "duplicate",
-            &[
-                ("1.json", &BASE.replace(r#""zz_fixture""#, "1")),
-                ("1.0.json", &BASE.replace(r#""zz_fixture""#, "1.0")),
-            ],
-        );
-        for file in ["1.json", "1.0.json"] {
-            let path = root.join("scripts/sdk/verbs").join(file);
-            let text = fs::read_to_string(&path).expect("a verb file");
-            fs::write(&path, format!("{{{text}}}")).expect("a verb file");
-        }
-        let error = Generator::new(&root)
-            .map(drop)
-            .expect_err("1 == 1.0")
-            .to_string();
-        assert_eq!(error, "ValueError: duplicate SDK verb");
-        fs::remove_dir_all(&root).expect("cleanup");
-    }
-
-    #[test]
-    fn grant_class_refusals_match_python() {
-        // The expected lines are the ones the Python generator printed for the same rows, through both halves of the
-        // port harness on G5 with main 30deae1a20e merged, before this change removed it.
-        const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
-        let phrase = "ValueError: zz_run: a grant class is one printable ASCII phrase, with no backslash, double quote \
-                      or `*/`";
-        let keys = "ValueError: zz_run: a run row names its input, scope, act class, effect, output, per-input outputs, run surface \
-                    and grant class, and nothing else";
-        let longest = format!(r#""grant_class": "{}""#, "x".repeat(120));
-        let too_long = format!(r#""grant_class": "{}""#, "x".repeat(121));
-        let cases: &[(&str, &str)] = &[
-            (r#""grant_class": "author's slice (ARCH-0053:20)""#, ""),
-            (r#""grant_class": "a/b * c /* d""#, ""),
-            (longest.as_str(), ""),
-            (r#""grant_class": 1"#, phrase),
-            (r#""grant_class": null"#, phrase),
-            (r#""grant_class": """#, phrase),
-            (r#""grant_class": " padded""#, phrase),
-            (r#""grant_class": "padded ""#, phrase),
-            (r#""grant_class": "a \"quoted\" phrase""#, phrase),
-            (r#""grant_class": "back\\slash""#, phrase),
-            (r#""grant_class": "ends */ here""#, phrase),
-            (r#""grant_class": "caf\u00e9""#, phrase),
-            (r#""grant_class": "tab\there""#, phrase),
-            (too_long.as_str(), phrase),
-            (r#""grant_class": "x", "nope": 1"#, keys),
-        ];
-        for (fields, expected) in cases {
-            let root = tree(
-                "grant-class",
-                &[
-                    ("zz_fixture.json", &format!("{{{BASE}}}")),
-                    ("zz_run.json", &format!("{{{RUN}, {fields}}}")),
-                ],
-            );
-            let got =
-                Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
-            assert_eq!(got, *expected, "{fields}");
-            fs::remove_dir_all(&root).expect("cleanup");
-        }
-        // Every run row's key set is checked before any run row's grant class: zz_a's bad grant class comes first in
-        // the verb table, yet zz_run's extra key is the refusal.
-        let root = tree(
-            "grant-class-order",
-            &[
-                ("zz_fixture.json", &format!("{{{BASE}}}")),
-                (
-                    "zz_a.json",
-                    &format!("{{{}, \"grant_class\": 1}}", RUN.replace("zz_run", "zz_a")),
-                ),
-                ("zz_run.json", &format!("{{{RUN}, \"nope\": 1}}")),
-            ],
-        );
-        let got = Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
-        assert_eq!(got, keys);
-        fs::remove_dir_all(&root).expect("cleanup");
-    }
-
-    #[test]
-    fn power_is_spawn_or_save_agent() {
-        const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
-        let refused = "ValueError: zz_run: a power is `spawn` or `save_agent`";
-        let cases: &[(&str, &str)] = &[
-            (r#""power": "spawn""#, ""),
-            (r#""power": "save_agent""#, ""),
-            (r#""grant_class": "parent's slice", "power": "spawn""#, ""),
-            (r#""power": "Spawn""#, refused),
-            (r#""power": "spawn ""#, refused),
-            (r#""power": "launch""#, refused),
-            (r#""power": 1"#, refused),
-            (r#""power": null"#, refused),
-            (r#""power": ["spawn"]"#, refused),
-        ];
-        for (fields, expected) in cases {
-            let root = tree(
-                "power",
-                &[
-                    ("zz_fixture.json", &format!("{{{BASE}}}")),
-                    ("zz_run.json", &format!("{{{RUN}, {fields}}}")),
-                ],
-            );
-            let got =
-                Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
-            assert_eq!(got, *expected, "{fields}");
-            fs::remove_dir_all(&root).expect("cleanup");
-        }
-    }
-
-    #[test]
-    fn type_names_is_read_before_the_verbs() {
-        // The `facade_types` import reads type_names.json before load_verbs: with both broken, the Python generator
-        // stops on type_names.json, and so does the module level with or without the type inventory.
-        let root = tree("type-names-first", &[("zz_fixture.json", "{")]);
-        fs::write(root.join("scripts/sdk/type_names.json"), "{\n").expect("type_names.json");
-        let expected = "json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column \
-                        1 (char 2)";
-        for got in [
-            Generator::new(&root).map(drop),
-            Generator::rows_only(&root).map(drop),
-        ] {
-            assert_eq!(
-                got.expect_err("type_names.json is broken").to_string(),
-                expected
-            );
-        }
-        fs::remove_dir_all(&root).expect("cleanup");
-    }
-
-    #[test]
-    fn sets_share_rows_and_bindings_move() {
-        let host = r#""context": "board", "scope": "Write", "host": {"input": "HostIn", "description": "D."}"#;
-        let generic = r#""handle_args": "old", "binding": {"generic": true, "args": [{"name": "text", "type": "String"}]}"#;
-        let root = tree(
-            "sets",
-            &[
-                (
-                    "a.json",
-                    &format!("{{{}, {host}}}", BASE.replace("zz_fixture", "a")),
-                ),
-                (
-                    "b.json",
-                    &format!("{{{}, {generic}}}", BASE.replace("zz_fixture", "b")),
-                ),
-            ],
-        );
-        let generator = Generator::new(&root).expect("valid rows");
-        assert_eq!(generator.manifest, [RowId(0), RowId(1)]);
-        assert_eq!(generator.board_host_rows, [RowId(2)]);
-        assert_eq!(generator.callable_rows, [RowId(0), RowId(1)]);
-        assert_eq!(generator.facade_rows, [RowId(1), RowId(2)]);
-        assert_eq!(generator.code_mode_rows, [RowId(1), RowId(0)]);
-        let board = &generator.rows[RowId(2)];
-        let keys: Vec<&str> = board.keys().map(String::as_str).collect();
-        assert_eq!(keys.last(), Some(&"board_input"));
-        assert!(board["act_class"].is_str("unstated"));
-        assert!(board["call"].is_str("crate::task_verb::sdk::host_only(memory, \"a\", &input)?"));
-        // The setdefault defaults land on the shared row; the binding moves to `handle_args`, which keeps its place.
-        let b = &generator.rows[RowId(1)];
-        assert!(b["mcp_scope"].is_str("unrestricted"));
-        let keys: Vec<&str> = b.keys().map(String::as_str).collect();
-        assert_eq!(
-            keys,
-            [
-                "name",
-                "input",
-                "output",
-                "call",
-                "scope",
-                "act_class",
-                "section",
-                "handle_args",
-                "mcp_fields",
-                "mcp_scope"
-            ]
-        );
-        fs::remove_dir_all(&root).expect("cleanup");
-    }
-}
+mod tests;

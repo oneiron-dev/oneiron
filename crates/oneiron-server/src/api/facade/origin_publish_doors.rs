@@ -26,12 +26,6 @@ fn not_a_publisher(verb: &str) -> MemoryError {
     )
 }
 
-/// The check a publish row's door runs before its pre chain (`door_admits`):
-/// a credential that binds a principal. Its Grant is the engine's to judge.
-pub(super) fn publish_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
-    super::owner_binding::facade_caller_or(server, auth, || not_a_publisher(verb)).map(drop)
-}
-
 async fn as_publisher<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
