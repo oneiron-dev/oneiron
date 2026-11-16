@@ -123,6 +123,13 @@ pub(super) fn project_once(
                 device.revoked = true;
             }
         }
+        if !state
+            .roster
+            .values()
+            .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
+        {
+            issues.push(AuthorityFoldIssue::NoRootKey);
+        }
     }
     let machines = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         super::machine_claims::folded_machines(state, unsettled)
@@ -295,6 +302,9 @@ pub(super) fn project_once(
         home_candidacy: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::home_candidacy::folded_home_candidacies(state)
         }),
+        full_copy_mark: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            super::full_copy_mark::folded_full_copy_marks(state)
+        }),
         owner_work: merged.as_ref().map_or_else(Default::default, |state| {
             super::owner_work::folded_owner_work(state, context.pin, context.machine_standing)
         }),
@@ -305,6 +315,9 @@ pub(super) fn project_once(
         refused_world_keys: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_world_keys.clone()),
+        verified_device_revocations: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            revoke_facts.device_revocations(state.vault_id)
+        }),
         counted_ancestor_pairs,
         issues,
     };

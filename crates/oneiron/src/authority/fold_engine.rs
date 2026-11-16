@@ -60,8 +60,14 @@ pub(super) struct FoldContext<'a> {
     /// The bytes this fold may project to hold at its peak.
     pub(super) memory_floor_bytes: u64,
     /// This install's pin on a fold of its own vault's log: which world-key
-    /// records count here. It decides no entry's validity.
+    /// records count here. The pin decides no entry's validity; it decides
+    /// which valid root appointment counts.
     pub(super) pin: Option<&'a PinnedRoot>,
+    /// The verdicts of the root appointments this fold holds, which their
+    /// refusals carry, and the world the counted ones recover
+    /// (`root_appointment_judge`). None on a fold that judges none (an
+    /// appointment is then `Unjudged`).
+    pub(super) appointments: Option<&'a super::root_appointment_judge::AppointmentJudgement>,
 }
 
 impl FoldContext<'_> {
@@ -360,9 +366,16 @@ pub(super) fn fold_authority_log_once(
     };
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
+    // Root appointments are judged before any entry folds: only the pinned
+    // anchor's, each over its own ancestry (`root_appointment_judge`).
+    let appointments = super::root_appointment_judge::judge_appointments(&by_hash, context.pin);
+    if let Some(anchor) = appointments.burned {
+        issues.push(AuthorityFoldIssue::AnchorBurned { anchor });
+    }
     let context = FoldContext {
         sequence_floors: causal_floors.as_ref(),
         entry_ancestors: Some(&entry_ancestors),
+        appointments: Some(&appointments),
         ..context
     };
 
@@ -372,15 +385,17 @@ pub(super) fn fold_authority_log_once(
     let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
 
     // A handoff's predecessor stays retired on every branch, not only its own.
-    // Fences close before concurrent confirmations contend, so a retired
-    // key's confirmation never prunes the new root's rows.
+    // Concurrent federation confirmations that share an id or a nonce all stay
+    // valid as spent evidence: no hash order picks a loser, so no signer's
+    // confirmation drops another signer's rows (RULING
+    // COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39).
     let retirements = super::retired_signers::settle_handoffs(
         &mut states,
         &by_hash,
         &entry_ancestors,
         handoffs,
+        &appointments.recovered,
         &mut issues,
-        |states, present| federation_confirm_losers(states, &by_hash, present),
     );
     super::world_refold::refold_world_edits(
         &mut states,
@@ -388,6 +403,7 @@ pub(super) fn fold_authority_log_once(
         &entry_ancestors,
         context,
         &mut issues,
+        |hash| retirements.fences_signer_of(hash, &by_hash),
     );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
@@ -448,11 +464,13 @@ pub(super) fn fold_authority_log_once(
             agent_carried_acts: BTreeMap::new(),
             agent_world_undo: Default::default(),
             home_candidacy: BTreeMap::new(),
+            full_copy_mark: BTreeMap::new(),
             owner_work: super::owner_work::FoldedOwnerWork::default(),
             install: InstallBound::default(),
             counted_ancestor_pairs,
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
+            verified_device_revocations: BTreeSet::new(),
             issues,
         };
     }
@@ -509,6 +527,7 @@ pub(super) fn fold_authority_log_once(
             revoke_facts,
             retired_keys,
             closed_handoffs: retirements.handoffs(),
+            closed_conflicts: retirements.closed_conflicts(),
             unsettled: retirements.unsettled(),
             counted_ancestor_pairs,
             issues,
@@ -517,32 +536,4 @@ pub(super) fn fold_authority_log_once(
         });
     }
     fold
-}
-
-/// The confirmations that lose a collision among the rows `present` keeps,
-/// with why. Confirmations are consumable across branches, not only in
-/// ancestry, and only entries already proven against their live roster
-/// contend.
-fn federation_confirm_losers(
-    states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    present: &dyn Fn(&AuthorityEntryHash) -> bool,
-) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue> {
-    let mut ids = BTreeSet::new();
-    let mut nonces = BTreeSet::new();
-    let mut rejected = BTreeMap::new();
-    // Hash order is a stable choice among otherwise valid concurrent asks.
-    for hash in states.keys().filter(|hash| present(hash)) {
-        if let AuthorityOp::FederationConfirm(action) = &entries[hash].op {
-            let vault = states[hash].vault_id;
-            if ids.contains(&(vault, action.confirm_id)) || nonces.contains(&(vault, action.nonce))
-            {
-                rejected.insert(*hash, AuthorityFoldIssue::InvalidEntry(*hash));
-            } else {
-                ids.insert((vault, action.confirm_id));
-                nonces.insert((vault, action.nonce));
-            }
-        }
-    }
-    rejected
 }

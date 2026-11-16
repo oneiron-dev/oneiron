@@ -288,6 +288,7 @@ impl LocalFoldContext {
             pre_handoff_entries: None,
             memory_floor_bytes: DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
             pin: None,
+            appointments: None,
         }
     }
 }
@@ -354,6 +355,7 @@ pub(super) fn single_owner_state(
         refused_export_acts: BTreeSet::new(),
         agent_carried_acts: BTreeMap::new(),
         home_candidacy: Default::default(),
+        full_copy_mark: Default::default(),
         owner_work: Default::default(),
         world_keys: BTreeMap::new(),
         refused_world_keys: BTreeSet::new(),

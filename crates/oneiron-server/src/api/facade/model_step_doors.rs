@@ -30,6 +30,7 @@ use super::host_doors::support::{Listed, internal, owner_proof};
 use super::live_run_doors::hold_live_run;
 use crate::ai_host::live_lease::{LeaseLine, LiveLease};
 use crate::ai_host::payer_funding::{attempt_grant_funding, scope_run_funding};
+use crate::api::llm::RefusalCode;
 use crate::auth::CoreAuth;
 use crate::models::OfferLadder;
 use crate::server::{HeldLiveRun, SyncServer};
@@ -471,16 +472,28 @@ fn detached() -> MemoryError {
 }
 
 fn inference_refusal(response: Box<Response>) -> MemoryError {
+    inference_door_refusal(
+        &response,
+        "the inference door refused this model-step request",
+    )
+}
+
+/// The inference door's refusal as a facade door's code: `refused`, then
+/// the wire code and typed reason the inference door built it with, so a
+/// caller can tell a locality mismatch from a tier, route or binding
+/// refusal (STEP-DOOR-REFUSAL-REASON). The inference door logged the reason.
+pub(super) fn inference_door_refusal(response: &Response, refused: &str) -> MemoryError {
     let code = match response.status().as_u16() {
         401 | 403 => MEMORY_CODE_FORBIDDEN,
         503 => MEMORY_CODE_MODEL_UNAVAILABLE,
         _ => MEMORY_CODE_BAD_REQUEST,
     };
-    MemoryError::new(
-        code,
-        "the inference door refused this model-step request",
-        &[],
-    )
+    let message = match response.extensions().get::<RefusalCode>() {
+        Some(built) if built.message.is_empty() => format!("{refused} ({})", built.code),
+        Some(built) => format!("{refused} ({}): {}", built.code, built.message),
+        None => refused.to_owned(),
+    };
+    MemoryError::new(code, message, &[])
 }
 
 /// Holds a step to one exact configured model, stamps its request with what
