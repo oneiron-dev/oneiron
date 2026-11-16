@@ -387,9 +387,11 @@ pub(super) fn purge_stored_history(
 /// lands or waits is the Grant's answer for this actor and this NOTE, never
 /// the writer's authorship (DEC-0006 #10, ARCH-0032 #forks-proposals). The
 /// owner lands everywhere in his own vault; owner authority comes from the
-/// authority log, not merely from an asserted actor class. Anyone else, the
-/// NOTE's author included, lands only under an automatic grant and
-/// otherwise proposes.
+/// authority log, not merely from an asserted actor class. In a shared
+/// vault a member lands exactly as its live federation grant allows the
+/// content write, whatever its class ([`shared_member_grant_allows`]).
+/// Anyone else, the NOTE's author included, lands only under an automatic
+/// grant and otherwise proposes.
 pub(super) fn grant_allows(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -401,7 +403,36 @@ pub(super) fn grant_allows(
     {
         return Ok(true);
     }
+    if shared_member_grant_allows(vault, txn, note, actor)? {
+        return Ok(true);
+    }
     automatic_edit_grant(vault, txn, note, actor)
+}
+
+/// True when this is a shared vault and `actor`'s live federation grant
+/// admits the content write of `note`: the shared NOTE write gate's answer
+/// (ARCH-0043 #shared-vault-authority: a Member works "exactly as its scopes
+/// allow"; RULING MEMBER-SYNC-WRITES = A). The grant decides whatever the
+/// writer's class (RULING MEMBER-GRANT-AGENT-LANDS = A, DEC-0006 #10). A
+/// personal vault has no roster and the gate admits every writer there, so
+/// it is never asked. Only the gate's refusal answers false; a store fault,
+/// or a write concurrent with a revocation, stays an error.
+fn shared_member_grant_allows(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    actor: WriteActor,
+) -> Result<bool> {
+    if vault.shared_vault_creation_in_txn(txn)?.is_none() {
+        return Ok(false);
+    }
+    match vault.authorize_shared_note_write_in_txn(txn, note, &actor) {
+        Ok(()) => Ok(true),
+        Err(crate::error::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority {
+            ..
+        })) => Ok(false),
+        Err(other) => Err(other),
+    }
 }
 
 /// Who answers whether a NOTE edit lands. Every agent-facing door asks the
