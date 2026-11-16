@@ -199,7 +199,7 @@ fn a_bare_agent_grant_row_names_no_ai_operation() {
     let fixture = fixture();
     let yuki = named_agent(&fixture.vault, "yuki");
     let mika = named_agent(&fixture.vault, "mika");
-    let honest = mint(&fixture, yuki, &["ai.text"]);
+    let honest = mint(&fixture, yuki, &["read", "ai.text"]);
     let template = row(&fixture.vault, honest);
     let forged = put_bare_copy(&fixture.vault, &template, mika);
 
@@ -266,7 +266,7 @@ fn a_bare_agent_grant_row_shows_revoked_in_the_registry() {
     let fixture = fixture();
     let yuki = named_agent(&fixture.vault, "yuki");
     let mika = named_agent(&fixture.vault, "mika");
-    let honest = mint(&fixture, yuki, &["ai.text"]);
+    let honest = mint(&fixture, yuki, &["read", "ai.text"]);
     let template = row(&fixture.vault, honest);
     let forged = put_bare_copy(&fixture.vault, &template, mika);
 
@@ -293,9 +293,9 @@ fn a_bare_agent_grant_row_shows_revoked_in_the_registry() {
 fn an_agent_grant_widened_in_place_stands_for_nothing() {
     let fixture = fixture();
     let yuki = named_agent(&fixture.vault, "yuki");
-    let id = mint(&fixture, yuki, &["ai.text"]);
+    let id = mint(&fixture, yuki, &["read", "ai.text"]);
     let mut widened = row(&fixture.vault, id);
-    widened.authority_scope = ai_scope(&["ai.text", "ai.image"]);
+    widened.authority_scope = ai_scope(&["read", "ai.text", "ai.image"]);
     put_unkeyed_member_grant(&fixture.vault, id, &widened).expect("the widened row lands");
 
     let operations = ai_operations(&fixture.vault, yuki);
@@ -310,7 +310,7 @@ fn an_agent_grant_widened_in_place_stands_for_nothing() {
 fn a_minted_agent_grant_names_its_ai_operation() {
     let fixture = fixture();
     let yuki = named_agent(&fixture.vault, "yuki");
-    let id = mint(&fixture, yuki, &["ai.text"]);
+    let id = mint(&fixture, yuki, &["read", "ai.text"]);
 
     let operations = ai_operations(&fixture.vault, yuki);
     assert_eq!(
@@ -330,7 +330,7 @@ fn a_minted_agent_grant_names_its_ai_operation() {
 fn a_revoked_agent_grant_put_back_stays_revoked() {
     let fixture = fixture();
     let yuki = named_agent(&fixture.vault, "yuki");
-    let id = mint(&fixture, yuki, &["ai.text"]);
+    let id = mint(&fixture, yuki, &["read", "ai.text"]);
     let saved = row(&fixture.vault, id);
     let revoked = revoke_agent_grant_as(
         &fixture.vault,
