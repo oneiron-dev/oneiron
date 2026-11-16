@@ -354,7 +354,8 @@ pub use scoped_export::{
     ScopedExportRecord, ScopedExportRequest,
 };
 pub use search_hybrid::{
-    HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
+    HybridPhoneticVectorQuery, HybridPprQuery, HybridRankReplay, HybridSearchHit,
+    HybridSearchRequest, HybridTemporalQuery,
 };
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,

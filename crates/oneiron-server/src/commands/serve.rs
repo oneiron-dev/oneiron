@@ -373,6 +373,7 @@ pub(crate) async fn build_server(
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
+        .with_phonetic_embedder(config.phonetic_embedder.as_ref())?
         .with_model_setup_config(config, startup_args)
         .with_gpu_pool(gpu_pool)
         .with_broker(broker)

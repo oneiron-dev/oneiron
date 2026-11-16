@@ -116,7 +116,8 @@ pub mod ports {
     pub use crate::ports::{
         ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead,
         EntityStoreRead, EntityTime, EntityWriteSegmentRead, JobQueueRead, PortRows,
-        RetrievalIndexRead, ShortIdStoreRead, TimeAxis, TimelineQuery, TombstoneStoreRead,
+        RetrievalIndexRead, ShortIdStoreRead, SoundMatchAdmission, TimeAxis, TimelineQuery,
+        TombstoneStoreRead,
     };
 }
 
