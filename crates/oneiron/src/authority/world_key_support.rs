@@ -56,6 +56,39 @@ pub(crate) fn sign_side_entry(
     Ok(entry)
 }
 
+/// [`sign_side_entry`] with an owner key's proof beside the carrier's
+/// signature when this install holds one (`proof`, row CARRIER-OWNER-PROOF):
+/// the proof key is in the entry before either key signs, so both sign the
+/// one transcript. With no proof it is [`sign_side_entry`].
+pub(crate) fn sign_side_entry_with_owner_proof(
+    fold: &AuthorityFold,
+    signing: &SigningKey,
+    seq: u64,
+    parents: BTreeSet<AuthorityEntryHash>,
+    op: AuthorityOp,
+    now: u64,
+    proof: Option<&dyn CheckpointRootSigner>,
+) -> Result<AuthorityLogEntry> {
+    let Some(proof) = proof else {
+        return sign_side_entry(fold, signing, seq, parents, op, now);
+    };
+    let signer = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let mut entry = unsigned_side_entry(fold, signer, seq, parents, op, now)?;
+    let proof_key = proof.root();
+    entry.cosigns.push(AuthoritySignature {
+        suite: proof_key.suite(),
+        public_key: proof_key,
+        signature: vec![0; 64],
+    });
+    let transcript = authority_transcript(&entry)?;
+    let proved = proof.sign_owner_proof(&transcript)?;
+    if let Some(cosign) = entry.cosigns.first_mut() {
+        cosign.signature = proved;
+    }
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    Ok(entry)
+}
+
 /// [`sign_side_entry`]'s entry before its signature: the key `signer`
 /// alone over `parents`, in its own suite, its signature zeroed, for a
 /// signer held behind a callback (FIX 11867, 11993). A frontier join names
