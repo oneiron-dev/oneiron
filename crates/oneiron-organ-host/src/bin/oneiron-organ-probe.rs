@@ -58,7 +58,8 @@ mod probe {
         /// `probe.ptrace {in_child}` makes one ptrace call and
         /// `probe.inet_socket {in_child}` opens one inet socket (`ptrace`
         /// and `inet_socket` below). `probe.reach {call, pid, nice}` makes
-        /// one call aimed at another process (`reach_process` below).
+        /// one call aimed at a process, or at the probe's own limits or
+        /// thread (`reach_process` below).
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
             let field = |key: &str| {
                 call.args
@@ -237,8 +238,12 @@ mod probe {
     /// `prlimit64`. `owner`: `pid` as the owner of a new memfd's signals
     /// with `fcntl(F_SETOWN)` (a memfd raises none). `priority`: the
     /// process's nice value set to `nice`, its current one, with
-    /// `setpriority`. Answers the call's return and errno, as [`one_call`]
-    /// does in the organ itself.
+    /// `setpriority`. And at the probe itself, whatever `pid`:
+    /// `set_limits`: its open-file limit set to what it reads, with
+    /// `prlimit64`. `name`: the calling thread named with
+    /// `prctl(PR_SET_NAME)`. `dumpable`: a read of its dumpable flag with
+    /// `prctl(PR_GET_DUMPABLE)`. Answers the call's return and errno, as
+    /// [`one_call`] does in the organ itself.
     #[cfg(target_os = "linux")]
     fn reach_process(which: &str, pid: Option<i64>, nice: i64) -> Value {
         let target = pid.unwrap_or_else(|| i64::from(std::process::id()));
@@ -247,9 +252,11 @@ mod probe {
         let zero: libc::c_long = 0;
         let mut descriptor = -1;
         // SAFETY: each call reads and writes only memory on this stack, and
-        // none changes anything where it is allowed: signal 0 sends
-        // nothing, the limit is only read, the memfd is this process's own
-        // (closed below), and the nice value set is the current one.
+        // none changes anything where it is allowed but a thread's name:
+        // signal 0 sends nothing, a limit read is only read and a limit set
+        // is the one just read, the memfd is this process's own (closed
+        // below), the nice value set is the current one, and the dumpable
+        // flag is only read.
         let returned = unsafe {
             match which {
                 "signal" => libc::syscall(libc::SYS_tgkill, target, target, zero),
@@ -278,6 +285,35 @@ mod probe {
                     target,
                     nice,
                 ),
+                "set_limits" => {
+                    let mut limits = [0_u64; 2];
+                    let read = libc::syscall(
+                        libc::SYS_prlimit64,
+                        zero,
+                        libc::c_long::from(libc::RLIMIT_NOFILE),
+                        std::ptr::null::<u64>(),
+                        limits.as_mut_ptr(),
+                    );
+                    if read == 0 {
+                        libc::syscall(
+                            libc::SYS_prlimit64,
+                            zero,
+                            libc::c_long::from(libc::RLIMIT_NOFILE),
+                            limits.as_ptr(),
+                            std::ptr::null_mut::<u64>(),
+                        )
+                    } else {
+                        read
+                    }
+                }
+                "name" => libc::syscall(
+                    libc::SYS_prctl,
+                    libc::c_long::from(libc::PR_SET_NAME),
+                    c"probe-named".as_ptr(),
+                ),
+                "dumpable" => {
+                    libc::syscall(libc::SYS_prctl, libc::c_long::from(libc::PR_GET_DUMPABLE))
+                }
                 _ => -1,
             }
         };

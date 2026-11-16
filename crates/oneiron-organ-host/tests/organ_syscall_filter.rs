@@ -3,7 +3,9 @@
 //! seccomp kill, SIGSYS, and so does a process it forked; so does a call
 //! its allow-list does not name (an inet socket), and so does a call aimed
 //! at another process (a signal, a limit, a descriptor's owner, a
-//! priority), while the same calls at its own process answer. An organ
+//! priority), while the same calls at its own process answer; it reads
+//! its own limits but setting one answers EPERM, and it may name its own
+//! threads but makes no other prctl. An organ
 //! under the filter still answers its ordinary calls, inputs read through
 //! regions included, and every verb of the probe answers under its list.
 //! Linux only: macOS has no seccomp.
@@ -264,6 +266,53 @@ fn an_organ_call_aimed_at_another_process_dies_by_the_syscall_filter() {
             "{which} at the host's process ends the organ: {organ:?}",
         );
     }
+}
+
+#[test]
+fn an_organ_sets_no_limit_and_makes_no_prctl_but_a_thread_name() {
+    let (_dir, vault) = vault();
+    let host = host();
+    // Its open-file limit set again to what it reads answers EPERM: no
+    // organ lifts the limits its grant set (a first-party organ's hard
+    // limits are open), and the organ lives on.
+    let set = host
+        .call(
+            &vault,
+            call("probe.reach", reach("set_limits", None, 0), Vec::new()),
+        )
+        .expect("setting a limit answers");
+    assert_eq!(
+        (
+            report_i64(&set.report, "returned"),
+            report_i64(&set.report, "errno")
+        ),
+        (Some(-1), Some(i64::from(libc::EPERM))),
+        "setting its own limit is refused: {:?}",
+        set.report,
+    );
+    // Naming its own thread answers, as a thread pool's start does.
+    let named = host
+        .call(
+            &vault,
+            call("probe.reach", reach("name", None, 0), Vec::new()),
+        )
+        .expect("naming its thread answers");
+    assert_eq!(
+        report_i64(&named.report, "returned"),
+        Some(0),
+        "naming its thread: {:?}",
+        named.report,
+    );
+    // Any other prctl, even a read, kills the organ under its call.
+    let host = host();
+    let dumpable = host.call(
+        &vault,
+        call("probe.reach", reach("dumpable", None, 0), Vec::new()),
+    );
+    assert!(
+        matches!(dumpable, Err(HostError::Crashed(_))),
+        "a prctl past a thread name ends the organ: {dumpable:?}",
+    );
 }
 
 #[test]
