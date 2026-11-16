@@ -319,7 +319,11 @@ fn approved_reach(
     child: AttemptId,
 ) -> Result<Option<CommReach>> {
     Ok(comm_widen_in(vault, txn, child)?
-        .and_then(|record| record.approved)
+        .and_then(|record| {
+            record
+                .approved
+                .filter(|approval| approval.standing_revoked_at.is_none())
+        })
         .map(|approval| approval.reach))
 }
 
