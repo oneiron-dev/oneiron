@@ -9,7 +9,10 @@ use oneiron::code_run::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, GatedActorWrite,
     RunCall, SelfAgentVerbCall, SelfEffect, SessionWriteAdmission, SessionWriteCeiling,
 };
-use oneiron::engine_executor::{EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime};
+use oneiron::engine_executor::{
+    EngineExecutorError, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
+    is_session_act_refusal,
+};
 use oneiron::llm::seat::ModelSeat;
 use oneiron::memory::HostWriteOrigin;
 use oneiron::off_record::OffRecordCreator;
@@ -392,12 +395,22 @@ fn run_in_off_record_session(
     if let Some(feedback) = provider.code_check() {
         executor = executor.with_code_check(feedback);
     }
-    reactor.block_on(executor.run(&config)).map_err(|error| {
-        if let oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report) = &error {
-            return McpCodeExecutionError::ResumeDivergence(report.to_string());
-        }
-        McpCodeExecutionError::Run(error.to_string())
-    })
+    reactor
+        .block_on(executor.run(&config))
+        .map_err(|error| match error {
+            // The session refused an act of the run: the caller's refusal,
+            // typed, never a failure of the run (FIX
+            // OFF-RECORD-RUN-POLICY-REFUSAL-500).
+            EngineExecutorError::Engine(refusal) if is_session_act_refusal(&refusal) => {
+                McpCodeExecutionError::Refused(Box::new(oneiron::MemoryError::from(refusal)))
+            }
+            // A resumed step's program changed an effect step (L8-23): the
+            // entry holds with the walk's report line.
+            EngineExecutorError::ResumeDivergence(report) => {
+                McpCodeExecutionError::ResumeDivergence(report.to_string())
+            }
+            error => McpCodeExecutionError::Run(error.to_string()),
+        })
 }
 
 /// The model list a session run and its reader children are held to (FIX

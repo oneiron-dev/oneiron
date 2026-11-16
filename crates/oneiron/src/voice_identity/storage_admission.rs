@@ -170,15 +170,11 @@ pub(super) struct VoiceDeletionTally {
     pub(super) sample_rows: usize,
     pub(super) vector_rows: usize,
     pub(super) active_pointer: bool,
-    pub(super) owner_ref_rows: usize,
 }
 
 impl VoiceDeletionTally {
     pub(super) const fn is_empty(self) -> bool {
-        self.print_rows == 0
-            && self.sample_rows == 0
-            && self.owner_ref_rows == 0
-            && !self.active_pointer
+        self.print_rows == 0 && self.sample_rows == 0 && !self.active_pointer
     }
 }
 

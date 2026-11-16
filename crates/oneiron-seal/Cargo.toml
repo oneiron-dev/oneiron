@@ -161,5 +161,10 @@ name = "esign_host_e2e"
 path = "tests/esign_host_e2e.rs"
 required-features = ["native"]
 
+[[test]]
+name = "seal_delta_crl_oid"
+path = "tests/seal_delta_crl_oid.rs"
+required-features = ["native"]
+
 [lints]
 workspace = true
