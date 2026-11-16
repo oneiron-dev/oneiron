@@ -87,6 +87,11 @@ pub enum ErrorCode {
     /// operation it asked for.
     #[serde(rename = "CONTROL_SCOPE_DENIED")]
     ControlScopeDenied,
+    /// L8-11: this process's event-loop watchdog holds new work back, while
+    /// the loop is hung or recovering from a hang. Retryable after the wait
+    /// `Retry-After` names, so a 503 like [`Self::MirrorNotReady`].
+    #[serde(rename = "PROCESS_NOT_READY")]
+    ProcessNotReady,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -128,6 +133,7 @@ impl ErrorCode {
         Self::OwnerBindingRequired,
         Self::CourtesyDeleteUnauthenticated,
         Self::ControlScopeDenied,
+        Self::ProcessNotReady,
         Self::CrdtAuthExpired,
         Self::CrdtDecodeError,
         Self::CrdtUnknownTag,
@@ -165,6 +171,7 @@ impl ErrorCode {
             Self::OwnerBindingRequired => oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED,
             Self::CourtesyDeleteUnauthenticated => COURTESY_DELETE_REFUSAL_CODE,
             Self::ControlScopeDenied => CONTROL_SCOPE_REFUSAL_CODE,
+            Self::ProcessNotReady => "PROCESS_NOT_READY",
             Self::CrdtAuthExpired => "4001",
             Self::CrdtDecodeError => "4002",
             Self::CrdtUnknownTag => "4003",
@@ -197,7 +204,8 @@ impl ErrorCode {
             Self::MirrorNotReady
             | Self::DeepRetrievalUnavailable
             | Self::EmbedderUnavailable
-            | Self::SummaryWriterUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            | Self::SummaryWriterUnavailable
+            | Self::ProcessNotReady => StatusCode::SERVICE_UNAVAILABLE,
             Self::UnsupportedFormat => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
@@ -305,6 +313,15 @@ pub enum ApiErrorDetails {
     CourtesyDeleteUnauthenticated { required_scope: Option<String> },
     #[serde(rename = "CONTROL_SCOPE_DENIED", rename_all = "camelCase")]
     ControlScopeDenied { required_scope: Option<String> },
+    /// The process's state, `draining` or `recovering`, and how long, in
+    /// whole seconds, the caller should wait: what is left of the
+    /// stabilization window, also sent as `Retry-After`.
+    #[serde(rename = "PROCESS_NOT_READY", rename_all = "camelCase")]
+    ProcessNotReady {
+        #[schema(value_type = String)]
+        readiness: oneiron_vault_contract::ProcessState,
+        retry_after_secs: u64,
+    },
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -354,6 +371,7 @@ impl ApiErrorDetails {
             Self::OwnerBindingRequired { .. } => ErrorCode::OwnerBindingRequired,
             Self::CourtesyDeleteUnauthenticated { .. } => ErrorCode::CourtesyDeleteUnauthenticated,
             Self::ControlScopeDenied { .. } => ErrorCode::ControlScopeDenied,
+            Self::ProcessNotReady { .. } => ErrorCode::ProcessNotReady,
             Self::CrdtAuthExpired => ErrorCode::CrdtAuthExpired,
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
             Self::CrdtUnknownTag { .. } => ErrorCode::CrdtUnknownTag,
@@ -446,6 +464,27 @@ impl ApiError {
             format!("too many attempts from this address: retry in {retry_after_secs} s"),
             ApiErrorDetails::TooManyAttempts { retry_after_secs },
             ["Wait the time Retry-After names, check the code, then retry."],
+        )
+    }
+
+    /// A 503 while this process's event-loop watchdog holds new work back
+    /// (L8-11): `readiness` is `draining` (the loop is hung) or `recovering`
+    /// (the hang ended and the stabilization window runs). The intake gate
+    /// sends the wait as `Retry-After` too.
+    pub fn process_not_ready(
+        readiness: oneiron_vault_contract::ProcessState,
+        retry_after_secs: u64,
+    ) -> Self {
+        Self::new(
+            format!(
+                "this process takes no new work while it is {}: retry in {retry_after_secs} s",
+                readiness.as_str()
+            ),
+            ApiErrorDetails::ProcessNotReady {
+                readiness,
+                retry_after_secs,
+            },
+            ["Wait the time Retry-After names, then retry; work already admitted runs to its end."],
         )
     }
 
@@ -806,7 +845,10 @@ impl IntoResponse for EnvelopedApiError {
     fn into_response(self) -> Response {
         let status = self.0.status();
         let retry_after = match *self.0.details {
-            ApiErrorDetails::TooManyAttempts { retry_after_secs } => Some(retry_after_secs),
+            ApiErrorDetails::TooManyAttempts { retry_after_secs }
+            | ApiErrorDetails::ProcessNotReady {
+                retry_after_secs, ..
+            } => Some(retry_after_secs),
             _ => None,
         };
         let mut envelope = ApiErrorEnvelope::new(self.0);

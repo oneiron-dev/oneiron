@@ -214,7 +214,11 @@ impl<'v> ScopedRead<'v> {
         if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
             return Ok(false);
         }
-        if self.actor_key.vault_owner_ref().is_some() {
+        // An owner key the conversation home binds (a saved outside lane
+        // rebuilt on the owner's floor) judges each source as any reader
+        // does: the shortcut below would carry a stamped claim's words in a
+        // summary that the claim gate withholds on its own.
+        if self.actor_key.vault_owner_ref().is_some() && !self.actor_key.reads_homed_unnamed() {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited
             // source still withholds the derived row (FIX 1496 S8): C6
@@ -657,8 +661,14 @@ impl<'v> ScopedRead<'v> {
         }
         // A key several of its holder's agent Grants bind reads a row only
         // where one of them alone admits it (FIX AGENT-GRAPHFS-GRANT-WORLDS),
-        // judged per row, outside the access-class cache below.
-        if grant.is_none() && !self.one_grant_alternative_admits_in(rtxn, id, raw, authority)? {
+        // judged per row, outside the access-class cache below. A key that
+        // names its holder is held to that holder's live Grants under
+        // `grant` too: `grant` admitted only the row's position, which names
+        // no facet (`Scope::admits`), and an identity key carries no facet
+        // limit of its own (Astra delta review of #8340, D1).
+        if (grant.is_none() || self.actor_key.agent_grant_holder().is_some())
+            && !self.one_grant_alternative_admits_in(rtxn, id, raw, authority)?
+        {
             return Ok(false);
         }
         // A CLAIM a reader with no record list reads is judged once per
