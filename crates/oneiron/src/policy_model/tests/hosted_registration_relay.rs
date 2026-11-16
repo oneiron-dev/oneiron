@@ -551,7 +551,8 @@ fn hosted_warn_relays_the_content_and_does_not_halt() -> Result<()> {
     // A warn still carries an enforcement signal, so it is receipted.
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].outcome, "relay_boundary_warn");
+    assert_eq!(receipts[0].outcome, "allow");
+    assert!(has_trace(&receipts[0], "gate.policy_model.warn"));
     Ok(())
 }
 
@@ -630,7 +631,8 @@ fn byo_path_never_evaluates_hosted_legal_policy() -> Result<()> {
 
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].outcome, "relay_not_relayed");
+    assert_eq!(receipts[0].outcome, "noted");
+    assert!(has_trace(&receipts[0], "gate.relay.not_relayed"));
     assert!(has_trace(&receipts[0], "gate.relay.classify.skipped"));
     // No hosted-legal verdict was reached, so no hosted notice exists.
     assert!(!receipts[0].fields.contains_key("system_notice"));
@@ -690,7 +692,7 @@ fn relay_block_writes_audit_receipt() -> Result<()> {
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     let receipt = &receipts[0];
-    assert_eq!(receipt.outcome, "relay_boundary_block");
+    assert_eq!(receipt.outcome, "deny");
     for expected in [
         "gate.relay.trust_domain.local_via_hosted_connector",
         "gate.relay.classifier_mode.classify_all",
