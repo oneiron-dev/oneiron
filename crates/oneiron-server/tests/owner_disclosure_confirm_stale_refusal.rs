@@ -15,7 +15,7 @@
 //! A consent refusal on any other owner route names no proposal
 //! ([OWNER-DISCLOSURE-NARROW-STATE-STRING]): `POST /v1/owner/disclosure/preclear`
 //! with one contact named twice answers 409 `INVALID_STATE` with the
-//! `consent_refused` state. On main it answers 500, and on the first fix
+//! `refused` state, in the engine's words. On main it answers 500, and on the first fix
 //! (which mapped every owner route's consent refusal to the widen proposal)
 //! it names `consent_widen_proposal`, an offer the trusted set never had.
 //!
@@ -246,7 +246,7 @@ fn confirm_settled_offer_answers_stale_proposal() {
 }
 
 #[test]
-fn preclear_repeated_contact_answers_consent_refused() {
+fn preclear_repeated_contact_answers_refused() {
     run_on_engine_stack("disclosure-preclear-repeated", || async {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let client = OwnerClient::new(dir.path());
@@ -267,9 +267,6 @@ fn preclear_repeated_contact_answers_consent_refused() {
             .await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(body["error"]["code"], "INVALID_STATE", "{body}");
-        assert_eq!(
-            body["error"]["details"]["state"], "consent_refused",
-            "{body}"
-        );
+        assert_eq!(body["error"]["details"]["state"], "refused", "{body}");
     });
 }
