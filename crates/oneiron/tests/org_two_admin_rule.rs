@@ -478,7 +478,7 @@ fn two_admin_opt_in_holds_a_single_admin_act() {
     // Each other live admin is asked in the inbox; the first admin is not.
     for asked in [org.owner, org.admin_b] {
         let asks = org.notices(asked, NOTIFICATION_PRODUCER_ADMIN_ACT_HELD);
-        assert_eq!(asks.len(), 1, "one ask to {asked}");
+        assert_eq!(asks.len(), 1, "one ask to {asked:?}");
         assert_eq!(asks[0].kind, NotificationKind::Ask);
         assert_eq!(asks[0].source.result.as_deref(), Some(held.as_str()));
     }
