@@ -30,8 +30,8 @@ use serde_json::{Map, Value};
 use super::ledger::{self, LedgerRow, content_hash};
 use super::sharing;
 use super::{
-    HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
-    HistoryThreadKind,
+    HistoryConversation, HistoryMessage, HistoryRole, HistorySharingCounts, HistorySkips,
+    HistorySource, HistoryThreadKind,
 };
 use crate::TimeRange;
 use crate::Vault;
@@ -101,6 +101,10 @@ pub struct HistoryImportReport {
     pub refusal_reasons: BTreeSet<String>,
     /// What the reader did not keep.
     pub not_kept: HistorySkips,
+    /// Who reads a conversation the source shared, in counts; absent for
+    /// one the source did not share, and in a dry run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<HistorySharingCounts>,
     /// The TURNs that took the messages landed new or as a revision, each
     /// once, in landing order: what a hosted import's progress counts for
     /// embeddings. Not part of the report's wire form.
@@ -121,6 +125,7 @@ impl HistoryImportReport {
             pending: 0,
             refusal_reasons: BTreeSet::new(),
             not_kept: conversation.skipped,
+            sharing: None,
             turns: Vec::new(),
         }
     }
@@ -172,7 +177,7 @@ pub(super) fn runs<'c>(
 /// external assistant the export recorded, each `Counterparty`. The source's
 /// own side and `said_by` stay in the provenance.
 fn witness_author(message: &HistoryMessage) -> WitnessAuthor {
-    match (message.role, message.said_by) {
+    match (message.role, &message.said_by) {
         (HistoryRole::User, None) => WitnessAuthor::User,
         (HistoryRole::User, Some(_)) | (HistoryRole::Assistant, _) => WitnessAuthor::Counterparty,
     }
@@ -292,8 +297,8 @@ fn provenance(
     if let Some(at) = message.at_ms {
         fields.insert("at_ms".into(), Value::from(at));
     }
-    if let Some(said_by) = message.said_by {
-        fields.insert("said_by".into(), Value::from(said_by));
+    if let Some(said_by) = &message.said_by {
+        fields.insert("said_by".into(), Value::from(said_by.as_str()));
     }
     if !message.tools.is_empty() {
         let tools: Vec<Value> = message
@@ -389,13 +394,14 @@ impl Vault {
                 })
             })
             .transpose()?;
+        report.sharing = sharing.map(|(_, counts)| counts);
         let import = Import {
             vault: self,
             memory,
             owner,
             source,
             conversation,
-            sharing,
+            sharing: sharing.map(|(policy, _)| policy),
             conversation_id: derive(
                 derived_domains::HISTORY_CONVERSATION,
                 &[source.source_id(), &conversation.native_id],
