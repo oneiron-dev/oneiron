@@ -2031,6 +2031,67 @@ fn machine_revision_then_removal_past_an_adopted_image_folds_and_matches_home() 
 }
 
 #[test]
+fn anchor_mark_past_an_adopted_image_still_needs_history() {
+    let (home, issuer, home_dir) = root_home();
+    let vault_id = home
+        .authority_fold()
+        .expect("home folds")
+        .vault_id
+        .expect("home's vault id");
+    // An owner root its own anchor signs alone, covered by the image: its
+    // anchor is in the image's merged root anchors.
+    let seed = oneiron::world_keys::RecoveryRootSeed::generate().expect("root seed");
+    let root = seed.public(&vault_id).expect("root's public facts");
+    let anchor = seed.anchor();
+    let record = oneiron::authority::OwnerRootRecord {
+        owner: EntityId::now(),
+        root: root.id,
+        recovery_key: MachineEncryptionKey {
+            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+            key: root.recovery_key.to_bytes(),
+        },
+        anchor_key: root.anchor_key,
+    };
+    let published =
+        sign_next_op_as(&home, &anchor, AuthorityOp::OwnerRoot(record)).expect("sign root");
+    put_signed_entries(&home, std::slice::from_ref(&published)).expect("store root");
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    // The anchor's mark of a machine, no owner act: the anchor's own chain
+    // folds it, not the roster, so it never folds serially past the image.
+    let op = machine_profile(
+        &fixture.home,
+        EntityId::now(),
+        EntityId::now(),
+        &SigningKey::from_bytes(&[0x73; 32]),
+        YOURS,
+        1,
+    );
+    let tail = sign_next_op_as(&fixture.home, &anchor, op).expect("sign mark");
+    let hash = authority_entry_hash(&tail).expect("mark hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&tail)).expect("store on home");
+    assert!(
+        fixture
+            .home
+            .authority_fold()
+            .expect("home folds mark")
+            .valid_entries
+            .contains(&hash),
+        "home folds the anchor's mark"
+    );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+            .and_then(|()| fixture.adopting.authority_fold()),
+    );
+}
+
+#[test]
 fn machine_revision_beside_a_covered_row_still_needs_history() {
     let ConcurrentHome {
         home,
