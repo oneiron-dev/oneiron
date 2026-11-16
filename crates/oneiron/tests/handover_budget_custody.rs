@@ -30,8 +30,10 @@ use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
     DEFAULT_BASE_LOGICAL_ID, DispatchAgent, SpawnSpend, SpendScopeId, SpendState,
 };
-use oneiron::attempt_queue::{AttemptQueue, CompleteAttempt};
-use oneiron::dreamer_runner::{DreamerHomeNodeCandidate, DreamerRunnerStore};
+use oneiron::attempt_queue::AttemptQueue;
+use oneiron::dreamer_runner::{
+    CompleteDreamerAttempt, DreamerHomeNodeCandidate, DreamerRunnerStore,
+};
 use oneiron::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
 use oneiron::store::ports::{IdGen, ManualClock};
 use oneiron::sync::bridge::Materializer;
@@ -443,8 +445,10 @@ fn handed_over_run_keeps_one_counter() {
         .charge(&scope_id, 30)
         .unwrap();
     let leased = claimed.status.attempt;
-    AttemptQueue::new(&b.vault)
-        .complete(CompleteAttempt {
+    // B finishes the run through the agent launch's own completion door, which
+    // settles B's share in the commit and leaves the write for sync to carry.
+    DreamerRunnerStore::new(&b.vault)
+        .complete(CompleteDreamerAttempt {
             id: x,
             lease_owner: "pump-b".to_owned(),
             attempt_count: leased.attempt_count,
