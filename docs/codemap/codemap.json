@@ -25565,7 +25565,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ScratchpadAppendReceipt",
@@ -25578,9 +25578,9 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed when its own session ends…",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -25589,9 +25589,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/context_board/scratchpad/run_lifecycle.rs",
-     "purpose": "Exact-pad ownership at a durable code run's close",
+     "purpose": "A durable code run's pads at its end (OF-548): each live run writes its own pads under its run pointer, so…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -65647,7 +65647,7 @@
      "path": "src/receipt/field_set.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 10,
       "fn": 25,
       "re-export": 1,
@@ -90178,7 +90178,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 124,
+      "mod": 125,
       "re-export": 1
      }
     },
@@ -90444,6 +90444,17 @@
      "purpose": "Doors for `tests/summary_as_record_permit.rs` (SUMMARY-AS-RECORD-PERMIT): a summary minted as the Dreamer…",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/scratchpad_wake.rs",
+     "purpose": "Door for `tests/scratchpad_wake.rs` (OF-548): an agent's own memory facade with its writes bound to a…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -102107,6 +102118,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/scratchpad_wake.rs",
+     "purpose": "OF-548 (ARCH-0032 #scratchpad-one-store; agent-mind-design-v1: \"There is one per wake and one per fork",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/seal_check_decide.rs",
      "purpose": "DECIDE-BYPASS-2 (ARCH-0076 #decide-required: \"Every such call goes through decide()\"): the seal checker's…",
      "surface": {}
@@ -104381,7 +104400,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 127,
+     "files": 128,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104556,10 +104575,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 268,
+   "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7616,
-   "test_files": 1364
+   "source_files": 7617,
+   "test_files": 1365
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -152592,10 +152611,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/hook_decisions.rs",
+     "purpose": "The hook `ai.verdict` decisions one thread collects while it runs its row's hooks (FIX 8042): a browser…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/hook_verdict.rs",
      "purpose": "`ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -161615,6 +161644,13 @@
      "layout": "file",
      "purpose": "This host's MACRO home candidacy (FIX 4898; ARCH-0026: \"Election order is cloud node when attached, then an…"
     },
+    "hook_decisions": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The hook `ai.verdict` decisions one thread collects while it runs its row's hooks (FIX 8042): a browser…"
+    },
     "hook_verdict": {
      "files": 1,
      "impl_vault": false,
@@ -161926,7 +161962,7 @@
    },
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1893,
+   "source_files": 1894,
    "test_files": 272
   },
   "oneiron-skill-attribution": {

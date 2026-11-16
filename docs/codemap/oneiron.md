@@ -2193,8 +2193,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/room_verbs/thread_readers.rs` | src | s | 4 crate-vis | — | A thread's own reader and ceiling (OF-529, FIX 2951): who reads one thread of a room, and the ceiling that… |
 | `src/context_board/room_verbs/upkeep_posture.rs` | src | s | 1 crate-vis | — | The posture a room host's upkeep voice speaks under (ARCH-0067 §8, OF-417): the mode… |
 | `src/context_board/room_verbs_tests.rs` | test | s | — | — | Room render reads: the caller's scoped read and every present peer's |
-| `src/context_board/scratchpad.rs` | src | m | 4 struct · 1 enum · 6 fn · 2 const · 9 crate-vis | ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine | The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed when its own session ends… |
-| `src/context_board/scratchpad/run_lifecycle.rs` | src | s | 1 fn · 1 crate-vis | — | Exact-pad ownership at a durable code run's close |
+| `src/context_board/scratchpad.rs` | src | L | 4 struct · 1 enum · 7 fn · 2 const · 10 crate-vis | ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine | The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed when its own session ends… |
+| `src/context_board/scratchpad/run_lifecycle.rs` | src | s | 1 fn · 2 crate-vis | — | A durable code run's pads at its end (OF-548): each live run writes its own pads under its run pointer, so… |
 | `src/context_board/self_brief.rs` | src | m | 6 struct · 17 fn · 5 re-export | CommunicationLimits, PlacedSelfBrief, SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState | Typed turn-one self projection shared by the prefix and mid-run describe call |
 | `src/context_board/self_brief/ceilings.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 re-export | BriefCeiling, BriefCeilingPosture, BriefParentBound, BriefParentCeiling | The ceilings a brief describes (Engine rulings GRANT and CLASSES, 21:47) |
 | `src/context_board/self_brief/class_verdicts.rs` | src | s | 3 struct · 2 enum · 1 re-export · 1 crate-vis | BriefClassReads, BriefClassSource, BriefClassVerdict, BriefClassVerdicts, BriefOutboundScope | The per-class verdicts a brief shows (FIX 20734, Engine ruling 11:16): one line for each class the actor's… |
@@ -5619,7 +5619,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/dispatch_identity.rs` | src | s | 2 crate-vis | — | Frozen dispatch receipt identity and approval field vocabulary |
 | `src/receipt/dispatch_observation.rs` | src | s | 10 crate-vis | — | Passive OF-327 per-try audit observations; never resend authority |
 | `src/receipt/family.rs` | src | m | 1 struct · 11 fn · 1 re-export · 7 crate-vis | PendingTrayAsk | — |
-| `src/receipt/field_set.rs` | src | m | 1 struct · 25 fn · 4 const · 1 re-export · 10 crate-vis | ContextReceiptFields | — |
+| `src/receipt/field_set.rs` | src | m | 1 struct · 25 fn · 5 const · 1 re-export · 10 crate-vis | ContextReceiptFields | — |
 | `src/receipt/grant.rs` | src | m | 2 struct · 1 re-export · 7 crate-vis | StandingOutboundGrantLensRow, StandingOutboundGrantsLens | — |
 | `src/receipt/graph_skill.rs` | src | s | 1 struct · 1 enum · 3 fn | GraphSkillRunOutcome, GraphSkillRunRequest | The attached run's saved graph-workflow call and its staged answers |
 | `src/receipt/guest_revoke.rs` | src | s | 2 struct · 1 fn · 1 re-export | GuestRevokeCourtesyTarget, GuestRevokeOutcome | OF-232: the guest-revoke response and its copied-bytes disclosure |
@@ -7744,7 +7744,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | s | 1 fn · 124 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 1 fn · 125 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/nightly.rs` | src | s | 2 struct · 1 enum · 2 fn | PlannedThing, SpentSpan, SpentSpanKind | The nightly plan's things, for integration tests (census L2-04): witnessed TURNs whose sieve spans are… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
@@ -7769,6 +7769,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/run_hold.rs` | src | s | 6 fn | — | Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override… |
 | `src/test_doors/run_lifecycle.rs` | src | s | 2 enum · 8 fn | TableAnswer, TableEvent | Doors for `tests/run_lifecycle_props.rs`: the lifecycle table's answer, the stored pause kind, force-cancel… |
 | `src/test_doors/scope_summary.rs` | src | s | 5 fn | — | Doors for `tests/summary_as_record_permit.rs` (SUMMARY-AS-RECORD-PERMIT): a summary minted as the Dreamer… |
+| `src/test_doors/scratchpad_wake.rs` | src | s | 4 fn · 2 crate-vis | — | Door for `tests/scratchpad_wake.rs` (OF-548): an agent's own memory facade with its writes bound to a… |
 | `src/test_doors/seat_park_model_step.rs` | src | s | 1 struct · 4 fn | PartitionPassExecutor | Doors for `tests/park_seat_model_step.rs` (SEAT-PARK-MODEL-STEP-PATH): a vault whose Micro consolidation… |
 | `src/test_doors/shared_act_family.rs` | src | s | 1 fn | — | The shared-act family's rows that hold a person's id, for the actor-erase test: execution receipts, outcome… |
 | `src/test_doors/skill_gate.rs` | src | s | 1 fn | — | A human-authored Standard skill for skill-gate integration fixtures |
@@ -8893,6 +8894,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/sandbox_backends_per_vault.rs` | test | s | — | — | F1-6 (lead, Tue 10 Nov 06:5x): the isolating backends ride on the vault, read through its `RuntimeHandle`… |
 | `tests/saved_question_outcome_lane.rs` | test | L | — | — | SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE: a learning question saved under a world-bound read lane takes an… |
 | `tests/scoped_community_prior.rs` | test | s | — | — | A narrowed Uniform expansion takes the configured community prior (RECALL-SCOPED-PPR-DROPS-COMMUNITY-PRIOR… |
+| `tests/scratchpad_wake.rs` | test | m | — | — | OF-548 (ARCH-0032 #scratchpad-one-store; agent-mind-design-v1: "There is one per wake and one per fork |
 | `tests/seal_check_decide.rs` | test | m | — | — | DECIDE-BYPASS-2 (ARCH-0076 #decide-required: "Every such call goes through decide()"): the seal checker's… |
 | `tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs` | test | s | — | — | (a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and… |
 | `tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs` | test | s | — | — | (b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`… |
