@@ -33,8 +33,10 @@ pub(crate) struct Turn<'a> {
     deadline: Instant,
     asked: bool,
     /// Its place at the head of its window's line, held until the request is
-    /// answered: the executor hands it to the hold's write, which gives it up
-    /// as the write returns, even when the request was dropped first.
+    /// answered: for a hold that reaches its write, the executor hands it to
+    /// the write, which gives it up as the write returns, even when the
+    /// request was dropped first; a hold answered before its write gives it
+    /// up with the turn.
     place: Option<LinePlace>,
 }
 
