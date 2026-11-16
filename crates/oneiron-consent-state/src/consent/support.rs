@@ -4,6 +4,7 @@
 use oneiron_base::error::Error;
 use oneiron_base::error::GateError;
 use oneiron_base::error::Result;
+use oneiron_contracts::msgpack;
 use oneiron_store::gate_decision::types::GateDecisionId;
 use oneiron_store::side_table::codec::CodecError;
 use oneiron_store::side_table::codec::RawValue;
@@ -67,29 +68,17 @@ pub fn hex_to_16_bytes(hex: &str) -> Option<[u8; 16]> {
 }
 
 pub fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_row)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_row());
-        };
-        if seen[index] {
-            return Err(invalid_row());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|present| present) {
-        Ok(())
-    } else {
-        Err(invalid_row())
-    }
+    msgpack::Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map(|_| ())
+        .map_err(|_| invalid_row())
 }
 
+/// The value under `key`; a key stored twice is refused.
 pub fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(invalid_row)
+    msgpack::Entries::new(entries)
+        .require(key)
+        .map_err(|_| invalid_row())
 }
 
 pub const fn invalid_row() -> Error {
