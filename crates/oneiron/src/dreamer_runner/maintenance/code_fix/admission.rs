@@ -358,7 +358,7 @@ pub(crate) fn admitting_grant_in(
             return Ok(Err(EngineAdmission::NoGrant));
         }
     }
-    let now = vault.instant_in_txn(txn)?.secs();
+    let now = vault.grant_judgement_secs_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let mut lapsed = false;
     let grants = vault.agent_grants_in_txn(txn)?;

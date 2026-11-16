@@ -3,7 +3,8 @@
 //! crate-private item, or a port of a seed helper of the `#[cfg(test)]`
 //! fixtures, so the ruled behaviour tests of X01, X02, CONSENT-RAMP and the
 //! repeat revoke (#6874) run from an integration target while the lib test
-//! target does not compile. Compiled only under `--cfg oneiron_test_support`
+//! target does not compile. UC-12's `tests/expiry_boundaries.rs` reaches the
+//! tagging trace history's age prune through the last two. Compiled only under `--cfg oneiron_test_support`
 //! (`test_doors`); the shared fixture writes they call are in `test_fixtures`
 //! and the process-memory keystore is `oneiron_keystore::MemoryKeystore`, both
 //! compiled under the same cfg, so no `test-support` feature is needed.
@@ -649,4 +650,25 @@ pub fn ramp_demotion_receipt_ids(vault: &Vault) -> Result<Vec<String>> {
         .filter(crate::consent_graduation::is_ramp_demotion_receipt)
         .map(|record| record.receipt_id)
         .collect())
+}
+
+/// Records one first-try tagging trace of `turn` at `recorded_at`, as a
+/// settling attempt does (UC-12 PR 4). A vault with no tagging armed records
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn record_tagging_trace(vault: &Vault, turn: EntityId, recorded_at: u64) -> Result<()> {
+    vault.record_tagging_trace_for_test(turn, recorded_at)
+}
+
+/// One round of the tagging trace history's age prune at `now`, as a worker
+/// pass runs before it claims; how many traces went (UC-12 PR 4).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn prune_expired_tagging_traces(vault: &Vault, now: u64) -> Result<usize> {
+    vault.prune_expired_tagging_traces_for_test(now)
 }
