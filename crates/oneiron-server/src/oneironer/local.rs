@@ -400,6 +400,7 @@ impl LocalTagger {
                 spans: true,
                 links: coref.is_some(),
                 mood: vad.is_some(),
+                relations: false,
             },
             stack_sha16: Some(stack),
         };
@@ -580,6 +581,7 @@ impl LocalTagger {
             context_links: Vec::new(),
             speaker_links: Vec::new(),
             mood_parts: Vec::new(),
+            relations: None,
             stack_sha16: self.card.stack_sha16.clone(),
         };
         for (decoded, key) in moved {

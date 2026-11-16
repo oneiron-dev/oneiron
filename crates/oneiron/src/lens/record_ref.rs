@@ -36,8 +36,9 @@ use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 pub use crate::request_limits::RECORD_REF_MAX_BYTES;
 pub use crate::store::record_ref::RECORD_REF_LABEL_MAX_CHARS;
 
-/// The most messages one `vault.refs.links` page of a turn reads for links,
-/// and the page size when the caller names none.
+/// The default of the owner's `refs.links.page_max`: the most messages one
+/// `vault.refs.links` page of a turn reads for links, and the page size when
+/// the caller names none, while the owner has not set the key.
 pub const RECORD_LINKS_TURN_PAGE_MAX: usize = 32;
 
 /// The body fields a snippet is read from; the first one holding text wins.
@@ -318,12 +319,18 @@ impl Memory<'_> {
                 })
             }
             (None, Some(turn_ref)) => {
+                let page_max = super::setting_keys::vault_value(
+                    self.vault(),
+                    &super::setting_keys::REFS_LINKS_PAGE_MAX,
+                )?
+                .get();
+                let page_max = usize::try_from(page_max).unwrap_or(usize::MAX);
                 let limit = page_limit_zero_refused(
                     input
                         .limit
                         .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
-                    RECORD_LINKS_TURN_PAGE_MAX,
-                    RECORD_LINKS_TURN_PAGE_MAX,
+                    page_max,
+                    page_max,
                 )
                 .map_err(|ZeroLimitRefused| {
                     MemoryError::bad_request_with(
