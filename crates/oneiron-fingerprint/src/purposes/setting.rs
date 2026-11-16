@@ -15,6 +15,19 @@ purposes! {
     /// when there is one; a flag for the row the change replaces, then that row's stored
     /// bytes when there is one.
     SET_EFFECT_V2 = "oneiron.setting.set_effect.v2";
+
+    /// The digest of a pack's defaults, which the pack's head row keeps as the defaults it
+    /// last weighed (`setting/pack.rs`, `defaults_digest`). Parts: the pack's name; the count
+    /// of its defaults; then per default in key-name order, the key's name and the default's
+    /// JSON bytes.
+    PACK_DEFAULTS = "oneiron.setting.pack_defaults.v1";
+
+    /// The digest of a pack's proposal, which a holder's yes names (`setting/pack.rs`,
+    /// `proposal_digest`). Parts: the pack's name; the defaults digest the proposal was made
+    /// under, as its hex; the count of waiting defaults; then per default, the key's name, the
+    /// default's JSON bytes, and a flag for the row it replaces, then that row's content hash
+    /// as its hex when there is one.
+    PACK_PROPOSAL = "oneiron.setting.pack_proposal.v1";
 }
 
 legacy_purposes! {}
