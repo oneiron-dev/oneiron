@@ -267,6 +267,10 @@ fn a_home_that_loses_the_election_during_a_switch_to_sync_opened_runs_it() {
                 SyncResidenceMode::All,
                 "FIXTURE: the elected home runs sync all"
             );
+            // The home holds every window in full, none granted (`rp:w:`).
+            let held =
+                discover_local_window_keys(&machine.vault).expect("FIXTURE: the held windows read");
+            assert!(!held.is_empty(), "FIXTURE: this install holds windows");
             // The switch plans sync all, the home's mode; another machine is
             // elected home before it records the owner's sync-opened choice.
             elect_home_at_next_residence_switch(
@@ -300,6 +304,26 @@ fn a_home_that_loses_the_election_during_a_switch_to_sync_opened_runs_it() {
                 machine.resolved_mode(),
                 "the mode the connection runs is the mode the store resolves to"
             );
+            // Its switch planned sync all and asked no grant, so each held
+            // window waits on the residence upkeep's grant (`rr:w:`); under
+            // sync opened a window syncs only once granted.
+            assert_eq!(
+                change.unsynced,
+                held,
+                "a home that loses the election during its switch to sync opened reports its \
+                 held windows unsynced"
+            );
+            for window in &held {
+                assert!(
+                    machine
+                        .vault
+                        .sync_state_get(&format!("rr:w:{window}"))
+                        .expect("the window's retain row reads")
+                        .is_some(),
+                    "each held window of a home that loses the election during its switch to \
+                     sync opened is marked for the residence upkeep to retain: {window}"
+                );
+            }
         },
     );
 }

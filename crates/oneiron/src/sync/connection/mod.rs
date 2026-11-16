@@ -505,7 +505,10 @@ impl SyncConnection {
     /// replace them). To opened, each window held in full is granted again
     /// by the home before it keeps syncing as a promoted window; that needs
     /// the home reachable, and an offline home leaves the mode unchanged.
-    /// Nothing held is erased. The elected home always stays All.
+    /// A home that loses the election while it switches runs sync opened at
+    /// once and reports its held windows unsynced; the residence upkeep asks
+    /// the new home to grant them. Nothing held is erased. The elected home
+    /// always stays All.
     pub async fn set_residence_mode(
         &self,
         mode: SyncResidenceMode,
@@ -529,9 +532,10 @@ impl SyncConnection {
     /// RESIDENCE-SWITCH-STALE-HOME). A machine elected home meanwhile stays
     /// All and keeps its mark; every window syncs, so none is reported
     /// retained or unsynced. A home that lost the election meanwhile runs the
-    /// owner's sync-opened choice and withdraws its mark; its held windows
-    /// are left to the opened lane's own grant path, as the residence refresh
-    /// leaves them after a lost election. The resolution and the publish
+    /// owner's sync-opened choice and withdraws its mark; the held windows
+    /// the home has not granted are marked in that transaction for the
+    /// residence upkeep to ask the home to retain, and reported unsynced
+    /// until then. The resolution and the publish
     /// hold [`Self::mode_publish`], as the residence refresh does, so neither
     /// publishes between the other's resolution and publish.
     async fn switch_residence_mode(
@@ -551,9 +555,12 @@ impl SyncConnection {
             mode,
             crate::sync::residence::local_is_elected_home(vault).map_err(storage)?,
         );
+        // Whether the switch asks the home to grant the held windows again
+        // before it records sync opened.
+        let grants = planned == SyncResidenceMode::Opened && planned != *self.mode.borrow();
         let mut retained = Vec::new();
         let mut unsynced = Vec::new();
-        if planned == SyncResidenceMode::Opened && planned != *self.mode.borrow() {
+        if grants {
             let mut config = self.client_config();
             config.residence_mode = SyncResidenceMode::Opened;
             let (mut client, _events) =
@@ -568,11 +575,25 @@ impl SyncConnection {
                 }
             }
         }
-        if mode == SyncResidenceMode::Opened {
-            // The install key signs the withdrawal; a home that loses the
-            // election before the recording transaction withdraws too.
-            vault.load_install_signing_if_minted().map_err(storage)?;
-        }
+        // A switch to sync opened planned without the grants (this machine
+        // was the home, or ran sync opened already) can still record it from
+        // sync all: the home moved meanwhile, or another switch published
+        // sync all. The recording transaction then marks the held windows the
+        // home has not granted for the residence upkeep's grants.
+        let ungranted = if mode == SyncResidenceMode::Opened && !grants {
+            crate::sync::residence::discover_local_window_keys(vault).map_err(storage)?
+        } else {
+            Vec::new()
+        };
+        // The install key signs the withdrawal; a home that loses the
+        // election before the recording transaction withdraws too. A key
+        // that does not load fails only a switch that withdraws: a machine
+        // elected home meanwhile records the choice and stays All.
+        let signing = if mode == SyncResidenceMode::Opened {
+            vault.load_install_signing_if_minted()
+        } else {
+            Ok(())
+        };
         #[cfg(oneiron_test_support)]
         crate::test_doors::full_copy_mark::at_residence_switch_record(vault).map_err(storage)?;
         let configured = self.config.client_config.residence_mode;
@@ -599,7 +620,13 @@ impl SyncConnection {
                 if switching && effective == SyncResidenceMode::Opened {
                     // L7-47: the mark is withdrawn in the same transaction
                     // that records the switch.
+                    signing?;
                     vault.declare_full_copy_in_txn(txn, false)?;
+                    // The held windows no grant was asked for stay on disk
+                    // unsynced until the upkeep's grants.
+                    let marked =
+                        crate::sync::client::mark_ungranted_windows_in_txn(vault, txn, ungranted)?;
+                    change.unsynced.extend(marked);
                 }
                 if switching && effective == SyncResidenceMode::All {
                     // A cached id refuses local writes until promoted; the

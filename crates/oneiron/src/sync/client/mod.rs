@@ -89,8 +89,8 @@ pub use self::residence::{
 };
 pub(crate) use self::residence::{
     catch_up_authority, exchange_checkpoint_roots, fetch_owed_machine_history,
-    observe_sealed_bundle_relay, pinned_checkpoint_pending, relay_sealed_bundle,
-    request_media_vectors, retry_refused_retains, search_resident,
+    mark_ungranted_windows_in_txn, observe_sealed_bundle_relay, pinned_checkpoint_pending,
+    relay_sealed_bundle, request_media_vectors, retry_refused_retains, search_resident,
 };
 pub(crate) use self::sealed_updates::{send_sealed_updates, world_relays_sealed};
 pub(crate) use self::staged_body_pull::StagedBodyPump;

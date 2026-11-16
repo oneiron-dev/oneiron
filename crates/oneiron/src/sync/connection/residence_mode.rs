@@ -39,9 +39,10 @@ pub(super) const RENEGOTIATE_AT_ONCE: bool = true;
 
 impl SyncConnection {
     /// Resolves the mode at start, then on each wake whose committed home
-    /// moved this machine in or out of the home, for the connection's whole
-    /// life. A federation lane keeps its configured mode and runs none. Each
-    /// change holds the host's admission, a pause waited out (FIX 12036).
+    /// moved this machine in or out of the home, or whose store resolves to
+    /// a mode other than the one this connection runs, for the connection's
+    /// whole life. A federation lane keeps its configured mode and runs none.
+    /// Each change holds the host's admission, a pause waited out (FIX 12036).
     pub(super) async fn run_residence_mode(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
@@ -54,7 +55,7 @@ impl SyncConnection {
         let mut home = None;
         loop {
             match crate::sync::residence::local_is_elected_home(&vault) {
-                Ok(is_home) if home != Some(is_home) => {
+                Ok(is_home) if home != Some(is_home) || self.running_mode_is_stale(&vault) => {
                     // `follow_home` resolves the mode afresh past a pause.
                     let _change = self.admit_round().await;
                     if let Err(error) = self.follow_home(&vault) {
@@ -76,6 +77,19 @@ impl SyncConnection {
                 match std::future::pending::<Infallible>().await {}
             }
         }
+    }
+
+    /// Whether the store resolves to a mode other than the one this
+    /// connection runs. An owner's switch publishes the mode its recording
+    /// transaction resolved, and two elections around that transaction can
+    /// leave the home where the refresh last read it while the store
+    /// resolves otherwise; the refresh runs on this too (FIX
+    /// RESIDENCE-SWITCH-STALE-HOME). A resolution that fails reads as
+    /// current: the refresh would fail on it as well.
+    fn running_mode_is_stale(&self, vault: &Vault) -> bool {
+        let configured = self.config.client_config.residence_mode;
+        crate::sync::residence::resolve_residence_mode(vault, configured)
+            .is_ok_and(|resolved| resolved != *self.mode.borrow())
     }
 
     /// Publishes the mode the committed home and the owner's stored choice
