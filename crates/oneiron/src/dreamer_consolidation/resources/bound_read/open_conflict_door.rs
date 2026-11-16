@@ -38,6 +38,44 @@ struct AssembledConflict<'a> {
     operand_order: Vec<EntityId>,
 }
 
+/// Runs `finish` over native assembly of `operands_json` on the bound
+/// attempt at `now_ms`: the bound inputs, the branch, the real assembly,
+/// and the operands' claim ids in operand order. The conflict doors and
+/// the candidate door share this body; only their finish differs.
+///
+/// # Errors
+///
+/// The vault's, and operands the bound read refuses.
+pub(super) fn with_native_assembly<R>(
+    vault: &Vault,
+    attempt_hex: &str,
+    now_ms: u64,
+    operands_json: &[Value],
+    finish: impl FnOnce(
+        AttemptId,
+        WriteActor,
+        &BranchResources<'_>,
+        consolidation::assembly::AssembledCandidates,
+        Vec<EntityId>,
+    ) -> Result<R>,
+) -> Result<R> {
+    let (attempt_id, operands) = door_request(attempt_hex, operands_json)?;
+    let actor = vault.dreamer_actor_for_attempt(attempt_id)?;
+    let inputs = bound_inputs(vault, &actor, attempt_id, &operands, now_ms)?;
+    let resources = BranchResources::open_branch(
+        vault,
+        actor,
+        &inputs.branch,
+        attempt_id,
+        Some(&inputs.scope),
+        None,
+        Some(&inputs.known),
+    )?;
+    let assembled =
+        consolidation::assembly::assemble_extracted(vault, &resources, inputs.extracted, now_ms)?;
+    finish(attempt_id, actor, &resources, assembled, inputs.claims)
+}
+
 /// Runs `finish` over the one native conflict `operands_json` form on the
 /// bound attempt at `now_ms`: the bound inputs, the branch, the real
 /// assembly, the set's members and their joined decisions. Both doors share
@@ -55,46 +93,40 @@ fn with_assembled_conflict<R>(
     operands_json: &[Value],
     finish: impl FnOnce(AssembledConflict<'_>) -> Result<R>,
 ) -> Result<R> {
-    let (attempt_id, operands) = door_request(attempt_hex, operands_json)?;
-    let actor = vault.dreamer_actor_for_attempt(attempt_id)?;
-    let inputs = bound_inputs(vault, &actor, attempt_id, &operands, now_ms)?;
-    let resources = BranchResources::open_branch(
+    with_native_assembly(
         vault,
-        actor,
-        &inputs.branch,
-        attempt_id,
-        Some(&inputs.scope),
-        None,
-        Some(&inputs.known),
-    )?;
-    let assembled =
-        consolidation::assembly::assemble_extracted(vault, &resources, inputs.extracted, now_ms)?;
-    let [conflict] = assembled.conflicts.as_slice() else {
-        return Err(Error::InvalidConfig(format!(
-            "the operands form {} native conflicts, not one",
-            assembled.conflicts.len()
-        )));
-    };
-    let mut members = Vec::with_capacity(conflict.candidate_indexes.len());
-    for index in &conflict.candidate_indexes {
-        let member = assembled.candidates.get(*index).ok_or_else(|| {
-            Error::InvalidConfig("a native conflict names a missing candidate".to_owned())
-        })?;
-        members.push(member);
-    }
-    let mut decisions = Vec::new();
-    for member in &members {
-        consolidation::provenance::join_decisions(&mut decisions, &member.decisions);
-    }
-    finish(AssembledConflict {
-        resources: &resources,
-        actor,
-        attempt: attempt_id,
-        conflict,
-        members,
-        decisions,
-        operand_order: inputs.claims,
-    })
+        attempt_hex,
+        now_ms,
+        operands_json,
+        |attempt_id, actor, resources, assembled, claims| {
+            let [conflict] = assembled.conflicts.as_slice() else {
+                return Err(Error::InvalidConfig(format!(
+                    "the operands form {} native conflicts, not one",
+                    assembled.conflicts.len()
+                )));
+            };
+            let mut members = Vec::with_capacity(conflict.candidate_indexes.len());
+            for index in &conflict.candidate_indexes {
+                let member = assembled.candidates.get(*index).ok_or_else(|| {
+                    Error::InvalidConfig("a native conflict names a missing candidate".to_owned())
+                })?;
+                members.push(member);
+            }
+            let mut decisions = Vec::new();
+            for member in &members {
+                consolidation::provenance::join_decisions(&mut decisions, &member.decisions);
+            }
+            finish(AssembledConflict {
+                resources,
+                actor,
+                attempt: attempt_id,
+                conflict,
+                members,
+                decisions,
+                operand_order: claims,
+            })
+        },
+    )
 }
 
 /// Parks the one native conflict `operands_json` form on the bound attempt

@@ -1,6 +1,6 @@
 //! Sealed resource handoff. Only the executor can construct one; every real
 //! promotion and attachment checks its pins inside the write transaction.
-use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
+use super::{BoundBranchRead, BranchResources, FallbackOutputPin, SourcePin, document_version};
 use crate::claim::{ClaimSource, ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::conflict::candidate_probe_body;
@@ -326,6 +326,24 @@ impl BranchResources<'_> {
 }
 
 impl ConsolidationFence {
+    /// The fence for a derive candidate write from a bound read: the given
+    /// actor, the bound read's attempt, sources, turns, texts and rules, no
+    /// fallback or root binding, both ledgers empty.
+    pub(crate) fn for_bound_read(actor: WriteActor, bound: &BoundBranchRead) -> Self {
+        Self {
+            actor,
+            attempt: bound.fenced_attempt(),
+            fallback_binding: None,
+            root_binding: None,
+            sources: bound.fenced_sources().clone(),
+            turns: bound.fenced_turns().clone(),
+            texts: bound.fenced_texts().clone(),
+            rules: bound.key_rules().clone(),
+            closed: std::sync::Mutex::default(),
+            standing: std::sync::Mutex::default(),
+        }
+    }
+
     pub(crate) fn validate_run(
         &self,
         run: &crate::dreamer_promotion::DreamerRunContext,

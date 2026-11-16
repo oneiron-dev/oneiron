@@ -20,6 +20,70 @@ pub(super) struct RoutedConflict {
     pub(super) component_coverage: Vec<usize>,
 }
 
+/// The kept matches of one candidate: the matches that stand after the
+/// observed-beside exclusion, the stated heads that were excluded, and
+/// whether the candidate exactly restates its one kept match.
+struct KeptCandidateMatches {
+    /// The matches that stand, each with whether its value key equals too.
+    kept: Vec<(EntityId, bool)>,
+    /// The stated heads the observed-beside rule excluded.
+    stated: BTreeSet<EntityId>,
+    /// Whether the kept matches are exactly one equal match.
+    exact: bool,
+}
+
+/// The loop body of [`route_observed_priors`] for one candidate: its
+/// matched heads, every one checked for a prior write, the stated heads
+/// excluded when the candidate qualifies as observed-beside, and the kept
+/// matches with the exact flag.
+fn kept_matches_for_candidate(
+    candidate: &PromotionCandidate,
+    heads: &[PriorHead],
+    bound: &BoundBranchRead,
+    observed_qualifies: bool,
+) -> MemoryResult<KeptCandidateMatches> {
+    let matches = bound_matching_priors(candidate, heads, bound.key_rules())?;
+    for (id, _) in &matches {
+        bound.require_prior_write(*id)?;
+    }
+    let stated: BTreeSet<EntityId> = matches
+        .iter()
+        .filter(|(id, _)| {
+            observed_qualifies
+                && bound.prior(*id).is_some_and(|head| {
+                    head.body.source.unwrap_or(ClaimSource::Imported) == ClaimSource::UserStated
+                })
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    let kept: Vec<_> = matches
+        .into_iter()
+        .filter(|(id, _)| !stated.contains(id))
+        .collect();
+    let exact = kept.len() == 1 && kept[0].1;
+    Ok(KeptCandidateMatches {
+        kept,
+        stated,
+        exact,
+    })
+}
+
+/// The kept matches of one checked proposal, whose operand is the one
+/// operand of `context`: its observed-beside qualification as
+/// [`route_observed_priors`] computes it, then the heads it stands against
+/// after the exclusion, each with whether its value key equals too. A
+/// proposal that does not qualify keeps every match, as the bound route
+/// without a qualifying candidate matches it.
+pub(crate) fn kept_matches_for_one_proposal(
+    bound: &BoundBranchRead,
+    context: &ExtractionRebuildContext<'_>,
+    proposal: &PromotionCandidate,
+) -> MemoryResult<Vec<(EntityId, bool)>> {
+    let observed = qualifying_candidates(std::slice::from_ref(proposal), bound, context)?;
+    let heads: Vec<PriorHead> = bound.priors().values().cloned().collect();
+    Ok(kept_matches_for_candidate(proposal, &heads, bound, observed.contains(&true))?.kept)
+}
+
 /// Verifies qualification and mirrors the crate's kept-match, component and singleton rules.
 /// Every original matching head must admit a write before any stated head is excluded.
 /// With no qualifying candidate, the existing bound route supplies every set and exact member.
@@ -50,29 +114,12 @@ pub(super) fn route_observed_priors(
     let mut stated = Vec::with_capacity(candidates.len());
     let mut kept = Vec::with_capacity(candidates.len());
     for (index, candidate) in candidates.iter().enumerate() {
-        let matches = bound_matching_priors(candidate, &heads, bound.key_rules())?;
-        for (id, _) in &matches {
-            bound.require_prior_write(*id)?;
-        }
-        let excluded: BTreeSet<EntityId> = matches
-            .iter()
-            .filter(|(id, _)| {
-                observed[index]
-                    && bound.prior(*id).is_some_and(|head| {
-                        head.body.source.unwrap_or(ClaimSource::Imported) == ClaimSource::UserStated
-                    })
-            })
-            .map(|(id, _)| *id)
-            .collect();
-        let matches: Vec<_> = matches
-            .into_iter()
-            .filter(|(id, _)| !excluded.contains(id))
-            .collect();
-        if matches.len() == 1 && matches[0].1 {
+        let kept_matches = kept_matches_for_candidate(candidate, &heads, bound, observed[index])?;
+        if kept_matches.exact {
             exact.insert(index);
         }
-        stated.push(excluded);
-        kept.push(matches);
+        stated.push(kept_matches.stated);
+        kept.push(kept_matches.kept);
     }
 
     let components: Vec<Vec<usize>> = nominated

@@ -16,9 +16,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::batch::{
-    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedConflict,
-    DerivedConflictMember, DerivedEvidence, DerivedEvidenceSpans as BatchSpans, DerivedSameAs,
-    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
+    DerivationBatch, DerivationItem, DerivedArchive, DerivedCandidate, DerivedClaim,
+    DerivedConflict, DerivedConflictMember, DerivedEvidence, DerivedEvidenceSpans as BatchSpans,
+    DerivedSameAs, DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
 };
 use super::commit::{DerivationReceipt, ItemOutcome};
 use super::revert::DeriveRevertReceipt;
@@ -117,6 +117,21 @@ pub struct DeriveConflictInput {
     pub set_members: Option<Vec<usize>>,
 }
 
+/// A candidate to land: one extraction candidate that replaces nothing. Its
+/// operand is the bound verdict's operand, with the confidence and the
+/// prospective query hints the claim lands with. The item names no row by a
+/// batch-local name, and its source versions are inside its operand, not in
+/// the request's `sources`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeriveCandidateInput {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The candidate, exactly the operand the verdict takes, with the
+    /// confidence and hints it lands with.
+    pub member: DeriveConflictMember,
+}
+
 /// One wire item: `{"kind": "<kind>", "spec": {...}}`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
@@ -134,6 +149,7 @@ pub enum DeriveItemInput {
     Topology(DeriveTopologyInput),
     Archive(DeriveArchiveInput),
     Conflict(DeriveConflictInput),
+    Candidate(DeriveCandidateInput),
 }
 
 impl DeriveItemInput {
@@ -201,30 +217,47 @@ impl DeriveItemInput {
                 policy_pin: archive.policy_pin,
                 config_pin: archive.config_pin,
             }),
-            Self::Conflict(conflict) => {
-                let mut members = Vec::with_capacity(conflict.members.len());
-                for member in conflict.members {
-                    if !(0.0..=1.0).contains(&member.confidence) {
-                        return Err(MemoryError::bad_request(
+            Self::Conflict(conflict) => DerivationItem::Conflict(DerivedConflict {
+                local: conflict.local,
+                members: conflict
+                    .members
+                    .into_iter()
+                    .map(|member| {
+                        derived_member(
+                            member,
                             "a conflict member's confidence is a number from 0 to 1",
-                        ));
-                    }
-                    members.push(DerivedConflictMember {
-                        operand: member.candidate,
-                        // In range, so the narrowing loses only precision.
-                        confidence: member.confidence as f32,
-                        prospective_queries: member.prospective_queries,
-                    });
-                }
-                DerivationItem::Conflict(DerivedConflict {
-                    local: conflict.local,
-                    members,
-                    heads: conflict.heads,
-                    set_members: conflict.set_members,
-                })
-            }
+                        )
+                    })
+                    .collect::<MemoryResult<_>>()?,
+                heads: conflict.heads,
+                set_members: conflict.set_members,
+            }),
+            Self::Candidate(candidate) => DerivationItem::Candidate(DerivedCandidate {
+                local: candidate.local,
+                member: derived_member(
+                    candidate.member,
+                    "a candidate member's confidence is a number from 0 to 1",
+                )?,
+            }),
         })
     }
+}
+
+/// One wire member as a batch holds it: its confidence inside `[0, 1]`,
+/// else a bad request with `out_of_range`.
+fn derived_member(
+    member: DeriveConflictMember,
+    out_of_range: &'static str,
+) -> MemoryResult<DerivedConflictMember> {
+    if !(0.0..=1.0).contains(&member.confidence) {
+        return Err(MemoryError::bad_request(out_of_range));
+    }
+    Ok(DerivedConflictMember {
+        operand: member.candidate,
+        // In range, so the narrowing loses only precision.
+        confidence: member.confidence as f32,
+        prospective_queries: member.prospective_queries,
+    })
 }
 
 /// `vault.derive.commit`: one batch of derived items.

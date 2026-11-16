@@ -54,7 +54,7 @@ pub(crate) fn reviewed_output(vault: &Vault, candidate: &PromotionCandidate) -> 
 /// A claim from imported words that the owner declined and that says what
 /// `candidate` says, citing every MESSAGE in `cited`. A message that lands
 /// later in the same TURN re-reads its old words too; what they yield again
-/// is not proposed again.
+/// is not proposed again. Every read uses one snapshot.
 pub(crate) fn declined_from_same_words(
     vault: &Vault,
     candidate: &PromotionCandidate,
@@ -63,15 +63,30 @@ pub(crate) fn declined_from_same_words(
     if cited.is_empty() {
         return Ok(None);
     }
+    let txn = vault.store.env.read_txn()?;
+    declined_from_same_words_in_txn(vault, &txn, candidate, cited)
+}
+
+/// [`declined_from_same_words`] in the caller's transaction: the MESSAGE
+/// headers, the dependents of each cited MESSAGE, and the type and body of
+/// each dependent claim.
+pub(crate) fn declined_from_same_words_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    candidate: &PromotionCandidate,
+    cited: &[EntityId],
+) -> Result<Option<EntityId>> {
+    if cited.is_empty() {
+        return Ok(None);
+    }
     let mut citing: Option<BTreeSet<EntityId>> = None;
     for message in cited {
-        let Some(header) = vault.read_entity_header(message)? else {
+        let Some(header) = vault.entity_header_in_txn(txn, message)? else {
             return Ok(None);
         };
-        let txn = vault.store.env.read_txn()?;
         let dependents: BTreeSet<_> = vault
             .port_dependency_list_by_source(
-                &txn,
+                txn,
                 SourceSpan {
                     document: *message,
                     frontier: header.learned_at,
@@ -86,10 +101,10 @@ pub(crate) fn declined_from_same_words(
     }
     let facts = candidate_facts(&candidate.candidate)?;
     for id in citing.unwrap_or_default() {
-        if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_CLAIM) {
+        if vault.get_entity_type_in_txn(txn, &id)? != Some(ENTITY_TYPE_CLAIM) {
             continue;
         }
-        let Some(body) = vault.get_claim(&id)? else {
+        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
             continue;
         };
         if body.approval == ClaimApprovalStatus::Rejected

@@ -10,12 +10,12 @@ mod landing;
 use super::*;
 use crate::dreamer_consolidation::evidence::ResolvedConflictOutput;
 use crate::error::{ErrorKind, GateError};
-pub(super) use landing::land_prepared_promotion_in_txn;
+pub(crate) use landing::land_prepared_promotion_in_txn;
 use landing::{finish_promotion_in_txn, read_prior_in_txn};
 
 /// A gate refusal's outcome and reason codes, as the gate wrote them: static
 /// codes, never the candidate's text (FIX 10355).
-pub(super) type GateCodes = (&'static str, Vec<&'static str>);
+pub(crate) type GateCodes = (&'static str, Vec<&'static str>);
 
 /// The outcome and reason codes of `error` when the gate refused the write.
 pub(super) fn gate_codes(error: &Error) -> Option<GateCodes> {
@@ -33,10 +33,20 @@ pub(super) fn gate_codes(error: &Error) -> Option<GateCodes> {
 /// gate refused it. A structural guard's refusal has no kind; none is read
 /// back out of text.
 #[derive(Debug)]
-pub(super) struct PromotionRejection {
+pub(crate) struct PromotionRejection {
     pub(super) reason: String,
-    pub(super) kind: Option<ErrorKind>,
-    pub(super) gate: Option<GateCodes>,
+    pub(crate) kind: Option<ErrorKind>,
+    pub(crate) gate: Option<GateCodes>,
+    /// Whether the candidate itself was refused: by a structural guard, or
+    /// by an engine error of the claim domain (`Error::Claim`,
+    /// `Error::InvalidClaimBody`). Any other engine error is the store's.
+    pub(crate) claim_domain: bool,
+}
+
+/// Whether `error` refuses a claim for what the claim is, as the derive
+/// stagers read it: every other error is the store's.
+fn claim_domain(error: &Error) -> bool {
+    matches!(error, Error::Claim(_) | Error::InvalidClaimBody(_))
 }
 
 impl PromotionRejection {
@@ -46,6 +56,7 @@ impl PromotionRejection {
             reason: reason.into(),
             kind: None,
             gate: None,
+            claim_domain: true,
         }
     }
 
@@ -54,6 +65,7 @@ impl PromotionRejection {
         Self {
             kind: Some(error.kind()),
             gate: gate_codes(&error),
+            claim_domain: claim_domain(&error),
             reason: error.to_string(),
         }
     }
@@ -63,6 +75,7 @@ impl PromotionRejection {
         Self {
             kind: Some(error.kind()),
             gate: gate_codes(&error),
+            claim_domain: claim_domain(&error),
             reason: format!("{context}: {error}"),
         }
     }
@@ -75,6 +88,7 @@ impl PromotionRejection {
             reason,
             kind: Some(Error::from(error).kind()),
             gate: None,
+            claim_domain: false,
         }
     }
 
@@ -97,15 +111,15 @@ impl PromotionRejection {
 /// `verify_landed`: every value the write and its re-read need, nothing
 /// the preparation only checked. The candidate the batch writes travels
 /// beside it, because the one write consumes it.
-pub(super) struct PreparedPromotion<'a> {
+pub(crate) struct PreparedPromotion<'a> {
     /// The caller-minted claim id the write lands at.
-    pub(super) claim_id: EntityId,
+    pub(crate) claim_id: EntityId,
     /// The envelope the writer built and signed, as the batch stamps it.
-    pub(super) envelope: WriteEnvelope,
+    pub(crate) envelope: WriteEnvelope,
     /// The claim's validity window, as the batch writes it.
-    pub(super) occurred: crate::TimeRange,
+    pub(crate) occurred: crate::TimeRange,
     /// The claim's learned time, as the batch writes it.
-    pub(super) learned_at: u64,
+    pub(crate) learned_at: u64,
     /// The prospective-query hints the batch keeps, empty for a signed
     /// (MACHINE) promotion.
     pub(super) hints: Vec<String>,
@@ -123,7 +137,7 @@ pub(super) struct PreparedPromotion<'a> {
     /// The claim's Rule A birth, when it names an input.
     pub(super) birth: Option<RowBirth>,
     /// Whether the computed source is `Imported`.
-    pub(super) imported: bool,
+    pub(crate) imported: bool,
     /// Whether the candidate is a conflict-open marker.
     pub(super) is_conflict_marker: bool,
     /// The rows an unverified promotion cites, for the recheck the write
@@ -133,10 +147,10 @@ pub(super) struct PreparedPromotion<'a> {
     /// and strength.
     pub(super) verified: Option<&'a VerifiedEvidenceSet>,
     /// The claim's predicate, as the write and its re-read check it.
-    pub(super) predicate: String,
+    pub(crate) predicate: String,
     /// The COMPUTED meet the writer stamped, as the write and its re-read
     /// check it.
-    pub(super) source: ClaimSource,
+    pub(crate) source: ClaimSource,
     /// The agent's own-rate window, read on the calling thread.
     pub(super) auto_write_rate: crate::store::own_rate_record::OwnRate,
 }
@@ -147,14 +161,17 @@ pub(super) struct PreparedPromotion<'a> {
 /// birth, scope, signature, rate, hints and text. It opens no transaction
 /// of its own; every read uses `txn`, the caller's one preparation
 /// snapshot. It answers the prepared write with the candidate the batch
-/// writes: its sealed evidence and its tainted scope are set.
-pub(super) fn prepare_promotion<'a>(
+/// writes: its sealed evidence and its tainted scope are set. The
+/// envelope's provenance is the caller's: `None` builds native's as
+/// before, `Some` stamps the passed value as is.
+pub(crate) fn prepare_promotion<'a>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
     verified: Option<&'a VerifiedEvidenceSet>,
     answers: &[&ResolvedConflictOutput],
+    provenance: Option<Value>,
 ) -> std::result::Result<(PreparedPromotion<'a>, crate::ClaimCandidate), PromotionRejection> {
     let public_refs = public_evidence_refs(candidate.candidate.evidence())
         .map_err(|error| PromotionRejection::engine_in("invalid document evidence", error))?;
@@ -268,10 +285,9 @@ pub(super) fn prepare_promotion<'a>(
         }
         _ => SourceLineage::of(ClaimSource::Generated),
     };
-    let mut envelope = WriteEnvelope::with_lineage(
-        run.agent_actor,
-        source,
-        WriteProvenance::new(super::resolved_outputs::with_answers(
+    let provenance_value = match provenance {
+        Some(value) => value,
+        None => super::resolved_outputs::with_answers(
             promotion_provenance(
                 run,
                 &candidate.provenance_chain,
@@ -280,8 +296,12 @@ pub(super) fn prepare_promotion<'a>(
             )
             .map_err(PromotionRejection::engine)?,
             answers,
-        ))
-        .map_err(PromotionRejection::engine)?,
+        ),
+    };
+    let mut envelope = WriteEnvelope::with_lineage(
+        run.agent_actor,
+        source,
+        WriteProvenance::new(provenance_value).map_err(PromotionRejection::engine)?,
         // Auto for every native candidate (ARCH-0067 §7). The gate may still
         // refuse; it may never turn this into an owner-review row.
         ClaimApprovalStatus::Auto,
@@ -519,7 +539,7 @@ pub(super) fn promote_one_answering(
             .env
             .read_txn()
             .map_err(PromotionRejection::store)?;
-        prepare_promotion(vault, &txn, run, candidate, verified, answers)?
+        prepare_promotion(vault, &txn, run, candidate, verified, answers, None)?
     };
     // The checker's turn, waited for here, before the batch announces its
     // write (FIX 8751, 8701): the gate inside never waits for capacity.
@@ -613,7 +633,7 @@ pub(super) fn verify_landed(
 }
 
 /// The same checks for the actual body in the writer and its post-commit read.
-fn verify_landed_body(
+pub(crate) fn verify_landed_body(
     body: &crate::claim::ClaimBody,
     expected_predicate: &str,
     expected_source: ClaimSource,
