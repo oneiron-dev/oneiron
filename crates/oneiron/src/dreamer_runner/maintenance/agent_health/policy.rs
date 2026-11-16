@@ -147,7 +147,9 @@ impl Vault {
 }
 
 /// The reviewer's in-force revision and its `policy.json` bytes: from the
-/// bootstrap `agent-health-review` skill, through admitted succession
+/// bootstrap `agent-health-review` skill (or, once its succession holds no
+/// loadable revision, the admitted restored default:
+/// `agent_dispatch::bootstrap_skill_root_in_txn`), through admitted succession
 /// (`Supersedes`, new to old) to its newest revision, when that revision is
 /// live, shared, active and approved (the judge rubric's walk). `None` when
 /// no such revision exists; the bytes are `None` when its package holds no
@@ -156,9 +158,10 @@ fn in_force_policy_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<(EntityId, Option<Vec<u8>>)>> {
-    let mut head = EntityId::derive(
-        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
-        &[AGENT_HEALTH_REVIEW_SKILL_ID.as_bytes()],
+    let mut head = crate::agent_dispatch::bootstrap_skill_root_in_txn(
+        vault,
+        txn,
+        AGENT_HEALTH_REVIEW_SKILL_ID,
     )?;
     let mut seen = BTreeSet::from([head]);
     loop {

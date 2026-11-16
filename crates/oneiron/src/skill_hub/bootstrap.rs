@@ -1,5 +1,7 @@
 //! Build-embedded bootstrap skills; import and activation commit together on first open.
 
+use std::collections::BTreeSet;
+
 use rmpv::Value;
 
 use super::{HubAdmissionProof, HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
@@ -33,8 +35,11 @@ impl Vault {
     }
 }
 
-/// Marker (engine version string) that the built-in bootstrap skill set has
-/// been seeded.
+/// Marker that the built-in bootstrap skill set has been seeded: the engine
+/// version that last seeded, then one line per `FILES` name a seed pass has
+/// offered. The loop's shipped skills version with the engine (ARCH-0053:273),
+/// so a later open offers each name its engine ships and the marker lacks
+/// (BOOTSTRAP-SEED-ON-UPGRADE = A). A marker with no name lines names none.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
 const FILES: [(&str, &str); 5] = [
     (
@@ -272,10 +277,31 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
     seed_bootstrap_skill_files(vault, &FILES)
 }
 
+/// The names a seed marker records as offered.
+fn offered_names(marker: &str) -> BTreeSet<&str> {
+    marker.lines().skip(1).collect()
+}
+
+/// The entries of `files` a seed pass still has to offer under `marker`:
+/// every entry before the first pass, else those whose name the marker lacks.
+fn unoffered<'a>(marker: Option<&str>, files: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+    let offered = marker.map(offered_names).unwrap_or_default();
+    files
+        .iter()
+        .copied()
+        .filter(|(name, _)| !offered.contains(name))
+        .collect()
+}
+
 /// The seed pass over `files` (the shipped `FILES`, or a test door's list).
+/// It offers only the names the marker lacks; each offer is skipped, as at
+/// first open, when its seed id is present, deleted or stale, or when another
+/// import holds its bytes, so a later pass never revives what the owner
+/// deleted or replaced.
 fn seed_bootstrap_skill_files(vault: &Vault, files: &[(&str, &str)]) -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
-    if SEEDED.contains(&vault.store, &rtxn, &())? {
+    let marker = SEEDED.get(&vault.store, &rtxn, &())?;
+    if marker.is_some() && unoffered(marker.as_deref(), files).is_empty() {
         return Ok(());
     }
     drop(rtxn);
@@ -288,11 +314,21 @@ fn seed_bootstrap_skill_files(vault: &Vault, files: &[(&str, &str)]) -> Result<(
         return Ok(());
     }
     let mut wtxn = vault.store.env.write_txn()?;
-    if SEEDED.contains(&vault.store, &wtxn, &())? {
+    let marker = SEEDED.get(&vault.store, &wtxn, &())?;
+    let pending = unoffered(marker.as_deref(), files);
+    if marker.is_some() && pending.is_empty() {
         return Ok(());
     }
+    let mut offered: BTreeSet<String> = marker
+        .as_deref()
+        .map(offered_names)
+        .unwrap_or_default()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
     let occurred = TimeRange { start: 0, end: 0 };
-    for &(name, markdown) in files {
+    for (name, markdown) in pending {
+        offered.insert(name.to_owned());
         let package = package(name, markdown)?;
         let seed_id = stable_id(name)?;
         let content_hash = package.content_hash()?;
@@ -349,12 +385,12 @@ fn seed_bootstrap_skill_files(vault: &Vault, files: &[(&str, &str)]) -> Result<(
         // (OF-540), in the transaction that admitted it.
         bind_shipped_pattern_in_txn(vault, &mut wtxn, name, id)?;
     }
-    SEEDED.put(
-        &vault.store,
-        &mut wtxn,
-        &(),
-        &env!("CARGO_PKG_VERSION").to_owned(),
-    )?;
+    let mut value = env!("CARGO_PKG_VERSION").to_owned();
+    for name in &offered {
+        value.push('\n');
+        value.push_str(name);
+    }
+    SEEDED.put(&vault.store, &mut wtxn, &(), &value)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -417,11 +453,31 @@ impl Vault {
         self.default_skill_present_for_entity_in_txn(&txn, entity, source)
     }
 
+    /// The fresh imports restore defaults made of the shipped skill `name`
+    /// ([`Self::restore_bootstrap_skills`]), whichever engine's bytes they
+    /// carry, in id order: the holders of the bootstrap hub's `name` alias
+    /// at any pin, other than the seed id. Empty for a name not shipped.
+    pub(crate) fn restored_bootstrap_skills_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        name: &str,
+    ) -> Result<Vec<EntityId>> {
+        let Some(&(_, markdown)) = FILES.iter().find(|(shipped, _)| *shipped == name) else {
+            return Ok(Vec::new());
+        };
+        let hash = package(name, markdown)?.content_hash()?;
+        let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+        self.hub_skill_holders_at_any_pin_in_txn(txn, &source, name, &stable_id(name)?)
+    }
+
     /// Explicitly re-imports missing or locally retired shipped bootstrap
     /// skills from the bytes embedded in this engine build. An unchanged
     /// default is left alone. Restored skills get new IDs and enter as
     /// Candidates through the ordinary scanner/import door; unlike first-open
-    /// seeding, this verb never grants activation authority. Crate-visible for
+    /// seeding, this verb never grants activation authority. Once admitted, a
+    /// restored skill is the one the loop loads in place of a seed whose
+    /// succession holds no loadable revision
+    /// (`agent_dispatch::bootstrap_skill_root_in_txn`). Crate-visible for
     /// the test door `test_doors::skill_hub_restore` (G99 pin).
     pub(crate) fn restore_bootstrap_skills(
         &self,

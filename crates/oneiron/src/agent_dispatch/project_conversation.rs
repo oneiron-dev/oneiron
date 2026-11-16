@@ -155,6 +155,27 @@ impl AgentDispatcher<'_> {
         )
     }
 
+    /// The goal-intake skill a run loads: a host's own configured skill as
+    /// configured; for the shipped one, the in-force head from its bootstrap
+    /// id, or from the admitted restored default once the bootstrap's
+    /// succession holds no loadable revision (`bootstrap_skill_root_in_txn`);
+    /// else the shipped id, as before.
+    fn goal_intake_skill_in_force(&self, configured: EntityId) -> Result<EntityId> {
+        let shipped = EntityId::derive(
+            crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
+            &[GOAL_INTAKE_SKILL.as_bytes()],
+        )?;
+        if configured != shipped {
+            return Ok(configured);
+        }
+        let txn = self.vault.store.env.read_txn()?;
+        let root = super::bootstrap_skill_root_in_txn(self.vault, &txn, GOAL_INTAKE_SKILL)?;
+        Ok(
+            super::task_type_tree::skill_head_in_force_in_txn(self.vault, &txn, root)?
+                .unwrap_or(root),
+        )
+    }
+
     fn prepare_project_conversation_run_with(
         &self,
         leased: &AttemptRecord,
@@ -183,18 +204,16 @@ impl AgentDispatcher<'_> {
             }
             ProjectRunBriefing::GoalIntake(brief) => {
                 self.check_goal_intake_run(&run, &brief)?;
-                let record = self
-                    .vault
-                    .get_skill_record(&skills.goal_intake)?
-                    .ok_or_else(|| {
-                        Error::InvalidConfig("the configured goal-intake skill is missing".into())
-                    })?;
+                let goal_intake = self.goal_intake_skill_in_force(skills.goal_intake)?;
+                let record = self.vault.get_skill_record(&goal_intake)?.ok_or_else(|| {
+                    Error::InvalidConfig("the configured goal-intake skill is missing".into())
+                })?;
                 if record.skill_id != GOAL_INTAKE_SKILL {
                     return Err(Error::InvalidConfig(
                         "the configured goal-intake skill is another skill".into(),
                     ));
                 }
-                skills.goal_intake
+                goal_intake
             }
         };
         let loaded = self.vault.load_attempt_skill_pack(
