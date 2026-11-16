@@ -399,10 +399,12 @@ pub(crate) async fn core_memory_verb(
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let (reason, response_reason) = core_memory_delete_reason(verb, req.reason)?;
             // DEL-2 (ARCH-0043, owner DEL-2 = A): a self-hosted root, the dev
-            // mode and an owner-grade token delete as the owner, as before,
-            // with no new read. Any other token is judged by the one delete
-            // authority on its own resolved actor.
-            let owner_door = host_action.is_some() || auth.is_owner_grade();
+            // mode and the owner's own slip delete as the owner, with no new
+            // read. Any other token, a full-scope slip someone else holds
+            // included, is judged by the one delete authority on its own
+            // resolved actor (OWNER-GRADE-IS-NOT-OWNERSHIP).
+            let owner_door =
+                host_action.is_some() || crate::api::owner_routes::owner(&auth, &server).is_ok();
             let (existed, receipt_id, sweep_key) = if owner_door {
                 let failed = |error: oneiron::Error| {
                     tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");

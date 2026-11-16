@@ -480,7 +480,9 @@ pub struct TokenPairArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
-    /// Environment variable holding a logged owner-grade capability slip.
+    /// Environment variable holding the owner's own logged full slip (one
+    /// paired to his PERSON with `--actor-class human`): a link mints a slip,
+    /// so only the vault owner makes one.
     #[arg(long, default_value = "ONEIRON_TOKEN")]
     pub token_env: String,
 
@@ -500,6 +502,8 @@ pub struct TokenPairArgs {
 
     /// D13 actor class the slip binds write identity to: `human`, `agent`,
     /// or `system`. Required by `/v1/core/facade` routes; absent by default.
+    /// A slip the owner pairs for himself takes `human`: owner acts (pairing
+    /// links, slip revocation, full sync) admit only his human-class slip.
     #[arg(long = "actor-class")]
     pub actor_class: Option<String>,
 
