@@ -15,7 +15,9 @@
 //! whole-vault copy B made), keeps both records (FILE-CUSTODY-DUP-UNOPENED
 //! = A); the guard cases hold with and without the merge. After a merge, B's
 //! known-value history no longer names its own record, and the finisher
-//! carries out the retirement the merge staged.
+//! carries out the retirement the merge staged. A row B wrote before the
+//! open, holding B's own record's handle, still reaches the value through
+//! it after the merge (REVIEW2 #8875 P2-1).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test file_custody_merge_after_rewrap`.
@@ -27,8 +29,8 @@ use std::sync::Arc;
 use loro::ExportMode;
 use oneiron::authority::{ActSurface, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
-use oneiron::secret_custody::{CustodyPlan, SecretCustodyStatus};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY};
+use oneiron::secret_custody::{CustodyPlan, RevealTarget, SecretCustodyStatus};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::schema::create_window_doc;
@@ -598,6 +600,71 @@ fn b_keeps_its_own_record_when_the_owner_exported_the_vault_before_the_open() ->
     )
 }
 
+/// A row B wrote between its own mint and the open holds B's record's
+/// handle: B's write door placed it for the value B's record held then. The
+/// merge retires that record and leaves the row as written; the row's
+/// handle still reaches the value, through the record that holds it now
+/// (REVIEW2 #8875 P2-1). Red before the fix: the owner's reveal through the
+/// row's handle refuses B's retired record.
+#[test]
+fn a_row_b_wrote_before_the_open_reaches_the_value_through_its_handle_after_the_merge()
+-> TestResult<()> {
+    let row = EntityId::now();
+    let mut handle_b = None;
+    let opened = b_mints_then_opens_after(|vault_b, _owner_b, handle| {
+        handle_b = Some(handle.to_owned());
+        vault_b.put_entity(
+            &row,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: T0, end: T0 },
+            T0,
+            format!("deploy token {}", file_token()).as_bytes(),
+        )?;
+        Ok(())
+    })?;
+    let handle_b = handle_b.ok_or("B named its own record")?;
+    let vault_b = &opened.vault_b;
+
+    // B's write door placed B's own record's handle in the row: the value
+    // B's custody held then was its own record's.
+    let stored = String::from_utf8(vault_b.get(&row)?.ok_or("B holds the row")?)?;
+    assert!(
+        !stored.contains(&file_token()),
+        "B's write door masked the row: {stored}"
+    );
+    let handle = stored
+        .split("[secret ")
+        .nth(1)
+        .and_then(|rest| rest.split(']').next())
+        .ok_or("the row holds a handle")?
+        .to_owned();
+    assert_eq!(
+        handle.split(':').next(),
+        handle_b.split(':').next(),
+        "the row holds B's own record's handle"
+    );
+
+    // The merge ran: B's mark names A's record now.
+    assert_eq!(
+        file_custody_marks::file_mark_custody(vault_b, &opened.file_body)?,
+        vec![opened.id_a],
+        "B merged its own record into A's"
+    );
+
+    // The row's handle still reaches the value.
+    let revealed = vault_b.reveal_secret_as_owner(
+        &opened.owner_b,
+        &RevealTarget::Handle(handle.clone()),
+        "the deploy token in the row",
+    )?;
+    assert_eq!(
+        revealed.value.as_slice(),
+        file_token().as_bytes(),
+        "the row's handle {handle} reaches the value after the merge"
+    );
+    Ok(())
+}
+
 /// B mints its own record of A's file key; then `act` (what the owner did,
 /// named by `done`) acts on that record, by its handle, before A's custody
 /// opens on B through a rewrap. A duplicate the owner acted on, or one that
@@ -606,6 +673,47 @@ fn b_keeps_its_own_record_after_an_act_before_the_open(
     done: &str,
     act: impl FnOnce(&Vault, &AuthenticatedOwner, &str) -> TestResult<()>,
 ) -> TestResult<()> {
+    let opened = b_mints_then_opens_after(act)?;
+    let vault_b = &opened.vault_b;
+    // A duplicate the owner acted on, or one that left B, keeps both
+    // records (FILE-CUSTODY-DUP-UNOPENED = A): B's mark still names its own
+    // record, and that record stays live beside A's.
+    let stored_b_after = vault_b.get(&opened.asset)?.ok_or("B holds the file")?;
+    assert_eq!(
+        file_custody_marks::file_mark_custody(vault_b, &stored_b_after)?,
+        vec![opened.id_b],
+        "B's mark for the file still names its own {done} record"
+    );
+    let view_b_after = vault_b.secret_custody_view(&opened.owner_b, &opened.name_b)?;
+    assert!(
+        view_b_after.status == Some(SecretCustodyStatus::Active),
+        "B keeps its own {done} record live beside A's"
+    );
+    Ok(())
+}
+
+/// What a case holds once A's custody opened on B: B's vault and owner
+/// proof, the file, both records and the name of B's own. Both vaults, their
+/// windows and their directories live as long as it does.
+struct OpenedOnB {
+    vault_b: Arc<Vault>,
+    owner_b: AuthenticatedOwner,
+    file_body: Vec<u8>,
+    asset: EntityId,
+    id_a: EntityId,
+    id_b: EntityId,
+    name_b: String,
+    _windows: (LoadedWindow, LoadedWindow, Arc<Materializer>, Arc<Materializer>),
+    _vault_a: Arc<Vault>,
+    _dirs: (tempfile::TempDir, tempfile::TempDir),
+}
+
+/// B mints its own record of A's file key; then `act` runs on B, given B's
+/// own record's handle, before A's custody opens on B through a rewrap.
+/// Answers the state once the open stood on B.
+fn b_mints_then_opens_after(
+    act: impl FnOnce(&Vault, &AuthenticatedOwner, &str) -> TestResult<()>,
+) -> TestResult<OpenedOnB> {
     // A and B: two machines of one owner.
     let dir_a = tempfile::tempdir()?;
     let vault_a = Arc::new(open_owner_vault(dir_a.path())?);
@@ -785,20 +893,16 @@ fn b_keeps_its_own_record_after_an_act_before_the_open(
         view_a_after.known && view_a_after.held_here,
         "B opened A's custody: A's record is known and held here"
     );
-
-    // A duplicate the owner acted on, or one that left B, keeps both
-    // records (FILE-CUSTODY-DUP-UNOPENED = A): B's mark still names its own
-    // record, and that record stays live beside A's.
-    let stored_b_after = vault_b.get(&asset)?.ok_or("B holds the file")?;
-    assert_eq!(
-        file_custody_marks::file_mark_custody(&vault_b, &stored_b_after)?,
-        vec![id_b],
-        "B's mark for the file still names its own {done} record"
-    );
-    let view_b_after = vault_b.secret_custody_view(&owner_b, &name_b)?;
-    assert!(
-        view_b_after.status == Some(SecretCustodyStatus::Active),
-        "B keeps its own {done} record live beside A's"
-    );
-    Ok(())
+    Ok(OpenedOnB {
+        vault_b,
+        owner_b,
+        file_body,
+        asset,
+        id_a,
+        id_b,
+        name_b,
+        _windows: (window_a, window_b, materializer_a, materializer_b),
+        _vault_a: vault_a,
+        _dirs: (dir_a, dir_b),
+    })
 }
