@@ -36,40 +36,8 @@ pub const CALENDAR_INVITE_TOOL_DESCRIPTOR: OutboundToolDescriptor = OutboundTool
     idempotency_supported_hint: Some(true),
 };
 
-/// iMIP method carried by one invite.
-///
-/// Closed on purpose. Outlook treats a `VEVENT` with no explicit `METHOD` as a
-/// brand-new event rather than an update, so a defaulted method is a duplicate
-/// meeting in the recipient's calendar — the set never widens silently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum CalendarInviteMethod {
-    /// `METHOD:REQUEST` — create or update an invitation.
-    Request,
-    /// `METHOD:CANCEL` — withdraw an invitation.
-    Cancel,
-}
-
-impl CalendarInviteMethod {
-    /// Wire token (`REQUEST` / `CANCEL`).
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Request => "REQUEST",
-            Self::Cancel => "CANCEL",
-        }
-    }
-
-    /// Parses the wire token; anything outside the closed set is `None`.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "REQUEST" => Some(Self::Request),
-            "CANCEL" => Some(Self::Cancel),
-            _ => None,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::calendar::invite::payload::CalendarInviteMethod;
 
 /// C7's exact frozen invite payload.
 ///

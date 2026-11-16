@@ -29,8 +29,6 @@
 //! container adds no `(room, contact)` grant. A contact already cleared is
 //! not asked or cleared again.
 
-use serde::{Deserialize, Serialize};
-
 use super::membership::HistoryChoice;
 use super::*;
 use crate::consent::{AuthenticatedOwner, ContactDisclosureOutcome, DisclosureConfirmationReceipt};
@@ -50,19 +48,8 @@ enum EntryAsk {
     Unasked,
 }
 
-/// Who entered a container.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContainerAttendee {
-    /// A PERSON entering as a room member.
-    Person(EntityId),
-    /// A voice speaker no room member covers, by its stable keys: one the
-    /// vault cannot place yet, or one it placed who is no member.
-    Speaker {
-        session_key: String,
-        speaker_key: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::conversation::attendee::ContainerAttendee;
 
 /// One attendee entering one container, as the host delivers it.
 #[derive(Debug, Clone, PartialEq, Eq)]
