@@ -2,21 +2,22 @@
 //! DISTINCT-EVENT-DEFAULT-PROJECT-STAMP).
 
 use super::*;
-use crate::identity_topology::StoredIdentityOpAction;
+use crate::identity_topology::{AdmissionDisposition, StoredIdentityOpAction};
 
 /// The position the identity topology event `id` of `kind`, with body
 /// `data`, is born at, under its own substrate facet. An AssertDistinct event
 /// names its pair and its `entity.distinct_from` CLAIM, and that CLAIM
 /// stands where the words that asserted it stand (`DistinctClaimPlace`, FIX
 /// INTENT-DISTINCT-PROJECT-WORLD). So the event is born in that CLAIM's
-/// project and world, as stored here, and so is the admission disposition
-/// that signs the event. A door that judges a row by its own stamp
+/// project and world, as stored here, and so are the rows that annotate the
+/// event: the admission disposition that signs it and its author attribution
+/// and redaction sidecars. A door that judges a row by its own stamp
 /// (`records_in_scope`, a selector window) then reads the event only where
 /// it reads the CLAIM, never in the default project. Every other action, a
-/// body that does not decode, and a CLAIM or event with no stamp here (a
-/// replicated row) keep the default position. An event already stamped keeps
-/// its stamp: an event is immutable, and one stored before this rule reads as
-/// it was born.
+/// body that does not decode, and an anchor with no stamp of its kind here
+/// (a replicated event) keep the default position. An event already stamped
+/// keeps its stamp: an event is immutable, and one stored before this rule
+/// reads as it was born.
 pub(super) fn identity_event_position(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -41,7 +42,8 @@ pub(super) fn identity_event_position(
 }
 
 /// The stored position of the row an event takes its place from: an
-/// AssertDistinct event's CLAIM, and an admission disposition's target event.
+/// AssertDistinct event's CLAIM, and the target event of an admission
+/// disposition or an author attribution or redaction sidecar.
 /// `None` for any other action, a body that does not decode, or an anchor
 /// with no stamp of its kind.
 fn anchor_position(
@@ -56,10 +58,11 @@ fn anchor_position(
         StoredIdentityOpAction::AssertDistinct { claim, .. } => {
             (claim, crate::registry::ENTITY_TYPE_CLAIM)
         }
-        StoredIdentityOpAction::AdmissionDisposition(disposition) => (
-            disposition.target,
-            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-        ),
+        StoredIdentityOpAction::AdmissionDisposition(AdmissionDisposition { target, .. })
+        | StoredIdentityOpAction::AuthorAttribution { target, .. }
+        | StoredIdentityOpAction::AuthorRedaction { target, .. } => {
+            (target, crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        }
         _ => return Ok(None),
     };
     Ok(SCOPE_RECORD
