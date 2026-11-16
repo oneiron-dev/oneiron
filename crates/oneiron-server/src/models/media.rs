@@ -26,8 +26,8 @@ use oneiron::{
     ModelTierRef, Vault,
 };
 use oneiron_llm::openai_compat::{
-    OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
-    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
+    OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod,
+    OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };
 use oneiron_speech::tts::cartesia::CARTESIA_VERSION;
 use oneiron_speech::tts::hosted::HostedWire;
@@ -64,6 +64,8 @@ mod fit;
 // FIX 9511, 9513: a job's end and its delete, in one order.
 mod job_lifecycle;
 mod jobs;
+// L9-25: an OpenAI-compatible provider's family backends behind one router.
+mod openai_compat;
 mod options;
 // FIX 465, 2248, 2962: a submit kept before it is sent, and keyed replays.
 mod replay;
@@ -84,6 +86,7 @@ pub use job_lifecycle::{MediaCancelMode, MediaCancelOutcome};
 pub(crate) use run_line::JobSpendLedger;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
+pub(in crate::models) use openai_compat::openai_compat_media;
 use run_line::{JobLine, ProgramLine};
 pub(in crate::models) use video_length::requested_video_ms;
 pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUploadGuard};
@@ -633,9 +636,9 @@ fn media_backends(
                         "a voxcpm2 worker takes a bearer credential; set key_env"
                     ))
                 } else {
-                    ProviderHttp::direct(&provider, KeyStyle::Bearer).map(|http| {
+                    super::voxcpm2_speech::socket::VoiceSocketDialer::new(&provider).map(|voice| {
                         Arc::new(VoxCpm2Speech {
-                            http,
+                            voice,
                             models: wire_models,
                             target: name.to_owned(),
                             locality: provider.locality,
@@ -649,14 +652,12 @@ fn media_backends(
             // OpenAI-compatible wire below.
             ProviderKind::Soniox => soniox::live_backend(provider),
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
-                Arc::new(
-                    OpenAiMediaBackend::new(
-                        MediaHttp { http },
-                        wire_models,
-                        provider.base_url.clone(),
-                    )
-                    .with_embed_shape(provider.embed_shape),
-                ) as Arc<dyn MediaBackend>
+                openai_compat_media(
+                    MediaHttp { http },
+                    wire_models,
+                    provider.base_url.clone(),
+                    provider.embed_shape,
+                )
             }),
         };
         match built {
@@ -769,6 +770,7 @@ fn media_rung(
             row,
             caps: caps.clone(),
         }),
+        hours: None,
     })
 }
 
