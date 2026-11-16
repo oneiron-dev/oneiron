@@ -187,14 +187,28 @@ async fn pair_agent(
     name: &str,
     seed: [u8; 32],
 ) -> Agent {
+    pair_agent_with_verbs(vault, app, issuer, name, seed, &["core:read", "core:write"]).await
+}
+
+/// [`pair_agent`] with the link narrowed to `verbs`.
+async fn pair_agent_with_verbs(
+    vault: &Vault,
+    app: &Router,
+    issuer: &HostSlipIssuer,
+    name: &str,
+    seed: [u8; 32],
+    verbs: &[&str],
+) -> Agent {
     let principal = vault.ensure_agent_principal(name).expect("agent principal");
     let holder = SigningKey::from_bytes(&seed);
     let binding_key = holder.verifying_key().to_bytes();
     let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from([
-        "core:read".to_owned(),
-        "core:write".to_owned(),
-    ]));
+    scope.verbs = ScopeAxis::Some(
+        verbs
+            .iter()
+            .map(|verb| (*verb).to_owned())
+            .collect::<BTreeSet<_>>(),
+    );
     let link = vault
         .issue_pairing_link_for_principal(
             issuer,
@@ -685,6 +699,63 @@ fn an_agent_the_owner_lets_answer_waits_out_a_quota_question() {
             body["error"]["code"].as_str(),
             Some("no_such_question"),
             "{body}"
+        );
+
+        fixture.finish().await;
+    });
+}
+
+/// An agent paired with `core:read` only answers no quota question, even
+/// with its item on: the answer is a write. The question stays open.
+#[test]
+fn a_read_only_agent_the_owner_lets_answer_is_refused() {
+    run_on_engine_stack("wave11-quota-read-only", || async {
+        let (fixture, a, _b) = setup().await;
+        let reader = pair_agent_with_verbs(
+            &fixture.vault,
+            &fixture.app,
+            &fixture.issuer,
+            "wave11-agent-reader",
+            [0xC3; 32],
+            &["core:read"],
+        )
+        .await;
+        set_quota_row(
+            &fixture,
+            "wait",
+            SettingScope::Agent(reader.principal),
+            true,
+        );
+        plant_question(&fixture, "q1", vec![QuotaChoice::Wait]);
+
+        let (status, body) = post(
+            &fixture,
+            "/v1/ai/quota/q1",
+            &reader.token,
+            agent_binding(&fixture, &reader),
+            json!({"choice": "wait"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "read-only agent: {body}");
+        assert_eq!(body["error"]["code"].as_str(), Some("FORBIDDEN"), "{body}");
+        assert!(
+            body.to_string().contains("core:write"),
+            "the refusal names the write scope: {body}"
+        );
+
+        set_quota_row(&fixture, "wait", SettingScope::Agent(a.principal), true);
+        let (status, bytes) = post_bytes(
+            &fixture,
+            "/v1/ai/quota/q1",
+            &a.token,
+            agent_binding(&fixture, &a),
+            json!({"choice": "wait"}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NO_CONTENT,
+            "the question stayed open: {bytes:?}"
         );
 
         fixture.finish().await;
