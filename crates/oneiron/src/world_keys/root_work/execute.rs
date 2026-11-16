@@ -5,11 +5,10 @@
 //!
 //! The door finds the counted request still pending here and checks the
 //! material against its change. Then one writer transaction rechecks the
-//! request (a stale one is answered refused, and returned; one whose basis
-//! this install has not folded yet signs nothing and stays pending, FIX
-//! 5551), makes the change through its root door's own transaction body and
-//! appends the enacted result beside it. No writer nests in another, and
-//! every check the root door makes before its transaction runs here too.
+//! request (a stale one is answered refused, and returned), makes the change
+//! through its root door's own transaction body and appends the enacted
+//! result beside it. No writer nests in another, and every check the root
+//! door makes before its transaction runs here too.
 //!
 //! The target decides at execution (FIX 4739): a request its fold holds
 //! cancelled by the owner, or superseded by a newer request on this install,
@@ -50,10 +49,6 @@ enum Answered<T> {
     Done(T),
     /// The recheck refused it; the refused result committed.
     Refused(OwnerWorkRefusal),
-    /// This install has not folded every root or mark the owner saw: the
-    /// change never ran, no result was signed, and the request stays
-    /// pending (CALLS ROOT_WORK_BASIS).
-    AwaitsBasis,
 }
 
 impl<T> Answered<T> {
@@ -62,7 +57,6 @@ impl<T> Answered<T> {
         match self {
             Self::Done(done) => Ok(done),
             Self::Refused(reason) => Err(RootWorkDone::Refused { reason }),
-            Self::AwaitsBasis => Err(RootWorkDone::AwaitingBasis),
         }
     }
 }
@@ -250,11 +244,9 @@ impl Vault {
     /// One writer transaction for `asked`: its recheck, then `effect` and,
     /// for [`Answer::Enacted`], the enacted result beside it. A request that
     /// fails the recheck is answered refused in this commit and `effect`
-    /// never runs: [`Answered::Refused`]. One whose basis this install has
-    /// not folded yet (FIX 5551) signs nothing, `effect` never runs, and it
-    /// stays pending: [`Answered::AwaitsBasis`]. One this fold holds
-    /// cancelled or superseded is pending no longer: `effect` never runs, no
-    /// result is signed, and the call is refused ([`not_pending`]).
+    /// never runs: [`Answered::Refused`]. One this fold holds cancelled or
+    /// superseded is pending no longer: `effect` never runs, no result is
+    /// signed, and the call is refused ([`not_pending`]).
     fn answer_root_request<T>(
         &self,
         asked: Asked,
@@ -271,9 +263,6 @@ impl Vault {
                     let outcome = OwnerWorkOutcome::Refused { reason };
                     self.append_owner_work_result_in_txn(txn, asked.hash, asked.me, outcome)?;
                     return Ok(Answered::Refused(reason));
-                }
-                RootRecheck::AwaitsBasis | RootRecheck::AwaitsBoundRoot => {
-                    return Ok(Answered::AwaitsBasis);
                 }
             }
             let done = effect(txn)?;
@@ -343,7 +332,7 @@ impl Vault {
         // pending (FIX 11977, 12046, 12135, 12136).
         let settled = match &confirmed {
             Answered::Done(kit) => Some(kit.kit),
-            Answered::Refused(_) | Answered::AwaitsBasis => None,
+            Answered::Refused(_) => None,
         };
         self.settle_pending_kit_pieces(settled);
         let mirror_pending = match transition.finish() {
