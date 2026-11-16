@@ -1,13 +1,11 @@
 //! The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611),
-//! `POST /v1/owner/proactivity/action-mode`, the two
-//! `POST /v1/owner/representation/*` writes, `POST /v1/owner/stewardship`,
+//! the two `POST /v1/owner/representation/*` writes, `POST /v1/owner/stewardship`,
 //! `POST /v1/owner/self-heal/findings/label` (FIX 11611 part D),
 //! `POST /v1/owner/proactivity/digest/assemble` (FIX 11654) and
 //! `PUT /v1/owner/coach/training-checkpoints` (FIX 12086).
 //! [`super`] is already past the file-size bar, so their schema fns live
 //! here, beside the route files' own.
 
-use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::identity::IdentitySettled;
 use oneiron::dreamer_runner::maintenance::stewardship::StewardshipRules;
 use oneiron::self_heal::distillation::ReviewedFinding;
@@ -16,7 +14,7 @@ use oneiron::training_pack::PinnedCheckpoint;
 use super::training_runs::checkpoints::CheckpointManifest;
 use super::{
     AnswerIdentityAsk, ApproveRepresentation, ApprovedView, DeclineRepresentation, DigestView,
-    LabelFinding, SetActionMode, SetStewardship,
+    LabelFinding, SetStewardship,
 };
 
 pub(crate) use super::training_runs::checkpoints::CHECKPOINT_HEADER;
@@ -31,18 +29,6 @@ pub(crate) fn answer_identity_ask_body_schema() -> serde_json::Value {
 /// (FIX 11611): [`IdentitySettled`].
 pub(crate) fn identity_settled_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<IdentitySettled>()
-}
-
-/// The OpenAPI schema of `POST /v1/owner/proactivity/action-mode`'s body
-/// (FIX 11611): [`SetActionMode`].
-pub(crate) fn set_action_mode_body_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<SetActionMode>()
-}
-
-/// The OpenAPI schema of `POST /v1/owner/proactivity/action-mode`'s answer
-/// (FIX 11611): the policy, or `null` when none is set.
-pub(crate) fn action_mode_policy_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<Option<ActionModePolicy>>()
 }
 
 /// The OpenAPI schema of `POST /v1/owner/representation/approve`'s body

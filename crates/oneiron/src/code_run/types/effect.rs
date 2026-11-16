@@ -36,6 +36,8 @@ pub enum SelfEffect {
     Speak,
     /// `self.think(text)` (ONE-1686) — reasoning the run keeps for itself.
     Think,
+    /// `self.think.aloud(text)` (L8-25) — reasoning the run publishes.
+    ThinkAloud,
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
     ReportBlocked,
@@ -123,6 +125,7 @@ impl SelfEffect {
             Self::Context => "self.context",
             Self::Speak => "self.speak",
             Self::Think => "self.think",
+            Self::ThinkAloud => "self.think.aloud",
             Self::Express => "self.express",
             Self::ReportBlocked => "self.report_blocked",
             Self::InferenceDefaultsRead => "self.inference_defaults.read",
@@ -172,6 +175,7 @@ impl SelfEffect {
         match self {
             Self::Speak => Some(ExecutorUtterance::Speak),
             Self::Think => Some(ExecutorUtterance::Think),
+            Self::ThinkAloud => Some(ExecutorUtterance::ThinkAloud),
             Self::Express => Some(ExecutorUtterance::Express),
             Self::AgentsSpawn
             | Self::AgentsPut

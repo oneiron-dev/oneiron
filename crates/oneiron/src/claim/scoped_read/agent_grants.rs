@@ -323,7 +323,7 @@ fn reader_grants_in(
     if crate::authority::principal_standing_in_txn(vault, txn, reader, class, "read")?.is_none() {
         return Ok(Vec::new());
     }
-    let now = vault.instant_in_txn(txn)?.secs();
+    let now = vault.grant_judgement_secs_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let (grants, undecoded) = vault.agent_grants_reporting_in_txn(txn)?;
     if !undecoded.is_empty() {
