@@ -4,7 +4,7 @@
 //! [`Vault::cancel_root_request`] (#3261, FIX 4739); and its siblings (FIX
 //! 5598): `vault.roots.requests.create` over [`Vault::request_root_change`]
 //! (`POST /v1/owner/roots/requests`), `vault.roots.requests.list` over
-//! [`Vault::pending_root_request_listing`] (`GET /v1/owner/roots/requests`) and
+//! [`Vault::pending_root_requests`] (`GET /v1/owner/roots/requests`) and
 //! `vault.owner_work.get` over [`Vault::owner_work_receipt`]
 //! (`GET /v1/owner/owner-work/{request}`). A server hands each the owner's
 //! in-request proof, as `/v1/owner` takes it, and where his say-so reached

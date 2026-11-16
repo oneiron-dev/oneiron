@@ -37,8 +37,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AuthorityKey, AwaitedRoot, CarrierReading, HostSlipIssuer, MachineOwnership,
-    MachineRole, OwnerRootView, RecoveryRootId, RootChange,
+    ActSurface, AwaitedRoot, HostSlipIssuer, MachineOwnership, MachineRole, OwnerRootView,
+    RecoveryRootId, RootChange,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -331,7 +331,7 @@ fn a_hosts_pin_request_lists_the_host_as_its_carrier_and_never_as_the_owners_mac
         .id;
     assert_eq!(
         request.carrier,
-        CarrierReading {
+        oneiron::authority::CarrierReading {
             machine: host_machine,
             role: Some(MachineRole::HostedNode),
             is_mine: false,
@@ -361,8 +361,11 @@ fn a_carrier_reads_as_the_owners_machine_only_under_the_key_this_install_trusts_
     );
 
     assert_eq!(
-        fold.carrier_reading(device.machine, &AuthorityKey::Ed25519(device.machine_key)),
-        CarrierReading {
+        fold.carrier_reading(
+            device.machine,
+            &oneiron::authority::AuthorityKey::Ed25519(device.machine_key)
+        ),
+        oneiron::authority::CarrierReading {
             machine: device.machine,
             role: Some(MachineRole::Owned(MachineOwnership::Yours)),
             is_mine: true,
@@ -370,8 +373,11 @@ fn a_carrier_reads_as_the_owners_machine_only_under_the_key_this_install_trusts_
         "an act the device's own key signed reads as his machine's"
     );
     assert_eq!(
-        fold.carrier_reading(device.machine, &AuthorityKey::Ed25519(STRANGER_MACHINE_KEY)),
-        CarrierReading {
+        fold.carrier_reading(
+            device.machine,
+            &oneiron::authority::AuthorityKey::Ed25519(STRANGER_MACHINE_KEY)
+        ),
+        oneiron::authority::CarrierReading {
             machine: device.machine,
             role: None,
             is_mine: false,
