@@ -80,6 +80,7 @@ pub mod home_pick_fold;
 pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
+pub mod host_root_row_signature;
 #[cfg(feature = "sync")]
 pub mod host_taint_replica;
 pub mod house_link;
