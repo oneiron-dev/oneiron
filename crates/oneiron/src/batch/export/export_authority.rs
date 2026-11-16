@@ -62,8 +62,10 @@ pub fn classify_vault_import_manifest(
 /// ([`archive_signer`]). Manifest only, and no write, as that door.
 ///
 /// On a matching chain the signer decides provenance. The owner's own device
-/// proves it, when its `Yours` here is his own signature and no carrier's
-/// word, so a same-chain, same-state, unnulled archive it signed reads
+/// proves it, when its `Yours` here is his own say-so and not a carrier's
+/// act alone (off hosted, a carried answer an owner key proved is his
+/// say-so; on a hosted vault it is not), so a same-chain, same-state,
+/// unnulled archive it signed reads
 /// [`VaultImportClassification::ByteFaithfulOwnerRestore`]. A live machine of
 /// this vault in a role the owner answered as not his own device (a hosted
 /// node, an execution node, a rented, work or school machine) signed an
@@ -71,8 +73,9 @@ pub fn classify_vault_import_manifest(
 /// read as [`VaultImportClassification::ForeignAuthorityChain`] (Engine
 /// RULING L2-23-SIGNER = B). No signature, one that does not verify or
 /// whose key does not stand as its machine here, or one by a machine whose
-/// `Yours` rests on a carrier's act, on no owner-signed row this install
-/// holds, or on a hosted vault's adopted checkpoint image, proves nothing:
+/// `Yours` rests on a carrier's act alone, on no row this install holds
+/// that proves it his, or on a hosted vault's adopted checkpoint image,
+/// proves nothing:
 /// [`VaultImportMismatch::UnauthenticatedProvenance`]. Every other gate
 /// holds as for the storage door.
 ///

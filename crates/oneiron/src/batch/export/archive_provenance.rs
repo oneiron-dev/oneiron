@@ -12,8 +12,8 @@
 //! sharpened by the lead's HOSTED-CARRIER-FIRST-PIN = D, "the yes must be
 //! provably his; a carrier's word is not him saying so"): only a machine this
 //! install trusts as the owner's own device signs one, and only while that
-//! `Yours` is his own signature: his pinned recovery root's mark, or on a
-//! vault that is not hosted an owner-held roster key's revision, or an
+//! `Yours` is his own say-so: his pinned recovery root's mark, or, on a
+//! vault that is not hosted, an owner-held roster key's revision or an
 //! answer a machine carried whose row an owner key proved (row
 //! EXPORT-PROOF-OWNER-SIGNED-CARRIED-YOURS, the lead's CARRIER-SELF-ANSWER).
 //! A `Yours` that rests on a carrier's act alone (any linked machine, the
@@ -73,14 +73,15 @@ pub struct ArchiveProvenance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArchiveSigner {
     /// A machine this install trusts as the owner's own device, by his own
-    /// signature, signed it.
+    /// say-so, signed it: his pinned root's mark, or, off hosted, an
+    /// owner-held roster revision or a carried answer an owner key proved.
     OwnerDevice,
     /// A live machine of this vault signed it, in a role the owner answered
     /// that is not his own device here.
     OtherMachine,
     /// No signature, none this vault can tie to a machine of its own, or one
-    /// by a machine whose `Yours` here is a carrier's word or rests on no
-    /// owner-signed row this install holds.
+    /// by a machine whose `Yours` here rests on a carrier's act alone, or on
+    /// no row this install holds that proves it his.
     Unproven,
 }
 
