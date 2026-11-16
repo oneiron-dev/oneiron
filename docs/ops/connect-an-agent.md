@@ -104,8 +104,11 @@ Codex does not expand `~` in `args`; write the full path.
 [`plugins/agent-plugins/`](../../plugins/agent-plugins/) is one package for
 every client that reads the Agent Plugins 1.0 format: a root `plugin.json`,
 an `mcp.json` with the same `oneiron mcp --surface tool-first` entry, and a
-skill that tells the agent when to recall and what to save. It carries no
-hooks; those are per client and come later. Its entry reads the credential
+skill that tells the agent when to recall and what to save. Hooks are per
+client: it carries Codex's and Copilot's session hooks in their own folders,
+and Cursor's come as a separate Cursor plugin
+([Session hooks for Codex, Cursor and GitHub Copilot](client-session-hooks.md)).
+Its entry reads the credential
 from `agent.cred` in the data folder the client gives each installed plugin
 (`${PLUGIN_DATA}`), so each client's install holds its own credential. An
 Agent Plugins client expands no other variable, so the package cannot read a

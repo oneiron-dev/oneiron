@@ -257,6 +257,7 @@ fn public_hold_writer_rechecks_retraction_expiry_and_exact_configuration() {
             constraint: None,
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: None,
+            cap_override: None,
         };
         assert!(
             crate::booking::lifecycle::execute_hold(&vault, &spec, write_now, Some(&authority))
@@ -305,6 +306,7 @@ fn public_attempt_dedupe_cannot_alias_a_literal_non_public_key() {
         constraint: None,
         lease: HoldLeaseSpec::Ordinary,
         idempotency_key: Some("same-key".to_owned()),
+        cap_override: None,
     };
     let public_id = enqueue_booking_verb_with_publication(
         &vault,

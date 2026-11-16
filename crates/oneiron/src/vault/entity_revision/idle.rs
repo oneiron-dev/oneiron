@@ -7,6 +7,7 @@ use super::{
     ReadMode, RevisionRef,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
+use crate::embed::world_space::WorldTextSpaces;
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
@@ -42,6 +43,11 @@ impl Vault {
     ///
     /// Then embeds again, at their published revision, the records an
     /// embedding-space swap left without a vector, writing the vector alone.
+    ///
+    /// A row a world with its own text space carries embeds into that space
+    /// alone (DEC-0005 #private-world-vectors): it publishes its text with no
+    /// vector in the vault's index, the embedder never sees it, and no refill
+    /// gives it one.
     pub fn refresh_indexed_at_idle(
         &self,
         now_ms: u64,
@@ -97,22 +103,16 @@ impl Vault {
                     continue;
                 };
                 let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-                // A claim republishes the text its commit indexed, never the
-                // generic string leaves: a non-string value would otherwise
-                // lose its postings at the first idle pass (FIX 12368).
-                let fields = if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
-                    let claim = crate::write_envelope::claim_body::decode_claim_body(&body, true)?;
-                    if !crate::claim::claim_surfaceable(&claim) {
-                        continue;
-                    }
-                    let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
-                    if text.is_empty() {
-                        Vec::new()
-                    } else {
-                        vec![("val".to_owned(), text)]
-                    }
-                } else {
-                    revision_text_fields(&self.store, &txn, &id, current.live, &body)?
+                let Some(fields) = super::storage::publication_text_fields(
+                    &self.store,
+                    &txn,
+                    &id,
+                    current.live,
+                    raw[0],
+                    &body,
+                )?
+                else {
+                    continue;
                 };
                 candidates.push(super::repo_projection::project_revision_input_in_txn(
                     self,
@@ -127,10 +127,10 @@ impl Vault {
                     },
                 )?);
             }
-            candidates
+            in_world_text_spaces(self, &txn, candidates)?
         };
         let mut report = IndexedRefreshReport::default();
-        for input in candidates {
+        for (input, world_space) in candidates {
             // A revision with nothing in its text publishes with no vector.
             let embeddable = input.payload().is_some();
             // The embedding space this work is done in, read with the staged
@@ -153,7 +153,9 @@ impl Vault {
             // The provider's vector, when nothing was staged.
             let generated = match staged.vector {
                 Some(_) => None,
-                None if !embeddable => None,
+                // A world's own text space takes the row's vectors: the
+                // vault's embedder never sees it.
+                None if !embeddable || world_space => None,
                 None => match embedder {
                     Some(embedder) => match embedder.embed_revision_marked(&input) {
                         Ok(marked) => Some(marked),
@@ -237,15 +239,25 @@ impl Vault {
                 report.superseded.push(input.entity);
                 continue;
             }
-            let generated_vector = staged.vector.is_none() && embedder.is_some();
+            // A world's order that started or stopped naming its own text
+            // space since the read supersedes the work: the revision stays
+            // dirty, judged again at the next pass.
+            if row_in_world_text_space(self, &txn, &input.entity)? != world_space {
+                report.superseded.push(input.entity);
+                continue;
+            }
+            // No vector of the vault's index goes with a row the world's own
+            // text space takes, not even one its writer staged.
+            let staged_vector = staged.vector.filter(|_| !world_space);
+            let generated_vector = staged_vector.is_none() && embedder.is_some() && !world_space;
             // Only the staged vector's own filler locality goes with it; a
             // vector generated here carries none (FIX 12783).
-            let staged_locality = staged.vector.as_ref().and(staged.locality);
-            let vector = match staged.vector {
+            let staged_locality = staged_vector.as_ref().and(staged.locality);
+            let vector = match staged_vector {
                 Some(vector) => Some((vector, staged.provenance)),
                 // The staged vector the work started from is gone, and the copy
                 // read before is not written in its place.
-                None if snapshot_staged => {
+                None if snapshot_staged && !world_space => {
                     report.superseded.push(input.entity);
                     continue;
                 }
@@ -321,10 +333,28 @@ impl Vault {
             }
             if !wrote_vector && !embeddable {
                 drop_vector_state(self, &mut txn, &input.entity)?;
+            } else if world_space {
+                // A vector of the vault's index the row held before its world
+                // named the space goes; the world's space keeps its vectors,
+                // and the pending work stays for it (and for the vault's index,
+                // should the world inherit again).
+                drop_index_vector_in_txn(&self.store, &mut txn, &input.entity)?;
+                // A row the pending worker does not embed (a NOTE, a caption)
+                // gets a vector of the vault's index back only by a refill,
+                // and a sweep after this pass finds no vector to mark it by:
+                // it is marked here, refilled should the world inherit again.
+                if !self
+                    .store
+                    .has_current_pending_embedding_in_txn(&txn, &input.entity)?
+                {
+                    vector_refill::mark_vector_refill_in_txn(&self.store, &mut txn, &input.entity)?;
+                }
             }
             super::pending_index::clear(&self.store, &mut txn, &input.entity)?;
             // The published revision settled its own vector, so a refill a
-            // swap left for the revision before it has nothing left to do.
+            // swap left for the revision before it has nothing left to do. A
+            // row the world's space takes keeps its marker, for the day its
+            // world inherits again.
             if wrote_vector || !embeddable {
                 vector_refill::clear(&self.store, &mut txn, &input.entity)?;
             }
@@ -371,7 +401,9 @@ impl Vault {
     /// settles its vector. An archived record is hidden, not gone: it keeps
     /// its marker and is refilled once restored. An edit or another swap
     /// between the embedding and the write supersedes the work, as it does
-    /// for a publication, and the marker stays for the next pass.
+    /// for a publication, and the marker stays for the next pass. A row a
+    /// world with its own text space carries is not refilled while it does:
+    /// it keeps its marker, refilled should the world inherit again.
     fn refill_vectors(
         &self,
         embedder: &dyn IndexedRevisionEmbedder,
@@ -412,6 +444,10 @@ impl Vault {
                 )?);
             }
             let epoch = crate::store::vector_index::read_embedding_model_epoch(&self.store, &txn)?;
+            let candidates = in_world_text_spaces(self, &txn, candidates)?
+                .into_iter()
+                .filter_map(|(input, world_space)| (!world_space).then_some(input))
+                .collect::<Vec<_>>();
             (candidates, epoch)
         };
         if !gone.is_empty() {
@@ -455,6 +491,7 @@ impl Vault {
             };
             let mut txn = self.store.env.write_txn()?;
             if !self.refill_still_due(&txn, &input.entity, input.source_revision_ref, epoch)?
+                || row_in_world_text_space(self, &txn, &input.entity)?
                 || super::repo_projection::revision_copy_current_in_txn(
                     self,
                     &txn,
@@ -540,6 +577,43 @@ impl Vault {
         self.indexed_revision_from_in_txn(&self.store, txn, id)
     }
 
+    /// The text idle publication hands the vault's index for `id`'s published revision
+    /// ([`crate::embed::indexed_payload`]): a NOTE's body, a caption's text fields. A world's
+    /// own text space embeds this text for a row the pending worker does not take, since its
+    /// world keeps the row out of the vault's index (DEC-0005 #private-world-vectors). `None`
+    /// for a record with no published revision, one withdrawn or archived, and one whose
+    /// revision holds nothing to embed.
+    pub(crate) fn published_revision_text_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<String>> {
+        if crate::ports::stale_in_txn(&self.store, txn, id)?
+            || self.archive_tombstone_in_txn(txn, id)?.is_some()
+        {
+            return Ok(None);
+        }
+        let (Some(revision), Some(raw)) = (
+            self.indexed_revision_in_txn(txn, id)?,
+            read_entity_revision_in_txn(self, txn, id, ReadMode::Indexed)?,
+        ) else {
+            return Ok(None);
+        };
+        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        let fields = revision_text_fields(&self.store, txn, id, revision, &body)?;
+        let input = IndexedRevisionInput {
+            entity: *id,
+            entity_type: raw[0],
+            source_revision_ref: revision,
+            fields,
+            body,
+        };
+        let Some(payload) = input.payload() else {
+            return Ok(None);
+        };
+        Ok(Some(crate::embed::payload_text(&payload)?.into_owned()))
+    }
+
     /// [`Self::indexed_revision_in_txn`] read through `store`: a room's view
     /// pins its overlay rows as base pins its own.
     pub(crate) fn indexed_revision_from_in_txn(
@@ -565,6 +639,35 @@ impl Vault {
     }
 }
 
+/// Each of `inputs` with whether a world with its own text space carries its
+/// row (DEC-0005 #private-world-vectors), the worlds' spaces read once in
+/// `txn`, and only when there is an input to judge.
+fn in_world_text_spaces(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    inputs: Vec<IndexedRevisionInput>,
+) -> Result<Vec<(IndexedRevisionInput, bool)>> {
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let spaces = WorldTextSpaces::read_in(vault, txn)?;
+    inputs
+        .into_iter()
+        .map(|input| {
+            let world_space = !spaces.of_row(&vault.store, txn, &input.entity)?.is_empty();
+            Ok((input, world_space))
+        })
+        .collect()
+}
+
+/// Whether a world with its own text space carries the row `id`, as `txn`
+/// reads the worlds' orders.
+fn row_in_world_text_space(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(!WorldTextSpaces::read_in(vault, txn)?
+        .of_row(&vault.store, txn, id)?
+        .is_empty())
+}
+
 /// Drops what a revision with nothing to embed must not keep: its vector and
 /// graph node, and the pending marker, job and lease a worker would lease it
 /// by. A turn left with no text drops the same state.
@@ -573,18 +676,7 @@ pub(crate) fn drop_vector_state(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let had_node = vault
-        .store
-        .hnsw_neighbors
-        .get(txn, id.as_bytes())?
-        .is_some();
-    let had_vector = vault.store.vectors.delete(txn, id.as_bytes())?;
-    if had_vector || had_node {
-        crate::hnsw::hnsw_deindex(&vault.store, txn, id)?;
-        crate::store::vector_index::increment_vector_version(&vault.store, txn)?;
-    }
-    crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
-    crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;
+    drop_index_vector_in_txn(&vault.store, txn, id)?;
     crate::embed::delete_text_media_vectors_in_txn(&vault.store, txn, id)?;
     vault.store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
@@ -596,4 +688,23 @@ pub(crate) fn drop_vector_state(
         crate::embed::clear_pending_embedding_lease_if_any(vault, txn, id)?;
     }
     Ok(())
+}
+
+/// Drops `id`'s vector in the vault's text index and its graph node, with the
+/// marks of where and on what it was filled; its media rows and its pending
+/// marker, job and lease stay. Whether it held a vector.
+pub(crate) fn drop_index_vector_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let had_node = store.hnsw_neighbors.get(txn, id.as_bytes())?.is_some();
+    let had_vector = store.vectors.delete(txn, id.as_bytes())?;
+    if had_vector || had_node {
+        crate::hnsw::hnsw_deindex(store, txn, id)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
+    }
+    crate::embed::clear_embedding_locality_in_txn(store, txn, id)?;
+    crate::embed::record_embedding_device_in_txn(store, txn, id, None)?;
+    Ok(had_vector)
 }

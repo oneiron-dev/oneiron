@@ -218,8 +218,10 @@ pub(crate) fn send_previewed(
     let principal_ref = owner.revalidate_principal_ref(vault)?;
     let expired = || OwnerError::Changed("the preview has expired; preview it again".to_owned());
     let now = vault.now_recorded_at();
-    if now.saturating_sub(previewed_at) > PREVIEW_LIFETIME_SECS
-        || previewed_at > now.saturating_add(PREVIEW_CLOCK_SKEW_SECS)
+    if oneiron_store::expiry::is_expired(
+        now,
+        oneiron_store::expiry::expires_at_saturating(previewed_at, PREVIEW_LIFETIME_SECS),
+    ) || previewed_at > now.saturating_add(PREVIEW_CLOCK_SKEW_SECS)
     {
         return Err(expired());
     }
