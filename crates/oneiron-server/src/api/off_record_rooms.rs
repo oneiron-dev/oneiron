@@ -765,6 +765,10 @@ fn engine_error(error: oneiron::Error, session_ref: &str) -> ApiError {
     }
 }
 
+/// A witness's refusal on the core error contract. Not on
+/// `ApiError::from_memory_code` (UC-11): four arms differ, an authority
+/// refusal keeps its own suggestion (D4), a state that refuses answers fixed
+/// words, and a missing row and an owner binding refusal are its failure.
 fn witness_error(error: MemoryError) -> ApiError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, None),

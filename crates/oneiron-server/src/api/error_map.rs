@@ -268,10 +268,69 @@ pub(super) fn carried_refusal(error: &oneiron::Error) -> Option<ApiError> {
     }
 }
 
+/// A route's names for the engine refusal codes it answers through
+/// [`ApiError::from_memory_code`] (UC-11).
+#[derive(Clone, Copy)]
+pub(crate) struct MemoryCodeRoute {
+    /// The resource a missing row names.
+    pub(crate) resource: &'static str,
+    /// The `state` a refusing state carries.
+    pub(crate) state: Option<&'static str>,
+    /// The route's words for a code it does not name, logged and answered.
+    pub(crate) failed: &'static str,
+}
+
+impl MemoryCodeRoute {
+    /// The route's answer to a code it does not name: an engine fault, logged
+    /// by its code, as a 500 in the route's words.
+    pub(crate) fn failure(self, code: &str) -> ApiError {
+        tracing::error!(code = %code, "{}", self.failed);
+        ApiError::internal_server_error(self.failed)
+    }
+}
+
+impl ApiError {
+    /// An engine refusal on the core error contract, per its code (UC-11): a
+    /// missing row is the route's resource not found (404), a malformed
+    /// request a bad request in the engine's words (400), a state that
+    /// refuses a 409 in the engine's words and suggestions under the route's
+    /// `state`, an authority or owner binding refusal a 403 in the engine's
+    /// words and suggestions, and any other code the route's logged failure
+    /// (500). A route that answers a code otherwise matches it first, as a
+    /// named override.
+    pub(crate) fn from_memory_code(
+        error: oneiron::memory::MemoryError,
+        route: MemoryCodeRoute,
+    ) -> Self {
+        match error.code.as_str() {
+            oneiron::MEMORY_CODE_NOT_FOUND => Self::not_found(route.resource, None),
+            oneiron::MEMORY_CODE_BAD_REQUEST => Self::bad_request(error.message, None),
+            oneiron::MEMORY_CODE_INVALID_STATE => Self::new(
+                error.message,
+                ApiErrorDetails::InvalidState {
+                    state: route.state.map(str::to_owned),
+                },
+                error.suggestions,
+            ),
+            oneiron::MEMORY_CODE_FORBIDDEN
+            | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => Self::new(
+                error.message,
+                ApiErrorDetails::Forbidden {
+                    required_scope: None,
+                },
+                error.suggestions,
+            ),
+            _ => route.failure(&error.code),
+        }
+    }
+}
+
 /// The carried owner refusal's answer: `OWNER_BINDING_REQUIRED` and
 /// `FORBIDDEN` are 403s under their own codes, naming the owner as what the
 /// act requires; `INVALID_STATE` is a 409. Any other code stays the caller's
-/// 500.
+/// 500. Not on [`ApiError::from_memory_code`] (UC-11): it names the owner as
+/// the scope, keeps the owner binding refusal's own code, answers
+/// `owner_check`, and returns `None` for any other code.
 fn owner_refusal(refusal: &oneiron::MemoryError) -> Option<ApiError> {
     let details = match refusal.code.as_str() {
         oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
@@ -292,6 +351,22 @@ fn owner_refusal(refusal: &oneiron::MemoryError) -> Option<ApiError> {
         details,
         refusal.suggestions.clone(),
     ))
+}
+
+/// What the run control, booking boundary, transcript, scratchpad and
+/// message result refusal maps answer an engine refusal whose code is
+/// `code` with, in that order: the integration tests' door (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) fn memory_code_answers_for_test(code: &str) -> [crate::error::EnvelopedApiError; 5] {
+    let refusal =
+        || oneiron::memory::MemoryError::new(code, "a pinned refusal", &["a pinned suggestion"]);
+    [
+        super::run_tree::run_control_refusal(refusal()),
+        super::booking::boundary_refusal_for_test(refusal()).into(),
+        super::conversation_transcript::refusal(refusal()),
+        super::context_board::scratchpad_error(refusal()).into(),
+        super::message_result::refusal(refusal()),
+    ]
 }
 
 pub(super) fn query_rejection_error(rejection: QueryRejection) -> ApiError {

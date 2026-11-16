@@ -145,6 +145,9 @@ pub(crate) async fn asked(
         };
         oneiron::memory::pull_image(&lane, &request, true)
             .map_err(|error| {
+                // Not on `ApiError::from_memory_code` (UC-11): a status onto
+                // this route's own refusal body, and an authority refusal is
+                // its 500 (N7).
                 let status = match error.code.as_str() {
                     oneiron::memory::MEMORY_CODE_NOT_FOUND => StatusCode::NOT_FOUND,
                     oneiron::memory::MEMORY_CODE_BAD_REQUEST => StatusCode::BAD_REQUEST,

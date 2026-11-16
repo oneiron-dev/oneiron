@@ -259,7 +259,9 @@ fn list_row(
 }
 
 /// The engine's refusal in the core error envelope, with the receipt of the
-/// read that refused.
+/// read that refused. Not on `ApiError::from_memory_code` (UC-11): three
+/// arms differ, a malformed request, a missing row and a state that refuses
+/// are its failure (N3).
 fn refusal(error: MemoryError) -> EnvelopedApiError {
     let receipt = error.read_receipt.clone();
     let api = match error.code.as_str() {
