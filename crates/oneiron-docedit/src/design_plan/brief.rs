@@ -633,7 +633,7 @@ fn pin(value: &Value, path: &str) -> Result<Pin, BriefError> {
     let quote_hash = fields
         .get("quote_hash")?
         .as_str()
-        .and_then(digest)
+        .and_then(oneiron_hex::decode::<32>)
         .ok_or_else(|| invalid(&hash_path))?;
     if *blake3::hash(quote.as_bytes()).as_bytes() != quote_hash {
         return Err(BriefError::QuoteHash {
@@ -660,22 +660,6 @@ fn pin(value: &Value, path: &str) -> Result<Pin, BriefError> {
         quote_hash,
         drift,
     })
-}
-
-/// 64 lowercase hex digits.
-fn digest(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64
-        || !hex
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return None;
-    }
-    let mut out = [0; 32];
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()?;
-    }
-    Some(out)
 }
 
 fn asset(value: &Value, path: &str) -> Result<Asset, BriefError> {

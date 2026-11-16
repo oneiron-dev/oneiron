@@ -75,6 +75,7 @@ doc = false
 async-trait = "0.1"
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 
 # The organ protocol, the only link to the engine (a socket, not a crate).
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol", optional = true }
