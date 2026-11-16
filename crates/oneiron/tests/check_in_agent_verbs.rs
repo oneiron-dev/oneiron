@@ -423,7 +423,7 @@ fn the_owner_goes_on_its_own_proof_and_a_person_without_a_grant_is_refused() {
     assert!(
         error
             .message
-            .contains("neither the vault owner nor an agent"),
+            .contains("neither the vault owner, a live member of the vault, nor an agent"),
         "{error:?}"
     );
     assert!(

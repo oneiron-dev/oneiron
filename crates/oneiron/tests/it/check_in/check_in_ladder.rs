@@ -8,8 +8,11 @@
 //!   Admin (every other holder of the grantor's role, not the Deputy or the
 //!   Member), rung 4 the Owner;
 //! - only a holder pinned on the current rung answers, as themself;
-//! - a holder whose own check-in for the act would wait, or whose grant does
-//!   not admit the verb, is not asked: the rung is skipped, naming why;
+//! - a holder whose own check-in for the act would wait, or whose roster
+//!   role's cell does not hold the act, is not asked: the rung is skipped,
+//!   naming why (a person's power is their role's cell for the act class,
+//!   whatever their membership row lists; Engine ruling CHECKIN-PERSON-POWER
+//!   = A);
 //! - a holder whose grant does not cover the effect's world is not asked, and
 //!   once its grant is narrowed away from that world it no longer answers or
 //!   extends (review round 1 of #7112);
@@ -158,13 +161,11 @@ fn a_holder_whose_own_check_in_would_wait_is_not_asked() {
 }
 
 #[test]
-fn a_holder_whose_grant_does_not_admit_the_verb_is_not_asked() {
+fn a_holder_whose_role_does_not_hold_the_act_is_not_asked() {
+    // An Admin's legal send only proposes (ARCH-0082's role table), so
+    // neither Admin is asked, though both rows list `write`.
     let l = Ladder::new();
-    let row = l.open(l.ask(
-        l.delegate,
-        ActClass::ReversibleWork,
-        "vault.not_granted.verb",
-    ));
+    let row = l.open(l.ask(l.delegate, ActClass::LegalSend, "write"));
     assert_eq!(
         skipped(&row)
             .into_iter()

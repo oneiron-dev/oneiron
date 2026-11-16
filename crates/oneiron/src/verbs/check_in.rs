@@ -1,15 +1,18 @@
 //! `vault.check_in.preflight` and `vault.check_in.open` (ARCH-0082 #composing
 //! and #ladder; ROLES-CHECKIN P2.3b, piece 2f; Engine ruling P23-SHAPE = A):
-//! before an act, an agent asks whether it may run now, and opens the
-//! durable ask when it waits.
+//! before an act, an agent or a member asks whether it may run now, and
+//! opens the durable ask when it waits.
 //!
 //! Both take the verb whose act would run, where its effect sits and the
 //! effect's digest. The act class is the verb row's own, the power comes
 //! from the caller's own live owner Grant that lists the verb and the role
 //! from the caller's live membership row on that Grant's vault, else the
-//! Grant's own (or the caller is the vault owner), and the answer is go,
-//! wait, propose, absent or unstated ([`CheckInVerdict`]); see
-//! `crate::check_in::asker`.
+//! Grant's own (or the caller is the vault owner). A person who is not the
+//! vault owner asks on their live membership row, which stands for the
+//! Grant: its roster role is the role, and that role's cell for the act
+//! class gives the power (Engine rulings CHECKIN-PERSON-GRANT and
+//! CHECKIN-PERSON-POWER = A). The answer is go, wait, propose, absent or
+//! unstated ([`CheckInVerdict`]); see `crate::check_in::asker`.
 //!
 //! * `preflight` (a read, `read`) writes nothing. A wait names the handle
 //!   only when the same saved call is already open.
@@ -109,8 +112,9 @@ pub struct CheckInOpenRequest {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum CheckInVerdict {
     /// The act may run now. `reason`: `read` (a read verb: the power is the
-    /// whole check), `never_ask` or `own_proof`. `act_class`: none for a
-    /// read verb.
+    /// whole check), `never_ask`, `own_proof`, or `sure` (a member's act
+    /// asked when unsure: a person's act is their own judgment).
+    /// `act_class`: none for a read verb.
     Go {
         reason: String,
         act_class: Option<String>,
@@ -171,8 +175,8 @@ pub struct CheckInHandleView {
 /// # Errors
 ///
 /// BAD_REQUEST for a digest that is not 64 hex or a name no verb row has;
-/// FORBIDDEN for a caller that is neither the live vault owner nor an agent;
-/// storage errors.
+/// FORBIDDEN for a caller that is neither the live vault owner, a live
+/// member of the vault, nor an agent; storage errors.
 pub fn check_in_preflight(
     memory: &Memory<'_>,
     input: CheckInPreflightRequest,

@@ -36,11 +36,14 @@
 //! owner or holds a live grant on the asker's vault (conferring now, its
 //! pact not inactive) whose verbs admit the exact verb and whose bounds cover
 //! where the effect sits, and whose own check-in for the act would not wait
-//! (Q9). A grant covers the effect when its worlds hold the effect's world
-//! (every world, when the effect names none) and it is narrowed on no axis
-//! the pending row cannot place the effect on: facets, bands, audience,
-//! sensitivity. A grant has no project axis; a project's act is placed by
-//! its world (review round 1 of #7112). A holder's role is read as an
+//! (Q9). A person's membership row is read by its roster role's cell for the
+//! act instead of its verbs, as a person asker's is ([`person_holds_power`];
+//! Engine ruling CHECKIN-PERSON-POWER = A): the shipped rows list permission
+//! tokens, not verb names. A grant covers the effect when its worlds hold the
+//! effect's world (every world, when the effect names none) and it is
+//! narrowed on no axis the pending row cannot place the effect on: facets,
+//! bands, audience, sensitivity. A grant has no project axis; a project's
+//! act is placed by its world (review round 1 of #7112). A holder's role is read as an
 //! asker's is ([`grant_role`]): an Owner-issued agent Grant carries the
 //! agent's delegated Owner powers, and the agent's live membership row on
 //! the vault gives its role (P24-SHAPE Q1 = A). A person's answer
@@ -230,9 +233,7 @@ impl RungResolver for VerifiedChain<'_> {
                 && crate::conversation::room_owners_in(vault, txn, room)?
                     .contains(&holder.principal));
         }
-        for (role, holds_power) in
-            holder_standing_in_txn(vault, txn, pending, holder, now)?
-        {
+        for (role, holds_power) in holder_standing_in_txn(vault, txn, pending, holder, now)? {
             let request = CheckInRequest {
                 act: pending.act,
                 role,
