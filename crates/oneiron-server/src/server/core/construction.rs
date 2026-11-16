@@ -57,7 +57,16 @@ impl SyncServer {
                             ),
                         ));
                     }
-                    Some(Arc::new(issuer))
+                    let issuer = Arc::new(issuer);
+                    // A self-host root is an owner key: held on the handle
+                    // from the first request, it proves the owner acts this
+                    // install carries (row CARRIER-OWNER-PROOF). The upkeep
+                    // pass holds the same signer; a managed host's custodial
+                    // root proves nothing and is never held here.
+                    if !hosted {
+                        vault.hold_checkpoint_root_signer(issuer.clone());
+                    }
+                    Some(issuer)
                 }
                 Err(error) if hosted => return Err(error),
                 Err(error) => {
@@ -141,7 +150,7 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
-        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        let wire_telemetry = Arc::new(crate::wire_telemetry::WireTelemetry::new(vault.clone()));
         live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
         payment_credential_release(&vault, config.release_payment_credentials_unfenced);
         let retained = Arc::new(crate::byte_line::ByteLine::new(
@@ -342,6 +351,7 @@ impl SyncServer {
             renderer_scratch: Default::default(),
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
+            process_readiness: Default::default(),
             invocation_claims: crate::invocation_claims::InvocationClaimStore::new(vault.clone()),
             vault,
             root_doc,
@@ -364,6 +374,7 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            recovery_box_hold: std::sync::OnceLock::new(),
             host_root_issuer: issuer,
             policy_doors: Default::default(),
             account_keys: None,
@@ -377,8 +388,10 @@ impl SyncServer {
             model_budgets,
             cloud_registration,
             connector_elicitations: Arc::default(),
+            connector_stdio: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),
+            runner_fence: std::sync::OnceLock::new(),
             desktop_guest: None,
             artifact_backend: None,
             desktop_seats: Arc::default(),
@@ -413,6 +426,7 @@ impl SyncServer {
             hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(hyde_queue_wait)),
             extraction_egress: None,
             tagger_egress: None,
+            phonetic_embedder: None,
             owner_host: None,
             feedback: None,
             feedback_triage: crate::config::FeedbackTriageConfig::default(),

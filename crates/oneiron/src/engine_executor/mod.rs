@@ -51,6 +51,8 @@ pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
 pub(crate) use self::record::{caller_task_in_txn, code_run_complete_in_txn, parked_wait_now};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::record::{executor_config_hash_for_test, step_state_hash_for_test};
 // FIX 4606: a canonical run's generation and parked wait, read outside its
 // entries.
 pub use self::run_position::{CodeRunPosition, code_run_position};
@@ -66,10 +68,10 @@ pub(crate) use self::step_evidence::step_evidence_page;
 pub use self::store::{RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES};
 pub(crate) use self::store::{
     bridge_result_output_path, clean_for_context, holds_reply_content, is_result_output_path,
-    mask_known_text, observation_output_path, parse_result_read_path, result_handle_json,
-    result_read_path_for, resumed_output_wait, script_output_path, store_agent_verb_write_answer,
-    store_ordinal_base, store_result_output_path, terminal_output_seq,
-    write_receipt_result_output_path,
+    mask_known_text, observation_output_path, parse_result_read_path, record_only_output_path,
+    result_handle_json, result_read_path_for, resumed_output_wait, script_output_path,
+    store_agent_verb_write_answer, store_ordinal_base, store_result_output_path,
+    terminal_output_seq, write_receipt_result_output_path,
 };
 pub use self::types::{
     CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
@@ -84,6 +86,8 @@ pub use self::types::{
 pub(crate) use self::host::executor_declarations_block;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::host::executor_system_prompt;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::host::spill_before_record;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::wire::{HealedExecutorReply, heal_executor_text_tracking_repairs};
 
