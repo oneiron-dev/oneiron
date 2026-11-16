@@ -92,6 +92,7 @@ const OWNER_ROUTES: &[Route] = &[
     ("GET", "/v1/core/run-tree"),
     ("GET", "/v1/core/run-tree/observe"),
     ("POST", "/v1/core/run-tree/intervene"),
+    ("GET", "/v1/core/jobs/{job_id}"),
     ("GET", "/v1/core/memory/{id}/timeline"),
     ("GET", "/v1/core/memory/{id}/watch"),
     ("PUT", "/v1/core/memory/{id}/watch"),

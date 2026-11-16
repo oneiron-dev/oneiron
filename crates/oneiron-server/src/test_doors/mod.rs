@@ -5,6 +5,7 @@
 //! `--all-features` build reaches them. Hidden; never API.
 
 pub mod big_rung;
+pub mod booking_turn_line;
 pub mod build_server;
 pub mod coach_round;
 #[cfg(unix)]
@@ -23,6 +24,7 @@ pub mod replay_admission;
 pub mod resident_pump;
 #[cfg(target_os = "linux")]
 pub mod sandbox_vendor;
+pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
 pub mod wire_health_sweep;
