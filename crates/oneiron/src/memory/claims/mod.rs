@@ -23,14 +23,38 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor};
 
 /// Predicates with declared multi-cardinality supersession keys (B1c,
-/// RATIFY-20260710 R0): the prior-claim match extends
-/// `subject+scope+predicate` with `value.question_id`.
-pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["companion.onboarding.answer"];
+/// RATIFY-20260710 R0), each with the value field that extends the
+/// prior-claim match `subject+scope+predicate`: a claim replaces, and an
+/// approval closes, only a claim whose value names the same key.
+const MULTI_CARDINALITY_VALUE_KEYS: [(&str, &str); 2] = [
+    ("companion.onboarding.answer", "question_id"),
+    // ARCH-0003 §G.1 predicate registry, line 272: one row per attendee,
+    // conflict set `(event, who)`. A second attendee stands beside the
+    // first; the same attendee's newer role or answer replaces its row.
+    ("calendar.attendee", "who"),
+];
 
-const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
+/// The predicates of [`MULTI_CARDINALITY_VALUE_KEYS`].
+pub const MULTI_CARDINALITY_PREDICATES: [&str; MULTI_CARDINALITY_VALUE_KEYS.len()] = {
+    let mut predicates = [""; MULTI_CARDINALITY_VALUE_KEYS.len()];
+    let mut index = 0;
+    while index < predicates.len() {
+        predicates[index] = MULTI_CARDINALITY_VALUE_KEYS[index].0;
+        index += 1;
+    }
+    predicates
+};
+
+/// The value field that keys `predicate`'s prior-claim match, when it is a
+/// declared multi-cardinality predicate.
+fn multi_cardinality_value_key(predicate: &str) -> Option<&'static str> {
+    MULTI_CARDINALITY_VALUE_KEYS
+        .iter()
+        .find_map(|&(name, key)| (name == predicate).then_some(key))
+}
 
 /// How the facade chooses a prior head; keyed multi predicates additionally
-/// retain the `value.question_id` identity above (ARCH-0044 S3).
+/// retain the value-key identity above (ARCH-0044 S3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaimCardinality {
     Single,
