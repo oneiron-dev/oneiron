@@ -83,6 +83,33 @@ impl std::fmt::Display for ErasedHoldTarget {
 /// route's refusal state, and a facade or MCP refusal's reason code.
 pub const OWNER_KEY_REQUIRED: &str = "owner_key_required";
 
+/// The prefix of the reason code that names what a client offers next after
+/// an owner-key refusal of a membership move
+/// ([`RecordError::OwnerKeyMoveRefused`]), followed by the step itself.
+pub const OWNER_KEY_NEXT_STEP_REASON_PREFIX: &str = "next_step:";
+
+/// The next step [`RecordError::OwnerKeyMoveRefused`] names (row
+/// HOSTED-ROOT-REVOKES-OWNER-KEY): no install of this vault can prove the
+/// move yet, so a client offers no retry. A hosted server holds no owner key,
+/// and a device holds no host issuer to make the move with.
+pub const OWNER_KEY_MOVE_NEXT_STEP: &str = "owner_device_proof_unavailable";
+
+/// The prefix of the reason code that names the member whose owner keys a
+/// refused membership move would end ([`RecordError::OwnerKeyMoveRefused`]),
+/// followed by their id in hex.
+pub const OWNER_KEY_MEMBER_REASON_PREFIX: &str = "member:";
+
+/// The engine's words for [`RecordError::OwnerKeyMoveRefused`], kept in this
+/// one place with [`OWNER_KEY_MOVE_SUGGESTION`] (the lead, 15 Nov 21:42: the
+/// text stays easy to change). Until a device can confirm such a move, they
+/// say plainly that it needs a device that holds an owner key (Engine RULING
+/// OWNERKEY-HOSTED-MOVE-NEXT-STEP = A, 16 Nov 19:53); with that path they
+/// become "confirm this on one of your devices".
+pub const OWNER_KEY_MOVE_REFUSAL_TEXT: &str = "This move ends a member's owner keys, so it needs a device that holds your owner key, and this install holds none: nothing was changed.";
+
+/// What [`RecordError::OwnerKeyMoveRefused`] suggests.
+pub const OWNER_KEY_MOVE_SUGGESTION: &str = "This move needs a device that holds your owner key, and none can confirm it here yet: the member keeps their owner standing until then.";
+
 fn revision_hex(revision: &[u8; 32]) -> String {
     oneiron_hex::encode(revision)
 }
@@ -258,6 +285,17 @@ pub enum RecordError {
         "This machine is not the owner's and holds no owner key: decide it on an owner device."
     )]
     OwnerKeyRequired,
+    /// A membership move that would end `member`'s owner keys, refused on an
+    /// install that holds no owner key the vault trusts (row
+    /// HOSTED-ROOT-REVOKES-OWNER-KEY): a revoke of an owner key counts only
+    /// with an owner key's proof, never with the custodial root's alone. Its
+    /// kind is [`ErrorKind::OwnerKeyRequired`]; beside that reason code a
+    /// surface names the next step and the member as reason codes
+    /// ([`OWNER_KEY_NEXT_STEP_REASON_PREFIX`],
+    /// [`OWNER_KEY_MEMBER_REASON_PREFIX`]). Nothing was written and nothing
+    /// waits; a shared act the move ran for stays pending.
+    #[error("{}", OWNER_KEY_MOVE_REFUSAL_TEXT)]
+    OwnerKeyMoveRefused { member: EntityId },
     /// The owner's world recipient choice keeps a world's rows from this
     /// destination (mesh PR2b, L11-B (B)): the reason names his choice (one
     /// named machine, or machines marked mine) and why this destination is
@@ -412,9 +450,11 @@ pub enum RecordError {
     )]
     AuthorityLogSignerPending { id: EntityId },
     /// Storing this AUTHORITY_LOG row would take its signer, or the log's
-    /// handoffs, past the pinned fold bound (H72). Nothing was written; a
-    /// slip issuer's slip ops, and the rows it signs that only restrict
-    /// authority, are never refused this way.
+    /// handoffs, past the pinned fold bound (H72), or the log past the
+    /// owner's reserve under its fold memory floor, where only the owner's
+    /// work lands ([AUTHORITY-LOG-SIGNER-FLOOD]). Nothing was written, and
+    /// the row may be offered again; a slip issuer's slip ops, and the rows
+    /// it signs that only restrict authority, are never refused this way.
     #[error(
         "authority log at its bound for signer {signer}; row {} not stored",
         id.to_hex()
@@ -521,7 +561,9 @@ impl RecordError {
             Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
             Self::CheckpointPolicyRefused(_) => ErrorKind::CheckpointPolicyRefused,
             Self::CheckpointPolicyRevisionStale { .. } => ErrorKind::CheckpointPolicyRevisionStale,
-            Self::OwnerKeyRequired => ErrorKind::OwnerKeyRequired,
+            Self::OwnerKeyRequired | Self::OwnerKeyMoveRefused { .. } => {
+                ErrorKind::OwnerKeyRequired
+            }
             Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
             Self::WorldPlacementUnverifiable(_) => ErrorKind::WorldPlacementUnverifiable,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
