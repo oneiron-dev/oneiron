@@ -63,7 +63,7 @@ struct WakeBatch<'a> {
     opener: Option<&'a str>,
 }
 
-use crate::runtime::wall_clock_ms;
+use oneiron_base::unix_millis_now;
 
 pub(crate) struct Instance {
     pub(crate) key: String,
@@ -104,6 +104,13 @@ impl Instance {
             inbox: inbox::Inbox::new(directory.join("oneiron-wakes")),
         })
     }
+
+    /// Whether this host acknowledged envelope id `event_ref` (RC99): a
+    /// helper's zero exit, `wake inbox` or `wake ack` recorded it in the
+    /// local inbox. The bridge's wake pump reports it at its next poll.
+    pub(crate) fn acknowledged(&self, event_ref: &str) -> bool {
+        self.inbox.is_acknowledged(event_ref)
+    }
 }
 
 pub(crate) fn command(args: WakeArgs) -> anyhow::Result<()> {
@@ -115,7 +122,7 @@ pub(crate) fn command(args: WakeArgs) -> anyhow::Result<()> {
             let wakes = instance.inbox.pending()?;
             // Stored notices take the opener now, as they are handed over,
             // never the clock of when they were queued (FIX 15011).
-            let opener = oneiron::context_board::wake_batch_opener(&wakes, wall_clock_ms());
+            let opener = oneiron::context_board::wake_batch_opener(&wakes, unix_millis_now());
             let output = if claude_code_stop {
                 if wakes.is_empty() {
                     json!({})

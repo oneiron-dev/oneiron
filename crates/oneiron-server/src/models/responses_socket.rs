@@ -26,7 +26,7 @@ use oneiron::{
     BudgetLease, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream,
     LlmStreamResult, ModelId,
 };
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatBackend, OpenAiCompatProviderStream, OpenAiCompatStreamFrame,
     OpenAiCompatTransportError, OpenAiResponsesChain, OpenAiResponsesLlmStream,
     OpenAiResponsesTurn, RESPONSES_PREVIOUS_NOT_FOUND, RESPONSES_SOCKET_LIMIT,

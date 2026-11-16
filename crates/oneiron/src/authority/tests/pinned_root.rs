@@ -156,6 +156,7 @@ fn a_restore_that_makes_a_new_machine_opens_unpinned() {
 
 /// The vault a restore replaced, activated beside its replacement, is a new
 /// machine and opens unpinned; the replacement keeps the pin.
+#[cfg(unix)]
 #[test]
 fn an_activated_archive_opens_unpinned() {
     let host = host();
@@ -178,12 +179,7 @@ fn an_activated_archive_opens_unpinned() {
     .unwrap();
     // As `oneiron restore` exchanges the two directories.
     vault
-        .swap_in_replacement(&replacement, || {
-            let between = home.with_extension("exchange");
-            std::fs::rename(&home, &between)?;
-            std::fs::rename(&staged, &home)?;
-            std::fs::rename(&between, &staged)
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .unwrap();
     drop((vault, replacement));
     let replacement = Vault::open(&home, VaultConfig::default()).unwrap();

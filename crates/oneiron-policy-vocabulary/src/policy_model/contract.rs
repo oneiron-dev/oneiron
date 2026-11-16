@@ -183,19 +183,17 @@ pub fn parse_rationale_notes(text: &str) -> Result<PolicyModelAnswer> {
             "rule_ids carries more entries than an answer may cite",
         ));
     }
+    let mut confidence = wire.confidence;
+    confidence.truncate(confidence.floor_char_boundary(POLICY_CONFIDENCE_MAX_LEN));
+    let mut rationale = wire.rationale;
+    rationale.truncate(rationale.floor_char_boundary(POLICY_RATIONALE_MAX_LEN));
     Ok(PolicyModelAnswer {
         // Bounded above only as a flood stop. WHICH ids survive, and the
         // dedupe, belong to `retain_resolvable_rule_ids`: this reader sees an
         // answer, not the plane it was answered against.
         rule_ids: wire.rule_ids,
-        confidence: Some(truncate_on_char_boundary(
-            wire.confidence,
-            POLICY_CONFIDENCE_MAX_LEN,
-        )),
-        rationale: Some(truncate_on_char_boundary(
-            wire.rationale,
-            POLICY_RATIONALE_MAX_LEN,
-        )),
+        confidence: Some(confidence),
+        rationale: Some(rationale),
         ..PolicyModelAnswer::default()
     })
 }
@@ -215,18 +213,6 @@ pub fn rationale_notes_format() -> ResponseFormat {
             },
         }),
     }
-}
-
-fn truncate_on_char_boundary(mut value: String, max_len: usize) -> String {
-    if value.len() <= max_len {
-        return value;
-    }
-    let mut end = max_len;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value.truncate(end);
-    value
 }
 
 fn unreadable(reason: &str) -> Error {
