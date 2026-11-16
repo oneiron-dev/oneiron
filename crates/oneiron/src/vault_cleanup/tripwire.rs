@@ -24,7 +24,7 @@ use crate::store::attempt_id::AttemptId;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_contracts::claim::ClaimSource;
 
-/// Owner-set cleanup posture: propose-first (default) vs auto-with-digest.
+/// Owner-set cleanup posture: auto-with-digest (absent) vs propose-first.
 /// Key: `()`.
 const POSTURE: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::VAULT_CLEANUP_POSTURE);
 
@@ -240,9 +240,12 @@ pub fn scan_cleanup_candidates(vault: &Vault) -> Result<Vec<CleanupCandidate>> {
 
 /// The vault's current cleanup posture.
 ///
-/// An absent or unreadable flag reads as [`CleanupPosture::ProposeFirst`]:
-/// the auto posture is a decision, and a decision nobody can read was never
-/// made.
+/// An absent flag reads as [`CleanupPosture::AutoWithDigest`]: a vault cleans
+/// up automatically from birth, with a snapshot per run and the owner's
+/// revert (owner 2026-10-18; DEC-0006: no grant step, no holdout). A stored
+/// flag reads as stored. An unreadable flag reads as
+/// [`CleanupPosture::ProposeFirst`], the safe reading of a damaged row: the
+/// owner may have stored propose-first there.
 ///
 /// # Errors
 ///
@@ -256,11 +259,8 @@ pub(super) fn cleanup_posture_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<CleanupPosture> {
-    if !rollout::auto_enabled(vault, rtxn)? {
-        return Ok(CleanupPosture::ProposeFirst);
-    }
     let Some(raw) = POSTURE.get(&vault.store, rtxn, &())? else {
-        return Ok(CleanupPosture::ProposeFirst);
+        return Ok(CleanupPosture::AutoWithDigest);
     };
     Ok(std::str::from_utf8(&raw)
         .ok()
@@ -268,8 +268,9 @@ pub(super) fn cleanup_posture_in_txn(
         .unwrap_or(CleanupPosture::ProposeFirst))
 }
 
-/// Sets the cleanup posture. OWNER ACTION ONLY — the teeth-closing tickets
-/// flip this flag; the cron never writes it.
+/// Sets the cleanup posture. OWNER ACTION ONLY — the cron never writes it.
+/// Either posture is the owner's choice; the ARCH-0066 teeth ride each
+/// automatic run's digest as a badge and gate neither.
 ///
 /// # Errors
 ///
@@ -283,11 +284,6 @@ pub(super) fn set_cleanup_posture_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     posture: CleanupPosture,
 ) -> Result<()> {
-    if posture == CleanupPosture::AutoWithDigest && !rollout::auto_enabled(vault, wtxn)? {
-        return Err(Error::InvariantViolation(
-            "automatic cleanup rollout blockers are open",
-        ));
-    }
     POSTURE.put(
         &vault.store,
         wtxn,
@@ -375,6 +371,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 archived: live_slots(applied.archived),
                 skipped: live_slots(applied.skipped),
                 rejected: Vec::new(),
+                integrity_teeth: Some(rollout::integrity_teeth()),
             };
             put_digest_in_txn(vault, wtxn, &digest)?;
             run_snapshot::record_in_txn(

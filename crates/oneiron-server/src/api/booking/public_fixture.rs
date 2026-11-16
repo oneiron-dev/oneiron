@@ -99,26 +99,11 @@ impl Fixture {
             config,
         };
         fixture.configure_page(page, id(0x72));
-        fixture
-            .server
-            .vault
-            .put_entity(
-                &id(0x77),
-                oneiron::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"fixture owner",
-            )
-            .expect("owner");
-        // The secret server bootstrapped a host genesis, so the facade's
-        // owner verbs need an explicit host-signed owner binding for the
-        // fixture owner. Without it every publication write fails closed
-        // with OWNER_BINDING_REQUIRED.
-        crate::test_credentials::bind_owner(
-            &fixture.server.vault,
-            "owner-fixture-secret",
-            id(0x77),
-        );
+        // The rooted server binds its embedded owner at genesis (H149), and the
+        // host-root credential acts as that owner, so the fixture publishes as
+        // it. A second owner binding would rebind the host key and leave the
+        // embedded owner unbound (OWNER_BINDING_REQUIRED, and rule amendments
+        // stored as proposals).
         fixture
     }
 
@@ -180,14 +165,14 @@ impl Fixture {
         let receipt = self
             .server
             .vault
-            .memory(id(0x77), EdgeActorClass::Human)
+            .memory(self.owner_actor(), EdgeActorClass::Human)
             .claim_upsert(&input)
             .expect("normal owner publication write");
         if receipt.approval == "proposed" {
             return self
                 .server
                 .vault
-                .memory(id(0x77), EdgeActorClass::Human)
+                .memory(self.owner_actor(), EdgeActorClass::Human)
                 .confirm_booking_publication(&receipt.claim_short_id, now_secs().expect("clock"))
                 .expect("owner confirms staged publication revision")
                 .claim_id;

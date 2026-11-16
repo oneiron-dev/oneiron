@@ -202,7 +202,13 @@ impl AiHost {
         recover_dead_leases(&vault);
         let budgets = budgets.unwrap_or_else(crate::models::ModelHostBudgets::unhosted);
         // Its ladders read chat replies on the vault's line (FIX 10626).
-        let rests = OfferCooldowns::in_vault_with(Arc::clone(&vault), budgets.clone());
+        // A down provider's offers rest as the host's `[models]` says (FIX
+        // 11226).
+        let rests = OfferCooldowns::in_vault_with(
+            Arc::clone(&vault),
+            budgets.clone(),
+            crate::models::HealthRestSettings::of(models),
+        );
         let mut runtime =
             ModelRuntime::build_hosted_on(models, broker, rests, &budgets, vault.privacy_posture())
                 .with_receipts(receipts)
@@ -434,7 +440,9 @@ fn recover_dead_leases(vault: &Vault) {
         };
         match parked {
             Some(park) if park.resumable_by(oneiron::dreamer_runner::ParkResumer::BootRecovery) => {
-                if let Err(error) = runner.resume_parked(row.id, &park.park_owner, unix_now()) {
+                if let Err(error) =
+                    runner.resume_parked(row.id, &park.park_owner, unix_seconds_now())
+                {
                     tracing::warn!(%error, attempt = ?row.id, "a checkpoint park was not cleared; its lease is kept");
                     held.insert(row.id);
                     continue;
@@ -459,7 +467,7 @@ fn recover_dead_leases(vault: &Vault) {
     };
     match queue.cleanup_leases_except(
         CleanupAttemptLeases {
-            now: unix_now().max(youngest.saturating_add(1)),
+            now: unix_seconds_now().max(youngest.saturating_add(1)),
             lease_timeout_secs: 1,
         },
         &held,
@@ -518,7 +526,7 @@ fn resume_outage_parks(vault: &Vault) {
         if !park.resumable_by(oneiron::dreamer_runner::ParkResumer::ProviderRecovery) {
             continue;
         }
-        match runner.resume_parked(row.id, &park.park_owner, unix_now()) {
+        match runner.resume_parked(row.id, &park.park_owner, unix_seconds_now()) {
             Ok(Some(_)) => resumed += 1,
             Ok(None) => {}
             Err(error) => {

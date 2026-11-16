@@ -73,13 +73,8 @@ pub struct RawEndpointGrant {
     pub protocol: RawProtocol,
 }
 
-/// The transport a [`RawEndpointGrant`] admits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RawProtocol {
-    Tcp,
-    Udp,
-}
+#[doc(hidden)]
+pub use oneiron_records::code_sandbox::egress::RawProtocol;
 
 impl RawEndpointGrant {
     /// The address this grant names, when its host is an IP literal.

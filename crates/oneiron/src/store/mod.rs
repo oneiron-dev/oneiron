@@ -107,10 +107,11 @@ use oneiron_store::extraction_work;
 
 pub mod ports {
     pub use crate::ports::{
-        BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,
-        EdgeDirection, EdgeStore, EntityRecord, EntityStore, IdGen, JobQueue, JobScope,
-        ManualClock, PlaceStore, RetrievalIndex, ShortIdStore, SourceSpan, StoreClock,
-        TombstoneStore, Transactions, safe_read_asset_text, safe_read_text,
+        AssetTextRead, AssetTextValidity, BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp,
+        ClaimStore, Clock, DependencyIndex, EdgeDirection, EdgeStore, EntityRecord, EntityStore,
+        IdGen, JobQueue, JobScope, ManualClock, PlaceStore, RetrievalIndex, ShortIdStore,
+        SourceSpan, StoreClock, TombstoneStore, Transactions, safe_read_asset_text,
+        safe_read_asset_text_diagnostic, safe_read_text,
     };
     pub use crate::ports::{
         ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead,
@@ -319,6 +320,7 @@ pub mod seat_model_description;
 pub(crate) mod secret_handle_labels;
 pub(crate) mod secret_handle_purpose;
 pub(crate) mod secret_name_index;
+pub(crate) mod secret_payment_marks;
 pub(crate) mod side_table_erase_scan;
 pub mod site_skill_exposure;
 pub mod skill_attribution_evidence;
@@ -377,6 +379,8 @@ pub mod retrieval_policy;
 mod retrieval_telemetry;
 pub mod retrieval_values;
 pub use oneiron_store::revision_ref;
+#[cfg(unix)]
+mod directory_exchange;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
@@ -525,6 +529,9 @@ pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 #[cfg(all(unix, test))]
 pub(crate) use root_directory::arm_after_root_entry_removed;
+
+#[cfg(unix)]
+pub use directory_exchange::{HeldEntry, exchange_held};
 #[cfg(unix)]
 pub use root_directory::{
     SharedPath, refuse_shared_path, refuse_shared_vault_root, remove_held_directory, shared_path,
