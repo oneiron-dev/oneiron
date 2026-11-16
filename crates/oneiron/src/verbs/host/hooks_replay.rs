@@ -9,9 +9,9 @@ pub use oneiron_verb_wire::verbs::host::hooks_replay::{
     HOOKS_REPLAY_LIMIT_DEFAULT, HookReplayOutcome, HooksReplayRequest,
 };
 
-/// The most entries one `vault.hooks.replay` page holds, the engine's own
-/// page quantum: a larger limit is served a page at a time through
-/// `next_cursor` (FIX 8629).
+/// The most entries one `vault.hooks.replay` page holds while the owner has
+/// not moved `verbs.hooks_replay.page_max` (its default): a larger limit is
+/// served a page at a time through `next_cursor` (FIX 8629).
 pub const HOOKS_REPLAY_PAGE_MAX: usize = 256;
 
 /// One page of `vault.hooks.replay`: its rows, and where the next starts.
@@ -23,11 +23,12 @@ pub struct HooksReplayPage {
     pub next_cursor: Option<String>,
     /// The replay has read every entry its hook takes.
     pub done: bool,
-    /// The rows this page could hold: the request's limit, or
-    /// [`HOOKS_REPLAY_PAGE_MAX`] when it asked for more.
+    /// The rows this page could hold: the request's limit, or the owner's
+    /// page maximum (default [`HOOKS_REPLAY_PAGE_MAX`]) when it asked for more.
     pub effective_limit: usize,
-    /// The request's limit was past [`HOOKS_REPLAY_PAGE_MAX`] and this page
-    /// was served at it; `next_cursor` continues to the rest.
+    /// The request's limit was past the owner's page maximum (default
+    /// [`HOOKS_REPLAY_PAGE_MAX`]) and this page was served at it;
+    /// `next_cursor` continues to the rest.
     #[serde(default)]
     pub limit_clamped: bool,
 }
@@ -99,7 +100,10 @@ pub fn replay_hooks_as_owner_listing(
     input: &HooksReplayRequest,
 ) -> MemoryResult<(HooksReplayPage, Vec<crate::EntityId>)> {
     let asked = input.limit()?;
-    let limit = asked.min(HOOKS_REPLAY_PAGE_MAX);
+    let page_max = vault
+        .page_max_in_force(&crate::verbs::setting_keys::HOOKS_REPLAY_PAGE_MAX_KEY)?
+        .rows();
+    let limit = asked.min(page_max);
     let binding = crate::EntityId::from_hex(input.binding.trim())
         .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;
     let since = input

@@ -38,7 +38,9 @@ pub(super) const PROPOSALS: SideTable<EntityId, LensProposalRecord, Named> =
 /// The owner's selected revision per pack/skill slot. Key: [`slot_key`].
 pub(super) const SLOTS: SideTable<String, LensSlotRecord, Named> =
     SideTable::new(&side_table::LENS_SLOT);
-/// The most rows one `vault.lenses.list` page returns.
+/// The most rows one `vault.lenses.list` page returns while the owner has not
+/// moved `lens.list.max_page` (its default), and the page an ask that names no
+/// limit is served.
 pub const LENS_LIST_MAX_PAGE: usize = 200;
 
 #[doc(hidden)]
@@ -242,10 +244,14 @@ impl Memory<'_> {
     /// else its row alone while it reads the slot's SKILL and live pack
     /// source (FIX 2136).
     pub fn lenses_list(&self, input: LensListRequest) -> MemoryResult<LensListPage> {
+        let max = self
+            .vault()
+            .page_max_in_force(&super::setting_keys::LENS_LIST_MAX_PAGE_KEY)?
+            .rows();
         let limit = page_limit_zero_as_one(
             input.limit.map(|limit| limit as usize),
             LENS_LIST_MAX_PAGE,
-            LENS_LIST_MAX_PAGE,
+            max,
         )
         .rows;
         let after = input

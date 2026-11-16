@@ -76,6 +76,7 @@ pub use record_ref::{
     RecordLinksRequest, RecordRef, RecordRefPreview, ResolveRecordRefRequest,
 };
 mod selection;
+pub(crate) mod setting_keys;
 pub use selection::{
     LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan,
     LensSelection, LensSelectionRange, LensSelectionResolveRequest, LensSelectionResolved,

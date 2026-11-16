@@ -36,8 +36,9 @@ use crate::{EntityId, Error, Result};
 pub const LENS_DEFAULT_READ_STEP: usize = 64;
 /// The excerpt of a source body a ledger row or thread entry shows.
 const EXCERPT_BYTES: usize = 1024;
-/// The body lines a dossier section shows, and the bytes of each.
-const DOSSIER_LINES: usize = 32;
+/// The body lines a dossier section shows while the owner has not moved
+/// `lens.dossier.lines_shown` (its default), and the bytes of each.
+pub(super) const DOSSIER_LINES: usize = 32;
 const DOSSIER_LINE_BYTES: usize = 512;
 
 #[doc(hidden)]
@@ -75,6 +76,9 @@ impl Memory<'_> {
         input: LensDefaultRequest,
     ) -> MemoryResult<ScopedReadResult<HostedLensRender>> {
         crate::memory::caps::check_as_of(input.as_of)?;
+        let dossier_lines = self
+            .vault()
+            .lens_excerpt_size_in_force(&super::setting_keys::DOSSIER_LINES_SHOWN_KEY)?;
         let title = LensText::new(input.title)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         let ledger_ids = source_ids(&input.ledger.iter().map(String::as_str).collect::<Vec<_>>())?;
@@ -130,7 +134,7 @@ impl Memory<'_> {
             let lines = text
                 .lines()
                 .filter(|line| !line.trim().is_empty())
-                .take(DOSSIER_LINES)
+                .take(dossier_lines)
                 .map(|line| LensText::new(clip(line, DOSSIER_LINE_BYTES)))
                 .collect::<Result<Vec<_>>>()?;
             let value = ScopedReadResult {

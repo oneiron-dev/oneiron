@@ -34,7 +34,8 @@ use crate::memory::{
 use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 
 pub use crate::store::record_ref::RECORD_REF_LABEL_MAX_CHARS;
-/// The most characters a [`RecordRefPreview`] snippet carries.
+/// The most characters a [`RecordRefPreview`] snippet carries while the owner
+/// has not moved `lens.refs.snippet_chars` (its default).
 pub const RECORD_REF_SNIPPET_MAX_CHARS: usize = 280;
 pub use crate::request_limits::RECORD_REF_MAX_BYTES;
 
@@ -127,6 +128,9 @@ impl Memory<'_> {
         read: impl FnOnce(&str) -> MemoryResult<ScopedReadResult<Option<EntityView>>>,
         live: impl FnOnce(&EntityView) -> MemoryResult<Option<String>>,
     ) -> MemoryResult<ScopedReadResult<RecordRefPreview>> {
+        let snippet_chars = self
+            .vault()
+            .lens_excerpt_size_in_force(&super::setting_keys::RECORD_REF_SNIPPET_CHARS_KEY)?;
         let reference = input.reference.trim();
         if reference.is_empty() || reference.len() > RECORD_REF_MAX_BYTES {
             return Err(MemoryError::bad_request_with(
@@ -159,7 +163,7 @@ impl Memory<'_> {
                     .body
                     .as_ref()
                     .and_then(|body| first_text(body, &SNIPPET_FIELDS))
-                    .map(|text| bounded(&text, RECORD_REF_SNIPPET_MAX_CHARS))
+                    .map(|text| bounded(&text, snippet_chars))
                     .filter(|snippet| !snippet.is_empty()),
                 record: RecordRef::from_view(&view),
                 revision,
