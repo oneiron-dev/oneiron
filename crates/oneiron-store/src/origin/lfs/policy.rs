@@ -2,6 +2,7 @@
 
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -9,8 +10,11 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 /// What a repository path's bytes ARE: the owner's word for a path, kept in
 /// the origin's LFS path policy (`vault.code.origin.lfs_path_policy.*`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "kebab-case")]
+#[register("lfs.asset.class")]
 pub enum LfsAssetClass {
     /// A large asset the repository carries: it belongs in the LFS plane.
     RepositoryLarge,
@@ -20,17 +24,6 @@ pub enum LfsAssetClass {
     /// (Engine CODECUSTODY-LFS Q2 = A). A file pushed as ordinary Git bytes
     /// stays ordinary Git bytes; nothing is rewritten.
     BuildRequired,
-}
-
-impl LfsAssetClass {
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::RepositoryLarge => "repository-large",
-            Self::BuildRequired => "build-required",
-        }
-    }
 }
 
 /// What the caller must do with one pushed pointer, whatever its class.

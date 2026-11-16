@@ -10,15 +10,17 @@
 //! person the source names (its `mail` or `userPrincipalName`).
 //!
 //! Graph tracks a calendar view, a fixed window of time: this wire's window
-//! runs from a month before it was opened to a year after, and opens again
-//! a month later, so the view moves with time. Each opening's first listing
-//! also reads the four years past the view once, without tracking them
-//! (fix list row 16313): an event that far ahead lands at once, and a
-//! change to it lands at the next opening. The view lists occurrences,
-//! not series: each occurrence, exception or single event lands as its own
-//! event, its UID the Graph id (`graph:<id>`), its times in UTC (an all-day
-//! event keeps its UTC span). A removed occurrence is a delete. An event
-//! shown as free, or one the person declined, stays free.
+//! runs from a month before it was opened to a year after (the owner's
+//! settings `mail_calendar.microsoft365_calendar.view_before_secs` and
+//! `.view_after_secs`, read at each opening and kept in its cursor), and
+//! opens again a month later, so the view moves with time. Each opening's
+//! first listing also reads the four years past the view once, without
+//! tracking them (fix list row 16313): an event that far ahead lands at
+//! once, and a change to it lands at the next opening. The view lists
+//! occurrences, not series: each occurrence, exception or single event lands
+//! as its own event, its UID the Graph id (`graph:<id>`), its times in UTC
+//! (an all-day event keeps its UTC span). A removed occurrence is a delete.
+//! An event shown as free, or one the person declined, stays free.
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
@@ -45,10 +47,21 @@ pub const MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR: &str = "connector:microsoft3
 const GRAPH_ORIGIN: &str = "https://graph.microsoft.com/";
 const GRAPH_ME_URL: &str = "https://graph.microsoft.com/v1.0/me";
 const PREFER: &str = "IdType=\"ImmutableId\", outlook.timezone=\"UTC\", outlook.body-content-type=\"text\", odata.maxpagesize=100";
-/// How far before its opening a view starts.
-const VIEW_BEFORE_SECS: u64 = 31 * 24 * 3600;
-/// How far after its opening a view ends.
-const VIEW_AFTER_SECS: u64 = 366 * 24 * 3600;
+/// How far before its opening a view starts, unless the owner sets another
+/// span; a cursor written before the setting existed reads this.
+pub(super) const VIEW_BEFORE_SECS: u64 = 31 * 24 * 3600;
+/// The furthest before its opening a view may start: one leap year.
+pub(super) const VIEW_BEFORE_MAX_SECS: u64 = 366 * 24 * 3600;
+/// How far after its opening a view ends, unless the owner sets another
+/// span; a cursor written before the setting existed reads this.
+pub(super) const VIEW_AFTER_SECS: u64 = 366 * 24 * 3600;
+/// The nearest after its opening a view may end: the month it stands, so
+/// the view holds the present until it opens again.
+pub(super) const VIEW_AFTER_MIN_SECS: u64 = VIEW_STANDS_SECS;
+/// The furthest after its opening a view may end: three leap years, so a
+/// view and the span before it stay inside the five years one Graph
+/// calendar view may span.
+pub(super) const VIEW_AFTER_MAX_SECS: u64 = 3 * 366 * 24 * 3600;
 /// How long a view stands before it opens again.
 const VIEW_STANDS_SECS: u64 = 30 * 24 * 3600;
 /// How far past a view's end its opening's far listing reads: within the
@@ -70,6 +83,100 @@ struct GraphCalendarCursor {
     /// then holds the view's delta link for the rounds after it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     far: Option<String>,
+    /// How far before `opened_at` the view starts: the owner's setting when
+    /// it opened. A cursor written before the setting existed reads the
+    /// shipped span.
+    #[serde(default = "shipped_view_before")]
+    view_before_secs: u64,
+    /// How far after `opened_at` the view ends, as `view_before_secs`.
+    #[serde(default = "shipped_view_after")]
+    view_after_secs: u64,
+}
+
+const fn shipped_view_before() -> u64 {
+    VIEW_BEFORE_SECS
+}
+
+const fn shipped_view_after() -> u64 {
+    VIEW_AFTER_SECS
+}
+
+impl GraphCalendarCursor {
+    /// A view opened at `now` over the span the owner's settings name.
+    fn opening(vault: &Vault, now: u64) -> Result<Self> {
+        let (view_before_secs, view_after_secs) =
+            super::setting_keys::microsoft365_calendar_view(vault)?;
+        Ok(Self {
+            opened_at: now,
+            link: view_link(now, view_before_secs, view_after_secs)?,
+            listing: true,
+            far: None,
+            view_before_secs,
+            view_after_secs,
+        })
+    }
+
+    /// The span this opening's listing reads, the view and its far listing:
+    /// what it did not see there is gone.
+    fn covers(&self) -> crate::TimeRange {
+        crate::TimeRange {
+            start: self.opened_at.saturating_sub(self.view_before_secs),
+            end: self
+                .opened_at
+                .saturating_add(self.view_after_secs)
+                .saturating_add(FAR_AFTER_SECS),
+        }
+    }
+
+    /// The far listing of this view: the occurrences from the view's end to
+    /// four years past it, read without a delta.
+    fn far_link(&self) -> Result<String> {
+        let view_end = self.opened_at.saturating_add(self.view_after_secs);
+        let start = graph_time(view_end)?;
+        let end = graph_time(view_end.saturating_add(FAR_AFTER_SECS))?;
+        Ok(format!(
+            "{GRAPH_ME_URL}/calendarView?startDateTime={start}&endDateTime={end}"
+        ))
+    }
+}
+
+/// The first link of a view opened at `now`, from `before_secs` before it
+/// to `after_secs` after it.
+fn view_link(now: u64, before_secs: u64, after_secs: u64) -> Result<String> {
+    let start = graph_time(now.saturating_sub(before_secs))?;
+    let end = graph_time(now.saturating_add(after_secs))?;
+    Ok(format!(
+        "{GRAPH_ME_URL}/calendarView/delta?startDateTime={start}&endDateTime={end}"
+    ))
+}
+
+/// The first link a view opened at `now` reads, and the span its listing
+/// covers: a test door, built only under `--cfg oneiron_test_support`.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn graph_calendar_opening(
+    vault: &Vault,
+    now: u64,
+) -> Result<(String, crate::TimeRange)> {
+    let cursor = GraphCalendarCursor::opening(vault, now)?;
+    let covers = cursor.covers();
+    Ok((cursor.link, covers))
+}
+
+/// The span the listing of the view whose stored cursor is `cursor` covers:
+/// a test door, built only under `--cfg oneiron_test_support`.
+///
+/// # Errors
+///
+/// A cursor that does not decode.
+#[cfg(oneiron_test_support)]
+pub(crate) fn graph_calendar_cursor_covers(cursor: &str) -> Result<crate::TimeRange> {
+    let cursor: GraphCalendarCursor =
+        serde_json::from_str(cursor).map_err(|_| refused("graph_calendar_cursor_unreadable"))?;
+    Ok(cursor.covers())
 }
 
 /// Host-side Microsoft Graph calendar wire over `reqwest::blocking`.
@@ -160,26 +267,6 @@ impl<'v> HttpGraphCalendarWire<'v> {
         door?;
         answer.ok_or_else(|| refused("graph_calendar_credential_door_refused"))
     }
-
-    /// The first link of a view opened at `now`.
-    fn view_link(now: u64) -> Result<String> {
-        let start = graph_time(now.saturating_sub(VIEW_BEFORE_SECS))?;
-        let end = graph_time(now.saturating_add(VIEW_AFTER_SECS))?;
-        Ok(format!(
-            "{GRAPH_ME_URL}/calendarView/delta?startDateTime={start}&endDateTime={end}"
-        ))
-    }
-
-    /// The far listing of the view opened at `opened_at`: the occurrences
-    /// from the view's end to four years past it, read without a delta.
-    fn far_link(opened_at: u64) -> Result<String> {
-        let view_end = opened_at.saturating_add(VIEW_AFTER_SECS);
-        let start = graph_time(view_end)?;
-        let end = graph_time(view_end.saturating_add(FAR_AFTER_SECS))?;
-        Ok(format!(
-            "{GRAPH_ME_URL}/calendarView?startDateTime={start}&endDateTime={end}"
-        ))
-    }
 }
 
 impl MailCalendarWire for HttpGraphCalendarWire<'_> {
@@ -196,12 +283,7 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
                 }
                 cursor
             }
-            None => GraphCalendarCursor {
-                opened_at: now,
-                link: Self::view_link(now)?,
-                listing: true,
-                far: None,
-            },
+            None => GraphCalendarCursor::opening(self.vault, now)?,
         };
         let page = match self.get(source, cursor.far.as_ref().unwrap_or(&cursor.link), &[])? {
             RestAnswer::Found(page) => page,
@@ -228,6 +310,10 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
             };
             changes.extend(change);
         }
+        let listing = cursor.listing || cursor.far.is_some();
+        // The opening's listing reads the view and its far listing: what it
+        // did not see in either span is gone.
+        let covers = cursor.covers();
         let next_page = text_of(page.get("@odata.nextLink"));
         let (next, complete) = if cursor.far.is_some() {
             // The far listing's pages end the opening's listing; the view's
@@ -235,10 +321,9 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
             let complete = next_page.is_none();
             (
                 GraphCalendarCursor {
-                    opened_at: cursor.opened_at,
-                    link: cursor.link,
                     listing: false,
                     far: next_page,
+                    ..cursor
                 },
                 complete,
             )
@@ -246,36 +331,37 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
             match (next_page, text_of(page.get("@odata.deltaLink"))) {
                 (Some(next), _) => (
                     GraphCalendarCursor {
-                        opened_at: cursor.opened_at,
                         link: next,
-                        listing: cursor.listing,
                         far: None,
+                        ..cursor
                     },
                     false,
                 ),
                 // The view's first listing ends: its far listing follows.
-                (None, Some(delta)) if cursor.listing => (
-                    GraphCalendarCursor {
-                        opened_at: cursor.opened_at,
-                        link: delta,
-                        listing: false,
-                        far: Some(Self::far_link(cursor.opened_at)?),
-                    },
-                    false,
-                ),
+                (None, Some(delta)) if cursor.listing => {
+                    let far = cursor.far_link()?;
+                    (
+                        GraphCalendarCursor {
+                            link: delta,
+                            listing: false,
+                            far: Some(far),
+                            ..cursor
+                        },
+                        false,
+                    )
+                }
                 (None, Some(delta)) => (
                     GraphCalendarCursor {
-                        opened_at: cursor.opened_at,
                         link: delta,
                         listing: false,
                         far: None,
+                        ..cursor
                     },
                     true,
                 ),
                 (None, None) => return Err(refused("graph_calendar_page_without_a_link")),
             }
         };
-        let listing = cursor.listing || cursor.far.is_some();
         Ok(MailCalendarRead::Pull(MailCalendarPull {
             changes,
             next_cursor: Some(
@@ -283,15 +369,7 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
                     .map_err(|_| refused("graph_calendar_cursor_unencodable"))?,
             ),
             complete: complete || !listing,
-            // The opening's listing reads the view and its far listing: what
-            // it did not see in either span is gone.
-            covers: Some(crate::TimeRange {
-                start: cursor.opened_at.saturating_sub(VIEW_BEFORE_SECS),
-                end: cursor
-                    .opened_at
-                    .saturating_add(VIEW_AFTER_SECS)
-                    .saturating_add(FAR_AFTER_SECS),
-            }),
+            covers: Some(covers),
             vacated: Vec::new(),
         }))
     }

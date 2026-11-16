@@ -143,8 +143,10 @@ fn dedupe_key(credential: &str, card: &LensRenderId, idempotency_key: &str) -> S
 }
 
 /// The callback as the agent reads it: who pressed what, on which card, the
-/// arguments the card's own declaration resolved, and any read reach the
-/// presser selected. All of it is labelled data.
+/// arguments the card's own declaration resolved, any read reach the presser
+/// selected, and the card's `$state` at the press (GENUI-STATE-PERSIST: a
+/// pick in a composed card is card state, sent with the card's action). All
+/// of it is labelled data.
 fn briefing(author: &LensPrincipalBinding, callback: &GeneratedUiAgentCallback) -> String {
     let params: Vec<serde_json::Value> = callback
         .resolved_params
@@ -170,6 +172,7 @@ fn briefing(author: &LensPrincipalBinding, callback: &GeneratedUiAgentCallback) 
         "card": callback.source_card_id.as_str(),
         "element": callback.source_element_id.as_str(),
         "selected": &callback.selected_context,
+        "state": &callback.state,
     });
     format!(
         "a lens card you rendered sent its model round-trip action back to you. Decide \
