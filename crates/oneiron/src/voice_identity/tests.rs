@@ -2,6 +2,7 @@ use super::*;
 
 use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::error::{ErrorKind, RegistryError};
+use crate::llm::ModelLocality;
 use crate::side_table::SideKey;
 use crate::temporal::TimeRange;
 use crate::test_util::entity as test_id;
@@ -130,6 +131,7 @@ fn enrollment(
         space: space(),
         samples,
         requested_at,
+        legal: VoiceEnrollmentLegalContext::unresolved(),
     }
 }
 
@@ -142,6 +144,7 @@ fn segment(
     VoiceSegmentEmbeddingInput {
         segment_id: segment_id.to_owned(),
         diarization_label: format!("cluster-{segment_id}"),
+        speaker_key: format!("cluster-{segment_id}"),
         start_ms,
         end_ms: start_ms + 1_000,
         space_id: space_id.to_owned(),
@@ -163,6 +166,8 @@ fn match_request(
         invite_attendee_refs,
         policy: VoiceMatchPolicy::with_known_default(0.7),
         created_at: 900,
+        purpose: VoicePrintPurpose::MeetingAttribution,
+        coverage: VoiceRunCoverage::Partial,
     }
 }
 
@@ -182,8 +187,20 @@ fn seed_relationship(vault: &Vault, id: EntityId) -> Result<()> {
 }
 
 fn stored_print(vault: &Vault, subject: EntityId) -> Result<Option<VoicePrintRecordV1>> {
+    // The machine secret is read before the txn opens, as the vault's own
+    // readers do (voice_identity/vault.rs).
+    let machine = vault.machine_secret_outside_txn();
     let rtxn = vault.store.env.read_txn()?;
-    read_active_print(&vault.store, &rtxn, &subject)
+    let Some(stored) = read_active_print(&vault.store, &rtxn, &subject)? else {
+        return Ok(None);
+    };
+    let secret = if stored.needs_world_key() {
+        Some(machine?)
+    } else {
+        None
+    };
+    let centroid = stored.centroid(vault, &rtxn, secret.as_ref())?;
+    Ok(Some(stored.metadata.with_centroid(centroid)))
 }
 
 fn stored_consent(
@@ -200,8 +217,9 @@ fn stored_sample(
     subject: EntityId,
     sample_id: &str,
 ) -> Result<Option<VoiceEnrollmentSampleV1>> {
+    let machine = vault.machine_secret_outside_txn();
     let rtxn = vault.store.env.read_txn()?;
-    read_sample(&vault.store, &rtxn, &subject, sample_id)
+    read_sample(vault, &rtxn, &subject, sample_id, machine)
 }
 
 fn print_family_rows(vault: &Vault, subject: EntityId) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -1003,8 +1021,9 @@ fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Resul
             clips: vec![clip.clone()],
         })?;
     }
-    let request = vault.prepare_voice_clone("stable-voice", "render", true)?;
-    let target = vault.record_voice_target_clone(&request, "vendor-pointer", 123)?;
+    let request =
+        vault.prepare_voice_clone("stable-voice", "render", true, ModelLocality::OwnServer)?;
+    let target = vault.record_voice_target_clone(&request, "vendor-pointer", 123, false)?;
     let assert_refs = || -> Result<()> {
         assert_eq!(
             vault
@@ -1028,7 +1047,9 @@ fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Resul
             vec![clip.clone()]
         );
         assert_eq!(
-            vault.voice_target_clone("stable-voice", "render", true)?,
+            vault
+                .voice_target_clone("stable-voice", "render", true, ModelLocality::OwnServer)?
+                .map(|(record, _)| record),
             Some(target.clone())
         );
         Ok(())
@@ -1073,7 +1094,7 @@ fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Resul
     assert!(vault.voice_ref_pack("designed")?.is_none());
     assert!(
         vault
-            .voice_target_clone("stable-voice", "render", true)?
+            .voice_target_clone("stable-voice", "render", true, ModelLocality::OwnServer)?
             .is_none()
     );
     Ok(())
@@ -1162,15 +1183,18 @@ fn manifest_limits_narrow_provider_values_with_holder_capped_at_vault() -> Resul
         ..clip.clone()
     });
     assert!(vault.store_voice_ref_pack(&too_many_clips).is_err());
-    let request = vault.prepare_voice_clone("holder-voice", "host", false)?;
+    let request =
+        vault.prepare_voice_clone("holder-voice", "host", false, ModelLocality::OwnServer)?;
     assert!(
         vault
-            .record_voice_target_clone(&request, &"v".repeat(201), 1)
+            .record_voice_target_clone(&request, &"v".repeat(201), 1, false)
             .is_err()
     );
-    let saved = vault.record_voice_target_clone(&request, &"v".repeat(180), 1)?;
+    let saved = vault.record_voice_target_clone(&request, &"v".repeat(180), 1, false)?;
     assert_eq!(
-        vault.voice_target_clone("holder-voice", "host", false)?,
+        vault
+            .voice_target_clone("holder-voice", "host", false, ModelLocality::OwnServer)?
+            .map(|(record, _)| record),
         Some(saved)
     );
 
@@ -1179,16 +1203,19 @@ fn manifest_limits_narrow_provider_values_with_holder_capped_at_vault() -> Resul
         id: "other-pack".into(),
         voice_id: "other-voice".into(),
         owner: other,
-        origin: VoiceRefOrigin::Captured,
+        origin: VoiceRefOrigin::Captured {
+            consent_event_ref: "grant-other-voice".to_owned(),
+        },
         clips: vec![clip],
     })?;
-    let other_request = vault.prepare_voice_clone("other-voice", "host", false)?;
+    let other_request =
+        vault.prepare_voice_clone("other-voice", "host", false, ModelLocality::OwnServer)?;
     assert!(
         vault
-            .record_voice_target_clone(&other_request, &"v".repeat(261), 2)
+            .record_voice_target_clone(&other_request, &"v".repeat(261), 2, false)
             .is_err()
     );
-    vault.record_voice_target_clone(&other_request, &"v".repeat(250), 2)?;
+    vault.record_voice_target_clone(&other_request, &"v".repeat(250), 2, false)?;
     Ok(())
 }
 
@@ -1222,7 +1249,9 @@ fn manifest_rows_replace_shipped_ceiling_and_choose_precedence() -> Result<()> {
         id: "source".into(),
         voice_id: "voice".into(),
         owner: holder,
-        origin: VoiceRefOrigin::Captured,
+        origin: VoiceRefOrigin::Captured {
+            consent_event_ref: "grant-voice".to_owned(),
+        },
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -1230,22 +1259,25 @@ fn manifest_rows_replace_shipped_ceiling_and_choose_precedence() -> Result<()> {
             transcript: String::new(),
         }],
     })?;
-    let request = vault.prepare_voice_clone("voice", "first-target", false)?;
+    let request =
+        vault.prepare_voice_clone("voice", "first-target", false, ModelLocality::OwnServer)?;
     assert!(
         vault
-            .record_voice_target_clone(&request, &"v".repeat(4_097), 1)
+            .record_voice_target_clone(&request, &"v".repeat(4_097), 1, false)
             .is_err()
     );
 
     install_voice_ref_policy(&vault, manifest_id, limits_row("nested_narrowing"))?;
     assert!(
         vault
-            .record_voice_target_clone(&request, &"v".repeat(5_001), 1)
+            .record_voice_target_clone(&request, &"v".repeat(5_001), 1, false)
             .is_err()
     );
-    let saved = vault.record_voice_target_clone(&request, &"v".repeat(4_097), 1)?;
+    let saved = vault.record_voice_target_clone(&request, &"v".repeat(4_097), 1, false)?;
     assert_eq!(
-        vault.voice_target_clone("voice", "first-target", false)?,
+        vault
+            .voice_target_clone("voice", "first-target", false, ModelLocality::OwnServer)?
+            .map(|(record, _)| record),
         Some(saved)
     );
 
@@ -1253,20 +1285,23 @@ fn manifest_rows_replace_shipped_ceiling_and_choose_precedence() -> Result<()> {
     // manifest door. Vault-only ignores a holder's narrower row, but still
     // observes the author-selected 8192-byte vault cap.
     install_voice_ref_policy(&vault, manifest_id, limits_row("vault_only"))?;
-    let second = vault.prepare_voice_clone("voice", "second-target", false)?;
+    let second =
+        vault.prepare_voice_clone("voice", "second-target", false, ModelLocality::OwnServer)?;
     assert!(
         vault
-            .record_voice_target_clone(&second, &"v".repeat(8_193), 2)
+            .record_voice_target_clone(&second, &"v".repeat(8_193), 2, false)
             .is_err()
     );
-    let saved = vault.record_voice_target_clone(&second, &"v".repeat(7_000), 2)?;
+    let saved = vault.record_voice_target_clone(&second, &"v".repeat(7_000), 2, false)?;
     assert_eq!(
-        vault.voice_target_clone("voice", "second-target", false)?,
+        vault
+            .voice_target_clone("voice", "second-target", false, ModelLocality::OwnServer)?
+            .map(|(record, _)| record),
         Some(saved)
     );
     install_voice_ref_policy(&vault, manifest_id, limits_row("nested_narrowing"))?;
     assert!(matches!(
-        vault.voice_target_clone("voice", "second-target", false),
+        vault.voice_target_clone("voice", "second-target", false, ModelLocality::OwnServer),
         Err(Error::InvalidConfig(_))
     ));
     Ok(())
@@ -1991,6 +2026,13 @@ fn record_decoders_reject_unknown_duplicate_keys_and_bad_schema_versions() -> Re
         contact_ref: None,
         relationship_ref: None,
         consent_event_ref: "consent-1".to_owned(),
+        world_ref: None,
+        consented_purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        legal: VoicePrintLegalEvidence {
+            jurisdiction: VoiceJurisdiction::Unresolved,
+            written_release: None,
+            owner_ask_owed: false,
+        },
         space: space(),
         centroid: vec![1.0, 0.0, 0.0, 0.0],
         sample_ids: vec!["s-1".to_owned()],
@@ -2259,7 +2301,8 @@ fn voice_offer_nonce_requires_exact_device_confirm_and_is_single_use() -> Result
         bound.clone(),
         ConsentSurface::Dashboard,
     )?;
-    let grant_ref = receipt.grant_ref().expect("standing disclosure grant");
+    let grant_ref =
+        crate::consent::consent_receipt_grant_ref(&receipt).expect("standing disclosure grant");
     assert!(vault.consent_grant(&grant_ref)?.is_some());
     assert!(
         vault
@@ -2438,8 +2481,9 @@ fn a_restore_never_undoes_a_voice_consent_withdrawal() -> Result<()> {
             transcript: "reference".into(),
         }],
     })?;
-    let request = vault.prepare_voice_clone("stable-voice", "render", true)?;
-    vault.record_voice_target_clone(&request, "vendor-pointer", 123)?;
+    let request =
+        vault.prepare_voice_clone("stable-voice", "render", true, ModelLocality::OwnServer)?;
+    vault.record_voice_target_clone(&request, "vendor-pointer", 123, false)?;
     vault.record_voice_consent(&granted_event(
         "consent-1",
         subject,
@@ -2466,8 +2510,10 @@ fn a_restore_never_undoes_a_voice_consent_withdrawal() -> Result<()> {
         basis: notice_basis(),
     })?;
 
+    let key = vault.checkpoint_key()?;
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         crate::config::VaultConfig::default(),
         &vault,
@@ -2481,7 +2527,7 @@ fn a_restore_never_undoes_a_voice_consent_withdrawal() -> Result<()> {
     assert!(restored.voice_ref_pack("designed")?.is_none());
     assert!(
         restored
-            .voice_target_clone("stable-voice", "render", true)?
+            .voice_target_clone("stable-voice", "render", true, ModelLocality::OwnServer)?
             .is_none()
     );
     let space_id = space().space_id;

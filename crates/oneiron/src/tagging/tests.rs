@@ -1983,11 +1983,9 @@ fn bind_resident(vault: &Vault) -> EntityId {
 /// another kind passes tagging rows over, uncounted.
 #[test]
 fn a_vault_past_100k_settled_tagging_markers_still_serves_the_inbox_and_resident_dispatch() {
-    let config = VaultConfig {
-        store_clock: ManualClock::new(NOW).bundle(),
-        tagging: Some(shadow(CHECKPOINT)),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = ManualClock::new(NOW).bundle();
+    config.tagging = Some(shadow(CHECKPOINT));
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let lead = bind_resident(&vault);
     let cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN as u64;
@@ -2059,6 +2057,7 @@ fn cleanup_proposals(vault: &Vault, clock: &ManualClock) -> Vec<[u8; 16]> {
         .expect("cleanup")
         .candidates
         .iter()
+        .flatten()
         .map(|candidate| *candidate.entity.as_bytes())
         .collect()
 }

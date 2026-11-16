@@ -50,8 +50,6 @@ mod vault_key;
 mod wrap;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-WORLD-KEYS-TESTS]: the lib test target's type check fails here (25 errors: E0061 x24, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

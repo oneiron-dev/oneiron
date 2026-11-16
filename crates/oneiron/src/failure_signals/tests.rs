@@ -53,7 +53,7 @@ fn on_record_diagnostic(vault: &crate::Vault, _time: u64) -> Result<EntityId> {
 fn taxonomy_round_trip_and_payload_has_only_opaque_identifiers() -> Result<()> {
     let counts = FailureSignalCounts::default();
     let config = FailureSignalConfig {
-        export_opt_in: true,
+        export_opt_in: Some(true),
         ..Default::default()
     };
     for class in ALL {
@@ -68,19 +68,19 @@ fn taxonomy_round_trip_and_payload_has_only_opaque_identifiers() -> Result<()> {
         let mut input = input(class);
         input.agent.name = "Alice-Smith".into();
         input.agent.version = "123-45-6789".into();
-        counts.record(
-            config,
-            input,
-            VerifiedIdentity::default(),
-            policy::Resolved::default(),
-            3601,
-            "private-medical-fact",
-        )?;
-        let row = counts
-            .export(config)?
-            .into_iter()
-            .find(|r| r.dimensions.taxonomy == taxonomy)
-            .expect("class row");
+        let row = Tier1FailureCount {
+            dimensions: counts
+                .dimensions(
+                    config,
+                    input,
+                    VerifiedIdentity::default(),
+                    policy::Resolved::default(),
+                    3601,
+                    "private-medical-fact",
+                )?
+                .expect("opted-in class counts"),
+            count: 1,
+        };
         let payload = serde_json::to_value(&row).expect("serialize tier 1");
         let wire = payload.to_string();
         for private in [
@@ -152,7 +152,7 @@ fn taxonomy_round_trip_and_payload_has_only_opaque_identifiers() -> Result<()> {
 fn on_record_witness_required_off_record_overlay_never_counts_even_after_close() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut config = VaultConfig::default();
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
     let session = vault
         .off_record_session_vault()
@@ -207,7 +207,7 @@ fn opt_in_and_vault_isolation() -> Result<()> {
     let one = tempfile::tempdir()?;
     let two = tempfile::tempdir()?;
     let mut config = VaultConfig::default();
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(one.path(), config.clone())?;
     let other = crate::Vault::open(two.path(), config)?;
     let id = on_record_diagnostic(&vault, 3601)?;
@@ -219,32 +219,34 @@ fn opt_in_and_vault_isolation() -> Result<()> {
     assert!(other.tier1_observation(id)?.is_none());
     assert!(other.export_tier1_failure_counts()?.is_empty());
     let default_off = FailureSignalCounts::default();
-    default_off.record(
-        FailureSignalConfig::default(),
-        input(FailureClassV1::TaskFailure),
-        VerifiedIdentity::default(),
-        policy::Resolved::default(),
-        1,
-        "detector",
-    )?;
     assert!(
         default_off
-            .export(FailureSignalConfig::default())?
-            .is_empty()
+            .dimensions(
+                FailureSignalConfig::default(),
+                input(FailureClassV1::TaskFailure),
+                VerifiedIdentity::default(),
+                policy::Resolved::default(),
+                1,
+                "detector",
+            )?
+            .is_none()
     );
     let managed = FailureSignalConfig {
         deployment: crate::config::failure_signals::DeploymentTier::Managed,
         ..Default::default()
     };
-    default_off.record(
-        managed,
-        input(FailureClassV1::TaskFailure),
-        VerifiedIdentity::default(),
-        policy::Resolved::default(),
-        1,
-        "detector",
-    )?;
-    assert_eq!(default_off.export(managed)?.len(), 1);
+    assert!(
+        default_off
+            .dimensions(
+                managed,
+                input(FailureClassV1::TaskFailure),
+                VerifiedIdentity::default(),
+                policy::Resolved::default(),
+                1,
+                "detector",
+            )?
+            .is_some()
+    );
     Ok(())
 }
 
@@ -252,7 +254,7 @@ fn opt_in_and_vault_isolation() -> Result<()> {
 fn detector_cannot_materialize_off_record_source_in_base_or_export_after_close() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut config = VaultConfig::default();
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
     let session = vault
         .off_record_session_vault()
@@ -335,7 +337,7 @@ fn registered_system_and_platform_versions_are_stable_across_vaults_and_reopen()
     let one = tempfile::tempdir()?;
     let two = tempfile::tempdir()?;
     let mut config = VaultConfig::default();
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(one.path(), config.clone())?;
     let other = crate::Vault::open(two.path(), config.clone())?;
     let (agent_ref, definition) = vault
@@ -410,7 +412,7 @@ fn retrieval_miss_uses_published_base_run_not_entity_impersonation() -> Result<(
     let dir = tempfile::tempdir()?;
     let mut config = crate::test_util::embedding_test_config();
     config.retrieval_telemetry_capture = true;
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
     let run = crate::store::RetrievalRunRecord::new(
         crate::store::RetrievalRunId::now(),
@@ -424,7 +426,7 @@ fn retrieval_miss_uses_published_base_run_not_entity_impersonation() -> Result<(
         Some("no_results".into()),
     );
     vault.store.record_retrieval_run(&run)?;
-    let ids = vault.run_retrieval_miss_detector("retrieval", 10)?;
+    let ids = vault.run_retrieval_miss_detector("retrieval")?;
     assert_eq!(ids.len(), 1);
     vault.record_failure_signal(
         &vault
@@ -456,7 +458,7 @@ fn a_long_running_vault_collects_dead_witnesses_and_keeps_live_ones() -> Result<
     let dir = tempfile::tempdir()?;
     let mut config = crate::test_util::embedding_test_config();
     config.retrieval_telemetry_capture = true;
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
     let miss = |started_at| {
         crate::store::RetrievalRunRecord::new(
@@ -473,7 +475,7 @@ fn a_long_running_vault_collects_dead_witnesses_and_keeps_live_ones() -> Result<
     };
     let mut started_at = 3_601;
     vault.store.record_retrieval_run(&miss(started_at))?;
-    let live = vault.run_retrieval_miss_detector("retrieval", 1)?[0];
+    let live = vault.run_retrieval_miss_detector("retrieval")?[0];
     let mut dead = Vec::new();
     let mut lost = None;
     for _ in 0..WITNESS_COLLECTION_FLOOR * 2 / 16 + 1 {
@@ -486,7 +488,11 @@ fn a_long_running_vault_collects_dead_witnesses_and_keeps_live_ones() -> Result<
         for run in &runs {
             vault.store.record_retrieval_run(run)?;
         }
-        let ids = vault.run_retrieval_miss_detector("retrieval", runs.len())?;
+        let fresh = vault.run_retrieval_miss_detector("retrieval")?;
+        let ids: Vec<_> = fresh
+            .into_iter()
+            .filter(|id| *id != live && !dead.contains(id))
+            .collect();
         assert_eq!(ids.len(), runs.len());
         if lost.is_none() {
             lost = vault.tier1_observation(ids[0])?;
@@ -531,7 +537,7 @@ fn real_retrieval_abstention_is_a_ledger_backed_failure_signal() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut config = crate::test_util::embedding_test_config();
     config.retrieval_telemetry_capture = true;
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
     let id = EntityId::now();
     vault
@@ -561,7 +567,7 @@ fn real_retrieval_abstention_is_a_ledger_backed_failure_signal() -> Result<()> {
         crate::self_heal::DiagnosticObservation::from_retrieval_run(&run).is_some(),
         "abstention with candidates should be a typed retrieval miss: {run:?}"
     );
-    let ids = vault.run_retrieval_miss_detector("real.retrieval", 10)?;
+    let ids = vault.run_retrieval_miss_detector("real.retrieval")?;
     assert_eq!(ids.len(), 1);
     vault.record_failure_signal(
         &vault
@@ -578,7 +584,7 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
     use crate::store::{GateDecisionId, GateDecisionRecord};
     let dir = tempfile::tempdir()?;
     let mut config = VaultConfig::device();
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
     let decision = GateDecisionRecord {
         version: 0,
@@ -596,6 +602,7 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
         grant_ref: None,
         diff_handle: vec![0xAA],
         read_frontier_hash: [0xBB; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &decision))?;
@@ -622,7 +629,7 @@ fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Resu
 fn public_door_counts_nine_classes_without_provenance_references() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut config = VaultConfig::default();
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = crate::Vault::open(dir.path(), config)?;
     let id = on_record_diagnostic(&vault, 1)?;
     let observation = vault.tier1_observation(id)?.expect("real producer");
@@ -720,16 +727,20 @@ fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
         .witness(&WitnessTurn {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
             occurred_at: 10,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: format!("where did I put {SENTINEL}?"),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
+            assertions: Default::default(),
         })
         .expect("authorized witness");
     // The turn's retrieval came back empty: a memory miss.
@@ -745,7 +756,7 @@ fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
         Some("no_results".into()),
     );
     vault.store.record_retrieval_run(&run)?;
-    let ids = vault.run_retrieval_miss_detector("retrieval", 10)?;
+    let ids = vault.run_retrieval_miss_detector("retrieval")?;
     vault.record_failure_signal(
         &vault
             .tier1_observation(ids[0])?

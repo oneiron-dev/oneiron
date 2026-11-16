@@ -11,6 +11,7 @@ fn sample_definition() -> SavedQueryDefinition {
     SavedQueryDefinition {
         schema_version: SAVED_QUERY_SCHEMA_VERSION,
         owner_actor: id(0x21),
+        owner_actor_class: crate::EdgeActorClass::Human,
         scope: QueryScope::default(),
         definition_version: 3,
         filter: FilterAst::Claim {
@@ -40,6 +41,7 @@ fn sample_memo_row() -> VerdictMemoRow {
         definition_version: 3,
         verdict: MatchVerdict::Match,
         why: "because".to_owned(),
+        source_refs: None,
         envelope: SavedQueryDerivationEnvelope {
             content_hash: hex_lower(&[7u8; EVIDENCE_HASH_LEN]),
             model_id: "hard".to_owned(),
@@ -80,18 +82,28 @@ fn memo_key_is_prefix_plus_three_fixed_width_components() {
 #[test]
 fn event_keys_sort_by_epoch_within_the_pair_prefix() {
     let (query, entity) = (id(0x28), id(0x29));
+    let campaign = id(0x2A);
     let mut prefix = MEMBERSHIP_EVENTS.decl().prefix.to_vec();
     prefix.extend_from_slice(&event_pair_prefix(&query, &entity));
     let mut keys = [
-        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)),
-        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)),
-        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 10))),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 2))),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 300))),
     ];
     assert!(keys.iter().all(|key| key.starts_with(&prefix)));
     keys.sort();
-    assert_eq!(keys[0], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)));
-    assert_eq!(keys[1], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)));
-    assert_eq!(keys[2], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)));
+    assert_eq!(
+        keys[0],
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 2)))
+    );
+    assert_eq!(
+        keys[1],
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 10)))
+    );
+    assert_eq!(
+        keys[2],
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 300)))
+    );
 }
 
 /// A row that is not JSON, is missing a field, or names a verdict outside the
@@ -143,6 +155,7 @@ fn canonical_json_is_insertion_order_independent() {
     let evidence = |value| RelevantEvidence {
         entity_ref: id(1),
         claim_values: vec![("predicate".to_string(), value)],
+        claim_value_fingerprints: Vec::new(),
         edge_targets: Vec::new(),
         semantic_inputs: Vec::new(),
         scope_membership: QueryScope {
@@ -176,6 +189,7 @@ fn evidence_hash_covers_relevant_evidence_and_scope() {
     let base = RelevantEvidence {
         entity_ref: id(0x2C),
         claim_values: vec![("crm.fit".to_owned(), json!("fit"))],
+        claim_value_fingerprints: Vec::new(),
         edge_targets: Vec::new(),
         semantic_inputs: Vec::new(),
         scope_membership: QueryScope::default(),
@@ -251,6 +265,7 @@ fn evidence_hash_length_prefixes_prevent_field_smearing() {
     let left = RelevantEvidence {
         entity_ref: id(0x2E),
         claim_values: vec![("ab".to_owned(), json!("c"))],
+        claim_value_fingerprints: Vec::new(),
         edge_targets: Vec::new(),
         semantic_inputs: Vec::new(),
         scope_membership: QueryScope::default(),
@@ -374,8 +389,16 @@ fn a_saved_query_row_answers_only_for_its_own_id() {
         matcher: definition.matcher.clone(),
         eval: definition.eval,
     };
-    let victim = create_saved_query(&vault, victim_owner, &request, 10).expect("victim");
-    let alias = create_saved_query(&vault, attacker, &request, 11).expect("alias");
+    let victim = create_saved_query(
+        &vault,
+        victim_owner,
+        crate::EdgeActorClass::Human,
+        &request,
+        10,
+    )
+    .expect("victim");
+    let alias = create_saved_query(&vault, attacker, crate::EdgeActorClass::Human, &request, 11)
+        .expect("alias");
     // The attacker's own row, rewritten so its body names the victim's row.
     let kind = super::storage::saved_query_type_byte(&vault).expect("kind");
     let raw = vault.get_raw(&alias.query_ref).expect("raw").expect("row");
@@ -467,9 +490,14 @@ fn a_held_claim_never_enrolls_under_negation_or_by_presence() {
             .expect("claim");
     }
     let owner_grants = QueryScope::default();
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
+    let owner_read = sweep_owner_read(&vault, owner, crate::EdgeActorClass::Human)
+        .expect("owner read")
+        .expect("the owner has a usable read");
     let evaluator = SavedQueryEvaluator {
         vault: &vault,
         owner_grants: &owner_grants,
+        owner_read: &owner_read,
         judge: None,
     };
     let verdict = |query: u8, predicate: &str, cmp: ClaimComparison| {
