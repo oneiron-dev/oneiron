@@ -372,6 +372,37 @@ impl OneironClient {
         }
     }
 
+    /// A new handle that answers asks as this install's owner device (UC-05
+    /// PR 2b; Engine RULING UC05-2B-PRESENCE = A): each ask word it gives
+    /// (`tasks.answer`) carries the proof the owner key this install holds
+    /// mints for that word, so a code consent or communication widen ask,
+    /// which refuses a word with no owner proof, admits the owner's answer.
+    /// The key is the one the vault's authority fold trusts as the owner's:
+    /// the device owner key once the owner enrolled it here, or the host
+    /// root an open with `hold_checkpoint_root_signer` keeps. Where this
+    /// install holds neither, every word the handle gives refuses
+    /// `owner_key_required`; where the handle's person is no live owner of
+    /// the vault, every word refuses `consent owner not authenticated`. An
+    /// explicit opt-in: no other handle changes,
+    /// and no other verb of this one. No user presence is asked yet (FIX
+    /// [OWNER-KEY-USER-PRESENCE]).
+    ///
+    /// Connected handles fail typed `FORBIDDEN`: the server binds an owner
+    /// proof from the credential a request arrived with.
+    pub fn as_owner_device(&self) -> Result<Self, MemoryError> {
+        match &self.backend {
+            Backend::Embedded(embedded) => Ok(Self {
+                backend: Backend::Embedded(embedded.as_owner_device()?),
+                host_root: None,
+            }),
+            Backend::Remote(_) => Err(forbidden(
+                "a connected handle answers under the credential it connected with",
+                &["Connect with the owner's own credential to answer as the owner."],
+            )),
+            Backend::DreamerAttempt(_) => Err(dreamer_attempt_rebind()),
+        }
+    }
+
     /// A new handle whose every read runs under the credential `key` a
     /// delegated reader presented to this embedded host (FIX 647): the
     /// paired credential `pair` returned, verified against this vault

@@ -68,8 +68,9 @@ pub(crate) struct ChatReused {
 /// locality bound covers that route). A breakpoint that is missing, kept
 /// for another reader, stale, or not admitted again is unavailable: the
 /// action runs as it always did, and nothing is rebuilt and called the same
-/// fork. With the row on the retained turns nothing changes. A reused
-/// prefix carries its action's own flight log (FIX 5027).
+/// fork. With the row on the retained turns the prefix is reused the same
+/// way, and its flight is written by the cheap writer as the agent (L10-33).
+/// A reused prefix carries its action's own flight log (FIX 5027).
 pub(crate) fn reuse_chat_breakpoint(
     ai: &AiHandle,
     vault: &Vault,

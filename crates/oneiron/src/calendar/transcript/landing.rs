@@ -178,6 +178,15 @@ pub(super) fn land(
             .ok_or(crate::Error::InvariantViolation(
                 "file-drop session was not closed",
             ))?;
+            // CAL-08: the follow-ups the owner promised in this meeting are
+            // drafted later, by a host worker's model; the landing only
+            // queues that, in its own writer, so a crash cannot lose it.
+            crate::calendar::follow_up::enqueue_meeting_follow_up_drafting_in_txn(
+                vault,
+                wtxn,
+                &session_ref,
+                vault.now_recorded_at(),
+            )?;
             // Exercise transaction rollback only after close and its wake writes landed.
             if fail_after_turns {
                 return Err(crate::Error::InvariantViolation(

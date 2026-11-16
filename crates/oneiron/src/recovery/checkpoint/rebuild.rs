@@ -241,8 +241,13 @@ pub(super) fn rebuild(
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &window, &[1u8])?;
         }
         crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
+        // Restored ledgers bypassed the append that maintains the membership index.
+        crate::conversation::rebuild_membership_index_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn, opaque_attempts)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
+        // The armed jobs' due index is not imaged: the restored rows rebuild it (DESIGN
+        // 15-setting-primitive, stage 0.2).
+        crate::schedule::rebuild_schedule_due_in_txn(&vault.store, txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
         crate::workspace_roster::rebuild_project_revision_indexes(&vault.store, txn)?;
         // Restored authority rows bypassed the put that sequences them (FIX 12369).

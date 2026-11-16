@@ -76,6 +76,7 @@ pub fn burn_page_fields(
         reminders: BTreeSet::new(),
         sent_at: None,
         reminder_at: BTreeMap::new(),
+        reviews: BTreeMap::new(),
     };
     let request = PdfPreparation {
         document_ref: "burn-parity",

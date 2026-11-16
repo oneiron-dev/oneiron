@@ -18,7 +18,7 @@ pub use oneiron_verb_wire::memory::merge_queue_doors::check_receipt::CodeCheckRe
 
 #[doc(hidden)]
 pub use oneiron_records::memory::merge_queue_doors::check_receipt::{
-    CodeCheckAttemptView, CodeCheckCommandResult, CodeCheckReceiptView,
+    CodeCheckAttemptView, CodeCheckCommandResult, CodeCheckReceiptView, CodeCheckReuseSource,
 };
 
 impl Memory<'_> {
@@ -139,6 +139,9 @@ fn attempt_view(receipt: &StoredQueueCheckReceipt, passes: Option<bool>) -> Code
             .unwrap_or_default(),
         verdict_ref: receipt.verdict_ref.clone(),
         passes,
-        reused_from: receipt.reused_from.clone(),
+        reused_from: receipt.reused_from.map(|source| CodeCheckReuseSource {
+            attempt_id: crate::entity_id::bytes_to_hex_lower(source.attempt.as_bytes()),
+            generation: source.generation,
+        }),
     }
 }
