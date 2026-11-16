@@ -1,4 +1,5 @@
-//! A structural put's refusals: CLAIM, MACHINE, NOTE, MESSAGE, a non-owner's PERSON, a non-object body.
+//! A structural put's refusals: CLAIM, MACHINE, NOTE, MESSAGE, a TASK at a caller-supplied id, a
+//! non-owner's PERSON, a non-object body.
 
 use super::*;
 
@@ -54,6 +55,20 @@ impl Memory<'_> {
                 &[
                     "MESSAGE bodies are gated envelopes; a caller-supplied body would bypass the witness ceiling.",
                     "Use witness, which binds author, type, content, metadata, visibility and order to the acting actor.",
+                ],
+            ));
+        }
+        // FIX TASK-ID-SQUAT-BY-STRUCTURAL-PUT: a TASK's id is the engine's. A
+        // post, a settled create proposal and an ask member each mint their
+        // TASK at an id the engine derives from inputs a caller can know; a
+        // TASK landed at such an id first would make that mint refuse. This
+        // door mints the id of every TASK it writes.
+        if type_byte == ENTITY_TYPE_TASK && input.id.is_some() {
+            return Err(MemoryError::bad_request_with(
+                "TASK entities cannot be written structurally at a caller-supplied id",
+                &[
+                    "Omit id: the door mints a fresh one.",
+                    "Use tasks.create, or a post's intent key, for a TASK the engine names.",
                 ],
             ));
         }

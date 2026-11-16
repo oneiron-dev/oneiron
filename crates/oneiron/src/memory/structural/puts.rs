@@ -12,7 +12,7 @@ use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
     ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
