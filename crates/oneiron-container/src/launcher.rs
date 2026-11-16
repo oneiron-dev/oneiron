@@ -22,6 +22,12 @@ mod options;
 // waits in the queue (FIX 6185).
 mod unix_rights;
 
+/// Set (to any value) by the host for a launcher whose container must outlive
+/// its fenced command until the host closes the launcher's stdin (FIX 8013):
+/// the host then still reads the container's cgroup after the guest's last
+/// frame. The fenced command never sees it.
+pub(crate) const HOLD_UNTIL_STDIN_CLOSES_ENV: &str = "ONEIRON_FENCE_HOLD_UNTIL_STDIN_CLOSES";
+
 struct Pending {
     request: Vec<u8>,
     sender: mpsc::Sender<wire::Reply>,
@@ -177,6 +183,7 @@ pub fn launch(
     // SAFETY: getpid only reads the trusted supervisor identity.
     let parent_pid = unsafe { libc::getpid() } as u32;
     let inherit_group = std::env::var_os("ONEIRON_FENCE_INHERIT_GROUP").is_some();
+    let hold_until_stdin_closes = std::env::var_os(HOLD_UNTIL_STDIN_CLOSES_ENV).is_some();
     let (parent, child_channel) = UnixStream::pair()?;
     // SAFETY: the launcher is single-threaded at fork; no inherited worker
     // or locked Rust mutex exists. The child installs its fence then execs.
@@ -272,11 +279,43 @@ pub fn launch(
             return Err(io::Error::last_os_error());
         }
     }
+    if hold_until_stdin_closes {
+        hold_until_stdin_closes_after(pid);
+    }
     Ok(if libc::WIFEXITED(status) {
         libc::WEXITSTATUS(status)
     } else {
         128 + libc::WTERMSIG(status)
     })
+}
+
+/// After the fenced command `pid` exited: end what it left running and the
+/// guest's stdout, then wait until the host closes stdin (FIX 8013). The
+/// container, and its cgroup with it, stay until then.
+fn hold_until_stdin_closes_after(pid: i32) {
+    // SAFETY: kill only signals. As its namespace's init, the launcher ends
+    // the processes the kernel would end at its own exit; otherwise it ends
+    // only its child's group.
+    unsafe {
+        if libc::getpid() == 1 {
+            libc::kill(-1, libc::SIGKILL);
+        } else {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+    // The guest's stdout ends with the guest, as before the hold: the host
+    // reads that end at once, not at the hold's end.
+    // SAFETY: open, dup2 and close act only on this process's descriptors.
+    unsafe {
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+        if null >= 0 {
+            libc::dup2(null, libc::STDOUT_FILENO);
+            libc::close(null);
+        } else {
+            libc::close(libc::STDOUT_FILENO);
+        }
+    }
+    let _ = io::copy(&mut io::stdin().lock(), &mut io::sink());
 }
 
 fn child(
@@ -302,7 +341,10 @@ fn child(
     wire::write(&mut frame, &(abi, channel.as_raw_fd()))?;
     drop(frame);
     drop(listener);
-    Err(Command::new(&command[0]).args(&command[1..]).exec())
+    Err(Command::new(&command[0])
+        .args(&command[1..])
+        .env_remove(HOLD_UNTIL_STDIN_CLOSES_ENV)
+        .exec())
 }
 fn connect(socket: &Path, hello: &wire::Hello, listener: &OwnedFd) -> io::Result<UnixStream> {
     let mut stream = UnixStream::connect(socket)?;
