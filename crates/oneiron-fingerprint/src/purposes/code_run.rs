@@ -1,9 +1,9 @@
 //! Purposes of code runs (`crates/oneiron/src/code_run`).
 //!
-//! A replay capsule records a model call's messages, system and tools digests and a native
-//! read's request hash, and replay admission compares them with the call it admits. Each is
-//! the plain BLAKE3 of a value's sorted JSON (`llm::canonical_json_bytes`), so each keeps its
-//! bytes (K, PLAN-UC-04 stage 6.4d).
+//! A model call's evidence record (`ModelCallRecord`, through `ModelCallKind::{Generate,
+//! LabelRead, SeatDecision}`) stores a model call's messages, system and tools digests and a
+//! native read's request hash. Each is the plain BLAKE3 of a value's sorted JSON
+//! (`llm::canonical_json_bytes`), so each keeps its bytes (K, PLAN-UC-04 stage 6.4d).
 
 purposes! {}
 

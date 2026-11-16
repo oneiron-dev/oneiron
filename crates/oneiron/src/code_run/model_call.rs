@@ -197,8 +197,8 @@ impl ModelCallReasoningPart {
     }
 }
 
-/// A canonical fingerprint: plain BLAKE3 of `value`'s sorted JSON. A replay
-/// capsule records each one and replay admission compares it, so each keeps
+/// A canonical fingerprint: plain BLAKE3 of `value`'s sorted JSON. A model
+/// call's evidence record (`ModelCallRecord`) stores each one, so each keeps
 /// its bytes (K, PLAN-UC-04 stage 6.4).
 fn sorted_json_digest<T: Serialize>(
     purpose: LegacyPurpose,

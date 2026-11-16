@@ -7,8 +7,8 @@
 //! fingerprint crate's K door (`purposes::llm`, `purposes::code_run`). A terminal step claim
 //! stores the params identity, an invocation claim holds the call hash, a budget trap
 //! persists the step hash, a trial's quality refuses an assessment naming other measurements,
-//! and a replay capsule records the replay digests that admission compares. So each must give
-//! main's bytes for every value.
+//! and a model call's evidence record (`ModelCallRecord`) stores the model-call digests. So
+//! each must give main's bytes for every value.
 //!
 //! `base_step_claim`, `base_llm`, `base_media_step`, `base_evidence` and `base_model_call`
 //! hold main's lines at 0b0f7603ddc9, copied by range (each range is named above its copy; the
