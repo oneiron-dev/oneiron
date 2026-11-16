@@ -525,15 +525,6 @@ impl<'c> Chain<'c> {
                     }
                 }
                 Some(_) => None,
-                // A refused Skip stays invalid, never an indirect Ask. A
-                // genuine blocking execution failure takes the Write Ask.
-                None if self.call.verb == COMPACT
-                    && self.runs.last().is_some_and(|run| {
-                        run.reason.as_deref() == Some("a host.compact pre-hook may not skip")
-                    }) =>
-                {
-                    None
-                }
                 None if binding.selector.blocking => match self.call.domain {
                     VerbDomain::Read => Some(self.hide(binding)),
                     VerbDomain::Write => {
