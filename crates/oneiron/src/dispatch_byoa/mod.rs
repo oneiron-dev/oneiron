@@ -122,7 +122,8 @@ pub use self::connector::{
     ProtocolAttachSpec, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
 };
 pub use self::dispatcher::{
-    ByoEndpointBackendFactory, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor,
+    ByoEndpointBackendFactory, ByoEndpointBinding, ByoaCliExecutor, ByoaDispatcher,
+    ByoaExecutionFence, ByoaMcpExecutor,
 };
 pub use self::error::{ByoaError, ByoaResult, SeatProviderTerm};
 pub use self::exhaust::{

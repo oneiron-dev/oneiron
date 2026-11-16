@@ -11,11 +11,10 @@ use crate::build_cache::DeclaredOutputPath;
 use crate::build_cache::command_spec::CodeBuildSpec;
 use crate::store::contract_oracle::ContractSpec;
 
-/// Where a repository keeps its check plan, relative to its root.
-pub const REPO_CHECK_PLAN_PATH: &str = ".oneiron/checks.json";
-
-/// The only plan schema this engine reads.
-const REPO_CHECK_PLAN_SCHEMA: u8 = 1;
+#[doc(hidden)]
+pub use oneiron_records::merge_queue::plan::REPO_CHECK_PLAN_PATH;
+#[doc(hidden)]
+use oneiron_records::merge_queue::plan::REPO_CHECK_PLAN_SCHEMA;
 
 /// A repository's declared checks: the ordered native fast and slow phase
 /// commands, and the shared contract-output commands both phases also run.

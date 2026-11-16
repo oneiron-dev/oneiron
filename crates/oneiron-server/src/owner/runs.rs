@@ -79,10 +79,25 @@ pub(crate) struct RunResolved {
     /// scheduled or why it could not (ARCH-0046 O2).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) commitment_wakes: Vec<CommitmentWakeScheduled>,
+    /// Approved meeting follow-up drafts in the run, each with the outbound
+    /// intent it scheduled or why it could not (CAL-08).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) meeting_follow_ups: Vec<MeetingFollowUpScheduled>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct CommitmentWakeScheduled {
+    pub(crate) claim_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) intent_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct MeetingFollowUpScheduled {
     pub(crate) claim_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) intent_ref: Option<String>,
@@ -373,16 +388,39 @@ pub(crate) fn resolve_with_wordings(
     }
     .into_iter()
     .map(|(claim, scheduled)| {
-        let (intent_ref, outcome, error) = match scheduled {
-            Ok(receipt) => (Some(receipt.intent_ref), Some(receipt.outcome), None),
-            Err(error) => {
-                tracing::warn!(claim = %claim.to_hex(), code = %error.code, "approved commitment wake did not schedule");
-                // The message can quote proposal text, which this endpoint
-                // masks everywhere else.
-                (None, None, Some(redacted(error.to_string())))
-            }
-        };
+        let (intent_ref, outcome, error) = scheduled_send_fields(
+            claim,
+            scheduled,
+            "approved commitment wake did not schedule",
+        );
         CommitmentWakeScheduled {
+            claim_id: claim.to_hex(),
+            intent_ref,
+            outcome,
+            error,
+        }
+    })
+    .collect();
+    // The approval half of a meeting follow-up (CAL-08): an approved draft
+    // schedules its send to the recipient's native route now, after the
+    // approval committed.
+    let meeting_follow_ups = match receipt.action {
+        GateConsentBundleAction::Approve => {
+            oneiron::calendar::follow_up::schedule_approved_meeting_follow_ups(
+                vault,
+                &receipt.member_claim_ids,
+            )
+        }
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .map(|(claim, scheduled)| {
+        let (intent_ref, outcome, error) = scheduled_send_fields(
+            claim,
+            scheduled,
+            "approved meeting follow-up did not schedule",
+        );
+        MeetingFollowUpScheduled {
             claim_id: claim.to_hex(),
             intent_ref,
             outcome,
@@ -402,7 +440,26 @@ pub(crate) fn resolve_with_wordings(
             .map(EntityId::to_hex)
             .collect(),
         commitment_wakes,
+        meeting_follow_ups,
     })
+}
+
+/// The intent an approved proposal's send scheduled, its outcome, or why it
+/// could not schedule.
+fn scheduled_send_fields(
+    claim: EntityId,
+    scheduled: oneiron::memory::MemoryResult<oneiron::memory::OutboundIntentReceipt>,
+    refused: &'static str,
+) -> (Option<String>, Option<String>, Option<String>) {
+    match scheduled {
+        Ok(receipt) => (Some(receipt.intent_ref), Some(receipt.outcome), None),
+        Err(error) => {
+            tracing::warn!(claim = %claim.to_hex(), code = %error.code, "{refused}");
+            // The message can quote proposal text, which this endpoint
+            // masks everywhere else.
+            (None, None, Some(redacted(error.to_string())))
+        }
+    }
 }
 
 /// The reminder wordings an approval names: proposal claim id to the
@@ -439,7 +496,7 @@ fn parse_bundle_id(value: &str) -> OwnerResult<[u8; 32]> {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 #[cfg(test)]

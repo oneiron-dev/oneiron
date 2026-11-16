@@ -802,9 +802,9 @@ fn a_handoff_hides_no_second_genesis() {
     assert!(fold.vault_root_is_conflicted());
 }
 
-/// A retired key's confirmation contends with nothing (Sol review 1): it
-/// never wins a nonce collision against the new root's, so the new root's
-/// confirmation and the slip it minted after it stand.
+/// A retired key's confirmation displaces nothing (Sol review 1): the
+/// handoff's fence refuses it, so the new root's confirmation that shares its
+/// nonce, and the slip the new root minted after it, stand.
 #[test]
 fn a_retired_root_confirmation_displaces_no_confirmation_of_the_new_root() {
     let dir = tempfile::tempdir().unwrap();

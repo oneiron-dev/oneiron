@@ -8,9 +8,8 @@ use crate::error::{Error, RegistryError, Result};
 use crate::registry::{TypeByteZone, zone_of};
 use std::collections::BTreeSet;
 
-// The final local pack slot doubles as the shared subtype carrier on overflow.
-// This is an allocation policy, not a globally identified entity kind.
-pub(super) const SHARED_HANDLE: u8 = 247;
+#[doc(hidden)]
+pub(super) use oneiron_records::registry::pack_byte_map::state::SHARED_HANDLE;
 
 impl PackByteMapSnapshot {
     pub(super) fn empty() -> Self {
