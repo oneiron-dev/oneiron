@@ -216,6 +216,26 @@ impl Fixture {
         fixtures::decode_png(&bytes)
     }
 
+    /// The kept `version`'s media type and its pixels, decoded as that type.
+    fn image_of(&self, artifact: EntityId, version: u64) -> (String, image::RgbaImage) {
+        let record = self
+            .vault
+            .blob_artifact_version_metadata(&artifact, version)
+            .expect("read")
+            .expect("the kept version");
+        let bytes = self
+            .vault
+            .read_blob_artifact_version(&artifact, version)
+            .expect("read")
+            .expect("the kept version");
+        let format = image::ImageFormat::from_mime_type(&record.export_media_type)
+            .expect("an image media type");
+        let image = image::load_from_memory_with_format(&bytes, format)
+            .expect("the kept version decodes as its media type")
+            .to_rgba8();
+        (record.export_media_type, image)
+    }
+
     /// Redrives every held call through this host, which runs the organ:
     /// the one proposal it landed beside `artifact` under `run_ref`.
     fn redrive(&self, artifact: EntityId, run_ref: &str) -> PendingProposalView {
@@ -363,6 +383,84 @@ fn a_crop_then_a_resize_lands_one_proposal_at_the_resized_size() {
     assert_eq!(f.png_of(artifact, 2).dimensions(), (4, 3));
     // The first version is still there, as it was.
     assert_eq!(f.png_of(artifact, 1).dimensions(), (12, 10));
+}
+
+/// FIX 23724 (IO-FORMAT C): an edit that names no format exports its
+/// source's own, so a JPEG artifact's crop lands on it and keeps as its
+/// version 2, a JPEG.
+#[test]
+fn a_crop_of_a_jpeg_artifact_keeps_its_format_and_lands_as_its_version_2() {
+    let f = fixture();
+    let jpeg = fixtures::jpeg_flat(8, 6, [200, 40, 40], None);
+    let source = f.artifact("photo.jpg", "image/jpeg", &jpeg);
+    let crop = ImageOp::Crop {
+        x: 1,
+        y: 1,
+        w: 4,
+        h: 3,
+    };
+    let edited = match f.edit(source, vec![crop], "crop-jpeg") {
+        Ok(edited) => edited,
+        Err(err) => panic!("the crop of a JPEG artifact runs: {err}"),
+    };
+    assert_eq!(
+        (edited.artifact, edited.born),
+        (source, false),
+        "FAILBEFORE: a JPEG artifact's edit lands on it, not on a new PNG"
+    );
+    let proposal = landed(edited);
+    assert_eq!(proposal.base_version, Some(1), "made against the head");
+    assert_eq!(f.head(source), Some(1), "nothing lands before Keep");
+
+    assert_eq!(f.keep(source, "crop-jpeg"), 2);
+    let (media_type, image) = f.image_of(source, 2);
+    assert_eq!(media_type, "image/jpeg");
+    assert_eq!(image.dimensions(), (4, 3));
+    for pixel in image.pixels() {
+        let [r, g, b, a] = pixel.0;
+        assert_eq!(a, 255);
+        assert!(
+            r.abs_diff(200) <= 8 && g.abs_diff(40) <= 8 && b.abs_diff(40) <= 8,
+            "{:?}",
+            pixel.0
+        );
+    }
+    let (media_type, original) = f.image_of(source, 1);
+    assert_eq!(
+        (media_type.as_str(), original.dimensions()),
+        ("image/jpeg", (8, 6)),
+        "version 1 stays as it was"
+    );
+    f.nothing_waits(source);
+}
+
+/// FIX 23724: a WebP artifact's edit lands on it as a lossless WebP, so its
+/// kept version holds exactly the crop's pixels.
+#[test]
+fn a_crop_of_a_webp_artifact_keeps_its_format_and_exactly_its_pixels() {
+    let f = fixture();
+    let (w, h) = (9, 7);
+    let webp = fixtures::webp_lossless(w, h, &fixtures::pixels(w, h, fixtures::coded));
+    let source = f.artifact("photo.webp", "image/webp", &webp);
+    let edited = match f.edit(source, vec![CROP_OF_V1], "crop-webp") {
+        Ok(edited) => edited,
+        Err(err) => panic!("the crop of a WebP artifact runs: {err}"),
+    };
+    assert_eq!(
+        (edited.artifact, edited.born),
+        (source, false),
+        "FAILBEFORE: a WebP artifact's edit lands on it, not on a new PNG"
+    );
+    landed(edited);
+
+    assert_eq!(f.keep(source, "crop-webp"), 2);
+    let (media_type, image) = f.image_of(source, 2);
+    assert_eq!(media_type, "image/webp");
+    assert_eq!(image.dimensions(), (6, 5));
+    for (x, y, pixel) in image.enumerate_pixels() {
+        assert_eq!(pixel.0, fixtures::coded(x + 2, y + 1), "pixel {x},{y}");
+    }
+    f.nothing_waits(source);
 }
 
 #[test]
