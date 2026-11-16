@@ -43,6 +43,7 @@ pub use self::code_check::TypeFeedback;
 // step's is.
 pub(crate) use self::code_check::{CheckedDoor, LatestFeedback, RowsCheck};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
+pub(crate) use self::compaction_host::{ParkedKindFolds, parked_kind_folds};
 pub use self::driver::EngineNativeExecutor;
 pub(crate) use self::host::ACT_GATES_COUNT_CALLABLE_ROWS;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
@@ -51,6 +52,8 @@ pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
 pub(crate) use self::record::{caller_task_in_txn, code_run_complete_in_txn, parked_wait_now};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::record::{executor_config_hash_for_test, step_state_hash_for_test};
 // FIX 4606: a canonical run's generation and parked wait, read outside its
 // entries.
 pub use self::run_position::{CodeRunPosition, code_run_position};
