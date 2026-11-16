@@ -369,6 +369,13 @@ pub(crate) async fn vault_skills_convert(
             &[],
         ));
     }
+    // An owner verified in an off-record session that keeps no model-call
+    // record names no rows on the refiner's runs (census L5-25), judged at
+    // arrival, as the files and recall doors judge it.
+    let off_record = server.vault().model_call_keeps_no_record_for(
+        auth.off_record_session(),
+        crate::api::call_receipt::request_principal(auth),
+    );
     let auth_for_refiner = auth.clone();
     let handle = tokio::runtime::Handle::current();
     owner_call(
@@ -382,6 +389,7 @@ pub(crate) async fn vault_skills_convert(
                 owner,
                 handle,
                 read_rows: std::cell::RefCell::new(Vec::new()),
+                off_record,
             };
             let answer = sdk::skill_convert_as_owner(server.vault(), owner, &input, &refiner)?;
             let rows = input
@@ -403,6 +411,10 @@ struct HostSkillRefiner<'a> {
     owner: &'a AuthenticatedOwner,
     handle: tokio::runtime::Handle,
     read_rows: std::cell::RefCell<Vec<oneiron::EntityId>>,
+    /// The caller's off-record session keeps no model-call record: every
+    /// refiner run names no rows
+    /// ([`oneiron::llm::run_admission::RunAdmission::off_record`]).
+    off_record: bool,
 }
 
 impl SkillRefiner for HostSkillRefiner<'_> {
@@ -616,6 +628,11 @@ impl HostSkillRefiner<'_> {
             crate::api::llm::admit(self.server, self.auth, &mut request).map_err(|response| {
                 refine_failed(&format!("inference refused ({})", response.status()))
             })?;
+        let run = if self.off_record {
+            run.off_record()
+        } else {
+            run
+        };
         let run = run.sourced(rows);
         let response = self
             .handle
