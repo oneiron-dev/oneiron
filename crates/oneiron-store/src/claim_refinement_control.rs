@@ -99,13 +99,17 @@ impl RefinementControl {
 }
 
 /// Both lanes offer bytes to the receiving base. Neither grants access to the sender's vault.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum SharedSkillLane {
     FederationMergeBack,
     CompanyPullRequest,
 }
 /// Durable offered delta; author and foreign fork are source assertions, never authority.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct SharedSkillDelta {
     pub candidate: String,

@@ -275,15 +275,17 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // Each session is judged on the call's own input (FIX 10344), as a row
     // door's is: a call that serves a room NOTE keeps its records there.
     let at = vault.now_recorded_at();
-    // A turn that answers in a thread replies there to the TURN it names,
-    // its own id minted here so the reply below answers it (FIX 3572); a
-    // trunk turn keeps the witness's own id.
-    let user_turn_id = reply_to
-        .filter(|_| session_binding.is_none())
-        .map(|_| EntityId::now());
+    // The user's TURN id is minted here on the canonical door, so the board
+    // below names on its recall the TURN the user's words are witnessed in
+    // (FIX RETRIEVAL-TURN-CONVENTION-HOST-STAMP); a session door's witness
+    // mints its own. A turn that answers in a thread replies there to the
+    // TURN it names, so the reply below answers this one (FIX 3572); a trunk
+    // reply answers in the trunk.
+    let user_turn_ref = session_binding.is_none().then(EntityId::now);
+    let user_turn_id = user_turn_ref.filter(|_| reply_to.is_some());
     let mut user_turn = witness_turn(
         &request.conversation_ref,
-        user_turn_id,
+        user_turn_ref,
         WitnessAuthor::User,
         request.text.clone(),
         at,
@@ -353,6 +355,18 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // deliveries. FIX 8133: the newcomer mark still precedes this read; FIX
     // 6794: the board still rides the dynamic tail, before anything the turn
     // witnesses.
+    // Its recall names the user's TURN and `destination`, the conversation
+    // the witness below writes that TURN ChildOf, so the engine can label the
+    // run from the user's later words there (the convention on
+    // `RetrievalTurn`). None while the vault captures no retrieval run, or
+    // when that read fails: the turn runs as it did.
+    let retrieval_turn = user_turn_ref.and_then(|turn| {
+        crate::server::blocking(|| vault.conversation_retrieval_turn(&destination, &turn))
+            .unwrap_or_else(|error| {
+                tracing::debug!(%error, "a chat turn's recall names no turn");
+                None
+            })
+    });
     let mut board = recall::turn_board(
         server,
         auth,
@@ -360,6 +374,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         &request.conversation_ref,
         request.agent_ref.as_deref(),
         agent,
+        retrieval_turn,
     )
     .await;
     // Admitted through its role on the current snapshot, after hydration:
