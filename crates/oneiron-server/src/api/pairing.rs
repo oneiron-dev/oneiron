@@ -660,9 +660,14 @@ pub(super) async fn revoke(
             server
                 .vault()
                 .revoke_capability_slip_held_by(issuer, credential, request.slip_id)
+                // A lapsed credential, or a host that is not this vault's
+                // root, is a 401; another holder's slip is a 403. Any other
+                // error is the engine's own, so a storage fault never tells
+                // a client to drop a good credential (REVIEW2 #8342, P3-1).
                 .map_err(|error| match error.kind() {
                     oneiron::ErrorKind::AuthorityRefused => ApiError::forbidden_scope("owner"),
-                    _ => ApiError::unauthorized(),
+                    oneiron::ErrorKind::InvalidAuthorityLogBody => ApiError::unauthorized(),
+                    _ => super::core_engine_error("slip revoke failed", error),
                 })?
         }
     };
