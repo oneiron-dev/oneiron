@@ -37,6 +37,9 @@ struct FakeState {
     signals: Vec<GpuJobSignal>,
     /// The next create makes its resource, then answers a timeout.
     create_times_out: bool,
+    /// The next create answers that the provider is unavailable and makes
+    /// nothing.
+    create_unavailable: bool,
     status: Option<GpuResourceStatus>,
     termination: Option<GpuTermination>,
     /// The next create waits here twice before it makes its resource: once
@@ -92,6 +95,11 @@ impl GpuJobConnector for FakeGpu {
         let mut state = self.state();
         state.calls.push(format!("create {key}"));
         state.specs.push(spec.clone());
+        if std::mem::take(&mut state.create_unavailable) {
+            return Err(GpuConnectorError::Unavailable {
+                reason: "fixture provider down".to_owned(),
+            });
+        }
         let resource = GpuResourceRef(format!("resource-{key}"));
         state.created.insert(key.to_owned(), resource.clone());
         if std::mem::take(&mut state.create_times_out) {
@@ -759,6 +767,124 @@ fn a_create_that_loses_to_a_cancel_terminates_its_resource() {
         1,
         "the resource the losing create made is terminated"
     );
+}
+
+/// The same race, with a provider that does not confirm the termination at
+/// once: the job keeps the resource and the host's step asks again until the
+/// provider confirms it. The cancelled job stays ended, and the customer pays
+/// nothing for the resource (review of #8059, round 2).
+#[test]
+fn a_losing_create_is_terminated_until_its_provider_confirms() {
+    let rig = rig();
+    let quote = rig.quote(100, None, NOW);
+    let (admission, receipts) = admission(&quote.job, quote.units);
+    let gate = Arc::new(Barrier::new(2));
+    rig.gpu.state().create_gate = Some(Arc::clone(&gate));
+    std::thread::scope(|scope| {
+        let cancel = scope.spawn(|| {
+            gate.wait();
+            let cancelled =
+                rig.vault
+                    .cancel_gpu_job(&rig.owner, &quote.job, &rig.permits, &rig.gpu, NOW);
+            gate.wait();
+            cancelled
+        });
+        rig.start(&quote, &admission);
+        cancel.join().expect("cancel thread").expect("cancel");
+    });
+    assert_eq!(rig.gpu.called("terminate"), 1, "asked, not confirmed");
+    assert_eq!(
+        rig.vault.live_gpu_jobs().expect("live jobs"),
+        vec![quote.job],
+        "the host steps the job until its resource's termination is confirmed"
+    );
+
+    rig.step(&quote.job, &admission);
+    assert_eq!(rig.gpu.called("terminate"), 2, "the step asks again");
+
+    rig.gpu
+        .terminates(GpuTermination::Confirmed { billed_secs: 3 });
+    rig.step(&quote.job, &admission);
+    assert_eq!(rig.gpu.called("terminate"), 3);
+    assert!(
+        rig.vault.live_gpu_jobs().expect("live jobs").is_empty(),
+        "nothing is left to step"
+    );
+    rig.step(&quote.job, &admission);
+    assert_eq!(
+        rig.gpu.called("terminate"),
+        3,
+        "a confirmed termination is not asked again"
+    );
+
+    let job = rig.job(&quote.job);
+    assert_eq!(
+        job.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Cancelled
+        }
+    );
+    assert_eq!(job.chunk().and_then(|chunk| chunk.settled_units), Some(0));
+    assert_eq!(settled(&receipts).iter().sum::<u64>(), 0);
+}
+
+/// A restarted host's step takes a reserved chunk up on a new permit, and a
+/// cancel that saw no permit ends the job unpaid before the step's create
+/// answers (here: a cancel on its own permits; on one host, a cancel between
+/// the step's read and its take-up). The step's write then loses, and its new
+/// permit is settled for nothing, not left holding the reservation (review of
+/// #8059, round 2).
+#[test]
+fn a_permit_taken_up_by_a_losing_step_is_settled() {
+    let rig = rig();
+    let quote = rig.quote(100, None, NOW);
+    let (first, _first_receipts) = admission(&quote.job, quote.units);
+    rig.gpu.state().create_unavailable = true;
+    let job = rig.start(&quote, &first);
+    assert_eq!(
+        job.state,
+        GpuJobState::Reserved,
+        "the create did not answer and the provider has nothing under its key"
+    );
+    // The host stops, and restarts with no permit.
+    let _ = rig.permits.hand_off_all();
+
+    let (second, second_receipts) = admission(&job.id, quote.units);
+    rig.gpu
+        .terminates(GpuTermination::Confirmed { billed_secs: 0 });
+    let gate = Arc::new(Barrier::new(2));
+    rig.gpu.state().create_gate = Some(Arc::clone(&gate));
+    let elsewhere = GpuJobPermits::new();
+    let report = std::thread::scope(|scope| {
+        let cancel = scope.spawn(|| {
+            gate.wait();
+            let cancelled = rig
+                .vault
+                .cancel_gpu_job(&rig.owner, &job.id, &elsewhere, &rig.gpu, NOW);
+            gate.wait();
+            cancelled
+        });
+        let report = rig.step(&job.id, &second);
+        cancel.join().expect("cancel thread").expect("cancel");
+        report
+    });
+
+    assert_eq!(
+        report.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Cancelled
+        }
+    );
+    assert!(
+        !rig.permits.holds(&job.id),
+        "the permit the step took up is not left held"
+    );
+    assert_eq!(
+        second.read().remaining_units,
+        quote.units,
+        "its reservation went back"
+    );
+    assert_eq!(settled(&second_receipts).iter().sum::<u64>(), 0);
 }
 
 /// An erase of the job's starter while a step waits on its provider: the
