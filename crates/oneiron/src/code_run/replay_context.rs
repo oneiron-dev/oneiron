@@ -12,7 +12,9 @@
 //! neither. A position the context does not hold is not captured: no reader
 //! takes it for a bare outcome. A granted `reveal.wait` answer carries a
 //! secret's value in its view (OF-560), so no context keeps it: its position
-//! stays not captured, and no arm replays the call.
+//! stays not captured, and no arm replays the call. Nor does it keep the
+//! view of a `vault.inquire` answer: the member's statements a `task` keep
+//! holds with its task alone.
 //!
 //! The context is a typed body with named members. Beside the responses, it
 //! holds what the step's result reads saw of reader state (FIX 6352,
@@ -96,6 +98,9 @@ impl GuestResponseCapture {
         budget: Option<BudgetLegibilityEnvelope>,
     ) {
         if reveals_secret(call) {
+            return;
+        }
+        if withholds_inquiry_view(call, view) {
             return;
         }
         match seq {
@@ -308,4 +313,12 @@ impl StepContextCommit {
 /// arm replays the call.
 pub(crate) fn reveals_secret(call: &SelfCall) -> bool {
     matches!(call, SelfCall::AgentVerb(verb) if verb.verb == AgentVerb::RevealWait)
+}
+
+/// Whether `call` is a `vault.inquire` whose guest read a view: the answer's
+/// statements, which the run's record withholds when the answer is kept
+/// `task` (INQUIRE-SHAPE Q6 = A), so no context keeps that view either.
+fn withholds_inquiry_view(call: &SelfCall, view: Option<&serde_json::Value>) -> bool {
+    view.is_some()
+        && matches!(call, SelfCall::AgentVerb(verb) if verb.verb == AgentVerb::VaultInquire)
 }
