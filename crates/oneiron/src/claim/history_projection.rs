@@ -131,6 +131,8 @@ fn machine_history(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<(ClaimTransitionProjection, Vec<EntityId>)> {
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::machine_history::count_history_resolution(target);
     let rows = machine_history_rows_from(source, store, txn, target)?;
     let packet = trusted_machine_handoff(store, txn, target)?;
     if fold.vault_id != Some(rows.birth.vault_id)
