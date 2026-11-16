@@ -438,8 +438,12 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
                     reason = failure.reason(),
                     "booking deposit move is still owed and is asked again later"
                 );
+                // Never an empty reason: the queue refuses one, and the row
+                // would then stay leased.
+                let reason =
+                    attempt_failure_reason(&refused(bounded(failure.reason(), MAX_FAILURE_BYTES)));
                 settle.requeue(
-                    &bounded(failure.reason(), MAX_FAILURE_BYTES),
+                    &reason,
                     now_utc.saturating_add(DEPOSIT_SETTLE_OWED_RECHECK_SECONDS),
                 )?;
                 drain.still_owed += 1;
