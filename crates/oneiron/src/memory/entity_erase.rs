@@ -225,6 +225,7 @@ impl Memory<'_> {
                 reason: SameBytesHold::VetoWindow.code().to_owned(),
                 receipt_ref: None,
                 state: DeleteRequestState::CompletionPending,
+                check_in: None,
             }
         } else {
             let actor = WriteActor::new(self.actor, self.actor_class);
@@ -418,6 +419,7 @@ impl Memory<'_> {
                 reason: DeleteReason::OwnerErase.as_str().to_owned(),
                 receipt_ref: Some(format!("redaction:{}", receipt.to_hex())),
                 state: DeleteRequestState::Applied,
+                check_in: None,
             })
         });
         if erased.is_ok() {
@@ -517,6 +519,7 @@ impl Memory<'_> {
                 .to_owned(),
                 receipt_ref: receipt.map(|receipt| format!("redaction:{receipt}")),
                 state: DeleteRequestState::Applied,
+                check_in: None,
             });
         }
         Err(MemoryError::new(
