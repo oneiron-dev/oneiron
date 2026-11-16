@@ -424,11 +424,12 @@ impl Vault {
     }
 
     /// Every setting target the fold names in `txn`, each with its
-    /// revision, what each act a reader of it meets counts for here, and its
-    /// acts that wait for the owner's proof and still ask: what the setting
-    /// projection compares with the basis it last projected (stage 7a-2; the
-    /// counts stage 7b-2; the asking acts stage 7b-3, which a target may have
-    /// with no frontier, at revision zero).
+    /// revision, what each act a reader of it meets counts for here, where its
+    /// heads conflict the act the register holds in force, and its acts that
+    /// wait for the owner's proof and still ask: what the setting projection
+    /// compares with the basis it last projected (stage 7a-2; the counts and
+    /// the conflict's act stage 7b-2; the asking acts stage 7b-3, which a
+    /// target may have with no frontier, at revision zero).
     pub(crate) fn policy_setting_revisions_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -443,11 +444,18 @@ impl Vault {
             .collect();
         Ok(targets
             .into_iter()
-            .map(|target| SettingTargetBasis {
-                target,
-                revision: settings.revision(target),
-                counts: settings.counts.get(&target).cloned().unwrap_or_default(),
-                asking: settings.asking.get(&target).cloned().unwrap_or_default(),
+            .map(|target| {
+                let folded = settings.targets.get(&target);
+                SettingTargetBasis {
+                    target,
+                    revision: settings.revision(target),
+                    counts: settings.counts.get(&target).cloned().unwrap_or_default(),
+                    conflict: folded.is_some_and(|folded| !folded.conflict.is_empty()),
+                    in_force: folded
+                        .and_then(|folded| folded.in_force.as_ref())
+                        .map(|head| head.act),
+                    asking: settings.asking.get(&target).cloned().unwrap_or_default(),
+                }
             })
             .collect())
     }
@@ -686,6 +694,10 @@ pub(crate) struct SettingTargetBasis {
     pub(crate) revision: [u8; 32],
     /// What each act a reader of it meets counts for here (stage 7b-2).
     pub(crate) counts: ChoiceCounts,
+    /// Whether the acts that stand left different values.
+    pub(crate) conflict: bool,
+    /// The act the register holds in force; `None` when no act stands.
+    pub(crate) in_force: Option<AuthorityEntryHash>,
     /// Its acts that wait for the owner's proof and still ask (stage 7b-3).
     pub(crate) asking: BTreeSet<AuthorityEntryHash>,
 }
