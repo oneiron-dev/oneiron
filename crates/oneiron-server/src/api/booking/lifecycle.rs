@@ -35,7 +35,7 @@ use crate::server::{LinePlace, SyncServer};
 /// so these are a taken confirm's, which writes none.
 ///
 /// `place`, a hold's place at the head of its page session's line, is held
-/// by the turn itself until it returns ([`write_holding_line_place`]).
+/// by the write itself until it returns ([`write_holding_line_place`]).
 pub(super) async fn run_booking_verb(
     server: &Arc<SyncServer>,
     request: BookingVerbRequest,
