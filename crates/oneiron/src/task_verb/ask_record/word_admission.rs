@@ -254,8 +254,6 @@ fn check_word_in_txn(
     // A word on an ask that asks one party is that party's own, under its
     // proof, or nothing: refused here, before anything is recorded.
     super::super::ask_guard::admit_word_in(vault, txn, id, group, source, actor, word, owner)?;
-    super::super::comm_widen::guard_word(vault, txn, id, group, source, actor, word)?;
-    super::super::code_consent_word::guard_word(vault, txn, id, group, source, actor, word)?;
     if word.confirmation.is_some() {
         if source != TaskAskSource::Human {
             return Err(invalid());

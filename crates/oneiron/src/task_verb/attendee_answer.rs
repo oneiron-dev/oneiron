@@ -204,9 +204,10 @@ pub(super) fn resolve_answer_in(
 }
 
 impl Memory<'_> {
-    /// The owner proof a word this surface writes carries: the proof the
-    /// host bound for the owner's direct request, and only there. Generated
-    /// code and a room turn answer for no one in person, so theirs is none.
+    /// The proof a word this surface writes carries: the proof the host bound
+    /// for the caller's direct request, the owner's or a person's own at the
+    /// person tier (UC-05), and only there. Generated code and a room turn
+    /// answer for no one in person, so theirs is none.
     pub(super) fn answer_owner_proof(&self) -> Option<&AuthenticatedOwner> {
         if self.writes_generated() || self.room_turn().is_some() {
             return None;

@@ -6,10 +6,14 @@
 //! offers. The checks every kind shares live here once: a word is the asked
 //! party's own tap (never a word given for someone else or a soft confirm),
 //! given on the node that admitted the ask, under the live proof of that
-//! party revalidated in the writing transaction. A settlement cuts such an
-//! ask on a word only under the same proof in the cutting transaction; its
-//! deadline or staleness closes it with no proof. Every other ask passes
-//! untouched.
+//! party revalidated in the writing transaction (UC-05-ASK-ANSWERER = A):
+//! an owner's under the owner proof, a person holder's under their
+//! person-tier proof, an agent's as its verified actor. A settlement cuts
+//! such an ask on a person's word only under the same proof in the cutting
+//! transaction; its deadline or staleness closes it with no proof. Every
+//! other ask passes untouched.
+
+use std::collections::BTreeSet;
 
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{TaskAskDecision, TaskAskSettlementReason, TaskAskSource, TaskAskWord};
@@ -25,24 +29,50 @@ pub(super) enum AskedParty {
     AnyOwner(Vec<EntityId>),
     /// Any live owner of this vault (attendee answer).
     VaultOwner,
+    /// An asked owner, or a frozen holder who is a person (code consent).
+    OwnerOrHolder {
+        owners: BTreeSet<EntityId>,
+        holders: BTreeSet<EntityId>,
+    },
+    /// One agent (comm widen's agent recipient): its verified actor is its
+    /// proof, and it carries no owner proof.
+    Agent(EntityId),
 }
 
 impl AskedParty {
-    /// Whether `writer` is this party under `owner`'s proof, revalidated as
-    /// the vault's owner in `txn`.
+    /// Whether `writer` is this person party under `proof`, revalidated in
+    /// `txn` at the tier the party takes: the owner tier for an owner, the
+    /// person tier for a holder. A person-tier proof proves no owner (FIX
+    /// 4707); an agent is never proven by a person's proof.
     fn proven_in(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
-        owner: &AuthenticatedOwner,
+        proof: &AuthenticatedOwner,
         writer: EntityId,
     ) -> Result<bool> {
-        let proven = owner.revalidate_in_txn(vault, txn)?;
+        if proof.is_person_tier() {
+            let Self::OwnerOrHolder { holders, .. } = self else {
+                return Ok(false);
+            };
+            let proven = proof.revalidate_person_in_txn(vault, txn)?;
+            return Ok(proven == writer && holders.contains(&proven));
+        }
+        if matches!(self, Self::Agent(_)) {
+            return Ok(false);
+        }
+        let proven = proof.revalidate_in_txn(vault, txn)?;
         Ok(proven == writer
             && match self {
                 Self::Owner(asked) => proven == *asked,
                 Self::AnyOwner(asked) => asked.contains(&proven),
                 Self::VaultOwner => true,
+                // An owner's proof also proves the person, so a frozen
+                // holder who owns the vault answers under it too.
+                Self::OwnerOrHolder { owners, holders } => {
+                    owners.contains(&proven) || holders.contains(&proven)
+                }
+                Self::Agent(_) => false,
             })
     }
 }
@@ -79,7 +109,7 @@ struct AskKind {
 /// Every ask kind whose word is its asked party's own act, in the order
 /// admission and settlement check them. Each kind's intent key prefix is
 /// its own, so at most one routes a given ask.
-const ASK_KINDS: [AskKind; 5] = [
+const ASK_KINDS: [AskKind; 7] = [
     AskKind {
         asked_in: super::attendee_answer::asked_in,
         offered_in: super::attendee_answer::offered_in,
@@ -123,6 +153,24 @@ const ASK_KINDS: [AskKind; 5] = [
             elsewhere: "a live-edit answer is given on the node that admitted the ask",
             unproven: "a live-edit answer needs the owner's own authenticated word",
             not_asked: "a live-edit answer is the asked owner's own word",
+        },
+    },
+    AskKind {
+        asked_in: super::comm_widen::asked_in,
+        offered_in: super::comm_widen::offered_in,
+        reasons: AskKindReasons {
+            elsewhere: "a comm widen answer is given on the node that admitted the ask",
+            unproven: "a comm widen answer needs the owner's own authenticated word",
+            not_asked: "a comm widen answer is the asked owner's own word",
+        },
+    },
+    AskKind {
+        asked_in: super::code_consent_word::asked_in,
+        offered_in: super::code_consent_word::offered_in,
+        reasons: AskKindReasons {
+            elsewhere: "a code consent answer is given on the node that admitted the ask",
+            unproven: "a code consent answer needs the asked person's own authenticated word",
+            not_asked: "a code consent answer is the asked owner's or holder's own word",
         },
     },
 ];
@@ -190,6 +238,16 @@ pub(super) fn admit_word_in(
         {
             return Err(ask_record::invalid());
         }
+        // An agent answers as itself: the verified actor the write runs as.
+        if let AskedParty::Agent(agent) = &asked {
+            if source != TaskAskSource::Executor
+                || actor != *agent
+                || !ask_record::owns_revision(vault, txn, id, group)?
+            {
+                return Err(ask_record::invalid());
+            }
+            continue;
+        }
         // Only the admission node settles the ask, so a word anywhere else
         // could never settle under the proof that admitted it.
         if !ask_record::owns_revision(vault, txn, id, group)? {
@@ -207,9 +265,10 @@ pub(super) fn admit_word_in(
 
 /// Whether settlement may cut the ask `id` for `reason` with `decision`
 /// under `owner`. Its deadline or staleness always closes it, on the hold
-/// default. An ask of a kind in [`ASK_KINDS`] cuts on a first word only
-/// under the live proof, in this transaction, of the asked party who gave
-/// it; without that proof it stays open. Any other ask passes.
+/// default. An ask of a kind in [`ASK_KINDS`] cuts on a person's first word
+/// only under the live proof, in this transaction, of the asked party who
+/// gave it; without that proof it stays open. An agent's word was admitted
+/// only from its verified actor, so it cuts as it is. Any other ask passes.
 ///
 /// # Errors
 ///
@@ -236,6 +295,9 @@ pub(super) fn may_cut_in(
         let TaskAskDecision::First(answer) = decision else {
             continue;
         };
+        if matches!(asked, AskedParty::Agent(_)) {
+            continue;
+        }
         let proven = match owner {
             Some(owner) => asked.proven_in(vault, txn, owner, answer.actor_ref)?,
             None => false,
