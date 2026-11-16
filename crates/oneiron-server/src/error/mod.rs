@@ -79,6 +79,11 @@ pub enum ErrorCode {
     /// own refusal code, a 403 like [`Self::Forbidden`].
     #[serde(rename = "OWNER_BINDING_REQUIRED")]
     OwnerBindingRequired,
+    /// A one-way act's call carried no confirm, or one that is not the
+    /// owner's live preview of it: the engine's own refusal code, a 428 as
+    /// the facade answers it (DEC-0006 #undo-class).
+    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
+    OwnerConfirmRequired,
     /// FIX 6032: a courtesy deletion's signed body names no pact, or does not
     /// verify against its pinned key; the two read the same.
     #[serde(rename = "COURTESY_DELETE_UNAUTHENTICATED")]
@@ -87,11 +92,6 @@ pub enum ErrorCode {
     /// operation it asked for.
     #[serde(rename = "CONTROL_SCOPE_DENIED")]
     ControlScopeDenied,
-    /// A one-way act's call carried no confirm, or one that is not the
-    /// owner's live preview of it: the engine's own refusal code, a 428 as
-    /// the facade answers it (DEC-0006 #undo-class).
-    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
-    OwnerConfirmRequired,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -131,9 +131,9 @@ impl ErrorCode {
         Self::PayloadTooLarge,
         Self::HostActionRequiresSupportGrant,
         Self::OwnerBindingRequired,
+        Self::OwnerConfirmRequired,
         Self::CourtesyDeleteUnauthenticated,
         Self::ControlScopeDenied,
-        Self::OwnerConfirmRequired,
         Self::CrdtAuthExpired,
         Self::CrdtDecodeError,
         Self::CrdtUnknownTag,
@@ -169,9 +169,9 @@ impl ErrorCode {
                 oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
             }
             Self::OwnerBindingRequired => oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            Self::OwnerConfirmRequired => oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED,
             Self::CourtesyDeleteUnauthenticated => COURTESY_DELETE_REFUSAL_CODE,
             Self::ControlScopeDenied => CONTROL_SCOPE_REFUSAL_CODE,
-            Self::OwnerConfirmRequired => oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED,
             Self::CrdtAuthExpired => "4001",
             Self::CrdtDecodeError => "4002",
             Self::CrdtUnknownTag => "4003",
@@ -309,12 +309,12 @@ pub enum ApiErrorDetails {
     HostActionRequiresSupportGrant { required_scope: Option<String> },
     #[serde(rename = "OWNER_BINDING_REQUIRED", rename_all = "camelCase")]
     OwnerBindingRequired { required_scope: Option<String> },
+    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
+    OwnerConfirmRequired,
     #[serde(rename = "COURTESY_DELETE_UNAUTHENTICATED", rename_all = "camelCase")]
     CourtesyDeleteUnauthenticated { required_scope: Option<String> },
     #[serde(rename = "CONTROL_SCOPE_DENIED", rename_all = "camelCase")]
     ControlScopeDenied { required_scope: Option<String> },
-    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
-    OwnerConfirmRequired,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -362,9 +362,9 @@ impl ApiErrorDetails {
                 ErrorCode::HostActionRequiresSupportGrant
             }
             Self::OwnerBindingRequired { .. } => ErrorCode::OwnerBindingRequired,
+            Self::OwnerConfirmRequired => ErrorCode::OwnerConfirmRequired,
             Self::CourtesyDeleteUnauthenticated { .. } => ErrorCode::CourtesyDeleteUnauthenticated,
             Self::ControlScopeDenied { .. } => ErrorCode::ControlScopeDenied,
-            Self::OwnerConfirmRequired => ErrorCode::OwnerConfirmRequired,
             Self::CrdtAuthExpired => ErrorCode::CrdtAuthExpired,
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
             Self::CrdtUnknownTag { .. } => ErrorCode::CrdtUnknownTag,
