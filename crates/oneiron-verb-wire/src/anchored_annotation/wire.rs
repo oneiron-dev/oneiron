@@ -8,7 +8,8 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// A position in one office artifact version. Character offsets count Unicode
-/// characters, not bytes; slides are 1-based and ranges use A1 notation.
+/// characters, not bytes; slides are 1-based and ranges use A1 notation. An
+/// image position is a pixel region or an overlay (L4-16).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "format", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AnnotationLocator {
@@ -51,6 +52,20 @@ pub enum AnnotationLocator {
         file_hash: String,
         char_start: u64,
         char_end: u64,
+    },
+    /// A half-open pixel rectangle of an image version, top-left origin,
+    /// after EXIF orientation; `w` and `h` are at least 1. It names no
+    /// words, so its quote is null.
+    ImagePixel {
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    },
+    /// An image overlay by its id. No stored image body holds one yet, so a
+    /// pin refuses it.
+    ImageObject {
+        overlay: u32,
     },
 }
 
