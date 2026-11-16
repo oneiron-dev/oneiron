@@ -115,8 +115,9 @@ impl Memory<'_> {
     /// The check-in decision of this actor's delete of the private thread
     /// rooted at `root`, `standing` their vault standing read with the
     /// thread (module docs). The rail meets a vault standing only for a
-    /// human (conversation::deletion::private_thread), so an agent's or a
-    /// pen's delete records none; so does a room role's alone. The Owner's
+    /// person acting as itself (conversation::deletion::private_thread), so
+    /// an agent's, a pen's or a handed-on credential's delete records none;
+    /// so does a room role's alone. The Owner's
     /// goes on their own proof. An Admin or a Deputy is judged under their
     /// membership role in a writer of its own before the rail, which reads
     /// their standing again: one whose admin grant is gone by then records
@@ -126,7 +127,8 @@ impl Memory<'_> {
         root: EntityId,
         standing: Option<VaultStanding>,
     ) -> MemoryResult<Option<CheckInDecision>> {
-        if self.actor_class() != crate::EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !self.acts_as_own_person() {
             return Ok(None);
         }
         match standing {
