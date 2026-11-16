@@ -172,6 +172,17 @@ fn notify_socket(path: &OsStr) -> io::Result<UnixDatagram> {
     Ok(socket)
 }
 
+/// One sd_notify datagram to `NOTIFY_SOCKET`, or nothing when no manager
+/// set one. A `Type=notify` unit without socket activation still sets it
+/// (FIX SYSTEMD-TEMPLATE-NOTIFY-WITHOUT-SOCKET).
+fn sd_notify(message: &[u8]) -> anyhow::Result<()> {
+    let Some(path) = std::env::var_os("NOTIFY_SOCKET") else {
+        return Ok(());
+    };
+    notify_socket(&path)?.send(message)?;
+    Ok(())
+}
+
 /// Owned activation socket, secret source, and readiness channel. OS fd
 /// discovery stays at process entry; adapters never own a raw fd twice.
 pub struct SystemdHost {
@@ -466,7 +477,7 @@ impl Host for DesktopHost {
         match self {
             Self::Systemd(host) => host.ready(),
             Self::Launchd(host) => host.ready(),
-            Self::Plain { .. } => Ok(()),
+            Self::Plain { .. } => sd_notify(b"READY=1"),
         }
     }
     /// A plain bind has no secret store: config and environment stay the
@@ -482,7 +493,7 @@ impl Host for DesktopHost {
         match self {
             Self::Systemd(host) => host.on_stop(),
             Self::Launchd(host) => host.on_stop(),
-            Self::Plain { .. } => Ok(()),
+            Self::Plain { .. } => sd_notify(b"STOPPING=1"),
         }
     }
     fn limits(&self) -> HostLimits {

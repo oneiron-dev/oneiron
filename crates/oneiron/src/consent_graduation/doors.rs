@@ -294,7 +294,12 @@ impl Vault {
     pub fn set_ramp_streak_floor(&self, scope: &RampScope, floor: u32) -> Result<()> {
         scope.validate()?;
         self.with_write_txn_grouped(|wtxn| {
-            RAMP_FLOOR.put(&self.store, wtxn, &scope.key(), &StreakFloor(floor))?;
+            RAMP_FLOOR.put(
+                &self.store,
+                wtxn,
+                &scope.key(),
+                &StreakFloor::dialed(scope, floor),
+            )?;
             Ok(())
         })
     }

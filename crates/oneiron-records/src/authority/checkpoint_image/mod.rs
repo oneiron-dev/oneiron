@@ -50,14 +50,17 @@ use serde::Serialize;
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
-/// 34, 35: reserved for OPUS-SPLIT-6's carrier owner proof and owner anchor stacks.
-/// 36: each covered row's sequence floor comes from the covered rows, not from the order
+/// 37: an image's revoke facts carry each device revocation proved on its own signed branch,
+/// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
+/// 34 to 36 are taken by open PRs (OPUS-SPLIT-6's carrier stack, #8449).
+/// 41: each covered row's sequence floor comes from the covered rows, not from the order
 /// they arrived in, and a row that only takes away is never floored (FIX
 /// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 36;
+/// 38 to 40 are open PRs' numbers; the train assigns this one.
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 41;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
