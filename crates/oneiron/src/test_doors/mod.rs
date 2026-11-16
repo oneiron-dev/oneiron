@@ -94,6 +94,7 @@ pub mod skill_gate;
 pub mod skill_hub_restore;
 pub mod skill_package;
 pub mod skill_read_hold;
+pub mod sound_match_birth;
 pub mod source_audience;
 pub mod source_audience_binding;
 pub mod spend;
