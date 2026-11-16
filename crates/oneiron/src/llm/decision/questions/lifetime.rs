@@ -8,10 +8,12 @@
 //! surviving answers, stays.
 //!
 //! A teardown that drops a question version also drops the Coach's override
-//! records of that version (FIX ERASED-QUESTION-KEEPS-PERSON-CHANGED-PAIRS),
-//! so no person-changed pair outlives the head that judged it.
+//! records of that version (FIX ERASED-QUESTION-KEEPS-PERSON-CHANGED-PAIRS):
+//! a record that outlived its question's head would read as a record of a
+//! question no one saved, and pair with no lane to judge it.
 
 use super::arrival::unwatch;
+use super::outcomes::PERSON_CHANGED;
 use super::records::AnswerRecord;
 use super::store::{
     AnswerKey, HeadKey, LabelKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION,
@@ -19,11 +21,19 @@ use super::store::{
 };
 use super::windows::{QUESTION_WINDOW, WindowKey};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::llm::decision::PersonChangedAnswer;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
 
 /// The adapter whose one version carries its answer's selection.
 const TASK_ASK_ADAPTER: &str = "tasks.ask";
+
+/// The Coach's quick picks that proved wrong (FIX 2437), kept beside the
+/// person-changed records they come from. Only a question teardown writes
+/// them here, and only to drop them. Key: as [`PERSON_CHANGED`]'s.
+const THINK_MISSED: SideTable<EntityId, PersonChangedAnswer, Named> =
+    SideTable::new(&side_table::COACH_THINK_MISSED);
 
 /// Removes every typed-question row that copies the answer `id` is, when
 /// `id` is a bound `judgment.answer` claim; a no-op for any other record.
@@ -65,11 +75,9 @@ pub(crate) fn erase_question_source_in_txn(
     // selection as its only option, so the version, its head, its watch and
     // the override records of that version go with the answer.
     QUESTION_VERSION.delete(store, wtxn, &version)?;
-    crate::dreamer_runner::maintenance::coach::erase_person_changed_question_in_txn(
-        store,
-        wtxn,
-        |id, of| id == question && of == version.version,
-    )?;
+    erase_person_changed_records_in_txn(store, wtxn, |id, of| {
+        id == question && of == version.version
+    })?;
     if QUESTION_HEAD
         .get(store, &*wtxn, &HeadKey(question))?
         .is_some_and(|head| head.version == version.version)
@@ -131,15 +139,36 @@ pub(crate) fn erase_standing_question_in_txn(
     for seq in unit_asks {
         super::role_asks::UNIT_ASKS.delete(store, wtxn, &seq)?;
     }
-    crate::dreamer_runner::maintenance::coach::erase_person_changed_question_in_txn(
-        store,
-        wtxn,
-        |id, _| id == question,
-    )?;
+    erase_person_changed_records_in_txn(store, wtxn, |id, _| id == question)?;
     // A trained head bound to any of its versions goes with it (FIX 3864).
     crate::training_pack::drop_question_heads_in_txn(store, wtxn, question, None)?;
     crate::training_pack::drop_question_trials_in_txn(store, wtxn, question, None)?;
     Ok(answers)
+}
+
+/// Drops, in the caller's write, each of the Coach's person-changed and
+/// quick-pick records whose question version `erased(question, version)`
+/// names. Every teardown of a question version calls it: the
+/// standing-question erase, the one-answer cascade of an erased answer claim,
+/// and the principal and unit legs of an actor's erase (`erase.rs`). Read
+/// marks stay, as the Coach's actor scrub keeps them, so a replay cannot
+/// resurrect a record.
+pub(super) fn erase_person_changed_records_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    erased: impl Fn(EntityId, u32) -> bool,
+) -> Result<()> {
+    for (source, record) in PERSON_CHANGED.scan(store, wtxn)? {
+        if erased(record.question, record.question_version) {
+            PERSON_CHANGED.delete(store, wtxn, &source)?;
+        }
+    }
+    for (source, record) in THINK_MISSED.scan(store, wtxn)? {
+        if erased(record.question, record.question_version) {
+            THINK_MISSED.delete(store, wtxn, &source)?;
+        }
+    }
+    Ok(())
 }
 
 /// The answer receipt `id` carries when it is a live `judgment.answer`

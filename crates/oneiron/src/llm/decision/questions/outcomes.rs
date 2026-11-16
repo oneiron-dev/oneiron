@@ -12,10 +12,11 @@ use crate::llm::decision::{DecisionAnswer, DecisionAsk, PersonChangedAnswer};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// The Coach's person-changed records, read here only: the table, its
-/// writer ([`Vault::record_person_changed_answer`]) and its read marks are
-/// the Coach's. Key: the source the host bound the person's answer to.
-const PERSON_CHANGED: SideTable<EntityId, PersonChangedAnswer, Named> =
+/// The Coach's person-changed records, read here: the table, its writer
+/// ([`Vault::record_person_changed_answer`]) and its read marks are the
+/// Coach's, and a question teardown drops a torn-down version's records
+/// (`lifetime.rs`). Key: the source the host bound the person's answer to.
+pub(super) const PERSON_CHANGED: SideTable<EntityId, PersonChangedAnswer, Named> =
     SideTable::new(&side_table::COACH_PERSON_CHANGED);
 
 pub fn project_bound_outcomes(

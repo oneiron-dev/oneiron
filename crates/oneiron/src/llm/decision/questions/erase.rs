@@ -301,7 +301,7 @@ pub(crate) fn erase_questions_for_actor_in_txn(
         UNIT_ASKS.delete(&vault.store, wtxn, seq)?;
     }
     if !doomed.is_empty() || !cascades.is_empty() {
-        crate::dreamer_runner::maintenance::coach::erase_person_changed_question_in_txn(
+        super::lifetime::erase_person_changed_records_in_txn(
             &vault.store,
             wtxn,
             |question, version| {
