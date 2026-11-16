@@ -17,6 +17,15 @@
 //! open CLAIM's tombstone rides P's window; the test asserts the R CLAIM's
 //! tombstone does not.
 //!
+//! The fixture also lands two PERSON rows through the sync replay door, as
+//! rows from the owner's other device land: one open, and one whose
+//! `source_audience` names R. A replicated row other than a CLAIM takes no
+//! record-scope stamp (FIX 11925), so the relationship gate withholds the R
+//! PERSON from P for want of a scope, and its delete has no scope to capture
+//! (FIX-LIST SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE). The owner purges
+//! both. The open PERSON's tombstone rides P's window; the test asserts the
+//! R PERSON's tombstone does not.
+//!
 //! Both deletes are hard. A plain delete keeps a header-only CLAIM shell and
 //! the shell's window edges, so `withheld_claim_carriers` reads the shell as
 //! a CLAIM whose body does not decode, and the export withholds its
@@ -25,8 +34,17 @@
 //! tombstone, so it cannot leak one.
 //!
 //! A second test gives the same grant the Owner role: a co-Owner reads the
-//! whole vault, so the R tombstone rides its window. It guards the fix
+//! whole vault, so both R tombstones ride its window. It guards the fix
 //! against refusing an Owner.
+//!
+//! Tests four and five make every tombstone capture of the R rows fail, as a
+//! store read that errors would, through the test door
+//! `fail_tombstone_captures_of` (FIX-LIST
+//! SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE, its P3). A failed capture that
+//! leaves no row lets the tombstone travel by the no-capture default, so the
+//! fourth test asserts the member outside R still takes neither R tombstone.
+//! The fifth gives the grant the Owner role and asserts both still ride: a
+//! closed capture refuses no Owner.
 //!
 //! A third test builds the window from a peer's bytes. A peer vault packs
 //! both CLAIMs and purges them. This vault never held either row, so no
@@ -36,8 +54,44 @@
 //! the row (ONE-1158), so the body under it decides: the open CLAIM's
 //! tombstone rides, and the R CLAIM's does not.
 //!
+//! A sixth test writes deleted rows again. Two open PERSONs land through the
+//! sync replay door, and a plain delete keeps each one's header-only shell
+//! and captures its open relationship read under the delete's own request.
+//! The owner writes each shell again locally, one still open and one whose
+//! `source_audience` names R, and purges both. A local put over a stored row
+//! takes no record-scope stamp, so the purge captures each row unscoped, and
+//! it must read the row as it was written again, not keep the plain delete's
+//! read. The reopened PERSON's tombstone rides P's window; the test asserts
+//! the R PERSON's does not.
+//!
+//! A seventh test exports a window whose tombstone of the R PERSON names no
+//! delete request, as a malformed peer value does: this engine writes none.
+//! No capture can be bound to such a value, so with no body of its row in the
+//! window it reaches no member but an Owner. The open PERSON's tombstone,
+//! which names a request, rides; the test asserts the R PERSON's does not.
+//!
+//! An eighth test packs three live CLAIMs into a window beside a tombstone of
+//! each, as a peer that sends a body and its tombstone together does. The open
+//! CLAIM's tombstone that names a request rides by its body. A legacy value,
+//! the delete's time alone, names no request, so no capture decides it: the
+//! bodies the window holds do. The test asserts the R CLAIM's legacy
+//! tombstone stays, and that the open CLAIM's rides: withholding it would
+//! leave the member a row the owner deleted.
+//!
+//! A ninth test gives the member a grant narrower than every record: it reads
+//! base reality's default project, where a PERSON put here is stamped at
+//! birth. Such a grant takes a tombstone of a row the export does not keep
+//! only where its delete captured a scope the grant reads (FIX 10161). A plain
+//! delete captures a stamped PERSON's scope and retires its stamp; the owner
+//! writes it again over its header-only shell, which takes no stamp, and
+//! purges it. The new row has no scope, so its capture must hold none: the
+//! test asserts the narrower grant does not take its tombstone by the scope
+//! captured of the deleted form. A PERSON purged once in the same scope is
+//! the control: its tombstone rides.
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The `LEAK:`
-//! assertion comes last.
+//! assertion comes last, except in the eighth test, whose last assertion
+//! (`MISSED DELETE:`) checks that the open CLAIM's tombstone still travels.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test selector_tombstone_label`.
@@ -45,9 +99,11 @@
 #![cfg(all(oneiron_test_support, feature = "test-hooks"))]
 
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope, Scope,
+    ScopeAxis, ScopeId,
 };
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::sync::schema::create_window_doc;
@@ -57,14 +113,17 @@ use oneiron::sync::{
     put_selector_test_federation_grant,
 };
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::label_writers::open_member_vault;
-use oneiron::write_envelope::claim_body::relationship_scope_of;
+use oneiron::test_doors::label_writers::{
+    fail_tombstone_captures_of, open_member_vault, put_replicated_row,
+};
+use oneiron::write_envelope::claim_body::{encode_relationship_scope, relationship_scope_of};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, DeleteReason,
     EntityId, Vault, VaultConfig,
 };
 use oneiron_authority::federation::scope_codec::read_preset;
 use rmpv::Value;
+use std::collections::BTreeSet;
 
 /// The shared vault the federation grant names.
 const SHARED_VAULT_ID: u64 = 7;
@@ -95,6 +154,43 @@ fn record(vault: &Vault, subject: EntityId, relationship: Option<EntityId>, now:
     id
 }
 
+/// A PERSON from the owner's other device, landed through the sync replay
+/// door, so it has no record-scope stamp here (FIX 11925). Its body is
+/// [`person_body`].
+fn replicated_person(vault: &Vault, relationship: Option<EntityId>, now: u64) -> EntityId {
+    let id = EntityId::now();
+    put_replicated_row(
+        vault,
+        &id,
+        ENTITY_TYPE_PERSON,
+        now,
+        &person_body(relationship),
+    )
+    .expect("FIXTURE: the replicated PERSON lands");
+    id
+}
+
+/// A PERSON body. With `relationship`, its `source_audience` names it, as a
+/// provisional confirm writes for a name said only there.
+fn person_body(relationship: Option<EntityId>) -> Vec<u8> {
+    let mut fields = vec![(Value::from("name"), Value::from("Yuki"))];
+    if let Some(relationship) = relationship {
+        fields.push((
+            Value::from("source_audience"),
+            Value::Map(vec![
+                (
+                    Value::from("rel"),
+                    encode_relationship_scope(relationship_scope_of(Some(relationship)).as_ref()),
+                ),
+                (Value::from("private"), Value::Boolean(false)),
+            ]),
+        ));
+    }
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &Value::Map(fields)).expect("PERSON body");
+    body
+}
+
 /// Keeps `doc` as the vault's own window `key`, as the engine persists a
 /// window: its snapshot and version vector.
 fn persist_window(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
@@ -113,24 +209,153 @@ fn persist_window(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
         .expect("FIXTURE: the window version flag is kept");
 }
 
-/// The R CLAIM one selector export saw purged, and whether the window
-/// carried its tombstone.
+/// The R rows one selector export saw purged, and whether the window
+/// carried each one's tombstone.
 struct Export {
-    /// The purged R CLAIM, and whether its tombstone rode the window.
-    labelled: [(&'static str, bool); 1],
+    /// The purged R CLAIM and R PERSON, and whether each tombstone rode the
+    /// window.
+    labelled: [(&'static str, bool); 2],
 }
 
-/// Plants the open CLAIM and the R CLAIM, gives `member` a live federation
+/// Plants the open CLAIM and the R CLAIM, lands the open PERSON and the R
+/// PERSON through the sync replay door, gives `member` a live federation
 /// grant of `role` whose Scope admits every record, keeps the packed window
-/// as the vault's own, purges both CLAIMs, and exports the vault's window
+/// as the vault's own, purges all four rows, and exports the vault's window
 /// through the member's selector. With `check_read_lane`, the fixture first
-/// checks that the member's own read lane reads the open CLAIM and not the
-/// R CLAIM.
+/// checks that the member's own read lane reads the open CLAIM and neither
+/// the R CLAIM nor the R PERSON. With `labelled_captures_fail`, every
+/// tombstone capture of the R CLAIM and the R PERSON fails.
 fn export_through(
     role: FederationGrantRole,
     preset: FederationGrantPreset,
     check_read_lane: bool,
+    labelled_captures_fail: bool,
 ) -> Export {
+    let Shared {
+        _dir,
+        vault,
+        member,
+        relationship,
+        scope,
+        selector,
+        now,
+    } = shared_vault(role, preset);
+
+    let open_claim = record(&vault, member, None, now);
+    let purged_claim = record(&vault, member, Some(relationship), now);
+    let open_person = replicated_person(&vault, None, now);
+    let purged_person = replicated_person(&vault, Some(relationship), now);
+
+    if check_read_lane {
+        assert!(
+            reads(&vault, member, open_claim),
+            "FIXTURE: the member reads the open CLAIM"
+        );
+        assert!(
+            !reads(&vault, member, purged_claim),
+            "FIXTURE: the member does not read the R CLAIM"
+        );
+        assert!(
+            !reads(&vault, member, purged_person),
+            "FIXTURE: the member does not read the R PERSON"
+        );
+    }
+
+    let key = WindowKey::from_timestamp(now);
+    let packed = create_window_doc("selector", &key);
+    reverse_rematerialize(&vault, &packed, &key).expect("the window pack");
+    for id in [open_claim, purged_claim] {
+        assert!(
+            packed.get_map("entities").get(&id.to_hex()).is_some(),
+            "FIXTURE: the packed window holds {}",
+            id.to_hex()
+        );
+    }
+    persist_window(&vault, &packed, &key);
+
+    if labelled_captures_fail {
+        for id in [purged_claim, purged_person] {
+            fail_tombstone_captures_of(id);
+        }
+    }
+    // Hard deletes only: a plain delete's CLAIM shell withholds the
+    // tombstone from every member (see the module doc).
+    let purged = [open_claim, purged_claim, open_person, purged_person];
+    for id in purged {
+        assert!(
+            vault
+                .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
+                .expect("FIXTURE: the owner's delete")
+                .existed,
+            "FIXTURE: the purged row {} existed",
+            id.to_hex()
+        );
+    }
+    let window = load_window_from_state(&vault, "local", &key).expect("the vault's window");
+    for id in purged {
+        assert!(
+            window.get_map("tombstones").get(&id.to_hex()).is_some(),
+            "FIXTURE: the vault's window holds the tombstone of {}",
+            id.to_hex()
+        );
+    }
+
+    let selected = filtered_window_doc(&vault, &window, &key, scope, &selector)
+        .expect("the member's selector window");
+    let carries = |id: EntityId| selected.get_map("tombstones").get(&id.to_hex()).is_some();
+    assert!(
+        carries(open_claim),
+        "FIXTURE: the selector window carries the open CLAIM's tombstone"
+    );
+    assert!(
+        carries(open_person),
+        "FIXTURE: the selector window carries the open PERSON's tombstone"
+    );
+    Export {
+        labelled: [
+            ("purged R CLAIM", carries(purged_claim)),
+            ("purged R PERSON", carries(purged_person)),
+        ],
+    }
+}
+
+/// Whether `member`'s own read lane reads `id`.
+fn reads(vault: &Vault, member: EntityId, id: EntityId) -> bool {
+    vault
+        .memory(member, EdgeActorClass::Human)
+        .get_entity(&id.to_hex())
+        .expect("member read")
+        .value
+        .is_some()
+}
+
+/// A vault with a relationship R, and a member P outside it who holds a live
+/// federation grant of `role` whose Scope admits every record; P's
+/// authorized All-world selector. `now` is the time every row is learned at,
+/// so all of them sit in one window.
+struct Shared {
+    /// Kept so the vault's directory outlives the vault.
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    member: EntityId,
+    relationship: EntityId,
+    scope: FederationGrantScope,
+    selector: SyncSelector,
+    now: u64,
+}
+
+fn shared_vault(role: FederationGrantRole, preset: FederationGrantPreset) -> Shared {
+    // Every role exports under the same Scope, so the role is the only
+    // difference between a member's export and a co-Owner's.
+    shared_vault_reading(role, preset, read_preset())
+}
+
+/// [`shared_vault`], with a federation grant whose Scope is `authority_scope`.
+fn shared_vault_reading(
+    role: FederationGrantRole,
+    preset: FederationGrantPreset,
+    authority_scope: Scope,
+) -> Shared {
     let dir = tempfile::tempdir().expect("tempdir");
     let member = EntityId::now();
     let vault = open_member_vault(dir.path(), VaultConfig::device(), &[member.to_hex()])
@@ -140,7 +365,6 @@ fn export_through(
     vault.install_device_keystore(std::sync::Arc::new(
         oneiron_keystore::MemoryKeystore::default(),
     ));
-    // Every row is learned now, so all of them sit in one window.
     let now = vault.now_recorded_at();
     let relationship = EntityId::now();
     vault
@@ -165,78 +389,20 @@ fn export_through(
     let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
     let grant_id = EntityId::now();
     let mut grant = FederationGrant::new(scope, member, role, preset);
-    // Both roles export under the same Scope, so the role is the only
-    // difference between the two tests.
-    grant.authority_scope = read_preset();
+    grant.authority_scope = authority_scope;
     put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
         .expect("the member's federation grant");
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     authorize_sync_selector(&vault, scope, &selector)
         .expect("FIXTURE: the member's selector is authorized");
-
-    let open_claim = record(&vault, member, None, now);
-    let purged_claim = record(&vault, member, Some(relationship), now);
-
-    let reads = |id: EntityId| {
-        vault
-            .memory(member, EdgeActorClass::Human)
-            .get_entity(&id.to_hex())
-            .expect("member read")
-            .value
-            .is_some()
-    };
-    if check_read_lane {
-        assert!(
-            reads(open_claim),
-            "FIXTURE: the member reads the open CLAIM"
-        );
-        assert!(
-            !reads(purged_claim),
-            "FIXTURE: the member does not read the R CLAIM"
-        );
-    }
-
-    let key = WindowKey::from_timestamp(now);
-    let packed = create_window_doc("selector", &key);
-    reverse_rematerialize(&vault, &packed, &key).expect("the window pack");
-    for id in [open_claim, purged_claim] {
-        assert!(
-            packed.get_map("entities").get(&id.to_hex()).is_some(),
-            "FIXTURE: the packed window holds {}",
-            id.to_hex()
-        );
-    }
-    persist_window(&vault, &packed, &key);
-
-    // Hard deletes only: a plain delete's CLAIM shell withholds the
-    // tombstone from every member (see the module doc).
-    for id in [open_claim, purged_claim] {
-        assert!(
-            vault
-                .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
-                .expect("FIXTURE: the owner's delete")
-                .existed,
-            "FIXTURE: the purged CLAIM existed"
-        );
-    }
-    let window = load_window_from_state(&vault, "local", &key).expect("the vault's window");
-    for id in [open_claim, purged_claim] {
-        assert!(
-            window.get_map("tombstones").get(&id.to_hex()).is_some(),
-            "FIXTURE: the vault's window holds the tombstone of {}",
-            id.to_hex()
-        );
-    }
-
-    let selected = filtered_window_doc(&vault, &window, &key, scope, &selector)
-        .expect("the member's selector window");
-    let carries = |id: EntityId| selected.get_map("tombstones").get(&id.to_hex()).is_some();
-    assert!(
-        carries(open_claim),
-        "FIXTURE: the selector window carries the open CLAIM's tombstone"
-    );
-    Export {
-        labelled: [("purged R CLAIM", carries(purged_claim))],
+    Shared {
+        _dir: dir,
+        vault,
+        member,
+        relationship,
+        scope,
+        selector,
+        now,
     }
 }
 
@@ -246,6 +412,7 @@ fn a_selector_window_carries_no_tombstone_of_a_relationship_row_its_member_does_
         FederationGrantRole::Member,
         FederationGrantPreset::Member,
         true,
+        false,
     );
     let leaked: Vec<&str> = export
         .labelled
@@ -265,6 +432,7 @@ fn a_co_owners_selector_window_carries_the_relationship_tombstones() {
         FederationGrantRole::Owner,
         FederationGrantPreset::Owner,
         false,
+        false,
     );
     let withheld: Vec<&str> = export
         .labelled
@@ -275,6 +443,46 @@ fn a_co_owners_selector_window_carries_the_relationship_tombstones() {
     assert!(
         withheld.is_empty(),
         "OVER-REFUSAL: the selector window withholds the tombstone of the {withheld:?} from a co-Owner"
+    );
+}
+
+#[test]
+fn a_failed_capture_keeps_the_relationship_tombstones_from_a_member_who_does_not_read_r() {
+    let export = export_through(
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+        true,
+        true,
+    );
+    let leaked: Vec<&str> = export
+        .labelled
+        .into_iter()
+        .filter(|(_, carried)| *carried)
+        .map(|(kind, _)| kind)
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "LEAK: after a failed capture, the selector window carries the tombstone of the {leaked:?} to a member who does not read R"
+    );
+}
+
+#[test]
+fn a_failed_capture_still_gives_a_co_owner_the_relationship_tombstones() {
+    let export = export_through(
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+        false,
+        true,
+    );
+    let withheld: Vec<&str> = export
+        .labelled
+        .into_iter()
+        .filter(|(_, carried)| !*carried)
+        .map(|(kind, _)| kind)
+        .collect();
+    assert!(
+        withheld.is_empty(),
+        "OVER-REFUSAL: after a failed capture, the selector window withholds the tombstone of the {withheld:?} from a co-Owner"
     );
 }
 
@@ -429,5 +637,298 @@ fn a_selector_window_carries_no_tombstone_beside_a_case_shifted_relationship_row
     assert!(
         !carries(keyed.id),
         "LEAK: the selector window carries the tombstone of the R CLAIM whose body it holds under a case-shifted key to a member who does not read R"
+    );
+}
+
+/// Whether the export `selected` carries the tombstone of `id`.
+fn carries_tombstone(selected: &LoroDoc, id: EntityId) -> bool {
+    selected.get_map("tombstones").get(&id.to_hex()).is_some()
+}
+
+#[test]
+fn a_selector_window_carries_no_tombstone_of_a_relationship_row_written_again_after_a_delete() {
+    let Shared {
+        _dir,
+        vault,
+        member,
+        relationship,
+        scope,
+        selector,
+        now,
+    } = shared_vault(FederationGrantRole::Member, FederationGrantPreset::Member);
+    // Both land open, so the member reads the relationship read each plain
+    // delete captures.
+    let reopened = replicated_person(&vault, None, now);
+    let narrowed = replicated_person(&vault, None, now);
+    let key = WindowKey::from_timestamp(now);
+    let packed = create_window_doc("selector", &key);
+    reverse_rematerialize(&vault, &packed, &key).expect("the window pack");
+    persist_window(&vault, &packed, &key);
+
+    // A plain delete keeps a PERSON's header-only shell and fences the row.
+    // A local put over the shell writes the row again and lifts the fence,
+    // and a local put over a stored row takes no record-scope stamp.
+    for (id, audience) in [(reopened, None), (narrowed, Some(relationship))] {
+        assert!(
+            vault
+                .delete_entity_with_reason(&id, DeleteReason::UserDelete)
+                .expect("FIXTURE: the owner's plain delete")
+                .existed,
+            "FIXTURE: the deleted PERSON {} existed",
+            id.to_hex()
+        );
+        let written_at = vault.now_recorded_at();
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                at(written_at),
+                written_at,
+                &person_body(audience),
+            )
+            .expect("FIXTURE: the owner writes the deleted PERSON again");
+    }
+    assert!(
+        !reads(&vault, member, narrowed),
+        "FIXTURE: the member does not read the PERSON written again with R named"
+    );
+    for id in [reopened, narrowed] {
+        assert!(
+            vault
+                .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
+                .expect("FIXTURE: the owner's purge")
+                .existed,
+            "FIXTURE: the PERSON {} written again existed",
+            id.to_hex()
+        );
+    }
+    let window = load_window_from_state(&vault, "local", &key).expect("the vault's window");
+    for id in [reopened, narrowed] {
+        assert!(
+            window.get_map("tombstones").get(&id.to_hex()).is_some(),
+            "FIXTURE: the vault's window holds the tombstone of {}",
+            id.to_hex()
+        );
+    }
+
+    let selected = filtered_window_doc(&vault, &window, &key, scope, &selector)
+        .expect("the member's selector window");
+    assert!(
+        carries_tombstone(&selected, reopened),
+        "FIXTURE: the selector window carries the tombstone of the PERSON written again open"
+    );
+    assert!(
+        !carries_tombstone(&selected, narrowed),
+        "LEAK: the selector window carries the tombstone of the PERSON written again with R named, by its plain delete's capture, to a member who does not read R"
+    );
+}
+
+#[test]
+fn a_selector_window_carries_no_tombstone_that_names_no_delete_request_to_a_member_who_is_not_an_owner()
+ {
+    let Shared {
+        _dir,
+        vault,
+        member,
+        relationship,
+        scope,
+        selector,
+        now,
+    } = shared_vault(FederationGrantRole::Member, FederationGrantPreset::Member);
+    let open = replicated_person(&vault, None, now);
+    let keyed = replicated_person(&vault, Some(relationship), now);
+    assert!(
+        !reads(&vault, member, keyed),
+        "FIXTURE: the member does not read the R PERSON"
+    );
+
+    // A tombstone this engine writes names its delete's request: the wire
+    // byte of a hard delete, the delete's time and the request id. No delete
+    // here captured that request, and the window holds no body of the row,
+    // so the tombstone travels.
+    let mut named = vec![2_u8];
+    named.extend_from_slice(&now.to_le_bytes());
+    named.extend_from_slice(&[0xA5; 16]);
+    let key = WindowKey::from_timestamp(now);
+    let window = create_window_doc("selector", &key);
+    window
+        .get_map("tombstones")
+        .insert(&open.to_hex(), named.as_slice())
+        .expect("FIXTURE: the window holds the open PERSON's tombstone");
+    // A malformed peer value names no request.
+    window
+        .get_map("tombstones")
+        .insert(&keyed.to_hex(), [1_u8].as_slice())
+        .expect("FIXTURE: the window holds the R PERSON's tombstone");
+    window.commit();
+
+    let selected = filtered_window_doc(&vault, &window, &key, scope, &selector)
+        .expect("the member's selector window");
+    assert!(
+        carries_tombstone(&selected, open),
+        "FIXTURE: the selector window carries the open PERSON's tombstone that names its request"
+    );
+    assert!(
+        !carries_tombstone(&selected, keyed),
+        "LEAK: the selector window carries the R PERSON's tombstone that names no request to a member who does not read R"
+    );
+}
+
+#[test]
+fn a_selector_window_carries_a_tombstone_that_names_no_delete_request_beside_a_body_its_member_reads()
+ {
+    let Shared {
+        _dir,
+        vault,
+        member,
+        relationship,
+        scope,
+        selector,
+        now,
+    } = shared_vault(FederationGrantRole::Member, FederationGrantPreset::Member);
+    let named = record(&vault, member, None, now);
+    let legacy = record(&vault, member, None, now);
+    let keyed = record(&vault, member, Some(relationship), now);
+    assert!(
+        reads(&vault, member, legacy),
+        "FIXTURE: the member reads the open CLAIM"
+    );
+    assert!(
+        !reads(&vault, member, keyed),
+        "FIXTURE: the member does not read the R CLAIM"
+    );
+
+    // The window holds each CLAIM's body beside its tombstone, and no delete
+    // here captured a request.
+    let key = WindowKey::from_timestamp(now);
+    let window = create_window_doc("selector", &key);
+    reverse_rematerialize(&vault, &window, &key).expect("the window pack");
+    for id in [named, legacy, keyed] {
+        assert!(
+            window.get_map("entities").get(&id.to_hex()).is_some(),
+            "FIXTURE: the window holds the body of {}",
+            id.to_hex()
+        );
+    }
+    let mut named_value = vec![2_u8];
+    named_value.extend_from_slice(&now.to_le_bytes());
+    named_value.extend_from_slice(&[0xA5; 16]);
+    // A legacy value is the delete's time alone: it names no request.
+    let legacy_value = now.to_le_bytes();
+    let tombstones = window.get_map("tombstones");
+    for (id, value) in [
+        (named, named_value.as_slice()),
+        (legacy, legacy_value.as_slice()),
+        (keyed, legacy_value.as_slice()),
+    ] {
+        tombstones
+            .insert(&id.to_hex(), value)
+            .expect("FIXTURE: the window holds the CLAIM's tombstone");
+    }
+    window.commit();
+
+    let selected = filtered_window_doc(&vault, &window, &key, scope, &selector)
+        .expect("the member's selector window");
+    assert!(
+        carries_tombstone(&selected, named),
+        "FIXTURE: the selector window carries the open CLAIM's tombstone that names a request, beside its body"
+    );
+    assert!(
+        !carries_tombstone(&selected, keyed),
+        "LEAK: the selector window carries the R CLAIM's tombstone that names no request, beside its body, to a member who does not read R"
+    );
+    assert!(
+        carries_tombstone(&selected, legacy),
+        "MISSED DELETE: the selector window withholds the open CLAIM's tombstone that names no request, beside a body its member reads, so the member keeps the deleted row"
+    );
+}
+
+/// A Scope that reads base reality's default project only, where a PERSON put
+/// here is stamped at birth: narrower than every record, so a tombstone of a
+/// row the export does not keep travels only where its delete captured a
+/// scope the grant reads (FIX 10161).
+fn base_default_project_reader() -> Scope {
+    let mut scope = read_preset();
+    scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())]));
+    scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(default_project_id())]));
+    scope
+}
+
+#[test]
+fn a_narrower_grant_takes_no_tombstone_of_a_row_written_again_by_the_scope_captured_of_its_deleted_form()
+ {
+    let Shared {
+        _dir,
+        vault,
+        scope,
+        selector,
+        now,
+        ..
+    } = shared_vault_reading(
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+        base_default_project_reader(),
+    );
+    // Both land open and stamped at birth into the scope the grant reads.
+    let control = EntityId::now();
+    let rewritten = EntityId::now();
+    for id in [control, rewritten] {
+        vault
+            .put_entity(&id, ENTITY_TYPE_PERSON, at(now), now, &person_body(None))
+            .expect("FIXTURE: the owner's PERSON");
+    }
+    let key = WindowKey::from_timestamp(now);
+    let packed = create_window_doc("selector", &key);
+    reverse_rematerialize(&vault, &packed, &key).expect("the window pack");
+    persist_window(&vault, &packed, &key);
+
+    // A plain delete captures the stamped row's scope, retires its stamp and
+    // keeps its header-only shell. A local put over the shell writes the row
+    // again and takes no record-scope stamp.
+    assert!(
+        vault
+            .delete_entity_with_reason(&rewritten, DeleteReason::UserDelete)
+            .expect("FIXTURE: the owner's plain delete")
+            .existed,
+        "FIXTURE: the stamped PERSON existed"
+    );
+    let written_at = vault.now_recorded_at();
+    vault
+        .put_entity(
+            &rewritten,
+            ENTITY_TYPE_PERSON,
+            at(written_at),
+            written_at,
+            &person_body(None),
+        )
+        .expect("FIXTURE: the owner writes the deleted PERSON again");
+    for id in [control, rewritten] {
+        assert!(
+            vault
+                .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
+                .expect("FIXTURE: the owner's purge")
+                .existed,
+            "FIXTURE: the PERSON {} existed",
+            id.to_hex()
+        );
+    }
+    let window = load_window_from_state(&vault, "local", &key).expect("the vault's window");
+    for id in [control, rewritten] {
+        assert!(
+            window.get_map("tombstones").get(&id.to_hex()).is_some(),
+            "FIXTURE: the vault's window holds the tombstone of {}",
+            id.to_hex()
+        );
+    }
+
+    let selected = filtered_window_doc(&vault, &window, &key, scope, &selector)
+        .expect("the member's selector window");
+    assert!(
+        carries_tombstone(&selected, control),
+        "FIXTURE: the narrower grant takes the tombstone of a PERSON purged in the scope it reads"
+    );
+    assert!(
+        !carries_tombstone(&selected, rewritten),
+        "LEAK: the narrower grant takes the tombstone of the PERSON written again with no scope, by the scope its plain delete captured of the deleted form"
     );
 }

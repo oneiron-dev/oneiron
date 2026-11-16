@@ -129,7 +129,9 @@ pub(super) fn audit_and_stage_body(
         crate::store::pending_comm_stop::maintain_pending_stop_put(store, wtxn, &fixed.id, data)?;
     }
     // A local put over an erased row is a sanctioned recreation: the row it
-    // writes is live, so the fence goes in the same commit. A row that still
+    // writes is live, so the fence goes in the same commit, and so does the
+    // scope its delete captured of the old row (OPUS-LEAKS,
+    // SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE). A row that still
     // has its body is fenced by an accepted delete awaiting its retry, and a
     // local edit does not withdraw that delete.
     if !fixed.replicated
@@ -138,6 +140,7 @@ pub(super) fn audit_and_stage_body(
             .is_none_or(|old| old.len() == ENTITY_METADATA_HEADER_LEN)
     {
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(fixed.id))?;
+        crate::deletion::tombstone_scope::forget_capture_in_txn(store, wtxn, &fixed.id)?;
     }
     let row_version = crate::ports::claim_order::for_put_in_txn(
         store.read(),
