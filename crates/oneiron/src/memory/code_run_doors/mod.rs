@@ -40,6 +40,7 @@ use crate::code_run::{
 use crate::consent::AuthenticatedOwner;
 use crate::engine_executor::step_evidence_page;
 use crate::entity_id::EntityId;
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use oneiron_model::llm::ModelId;
 
 impl Memory<'_> {
@@ -247,11 +248,13 @@ fn code_run_id(run_ref: &str) -> MemoryResult<EntityId> {
 /// limit, at most [`CODE_RUN_CORRECTIONS_MAX_STEPS`]; a zero limit is
 /// refused.
 fn step_page_limit(limit: Option<u32>) -> MemoryResult<u32> {
-    match limit {
-        Some(0) => Err(MemoryError::bad_request("limit must be positive")),
-        Some(limit) => Ok(limit.min(CODE_RUN_CORRECTIONS_MAX_STEPS)),
-        None => Ok(CODE_RUN_CORRECTIONS_DEFAULT_STEPS),
-    }
+    page_limit_zero_refused(
+        limit,
+        CODE_RUN_CORRECTIONS_DEFAULT_STEPS,
+        CODE_RUN_CORRECTIONS_MAX_STEPS,
+    )
+    .map(|limit| limit.rows)
+    .map_err(|ZeroLimitRefused| MemoryError::bad_request("limit must be positive"))
 }
 
 /// The CALL behind the model a tally is read for: the exact
