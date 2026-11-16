@@ -81,6 +81,13 @@ impl Vault {
             .map(|(hash, _, _)| *hash)
             .filter(|hash| !resident.contains(hash))
             .collect();
+        // Each row's store door reads the fold beside every row this page
+        // stages, as the fold after staging judges them (owner-reserve delta
+        // review F2).
+        let staged_rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = decoded
+            .iter()
+            .map(|(hash, _, entry)| (*hash, entry.clone()))
+            .collect();
         // A vault missing history it must hold has no fold until an import
         // closes the gap (OF-469): its arriving rows are judged against the
         // fold that closes it, after staging, and an import that leaves it
@@ -133,7 +140,9 @@ impl Vault {
             };
             rows.push((op, re_root_signer));
         }
-        self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows)?;
+        self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows, &|| {
+            Ok(staged_rows.clone())
+        })?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged

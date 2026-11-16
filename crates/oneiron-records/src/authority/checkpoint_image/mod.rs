@@ -63,13 +63,16 @@ use serde::Serialize;
 /// 41: a carried machine answer that needed an owner key's proof and carried none is held
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
-/// 42: a counted root appointment folds its line as its own ancestry's fold did, and a
+/// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
+/// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
+/// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
+/// 43: a counted root appointment folds its line as its own ancestry's fold did, and a
 /// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
-/// 43: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
+/// 44: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
 /// an owner key until the owner switches it back to web sign-in (the owner's ruling AUTH-5); an
 /// image's projected fold carries what the vault asks of its owner and how each act of the web
 /// sign-in setting landed.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
