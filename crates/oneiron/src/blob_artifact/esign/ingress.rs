@@ -18,6 +18,16 @@ use crate::{EntityId, Result, Vault};
 pub struct EsignIngress {
     document: EntityId,
     recipient: String,
+    admitted_until: u64,
+}
+
+impl EsignIngress {
+    /// The recorded second from which the clock alone refuses this link:
+    /// the earlier of its capability's hard lifetime and its recipient's
+    /// deadline. A revocation, or the envelope's end, can refuse it sooner.
+    pub fn admitted_until(&self) -> u64 {
+        self.admitted_until
+    }
 }
 
 impl Vault {
@@ -45,16 +55,19 @@ impl Vault {
             .recipients
             .iter()
             .any(|recipient| recipient.id == cap.recipient);
-        let live = state
+        let recipient_until = state
             .recipients
             .get(&cap.recipient)
-            .is_some_and(|progress| now < progress.expires_at);
+            .map(|progress| progress.expires_at);
+        let live = recipient_until.is_some_and(|until| now < until);
         if !on_envelope || !live || state.status == DocumentStatus::Draft {
             return Err(invalid("invalid capability"));
         }
         Ok(EsignIngress {
             document,
             recipient: cap.recipient,
+            admitted_until: recipient_until
+                .map_or(cap.hard_expires_at, |until| until.min(cap.hard_expires_at)),
         })
     }
 
