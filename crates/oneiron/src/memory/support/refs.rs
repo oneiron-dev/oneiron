@@ -133,11 +133,7 @@ impl Memory<'_> {
 pub(crate) use crate::vault::entity_refs::hard_deleted_refusal;
 
 pub(in crate::memory) fn hex_string(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    oneiron_hex::encode(bytes)
 }
 
 /// The short ref `store` holds for `id`: the vault's own, or a room's view,

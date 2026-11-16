@@ -25,7 +25,6 @@ pub use oneiron_verb_wire::code_run::run_verbs::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::code_run::SessionHookDisposition;
 use crate::entity_id::EntityId;
 
 /// `vault.claims.supersede`: closes `oldId` in favour of `newId`.
@@ -376,37 +375,11 @@ pub enum TaskWaitOutput {
     Agents(crate::agent_dispatch::AgentWaitSetResult),
 }
 
-/// `vault.search`'s output: the hits, best first, and in an off-record room
-/// what each verb hook bound to the search did (WILL L11-01 S01-2c).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct MemorySearchOutput {
-    pub results: Vec<MemorySearchHit>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub hooks: Vec<SessionHookDisposition>,
-}
-
-/// One `vault.search` hit.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct MemorySearchHit {
-    pub id: EntityId,
-    pub score: f32,
-}
-
-/// `vault.claims.put` and `vault.claims.supersede`'s output: the claim
-/// written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MemoryWriteOutput {
-    pub id: EntityId,
-}
-
-/// `vault.edges.put`'s output: the edge written.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct MemoryEdgeOutput {
-    pub src: EntityId,
-    /// The edge kind's name.
-    pub kind: String,
-    pub tgt: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::code_run::run_verbs::{
+    AgentSpawnKind, LeaderPatternFile, LeaderPatternOutput, LeaderSplitOutput, MemoryEdgeOutput,
+    MemorySearchHit, MemorySearchOutput, MemoryWriteOutput,
+};
 
 /// `self.agents.spawn`'s output: the queued attempt, the widening its
 /// spawn proposed instead, or an erase of its target or its asker that
@@ -443,13 +416,6 @@ pub enum AgentSpawnOutput {
     AskerErased { kind: AgentSpawnKind },
 }
 
-/// The `kind` every `self.agents.spawn` output carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentSpawnKind {
-    AgentSpawn,
-}
-
 /// The one projection of a spawn's answer onto `self.agents.spawn`'s
 /// output, for the guest's reply and the host door alike (FIX 9183).
 impl From<crate::code_run::SelfAgentSpawnResult> for AgentSpawnOutput {
@@ -479,39 +445,4 @@ impl From<crate::code_run::SelfAgentSpawnResult> for AgentSpawnOutput {
             SelfAgentSpawnResult::AskerErased => Self::AskerErased { kind },
         }
     }
-}
-
-/// `self.leader.pattern`'s output: the pattern loaded, as the leader reads
-/// it (OF-389).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct LeaderPatternOutput {
-    /// The entity that loaded: an exploration trial may route to its
-    /// proposal.
-    pub skill: EntityId,
-    pub skill_id: String,
-    pub version: String,
-    pub desc: String,
-    pub files: Option<Vec<LeaderPatternFile>>,
-}
-
-/// `self.leader.split`'s output: the subproject her TASK wraps (OF-389).
-/// A retry answers the same child.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LeaderSplitOutput {
-    /// The child PROJECT.
-    pub project: EntityId,
-    /// The TASK that wraps it.
-    pub task: EntityId,
-    /// The project it was spawned under.
-    pub parent: EntityId,
-    pub leader: EntityId,
-    /// How many more levels the child may spawn.
-    pub depth_remaining: u64,
-}
-
-/// One file of a loaded pattern.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct LeaderPatternFile {
-    pub path: String,
-    pub text: String,
 }
