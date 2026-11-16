@@ -33,7 +33,7 @@
      "path": "build.rs",
      "purpose": "Assembles the side-table catalogue from every `side_tables!` row in `src` (core split slice 1; Fable's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -5398,7 +5398,7 @@
      "path": "src/authority/op_apply.rs",
      "purpose": "Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`]",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -5496,7 +5496,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 21
      }
     },
     {
@@ -5560,13 +5560,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/owner_work/root_basis.rs",
-     "purpose": "A root request's basis witness, checked on its target (FIX 5551): whether the target's heads are the ones…",
+     "purpose": "A root request's basis, checked on its target (FIX 5551): whether the target's roster heads are the ones the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -5756,9 +5756,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/revoke_proof.rs",
-     "purpose": "Log-derived, typed restrictive facts (actor revocations, slip withdrawals, a Grant's slip withdrawals, slip…",
+     "purpose": "Log-derived, typed restrictive facts (actor and device revocations, slip withdrawals, a Grant's slip…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -41681,6 +41681,7 @@
       "FeedPosition",
       "FeedRead",
       "FeedSelector",
+      "FeedSetting",
       "FeedSource",
       "FeedSubscribeRequest",
       "FeedSubscription"
@@ -41688,12 +41689,12 @@
      "path": "src/feeds/mod.rs",
      "purpose": "Change feeds (untangle slice 6.8, primitive B; ARCH-0080 §4 Sources and cursors)",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 16,
       "enum": 3,
       "fn": 7,
       "re-export": 2,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -47904,7 +47905,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 218,
+      "mod": 219,
       "re-export": 105
      }
     },
@@ -49521,17 +49522,19 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AuthorizedInference",
       "BoundInference",
-      "InferencePolicySnapshot"
+      "InferencePolicySnapshot",
+      "InferenceRefusal"
      ],
      "path": "src/llm/inference_admission.rs",
      "purpose": "One snapshot and one admission for policy-managed inference calls",
      "surface": {
-      "fn": 12,
+      "enum": 1,
+      "fn": 14,
       "re-export": 1,
       "struct": 3
      }
@@ -50500,11 +50503,11 @@
      "path": "src/llm/step/retry.rs",
      "purpose": "Transport retries for one durable model call: the ONE retry authority",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 15
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/schema.rs",
@@ -72514,6 +72517,113 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/setting/catalogue.rs",
+     "purpose": "The catalogue: every key the crate declares, assembled by the build script from each `setting_keys.rs`",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SettingChange"
+     ],
+     "path": "src/setting/change.rs",
+     "purpose": "The change stream: one `SETTING_CHANGE` row per change, written in the commit that makes it, and the erase…",
+     "surface": {
+      "crate-vis": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LearnedRange",
+      "SettingFitView"
+     ],
+     "path": "src/setting/learned.rs",
+     "purpose": "Learned keys (ARCH-0003 `#learning-settings`; DESIGN 15-setting-primitive, stage 3): a number a fit learns…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ItemDomain",
+      "Kind",
+      "SetBy",
+      "Setting",
+      "SettingKey",
+      "SettingSpec",
+      "ValueKind"
+     ],
+     "path": "src/setting/mod.rs",
+     "purpose": "The Setting primitive (DESIGN 15-setting-primitive, stage 0.1): one kind of stored choice in place of a…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 12,
+      "enum": 1,
+      "fn": 11,
+      "re-export": 6,
+      "struct": 4,
+      "trait": 2,
+      "type": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SettingCatalogueEntry",
+      "SettingRowView",
+      "SettingView"
+     ],
+     "path": "src/setting/read.rs",
+     "purpose": "Reading a key: one walk for every key, and who may read what",
+     "surface": {
+      "crate-vis": 21,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EngineSetting",
+      "SetSetting",
+      "SetSettingOutcome",
+      "SettingCaller"
+     ],
+     "path": "src/setting/set.rs",
+     "purpose": "The one door that changes a setting row: [`Vault::set_setting`]",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/setting/tables.rs",
+     "purpose": "The side tables of the Setting primitive: each row declares one, and the crate's build script places it in…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -79789,7 +79899,7 @@
      "path": "src/store/model_step_submission.rs",
      "purpose": "Core half of `store::model_step_submission`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 2
      }
     },
@@ -90198,7 +90308,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 127,
+      "mod": 130,
       "re-export": 1
      }
     },
@@ -90214,6 +90324,16 @@
       "const": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/model_step_submission_codec.rs",
+     "purpose": "Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -90488,6 +90608,27 @@
      "surface": {
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/setting.rs",
+     "purpose": "Doors for the Setting primitive's tests (DESIGN 15-setting-primitive, stage 0.1)",
+     "surface": {
+      "fn": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/setting_keys.rs",
+     "purpose": "The catalogue keys the Setting primitive's tests set (DESIGN 15-setting-primitive, stage 0.1)",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -93927,7 +94068,7 @@
       "crate-vis": 1,
       "fn": 9,
       "mod": 1,
-      "re-export": 132,
+      "re-export": 133,
       "struct": 9
      }
     },
@@ -94458,6 +94599,22 @@
       "fn": 1,
       "re-export": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SettingCatalogue",
+      "SettingGetRequest",
+      "SettingListRequest",
+      "SettingSetRequest"
+     ],
+     "path": "src/verbs/setting.rs",
+     "purpose": "The Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1): `vault.settings.get`…",
+     "surface": {
+      "fn": 3,
+      "struct": 4
      }
     },
     {
@@ -101104,6 +101261,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/model_step_submission_codec.rs",
+     "purpose": "STEP-CORRECTION-HEALTH-PARK: a model step's submission row gained the point a parked schema correction…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/named_agent_principal_standing.rs",
      "purpose": "A named agent's PERSON (the principal `Vault::ensure_agent_principal` derives from its name: `oneiron token…",
      "surface": {}
@@ -101839,6 +102004,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/revocation_survives_confirm_collision.rs",
+     "purpose": "A key's revocation survives a confirmation collision below it (root FIX-LIST…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101908,6 +102081,14 @@
      "notable": [],
      "path": "tests/room_turn_for_org.rs",
      "purpose": "A bound house's room turns read \"<agent>, for <org>\" (HOUSE-BIND = A, ARCH-0063 #house-bind, ARCH-0067…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/root_work_basis_scope.rs",
+     "purpose": "The root-work basis is the target's two roster heads (K5-BASIS-SHAPE = A, Engine RULING 07:03): the roster…",
      "surface": {}
     },
     {
@@ -102230,6 +102411,30 @@
      "notable": [],
      "path": "tests/serving_scoped_credentials.rs",
      "purpose": "Serving keeps the owner's current view while an admitted agent receives the scoped export's typed Nulled…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/setting_learned.rs",
+     "purpose": "DESIGN 15-setting-primitive, stage 3a: learned keys in the Setting primitive (ARCH-0003…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/setting_primitive.rs",
+     "purpose": "DESIGN 15-setting-primitive, stage 0.1: the Setting primitive through its public verbs. - the owner sets…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/setting_primitive_callers.rs",
+     "purpose": "DESIGN 15-setting-primitive, stage 0.3: the Setting primitive's other callers and doors. - the engine sets a…",
      "surface": {}
     },
     {
@@ -102694,6 +102899,14 @@
      "notable": [],
      "path": "tests/untangle_regressions.rs",
      "purpose": "Untangle regressions (lead 19:05 9 Nov, TESTS-MUST-RUN): the ruled behaviour tests of X01 (#6878)…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_archive_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.archive` family (ruling L4-23 = A: each test proves a promise at…",
      "surface": {}
     },
     {
@@ -104256,6 +104469,13 @@
      "layout": "file+dir",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
+    "setting": {
+     "files": 7,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The Setting primitive (DESIGN 15-setting-primitive, stage 0.1): one kind of stored choice in place of a…"
+    },
     "settings": {
      "files": 15,
      "impl_vault": true,
@@ -104446,7 +104666,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 130,
+     "files": 133,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104558,7 +104778,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 145,
+     "files": 146,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104623,8 +104843,8 @@
    },
    "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7620,
-   "test_files": 1367
+   "source_files": 7631,
+   "test_files": 1374
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -114022,6 +114242,43 @@
    "source_files": 4,
    "test_files": 0
   },
+  "oneiron-derive": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Proc-macro derives of the oneiron workspace, one module per derive",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_key.rs",
+     "purpose": "`#[derive(SideKey)]` for `oneiron_store::side_table::key::SideKey`: a stored side-table key declares its…",
+     "surface": {
+      "crate-vis": 1
+     }
+    }
+   ],
+   "modules": {
+    "side_key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "`#[derive(SideKey)]` for `oneiron_store::side_table::key::SideKey`: a stored side-table key declares its…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Proc-macro derives of the oneiron workspace, one module per derive",
+   "source_files": 2,
+   "test_files": 0
+  },
   "oneiron-docedit": {
    "files": [
     {
@@ -117739,6 +117996,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/setting.rs",
+     "purpose": "Purposes of the Setting primitive (`crates/oneiron/src/setting/`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/skill.rs",
      "purpose": "Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`)",
      "surface": {}
@@ -117798,7 +118063,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -117814,7 +118079,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -133513,7 +133778,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DbManifestEntry"
@@ -136079,7 +136344,7 @@
     "store": {
      "files": 45,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -143180,7 +143445,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 198
+      "crate-vis": 199
      }
     },
     {
@@ -143580,7 +143845,7 @@
      "path": "src/api/facade/model_step_doors.rs",
      "purpose": "Model steps on the owner's proof, or on a live run's own actor (slice 6.5c); HTTP, SDK and MCP reach the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -144071,6 +144336,16 @@
      "purpose": "`self.actor` (FIX 1047): the actor the caller's credential binds, as the facade binds every write of his…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/setting_catalogue_doors.rs",
+     "purpose": "The host doors of the Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1)…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -147815,6 +148090,14 @@
      "notable": [],
      "path": "src/api/tests/mcp_quickjs/device_local.rs",
      "purpose": "DEC-0005 in code mode: a run's result is an MCP result, judged at release by the rows its verb calls served…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/mcp_quickjs/graph_fs_walk.rs",
+     "purpose": "A code-mode guest reaches the read-only graph-FS rows through the verb-call import (census L3-38…",
      "surface": {}
     },
     {
@@ -160824,6 +161107,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/inference_door_refusal.rs",
+     "purpose": "Both inference doors name the vault policy's typed refusal (STEP-DOOR-REFUSAL-REASON): `ai.steps.submit` and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/inference_egress.rs",
      "purpose": "Extraction default changes require a host gate at storage and dispatch",
      "surface": {}
@@ -161353,6 +161644,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/self_secrets_doors.rs",
+     "purpose": "Public-door promise tests for the `self.secrets` family (ruling L4-23 = A: each test proves a promise at the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -161423,6 +161722,102 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_budgets_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.budgets` family (ARCH-0079 #budget: the runtime enforces only the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_consent_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.consent` family (ruling L4-23 = A: each test proves a promise at…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_courtesy_delete_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.courtesy_delete` family (ruling L4-23 = A: each test proves a…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_export_doors.rs",
+     "purpose": "Public-door promise tests for the scoped and kept `vault.export` family (ruling L4-23 = A: each test proves…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_members_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.members` family: an Admin invites through `vault.members.add`, the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_notes_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.notes` family (the server serves all 27 verbs; editor.bind/close…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_seal_doors.rs",
+     "purpose": "Owner-door promise tests for the `vault.seal` family (ARCH-0079 P1/P2/P3)",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_secrets_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.secrets` family (ruling L4-23 = A: each test proves a promise at…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_shared_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.shared` family (ARCH-0043 = A: each test proves a promise at the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_support_grants_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.support_grants` family (ruling L4-23 = A: each test proves a…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_usage_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.usage` repair family: the stored usage rows of this server's…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_voices_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.voices` family (ruling L4-23 = A: each test proves a promise at the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -161470,7 +161865,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 789,
+     "files": 791,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -162032,8 +162427,127 @@
    },
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1894,
-   "test_files": 272
+   "source_files": 1895,
+   "test_files": 287
+  },
+  "oneiron-setting-contract": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Decided",
+      "FoundFit",
+      "FoundRow"
+     ],
+     "path": "src/decide.rs",
+     "purpose": "Which stored row a read takes its value from: one order for every key",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RowKey"
+     ],
+     "path": "src/key.rs",
+     "purpose": "The stored key of one setting row: `name 0x00 item 0x00 mode scope`",
+     "surface": {
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FitCell",
+      "ReadBy",
+      "Resolved",
+      "Restore",
+      "Setter",
+      "SettingMode",
+      "SettingSource",
+      "SettingSync"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "The Setting vocabulary below the engine (DESIGN 15-setting-primitive section 1.2): a Setting is a stored…",
+     "surface": {
+      "enum": 6,
+      "fn": 2,
+      "re-export": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScopeKind",
+      "SettingScope"
+     ],
+     "path": "src/scope.rs",
+     "purpose": "Where a stored row applies, and the chain of scopes a read walks",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EncodedValue",
+      "SettingValue"
+     ],
+     "path": "src/value.rs",
+     "purpose": "The contract every stored setting value meets",
+     "surface": {
+      "fn": 5,
+      "struct": 1,
+      "trait": 1
+     }
+    }
+   ],
+   "modules": {
+    "decide": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Which stored row a read takes its value from: one order for every key"
+    },
+    "key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The stored key of one setting row: `name 0x00 item 0x00 mode scope`"
+    },
+    "scope": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Where a stored row applies, and the chain of scopes a read walks"
+    },
+    "value": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The contract every stored setting value meets"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The Setting vocabulary below the engine (DESIGN 15-setting-primitive section 1.2): a Setting is a stored…",
+   "source_files": 5,
+   "test_files": 0
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -169781,18 +170295,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "FieldSpelling",
       "FixedSideKey",
       "HexId",
+      "HexLower",
+      "HexU32",
+      "HexU64",
+      "LengthPrefix",
       "SideKey"
      ],
      "path": "src/side_table/key.rs",
      "purpose": "Key types: what a table's key contributes after its declared prefix",
      "surface": {
-      "struct": 1,
-      "trait": 2
+      "re-export": 1,
+      "struct": 4,
+      "trait": 4
      }
     },
     {
@@ -171548,11 +172068,27 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/side_key_derive.rs",
+     "purpose": "UC-06 PR 0b: `#[derive(SideKey)]` spells and reads a key exactly as the hand-written impl it will replace",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/side_key_hex_case.rs",
      "purpose": "UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: \"Stored and wire forms stay…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/side_key_pins.rs",
+     "purpose": "UC-06 PR 1 K-proof: the ten `oneiron-store` side-table keys that PR 1 derives spell the same bytes and read…",
      "surface": {}
     }
    ],
@@ -172911,7 +173447,7 @@
     "side_table": {
      "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Store-layer modules of core `side_table`; core re-exports each one at its old path"
     },
@@ -173129,7 +173665,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 14
+   "test_files": 16
   },
   "oneiron-testkit": {
    "files": [
@@ -191534,13 +192070,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/links.rs",
      "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/links/admission.rs",
+     "purpose": "Admitting a formula's external references: the workbook names that read a linked workbook…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/links/parts.rs",
+     "purpose": "Reading the package for its links: the external relationship targets the engine keeps, the workbook's link…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -191585,7 +192141,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WorkbookRecalc"
@@ -191596,6 +192152,36 @@
       "crate-vis": 3,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workbook/admission.rs",
+     "purpose": "Admitting a workbook's formulas for native recalculation (`Formulas::admit`): what the engine must not…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workbook/edit_gate.rs",
+     "purpose": "The recalculated package against the edit round trip's corruption gate: a result the gate would refuse goes…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workbook/read.rs",
+     "purpose": "Reading the formulas the writer evaluates (`Formulas::read`), with the reader's checks of malformed content…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -191668,10 +192254,10 @@
      "purpose": "Typed failures for the formula crate"
     },
     "links": {
-     "files": 1,
+     "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…"
     },
     "location": {
@@ -191696,10 +192282,10 @@
      "purpose": "External links on the precision fallback's route"
     },
     "workbook": {
-     "files": 1,
+     "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Recalculate a local XLSX through the fork's retained cache writer"
     },
     "xml": {
@@ -191710,9 +192296,9 @@
      "purpose": "The document organ's namespace-aware reader, with this crate's errors"
     }
    },
-   "over_bar": 2,
+   "over_bar": 0,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 16,
+   "source_files": 21,
    "test_files": 1
   }
  }
