@@ -271,6 +271,11 @@ fn publish_entity_effects(
             .map(|(id, _)| *id)
             .collect(),
     );
+    // A data-key generation an authority row carried is received now, as
+    // the history and page imports receive it.
+    if applied_ops.iter().any(|(_, blob)| is_authority_row(blob)) {
+        vault.adopt_data_key_generations_after_ingest();
+    }
 }
 
 /// An isolated candidate's entity effects, retained until its root commits.
