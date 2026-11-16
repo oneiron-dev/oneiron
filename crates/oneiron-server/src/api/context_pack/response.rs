@@ -587,7 +587,9 @@ pub(crate) struct CoreReactionSignal {
     pub event: &'static str,
     pub reaction: String,
     pub message: String,
-    pub by: String,
+    /// The reactor, omitted when the reader may not read their PERSON row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
     pub glyph: String,
     pub occurred_at: u64,
     pub recorded_at: u64,

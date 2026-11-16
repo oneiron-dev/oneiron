@@ -22,7 +22,7 @@ use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder};
 use oneiron::memory::extraction::{ExtractionWork, NerSpan};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::reaction::{ReactionInput, ReactionPill};
+use oneiron::reaction::{ReactionInput, ReactionPill, ReactionSignal};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::tagging::{MentionLink, TaggingMarkerConfig, TaggingMode, TaggingReconciler};
 use oneiron::temporal::TimeRange;
@@ -103,6 +103,8 @@ struct Fixture {
     outsider: EntityId,
     /// A member of R, who reads R’s MESSAGEs on a live grant.
     insider: EntityId,
+    /// The author of both MESSAGEs, whose signal feed hears of the reaction.
+    speaker: EntityId,
     hidden_message: EntityId,
     room_message: EntityId,
     /// The PERSON confirmed from the name only the R MESSAGE holds.
@@ -259,6 +261,7 @@ fn fixture() -> Fixture {
         vault,
         outsider,
         insider,
+        speaker,
         hidden_message,
         room_message,
         reactor,
@@ -350,5 +353,91 @@ fn a_relationship_member_sees_the_reactors_id_in_the_pill() {
         pill.by,
         vec![fixture.reactor],
         "the member of R is shown the id of the reactor it reads"
+    );
+}
+
+impl Fixture {
+    /// The put signal of the reactor’s 👍 in the room MESSAGE author’s feed.
+    fn signal(&self) -> ReactionSignal {
+        self.vault
+            .reactions_since(self.speaker, 0)
+            .expect("the author’s signal feed")
+            .into_iter()
+            .find(|signal| signal.reaction == self.reaction && !signal.revoked)
+            .expect("FIXTURE: the author’s feed carries the reactor’s 👍")
+    }
+}
+
+/// The outsider hears of the reaction, but its signal carries no id of the reactor it may
+/// not read.
+#[test]
+fn a_signal_carries_no_id_of_a_reactor_the_reader_may_not_read() {
+    let fixture = fixture();
+    let signal = fixture.signal();
+    let read = fixture.vault.scoped_read(key(fixture.outsider));
+    assert!(
+        read.is_reaction_signal_readable(&signal)
+            .expect("the outsider judges the signal"),
+        "FIXTURE: the outsider hears of the reaction"
+    );
+    assert_eq!(
+        read.reaction_signal_reactor_under(&signal, None)
+            .expect("the outsider judges the reactor"),
+        None,
+        "the outsider’s signal carries no id of the reactor it may not read"
+    );
+}
+
+/// A member of R hears of the same reaction with the reactor’s id.
+#[test]
+fn a_relationship_member_hears_the_reactors_id_in_the_signal() {
+    let fixture = fixture();
+    let signal = fixture.signal();
+    let read = fixture.vault.scoped_read(key(fixture.insider));
+    assert!(
+        read.is_reaction_signal_readable(&signal)
+            .expect("the member of R judges the signal"),
+        "FIXTURE: the member of R hears of the reaction"
+    );
+    assert_eq!(
+        read.reaction_signal_reactor_under(&signal, None)
+            .expect("the member of R judges the reactor"),
+        Some(fixture.reactor),
+        "the member of R is told the id of the reactor it reads"
+    );
+}
+
+/// The outsider gets no history of the reactor’s 👍: the chain is keyed by a person it may
+/// not read.
+#[test]
+fn the_history_of_a_reactor_the_reader_may_not_read_is_withheld() {
+    let fixture = fixture();
+    let history = fixture
+        .vault
+        .scoped_read(key(fixture.outsider))
+        .reaction_history(fixture.room_message, fixture.reactor, "👍")
+        .expect("the outsider reads the history")
+        .value;
+    assert!(
+        history.is_empty(),
+        "the outsider reads no chain of the reactor it may not read"
+    );
+}
+
+/// A member of R reads the reactor’s chain: her one 👍, by her id.
+#[test]
+fn a_relationship_member_reads_the_reactors_history() {
+    let fixture = fixture();
+    let history = fixture
+        .vault
+        .scoped_read(key(fixture.insider))
+        .reaction_history(fixture.room_message, fixture.reactor, "👍")
+        .expect("the member of R reads the history")
+        .value;
+    let ids: Vec<(EntityId, EntityId)> = history.iter().map(|entry| (entry.id, entry.by)).collect();
+    assert_eq!(
+        ids,
+        vec![(fixture.reaction, fixture.reactor)],
+        "the member of R reads the reactor’s 👍 by her id"
     );
 }

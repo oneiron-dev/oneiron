@@ -658,10 +658,26 @@ fn reaction_records(
             .map_err(|e| core_engine_error("reaction listing failed", e))?;
         (read.value, Some(read.receipt))
     } else {
-        let pills = server
+        let mut pills = server
             .vault
             .reaction_pills(&targets, viewer)
             .map_err(|e| core_engine_error("reaction listing failed", e))?;
+        // The owner reads every reactor, save a PERSON row a world keeps
+        // from this read's destination (DEC-0005): a pill names no such
+        // reactor and still counts her (Engine ANSWER
+        // REACTION-REACTOR-ID-SURFACES = A).
+        for pill in pills.values_mut().flatten() {
+            let mut shown = Vec::with_capacity(pill.by.len());
+            for person in std::mem::take(&mut pill.by) {
+                if auth
+                    .can_read_entity(&server.vault, &person)
+                    .map_err(|e| core_engine_error("reactor access failed", e))?
+                {
+                    shown.push(person);
+                }
+            }
+            pill.by = shown;
+        }
         (pills, None)
     };
     let records = pairs

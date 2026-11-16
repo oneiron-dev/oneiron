@@ -3,9 +3,9 @@ use super::access_gate::HeldAuthority;
 use super::*;
 use crate::context_pack::{ComposedFieldProducers, ContextPack};
 use crate::disclosure::DisclosureContext;
-use crate::reaction::{REACTIONS_FIELD, ReactionPill, ReactionSignal};
+use crate::reaction::{REACTIONS_FIELD, ReactionHistoryEntry, ReactionPill, ReactionSignal};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, btree_map::Entry};
 
 /// What one read admits a conversation record's reactions under, in one
 /// snapshot: the lane's own resolved request (its bound caller filter met
@@ -236,7 +236,10 @@ impl ScopedRead<'_> {
 
     /// [`crate::Vault::reaction_pills`] under this read, in one snapshot: only
     /// messages this read reads get pills, and a pill counts only the
-    /// reactions it reads, each under its whole admission. The pills come
+    /// reactions it reads, each under its whole admission. A pill's `by`
+    /// lists only the reactors whose PERSON row this read admits, under the
+    /// same admission: another reactor still counts, with no id (Engine
+    /// ANSWER REACTION-REACTOR-ID-SURFACES = A, 17 Nov 03:15). The pills come
     /// with the receipt of that read (FIX 8669). Like every read on this
     /// lane, an owner lane refuses once its binding is gone.
     pub fn reaction_pills(
@@ -254,11 +257,24 @@ impl ScopedRead<'_> {
                 readable.push(*message);
             }
         }
-        let value = self
+        let mut value = self
             .vault
             .reaction_pills_in(&rtxn, &readable, viewer, |row| {
                 self.row_admitted_in(&rtxn, &admission, &row.id)
             })?;
+        let mut reactors = BTreeMap::new();
+        for pill in value.values_mut().flatten() {
+            let mut shown = Vec::with_capacity(pill.by.len());
+            for person in std::mem::take(&mut pill.by) {
+                if let Entry::Vacant(entry) = reactors.entry(person) {
+                    entry.insert(self.row_admitted_in(&rtxn, &admission, &person)?);
+                }
+                if reactors[&person] {
+                    shown.push(person);
+                }
+            }
+            pill.by = shown;
+        }
         Ok(ScopedReadResult {
             value,
             receipt: admission.receipt,
@@ -290,6 +306,57 @@ impl ScopedRead<'_> {
         let reaction = every_status.reaction_admission_in(&rtxn, disclosure)?;
         Ok(self.row_admitted_in(&rtxn, &record, &signal.message)?
             && every_status.row_admitted_in(&rtxn, &reaction, &signal.reaction)?)
+    }
+
+    /// The reactor `signal` names, when this read admits their PERSON row
+    /// under its whole admission and `disclosure`, as a reaction line names
+    /// them; otherwise none. A signal this read may see reaches it either
+    /// way, with no id in the second case (Engine ANSWER
+    /// REACTION-REACTOR-ID-SURFACES = A, 17 Nov 03:15).
+    pub fn reaction_signal_reactor_under(
+        &self,
+        signal: &ReactionSignal,
+        disclosure: Option<&DisclosureContext>,
+    ) -> Result<Option<EntityId>> {
+        let rtxn = self.grant_read_txn()?;
+        let admission = self.reaction_admission_in(&rtxn, disclosure)?;
+        Ok(self
+            .row_admitted_in(&rtxn, &admission, &signal.by)?
+            .then_some(signal.by))
+    }
+
+    /// [`crate::Vault::reaction_history`] under this read, in one snapshot:
+    /// the chain of `by`'s `glyph` on `message`, each claim judged at every
+    /// status under the read's whole admission, so a removal stays readable
+    /// beside the put it removed. The chain is keyed by its reactor, so a
+    /// message this read does not read, or a reactor whose PERSON row it
+    /// does not read, has no history here at all (Engine ANSWER
+    /// REACTION-REACTOR-ID-SURFACES = A, 17 Nov 03:15). The entries come with
+    /// the receipt of that read (FIX 8669).
+    pub fn reaction_history(
+        &self,
+        message: EntityId,
+        by: EntityId,
+        glyph: &str,
+    ) -> Result<ScopedReadResult<Vec<ReactionHistoryEntry>>> {
+        let rtxn = self.grant_read_txn()?;
+        let every_status = self.at_every_claim_status()?;
+        let admission = self.reaction_admission_in(&rtxn, None)?;
+        let claims = every_status.reaction_admission_in(&rtxn, None)?;
+        let value = if self.row_admitted_in(&rtxn, &admission, &message)?
+            && self.row_admitted_in(&rtxn, &admission, &by)?
+        {
+            self.vault
+                .reaction_history_in(&rtxn, message, by, glyph, |row| {
+                    every_status.row_admitted_in(&rtxn, &claims, &row.id)
+                })?
+        } else {
+            Vec::new()
+        };
+        Ok(ScopedReadResult {
+            value,
+            receipt: admission.receipt,
+        })
     }
 }
 
