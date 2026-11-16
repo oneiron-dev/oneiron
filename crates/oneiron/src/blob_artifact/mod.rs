@@ -60,12 +60,12 @@ mod versions;
 pub(crate) use self::archived_versions::{
     ArchivedVersionSource, archive_version_rows, archive_version_source,
 };
-pub(crate) use self::body::validate_blob_artifact_body_bytes;
 pub use self::body::{
     BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES, BLOB_ARTIFACT_NAME_MAX_BYTES,
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
+pub(crate) use self::body::{body_with_secret_taint_refs, validate_blob_artifact_body_bytes};
 pub use self::body_file::BlobBodyFile;
 pub(crate) use self::body_file::BlobContent;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
@@ -110,11 +110,11 @@ pub use self::review_request::SlideReviewLimitsInput;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub use self::verbs::{
-    ArtifactAdmitSubmit, ArtifactAskOutcome, ArtifactAskSubmit, ArtifactAskUnits,
-    ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
-    DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, FolderItemInput, KeptProposal,
-    NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
-    SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
+    AdmittedArtifactVersion, ArtifactAdmitSubmit, ArtifactAskOutcome, ArtifactAskSubmit,
+    ArtifactAskUnits, ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest,
+    BornFromRequest, BornFromView, DeckProposeOutcome, DeckProposeRequest, DiscardedProposal,
+    FolderItemInput, KeptProposal, NativeOutputRequest, ProposalSettleRequest, ReleasedWait,
+    SlideReviewOutcome, SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
 pub(crate) use self::versions::RoomResponseVersion;
 pub(crate) use self::versions::archive_version_tables;

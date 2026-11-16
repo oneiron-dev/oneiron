@@ -495,7 +495,10 @@ pub(super) fn load_match_candidates(
             // it is never compared and never scored low.
             continue;
         }
-        if record.delete_after.is_some_and(|deadline| deadline <= now) {
+        if record
+            .delete_after
+            .is_some_and(|deadline| oneiron_store::expiry::is_expired(now, deadline))
+        {
             // Past its retention deadline the print is owed a hard delete;
             // until the prune lands it recognizes no one.
             continue;
