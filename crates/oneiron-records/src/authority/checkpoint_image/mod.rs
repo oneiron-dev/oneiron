@@ -63,13 +63,16 @@ use serde::Serialize;
 /// 41: a carried machine answer that needed an owner key's proof and carried none is held
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
-/// 42: each covered row's sequence floor comes from the covered rows, not from the order
+/// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
+/// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
+/// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
+/// 43: each covered row's sequence floor comes from the covered rows, not from the order
 /// they arrived in, and a row that only takes away is never floored (FIX
 /// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
