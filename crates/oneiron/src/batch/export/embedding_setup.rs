@@ -321,7 +321,7 @@ fn import_setup_outcome<T: PartialEq>(here: Option<T>, incoming: Option<T>) -> S
 /// provider is looked up: a space whose offer this host lacks is declared all the same, under
 /// its own id, with its vectors pending recompute.
 pub(super) fn import_embedding_setup_in_txn<R: Read + Seek>(
-    store: &crate::store::Store,
+    store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     archive: &IndexedArchive<'_, R>,
 ) -> Result<EmbeddingSetupImport> {

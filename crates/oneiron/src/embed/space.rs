@@ -279,9 +279,9 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
                 }
                 drop_space_rows_in_txn(store, wtxn, &space.id, &InputKind::ALL.into())?;
             }
-            // A same-width declaration keeps what the bound slots and a world's text space
-            // use, as the local declare path does (FIX 9832, FIX 11170); a first declaration,
-            // or one arriving after the width-conflict handling above, lands as it came.
+            // A same-width declaration keeps what the bound slots use, as the local declare
+            // path does (FIX 9832, FIX 11170); a first declaration, or one arriving after the
+            // width-conflict handling above, lands as it came.
             let space = match &existing {
                 Some(existing) if existing.dimensions == space.dimensions => {
                     capabilities::reconcile_bound_space_capabilities_in_txn(
@@ -525,10 +525,10 @@ pub(crate) fn embedding_spaces_in_txn(
 }
 
 /// [`Vault::declare_embedding_space`] in the caller's write: a valid space, at its declared
-/// width when its id is declared already, keeping what the slots and worlds it serves use
+/// width when its id is declared already, keeping what the slots it serves use
 /// ([`capabilities::reconcile_bound_space_capabilities_in_txn`], FIX 9832).
 pub(crate) fn declare_embedding_space_in_txn(
-    store: &Store,
+    store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     space: &EmbeddingSpace,
 ) -> Result<()> {

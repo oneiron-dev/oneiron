@@ -274,17 +274,14 @@ fn queue_way_back_in_txn(
     crate::vault::entity_revision::mark_vector_refill_in_txn(store, txn, id)
 }
 
-/// `sources` and every row that carries the worlds of one of them, transitively
-/// (`settings::carried_worlds_in`): a row that derives from one through a DerivedFrom edge (a
-/// caption carries the worlds of the picture it derives from), and a row whose birth names one
-/// as a prompt input (a claim a model wrote from a prompt that carried it carries its words,
-/// FIX 8192). The births are read once per call.
+/// `sources` and every row that derives from one of them through DerivedFrom edges,
+/// transitively: a caption carries the worlds of the picture it derives from
+/// (`settings::carried_worlds_in`).
 fn derived_closure_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     sources: &BTreeSet<EntityId>,
 ) -> Result<BTreeSet<EntityId>> {
-    let prompted = crate::store::birth_record::prompted::rows_prompted_by_input_in_txn(store, txn)?;
     let mut closure = sources.clone();
     let mut frontier: Vec<EntityId> = sources.iter().copied().collect();
     while let Some(id) = frontier.pop() {
@@ -292,11 +289,6 @@ fn derived_closure_in_txn(
             let derived = derived?;
             if closure.insert(derived) {
                 frontier.push(derived);
-            }
-        }
-        for row in prompted.get(&id).into_iter().flatten() {
-            if closure.insert(*row) {
-                frontier.push(*row);
             }
         }
     }
