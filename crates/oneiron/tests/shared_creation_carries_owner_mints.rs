@@ -7,7 +7,8 @@
 //! mint to a base agent each go on standing after he shares. Before, the creation refused a vault
 //! that held his agent Grant, and the other three rows stayed at the own-device residence, where
 //! no reader of a shared vault reads them. A copy put back at the own-device residence after
-//! sharing stands for nothing.
+//! sharing stands for nothing. A connected OAuth app's tokens, which stand on his agent Grant,
+//! go on working after he shares (Engine ANSWER R3F-CARRY-IN-PLACE = A).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -15,8 +16,16 @@
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use oneiron::authority::ActSurface;
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use oneiron::authority::{
+    ActSurface, AgentTier, HostSlipIssuer, MachineRole, OAuthAuthorizationStart,
+    OAuthAuthorizationStatus, OAuthClientRegistration, OAuthCodeExchange, OAuthRefresh,
+    OAuthTokens,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     EngineControlActor, EngineControlClass, FederationGrant, FederationGrantScope, Scope,
@@ -30,11 +39,14 @@ use oneiron::test_doors::grant_standing::{grant_line, standing_git_push_grant_id
 use oneiron::test_doors::steward::{
     GrantMark, dreamer, grant_mark, open_owner_carrier_vault, owner, write_steward_holder_row,
 };
+use oneiron::test_support::provision_engine_machines;
 use oneiron::verbs::{
-    AgentGrantMintRequest, GitPushGrantMintInput, RepoAnchorBindInput, bind_repo_anchor_as,
-    mint_agent_grant_as, mint_git_push_grant_as,
+    AgentGrantMintRequest, GitPushGrantMintInput, OAuthAuthorizationAnswer, RepoAnchorBindInput,
+    answer_oauth_authorization_as, bind_repo_anchor_as, mint_agent_grant_as,
+    mint_git_push_grant_as,
 };
-use oneiron::{EntityId, Vault};
+use oneiron::{EntityId, Vault, VaultConfig};
+use sha2::{Digest as _, Sha256};
 
 const SHARED: u64 = 42;
 
@@ -282,5 +294,189 @@ fn the_owners_steward_mint_stands_after_he_shares() {
         grant_mark(&carrier.vault, dreamer).expect("grant mark"),
         mark,
         "grant={grant:?}; expected the Dreamer's reach to stand on the same row after sharing"
+    );
+}
+
+/// The protected resource a sign-in's tokens are for: the vault's `/mcp`.
+const MCP_RESOURCE: &str = "https://vault.example/mcp";
+/// Where the connected app's sign-in returns.
+const APP_CALLBACK: &str = "https://app.example/oauth/callback";
+/// The app's PKCE verifier (RFC 7636: 43 to 128 unreserved characters).
+const PKCE_VERIFIER: &str = "a-connected-app-pkce-verifier-of-at-least-forty-three-characters";
+
+/// [`Carrier`] with the host issuer kept, whose secret keys the OAuth server's rows; the same
+/// setup as `open_owner_carrier_vault`.
+struct OAuthCarrier {
+    vault: Vault,
+    owner: AuthenticatedOwner,
+    issuer: HostSlipIssuer,
+    _dir: tempfile::TempDir,
+}
+
+fn oauth_carrier() -> OAuthCarrier {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+    let issuer = provision_engine_machines(&vault);
+    vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's machine profile");
+    let owner = owner(&vault).expect("owner proof");
+    OAuthCarrier {
+        vault,
+        owner,
+        issuer,
+        _dir: dir,
+    }
+}
+
+/// Wall-clock seconds, the clock the OAuth server's rows keep.
+fn wall_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("wall clock")
+        .as_secs()
+}
+
+/// A connected app: the owner agent Grant its tokens stand on, its client ID and its first
+/// token pair.
+struct SignedIn {
+    grant: EntityId,
+    client_id: String,
+    tokens: OAuthTokens,
+}
+
+/// The app signs in: it registers, asks at the read tier, the owner allows it as his inbox's
+/// one-tap does, the authorize page collects the code, and the app trades the code.
+fn sign_in(carrier: &OAuthCarrier) -> SignedIn {
+    let vault = &carrier.vault;
+    let now = wall_now();
+    let client = vault
+        .register_oauth_client(
+            &OAuthClientRegistration {
+                redirect_uris: vec![APP_CALLBACK.to_owned()],
+                client_name: Some("Connected app".to_owned()),
+                token_endpoint_auth_method: Some("none".to_owned()),
+                grant_types: None,
+                response_types: None,
+            },
+            now,
+        )
+        .expect("client registration")
+        .expect("a public client with an https callback registers");
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(PKCE_VERIFIER.as_bytes()));
+    let pending = vault
+        .begin_oauth_authorization(
+            &carrier.issuer,
+            &OAuthAuthorizationStart {
+                client: &client,
+                redirect_uri: APP_CALLBACK,
+                code_challenge: &challenge,
+                state: None,
+                resource: MCP_RESOURCE,
+                tier: AgentTier::ReadOnly,
+            },
+            now,
+        )
+        .expect("authorization request")
+        .expect("the request waits for the owner");
+    let answered = answer_oauth_authorization_as(
+        vault,
+        &carrier.owner,
+        ActSurface::ThisInstall,
+        OAuthAuthorizationAnswer {
+            request_ref: pending.request_ref,
+            allow: true,
+            tier: None,
+            world_ref: None,
+        },
+    )
+    .expect("the owner answers the sign-in");
+    let grant = answered
+        .grant_ref
+        .expect("an allow mints the owner's agent Grant");
+    let OAuthAuthorizationStatus::Allowed { code, .. } = vault
+        .collect_oauth_authorization(&carrier.issuer, &pending.page_token, now)
+        .expect("the page's poll")
+    else {
+        panic!("expected the allowed request to hand the page its code");
+    };
+    let tokens = vault
+        .exchange_oauth_code(
+            &carrier.issuer,
+            &OAuthCodeExchange {
+                code: &code,
+                client_id: &client.client_id,
+                redirect_uri: APP_CALLBACK,
+                code_verifier: PKCE_VERIFIER,
+                resource: Some(MCP_RESOURCE),
+            },
+            now,
+        )
+        .expect("code exchange")
+        .expect("the app trades its code for a token pair");
+    SignedIn {
+        grant,
+        client_id: client.client_id,
+        tokens,
+    }
+}
+
+/// Whether the access token `token` works at the `/mcp` ingress: it resolves to the slip the
+/// server holds for it, which it does only while its owner agent Grant stands.
+fn token_works(carrier: &OAuthCarrier, token: &str) -> bool {
+    carrier
+        .vault
+        .resolve_oauth_access_token(&carrier.issuer, token, MCP_RESOURCE, wall_now())
+        .expect("token resolution")
+        .is_some()
+}
+
+#[test]
+fn a_connected_oauth_apps_token_still_works_after_he_shares() {
+    let carrier = oauth_carrier();
+    let app = sign_in(&carrier);
+    assert!(
+        token_works(&carrier, &app.tokens.access_token),
+        "grant={:?}; expected the app's access token to work before sharing",
+        app.grant
+    );
+    let before = row(&carrier.vault, app.grant);
+
+    carrier
+        .vault
+        .initialize_shared_vault(&carrier.owner, SHARED, None, &[], 1)
+        .expect("the owner shares a vault an OAuth app is connected to");
+
+    assert_moved(
+        &carrier.vault,
+        app.grant,
+        &before,
+        "OAuth sign-in's agent Grant",
+    );
+    assert!(
+        token_works(&carrier, &app.tokens.access_token),
+        "grant={:?}; expected the app's access token to work after sharing, on the same Grant",
+        app.grant
+    );
+    let refreshed = carrier
+        .vault
+        .refresh_oauth_token(
+            &carrier.issuer,
+            &OAuthRefresh {
+                refresh_token: &app.tokens.refresh_token,
+                client_id: &app.client_id,
+                resource: Some(MCP_RESOURCE),
+                scope: None,
+            },
+            wall_now(),
+        )
+        .expect("refresh")
+        .expect("the app's refresh token rotates after sharing");
+    assert!(
+        token_works(&carrier, &refreshed.access_token),
+        "grant={:?}; expected the access token a refresh after sharing mints to work",
+        app.grant
     );
 }
