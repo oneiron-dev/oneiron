@@ -2,9 +2,10 @@
 //! (OF-067): a message stream's seed, a NOTE's live text, a proposal's body,
 //! a code file's edit. The batch door's own plan reads it: each secret its
 //! text rules place goes to custody and leaves its handle, the copy is read
-//! again, and a hit no span places refuses the write before any record is
-//! minted. The owner's switch, read in the writer's transaction, turns it
-//! off as it turns off the batch door.
+//! again, and a hit no span places is sealed whole, as the batch door seals
+//! one (`seal_whole`): a text keeps one handle. A hit no seal clears refuses
+//! the write before any record is minted. The owner's switch, read in the
+//! writer's transaction, turns it off as it turns off the batch door.
 //!
 //! It mints through the side-row wall's one core
 //! ([`admit_seeded_parts`]), with each part's own record and place on its
@@ -23,6 +24,7 @@ use std::sync::Arc;
 use heed::{RoTxn, RwTxn};
 
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
+use super::seal_whole;
 use super::secret_spans;
 use super::side_row::{SidePart, admit_seeded_parts, plan_seeded_parts};
 use super::wipe::{PlanValues, replace_wiped, wipe_part};
@@ -55,11 +57,12 @@ pub(crate) enum Part<'a> {
 /// Admits the `parts` of `record`, each under its place (`text:<field>`,
 /// `body`), in the writer's transaction. With the owner's switch on, parts the
 /// door would refuse are planned on a copy with a stand-in for each secret
-/// their spans place, and the copy is read again: only a clean copy mints
-/// custody records, one per value (a value in `lifted` keeps its handle). The
-/// parts then hold their handles. A hit the plan leaves refuses the write with
-/// the door's reason, before anything is minted. Returns whether a part
-/// changed.
+/// their spans place, and the copy is read again: a hit the plan leaves is
+/// sealed whole, a text whole (`seal_whole`), and only a clean copy mints
+/// custody records, one per value (a value in `lifted` keeps its handle, and
+/// each sealed value joins it). The parts then hold their handles. A hit no
+/// seal clears refuses the write with the door's reason, before anything is
+/// minted. Returns whether a part changed.
 pub(crate) fn admit_parts_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -73,8 +76,9 @@ pub(crate) fn admit_parts_in_txn(
 /// [`admit_parts_in_txn`] as its plan alone (FIX 21363), for a replay that
 /// proves an earlier admission stored what it offers again: the parts take
 /// the handles of the values `known` holds, and nothing is minted or
-/// written. A secret `known` does not hold refuses with the door's reason.
-/// Returns whether a part changed.
+/// written: a value the admission sealed whole takes the handle of the
+/// record `known` holds it in. A secret `known` does not hold refuses with
+/// the door's reason. Returns whether a part changed.
 pub(crate) fn plan_parts_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -244,38 +248,48 @@ pub(crate) fn scan_document_in_txn(
 
 /// The batch door's mask on write, predicted for a planner that holds no
 /// writer (OF-560): `Ok(())` when the door would place every hit in `body`
-/// (a put's body, read as the door reads one) and land the write with its
-/// handles, or the door's refusal for a hit no span places. The plan runs on
-/// a copy with a stand-in for each secret, as the door's does, and the copy
-/// is read again. Nothing is minted, values custody already holds are not
-/// read, and the owner's switch is the caller's to read.
+/// (a put's body, read as the door reads one), or seal what no span places
+/// (`seal_whole`), and land the write with its handles; the door's refusal
+/// for a hit no seal clears. The plan runs on a copy with a stand-in for
+/// each secret and each seal, as the door's does, and the copy is read
+/// again. Nothing is minted, values custody already holds are not read, and
+/// the owner's switch is the caller's to read.
 pub(crate) fn predict_masked_body(body: &[u8]) -> Result<()> {
-    predict_masked(body, |plan| plan.mask_body(body))
+    predict_masked(
+        body,
+        |plan| plan.mask_body(body),
+        seal_whole::predict_body_seals,
+    )
 }
 
 /// [`predict_masked_body`] for a text field's text, read as the door reads
-/// one.
+/// one, which a hit no span places seals whole.
 pub(crate) fn predict_masked_text(text: &str) -> Result<()> {
-    predict_masked(text.as_bytes(), |plan| {
-        Ok(plan.mask_text(text)?.map(String::into_bytes))
-    })
+    predict_masked(
+        text.as_bytes(),
+        |plan| Ok(plan.mask_text(text)?.map(String::into_bytes)),
+        seal_whole::predict_text_seals,
+    )
 }
 
 fn predict_masked(
     data: &[u8],
     mask: impl FnOnce(&mut super::Masker) -> Result<Option<Vec<u8>>>,
+    seal: impl FnOnce(&mut Vec<u8>, Error) -> Result<()>,
 ) -> Result<()> {
-    let Err(refusal) = super::super::scan_write_payload(data) else {
+    if super::super::scan_write_payload(data).is_ok() {
         return Ok(());
-    };
+    }
     // No record is read or written: the plan's place only names its finds.
     let mut plan = super::Masker {
         at: Some((EntityId::from_bytes_unchecked([0; 16]), "plan".to_owned())),
         ..super::Masker::default()
     };
-    // The copy holds what no span placed; it is wiped once read again.
-    let Some(copy) = mask(&mut plan)?.map(zeroize::Zeroizing::new) else {
-        return Err(refusal);
+    // The copy holds what no span placed, and then what no seal took; it is
+    // wiped once read again.
+    let mut copy = zeroize::Zeroizing::new(mask(&mut plan)?.unwrap_or_else(|| data.to_vec()));
+    let Err(left) = super::super::scan_write_payload(&copy) else {
+        return Ok(());
     };
-    super::super::scan_write_payload(&copy)
+    seal(&mut *copy, left)
 }

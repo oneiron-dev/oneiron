@@ -295,7 +295,8 @@ fn pin_in_txn(
 /// `args` as the JSON text the secret write-wall admits for `registration`,
 /// read as a body so a credential-valued member is read structurally (FIX
 /// 8718): with the owner's scanning on, each secret goes to custody and
-/// leaves its handle; a hit the wall cannot place refuses the arming, before
+/// leaves its handle; a hit no span places is sealed whole at its smallest
+/// value (`seal_whole`), and one no seal clears refuses the arming, before
 /// anything is pinned. With scanning off the text is the caller's own.
 fn admitted_args_in_txn(
     vault: &Vault,

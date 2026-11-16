@@ -138,9 +138,9 @@ impl HistoryLedgerSnapshot {
     /// What importing `conversation` would do. The write door's secret scan
     /// and its mask on write are predicted, over the same bytes the import
     /// would stage, when the vault's switch has it on: a secret the mask
-    /// places lands as its handle, and only a hit no span places counts as
-    /// refused. A refusal from a policy gate is only seen by the import
-    /// itself.
+    /// places lands as its handle, a hit no span places lands sealed whole
+    /// (`seal_whole`), and only a hit no seal clears counts as refused. A
+    /// refusal from a policy gate is only seen by the import itself.
     ///
     /// # Errors
     ///
