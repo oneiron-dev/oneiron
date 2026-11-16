@@ -193,9 +193,7 @@ impl SyncClient {
         // Saturate to 0 on pre-epoch wall clock (NTP regression, suspended
         // VM, embedded device with reset RTC). Matches sync/queue.rs
         // push_embed_job.
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let now_secs = crate::unix_seconds_now();
 
         let effective_worlds = self.negotiated_worlds_or_live()?;
         let mut keys: Vec<WindowKey> = Vec::new();
