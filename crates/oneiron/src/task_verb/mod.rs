@@ -7,6 +7,7 @@ mod ask_band;
 mod ask_effect;
 mod ask_facade;
 mod ask_forward;
+mod ask_guard;
 mod ask_guest;
 mod ask_limits;
 mod ask_option_link;
