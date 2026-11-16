@@ -601,6 +601,7 @@ fn owner_change(key: &str, scope: SettingScope, value: Value) -> SetSetting {
         expected_revision: None,
         why: None,
         check_in_ref: None,
+        weight_runs: None,
     }
 }
 
