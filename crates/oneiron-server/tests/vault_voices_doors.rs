@@ -576,9 +576,12 @@ impl Served {
         roster.segments[0].subject_ref
     }
 
-    /// The owner mints the agent one Grant naming `verbs`, at the Grant
-    /// mint door: answers its id.
+    /// The owner mints the agent one Grant naming `read` (so the Grant
+    /// confers) and `verbs`, at the Grant mint door: answers its id.
     async fn grant_agent(&self, verbs: &[&str]) -> String {
+        let verbs: Vec<&str> = std::iter::once("read")
+            .chain(verbs.iter().copied())
+            .collect();
         let minted = self
             .ok(
                 Caller::Owner,
@@ -1200,11 +1203,12 @@ fn a_person_withdraws_their_own_voice_and_the_owner_any_subjects() {
 /// VOICE-WITHDRAW-AGENT-GRANT = A; lead: "the way out must never be harder
 /// than the way in"): the print goes, the agent records the withdrawal,
 /// and the owner is told in their inbox who asked and which consent it
-/// was. An agent with no Grant, or with one naming only the withdraw verb,
-/// is refused; the consent-log Grant reaches no owner's voice and needs a
-/// subject. The withdrawal only narrows: the withdrawn grant enrolls
-/// nothing again, every other print still recognizes its subject, and a
-/// replay deletes nothing and tells no one again.
+/// was. An agent with no Grant, or with a conferring one that names the
+/// withdraw verb but not the consent-log verb, is refused; the consent-log
+/// Grant reaches no owner's voice and needs a subject. The withdrawal only
+/// narrows: the withdrawn grant enrolls nothing again, every other print
+/// still recognizes its subject, and a replay deletes nothing and tells no
+/// one again.
 #[test]
 fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_withdrawal_and_tells_the_owner() {
     run_on_engine_stack("voices-recognition-agent", || async {
@@ -1218,7 +1222,8 @@ fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_withdrawal_and_tells
         served.enroll_print(person, "person-grant", &axis_vector(1), now);
         served.enroll_print(counterparty, "counterparty-grant", &axis_vector(2), now);
 
-        // No Grant, then a Grant naming only the withdraw verb: refused.
+        // No Grant, then a conferring Grant naming the withdraw verb and not
+        // the consent-log verb: refused.
         for (index, verb) in [None, Some(RECOGNITION_WITHDRAW)].into_iter().enumerate() {
             if let Some(verb) = verb {
                 served.grant_agent(&[verb]).await;
