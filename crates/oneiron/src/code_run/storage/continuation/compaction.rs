@@ -35,7 +35,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::super::compaction::{
@@ -43,10 +42,10 @@ use super::super::compaction::{
 };
 use super::super::folds::{base_code_run_folds_in_txn, seed_code_run_folds_in_txn};
 use crate::code_run::payload::decode_self_dispatch_outcome;
-use crate::code_run::support::{expect_map, invalid_code_run_replay, map_get, str_value};
+use crate::code_run::support::{expect_map, map_get, str_value};
 use crate::code_run::{CodeRunBridgeCall, CodeRunReplayRecord, SelfDispatchOutcome, SelfEffect};
 use crate::compaction::{
-    FoldCompactAsked, FoldLedger, FoldMarked, FoldRecord, FoldReply, FoldUnfolded, SelfFoldCall,
+    FoldCompactAsked, FoldLedger, FoldMarked, FoldRecord, FoldUnfolded, SelfFoldCall,
     parse_fold_handle,
 };
 use crate::store::Store;
@@ -351,21 +350,7 @@ fn answered_fold_bound(call: &CodeRunBridgeCall) -> Result<u64> {
         })
 }
 
-/// A fold verb's typed answer in `answer`, the JSON its call recorded, or
-/// `None` for the ledger's refusal, which gave out no handle.
-///
-/// # Errors
-///
-/// An answer that decodes as neither.
-fn fold_answer<T: DeserializeOwned>(answer: &str) -> Result<Option<T>> {
-    match serde_json::from_str::<FoldReply<T>>(answer) {
-        Ok(FoldReply::Answer(answer)) => Ok(Some(answer)),
-        Ok(FoldReply::Refused { .. }) => Ok(None),
-        Err(_) => Err(undecoded_fold_answer()),
-    }
-}
-
-/// The storage error for a copied fold call that does not decode.
-fn undecoded_fold_answer() -> Error {
-    invalid_code_run_replay("a copied fold answer does not decode")
-}
+#[doc(hidden)]
+use oneiron_records::code_run::storage::continuation::compaction::{
+    fold_answer, undecoded_fold_answer,
+};

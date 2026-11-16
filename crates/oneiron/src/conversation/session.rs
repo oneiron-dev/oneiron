@@ -7,7 +7,6 @@ use crate::federation::{ScopeAxis, ScopeId};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Participants one session's presence holds past which this process says
@@ -17,20 +16,9 @@ const PRESENCE_NOTICE: usize = 10_000;
 /// Not a bound: every session's presence is kept.
 const ACTIVE_SESSIONS_NOTICE: usize = 1024;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionMode {
-    #[default]
-    Direct,
-    Group,
-    Council,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionPresence {
-    pub mode: SessionMode,
-    /// Who is here now, earliest arrival first.
-    pub active_participant_ids: Vec<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::conversation::session::{SessionMode, SessionPresence};
+
 impl Vault {
     pub fn session_presence(&self, session: EntityId) -> Result<SessionPresence> {
         let txn = self.store.env.read_txn()?;

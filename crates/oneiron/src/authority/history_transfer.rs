@@ -285,6 +285,10 @@ impl Vault {
     /// attested prefix plus the signed incoming tail, not an independent
     /// replay of the whole prefix ([`AdoptedPrefix`]); a covered row the
     /// blobs carry lands as hydration.
+    /// A row the source's own fold never applied, which the door here would
+    /// hold, is left out with each row standing on it (H72), so the history
+    /// of a vault that stored a stranger's row before #1449 imports without
+    /// them.
     pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
@@ -293,6 +297,12 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        let carried: BTreeMap<_, _> = decoded
+            .iter()
+            .map(|(hash, _, entry)| (*hash, entry.clone()))
+            .collect();
+        let never_applied = carried_rows_never_applied_in_txn(&self.store, &txn, &carried)?;
+        decoded.retain(|(hash, _, _)| !never_applied.contains(hash));
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;

@@ -138,9 +138,7 @@ impl SkillOptimizeAuthor for CoachSkillAuthor {
         // The workflow is the Coach's recipe. Its load pins its revision and
         // the Coach's model on the optimization attempt, where the edit's
         // held-out outcome is credited.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs());
+        let now = oneiron_base::unix_seconds_now();
         let (loaded, pack_sources) = match server.vault().load_attempt_skill_pack_sourced(
             attempt.id,
             &coach_improver_skill_id()?,
