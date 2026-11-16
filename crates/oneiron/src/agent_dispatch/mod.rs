@@ -41,6 +41,8 @@ pub(crate) use self::comm_widen::{
     comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn, effective_comm_in_txn,
     erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) mod comm_widen_test_door;
 mod context;
 mod continuation;
 pub use self::continuation::{ConcernPromptInjectOutcome, ConcernPromptInjectRequest};
