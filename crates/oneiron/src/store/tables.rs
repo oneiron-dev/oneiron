@@ -291,6 +291,10 @@ crate::side_table::side_tables! {
     /// hash32 (the ReRoot's entry hash).
     AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF: VaultMeta b"authority:leave-notice-delegation-by-handoff:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// A recovery hold's seed slot this install may hold: written and committed before R's seed
+    /// enters the slot, removed when the slot is deleted. Public key only. Key: successor key.
+    AUTHORITY_RECOVERY_HOLD_SLOT_PENDING: VaultMeta b"authority:recovery-hold-slot-pending:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The last commit a write that changes no content stamped (FIX 6730): its transaction id,
     /// the last content commit's and its class, so a host's telemetry and a backup's own writes
     /// move no backup watermark. Runtime-tier: no image carries it. Key: ().
@@ -1152,6 +1156,12 @@ crate::side_table::side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// Whether the recovery box's kit-only hold may not match the recovery preset: set before a
+    /// switch into 'Nobody but me' asks the box to hold, and by a switch out of it; cleared once
+    /// the box answered. A managed boot resends the hold that matches the preset when it is set.
+    /// Key: ().
+    VAULT_KEY_BOX_HOLD_PENDING: VaultMeta b"vault_key:box_hold_pending:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// The BLAKE3 fingerprint of the recipient public key each escrow label was sealed to, kept
     /// after the label retires, so a later add of the same key under another label warns (FIX

@@ -6,8 +6,9 @@
 //! resolving.
 use super::{
     Argon2Cost, Deserialize, EscrowAddWarning, EscrowRetirement, HybridPublicKey, Kek, Named,
-    Passphrase, Purpose, RecoveryPreset, Result, SealKey, SealParams, Serialize, SideTable,
-    StoredWrap, SysRng, VaultDataKey, VaultKeyWrapKind, Zeroizing, refused, seal, side_table,
+    Passphrase, Purpose, RecoveryBoxHoldPending, RecoveryPreset, Result, SealKey, SealParams,
+    Serialize, SideTable, StoredWrap, SysRng, VaultDataKey, VaultKeyWrapKind, Zeroizing, refused,
+    seal, side_table,
 };
 #[doc(hidden)]
 pub(super) use oneiron_records::world_keys::vault_key::state::{
@@ -19,6 +20,8 @@ pub(super) const PASSKEY_PRF_CONTEXT: &str = "oneiron/vault-key-passkey-prf-inpu
 pub(super) const ESCROW_SEED_LABEL: &[u8] = b"oneiron/vault-key-escrow-recipient/v1";
 pub(super) const STATE: SideTable<(), VaultKeyState, Named> =
     SideTable::new(&side_table::VAULT_KEY_STATE);
+pub(super) const BOX_HOLD_PENDING: SideTable<(), RecoveryBoxHoldPending, Named> =
+    SideTable::new(&side_table::VAULT_KEY_BOX_HOLD_PENDING);
 pub(super) const WRAPS: SideTable<String, StoredWrap, Named> =
     SideTable::new(&side_table::VAULT_KEY_WRAP);
 #[derive(Debug, Clone, Serialize, Deserialize)]

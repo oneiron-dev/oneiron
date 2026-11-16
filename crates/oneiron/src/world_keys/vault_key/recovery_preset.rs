@@ -40,8 +40,13 @@
 use super::kit::IssuedVaultKeyKit;
 use super::*;
 use crate::config::VaultDataKeyCustody;
-use crate::store::recovery_kit::{KitIssue, KitPiece};
+use crate::store::recovery_kit::{KitIssue, KitPassphrase, KitPiece};
 use crate::world_keys::{WORLD_KIT_ESCROW, derive_guarded, os_fill};
+
+mod recovery_box_hold;
+pub use recovery_box_hold::{NoRecoveryBox, RecoveryBoxHold, RecoveryBoxHoldPending};
+
+mod kit_only_switch;
 
 const SHEET_KEK_CONTEXT: &str = "oneiron/vault-key-sheet/v1";
 const SHEET_CHECK_CONTEXT: &str = "oneiron/vault-key-sheet/v1/check";
@@ -74,6 +79,11 @@ const WORLD_KIT_LABEL: &str = "the world kit's escrow wrap is written by confirm
 const SHEET_MALFORMED: &str = "a recovery sheet's code is 56 letters and digits";
 const SHEET_TYPO: &str = "the recovery sheet's code has a typo: its check does not match";
 const PRESET_RACED: &str = "the recovery preset changed while the sheet was drawn: set it again";
+const KIT_ONLY_NEEDS_KIT: &str = "switching to Nobody but me needs your recovery kit, so the key the \
+                                  recovery box could release is replaced; bring the kit; nothing was \
+                                  written";
+const PRESET_OWNER_ONLY: &str =
+    "setting the recovery preset is the owner's to do; no Grant action names it";
 
 /// Who writes an escrow wrap, typed by the writing path and never read from
 /// its label: the world kit's confirm, or any other recipient.
@@ -280,6 +290,15 @@ enum SheetHandover {
     Answer { device_wrap: Option<String> },
 }
 
+/// A kit door's prepared authority rotation: the kit's restored seed and the
+/// live generation it held on the pre-write read snapshot, if any. The write
+/// finds the live generation again in its txn and rotates from it; no seed
+/// is handed out by the switch.
+struct PreparedRotation {
+    seed: crate::world_keys::RecoveryRootSeed,
+    live_pre: Option<u32>,
+}
+
 /// What setting the recovery preset did.
 #[derive(Debug)]
 pub struct RecoveryPresetChange {
@@ -299,6 +318,11 @@ pub struct RecoveryPresetChange {
     /// failed after it: the change stands, and the next sealed open repairs
     /// the mirror.
     pub mirror_pending: bool,
+    /// The change committed to `Standard` but the recovery box's release did
+    /// not go through: the preset stands, and the box still holds kit-only.
+    /// Never an error; only the switch back sets it. The marker
+    /// [`RecoveryBoxHoldPending`] stays set, and a managed boot resends the hold.
+    pub box_release_pending: bool,
 }
 
 /// What turning on "any 2 pieces" did: the preset's change, and the kit its
@@ -309,13 +333,30 @@ pub struct RecoveryPresetAnyTwoChange {
     pub kit: IssuedVaultKeyKit,
 }
 
+/// A fresh random attempt id for one switch's box-hold-pending marker, from
+/// the OS CSPRNG. Never "stored + 1": after a delete a counter restarts and
+/// could repeat an attempt a heal still holds.
+fn fresh_box_hold_attempt() -> Result<u64> {
+    let mut bytes = [0u8; 8];
+    os_fill(&mut bytes)?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
 impl Vault {
     /// The owner's recovery preset: `Standard` while the vault has no data
     /// key.
     pub fn recovery_preset(&self) -> Result<RecoveryPreset> {
         let txn = self.store.env.read_txn()?;
+        self.recovery_preset_in_txn(&txn)
+    }
+
+    /// [`Self::recovery_preset`] in the caller's transaction (a read or a
+    /// write): `Standard` while the vault has no data key. The root door
+    /// refuses the box's released key under kit-only in its writer through
+    /// it, so the check counts.
+    pub(crate) fn recovery_preset_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<RecoveryPreset> {
         Ok(STATE
-            .get(&self.store, &txn, &())?
+            .get(&self.store, txn, &())?
             .map_or(RecoveryPreset::Standard, |state| state.recovery))
     }
 
@@ -341,8 +382,21 @@ impl Vault {
         owner: &crate::consent::AuthenticatedOwner,
         preset: RecoveryPreset,
         keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
+        box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetChange> {
-        self.set_recovery_preset_handed_over(owner, preset, keep_sheet, SheetHandover::Kept)
+        // No rotation without the kit: the surface never reaches an enrol.
+        let authority = crate::authority::ActAuthority::Owner(
+            owner.clone(),
+            crate::authority::ActSurface::ThisInstall,
+        );
+        self.set_recovery_preset_handed_over(
+            &authority,
+            preset,
+            keep_sheet,
+            SheetHandover::Kept,
+            None,
+            box_hold,
+        )
     }
 
     /// [`Vault::set_recovery_preset_as`] for a caller whose answer is the
@@ -356,13 +410,20 @@ impl Vault {
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         preset: RecoveryPreset,
+        box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetChange> {
         let device_wrap = self.device_wrap_held_here()?;
+        let authority = crate::authority::ActAuthority::Owner(
+            owner.clone(),
+            crate::authority::ActSurface::ThisInstall,
+        );
         self.set_recovery_preset_handed_over(
-            owner,
+            &authority,
             preset,
             |_| Ok(()),
             SheetHandover::Answer { device_wrap },
+            None,
+            box_hold,
         )
     }
 
@@ -387,21 +448,79 @@ impl Vault {
 
     fn set_recovery_preset_handed_over(
         &self,
-        owner: &crate::consent::AuthenticatedOwner,
+        authority: &crate::authority::ActAuthority,
         preset: RecoveryPreset,
         keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
         handover: SheetHandover,
+        rotation: Option<PreparedRotation>,
+        box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetChange> {
+        let owner = match authority {
+            crate::authority::ActAuthority::Owner(owner, _) => owner,
+            crate::authority::ActAuthority::Agent(_) => {
+                return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
+            }
+        };
+        let current = self.recovery_preset()?;
+        // Entering kit-only without the kit while a generation is live is
+        // refused before anything is drawn or kept. The write checks again.
+        if rotation.is_none() && current == RecoveryPreset::Standard && preset.is_nobody_but_me() {
+            let txn = self.store.env.read_txn()?;
+            if self.any_live_recovery_authority_in_txn(&txn)? {
+                return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
+            }
+        }
         let issue = match preset {
             RecoveryPreset::NobodyButMeAnyTwo => return Err(refused(ANY_TWO_NEEDS_KIT)),
-            RecoveryPreset::NobodyButMe if self.recovery_preset()? != preset => {
-                Some(self.draw_recovery_sheet(keep_sheet)?)
+            RecoveryPreset::NobodyButMe if current != preset => {
+                // Custody first, then the held key, as the draw checked them
+                // before it took the key as an argument.
+                if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
+                    return Err(refused(PRESET_CUSTODY));
+                }
+                let held = self
+                    .held_vault_key()
+                    .ok_or_else(|| refused("unlock the vault key first"))?;
+                Some(self.draw_recovery_sheet(&held, keep_sheet)?)
             }
             RecoveryPreset::NobodyButMe | RecoveryPreset::Standard => None,
         };
-        let transition = self.begin_wrap_transition()?;
-        let mut change = self.with_write_txn(|txn| {
+        // Target kit-only writes the box-hold-pending marker in its own write
+        // before it holds the box, after the no-write checks pass; the switch's
+        // own write clears it, and a failure after the hold releases the box
+        // again on a vault still on `Standard`. A hold error refuses with the
+        // marker set for a managed boot to heal.
+        let held_box = preset.is_nobody_but_me();
+        let hold_attempt = if held_box {
+            let attempt = fresh_box_hold_attempt()?;
+            let pending = RecoveryBoxHoldPending {
+                target_kit_only: true,
+                attempt,
+            };
+            self.with_write_txn(|txn| self.put_recovery_box_hold_pending_in_txn(txn, &pending))?;
+            box_hold.hold_kit_only(true)?;
+            Some(attempt)
+        } else {
+            None
+        };
+        // Leaving kit-only draws its attempt before the write; the write puts
+        // the marker when it actually leaves, in the same txn as the preset.
+        let leave_attempt = if preset == RecoveryPreset::Standard {
+            Some(fresh_box_hold_attempt()?)
+        } else {
+            None
+        };
+        let transition = self.release_box_hold_on_failure(
+            self.begin_wrap_transition(),
+            held_box,
+            hold_attempt,
+            box_hold,
+        )?;
+        let written = self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
+            if let Some(attempt) = hold_attempt {
+                self.clear_recovery_box_hold_pending_in_txn(txn, attempt)?;
+            }
             let mut state = STATE
                 .get(&self.store, txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?;
@@ -412,9 +531,16 @@ impl Vault {
                 removed: Vec::new(),
                 retired: Vec::new(),
                 mirror_pending: false,
+                box_release_pending: false,
             };
             if state.recovery == preset {
-                return Ok(change);
+                return Ok((change, None));
+            }
+            // Rotation happens iff Standard goes to kit-only and a generation
+            // is live. Kit-only to kit-only and the switch back change no
+            // roster.
+            if state.recovery == RecoveryPreset::Standard && preset.is_nobody_but_me() {
+                self.maybe_rotate_recovery_authority_in_txn(txn, authority, &rotation)?;
             }
             if preset == RecoveryPreset::NobodyButMe {
                 let Some((_, commitment, envelope)) = &issue else {
@@ -439,30 +565,70 @@ impl Vault {
                     Some((VaultKeyWrapKind::Sheet, envelope.clone())),
                 )?;
             }
+            // Leaving kit-only sets the marker in the same txn, before the STATE
+            // put; staying on Standard writes no marker.
+            let mut leave_marker: Option<u64> = None;
+            if preset == RecoveryPreset::Standard && state.recovery.is_nobody_but_me() {
+                if let Some(attempt) = leave_attempt {
+                    self.put_recovery_box_hold_pending_in_txn(
+                        txn,
+                        &RecoveryBoxHoldPending {
+                            target_kit_only: false,
+                            attempt,
+                        },
+                    )?;
+                    leave_marker = Some(attempt);
+                }
+            }
             state.recovery = preset;
+            // [VAULT-DATA-KEY-ROTATION]: its `start_data_key_generation_in_txn`
+            // will run last in this write, after the STATE put.
             STATE.put(&self.store, txn, &(), &state)?;
-            Ok(change)
-        })?;
+            Ok((change, leave_marker))
+        });
+        let (mut change, leave_marker) =
+            self.release_box_hold_on_failure(written, held_box, hold_attempt, box_hold)?;
         change.mirror_pending = finish_or_pending(transition);
+        // Target Standard releases the box after the commit; a failure is
+        // answered as pending, never an error. An `Ok` release clears the
+        // leaving marker (a failure there is logged only); an `Err` keeps it.
+        if preset == RecoveryPreset::Standard {
+            match box_hold.hold_kit_only(false) {
+                Ok(()) => {
+                    if let Some(attempt) = leave_marker {
+                        if let Err(error) = self.clear_recovery_box_hold_pending(attempt) {
+                            tracing::warn!(
+                                kind = ?error.kind(),
+                                "a recovery preset change committed to Standard and released the box; clearing its marker did not go through"
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "a recovery preset change committed to Standard; the recovery box release is pending"
+                    );
+                    change.box_release_pending = true;
+                }
+            }
+        }
         if change.previous != change.preset {
             change.sheet = issue.map(|(sheet, _, _)| sheet);
         }
         Ok(change)
     }
 
-    /// Draws a printed sheet for the held key, its wrap sealed, and hands it
-    /// to `keep_sheet` before any write. The sheet, the commitment of the key
-    /// it opens and its wrap's envelope.
+    /// Draws a printed sheet for `key`, its wrap sealed, and hands it to
+    /// `keep_sheet` before any write. The sheet, the commitment of the key it
+    /// opens and its wrap's envelope. The caller checks an owner-held key
+    /// custody and passes the held key; the commitment checks keep comparing
+    /// the held key's commitment.
     fn draw_recovery_sheet(
         &self,
+        key: &VaultDataKey,
         keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
     ) -> Result<(RecoverySheet, [u8; 32], Vec<u8>)> {
-        if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
-            return Err(refused(PRESET_CUSTODY));
-        }
-        let key = self
-            .held_vault_key()
-            .ok_or_else(|| refused("unlock the vault key first"))?;
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let sheet = RecoverySheet::generate()?;
@@ -471,7 +637,7 @@ impl Vault {
             &commitment,
             &VaultKeyWrapKind::Sheet,
             &WrapSecret::Kek(sheet.kek(&vault_id)),
-            &key,
+            key,
         )?;
         keep_sheet(&sheet)?;
         Ok((sheet, commitment, envelope))
@@ -493,7 +659,9 @@ impl Vault {
     /// (FLIP = A); what was sealed before still opens with what opened it
     /// then. With the switch already on, the new kit is issued and no other
     /// wrap changes. A mirror rewrite that fails after the commit is
-    /// answered as `mirror_pending`.
+    /// answered as `mirror_pending`. Entering from `Standard` while a
+    /// generation is live needs the kit:
+    /// [`Self::set_recovery_preset_any_two_with_kit_as`].
     ///
     /// # Errors
     ///
@@ -506,44 +674,21 @@ impl Vault {
         issue: &KitIssue<'_>,
         passkey: Option<KitPasskey<'_>>,
         keep_pieces: impl FnOnce(&[KitPiece]) -> Result<()>,
+        box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetAnyTwoChange> {
-        if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
-            return Err(refused(PRESET_CUSTODY));
-        }
-        let mut drawn = self.draw_vault_key_kit(owner, issue, passkey)?;
-        let point = drawn.point.take();
-        let commitment = drawn.commitment;
-        // The owner's pieces are kept before this install's slot is
-        // replaced, so a failed keep leaves the earlier kit's local piece.
-        drawn.keep_owner_pieces(keep_pieces)?;
-        let kit = drawn.hand_over(true)?;
-        let preset = RecoveryPreset::NobodyButMeAnyTwo;
-        let transition = self.begin_wrap_transition()?;
-        let mut change = self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let mut state = STATE
-                .get(&self.store, txn, &())?
-                .ok_or_else(|| refused("the vault has no data key"))?;
-            if state.commitment != commitment {
-                return Err(refused("this handle holds another vault key"));
-            }
-            self.list_vault_key_kit_in_txn(txn, owner, &kit.manifest)?;
-            let (removed, retired) =
-                self.enter_nobody_but_me_in_txn(txn, &transition, preset, point)?;
-            let change = RecoveryPresetChange {
-                previous: state.recovery,
-                preset,
-                sheet: None,
-                removed,
-                retired,
-                mirror_pending: false,
-            };
-            state.recovery = preset;
-            STATE.put(&self.store, txn, &(), &state)?;
-            Ok(change)
-        })?;
-        change.mirror_pending = finish_or_pending(transition);
-        Ok(RecoveryPresetAnyTwoChange { change, kit })
+        // No rotation without the kit: the surface never reaches an enrol.
+        let authority = crate::authority::ActAuthority::Owner(
+            owner.clone(),
+            crate::authority::ActSurface::ThisInstall,
+        );
+        self.set_recovery_preset_any_two_handed_over(
+            &authority,
+            issue,
+            passkey,
+            keep_pieces,
+            None,
+            box_hold,
+        )
     }
 
     /// Unlocks the vault data key with the printed recovery sheet.
