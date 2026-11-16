@@ -2148,6 +2148,10 @@ needs that kit: `--piece` (two piece files, or one and `--secret-file`) on the c
 that key is live. `recovery-kit issue-vault-key --any-two-pieces` takes the kit the same way
 (`--piece`, and `--kit-secret-file` with one piece). `box_release_pending: true` says the switch
 back to `standard` stands but the recovery box still holds the vault as kit-only.
+`box_recovery_needs_new_kit: true` says the switch back left the recovery box with no seed of a
+live root authority key (entering the preset replaced the key whose seed it held): signing in with
+the recovery PIN restores no owner control until a new kit is confirmed, which deposits its seed.
+The kit itself still restores the vault, and the switch back changes no key on the roster.
 
 On a new host, the sheet restores the vault:
 

@@ -244,7 +244,7 @@ impl Vault {
                 },
             )
         })?;
-        box_hold.hold_kit_only(true)?;
+        self.hold_recovery_box_kit_only(box_hold)?;
         let transition = self.release_box_hold_on_failure(
             self.begin_wrap_transition(),
             true,
@@ -277,6 +277,7 @@ impl Vault {
                 retired,
                 mirror_pending: false,
                 box_release_pending: false,
+                box_recovery_needs_new_kit: false,
             };
             state.recovery = preset;
             // [VAULT-DATA-KEY-ROTATION]: its `start_data_key_generation_in_txn`

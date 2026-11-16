@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
+use oneiron_contracts::register::Register;
 use oneiron_llm::openai_compat::EmbedShape;
 use serde::Deserialize;
 
@@ -132,8 +133,9 @@ impl ProviderKind {
 /// from. Most servers (llama.cpp, vLLM, MLX, most proxies) read
 /// `max_tokens`; some hosted reasoning models accept only
 /// `max_completion_tokens`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("output.limit.field")]
 pub enum OutputLimitField {
     #[default]
     MaxTokens,
@@ -143,10 +145,7 @@ pub enum OutputLimitField {
 impl OutputLimitField {
     #[must_use]
     pub fn key(self) -> &'static str {
-        match self {
-            Self::MaxTokens => "max_tokens",
-            Self::MaxCompletionTokens => "max_completion_tokens",
-        }
+        self.as_str()
     }
 }
 

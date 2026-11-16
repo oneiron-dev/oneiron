@@ -101,6 +101,17 @@ pub struct SharedEraseAsk {
     pub closed_at: Option<u64>,
 }
 
+/// The erase ask [`Vault::open_erase_ask_in_txn`] finds or opens: `asker`'s
+/// ask, of `kind`, for `record`. With `declined_answers`, an ask an Owner
+/// declined answers as well as an open one.
+#[derive(Debug, Clone, Copy)]
+struct EraseAskOpen {
+    asker: EntityId,
+    kind: EraseAskKind,
+    record: EntityId,
+    declined_answers: bool,
+}
+
 /// An agent's ask that the Owners erase a record
 /// ([`Vault::propose_erase_as_agent`]). It erases nothing.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -162,7 +173,16 @@ impl Vault {
             return Err(invalid());
         }
         let (ask, opened) = self.open_erase_ask_in_txn(
-            &mut txn, vault_id, &holders, now, actor, kind, record, false,
+            &mut txn,
+            vault_id,
+            &holders,
+            now,
+            EraseAskOpen {
+                asker: actor,
+                kind,
+                record,
+                declined_answers: false,
+            },
         )?;
         // An ask already open answers with nothing written: the writer's
         // clock floors are dropped with it, as before the agent door
@@ -173,23 +193,26 @@ impl Vault {
         Ok(ask)
     }
 
-    /// The erase ask by `asker` for `record` in shared vault `vault_id`, a
-    /// live record, and whether this call opened it: the one already open
-    /// (with `declined_answers`, also one an Owner declined), else a new one,
-    /// with an inbox ask to every live Owner of `holders` naming the record.
-    /// The caller has judged `asker` and its `kind`.
-    #[allow(clippy::too_many_arguments)]
+    /// The erase ask by `open.asker` for `open.record` in shared vault
+    /// `vault_id`, a live record, and whether this call opened it: the one
+    /// already open (with `open.declined_answers`, also one an Owner
+    /// declined), else a new one, with an inbox ask to every live Owner of
+    /// `holders` naming the record. The caller has judged the asker and its
+    /// kind.
     fn open_erase_ask_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         vault_id: u64,
         holders: &[super::LiveActHolder],
         now: u64,
-        asker: EntityId,
-        kind: EraseAskKind,
-        record: EntityId,
-        declined_answers: bool,
+        open: EraseAskOpen,
     ) -> Result<(SharedEraseAsk, bool)> {
+        let EraseAskOpen {
+            asker,
+            kind,
+            record,
+            declined_answers,
+        } = open;
         let (asker_hex, record_hex) = (asker.to_hex(), record.to_hex());
         if let Some(standing) = self
             .erase_asks_in_txn(txn, vault_id)?
@@ -326,10 +349,12 @@ impl Vault {
                         creation.vault_id,
                         &holders,
                         now,
-                        agent,
-                        kind,
-                        record,
-                        true,
+                        EraseAskOpen {
+                            asker: agent,
+                            kind,
+                            record,
+                            declined_answers: true,
+                        },
                     )?
                     .0,
                 )
