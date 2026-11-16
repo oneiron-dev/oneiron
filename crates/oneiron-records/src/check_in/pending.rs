@@ -12,14 +12,17 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// The BLAKE3 natural key of an ask: the asker, the verb, the act class,
-/// where the effect sits and the effect's digest (P23-SHAPE Q2 = A). Two
-/// opens with one key are the same saved call.
+/// where the effect sits and the effect's digest (P23-SHAPE Q2 = A), and
+/// the closed room whose owners alone answer it, when it has one. Two opens
+/// with one key are the same saved call; an ordinary ask and a closed
+/// room's ask of the same add are two.
 pub fn open_key_of(
     asker: EntityId,
     verb: &str,
     act: ActClass,
     scope: &CheckInScope,
     effect_digest: &[u8; 32],
+    room: Option<&EntityId>,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron.check_in.open_key.v1");
     hasher.update(asker.as_bytes());
@@ -41,6 +44,10 @@ pub fn open_key_of(
         }
     }
     hasher.update(effect_digest);
+    if let Some(room) = room {
+        hasher.update(&[1]);
+        hasher.update(room.as_bytes());
+    }
     *hasher.finalize().as_bytes()
 }
 
@@ -56,6 +63,9 @@ pub enum Rung {
     ChainHolders,
     /// Rung 4: the Owner role, where the chain ends.
     Owner,
+    /// A closed room's owners (ARCH-0082 #closed-room): the one rung a
+    /// closed room's ask enters, whoever adds, and where it ends.
+    RoomOwner,
 }
 
 impl Rung {
@@ -65,17 +75,18 @@ impl Rung {
         match self {
             Self::Grantor => 2,
             Self::ChainHolders => 3,
-            Self::Owner => 4,
+            Self::Owner | Self::RoomOwner => 4,
         }
     }
 
-    /// The rung above this one; `None` above the Owner.
+    /// The rung above this one; `None` above the Owner and above a closed
+    /// room's owners.
     #[must_use]
     pub const fn next(self) -> Option<Self> {
         match self {
             Self::Grantor => Some(Self::ChainHolders),
             Self::ChainHolders => Some(Self::Owner),
-            Self::Owner => None,
+            Self::Owner | Self::RoomOwner => None,
         }
     }
 
@@ -86,6 +97,7 @@ impl Rung {
             Self::Grantor => "grantor",
             Self::ChainHolders => "chain_holders",
             Self::Owner => "owner",
+            Self::RoomOwner => "room_owner",
         }
     }
 }
@@ -245,6 +257,13 @@ impl EligibleBasis {
 pub struct PendingCheckIn {
     pub id: EntityId,
     pub asker: EntityId,
+    /// The agent whose attempt spawned the asker's running attempt, as that
+    /// attempt froze it at spawn, when the ask came from such a run: the
+    /// grantor its rung 2 asks (ARCH-0082 #ladder; FIX
+    /// CHECK-IN-SPAWN-PARENT-PRINCIPAL). `None` for every other ask, for
+    /// every row written before it, and once the parent's erase scrubbed it.
+    #[serde(default)]
+    pub spawn_parent: Option<EntityId>,
     /// The asker's grant on this vault link, by its ref.
     pub grant_ref: String,
     /// The exact verb that waits.
@@ -281,6 +300,12 @@ pub struct PendingCheckIn {
     /// that resends under it is PR 3's.
     #[serde(default)]
     pub invocation: Option<[u8; 16]>,
+    /// The closed room whose owners alone answer this ask (ARCH-0082
+    /// #closed-room; P26-SHAPE Q5 = A): the ask enters only
+    /// [`Rung::RoomOwner`], and only a door adding to that room spends it.
+    /// `None` for every other ask.
+    #[serde(default)]
+    pub room: Option<EntityId>,
 }
 
 impl PendingCheckIn {
@@ -324,6 +349,7 @@ impl PendingCheckIn {
             self.act,
             &self.scope,
             &self.effect_digest,
+            self.room.as_ref(),
         )
     }
 
