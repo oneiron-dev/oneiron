@@ -31,8 +31,8 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 pub(in crate::calendar) use connector::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
-    delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
-    sweep_connector_uids,
+    delete_connector_resource, preflight_connector_feed, repeat_connector_host_cancel_refund,
+    sweep_connector_resource, sweep_connector_uids,
 };
 use continuation::OwedProperties;
 pub(super) use continuation::run_ics_property_continuation_admitting;
@@ -551,11 +551,13 @@ impl PollAdmission<'_> {
     /// hash) and an explicit cancellation, its booking's deposit refund is
     /// asked again. The passport commits before the refund does, so a stop
     /// between them leaves the next read of the feed here, and this is where
-    /// the refund is repaired. The cancellation was seen when that passport
-    /// committed, so a repair after the booking's start still refunds a
-    /// cancellation first seen before it. An older SEQUENCE replay moves no
-    /// money: the passport it lost to may carry a live booking. Nor does a
-    /// source the EVENT was not written to ([`names_written_calendar`]).
+    /// the refund is repaired; a connector pull reaches it through its echo
+    /// arm ([`repeat_connector_host_cancel_refund`]). The cancellation was
+    /// seen when that passport committed, so a repair after the booking's
+    /// start still refunds a cancellation first seen before it. An older
+    /// SEQUENCE replay moves no money: the passport it lost to may carry a
+    /// live booking. Nor does a source the EVENT was not written to
+    /// ([`names_written_calendar`]).
     fn repeat_host_cancel_refund(
         &self,
         event_ref: EntityId,
