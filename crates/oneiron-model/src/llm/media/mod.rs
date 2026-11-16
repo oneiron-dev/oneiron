@@ -35,6 +35,7 @@ pub mod wav;
 
 pub use backend::{
     AiMediaDoor, ImageMedia, MediaBackend, MediaProgressFuture, ReferenceCompatibility,
+    run_once_released,
 };
 pub use caps::{AiOperation, MediaCaps, Modality, NativeUnit};
 pub use replay::MediaReplayKey;
