@@ -6,12 +6,15 @@ mod cold_attach;
 mod device;
 mod eligibility;
 mod evidence;
+mod gpu_pod_hours;
 #[cfg(feature = "sync")]
 pub(crate) mod home_vectors;
 #[cfg(feature = "sync")]
 pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
+mod refusal;
+pub use refusal::is_device_local_row_refusal;
 #[cfg(feature = "sync")]
 mod release;
 mod repo_projection;
@@ -41,6 +44,7 @@ pub(crate) use eligibility::{
     turn_text_in_txn,
 };
 pub use evidence::EmbeddingMatchEvidence;
+pub use gpu_pod_hours::{PodHoursClock, PodHoursWait};
 pub(crate) use locality::{clear_embedding_locality_in_txn, stamp_embedding_locality_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use media::text_vector_sources_in_txn;
@@ -217,6 +221,7 @@ struct LeasedPendingEmbedding {
 struct LeaseBatch {
     work: Vec<LeasedPendingEmbedding>,
     active_leases: usize,
+    held_for_pod_hours: usize,
     stale_jobs: usize,
     egress_denied: usize,
     egress_no_verdict: usize,
@@ -242,6 +247,10 @@ pub struct MeasuredEmbedFill {
 pub struct PendingEmbeddingReconcileReport {
     pub leased: usize,
     pub active_leases: usize,
+    /// Rows the owner's wait holds pending, unleased and unsent while every
+    /// GPU pod is outside its hours (NIGHT-BACKFILL-HOLD): backfill only, by
+    /// default.
+    pub held_for_pod_hours: usize,
     pub stale_jobs: usize,
     pub embedded: usize,
     pub filled: usize,
@@ -268,6 +277,7 @@ pub struct PendingEmbeddingReconciler {
     lease_duration_ms: u64,
     remote_rung: Option<RemoteRung>,
     rung_role: routing::RungRole,
+    pod_hours: Option<std::sync::Arc<dyn PodHoursClock>>,
 }
 
 #[cfg(feature = "sync")]
@@ -284,6 +294,7 @@ impl PendingEmbeddingReconciler {
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
             remote_rung: None,
             rung_role: routing::RungRole::Fallback,
+            pod_hours: None,
         }
     }
 
@@ -359,14 +370,25 @@ impl PendingEmbeddingReconciler {
         Ok(self)
     }
 
+    /// Reads `clock`, the GPU pods the primary's batches route through, once
+    /// per pass: while every pod is outside its hours, the queued jobs the
+    /// owner's wait names (backfill only, by default) stay pending, unleased
+    /// and unsent, and a pass inside the hours embeds them
+    /// (NIGHT-BACKFILL-HOLD). Without it no job waits.
+    #[must_use]
+    pub fn with_pod_hours(mut self, clock: std::sync::Arc<dyn PodHoursClock>) -> Self {
+        self.pod_hours = Some(clock);
+        self
+    }
+
     pub fn reconcile_once(&self) -> Result<PendingEmbeddingReconcileReport> {
-        self.reconcile_once_at(unix_millis_now())
+        self.reconcile_once_at(crate::unix_millis_now())
     }
 
     /// Replaces `report` with this pass's progress, including committed fills
     /// before a later error. The original error still propagates.
     pub fn reconcile_once_into(&self, report: &mut PendingEmbeddingReconcileReport) -> Result<()> {
-        self.reconcile_once_into_at(unix_millis_now(), report)
+        self.reconcile_once_into_at(crate::unix_millis_now(), report)
     }
 
     fn reconcile_once_at(&self, now_ms: u64) -> Result<PendingEmbeddingReconcileReport> {
@@ -395,6 +417,7 @@ impl PendingEmbeddingReconciler {
         *report = PendingEmbeddingReconcileReport {
             leased: batch.work.len(),
             active_leases: batch.active_leases,
+            held_for_pod_hours: batch.held_for_pod_hours,
             stale_jobs: batch.stale_jobs,
             egress_denied: batch.egress_denied,
             egress_no_verdict: batch.egress_no_verdict,
@@ -519,14 +542,7 @@ impl PendingEmbeddingReconciler {
             return embedder.embed_marked_measured(inputs);
         }
         embedder.embed_released_measured(inputs, &|rows| {
-            if self.vault.rows_may_leave_for(rows, destination)? {
-                Ok(())
-            } else {
-                Err(Error::UpstreamToolFailure {
-                    tool: "embedder-remote",
-                    code: "device_local_row".to_owned(),
-                })
-            }
+            self.vault.release_embed_rows(rows, destination)
         })
     }
 
@@ -550,7 +566,7 @@ impl PendingEmbeddingReconciler {
                         entity_id: item.input.entity_id,
                         source_version: item.input.pending_embedding_token.clone(),
                         input_tokens,
-                        occurred_at: unix_millis_now() / 1000,
+                        occurred_at: crate::unix_millis_now() / 1000,
                     });
                 }
             } else {
@@ -607,6 +623,13 @@ impl PendingEmbeddingReconciler {
         let primary_on_device = self.embedder.locality() == EmbedderLocality::OnDevice;
         let primary_endpoint = self.embedder.endpoint();
         let rung_endpoint = self.remote_rung.as_ref().map(RemoteRung::endpoint);
+        // The pods' hours are read once, before the writer: a job the wait
+        // names is held before its payload is read.
+        let wait = PodHoursWait::default();
+        let outside_pod_hours = self
+            .pod_hours
+            .as_ref()
+            .is_some_and(|clock| clock.outside_pod_hours());
         self.vault.with_write_txn_grouped(|wtxn| {
             let flagged_primary =
                 crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
@@ -626,6 +649,10 @@ impl PendingEmbeddingReconciler {
                 }
                 if batch.work.len() >= self.batch_size {
                     break;
+                }
+                if outside_pod_hours && wait.holds(job.priority) {
+                    batch.held_for_pod_hours += 1;
+                    continue;
                 }
                 let Some((input, entity_type)) =
                     pending_input_in_txn(&self.vault, wtxn, &job.entity_id)?
@@ -978,13 +1005,6 @@ fn clear_pending_embedding_lease_if_matches(
         return Ok(false);
     }
     PENDING_EMBEDDING_LEASE.delete(&vault.store, wtxn, &key)
-}
-
-#[cfg(feature = "sync")]
-fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis().min(u128::from(u64::MAX)) as u64)
 }
 
 pub(crate) mod tables;

@@ -218,6 +218,14 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
+        // A named room's standing lifts the conversation home only while
+        // this snapshot finds the reader standing in the room (DEC-0006
+        // `#home-clearance`).
+        if crate::disclosure::scope_home_band(body.scope.as_ref()).is_some()
+            && self.actor_key.room_standing_lapsed_in(self.vault, rtxn)?
+        {
+            return Ok(false);
+        }
         let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
         let allowed = match grant {
             None => {

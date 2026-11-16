@@ -364,7 +364,14 @@ impl ShadowBridgeHost<'_> {
             ResultFacet::Query => Some(self.store.sink()?),
             _ => None,
         };
-        let reply = read.arm_read(self.store, &self.watch, facet, input, sink.as_mut())?;
+        let reply = read.arm_read(
+            self.store,
+            &self.watch,
+            self.search_max_context,
+            facet,
+            input,
+            sink.as_mut(),
+        )?;
         Ok(match reply {
             ResultReply::Output(output) => json!({ "output": output }),
             ResultReply::Denied(refused) => refused,
