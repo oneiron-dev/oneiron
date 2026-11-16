@@ -163,6 +163,31 @@ pub(super) fn lookup_possessed_in_txn(
     })
 }
 
+/// Whether any of `entities` is a provisional person minted for a role
+/// phrase of a possessor other than `possessor`, when `possessor` names one:
+/// a role phrase's link never names another speaker's (FIX
+/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER). Real entities, and every
+/// provisional entity when `possessor` is `None`, name no other.
+pub(super) fn names_other_possessor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entities: &[EntityId],
+    possessor: Option<EntityId>,
+) -> Result<bool> {
+    if possessor.is_none() {
+        return Ok(false);
+    }
+    for id in entities {
+        if PROVISIONAL
+            .get(store, txn, id)?
+            .is_some_and(|entity| entity.possessor != possessor)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The provisional entities of `kind` whose name keys as `mention` does and
 /// that `keep` takes.
 fn lookup_where_in_txn(

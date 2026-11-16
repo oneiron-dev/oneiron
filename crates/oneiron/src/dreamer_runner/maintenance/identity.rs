@@ -216,8 +216,9 @@ pub(crate) fn recheck_page_for_test(vault: &Vault, now: u64) -> Result<Vec<Ident
 
 /// Settles every open ask whose mention is in `turn` as `chosen` at `now`,
 /// as the nightly pass settles one a saved hint picks (inferred, under the
-/// Dreamer's seal): the test door's way to answer an ask (FIX
-/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER). Returns how many it settled.
+/// Dreamer's seal), with no Dreamer receipt: the test door's way to answer
+/// an ask (FIX LINKER-ROLE-PROVISIONAL-PER-SPEAKER). Returns how many it
+/// settled.
 #[cfg(oneiron_test_support)]
 pub(crate) fn settle_asks_of_turn_for_test(
     vault: &Vault,

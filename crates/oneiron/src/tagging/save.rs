@@ -275,8 +275,17 @@ pub(super) fn save_with_hint_read_in_txn(
                 let hits = linker.candidates(txn, kind, text, possessor)?;
                 if hits.is_empty() {
                     // A name the key misses takes its antecedent's link and
-                    // never mints a twin of it.
-                    if inherited.kind() == Some(kind) {
+                    // never mints a twin of it; a role phrase never takes
+                    // another possessor's provisional person (FIX
+                    // LINKER-ROLE-PROVISIONAL-PER-SPEAKER).
+                    if inherited.kind() == Some(kind)
+                        && !provisional::names_other_possessor_in_txn(
+                            &vault.store,
+                            txn,
+                            inherited.entities(),
+                            possessor,
+                        )?
+                    {
                         inherited.clone()
                     } else {
                         let link =
@@ -305,7 +314,7 @@ pub(super) fn save_with_hint_read_in_txn(
                     let link = linker.hinted(
                         txn,
                         link,
-                        text,
+                        (text, &messages[span.message]),
                         message_text,
                         span.start,
                         span.end,

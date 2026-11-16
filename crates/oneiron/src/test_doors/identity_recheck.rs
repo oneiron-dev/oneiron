@@ -12,8 +12,8 @@ pub fn run_identity_recheck(vault: &Vault, now: u64) -> Result<Vec<IdentityAsk>>
 }
 
 /// Settles every open identity ask whose mention is in `turn` as `chosen`
-/// at `now` (seconds), as the nightly pass settles one a saved hint picks;
-/// returns how many it settled.
+/// at `now` (seconds), as the nightly pass settles one a saved hint picks,
+/// with no Dreamer receipt; returns how many it settled.
 pub fn settle_identity_asks_of_turn(
     vault: &Vault,
     turn: &EntityId,
