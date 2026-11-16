@@ -76,23 +76,24 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
         "/public/booking/{page_token}/verbs/{verb}",
         PublicProof,
     ),
-    // The signing ceremony's signer doors. The exchange reads a link's
-    // capability (the link stays reusable) and answers a single-use
-    // exchange; the session consumes that exchange and opens the link's
-    // signing session.
+    // The signing ceremony's signer doors.
     ("GET", "/sign", PublicProof),
-    ("POST", "/sign/exchange", PublicProof),
     ("POST", "/sign/geometry", PublicProof),
     ("POST", "/sign/image", PublicProof),
     ("POST", "/sign/layout", PublicProof),
     ("POST", "/sign/pdf", PublicProof),
     ("POST", "/sign/preview", PublicProof),
-    ("POST", "/sign/session", PublicProof),
     ("POST", "/sign/signature", PublicProof),
     // A sealed certificate's QR page and its report, keyless as the signer
     // doors are: the vault checks the QR capability on each report.
     ("GET", "/esign/verify", PublicProof),
     ("POST", "/esign/verify/report", PublicProof),
+    // A signing link's exchange doors: the exchange reads the link's
+    // capability (the link stays reusable) and answers a single-use
+    // exchange, which the session consumes to open the link's signing
+    // session.
+    ("POST", "/sign/exchange", PublicProof),
+    ("POST", "/sign/session", PublicProof),
     // A bulk campaign email's one-click unsubscribe link (RFC 8058):
     // keyless, its mac checked in the vault on each call.
     (
