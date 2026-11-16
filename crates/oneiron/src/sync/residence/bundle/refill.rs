@@ -9,6 +9,8 @@
 //! generation the home retired, and waits on no erase. A current provider's
 //! refill on a replacement or an activation is L02's (`CurrentProvider`).
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     Asked, BundlePartRead, CurrentPadObjects, PadObjectInstall, PadObjectRefillSource,
     PadObjectUnavailable, STAGES, SealedBundleEntry, SealedBundleObject, decode_stage, denied,
@@ -67,7 +69,8 @@ fn whole_pads_in(
             BundlePartRead::PadObjectUnavailable(_) => return Ok(None),
         }
     }
-    if bytes.len() as u64 != entry.pads_len || *blake3::hash(&bytes).as_bytes() != entry.pads_digest
+    if bytes.len() as u64 != entry.pads_len
+        || *ContentHash::of(&bytes).as_bytes() != entry.pads_digest
     {
         return Ok(None);
     }

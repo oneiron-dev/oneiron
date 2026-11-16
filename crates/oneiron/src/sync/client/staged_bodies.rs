@@ -14,6 +14,8 @@
 
 use std::collections::HashMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::base::SyncClient;
 use super::federated::map_federated_admission_err;
 use crate::EntityId;
@@ -166,7 +168,7 @@ impl SyncClient {
             .ok_or(TransportError::Storage(
                 "owed staged import content missing".into(),
             ))?;
-        if receipt.admitted_update_digest != Some(*blake3::hash(&content).as_bytes()) {
+        if receipt.admitted_update_digest != Some(*ContentHash::of(&content).as_bytes()) {
             return Err(TransportError::InvalidPayload(
                 "admitted update digest mismatch",
             ));

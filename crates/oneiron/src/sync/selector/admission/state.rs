@@ -4,6 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
@@ -306,7 +308,7 @@ pub(in crate::sync) fn staged_births(
     // A receipt binds all per-window records before any is selected or held.
     let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?
         .ok_or(Error::CorruptedIndex("staged facet stamps"))?;
-    if stamps_digest != Some(*blake3::hash(&record).as_bytes()) {
+    if stamps_digest != Some(*ContentHash::of(&record).as_bytes()) {
         return Err(Error::CorruptedIndex("staged facet stamps"));
     }
     let mut records = crate::batch::export::decode_staged_window_parts(&record)?

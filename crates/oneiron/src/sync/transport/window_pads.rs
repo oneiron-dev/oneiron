@@ -30,6 +30,8 @@ mod parts;
 
 pub use parts::{ReceivedWindowPadEnvelope, WindowPadArrival, WindowPadAssembly, WindowPadPayload};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     MAX_ENCODED_FRAME_BYTES, TAG_WINDOW_SYNC, TransportError, validate_window_key, window_sub_tags,
 };
@@ -322,7 +324,7 @@ impl WindowPadEnvelope {
         WindowPadBinding {
             kind: self.kind,
             queue_seq: self.queue_seq,
-            payload_digest: *blake3::hash(&self.payload).as_bytes(),
+            payload_digest: *ContentHash::of(&self.payload).as_bytes(),
             refs_digest: window_pad_refs_digest(&self.refs),
             recipient: self.sidecar.as_ref().map(|sidecar| sidecar.recipient),
             source_position: self.sidecar.as_ref().map(|sidecar| sidecar.source_position),
@@ -337,7 +339,7 @@ impl WindowPadEnvelope {
         header[5] = self.form.tag();
         header[6..14].copy_from_slice(&self.queue_seq.unwrap_or(0).to_be_bytes());
         header[14..18].copy_from_slice(&u32_len(self.payload.len())?.to_be_bytes());
-        header[18..50].copy_from_slice(blake3::hash(&self.payload).as_bytes());
+        header[18..50].copy_from_slice(ContentHash::of(&self.payload).as_bytes());
         header[50..54].copy_from_slice(&u32_len(self.refs.len())?.to_be_bytes());
         if let Some(sidecar) = &self.sidecar {
             header[54..70].copy_from_slice(&sidecar.recipient);
@@ -496,7 +498,7 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
         return Err(invalid("window pad envelope length"));
     }
     let payload = bytes[WINDOW_PAD_HEADER_BYTES..header.head()].to_vec();
-    if *blake3::hash(&payload).as_bytes() != header.payload_digest {
+    if *ContentHash::of(&payload).as_bytes() != header.payload_digest {
         return Err(invalid("window pad payload digest"));
     }
     let refs_end = header.head() + header.refs * REF_BYTES;
@@ -514,7 +516,7 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
     ) {
         (Some(recipient), Some(source_position), Some(digest)) => {
             let capsule = bytes[refs_end..].to_vec();
-            if *blake3::hash(&capsule).as_bytes() != digest {
+            if *ContentHash::of(&capsule).as_bytes() != digest {
                 return Err(invalid("window pad capsule digest"));
             }
             Some(WindowPadSidecar {

@@ -11,6 +11,8 @@ use crate::{TimeRange, Vault};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 /// One transfer's disk spool and metadata. Dropping it cancels without publication.
 /// Hosts bound concurrency by owning a single transfer per connection.
 pub struct ChunkDownload {
@@ -109,7 +111,8 @@ impl ChunkDownload {
                 }
                 let (_, body) = page.chunks.pop().expect("one entry");
                 let chunk = &manifest.chunks[self.next];
-                if body.len() != chunk.size as usize || blake3::hash(&body).as_bytes() != &expected
+                if body.len() != chunk.size as usize
+                    || ContentHash::of(&body).as_bytes() != &expected
                 {
                     return Err(invalid());
                 }

@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use loro::{CommitOptions, LoroDoc};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::super::loro_support::{map_get_bytes, map_insert_bytes};
 use super::bridge::BRIDGE_ORIGIN;
@@ -64,7 +65,7 @@ impl ErasedOrigin {
             by_key
                 .entry(key.as_str())
                 .or_default()
-                .insert(*blake3::hash(blob).as_bytes(), blob.as_slice());
+                .insert(*ContentHash::of(blob).as_bytes(), blob.as_slice());
         }
         let mut erased = Self::default();
         for (key, blobs) in by_key {
@@ -126,7 +127,7 @@ impl ErasedOrigin {
     pub(super) fn refuses(&self, key: &str, blob: &[u8]) -> bool {
         self.refused
             .get(key)
-            .is_some_and(|revisions| revisions.contains(blake3::hash(blob).as_bytes()))
+            .is_some_and(|revisions| revisions.contains(ContentHash::of(blob).as_bytes()))
     }
 
     /// Rewrites, under the same key in pinned window `doc`, each refused live carrier that is

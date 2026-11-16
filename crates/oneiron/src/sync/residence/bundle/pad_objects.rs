@@ -21,6 +21,8 @@
 //! never a missing generation. A complete object reads as before, cold or
 //! not, with no provider asked.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::bundle_access::{generation_prefix, grant_row};
 use super::{
     Asked, GENERATIONS, PARTS, SealedBundleEntry, SealedBundleObject, denied, object_prefix,
@@ -400,7 +402,7 @@ fn whole(entry: &SealedBundleEntry, parts: &[(u64, Vec<u8>)]) -> std::result::Re
 /// sealed for its generation.
 fn is_object(entry: &SealedBundleEntry, bytes: &[u8]) -> bool {
     bytes.len() as u64 == entry.pads_len
-        && *blake3::hash(bytes).as_bytes() == entry.pads_digest
+        && *ContentHash::of(bytes).as_bytes() == entry.pads_digest
         && SealedKeyPads::from_bytes(bytes).is_ok_and(|pads| pads.generation() == entry.generation)
 }
 

@@ -43,6 +43,7 @@ use loro::{
     ContainerID, ContainerType, EncodedBlobMode, ExportMode, IdSpan, ImportBlobMetadata, LoroDoc,
     LoroValue, VersionVector,
 };
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::history::needs_whole_hold;
 use super::rows::{HeldEdit, Landing};
@@ -422,7 +423,7 @@ impl SyncSecretProjection {
             .as_deref()
             .unwrap_or(raw)
             .get(ENTITY_METADATA_HEADER_LEN..)
-            .is_some_and(|body| self.is_unread(blake3::hash(body).as_bytes()));
+            .is_some_and(|body| self.is_unread(ContentHash::of(body).as_bytes()));
         if unread {
             return Err(Error::InvariantViolation(UNREAD_EDIT));
         }
@@ -525,7 +526,7 @@ impl SyncSecretProjection {
             let hash = match bound {
                 Some(hash) => *hash,
                 None => match raw.get(ENTITY_METADATA_HEADER_LEN..) {
-                    Some(body) => *blake3::hash(body).as_bytes(),
+                    Some(body) => *ContentHash::of(body).as_bytes(),
                     None => continue,
                 },
             };
@@ -548,7 +549,7 @@ impl SyncSecretProjection {
     /// Whether `row`'s body is a copy this pass makes.
     fn is_copy_row(&self, row: &[u8]) -> bool {
         row.get(ENTITY_METADATA_HEADER_LEN..).is_some_and(|body| {
-            self.copy_body_source_hash(blake3::hash(body).as_bytes())
+            self.copy_body_source_hash(ContentHash::of(body).as_bytes())
                 .is_some()
         })
     }

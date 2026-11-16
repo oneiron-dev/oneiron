@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 
 use loro::{LoroMap, LoroValue, ValueOrContainer};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::loro_bytes::{map_contains_binary, map_get_bytes, map_insert_bytes};
@@ -155,7 +156,7 @@ pub(crate) fn join_parts_from<B: AsRef<[u8]>>(
         let key = part_key(digest);
         let part = get(&key)?;
         let part = part.as_ref();
-        if blake3::hash(part).as_bytes() != digest {
+        if ContentHash::of(part).as_bytes() != digest {
             return None;
         }
         bytes.extend_from_slice(part);
@@ -172,7 +173,7 @@ pub(crate) fn admit_part(map_key: &str, value: &LoroValue) -> Result<()> {
     if bytes.is_empty() || bytes.len() > PART_BYTES {
         return Err(refused("not a part's length"));
     }
-    if part_key(blake3::hash(bytes).as_bytes()) != map_key {
+    if part_key(ContentHash::of(bytes).as_bytes()) != map_key {
         return Err(refused("filed under another key"));
     }
     Ok(())

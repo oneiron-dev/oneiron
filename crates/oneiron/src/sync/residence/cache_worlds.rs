@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use crate::ports::EntityStoreRead;
@@ -22,8 +23,8 @@ impl CachedItemWorlds {
     /// Whether this evidence names exactly the cached row and document.
     pub fn matches(&self, item: EntityId, blob: &[u8], document: &[u8]) -> bool {
         self.source == item
-            && self.blob_digest == *blake3::hash(blob).as_bytes()
-            && self.document_digest == *blake3::hash(document).as_bytes()
+            && self.blob_digest == *ContentHash::of(blob).as_bytes()
+            && self.document_digest == *ContentHash::of(document).as_bytes()
     }
 
     /// Whether this provenance belongs to the item named by its cache key.

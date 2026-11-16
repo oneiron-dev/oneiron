@@ -22,6 +22,7 @@
 //! current stamp writes none.
 
 use loro::{ExportMode, IdSpan, LoroDoc, LoroValue, PeerID, ValueOrContainer};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::frames::isolated;
 use super::{CopyRow, InboundRow, SyncSecretProjection};
@@ -157,7 +158,7 @@ impl SyncSecretProjection {
             let row = carrier.as_deref().unwrap_or(raw);
             let Some(blob) = row
                 .get(ENTITY_METADATA_HEADER_LEN..)
-                .and_then(|body| self.blob(blake3::hash(body).as_bytes()))
+                .and_then(|body| self.blob(ContentHash::of(body).as_bytes()))
             else {
                 return;
             };

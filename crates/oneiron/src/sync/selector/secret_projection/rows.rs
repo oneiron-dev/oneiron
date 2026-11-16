@@ -1,6 +1,8 @@
 //! One entity row as a peer gets it, and one incoming copy row as the
 //! canonical store takes it.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{BlobCopy, SyncSecretProjection};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -93,7 +95,7 @@ impl SyncSecretProjection {
             // A row kept under its own id is a copy only when its body is a
             // copy this pass makes.
             None => match self
-                .copy_body_source_hash(blake3::hash(body).as_bytes())
+                .copy_body_source_hash(ContentHash::of(body).as_bytes())
                 .and_then(|hash| self.blob(hash).map(|blob| (*hash, blob)))
             {
                 Some((hash, blob)) if !self.has_source(key) => (*key, hash, blob),
