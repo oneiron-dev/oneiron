@@ -120,7 +120,7 @@ fn admit_machine(rooted: &Rooted) -> EntityId {
         encryption_key,
         machine_proof,
     };
-    let folded = rooted
+    let landing = rooted
         .vault
         .enroll_machine(
             &rooted.proof,
@@ -130,7 +130,10 @@ fn admit_machine(rooted: &Rooted) -> EntityId {
             None,
         )
         .expect("the owner admits the machine");
-    assert!(folded.is_mine(None), "the admitted machine is the owner's");
+    assert!(
+        landing.machine().is_some_and(|folded| folded.is_mine(None)),
+        "the admitted machine is the owner's: {landing:?}"
+    );
     machine
 }
 
