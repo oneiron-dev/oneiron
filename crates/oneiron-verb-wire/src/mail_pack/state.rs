@@ -62,4 +62,9 @@ pub struct MailSyncStatusView {
     pub last_step_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Until when the source rests, its provider quota spent for the
+    /// minute or the day, or its provider having answered that its rate is
+    /// spent: no step reads the provider before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_paused_until: Option<u64>,
 }

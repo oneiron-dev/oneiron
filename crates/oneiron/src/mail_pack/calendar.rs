@@ -443,6 +443,7 @@ pub(super) fn calendar_status_view_in(
         claim_rechecks_obsolete: 0,
         last_step_at: state.last_step_at,
         last_error: state.last_error,
+        quota_paused_until: None,
     })
 }
 
