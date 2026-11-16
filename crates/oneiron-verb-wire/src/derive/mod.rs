@@ -2,6 +2,7 @@ pub use crate::derive::wire::DeriveArchiveInput;
 pub use crate::derive::wire::DeriveClaimInput;
 pub use crate::derive::wire::DeriveCommitView;
 pub use crate::derive::wire::DeriveEvidenceInput;
+pub use crate::derive::wire::DeriveEvidenceSpans;
 pub use crate::derive::wire::DeriveItemView;
 pub use crate::derive::wire::DeriveLeftItemView;
 pub use crate::derive::wire::DeriveRef;

@@ -145,7 +145,33 @@ pub(crate) fn turn_lifted_keys_in_txn(
     turn: &EntityId,
     text: &TurnText,
 ) -> crate::memory::MemoryResult<Option<crate::batch::secret_scan::LiftedKeys>> {
-    if !memory.reads_lifted_keys_masked_in_txn(txn)? {
+    Ok(turn_lifted_keys_with_masked_in_txn(
+        &memory.vault().store,
+        read,
+        txn,
+        memory.reads_lifted_keys_masked_in_txn(txn)?,
+        turn,
+        text,
+    )?)
+}
+
+/// [`turn_lifted_keys_in_txn`] with `masked` already decided: the keys the
+/// TURN's own body and each MESSAGE row its words come from name, each row
+/// read through `read`, or `None` when unmasked. The derive stager shares
+/// this body without a `Memory`.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn turn_lifted_keys_with_masked_in_txn(
+    store: &crate::store::Store,
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    masked: bool,
+    turn: &EntityId,
+    text: &TurnText,
+) -> Result<Option<crate::batch::secret_scan::LiftedKeys>> {
+    if !masked {
         return Ok(None);
     }
     let mut sources = vec![*turn];
@@ -158,5 +184,5 @@ pub(crate) fn turn_lifted_keys_in_txn(
         .flatten()
         .map(|(_, _, body)| body)
         .collect();
-    memory.lifted_keys_of_bodies_in_txn(txn, &bodies)
+    crate::memory::Memory::lifted_keys_of_bodies_with_masked_in_txn(store, txn, masked, &bodies)
 }

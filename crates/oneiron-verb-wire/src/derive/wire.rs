@@ -5,6 +5,8 @@ use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::snapshot_read::evidence_spans::EvidenceRange;
+
 /// A row an item names: `{"stored": "<id>"}` for a stored row, or
 /// `{"local": "<name>"}` for the row an earlier item of the batch creates.
 /// Only a claim, a settlement, a SameAs and a topology item create a row
@@ -17,6 +19,17 @@ pub enum DeriveRef {
     /// The row an earlier item of the batch creates, by that item's local
     /// name.
     Local(String),
+}
+
+/// One cited TURN's byte ranges over its text as the committing actor reads it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeriveEvidenceSpans {
+    /// The cited TURN, as stored.
+    pub source: EntityId,
+    /// Byte ranges over the TURN's text as the committing actor reads it
+    /// through `vault.evidence.spans`.
+    pub ranges: Vec<EvidenceRange>,
 }
 
 /// A derived claim.
@@ -36,6 +49,11 @@ pub struct DeriveClaimInput {
     /// The rows it was derived from. A stored one names its version in the
     /// request's `sources`.
     pub evidence: Vec<DeriveRef>,
+    /// Byte ranges over a cited TURN's text as the committing actor reads it
+    /// through `vault.evidence.spans`, at the version the request's `sources`
+    /// pins; a TURN with no entry is cited whole.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spans: Vec<DeriveEvidenceSpans>,
 }
 
 /// Evidence for a stored claim.
@@ -49,6 +67,11 @@ pub struct DeriveEvidenceInput {
     /// The supporting rows: TURNs, cited whole, or admissible claims. A
     /// stored one names its version in the request's `sources`.
     pub sources: Vec<DeriveRef>,
+    /// Byte ranges over a cited TURN's text as the committing actor reads it
+    /// through `vault.evidence.spans`, at the version the request's `sources`
+    /// pins; a TURN with no entry is cited whole.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spans: Vec<DeriveEvidenceSpans>,
 }
 
 /// A supersession: the claim `new` replaces the claim `old`.
