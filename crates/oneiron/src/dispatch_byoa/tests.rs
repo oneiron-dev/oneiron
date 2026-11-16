@@ -86,12 +86,15 @@ impl LlmBackend for StubBackend {
 struct StubFactory;
 
 impl ByoEndpointBackendFactory for StubFactory {
-    fn resolve_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         assert!(
             !format!("{spec:?}").contains(NEVER_A_PAYLOAD),
             "the factory seam must only ever receive custody handles"
         );
-        Ok(Arc::new(StubBackend))
+        Ok(ByoEndpointBinding {
+            backend: Arc::new(StubBackend),
+            secret_taint_refs: Vec::new(),
+        })
     }
 }
 
@@ -940,9 +943,12 @@ impl LlmBackend for RecordingBackend {
 
 struct RecordingFactory(Arc<RecordingBackend>);
 impl ByoEndpointBackendFactory for RecordingFactory {
-    fn resolve_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         assert_eq!(spec, &endpoint_spec());
-        Ok(self.0.clone())
+        Ok(ByoEndpointBinding {
+            backend: self.0.clone(),
+            secret_taint_refs: Vec::new(),
+        })
     }
 }
 
