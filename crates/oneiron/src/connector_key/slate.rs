@@ -15,14 +15,14 @@ const GRANT_SLATE: SideTable<EntityId, ConnectorGrantSlate, LegacyJson> =
 /// The one connector key a stamped slate admits. Key: slate id.
 const SLATE_BINDING: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::CONNECTOR_GRANT_SLATE_BINDING);
-/// ARCH-0054's one aggregate, with the slate's two named inputs: the
-/// manifest hash and the grant hash.
-const SLATE_STAMP_DOMAIN: &[u8] = b"connector-grant-slate-stamp-v1";
-const SLATE_GRANT_DOMAIN: &[u8] = b"connector-grant-slate-grant-v1";
-
-fn invalid() -> Error {
-    Error::InvalidConfig("invalid typed connector grant slate".to_owned())
-}
+#[doc(hidden)]
+pub use oneiron_records::connector_key::slate::SlateFacetNarrow;
+#[doc(hidden)]
+pub(in crate::connector_key) use oneiron_records::connector_key::slate::schema_narrows;
+#[doc(hidden)]
+use oneiron_records::connector_key::slate::{
+    SLATE_GRANT_DOMAIN, SLATE_STAMP_DOMAIN, facets_widen, invalid, is_resolved_schema,
+};
 
 /// The four DEC-0006 capability settings. Declaration order is strictness,
 /// so `Ord` reads "tighter": always allow < auto < always ask < never allow.
@@ -81,41 +81,15 @@ impl SlateDataClass {
     }
 }
 
-/// The owner and holder edges' key for the elicitation row, beside tool
-/// names. MCP tool names are `[A-Za-z0-9_.-]`, so no tool can take it, and
-/// a slate refuses a tool that tries.
-pub const ELICITATION_ROW_KEY: &str = "@elicitation";
+#[doc(hidden)]
+pub use oneiron_verb_wire::connector_key::slate::{
+    ELICITATION_ROW_KEY, SlateCapability, SlatePackSource,
+};
+
 /// The elicitation row's class. The row lets a foreign server ask; it is
 /// not a payload verdict: each answer takes its own payload-aware check
 /// under the calling actor's scoped grant.
 pub(super) const ELICITATION_ROW_DATA_CLASS: SlateDataClass = SlateDataClass::Personal;
-
-/// A slate row's typed identity: one declared tool, or the one MCP client
-/// capability ARCH-0072 gives a permission row. Elicitation is never a
-/// callable tool; sampling, roots and logging are not rows (DEC-0006).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SlateCapability<'a> {
-    Tool(&'a str),
-    Elicitation,
-}
-impl<'a> SlateCapability<'a> {
-    /// An edge row key: [`ELICITATION_ROW_KEY`] is the elicitation row, any
-    /// other key names a tool.
-    pub fn parse(key: &'a str) -> Self {
-        if key == ELICITATION_ROW_KEY {
-            Self::Elicitation
-        } else {
-            Self::Tool(key)
-        }
-    }
-    /// The key the owner and holder edges name this row by.
-    pub fn key(self) -> &'a str {
-        match self {
-            Self::Tool(name) => name,
-            Self::Elicitation => ELICITATION_ROW_KEY,
-        }
-    }
-}
 
 /// The slate's one elicitation declaration (ARCH-0072: "one typed row per
 /// declared capability, including elicitation"). Elicitation is an MCP
@@ -140,14 +114,6 @@ impl SlateElicitationManifest {
             .collect();
         (declared || !legacy_ask_tools.is_empty()).then_some(Self { legacy_ask_tools })
     }
-}
-
-/// Immutable pack identity included in the slate's manifest hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SlatePackSource {
-    pub source_ref: String,
-    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -252,14 +218,6 @@ pub struct SlateOwnerOverride {
 #[serde(deny_unknown_fields)]
 pub struct SlateHolderNarrow {
     pub disposition: SlateDisposition,
-    pub actor: String,
-    pub at: u64,
-}
-/// The holder's own facet narrowing, kept beside the owner's limit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SlateFacetNarrow {
-    pub facets: BTreeSet<EntityId>,
     pub actor: String,
     pub at: u64,
 }
@@ -589,15 +547,6 @@ pub(in crate::connector_key) fn elicitation_expands(
     !next.legacy_ask_tools.is_subset(&old.legacy_ask_tools)
 }
 
-/// A dropped facet limit, or a facet the old limit lacked, widens the Grant.
-fn facets_widen(old: Option<&BTreeSet<EntityId>>, next: Option<&BTreeSet<EntityId>>) -> bool {
-    match (old, next) {
-        (None, _) => false,
-        (Some(_), None) => true,
-        (Some(old), Some(next)) => !next.is_subset(old),
-    }
-}
-
 /// Compare the fully typed grant declaration and the effective settings.
 /// Unchanged or reduced authority carries its earlier consent; new rows,
 /// richer declarations, a looser setting or a wider facet set need a tap.
@@ -644,161 +593,6 @@ fn elicitation_row_expands(old: &ConnectorGrantSlate, next: &ConnectorGrantSlate
     };
     elicitation_expands(old_declaration, declaration)
         || row.effective_disposition() < old_row.effective_disposition()
-}
-
-/// Only a provable restriction carries consent. Anything unknown re-asks.
-/// Manifest drift reads the same judgment (FIX 2604).
-pub(in crate::connector_key) fn schema_narrows(
-    old: Option<&serde_json::Value>,
-    next: Option<&serde_json::Value>,
-) -> bool {
-    let (Some(old), Some(next)) = (old, next) else {
-        return old == next;
-    };
-    if old == next {
-        return true;
-    }
-    let (Some(a), Some(b)) = (old.as_object(), next.as_object()) else {
-        return false;
-    };
-    if a.get("type") != b.get("type") || a.get("default") != b.get("default") {
-        return false;
-    }
-    if a.get("additionalProperties") != b.get("additionalProperties") {
-        return false;
-    }
-    let (Some(ap), Some(bp)) = (
-        a.get("properties").and_then(|v| v.as_object()),
-        b.get("properties").and_then(|v| v.as_object()),
-    ) else {
-        return false;
-    };
-    if bp.keys().collect::<BTreeSet<_>>() != ap.keys().collect::<BTreeSet<_>>() {
-        return false;
-    }
-    let required = |obj: &serde_json::Map<String, serde_json::Value>| -> Option<BTreeSet<String>> {
-        obj.get("required")
-            .map_or(Some(&[][..]), |v| v.as_array().map(Vec::as_slice))?
-            .iter()
-            .map(|v| v.as_str().map(str::to_owned))
-            .collect::<Option<BTreeSet<_>>>()
-    };
-    let (Some(ar), Some(br)) = (required(a), required(b)) else {
-        return false;
-    };
-    if !ar.is_subset(&br) {
-        return false;
-    }
-    if a.keys().any(|k| {
-        !matches!(
-            k.as_str(),
-            "type" | "default" | "properties" | "required" | "additionalProperties"
-        )
-    }) || b.keys().any(|k| {
-        !matches!(
-            k.as_str(),
-            "type" | "default" | "properties" | "required" | "additionalProperties"
-        )
-    }) {
-        return false;
-    }
-    ap.iter().all(|(name, prior)| {
-        let Some(current) = bp.get(name) else {
-            return false;
-        };
-        if current == prior {
-            return true;
-        }
-        let (Some(x), Some(y)) = (prior.as_object(), current.as_object()) else {
-            return false;
-        };
-        if x.get("type") != y.get("type") || x.get("default") != y.get("default") {
-            return false;
-        }
-        let (Some(xe), Some(ye)) = (
-            x.get("enum").and_then(|v| v.as_array()),
-            y.get("enum").and_then(|v| v.as_array()),
-        ) else {
-            return false;
-        };
-        x.keys()
-            .all(|k| matches!(k.as_str(), "type" | "default" | "enum"))
-            && y.keys()
-                .all(|k| matches!(k.as_str(), "type" | "default" | "enum"))
-            && ye.iter().all(|value| xe.contains(value))
-    })
-}
-
-fn is_resolved_schema(value: &serde_json::Value) -> bool {
-    let Some(schema) = value.as_object() else {
-        return false;
-    };
-    // Unions stay in a resolved schema, each variant resolved; the call
-    // validator reads them (outbound_consent/tool_schema.rs).
-    if schema
-        .keys()
-        .any(|key| matches!(key.as_str(), "$ref" | "allOf"))
-    {
-        return false;
-    }
-    for key in ["anyOf", "oneOf", "prefixItems"] {
-        if let Some(value) = schema.get(key)
-            && !value.as_array().is_some_and(|variants| {
-                variants
-                    .iter()
-                    .all(|variant| variant.is_boolean() || is_resolved_schema(variant))
-            })
-        {
-            return false;
-        }
-    }
-    // Names under `properties` are caller-chosen parameter names, not schema
-    // operators. Values in defaults/const/enums are instance data; never
-    // interpret their object keys as `$ref` or composition keywords.
-    for key in [
-        "properties",
-        "patternProperties",
-        "$defs",
-        "definitions",
-        "dependentSchemas",
-    ] {
-        if let Some(value) = schema.get(key) {
-            let Some(entries) = value.as_object() else {
-                return false;
-            };
-            if !entries.values().all(is_resolved_schema) {
-                return false;
-            }
-        }
-    }
-    for key in [
-        "items",
-        "additionalProperties",
-        "unevaluatedProperties",
-        "contains",
-        "not",
-        "if",
-        "then",
-        "else",
-        "propertyNames",
-    ] {
-        if let Some(value) = schema.get(key) {
-            if value.is_boolean() {
-                continue;
-            }
-            if key == "items" && value.is_array() {
-                if !value
-                    .as_array()
-                    .is_some_and(|items| items.iter().all(is_resolved_schema))
-                {
-                    return false;
-                }
-            } else if !is_resolved_schema(value) {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 /// A stamped slate is an admission for one connector, not a reusable grant.

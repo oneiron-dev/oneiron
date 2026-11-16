@@ -44,8 +44,8 @@ use oneiron::llm::run_admission::{
 };
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
-    AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
-    ModelId, ReasoningEffort,
+    AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, AutoCheckWorldHold, BoundedAutoChecker,
+    LabelReadModel, ModelId, ReasoningEffort,
 };
 use oneiron::memory::ImagePick;
 use oneiron::policy_model::PolicyDecisions;
@@ -202,7 +202,9 @@ pub struct DecisionHost {
     /// row's), so an older read never lands last.
     person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
-    auto_check: Option<(String, EntityId)>,
+    /// The auto check's wording, its principal, and the judge of each
+    /// candidate's world: the vault's world settings.
+    auto_check: Option<(String, EntityId, Arc<dyn AutoCheckWorldHold>)>,
     image_pick: Option<ImagePickSettings>,
     booking_parse: Option<BookingParseSettings>,
     connector_slate: Option<ConnectorSlateSettings>,
@@ -577,26 +579,41 @@ impl DecisionHost {
     }
 
     /// The write gate's auto check through this ladder, worded `wording`,
-    /// for `principal`.
-    fn with_auto_check(mut self, wording: Option<&str>, principal: Option<EntityId>) -> Self {
-        self.auto_check = wording
-            .zip(principal)
-            .map(|(wording, principal)| (wording.to_owned(), principal));
+    /// for `principal`. A candidate whose world `vault`'s world settings keep
+    /// on this device is asked only of the rungs that run on this device
+    /// (DEC-0005 fix 6); with none, the write fails closed.
+    fn with_auto_check(
+        mut self,
+        wording: Option<&str>,
+        principal: Option<EntityId>,
+        vault: &Arc<Vault>,
+    ) -> Self {
+        self.auto_check = wording.zip(principal).map(|(wording, principal)| {
+            (
+                wording.to_owned(),
+                principal,
+                Arc::clone(vault) as Arc<dyn AutoCheckWorldHold>,
+            )
+        });
         self.rebuild_auto_check()
     }
 
     fn rebuild_auto_check(mut self) -> Self {
-        self.auto_checker = self.auto_check.as_ref().map(|(wording, principal)| {
-            BoundedAutoChecker::new(AutoCheckDecisions {
-                ladder: self.ladder.clone(),
-                principal: *principal,
-                dial: self.dial(DecisionRung::Big),
-                bands: self.bands.clone(),
-                wording: wording.clone(),
-                notes: Arc::new(self.notes.clone()),
-                calibrated: None,
-            })
-        });
+        self.auto_checker = self
+            .auto_check
+            .as_ref()
+            .map(|(wording, principal, world_hold)| {
+                BoundedAutoChecker::new(AutoCheckDecisions {
+                    ladder: self.ladder.clone(),
+                    principal: *principal,
+                    dial: self.dial(DecisionRung::Big),
+                    bands: self.bands.clone(),
+                    wording: wording.clone(),
+                    notes: Arc::new(self.notes.clone()),
+                    calibrated: None,
+                    world_hold: Some(Arc::clone(world_hold)),
+                })
+            });
         self
     }
 
@@ -744,7 +761,7 @@ impl HouseRead {
 /// call, through the credential broker.
 struct SystemOneRung {
     vault: Arc<Vault>,
-    seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
+    seat: Arc<oneiron_llm::systemone::SystemOneSeat>,
     guard: BudgetGuard,
     /// The host account and receipt sink for calls without a caller's run (FIX 3795).
     models: Arc<crate::models::ModelRuntime>,
@@ -771,7 +788,7 @@ impl SystemOneRung {
         let seat = match (&settings.key_env, &settings.key_secret) {
             (Some(env), _) => {
                 let bearer = std::env::var(env).map_err(|_| anyhow::anyhow!("{env} is not set"))?;
-                oneiron_llm_systemone::SystemOneSeat::new(endpoint, bearer, model, version)
+                oneiron_llm::systemone::SystemOneSeat::new(endpoint, bearer, model, version)
             }
             (None, Some(secret)) => {
                 let broker = broker.ok_or_else(|| {
@@ -779,7 +796,7 @@ impl SystemOneRung {
                         "its key_secret needs the vault's credential broker, and none was opened"
                     )
                 })?;
-                oneiron_llm_systemone::SystemOneSeat::with_transport(
+                oneiron_llm::systemone::SystemOneSeat::with_transport(
                     endpoint,
                     model,
                     version,

@@ -13,7 +13,7 @@ use oneiron::llm::{
     SingleRouteBackend, WorkerBuildEvidence, WorkerDescriptor, WorkerKind,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmCatalogEntry, LlmError, LlmResult};
-use oneiron_llm_gemini::{
+use oneiron_llm::gemini::{
     GeminiBackend, GeminiFrame, GeminiFuture, GeminiHttpRequest, GeminiHttpResponse,
     GeminiProviderStream, GeminiTransport,
 };

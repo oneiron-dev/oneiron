@@ -40,6 +40,33 @@ impl OrganOutcome {
         Ok(rows)
     }
 
+    /// The version of `artifact` itself this call read, with its content
+    /// hash: what an output that lands on `artifact` was made against, so a
+    /// head that moved after the read (another version kept, or a held call
+    /// redriven later) keeps the output as a fork of it (review of #7368).
+    /// `None` when the call read no version of `artifact`, as for a PNG
+    /// born from a JPEG source.
+    ///
+    /// # Errors
+    ///
+    /// The vault's read error.
+    pub fn made_against(
+        &self,
+        vault: &Vault,
+        artifact: &EntityId,
+    ) -> oneiron::Result<Option<(u64, [u8; 32])>> {
+        let Some(input) = self.receipt.inputs.iter().find(|input| {
+            !input.lent && EntityId::from_hex(&input.artifact).is_ok_and(|row| row == *artifact)
+        }) else {
+            return Ok(None);
+        };
+        // The version's own hash: a masked sight lent a copy under another.
+        let hash = vault
+            .blob_artifact_version_metadata(artifact, input.version)?
+            .map_or(input.content_hash.0, |record| record.content_hash);
+        Ok(Some((input.version, hash)))
+    }
+
     /// The made_by envelope this call gives what it made: `actor` ran it,
     /// `trigger` is the task, ask, run or skill it answers.
     #[must_use]
@@ -305,11 +332,13 @@ fn report_json_text(report: &Value) -> Option<String> {
 }
 
 /// Offers every export file of one organ call to `artifact`, each a proposal
-/// waiting for Keep, with the call receipt as its made_by. A call a principal
-/// submitted has its envelope's trigger and receipt inputs admitted through
-/// that principal's own read as each proposal is retained (FIX 9310); a
-/// host's own call, with no submitter, keeps the envelope as the host built
-/// it ([`oneiron::edit_settle::MadeByReader::OrganReceipt`], FIX 1229).
+/// waiting for Keep, with the call receipt as its made_by. Each is pinned to
+/// the version of `artifact` the call read ([`OrganOutcome::made_against`]),
+/// else to the head. A call a principal submitted has its envelope's trigger
+/// and receipt inputs admitted through that principal's own read as each
+/// proposal is retained (FIX 9310); a host's own call, with no submitter,
+/// keeps the envelope as the host built it
+/// ([`oneiron::edit_settle::MadeByReader::OrganReceipt`], FIX 1229).
 ///
 /// # Errors
 ///
@@ -325,18 +354,19 @@ pub fn propose_organ_outputs(
     actor: WriteActor,
     submitter: Option<EntityId>,
 ) -> oneiron::Result<Vec<PendingProposalView>> {
+    let made_against = outcome.made_against(vault, artifact)?;
     land_outputs(
         vault,
         outcome,
         (run_ref, trigger, actor.entity_ref()),
         |output, now, read_rows| {
-            vault.propose_native_output_with_reads(
+            vault.propose_native_output_made_against(
                 artifact,
                 output,
                 Some(vault.organ_landing_reader(submitter)?),
                 (actor, now),
+                made_against,
                 read_rows,
-                None,
             )
         },
     )
@@ -344,9 +374,11 @@ pub fn propose_organ_outputs(
 
 /// Lands every export file of the held call `wait` once a node ran it at a
 /// redrive (FIX 22386), as [`propose_organ_outputs`] does for a call that ran
-/// at once: each through [`Vault::propose_held_organ_output`], the one door
-/// a ref its call holds lets in. A file under the held ref ends its hold as
-/// it lands; the redrive releases the hold of a call that made several.
+/// at once: each through [`Vault::propose_held_organ_output_made_against`],
+/// the one door a ref its call holds lets in, pinned to the version of the
+/// held artifact the call read as [`propose_organ_outputs`] pins its files.
+/// A file under the held ref ends its hold as it lands; the redrive releases
+/// the hold of a call that made several.
 ///
 /// # Errors
 ///
@@ -358,6 +390,7 @@ pub(crate) fn land_held_organ_outputs(
     wait: &OrganWait,
     outcome: &OrganOutcome,
 ) -> oneiron::Result<Vec<PendingProposalView>> {
+    let made_against = outcome.made_against(vault, &wait.artifact_id)?;
     land_outputs(
         vault,
         outcome,
@@ -366,7 +399,9 @@ pub(crate) fn land_held_organ_outputs(
             wait.trigger.clone(),
             wait.held_by.entity_ref(),
         ),
-        |output, now, read_rows| vault.propose_held_organ_output(wait, output, now, read_rows),
+        |output, now, read_rows| {
+            vault.propose_held_organ_output_made_against(wait, output, now, made_against, read_rows)
+        },
     )
 }
 

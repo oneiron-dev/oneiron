@@ -1,8 +1,8 @@
 //! The one provider abstraction: `[models]` in, one backend per seat out.
 //!
 //! Every provider kind is reached over HTTP through the matching adapter
-//! crate (`oneiron-llm-openai` for OpenAI-compatible and local servers,
-//! `oneiron-llm-anthropic` for Anthropic-compatible ones). Each role's ladder
+//! module of `oneiron-llm` (`openai_compat` for OpenAI-compatible and local
+//! servers, `anthropic` for Anthropic-compatible ones). Each role's ladder
 //! becomes an `OfferLadder` behind one seat model id, so the engine pins a
 //! single identity while the ladder falls back across rungs.
 //!
@@ -24,8 +24,8 @@ use oneiron::llm::run_admission::{
 };
 use oneiron::llm::{SingleRouteBackend, WorkerKind};
 use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
-use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
-use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
+use oneiron_llm::anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
+use oneiron_llm::openai_compat::{OpenAiCompatBackend, OpenAiCompatConfig};
 
 use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind, role_key};
 
@@ -111,13 +111,14 @@ mod worker_host;
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 pub(crate) use broker_context::{BrokerContext, WeakBrokerContext};
 use cooldown::FallbackRung;
+pub(crate) use cooldown::{HEALTH_REST_MAX_SECS, HEALTH_REST_SECS, HealthRestSettings};
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::{MeshRoutes, withdraw_discovered};
 pub(crate) use host_budgets::ModelHostBudgets;
-pub use hosted_speech::{HostedCloner, VendorVoice};
+pub use hosted_speech::HostedCloner;
 pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
 pub(crate) use ladder::{AnsweringRung, ModelCallBinding};
 pub use ladder::{CallDeadline, OfferLadder};
@@ -127,6 +128,7 @@ pub(crate) use media::JobSpendLedger;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
+pub use oneiron_speech::design::hosted::VendorVoice;
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
 pub(crate) use receipts::ServerReceipts;
