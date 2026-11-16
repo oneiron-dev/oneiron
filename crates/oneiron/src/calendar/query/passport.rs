@@ -19,7 +19,7 @@ impl Memory<'_> {
         &self,
         request: &CalendarPassportReadRequest,
     ) -> MemoryResult<ScopedReadResult<Option<CalendarPassportRevision>>> {
-        let result = self.calendar_passport_revisions(request, ClaimReadStatus::Surfaceable)?;
+        let result = self.calendar_passport_revisions(request, ClaimReadStatus::Recorded)?;
         if result.value.len() > 1 {
             return Err(
                 MemoryError::bad_request("competing admitted calendar passports")
