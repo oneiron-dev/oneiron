@@ -233,15 +233,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/sync/birth_fields.rs` | src | s | 1 fn · 1 const | — | The canonical-birth field rules of the kinds besides MESSAGE whose text the sync plane births lazily (FIX… |
 | `src/esign_rate_thresholds.rs` | src | s | 1 struct | EsignRateThresholds | The e-sign send-rate thresholds a policy manifest resolves to |
 | `src/executor_speech_identity.rs` | src | s | 4 fn | — | The deterministic ids of a durable executor run's speech turn and compaction session, and the domain-tagged… |
+| `src/expiry.rs` | src | s | 4 fn | — | The one expiry instant (UC-12): a row or a lease that lives until `expires_at` is dead from that second on… |
 | `src/extraction_work.rs` | src | s | 1 enum | ExtractionWork | Scheduling class carried by stored extraction markers |
 | `src/file_secret_marks.rs` | src | s | 1 struct · 2 enum · 5 fn · 2 type · 2 const | KeySpan, MemberStep, SecretSight | Value-free file-mask paths, read visibility, and byte-span transformations |
 | `src/gate_decision.rs` | src | s | 5 mod | — | Store-layer modules of core `store::gate_decision`; core re-exports each one at its old path |
 | `src/gate_decision/keys.rs` | src | s | 5 fn · 6 const | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
 | `src/gate_decision/retention_policy.rs` | src | s | 2 enum | GateRetentionOverrideCeiling, GateRetentionPrecedence | Append-time decision ancestry and retention-policy values |
-| `src/gate_decision/types.rs` | src | s | 4 struct · 1 enum · 6 fn · 11 const | GateClaimIndexBackfill, GateDecisionId, GateEnginePart, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
+| `src/gate_decision/types.rs` | src | s | 4 struct · 1 enum · 5 fn · 11 const | GateClaimIndexBackfill, GateDecisionId, GateEnginePart, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
 | `src/gate_decision/vet.rs` | src | s | 3 fn · 1 const | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/gate_decision/write_mode.rs` | src | s | 1 struct | GateWriteMode | Claim-write decision recording and pending-consent mode |
-| `src/gate_reason.rs` | src | m | 4 enum · 11 fn · 3 const | GateMetricReasonClass, GateOutcome, GateReasonCode, GateReceiptOutcome | Gate outcomes, stable reason codes, and pure metric classification |
+| `src/gate_reason.rs` | src | m | 4 enum · 9 fn · 2 const | GateMetricReasonClass, GateOutcome, GateReasonCode, GateReceiptOutcome | Gate outcomes, stable reason codes, and pure metric classification |
 | `src/git_wire.rs` | src | s | 23 mod | — | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
 | `src/git_wire/argv.rs` | src | s | 6 fn | — | Frozen typed argv: one constructor per git verb plus the token validators |
 | `src/git_wire/bridge.rs` | src | s | 3 fn | — | `repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction |
@@ -263,7 +264,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/plan.rs` | src | s | 1 struct · 1 enum · 1 fn | GitWirePlannedOid, PlannedPublication | Two-phase plan assembly: object writes plus the ref publications they authorize |
 | `src/git_wire/process.rs` | src | s | 7 fn | — | The crate's single git child-process constructor plus its bounded IO and thread-pump helpers |
 | `src/git_wire/projected_object.rs` | src | m | 2 struct · 1 enum · 11 fn · 3 const | GitObjectEdge, GitProjectedPayload, RawTreeEntry | A masked copy's objects and its store (FIX 7608 slice 2b-i, CALL P2 `PreservePayload`) |
-| `src/git_wire/record.rs` | src | m | 5 struct · 3 enum · 22 fn | GitWireCommitOutcome, GitWirePrepared, GitWireReceipt, GitWireRecordState, GitWireRejection, StoredGitWireRecord, StoredObservedRef, StoredPublication | Durable journal row: record state machine, key builders, MessagePack codec, stored conversions |
+| `src/git_wire/record.rs` | src | m | 5 struct · 3 enum · 21 fn | GitWireCommitOutcome, GitWirePrepared, GitWireReceipt, GitWireRecordState, GitWireRejection, StoredGitWireRecord, StoredObservedRef, StoredPublication | Durable journal row: record state machine, key builders, MessagePack codec, stored conversions |
 | `src/git_wire/repo.rs` | src | m | 3 struct · 15 fn | GitWireRepo, GitWireRepoGuard, GitWireRepoIdentity | Proven repository identity plus the cross-thread, cross-process repository lock |
 | `src/git_wire/repository_profile.rs` | src | m | 4 struct · 1 enum · 9 fn | RefBackend, RepoLayout, SourceFile, WorktreeOverrides, WorktreeSemantics | Admission of immutable Git layout and worktree semantics before an attribute-consuming effect |
 | `src/git_wire/retained_object.rs` | src | m | 3 struct · 1 enum · 26 fn | GitObjectKind, GitRetainedObject, GitSpool, RetainedGitIo | Retained Git object IO (FIX 7608 slice 2b-i, Rule 5) |
@@ -310,7 +311,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/known_value_index/forms.rs` | src | m | 1 struct · 11 fn · 1 const | View | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/known_value_index/rolling.rs` | src | s | 3 struct · 11 fn | RollingKey, RollingScan, RollingSets | The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window… |
 | `src/l2_evidence.rs` | src | s | 2 struct · 4 fn | L2BaseCache, L2BaseSummary | Bounded, vault-owned cache of score-free context evidence |
-| `src/lib.rs` | src | s | 224 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 225 mod | — | The store layer of the oneiron engine |
 | `src/live_speaker_calls.rs` | src | s | 1 struct · 3 fn | LiveSpeakers | Per-room live voice-call registration index |
 | `src/local_queue_budget.rs` | src | s | 1 fn | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
@@ -328,7 +329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 56 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
-| `src/model_decision/policy.rs` | src | m | 8 struct · 2 enum · 15 fn · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +2 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
+| `src/model_decision/policy.rs` | src | m | 8 struct · 2 enum · 19 fn · 1 type · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +2 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
 | `src/model_decision/provider.rs` | src | s | 3 struct · 7 fn · 3 const | PairedAnswer, ProviderCapability, ProviderDecision | Provider answer values, capabilities, and score-level rules |
 | `src/model_decision/questions/mod.rs` | src | s | 3 re-export | — | Graph-question recipe and outcome vocabulary |
 | `src/model_decision/questions/recipe.rs` | src | s | 2 struct | GraphQuestionInput, GraphQuestionRef | Graph-question identities and explicit evidence joins |
@@ -419,7 +420,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/proposal_observation_record.rs` | src | s | 1 struct | ProposalPolicySource | The policy source behind a proposal submission's advisory threshold, as the proposal observation records it |
 | `src/proposal_spool.rs` | src | s | 1 struct · 1 enum · 2 trait | ProposalSpoolClaim, ProposalSpoolFloor, SpoolAtFloor, SpoolFloorRefusal | Where a proposal body is spooled, and the disk floor each of its appends keeps (FIX 7650) |
 | `src/query_health.rs` | src | s | 3 struct · 2 enum · 1 fn | SavedQueryHealth, SavedQueryPass, SavedQueryWake, SavedQueryWakeOutcome, WakeEvaluationReport | Each swept saved query's health (FIX 11250): one row per query the host's evaluator wakes, written at every… |
-| `src/query_memo_codec.rs` | src | s | 11 fn · 4 const | — | — |
+| `src/query_memo_codec.rs` | src | s | 9 fn · 3 const | — | — |
 | `src/query_memos.rs` | src | s | 3 struct · 1 enum · 11 fn · 1 const | MatchVerdict, SavedQueryDerivationEnvelope, VerdictMemoKey, VerdictMemoRow | Standing-query memo values, exact codecs and response-carriage ownership |
 | `src/reaction_predicate.rs` | src | s | 1 const | — | Reaction outcome predicate stored by event-outcome projections |
 | `src/reader_fold_receipt.rs` | src | s | 2 struct | ReceiptPartial, SummaryMemo | Stored reader-fold receipts and their occurrence vocabulary |
@@ -668,8 +669,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/world_access_predicates.rs` | src | s | 1 fn · 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `tests/expiry_rule.rs` | test | s | — | — | UC-12 PR 3: the one expiry instant, `oneiron_store::expiry` |
 | `tests/fingerprint_keep_skill_tree.rs` | test | s | 1 struct · 1 fn · 2 const · 1 crate-vis | SkillContentHash | K-proof (oracle) for PLAN-UC-04 stage 6.3a: the canonical skill tree hash keeps its bytes |
 | `tests/fingerprint_keep_vault_import_receipt.rs` | test | s | 2 fn · 2 const | — | K-proof (oracle) for PLAN-UC-04 stage 6.3c: the foreign vault import receipt id keeps its bytes |
+| `tests/gate_engine_part_names.rs` | test | s | — | — | `GateEnginePart`'s names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names… |
 | `tests/gate_receipt_outcome_tokens.rs` | test | s | — | — | UC-03 PR 0: `GateReceiptOutcome`, the closed outcome a Gate receipt records (DESIGN fable/21 §2) |
 | `tests/msgpack_store_rows.rs` | test | s | — | — | PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the… |
 | `tests/phonetic_han_codes.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form… |

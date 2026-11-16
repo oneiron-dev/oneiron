@@ -480,7 +480,9 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let mut due = Vec::new();
         for (_, lease) in SECRET_LEASE.scan(&self.store, &wtxn)? {
-            if lease.status == SecretLeaseStatus::Active && now >= lease.expires_at {
+            if lease.status == SecretLeaseStatus::Active
+                && oneiron_store::expiry::is_expired(now, lease.expires_at)
+            {
                 due.push(lease);
             }
         }
