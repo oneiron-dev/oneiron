@@ -417,7 +417,12 @@ async fn digest(
             .and_then(|framed| {
                 framed
                     .map(|framed| {
-                        crate::api::facade::host_doors::hold_weave_digest(&server, &auth, framed)
+                        crate::api::facade::host_doors::hold_weave_digest(
+                            &server,
+                            &auth,
+                            framed,
+                            crate::lens_frames::HeldCardProof::Owner,
+                        )
                     })
                     .transpose()
             })

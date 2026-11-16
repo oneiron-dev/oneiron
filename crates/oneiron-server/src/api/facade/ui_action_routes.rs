@@ -28,7 +28,8 @@
 //! `GET /v1/core/lens-frames/{card_id}` hands a held card back to the
 //! credential that rendered it (GENUI-STATE-PERSIST), its render carrying the
 //! current `$state`, so a reload draws the state the card's events left, not
-//! the render's initial values; its rows are proved again on that read first.
+//! the render's initial values. The proof its render read under is proved
+//! again first, as the card's own door proves it, and its rows on that read.
 //! A model round trip carries the card's `$state` at the press to the agent.
 //!
 //! `selectedContext` (FIX 3268) names selections the clicker made on this
@@ -82,7 +83,7 @@ use crate::ai_host::LensCallback;
 use crate::api::call_receipt::CallStamp;
 use crate::api::credential_memory;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::lens_frames::{CardOwner, HeldCard};
+use crate::lens_frames::{CardOwner, HeldCard, HeldCardProof};
 use crate::server::SyncServer;
 
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
@@ -140,11 +141,15 @@ pub(crate) async fn vault_lenses_default(
                     frame,
                     card.render.clone(),
                     owner,
+                    HeldCardProof::CallerRead,
                 )?;
             }
-            None => server
-                .lens_frames
-                .record(auth, frame, card.render.clone())?,
+            None => server.lens_frames.record(
+                auth,
+                frame,
+                card.render.clone(),
+                HeldCardProof::CallerRead,
+            )?,
         }
         Ok(ScopedReadResult {
             value: card,
@@ -434,8 +439,11 @@ fn tool_bound(
 /// `$state` its events left: `{"cardId", "render"}`. A reload, and every
 /// view of the card in the same app (the talk, the pane beside the room, a
 /// pinned view), draws this one state instead of the render's initial
-/// values. Every row the card binds is proved again on the caller's read
-/// first, as an event's are: a row it no longer reads, or one that moved
+/// values. The proof the card's render read under holds again first
+/// ([`reprove_held_proof`]): an owner card goes back to the vault's owner
+/// alone, a weave Admin card only under its Admin grant and a standing
+/// step-up. Then every row the card binds is proved again on the caller's
+/// read, as an event's are: a row it no longer reads, or one that moved
 /// since the render, refuses. A card this credential did not render, or
 /// one this server no longer holds, answers the re-render refusal.
 async fn card_state(
@@ -444,7 +452,7 @@ async fn card_state(
     Path(card_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-    let held = LensRenderId::new(card_id)
+    let (held, proof) = LensRenderId::new(card_id)
         .ok()
         .and_then(|card| server.lens_frames.rendered_card(&auth, &card))
         .ok_or_else(rerender)?;
@@ -454,6 +462,7 @@ async fn card_state(
         let auth = auth.clone();
         let held = Arc::clone(&held);
         super::clock_ingress::run_blocking(move || {
+            reprove_held_proof(&server, &auth, proof)?;
             credential_memory(&server.vault, Some(&auth), actor, class)
                 .at(auth.locality())
                 .lens_frame_reread(&held.frame)
@@ -468,6 +477,29 @@ async fn card_state(
     Ok(Json(
         serde_json::json!({ "cardId": &held.render.card_id, "render": render }),
     ))
+}
+
+/// The proof a held card's render read under, proved again for `auth`'s
+/// request as the card's own door proves it: an owner card's credential is
+/// the vault's owner now (`/v1/owner/weave/*`), and a weave Admin card's
+/// request binds its Admin membership grant with a step-up standing on its
+/// slip now (`vault.weave.admin.*`). A credential's own card needs nothing
+/// past its rows. Each refuses as its door refuses.
+fn reprove_held_proof(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    proof: HeldCardProof,
+) -> MemoryResult<()> {
+    match proof {
+        HeldCardProof::CallerRead => Ok(()),
+        HeldCardProof::Owner => {
+            super::owner_binding::facade_owner(server, auth, "a held owner lens card").map(drop)
+        }
+        HeldCardProof::WeaveAdmin { membership_grant } => {
+            super::weave_admin_doors::stepped_up_admin_under(server, auth, membership_grant)
+                .map(drop)
+        }
+    }
 }
 
 /// Closes a held card for the credential that rendered it; a card it did

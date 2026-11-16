@@ -5,14 +5,22 @@
 //! events left, after every row it binds is proved again on that read.
 //! Another credential, and a card the server does not hold, get the
 //! re-render refusal; a card whose row moved since the render is refused.
+//! A card held under an Owner proof or a weave Admin proof goes back only
+//! once that proof holds again, as the card's own door proves it: a slip
+//! cut short of the owner's, or one with no Admin step-up standing on it,
+//! is refused.
 //!
 //! The card is the owner's default lens, rendered through
 //! `vault.lenses.default`, which holds its frame. That card carries no local
 //! action, so the test door `move_held_state` moves its held `$state` as an
-//! accepted local event does.
+//! accepted local event does. The owner lens and the weave Admin lens
+//! render through a model route, so the doors `set_owner_proof` and
+//! `set_weave_admin_proof` hold a rendered card as those lenses hold theirs.
 //!
 //! Red on main (main with this file and the door): the path routes DELETE
-//! only, so every GET answers 405.
+//! only, so every GET answers 405. Red for the two proof tests: the head
+//! with the reload's proof check cut out (every proof passes): each of
+//! those reloads answers 200.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
 //! lens_frame_state_door`.
@@ -31,7 +39,9 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::lens::GeneratedUiStateSnapshot;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_server::test_doors::lens_frames::move_held_state;
+use oneiron_server::test_doors::lens_frames::{
+    move_held_state, set_owner_proof, set_weave_admin_proof,
+};
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
@@ -325,6 +335,64 @@ fn another_credential_is_refused_the_cards_state() {
         assert!(
             body.to_string().contains("re-render"),
             "the refusal says to re-render: {body}"
+        );
+    });
+}
+
+#[test]
+fn an_owner_card_goes_back_only_under_the_owners_proof() {
+    on_engine_stack(|| async {
+        let fx = served();
+        // The owner's slip cut to `read` and `write` is no Owner proof: the
+        // owner lens's doors refuse it, and so does the reload of its card.
+        let owner = fx.owner_credential();
+        let card = fx.render(&owner).await;
+        assert!(move_held_state(&fx.server, &card, picked()).await);
+        assert!(
+            set_owner_proof(&fx.server, &card),
+            "the server holds the card"
+        );
+
+        let (status, body) = fx.card_state(&owner, &card).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "an owner card goes back only under an Owner proof: {body}"
+        );
+        assert!(
+            body.to_string().contains("vault owner"),
+            "the refusal names the owner: {body}"
+        );
+        assert!(
+            move_held_state(&fx.server, &card, picked()).await,
+            "a refused reload leaves the card held"
+        );
+    });
+}
+
+#[test]
+fn a_weave_admin_card_goes_back_only_under_a_standing_admin_step_up() {
+    on_engine_stack(|| async {
+        let fx = served();
+        let owner = fx.owner_credential();
+        let card = fx.render(&owner).await;
+        assert!(move_held_state(&fx.server, &card, picked()).await);
+        assert!(
+            set_weave_admin_proof(&fx.server, &card, EntityId::now()),
+            "the server holds the card"
+        );
+
+        // No step-up stands on this slip: `vault.weave.admin.lens` refuses
+        // it the Admin proof, and so does the reload of an Admin card.
+        let (status, body) = fx.card_state(&owner, &card).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "an Admin card goes back only under a current Admin proof: {body}"
+        );
+        assert!(
+            body.to_string().contains("steps up"),
+            "the refusal says to step up: {body}"
         );
     });
 }
