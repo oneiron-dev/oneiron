@@ -702,11 +702,15 @@ pub(super) async fn handle_connection(
                     break;
                 }
                 if !matches!(&msg, SyncMessage::Rpc(_) | SyncMessage::Sub(_)) {
-                    let _ = server.wire_telemetry.record(
-                        &format!("sync:{:02x}", data[0]),
-                        &telemetry_actor,
-                        oneiron_vault_contract::now_ts(),
-                    );
+                    // The count waits on the blocking pool, never on this
+                    // loop's worker (FIX [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+                    let verb = format!("sync:{:02x}", data[0]);
+                    let actor = telemetry_actor.clone();
+                    crate::wire_telemetry::record_on_blocking_pool(
+                        &server,
+                        move |telemetry, now| telemetry.record(&verb, &actor, now),
+                    )
+                    .await;
                 }
                 // Rule 5: a new session or subscription waits its turn here,
                 // before the synchronous app tier runs it; only a live bound
@@ -731,6 +735,7 @@ pub(super) async fn handle_connection(
                         &direct_tx,
                         Some(&mut app_connection),
                     )
+                    .await
                     .map(|call| {
                         if let Some(call) = call {
                             match call {
@@ -756,6 +761,7 @@ pub(super) async fn handle_connection(
                         &direct_tx,
                         Some(&mut app_connection),
                     )
+                    .await
                     .map(drop),
                     msg => match handle_sync_message(
                         &server,

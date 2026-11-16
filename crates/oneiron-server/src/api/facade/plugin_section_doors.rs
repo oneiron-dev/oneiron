@@ -14,11 +14,9 @@ use oneiron::memory::{
     MemoryResult, PluginSectionGrant, PluginSectionGrantRequest, PluginSectionInstallOutcome,
     PluginSectionListRequest, PluginSectionProposeRequest, PluginSectionRevokeRequest,
     PluginSectionRevoked, PluginSectionSuggestRequest, PluginSectionSuggestion, PluginSectionsView,
-    PluginSuggestionsSetRequest, PluginSuggestionsView,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::skill_hub::CallerPermissions;
-use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing, refused};
@@ -139,45 +137,6 @@ pub(crate) async fn vault_packs_sections_suggest(
     const VERB: &str = "vault.packs.sections.suggest";
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.plugin_section_suggest(&input)
-    })
-    .await
-}
-
-/// `vault.packs.sections.suggestions.get`: the owner's suggestion knob.
-pub(crate) async fn vault_packs_sections_suggestions_get(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass),
-    _invocation: Option<InvocationId>,
-    _input: EmptyRequest,
-) -> Listed<PluginSuggestionsView> {
-    const VERB: &str = "vault.packs.sections.suggestions.get";
-    let proof = match owner(server, auth, VERB) {
-        Ok(proof) => proof,
-        Err(refusal) => return refused(refusal),
-    };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.plugin_suggestions_as_owner(&proof)
-    })
-    .await
-}
-
-/// `vault.packs.sections.suggestions.set`: the owner turns the suggestion
-/// pass on or off; off silences it before any catalog access.
-pub(crate) async fn vault_packs_sections_suggestions_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass),
-    _invocation: Option<InvocationId>,
-    input: PluginSuggestionsSetRequest,
-) -> Listed<PluginSuggestionsView> {
-    const VERB: &str = "vault.packs.sections.suggestions.set";
-    let proof = match owner(server, auth, VERB) {
-        Ok(proof) => proof,
-        Err(refusal) => return refused(refusal),
-    };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.plugin_suggestions_set_as_owner(&proof, &input)
     })
     .await
 }
