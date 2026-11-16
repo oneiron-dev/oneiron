@@ -9,9 +9,13 @@ use crate::temporal::TimeRange;
 
 // ─── fixtures ───────────────────────────────────────────────────────────
 
+/// A vault whose owner chose propose-first: most tests here drive the
+/// proposal flow, and a vault with no stored posture cleans up
+/// automatically.
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    set_cleanup_posture(&vault, CleanupPosture::ProposeFirst).expect("propose-first fixture");
     (tmp, vault)
 }
 
@@ -206,7 +210,6 @@ fn the_archive_tombstone_writes_no_receipt_and_queues_no_sweep() {
 #[test]
 fn restore_archived_revives_the_row_without_minting_a_twin() {
     let (_tmp, vault) = temp_vault();
-    rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("set posture");
     let person = fresh_id();
     put_person(&vault, &person);
