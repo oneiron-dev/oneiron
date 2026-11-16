@@ -64,7 +64,7 @@ pub(crate) fn redraft_slate(
     let slate = vault
         .connector_slate(slate_id)?
         .ok_or(oneiron::Error::EntityNotFound)?;
-    if slate.revision() != request.expected_revision {
+    if slate.revision() == request.expected_revision {
         return Err(oneiron::Error::ConcurrentWrite("connector slate revision"));
     }
     with_slate_drafter(server, owner, |drafter| match drafter {

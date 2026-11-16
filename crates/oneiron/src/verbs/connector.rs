@@ -120,6 +120,7 @@ fn builtin_web_entry(query: &str) -> Option<ConnectorEntry> {
     let summary = "Web search and page fetch through the configured provider.";
     let name_query = crate::connector_key::normalize_connector_key(query);
     let summary_query = query.trim().to_lowercase();
+    if query.is_empty() { return None; }
     if !WEB_CONNECTOR_NAME.contains(&name_query) && !summary.to_lowercase().contains(&summary_query)
     {
         return None;

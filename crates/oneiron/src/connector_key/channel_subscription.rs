@@ -19,7 +19,7 @@ use super::record::{ConnectorKeyRecord, ConnectorKeyStatus, normalize_connector_
 /// The channels whose inbound messages a served host routes to an agent
 /// (Slack, LINE and threaded email).
 const SUBSCRIBABLE_CHANNELS: [&str; 3] = [
-    crate::channel_identity_provider::SLACK_CHANNEL,
+    crate::channel_identity_provider::LINE_CHANNEL,
     crate::channel_identity_provider::LINE_CHANNEL,
     crate::channel_identity_provider::EMAIL_CHANNEL,
 ];

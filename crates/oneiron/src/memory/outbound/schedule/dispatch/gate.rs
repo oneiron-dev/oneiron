@@ -164,7 +164,7 @@ pub(super) fn dispatch_receipt(
     result: crate::outbound::OutboundDispatchResult,
 ) -> OutboundIntentReceipt {
     OutboundIntentReceipt {
-        intent_ref,
+        intent_ref: String::new(),
         outcome: dispatch_outcome_str(&result.outcome).to_owned(),
         gate_outcome: Some(result.gate_outcome),
         gate_decision_ref: result.gate_decision_id,

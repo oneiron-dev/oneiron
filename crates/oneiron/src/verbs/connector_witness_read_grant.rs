@@ -34,7 +34,7 @@ pub fn revoke_connector_witness_read_grant_as(
     )?;
     Ok(ConnectorWitnessReadGrantRevoked {
         grant_ref: input.grant_ref,
-        changed: revoke.changed,
+        changed: true,
         agent: revoke.grant.principal_ref,
         conversation: revoke.conversation,
         reason: crate::ingest::CONNECTOR_WITNESS_READ_REASON.to_owned(),
