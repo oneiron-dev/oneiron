@@ -144,8 +144,8 @@ pub fn custody_member_drain_begin_as(
         target_id: ticket.target_id.as_str().to_owned(),
         set_revision: ticket.set_revision,
         position: AckPosition::of(&ticket.position),
-        operation_id: hex(&ticket.operation_id),
-        token: hex(ticket.token.expose()),
+        operation_id: oneiron_hex::encode(&ticket.operation_id),
+        token: oneiron_hex::encode(ticket.token.expose()),
         check_in: Some(check_in),
     })
 }
@@ -265,8 +265,4 @@ fn reenrolled_spec(input: &CustodyMemberReenrolRequest) -> MemoryResult<TargetSp
             "name the member by target_id, or a folder member by folder",
         )),
     }
-}
-
-fn hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

@@ -2,13 +2,8 @@
 
 use super::*;
 
-/// Payload of an `add_owner` act: `owner` gains the Owner role; nobody loses it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AddOwnerPlan {
-    pub v: u8,
-    pub owner: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::shared_act::owner_add::AddOwnerPlan;
 
 impl Vault {
     /// Start an `add_owner` act for a live person who is not already an Owner.
