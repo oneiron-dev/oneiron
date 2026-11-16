@@ -8216,6 +8216,7 @@ dependencies = [
  "futures-util",
  "libc",
  "memchr",
+ "oneiron-fingerprint",
  "oneiron-hex",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
@@ -8820,6 +8821,7 @@ dependencies = [
  "jieba-rs",
  "lindera",
  "oneiron-contracts",
+ "regex",
  "rmpv",
  "rust-stemmers",
  "serde",
@@ -9029,6 +9031,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-llm",
+ "serde",
  "serde_json",
 ]
 
@@ -9121,6 +9124,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "libc",
+ "oneiron-fingerprint",
  "oneiron-hex",
  "serde",
  "serde_json",
@@ -9205,6 +9209,8 @@ dependencies = [
  "blake3",
  "dom_smoothie",
  "encoding_rs",
+ "oneiron-fingerprint",
+ "oneiron-hex",
  "reqwest 0.12.28",
  "schemars 0.8.22",
  "serde",
