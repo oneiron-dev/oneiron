@@ -384,25 +384,37 @@ fn accumulate_lands_every_member() -> TestResult<()> {
         panic!("an accumulate resolves");
     };
     assert_eq!(*outcome, ResolvedOutcome::Accumulate);
+    // The set's order is the selection's ready order (score, then claim
+    // id), not the reply's. The two siblings tie on score, so either may
+    // come first in a fresh vault; the rows stand in the item's set order.
+    let items = planned.items();
+    let spec = &items[0]["spec"];
+    let positions = spec["set_members"].as_array().ok_or("the set members")?;
+    let mut expected = Vec::new();
+    for position in positions {
+        let position = usize::try_from(position.as_u64().ok_or("a position")?)?;
+        let value = spec["members"][position]["candidate"]["value"]
+            .as_str()
+            .ok_or("a member's value")?;
+        expected.push(value.to_owned());
+    }
+    let mut both = expected.clone();
+    both.sort_unstable();
+    assert_eq!(both, ["black coffee", "green tea"]);
     let answer = commit_dreamer(
         &run.vault,
         Some(run.attempt_id),
-        json!({"items": planned.items(), "sources": []}),
+        json!({"items": items, "sources": []}),
     )?;
     let item = &answer["items"][0];
     assert_eq!(item["landed"], true, "{answer}");
     let rows = item["rows"].as_array().ok_or("the rows")?;
-    assert_eq!(rows.len(), 2, "{answer}");
-    let first = EntityId::from_hex(rows[0].as_str().ok_or("the first row")?)?;
-    let second = EntityId::from_hex(rows[1].as_str().ok_or("the second row")?)?;
-    let first_body = run.vault.get_claim(&first)?.ok_or("the first claim")?;
-    let second_body = run.vault.get_claim(&second)?.ok_or("the second claim")?;
-    assert_eq!(first_body.value, RmpValue::from("green tea"), "set order");
-    assert_eq!(
-        second_body.value,
-        RmpValue::from("black coffee"),
-        "set order"
-    );
+    assert_eq!(rows.len(), expected.len(), "{answer}");
+    for (row, value) in rows.iter().zip(&expected) {
+        let claim = EntityId::from_hex(row.as_str().ok_or("a row")?)?;
+        let stored = run.vault.get_claim(&claim)?.ok_or("the stored claim")?;
+        assert_eq!(stored.value, RmpValue::from(value.as_str()), "set order");
+    }
     Ok(())
 }
 
