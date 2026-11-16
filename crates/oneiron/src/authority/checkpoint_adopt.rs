@@ -18,6 +18,14 @@
 //! owner-root pin, an empty unresolved closure, coverage that never shrinks),
 //! then keeps the image as the head, stores the pin and attestations and
 //! advances the generation. It publishes nothing into the process cache.
+//!
+//! An image that covers a sealed row (census L5-22 1a-iii) carries every
+//! covered row's body, and its sender's fold grants this install nothing:
+//! the adoption lands every carried row it does not hold in the same
+//! transaction, through the history import, and the readers that fold past
+//! an image, or read its fold or carried evidence, are declined it
+//! ([`adopted_image_view_in_txn`]), so the stored log folds whole. Its pin,
+//! coverage and attestations still stand ([`cached_verified_adoption_in_txn`]).
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -210,8 +218,17 @@ pub(crate) fn adopted_authority_checkpoint_in_txn(
 pub(crate) struct AdoptedImageCacheEntry {
     adopted: AdoptedCheckpoint,
     verified: Arc<VerifiedAuthorityCheckpoint>,
-    evidence: Arc<super::adopted_evidence::AdoptedEvidence>,
+    /// None for an image that covers a sealed row: it seeds no reader here,
+    /// and a sealed body does not decode whole.
+    evidence: Option<Arc<super::adopted_evidence::AdoptedEvidence>>,
 }
+
+/// The adopted image, verified, and its carried evidence unless the image
+/// covers a sealed row.
+type AdoptedImage = (
+    Arc<VerifiedAuthorityCheckpoint>,
+    Option<Arc<super::adopted_evidence::AdoptedEvidence>>,
+);
 
 /// The image this vault adopted, verified once per stored rows and shared
 /// across readers (FIX 2987/3415/3449: every door-view rebuild, owner audit
@@ -219,7 +236,8 @@ pub(crate) struct AdoptedImageCacheEntry {
 /// both stored rows and compares them to the entry: a swapped `ADOPTED`
 /// row, swapped attestations or swapped image bytes always miss and fall
 /// through to the fresh primitive, so corruption still surfaces as
-/// `CorruptedIndex`, never a stale hit. None when nothing was adopted.
+/// `CorruptedIndex`, never a stale hit. None when nothing was adopted, and
+/// for an image that covers a sealed row ([`adopted_image_view_in_txn`]).
 pub(crate) fn cached_adopted_authority_checkpoint_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -230,7 +248,7 @@ pub(crate) fn cached_adopted_authority_checkpoint_in_txn(
 /// The carried bodies of the image this vault adopted, decoded once per
 /// stored rows (FIX 3449 hint: the evidence had no crate-visible accessor
 /// and no cache outside the door view). Same key and publish rule as
-/// [`cached_adopted_authority_checkpoint_in_txn`].
+/// [`cached_adopted_authority_checkpoint_in_txn`], and None where it is.
 pub(crate) fn cached_adopted_evidence_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -238,6 +256,24 @@ pub(crate) fn cached_adopted_evidence_in_txn(
     Ok(adopted_image_view_in_txn(store, txn)?.map(|(_, evidence)| evidence))
 }
 
+/// The image this vault adopted, verified once per stored rows as
+/// [`cached_adopted_authority_checkpoint_in_txn`] shares it, whatever it
+/// covers: its pin identity, its coverage and its attestations. Never a fold
+/// seed: a reader that folds past the image, or reads its fold or carried
+/// evidence, takes [`adopted_image_view_in_txn`]. None when nothing was
+/// adopted.
+pub(crate) fn cached_verified_adoption_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<Arc<VerifiedAuthorityCheckpoint>>> {
+    Ok(adopted_image_in_txn(store, txn)?.map(|(verified, _)| verified))
+}
+
+/// The adopted image and its carried evidence, for the readers that fold
+/// past the image or read its fold or carried rows. None when nothing was
+/// adopted, and for an image that covers a sealed row (census L5-22 1a-iii):
+/// its sender's fold grants this install nothing, the adoption landed every
+/// covered row here, and the stored log folds whole.
 pub(crate) fn adopted_image_view_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -247,6 +283,15 @@ pub(crate) fn adopted_image_view_in_txn(
         Arc<super::adopted_evidence::AdoptedEvidence>,
     )>,
 > {
+    Ok(adopted_image_in_txn(store, txn)?
+        .and_then(|(verified, evidence)| evidence.map(|evidence| (verified, evidence))))
+}
+
+/// The adopted image from the cache on an exact stored-row hit, else
+/// verified fresh. An image that covers a sealed row is verified before it
+/// is classified, so corruption still surfaces as an error, never as "not
+/// adopted"; its evidence is never built.
+fn adopted_image_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Option<AdoptedImage>> {
     let Some(adopted) = ADOPTED.get(store, txn, &())? else {
         return Ok(None);
     };
@@ -258,16 +303,17 @@ pub(crate) fn adopted_image_view_in_txn(
         && entry.adopted == adopted
         && image_id == Some(entry.verified.id())
     {
-        return Ok(Some((
-            Arc::clone(&entry.verified),
-            Arc::clone(&entry.evidence),
-        )));
+        return Ok(Some((Arc::clone(&entry.verified), entry.evidence.clone())));
     }
     let verified = Arc::new(verified_adoption(&adopted, bytes.as_deref())?);
-    let evidence = Arc::new(super::adopted_evidence::AdoptedEvidence::of_verified(
-        &verified,
-    )?);
-    publish_adopted_image_if_committed_tip(store, &adopted, image_id, &verified, &evidence);
+    let evidence = if verified.image().covers_sealed_row() {
+        None
+    } else {
+        Some(Arc::new(
+            super::adopted_evidence::AdoptedEvidence::of_verified(&verified)?,
+        ))
+    };
+    publish_adopted_image_if_committed_tip(store, &adopted, image_id, &verified, evidence.as_ref());
     Ok(Some((verified, evidence)))
 }
 
@@ -284,7 +330,7 @@ fn publish_adopted_image_if_committed_tip(
     adopted: &AdoptedCheckpoint,
     image_id: Option<[u8; 32]>,
     verified: &Arc<VerifiedAuthorityCheckpoint>,
-    evidence: &Arc<super::adopted_evidence::AdoptedEvidence>,
+    evidence: Option<&Arc<super::adopted_evidence::AdoptedEvidence>>,
 ) {
     let committed: Option<(AdoptedCheckpoint, Option<[u8; 32]>)> = std::thread::scope(|scope| {
         scope
@@ -315,7 +361,7 @@ fn publish_adopted_image_if_committed_tip(
         *cache = Some(AdoptedImageCacheEntry {
             adopted: adopted.clone(),
             verified: Arc::clone(verified),
-            evidence: Arc::clone(evidence),
+            evidence: evidence.cloned(),
         });
     }
 }
@@ -390,19 +436,29 @@ impl Vault {
         expectation_in_txn(&self.store, txn)
     }
 
-    /// Adopts `verified` in the caller's write transaction and returns its id;
-    /// the caller commits, and aborts on any error. Refused unless `expected`
-    /// is still what `wtxn` reads (else `ConcurrentWrite`), the pin names this
-    /// vault's storage id, a resident Genesis is the pin's genesis, the image
-    /// was built under this install's own owner-root pin, its unresolved
-    /// closure is empty, and it covers every row the prior adoption covered.
+    /// Adopts `verified` in the caller's write transaction and returns its id
+    /// and the stored ids of the covered rows it landed; the caller commits,
+    /// and aborts on any error. Refused unless `expected` is still what
+    /// `wtxn` reads (else `ConcurrentWrite`), the pin names this vault's
+    /// storage id, a resident Genesis is the pin's genesis, the image was
+    /// built under this install's own owner-root pin, its unresolved closure
+    /// is empty, and it covers every row the prior adoption covered.
     /// Adopting the adopted image again changes nothing.
+    ///
+    /// An image that covers a sealed row grants this install nothing from
+    /// its sender's fold (census L5-22 1a-iii): every covered row it carries
+    /// and this vault does not hold lands in `wtxn` through the history
+    /// import's own checks ([`Vault::import_signed_authority_history`]), and
+    /// this install folds them itself; one that does not land refuses the
+    /// adoption. The caller owes the landed rows what an import owes its
+    /// rows: the stale-stamp watch begun before `wtxn` and finished after the
+    /// commit, and the live mirror's note of the committed ids.
     pub fn adopt_authority_checkpoint_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         verified: &VerifiedAuthorityCheckpoint,
         expected: &AuthorityCheckpointExpectation,
-    ) -> Result<[u8; 32]> {
+    ) -> Result<([u8; 32], Vec<crate::EntityId>)> {
         let store = &self.store;
         if expectation_in_txn(store, wtxn)? != *expected {
             return Err(Error::ConcurrentWrite(
@@ -430,8 +486,10 @@ impl Vault {
             return Err(adopt_refused("the checkpoint image holds unresolved rows"));
         }
         if let Some(prior) = adopted_authority_checkpoint_in_txn(store, wtxn)? {
+            // An image that covers a sealed row landed its rows in the
+            // transaction that adopted it.
             if prior.id() == id {
-                return Ok(id);
+                return Ok((id, Vec::new()));
             }
             if prior.pin().genesis != pin.genesis
                 || prior
@@ -463,11 +521,47 @@ impl Vault {
             },
         )?;
         super::readonly_fold::advance_authority_cache_generation(store, wtxn)?;
+        // After the generation moved, so no fold cached before the adoption
+        // serves the import's own folds.
+        let landed = if image.covers_sealed_row() {
+            self.land_covered_rows_in_txn(wtxn, image)?
+        } else {
+            Vec::new()
+        };
         // The adopted fold may carry an owner home pick (DOOR-101): it
         // re-elects this node's MACRO home in the caller's transaction, whose
         // commit owes the wake.
         crate::dreamer_runner::reelect_home_in_txn(store, wtxn, self.privacy_posture());
-        Ok(id)
+        Ok((id, landed))
+    }
+
+    /// The covered rows `image` carries and this vault does not hold, landed
+    /// in `wtxn` through the history import; their stored ids. No overlay row
+    /// travels with them: a sealed row this install's custody does not open
+    /// lands as structure and grants nothing until its key arrives.
+    fn land_covered_rows_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        image: &AuthorityCheckpointV2,
+    ) -> Result<Vec<crate::EntityId>> {
+        let held: BTreeSet<crate::EntityId> =
+            super::readonly_fold::authority_log_ids_in_txn(&self.store, wtxn)?
+                .into_iter()
+                .collect();
+        let mut blobs = Vec::new();
+        for (hash, row) in &image.rows {
+            if held.contains(&authority_log_entity_id_from_hash(hash)?) {
+                continue;
+            }
+            // A verified image that covers a sealed row carries every body.
+            blobs.push(row.body.clone().ok_or(Error::InvariantViolation(
+                "a checkpoint image over a sealed row without a covered body",
+            ))?);
+        }
+        if blobs.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.import_signed_authority_history_in_txn(wtxn, &blobs, &CarriedOverlays::new())
     }
 
     /// Verifies `bytes` and `attestations` against `pin` and adopts the image
@@ -480,12 +574,31 @@ impl Vault {
         attestations: &[AuthorityCheckpointAttestation],
     ) -> Result<[u8; 32]> {
         let verified = VerifiedAuthorityCheckpoint::verify(pin, bytes, attestations)?;
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut wtxn = self.store.env.write_txn()?;
         let expected = self.authority_checkpoint_expectation_in_txn(&wtxn)?;
-        let id = self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
+        let (id, landed) =
+            self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
         wtxn.commit()?;
-        self.store.notify_proactivity_changes();
+        self.after_adoption_commit(watch, landed)?;
         Ok(id)
+    }
+
+    /// What an adoption's transaction owner owes after its commit, as an
+    /// import owes it: the stale-stamp sweep of the rows it landed, the wake
+    /// of a home pick, and the live mirror's note of the landed rows.
+    fn after_adoption_commit(
+        &self,
+        watch: crate::federation::StaleSweepWatch<'_>,
+        landed: Vec<crate::EntityId>,
+    ) -> Result<()> {
+        watch.finish()?;
+        self.store.notify_proactivity_changes();
+        #[cfg(feature = "sync")]
+        self.note_committed_rows(landed.into_iter().collect());
+        #[cfg(not(feature = "sync"))]
+        drop(landed);
+        Ok(())
     }
 
     /// Adopts, for a kit restore from the sealed cloud bundle (FIX 3583), the
@@ -514,6 +627,7 @@ impl Vault {
         }
         let verified = VerifiedAuthorityCheckpoint::verify(pin, bytes, attestations)?;
         let store = &self.store;
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut wtxn = store.env.write_txn()?;
         let RecoveryPin::KitRootFirst = RECOVERY_CHECKPOINT_PIN;
         if verified.image().building_pin == Some(kit_root)
@@ -524,9 +638,10 @@ impl Vault {
         }
         // Read after the pin, which moves the generation.
         let expected = expectation_in_txn(store, &wtxn)?;
-        let id = self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
+        let (id, landed) =
+            self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
         wtxn.commit()?;
-        self.store.notify_proactivity_changes();
+        self.after_adoption_commit(watch, landed)?;
         Ok(id)
     }
 

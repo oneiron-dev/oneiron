@@ -66,7 +66,9 @@ use serde::Serialize;
 /// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
 /// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
 /// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
+/// 43: each covered row's summary marks its kind and whether it is sealed, and an image that
+/// covers a sealed row carries every covered row's body (census L5-22 1a-iii).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

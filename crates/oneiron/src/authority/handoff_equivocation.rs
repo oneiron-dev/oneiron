@@ -23,7 +23,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
-use super::retired_signers::entry_signer_keys;
+use super::log_structure::row_signatures_verified;
+use super::retired_signers::row_signer_keys;
 use super::*;
 
 /// A key that a handoff this vault holds retired signed another row, which a
@@ -235,23 +236,24 @@ pub(crate) fn door_refuses_retired_standing(
     store: &Store,
     fold: &AuthorityFold,
     hash: &AuthorityEntryHash,
-    entry: &AuthorityLogEntry,
-    row: &mut dyn FnMut(&AuthorityEntryHash) -> Result<Option<AuthorityLogEntry>>,
+    entry: &FoldRow,
+    row: &mut dyn FnMut(&AuthorityEntryHash) -> Result<Option<FoldRow>>,
 ) -> Result<bool> {
     if !fold.stands_on_retired_key(hash, entry, row)? {
         return Ok(false);
     }
-    if entry.validate_shape().is_err()
-        || verify_entry_signatures(entry).is_err()
+    if entry
+        .open()
+        .is_some_and(|entry| entry.validate_shape().is_err())
+        || !row_signatures_verified(entry)
         || !of_fold_vault(fold, entry)?
     {
         return Ok(true);
     }
-    for signer in entry_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
+    for signer in row_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
         let mut handoffs = BTreeSet::new();
         for held in &fold.closed_handoffs {
-            if row(held)?
-                .is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
+            if row(held)?.is_some_and(|handoff| row_signer_keys(&handoff).any(|key| key == signer))
             {
                 handoffs.insert(*held);
             }
@@ -269,13 +271,24 @@ pub(crate) fn door_refuses_retired_standing(
     Ok(true)
 }
 
-/// Whether `entry` belongs to the vault `fold` folds: a genesis founds the
-/// vault its own hash names, and every other row names its vault. A fold with
-/// no settled root holds no vault to match.
-fn of_fold_vault(fold: &AuthorityFold, entry: &AuthorityLogEntry) -> Result<bool> {
-    let vault_id = match entry.op {
-        AuthorityOp::Genesis { .. } => Some(genesis_vault_id(entry)?),
-        _ => entry.vault_id,
+/// Whether `row` belongs to the vault `fold` folds: a genesis founds the
+/// vault its own hash names, and every other row names its vault. A sealed
+/// row whose record does not open here reads both from its envelope. A fold
+/// with no settled root holds no vault to match.
+fn of_fold_vault(fold: &AuthorityFold, row: &FoldRow) -> Result<bool> {
+    let vault_id = match row {
+        FoldRow::Open(entry) if matches!(entry.op, AuthorityOp::Genesis { .. }) => {
+            Some(genesis_vault_id(entry)?)
+        }
+        FoldRow::PassThrough(public)
+            if matches!(public.standing(), PublicStanding::Genesis { .. }) =>
+        {
+            if row.vault_id().is_some() {
+                return Err(invalid_authority());
+            }
+            Some(row.hash()?)
+        }
+        _ => row.vault_id(),
     };
     Ok(fold.vault_id.is_some() && vault_id == fold.vault_id)
 }

@@ -3,7 +3,7 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn causal_sequence_floors(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
 ) -> Option<BTreeMap<AuthorityEntryHash, u64>> {
@@ -13,7 +13,7 @@ pub(super) fn causal_sequence_floors(
         let before = floors.len();
         for (tip_hash, tip) in by_hash {
             let tip_floor = original.get(tip_hash).copied();
-            let rollback_tip = tip_floor.is_some_and(|floor| tip.seq < floor);
+            let rollback_tip = tip_floor.is_some_and(|floor| tip.seq() < floor);
             // No floor refuses a roster row (`changes_roster`), so even below
             // its floor it vouches for every row of its signer below it in its
             // ancestry that this install's floor refuses (`floor_refuses`),
@@ -22,23 +22,25 @@ pub(super) fn causal_sequence_floors(
             // rows then fold here as on an install that received every row in
             // its signer's order, and the vouch admits nothing such an install
             // does not hold. A restriction keeps its floor and lands
-            // restriction only, an install-local execution (Astra F2).
-            let roster_tip = super::entry_transition::changes_roster(&tip.op);
+            // restriction only, an install-local execution (Astra F2). A
+            // sealed row that passes through is a roster row by its kind
+            // (`row_changes_roster`).
+            let roster_tip = super::entry_transition::row_changes_roster(tip);
             if rollback_tip && !roster_tip {
                 continue;
             }
             let covered: Vec<_> = ancestors[tip_hash]
                 .iter()
                 .filter(|hash| {
-                    by_hash.get(*hash).is_some_and(|entry| {
+                    by_hash.get(*hash).is_some_and(|row| {
                         let in_flight =
-                            !rollback_tip && tip_floor.is_none_or(|floor| entry.seq > floor);
+                            !rollback_tip && tip_floor.is_none_or(|floor| row.seq() > floor);
                         let refused_below_roster_row =
-                            roster_tip && super::entry_transition::floor_refuses(&entry.op);
-                        entry.signer_key() == tip.signer_key()
-                            && entry.seq < tip.seq
+                            roster_tip && super::entry_transition::row_floor_refuses(row);
+                        row.signer_key() == tip.signer_key()
+                            && row.seq() < tip.seq()
                             && (in_flight || refused_below_roster_row)
-                            && floors.get(*hash).is_some_and(|floor| entry.seq < *floor)
+                            && floors.get(*hash).is_some_and(|floor| row.seq() < *floor)
                     })
                 })
                 .copied()
@@ -82,7 +84,7 @@ pub(super) fn causal_sequence_floors(
 /// would quietly disagree with it about which history can vouch a sequence floor.
 fn entry_folds_on_available_ancestry(
     target_hash: AuthorityEntryHash,
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
 ) -> bool {
@@ -106,11 +108,11 @@ fn entry_folds_on_available_ancestry(
         let hashes: Vec<_> = pending.iter().copied().collect();
         let mut progressed = false;
         for hash in hashes {
-            let Some(entry) = by_hash.get(&hash) else {
+            let Some(row) = by_hash.get(&hash) else {
                 return false;
             };
-            match fold_entry_state(
-                entry,
+            match fold_row_state(
+                row,
                 hash,
                 &states,
                 FoldContext {

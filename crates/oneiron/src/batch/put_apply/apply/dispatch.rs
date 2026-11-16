@@ -206,9 +206,10 @@ pub(super) fn dispatch_put_type(
             None
         };
         // A sealed row opens with its overlay record (census L5-22); the
-        // decode validates the body.
-        let entry = crate::authority::open_vault_authority_body_in_txn(store, wtxn, data)?;
-        let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
+        // decode validates the body. A row that does not open lands as
+        // structure (PassThrough).
+        let row = crate::authority::decode_vault_authority_fold_row_in_txn(store, wtxn, data)?;
+        let entry_hash = row.hash()?;
         // ONE-1604-D1 chokepoint: every materialization path funnels through
         // here, so the store-key bind, the append-only guard, and the
         // cross-type dominance verdict are computed on every import/replay
@@ -224,10 +225,10 @@ pub(super) fn dispatch_put_type(
             Some(fold) => crate::authority::DoorFold::Held(fold),
             None => crate::authority::DoorFold::Snapshot(fixed.posture, fixed.authority_beside),
         };
-        match crate::authority::authority_door(store, wtxn, &entry, door_fold)? {
+        match crate::authority::authority_door(store, wtxn, &row, door_fold)? {
             crate::authority::AuthorityDoor::Lands => {}
             crate::authority::AuthorityDoor::AtBound => {
-                let signer = crate::authority::authority_signer_label(entry.signer_key());
+                let signer = crate::authority::authority_signer_label(row.signer_key());
                 return Err(Error::Record(RecordError::AuthorityLogFull {
                     id: fixed.id,
                     signer,
@@ -240,7 +241,7 @@ pub(super) fn dispatch_put_type(
             }
         }
         dispatch.authority_entry_hash_pin = Some(entry_hash);
-        dispatch.authority_entry_observation = Some(entry);
+        dispatch.authority_entry_observation = Some(row);
     } else if crate::store::project_kind::is_project_revision_type(store, fixed.entity_type) {
         let put = crate::workspace_roster::check_revision_put(
             store,

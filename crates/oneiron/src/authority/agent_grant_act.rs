@@ -155,24 +155,39 @@ pub(super) fn apply_agent_grant_act(
     entry: &AuthorityLogEntry,
     record: &AgentGrantActRecord,
     hash: AuthorityEntryHash,
+    view: (Option<&PinnedRoot>, InstallCounted<'_>),
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    agent_grant_signer_stands(
+        state,
+        (&entry.signer, &entry.cosigns, entry.seq),
+        record.machine,
+        hash,
+        view,
+    )
+}
+
+/// The signer rule of [`apply_agent_grant_act`] over the envelope and the
+/// act's machine alone. A row whose record does not open here stands as
+/// structure on it (census L5-22 1a-iii); the rule reads nothing hidden.
+pub(super) fn agent_grant_signer_stands(
+    state: &FoldState,
+    (signer, cosigns, seq): (&AuthoritySignature, &[AuthoritySignature], u64),
+    machine: EntityId,
+    hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() {
+    if !cosigns.is_empty() {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    let signer = entry.signer_key();
+    let signer = &signer.public_key;
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     };
-    let named = Standing::new(state, pin, counted).names_key(record.machine, key);
+    let named = Standing::new(state, pin, counted).names_key(machine, key);
     if !named || state.roster.contains_key(signer) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
-    if state
-        .seqs
-        .get(signer)
-        .is_some_and(|prior| entry.seq <= *prior)
-    {
+    if state.seqs.get(signer).is_some_and(|prior| seq <= *prior) {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     Ok(())

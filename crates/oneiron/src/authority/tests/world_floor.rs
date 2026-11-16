@@ -1496,9 +1496,10 @@ pub(super) fn vouch_widenings(vault: &Vault) -> (bool, Vec<String>) {
     let entries = stored_entries(vault);
     let txn = vault.store.env.read_txn().unwrap();
     let observations = authority_local_observations_in_txn(&vault.store, &txn, &entries).unwrap();
+    let rows = crate::authority::fold_engine::open_rows(&entries);
     let fold = |observations: &AuthorityLocalObservations| {
         fold_authority_log_with_local_observations_and_posture(
-            &entries,
+            &rows,
             &BTreeMap::new(),
             0,
             &BTreeMap::new(),

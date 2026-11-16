@@ -581,7 +581,11 @@ fn the_slip_issuers_slip_rows_count_toward_no_fold_bound() {
             .iter()
             .map(|entry| (authority_entry_hash(entry).unwrap(), entry.clone()))
             .collect();
-        let uncounted = crate::authority::log_budget::uncounted_rows(&by_hash);
+        let rows: BTreeMap<_, _> = by_hash
+            .iter()
+            .map(|(hash, entry)| (*hash, FoldRow::Open(entry.clone())))
+            .collect();
+        let uncounted = crate::authority::log_budget::uncounted_rows(&rows);
         assert_eq!(uncounted.len(), slips.len() + 1, "the root mint too");
         let counted_rows = (entries.len() - uncounted.len()) as u64;
         assert!(
@@ -802,7 +806,8 @@ fn every_live_owner_a_fold_holds_is_a_slip_issuer() {
     let mut revoked_owners = 0;
     for seed in 0..400_u64 {
         let entries = super::fold_schedule::random_log(&mut StdRng::seed_from_u64(seed));
-        let issuers = crate::authority::log_budget::slip_issuers(&entries);
+        let rows: Vec<FoldRow> = entries.iter().cloned().map(FoldRow::Open).collect();
+        let issuers = crate::authority::log_budget::slip_issuers(&rows);
         for fold in [
             fold_authority_log(&entries),
             fold_legacy_authority_log(&entries),
@@ -1003,7 +1008,8 @@ fn a_host_an_admin_admitted_line_hands_off_to_is_a_slip_issuer() {
             .contains(&authority_entry_hash(&handoff).unwrap())
     );
     assert!(roster_has_live_owner(&fold.roster, &host.public_key()));
-    let issuers = crate::authority::log_budget::slip_issuers(&entries);
+    let rows: Vec<FoldRow> = entries.iter().cloned().map(FoldRow::Open).collect();
+    let issuers = crate::authority::log_budget::slip_issuers(&rows);
     assert!(issuers.contains(&host.public_key()));
     assert!(!issuers.contains(&authority_key_from_ed(&admin)));
 
@@ -1076,7 +1082,8 @@ fn an_admin_genesis_line_imports_with_its_host_a_slip_issuer() {
         &admin,
     );
     let entries = vec![genesis, enrolled, handoff];
-    let issuers = crate::authority::log_budget::slip_issuers(&entries);
+    let rows: Vec<FoldRow> = entries.iter().cloned().map(FoldRow::Open).collect();
+    let issuers = crate::authority::log_budget::slip_issuers(&rows);
     assert!(issuers.contains(&host.public_key()));
     assert!(!issuers.contains(&authority_key_from_ed(&admin)));
     let history: Vec<_> = entries

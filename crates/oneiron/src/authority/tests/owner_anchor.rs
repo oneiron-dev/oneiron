@@ -546,10 +546,12 @@ fn a_host_handoff_never_retires_the_owners_anchor() {
         .iter()
         .map(|entry| (hash(entry), entry.clone()))
         .collect();
-    let mut row = |at: &AuthorityEntryHash| Ok::<_, crate::error::Error>(by_hash.get(at).cloned());
+    let mut row = |at: &AuthorityEntryHash| {
+        Ok::<_, crate::error::Error>(by_hash.get(at).cloned().map(FoldRow::Open))
+    };
     assert!(
         !fold
-            .stands_on_retired_key(&hash(&removal), &removal, &mut row)
+            .stands_on_retired_key(&hash(&removal), &FoldRow::Open(removal.clone()), &mut row)
             .unwrap()
     );
 }

@@ -412,19 +412,25 @@ fn capture_in_txn(
             (AdoptedImageFold::NeedHistory(_), _) => return Ok(None),
         }
     }
-    let entries = authority_log_rows_in_txn(store, txn)?
+    let rows = authority_log_rows_in_txn(store, txn)?
         .into_iter()
-        .map(|(_, body)| decode_stored_authority_log_body(store, txn, &body))
+        .map(|(_, body)| decode_stored_authority_fold_row(store, txn, &body))
         .collect::<Result<Vec<_>>>()?;
-    let parents = entries
+    let parents = rows
         .iter()
-        .map(|entry| Ok((authority_entry_hash(entry)?, entry.parent_hashes.clone())))
+        .map(|row| Ok((row.hash()?, row.parent_hashes().to_vec())))
         .collect::<Result<Parents>>()?;
-    let observations = authority_local_observations_in_txn(store, txn, &entries)?;
+    let metas = rows
+        .iter()
+        .map(|row| Ok(super::fold_resume::RowMeta::of_row(Some(row.hash()?), row)))
+        .collect::<Result<Vec<_>>>()?;
+    let observations = super::sequence_observation::authority_local_observations_of_rows_in_txn(
+        store, txn, &metas,
+    )?;
     let capture = FoldCapture::for_image(heads.clone());
     let (consent, local) = super::fold_engine::own_log_inputs(posture, pin);
     super::fold_engine::fold_authority_log_inner(
-        &entries,
+        &rows,
         &BTreeMap::new(),
         None,
         &peers,
@@ -457,18 +463,27 @@ fn capture_past_adopted(
         .collect();
     let mut held_covered = BTreeSet::new();
     let mut tail = BTreeMap::new();
+    // The adopted capture takes whole entries: a tail row that does not open
+    // here sends the capture to the held log (census L5-22 1a-iii).
+    let mut passes_through = false;
     for (id, body) in authority_log_rows_in_txn(store, txn)? {
         if let Some(hash) = covered_ids.get(&id) {
             held_covered.insert(*hash);
             continue;
         }
-        let entry = decode_stored_authority_log_body(store, txn, &body)?;
-        let hash = authority_entry_hash(&entry)?;
+        let row = decode_stored_authority_fold_row(store, txn, &body)?;
+        let hash = row.hash()?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
+        } else if let Some(entry) = row.open() {
+            tail.insert(hash, (entry.clone(), body));
         } else {
-            tail.insert(hash, (entry, body));
+            passes_through = true;
         }
+    }
+    if passes_through {
+        let request = super::adopted_fold::whole_history(adopted, &BTreeSet::new(), &held_covered);
+        return Ok((AdoptedImageFold::NeedHistory(request), Parents::new()));
     }
     let (closed, _, _) = super::adopted_build::tail_closure(image, &tail);
     let closed_tail: Vec<_> = closed

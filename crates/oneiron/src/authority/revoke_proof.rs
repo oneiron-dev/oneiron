@@ -133,15 +133,15 @@ pub(super) use oneiron_records::authority::revoke_proof::{
 /// evaluator as the ordinary fold, with only global winner selection removed.
 /// Neither input arrival order nor a persisted node-local marker is involved.
 pub(super) fn derive_revoke_facts(
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
-    for (hash, entry) in entries {
-        let removal = match &entry.op {
-            AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. } => false,
-            op if removes_machine(op) => true,
+    for (hash, row) in entries {
+        let removal = match row.op() {
+            Some(AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. }) => false,
+            Some(op) if removes_machine(op) => true,
             _ => continue,
         };
         // A removal is terminal on every replica. It vouches for its own
@@ -183,18 +183,18 @@ pub(super) fn derive_revoke_facts(
             continue;
         };
         let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
-        let kind = match &entry.op {
-            AuthorityOp::RevokeActor {
+        let kind = match row.op() {
+            Some(AuthorityOp::RevokeActor {
                 authority_key,
                 epoch,
-            } => Restriction::Actor {
+            }) => Restriction::Actor {
                 authority_key: authority_key.clone(),
                 epoch: *epoch,
             },
-            AuthorityOp::RevokeDevice { revoked_key } => {
+            Some(AuthorityOp::RevokeDevice { revoked_key }) => {
                 Restriction::DeviceRevoke(revoked_key.clone())
             }
-            AuthorityOp::MachineProfile(profile) => {
+            Some(AuthorityOp::MachineProfile(profile)) => {
                 let Some((admitter, chain)) = state
                     .machines
                     .get(&profile.machine)
@@ -253,21 +253,23 @@ impl RevokeFacts {
     /// on its own signed branch, as an actor revocation is.
     pub(super) fn add_dropped_slip_restrictions(
         &mut self,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
         context: FoldContext<'_>,
         survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
     ) {
-        for (hash, entry) in entries {
+        for (hash, row) in entries {
             if survivors.contains_key(hash) {
                 continue;
             }
-            let restriction = match &entry.op {
-                AuthorityOp::SlipRevoke { slip_id } => Restriction::SlipRevoke(*slip_id),
-                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
+            let restriction = match row.op() {
+                Some(AuthorityOp::SlipRevoke { slip_id }) => Restriction::SlipRevoke(*slip_id),
+                Some(AuthorityOp::SlipGrantRevoke { grant_ref, .. }) => {
                     Restriction::SlipGrantRevoke(grant_ref.to_hex())
                 }
-                AuthorityOp::MembershipExecution(record) if !record.withdrawn_grants.is_empty() => {
+                Some(AuthorityOp::MembershipExecution(record))
+                    if !record.withdrawn_grants.is_empty() =>
+                {
                     Restriction::GrantsWithdrawn(
                         record
                             .withdrawn_grants
@@ -276,9 +278,9 @@ impl RevokeFacts {
                             .collect(),
                     )
                 }
-                AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. } => {
-                    Restriction::SlipBurn(BTreeSet::new())
-                }
+                Some(
+                    AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. },
+                ) => Restriction::SlipBurn(BTreeSet::new()),
                 _ => continue,
             };
             let Some(state) = verify_signed_branch(*hash, entries, ancestors, context) else {
@@ -353,7 +355,7 @@ impl RevokeFacts {
     pub(super) fn forget_retired(
         &mut self,
         retirements: &super::retired_signers::Retirements,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) {
         self.by_hash
@@ -367,7 +369,7 @@ impl RevokeFacts {
     pub(super) fn forget_unsettled(
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) {
         self.by_hash.retain(|hash, _| {
@@ -375,9 +377,9 @@ impl RevokeFacts {
                 || ancestors.get(hash).is_some_and(|line| {
                     line.iter().all(|ancestor| {
                         settled.contains_key(ancestor)
-                            || !entries
-                                .get(ancestor)
-                                .is_some_and(|row| matches!(row.op, AuthorityOp::ReRoot { .. }))
+                            || !entries.get(ancestor).is_some_and(|row| {
+                                matches!(row.op(), Some(AuthorityOp::ReRoot { .. }))
+                            })
                     })
                 })
         });
@@ -390,7 +392,7 @@ impl RevokeFacts {
 /// siblings cannot erase a verified restrictive fact on this branch.
 fn verify_signed_branch(
     target: AuthorityEntryHash,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
 ) -> Option<FoldState> {
@@ -426,7 +428,7 @@ fn verify_signed_branch(
                 }
                 EntryFold::Invalid(_)
                     if hash != target
-                        && super::ancestry_evaluator::skippable_permissive(&entries[&hash].op) =>
+                        && super::ancestry_evaluator::row_skippable_permissive(&entries[&hash]) =>
                 {
                     rejected.insert(hash);
                     pending.remove(&hash);
@@ -450,7 +452,7 @@ fn verify_signed_branch(
             .copied()
             .chain(pending.iter().copied().filter(|hash| {
                 *hash != target
-                    && super::ancestry_evaluator::skippable_permissive(&entries[hash].op)
+                    && super::ancestry_evaluator::row_skippable_permissive(&entries[hash])
                     && ancestors
                         .get(hash)
                         .is_some_and(|past| !past.is_disjoint(&rejected))
@@ -458,7 +460,7 @@ fn verify_signed_branch(
             .collect();
         let mut rescued = false;
         for hash in pending.clone() {
-            if !restrictive_withdrawal(&entries[&hash].op) {
+            if !entries[&hash].op().is_some_and(restrictive_withdrawal) {
                 continue;
             }
             if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(

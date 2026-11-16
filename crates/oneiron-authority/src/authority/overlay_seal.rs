@@ -437,6 +437,157 @@ pub fn read_authority_log_entry_body(bytes: &[u8]) -> Result<AuthorityEntryRead>
     open_authority_log_entry_body(bytes, None).map(AuthorityEntryRead::Open)
 }
 
+/// Verifies a sealed stored entry body whose overlay record does not open
+/// here, for the fold to take as structure only ([`FoldRow::PassThrough`]):
+/// its scaffold as [`verify_authority_log_entry_scaffold`] does; every
+/// commitment node where [`seal_op_value`] puts one and nowhere else; and
+/// the public fields its kind's
+/// signer rule reads ([`PublicStanding`]), decoded as the full decoder
+/// decodes them. A row with nothing sealed is refused: it opens whole. So is
+/// a sealed row of a kind with no signer projection; an owner-key enrollment
+/// is one, as it seals nothing (its possession proof stays in the scaffold).
+/// A hidden leaf's own grammar is checked only when the row opens.
+///
+/// # Errors
+/// A body that is not a well-formed, validly signed sealed entry of a kind
+/// with a signer projection.
+pub fn verify_authority_public_row(bytes: &[u8]) -> Result<AuthorityPublicRow> {
+    let scaffold = verify_authority_log_entry_scaffold(bytes)?;
+    if !scaffold.sealed {
+        return Err(invalid_authority());
+    }
+    let value = read_one_value(bytes)?;
+    let op = map_get(&value, KEY_OP).ok_or_else(invalid_authority)?;
+    if !commitments_sit_at_leaf_paths(op, &scaffold.op_kind) {
+        return Err(invalid_authority());
+    }
+    let standing = public_standing(op, &scaffold.op_kind)?;
+    Ok(AuthorityPublicRow { scaffold, standing })
+}
+
+/// Whether every commitment node in the op map `op` of kind `kind` holds 32
+/// bytes and sits at an overlay leaf path of that kind
+/// ([`overlay_leaf_classes`]) under no sibling that keeps the leaf in the
+/// scaffold: where [`seal_op_value`] puts one. A node in an array, in a map
+/// key, under a non-string key or at any other path fails.
+pub(super) fn commitments_sit_at_leaf_paths(op: &Value, kind: &str) -> bool {
+    nodes_sit_at_leaf_paths(op, &mut Vec::new(), kind)
+}
+
+fn nodes_sit_at_leaf_paths(value: &Value, path: &mut Vec<String>, kind: &str) -> bool {
+    match value {
+        Value::Map(entries) => entries.iter().all(|(key, child)| {
+            if contains_overlay_node(key) {
+                return false;
+            }
+            let Some(key) = key.as_str() else {
+                return !contains_overlay_node(child);
+            };
+            path.push(key.to_owned());
+            let sits = match child {
+                Value::Ext(ext, payload) if *ext == AUTHORITY_OVERLAY_EXT_TYPE => {
+                    payload.len() == 32 && leaf_path_admits_node(value, path, kind)
+                }
+                _ => nodes_sit_at_leaf_paths(child, path, kind),
+            };
+            path.pop();
+            sits
+        }),
+        Value::Array(items) => !items.iter().any(contains_overlay_node),
+        Value::Ext(ext, _) => *ext != AUTHORITY_OVERLAY_EXT_TYPE,
+        _ => true,
+    }
+}
+
+/// Whether an overlay leaf class of `kind` names `path`, and the map
+/// `parent` that holds the node there does not keep that leaf in the
+/// scaffold by its sibling.
+fn leaf_path_admits_node(parent: &Value, path: &[String], kind: &str) -> bool {
+    overlay_leaf_classes(kind).any(|class| {
+        class.path.len() == path.len()
+            && class.path.iter().zip(path).all(|(want, key)| *want == key)
+            && !scaffold_by_sibling(parent, class)
+    })
+}
+
+/// The public fields the signer rule of `kind` reads from the op map `op`.
+fn public_standing(op: &Value, kind: &str) -> Result<PublicStanding> {
+    let entries = map_entries(op)?;
+    let id = |name: &str| super::machine_profile::decode_canonical_id(required(entries, name)?);
+    let hash = |name: &str| decode_hash(required(entries, name)?);
+    let device = |name: &str| public_device(required(entries, name)?);
+    Ok(match kind {
+        OP_KIND_SLIP_MINT => PublicStanding::SlipMint,
+        OP_KIND_AGENT_GRANT_ACT => PublicStanding::AgentGrantAct {
+            machine: id("machine")?,
+        },
+        OP_KIND_RESIDENCE_RESULT => PublicStanding::ResidenceResult {
+            machine: id("machine")?,
+            directive: id("directive")?,
+            directive_entry: hash("directive_entry")?,
+        },
+        OP_KIND_OWNER_WORK_RESULT => PublicStanding::OwnerWorkResult {
+            executor: id("executor")?,
+            request: hash("request")?,
+        },
+        OP_KIND_GENESIS => {
+            let (key, tier, roles) = device("device")?;
+            PublicStanding::Genesis { key, tier, roles }
+        }
+        OP_KIND_ENROLL_DEVICE => {
+            let (key, tier, roles) = device("device")?;
+            PublicStanding::EnrollDevice { key, tier, roles }
+        }
+        OP_KIND_ROTATE_KEY => {
+            let (key, tier, roles) = device("new_device")?;
+            PublicStanding::RotateKey { key, tier, roles }
+        }
+        OP_KIND_RE_ROOT => {
+            let (key, tier, roles) = device("new_device")?;
+            PublicStanding::ReRoot { key, tier, roles }
+        }
+        _ => return Err(invalid_authority()),
+    })
+}
+
+/// The key, tier and roles of the device map `value`, whose attestation
+/// evidence may be a commitment node: its keys as the full decoder requires
+/// them, its transport binding a hash, and its attestation a kind with
+/// binary or committed evidence.
+fn public_device(value: &Value) -> Result<(AuthorityKey, AuthorityTier, u16)> {
+    let entries = map_entries(value)?;
+    validate_keys(
+        entries,
+        &[
+            "key",
+            "transport_key_binding",
+            "attestation",
+            "tier",
+            "roles",
+        ],
+    )?;
+    decode_hash(required(entries, "transport_key_binding")?)?;
+    let attestation = map_entries(required(entries, "attestation")?)?;
+    validate_keys(attestation, &ATTESTATION_KEYS)?;
+    required(attestation, KEY_ATTEST_KIND)?
+        .as_str()
+        .ok_or_else(invalid_authority)?;
+    match required(attestation, KEY_ATTEST_EVIDENCE)? {
+        Value::Binary(_) => {}
+        Value::Ext(ext, _) if *ext == AUTHORITY_OVERLAY_EXT_TYPE => {}
+        _ => return Err(invalid_authority()),
+    }
+    let roles = required(entries, "roles")?
+        .as_u64()
+        .and_then(|roles| u16::try_from(roles).ok())
+        .ok_or_else(invalid_authority)?;
+    Ok((
+        decode_key(required(entries, "key")?)?,
+        decode_tier(required(entries, "tier")?)?,
+        roles,
+    ))
+}
+
 /// Decodes a stored entry body with its overlay record when the row is
 /// sealed: opens the op, decodes and validates the entry, checks that it
 /// re-encodes to exactly `bytes`, and verifies its signatures. A sealed row

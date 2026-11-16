@@ -380,8 +380,10 @@ enum UnknownDependencies {
 }
 
 /// The request only the whole history closes: `gaps`, and every covered row
-/// not held here, since only the whole history folds past such a row.
-fn whole_history(
+/// not held here, since only the whole history folds past such a row. A
+/// reader whose tail holds a row that does not open here asks it with no
+/// gaps (census L5-22 1a-iii).
+pub(in crate::authority) fn whole_history(
     adopted: &VerifiedAuthorityCheckpoint,
     gaps: &BTreeSet<AuthorityEntryHash>,
     held_covered: &BTreeSet<AuthorityEntryHash>,

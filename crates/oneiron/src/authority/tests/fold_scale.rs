@@ -138,8 +138,9 @@ fn seen(entries: &[AuthorityLogEntry]) -> BTreeMap<AuthorityEntryHash, u64> {
 pub(super) fn vault_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
     let first_seen = seen(entries);
     let observations = unfloored();
+    let rows = crate::authority::fold_engine::open_rows(entries);
     fold_authority_log_with_local_observations_and_posture(
-        entries,
+        &rows,
         &first_seen,
         2,
         &BTreeMap::new(),
@@ -157,9 +158,10 @@ fn stored_fold(
 ) -> (AuthorityFold, Option<FoldBase>) {
     let first_seen = seen(entries);
     let observations = unfloored();
+    let rows = crate::authority::fold_engine::open_rows(entries);
     fold_stored_log(
         StoredLog {
-            entries,
+            entries: &rows,
             first_seen_at_secs: &first_seen,
             now_secs: 2,
             peer_consent_roots: &BTreeMap::new(),

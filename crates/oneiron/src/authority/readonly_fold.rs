@@ -50,9 +50,46 @@ pub(crate) fn authority_cache_generation(store: &Store, txn: &heed::RoTxn<'_>) -
         .map(|value| value.unwrap_or(0))
 }
 
+/// How many key events changed which sealed rows open here (census L5-22
+/// 1a-iii). A later generation's fold resumes from a cached base only when
+/// both were folded at the same count: a base that counted a row as open
+/// never resumes past its subject's retirement.
+const AUTHORITY_OVERLAY_OPENNESS_EPOCH: crate::side_table::SideTable<
+    (),
+    u64,
+    crate::side_table::Raw,
+> = crate::side_table::SideTable::new(&crate::side_table::AUTHORITY_OVERLAY_OPENNESS_EPOCH);
+
+fn authority_overlay_openness_epoch(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u64> {
+    AUTHORITY_OVERLAY_OPENNESS_EPOCH
+        .get(store, txn, &())
+        .map(|value| value.unwrap_or(0))
+}
+
+/// Notes in `txn` that a key event changed which sealed rows open here (a
+/// key installed, a subject retired): the openness epoch and the authority
+/// cache generation move together, so no cached fold answers past it and no
+/// later fold resumes from a base folded before it.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(crate) fn note_authority_overlay_openness_change_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let next = authority_overlay_openness_epoch(store, txn)?
+        .checked_add(1)
+        .ok_or(Error::CorruptedIndex(
+            "authority overlay openness epoch exhausted",
+        ))?;
+    AUTHORITY_OVERLAY_OPENNESS_EPOCH.put(store, txn, &(), &next)?;
+    advance_authority_cache_generation(store, txn)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AuthorityCacheKey {
     generation: u64,
+    /// The overlay openness epoch read in the same snapshot (census L5-22
+    /// 1a-iii): it moves only with the generation, and gates resumption.
+    openness_epoch: u64,
     now_secs: u64,
     posture: HostingPrivacyPosture,
     policy: AuthorityObservationPolicy,
@@ -353,6 +390,7 @@ enum AuthorityTailFold {
 impl AuthorityCachedFold {
     fn matches(&self, key: AuthorityCacheKey) -> bool {
         self.key.generation == key.generation
+            && self.key.openness_epoch == key.openness_epoch
             && self.key.posture == key.posture
             && self.key.policy == key.policy
             && self.key.pin == key.pin
@@ -372,6 +410,7 @@ fn authority_cache_key(
     let now_secs = authority_clock_reading_in_txn(store, txn, store.clock.now_recorded_at())?;
     Ok(AuthorityCacheKey {
         generation: authority_cache_generation(store, txn)?,
+        openness_epoch: authority_overlay_openness_epoch(store, txn)?,
         now_secs,
         posture,
         policy: authority_observation_policy_in_txn(store, txn)?,
@@ -526,7 +565,7 @@ pub(crate) fn authority_view_readonly_for_store_in_txn(
         return Ok(apply_live_overlay(store, txn, key, fold, use_past_standing));
     }
     // A miss resumes from the last committed generation's fold where it can.
-    let continuation = resumable_continuation(store, key.generation);
+    let continuation = resumable_continuation(store, key.generation, key.openness_epoch);
     let (view, next_deadline_secs, continuation) =
         fold_view_for_key(store, posture, txn, key, continuation.as_deref())?;
     cache_fold_if_committed(store, key, next_deadline_secs, &view, continuation);
@@ -619,12 +658,20 @@ fn apply_live_overlay(
 /// The cached continuation a fold at `generation` may resume from: only one
 /// folded at that generation or an earlier one. A snapshot older than the
 /// cached fold lacks rows that fold read, and would be refused as missing
-/// history it never lost.
-fn resumable_continuation(store: &Store, generation: u64) -> Option<Arc<AuthorityContinuation>> {
+/// history it never lost. A fold at another overlay openness epoch (census
+/// L5-22 1a-iii) folds whole: the base judged rows a key event since
+/// opened or closed.
+fn resumable_continuation(
+    store: &Store,
+    generation: u64,
+    openness_epoch: u64,
+) -> Option<Arc<AuthorityContinuation>> {
     store.authority_fold_cache.lock().ok().and_then(|cache| {
         cache
             .as_ref()
-            .filter(|cached| cached.key.generation <= generation)
+            .filter(|cached| {
+                cached.key.generation <= generation && cached.key.openness_epoch == openness_epoch
+            })
             .and_then(|cached| cached.continuation.clone())
     })
 }
@@ -636,7 +683,8 @@ pub(super) fn resumed_hashes_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeSet<AuthorityEntryHash>> {
     let generation = authority_cache_generation(store, txn)?;
-    Ok(resumable_continuation(store, generation)
+    let openness_epoch = authority_overlay_openness_epoch(store, txn)?;
+    Ok(resumable_continuation(store, generation, openness_epoch)
         .map(|continuation| continuation.ids.values().copied().collect())
         .unwrap_or_default())
 }
@@ -743,7 +791,7 @@ fn fold_authority_checkpoint_tail_in_txn(
     key: AuthorityCacheKey,
     baseline: Option<&AuthorityContinuation>,
     required: &BTreeSet<AuthorityEntryHash>,
-    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> Result<AuthorityTailFold> {
     fold_stored_tail_in_txn(store, posture, txn, key, baseline, required, arriving)
 }
@@ -773,7 +821,7 @@ fn fold_stored_tail_in_txn(
     key: AuthorityCacheKey,
     baseline: Option<&AuthorityContinuation>,
     required: &BTreeSet<AuthorityEntryHash>,
-    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> Result<AuthorityTailFold> {
     if let Some(adopted) =
         super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
@@ -793,10 +841,10 @@ fn fold_stored_tail_in_txn(
     let mut tail = Vec::new();
     let mut held = HeldRows::scan_in_txn(store, txn, baseline, &mut tail)?;
     let mut unstored = Vec::new();
-    for (hash, entry) in arriving {
+    for (hash, row) in arriving {
         if held.insert(*hash) {
-            tail.push((*hash, entry.clone()));
-            unstored.push(entry.clone());
+            tail.push((*hash, row.clone()));
+            unstored.push(row.clone());
         }
     }
     let checkpoint_head = super::checkpoint::checkpoint_head_in_txn(store, txn)?;
@@ -834,13 +882,13 @@ fn fold_stored_tail_in_txn(
             .flat_map(|(_, parents)| parents.iter().copied());
         let tail_parents = tail
             .iter()
-            .flat_map(|(_, entry)| entry.parent_hashes.iter().copied());
+            .flat_map(|(_, row)| row.parent_hashes().iter().copied());
         named.extend(baseline_parents.chain(tail_parents));
         named.retain(|hash| !held.contains(hash));
         return Ok(AuthorityTailFold::NeedHistory(AuthorityHistoryRequest {
             vault_id: baseline
                 .and_then(|baseline| baseline.base.vault_id())
-                .or_else(|| tail.iter().find_map(|(_, entry)| entry.vault_id)),
+                .or_else(|| tail.iter().find_map(|(_, row)| row.vault_id())),
             checkpoint: checkpoint.map(|(head, _)| head).or(checkpoint_head),
             missing: named,
         }));
@@ -860,7 +908,7 @@ fn fold_stored_tail_in_txn(
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     if let Some(baseline) = baseline {
         tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, rows = tail.len(), "authority fold past the cached base");
-        let tail: Vec<_> = tail.iter().map(|(hash, entry)| (*hash, entry)).collect();
+        let tail: Vec<_> = tail.iter().map(|(hash, row)| (*hash, row)).collect();
         // Only the tail's receipts and an unpinned base row's are read, and
         // only those rows are visited (FIX 1854, FIX 12282).
         let receipts = RowReceipts::past_base_in_txn(
@@ -918,15 +966,15 @@ fn fold_stored_tail_in_txn(
         }
     }
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
-    let mut entries = authority_log_rows_in_txn(store, txn)?
+    let mut stored = authority_log_rows_in_txn(store, txn)?
         .into_iter()
-        .map(|(_, body)| decode_stored_authority_log_body(store, txn, &body))
+        .map(|(_, body)| decode_stored_authority_fold_row(store, txn, &body))
         .collect::<Result<Vec<_>>>()?;
-    entries.extend(unstored);
-    let mut rows = Vec::with_capacity(entries.len());
-    for entry in &entries {
-        let hash = authority_entry_hash(entry)?;
-        rows.push(super::fold_resume::RowMeta::of(Some(hash), entry));
+    stored.extend(unstored);
+    let mut rows = Vec::with_capacity(stored.len());
+    for row in &stored {
+        let hash = row.hash()?;
+        rows.push(super::fold_resume::RowMeta::of_row(Some(hash), row));
     }
     let RowReceipts {
         first_seen_at_secs,
@@ -935,7 +983,7 @@ fn fold_stored_tail_in_txn(
     } = RowReceipts::read_in_txn(store, txn, &rows, arriving, backfilled, now_secs)?;
     let (fold, base) = super::fold_resume::fold_stored_log(
         super::fold_resume::StoredLog {
-            entries: &entries,
+            entries: &stored,
             first_seen_at_secs: &first_seen_at_secs,
             now_secs,
             peer_consent_roots: &peer_consent_roots,
@@ -945,10 +993,13 @@ fn fold_stored_tail_in_txn(
         },
         None,
     );
+    // The stale-roster window reads approvals alone: a row that passes
+    // through holds none, so only the rows that opened reach it.
+    let open: Vec<_> = stored.iter().filter_map(FoldRow::open).collect();
     let next_deadline_secs = next_deadline(
         &fold,
         next_stale_roster_deadline(
-            &entries,
+            &open,
             &fold,
             &first_seen_at_secs,
             key.now_secs,
@@ -1052,7 +1103,10 @@ pub(super) fn authority_log_rows_in_txn(
 
 /// The store ids of the AUTHORITY_LOG rows, in id order, read from the type
 /// index alone.
-fn authority_log_ids_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<crate::EntityId>> {
+pub(super) fn authority_log_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<crate::EntityId>> {
     let mut ids = Vec::new();
     for row in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
         ids.push(row?);
@@ -1080,19 +1134,15 @@ fn authority_log_body_in_txn(
     Ok(body.to_vec())
 }
 
-/// The entry a stored AUTHORITY_LOG `body` holds. A missing or retired
-/// overlay remains unavailable; every other decode fault is store damage
-/// and answers `CorruptedIndex` (ARCH-0006a #list-read-built).
-pub(super) fn decode_stored_authority_log_body(
+/// The row a stored AUTHORITY_LOG `body` holds. A sealed row whose
+/// overlay record does not open here lands as structure
+/// ([`FoldRow::PassThrough`]); every other decode fault is store damage and
+/// answers `CorruptedIndex` (ARCH-0006a #list-read-built).
+pub(super) fn decode_stored_authority_fold_row(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     body: &[u8],
-) -> Result<AuthorityLogEntry> {
-    crate::authority::open_vault_authority_body_in_txn(store, txn, body).map_err(|error| {
-        if is_authority_overlay_unavailable(&error) {
-            error
-        } else {
-            Error::CorruptedIndex("stored authority log row")
-        }
-    })
+) -> Result<FoldRow> {
+    crate::authority::decode_vault_authority_fold_row_in_txn(store, txn, body)
+        .map_err(|_| Error::CorruptedIndex("stored authority log row"))
 }

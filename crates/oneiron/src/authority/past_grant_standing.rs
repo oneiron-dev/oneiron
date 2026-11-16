@@ -85,18 +85,22 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
     let mut parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
     let mut bodies: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = BTreeMap::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(store, txn, &body)?;
-        let hash = authority_entry_hash(&entry)?;
+        let row = decode_stored_authority_fold_row(store, txn, &body)?;
+        let hash = row.hash()?;
         if let Some(prior) = parents.get(&hash) {
-            if *prior != entry.parent_hashes {
+            if prior.as_slice() != row.parent_hashes() {
                 return Err(Error::CorruptedIndex(
                     "past grant standing: conflicting held parents for one hash",
                 ));
             }
             continue;
         }
-        parents.insert(hash, entry.parent_hashes.clone());
-        bodies.insert(hash, entry);
+        parents.insert(hash, row.parent_hashes().to_vec());
+        // Ancestry walks cross every row, but only a row that opened names
+        // an op: a row that passes through is never a mint or a revoke.
+        if let Some(entry) = row.open() {
+            bodies.insert(hash, entry.clone());
+        }
     }
     if let Some(adopted) =
         super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?

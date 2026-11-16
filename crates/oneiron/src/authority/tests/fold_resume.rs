@@ -93,9 +93,10 @@ impl Misses {
         let peers = &under.peers;
         let before = RESUMED_FOR_TEST.with(Cell::get);
         TRANSITIONED_FOR_TEST.with(|rows| *rows.borrow_mut() = Some(Vec::new()));
+        let stored = crate::authority::fold_engine::open_rows(entries);
         let (fold, next) = fold_stored_log(
             StoredLog {
-                entries,
+                entries: &stored,
                 first_seen_at_secs: &first_seen,
                 now_secs: under.now,
                 peer_consent_roots: peers,
@@ -108,7 +109,7 @@ impl Misses {
         let transitioned = TRANSITIONED_FOR_TEST.with(|rows| rows.borrow_mut().take());
         let resumed = RESUMED_FOR_TEST.with(Cell::get) > before;
         let reference = fold_authority_log_with_local_observations_and_posture(
-            entries,
+            &stored,
             &first_seen,
             under.now,
             peers,

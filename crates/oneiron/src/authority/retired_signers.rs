@@ -88,21 +88,21 @@ impl Fence {
     fn of(
         row: &AuthorityEntryHash,
         states: &BTreeMap<AuthorityEntryHash, FoldState>,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) -> Self {
         let entry = &entries[row];
-        let (kind, keys) = match &entry.op {
-            AuthorityOp::RevokeDevice { revoked_key } => {
+        let (kind, keys) = match entry.op() {
+            Some(AuthorityOp::RevokeDevice { revoked_key }) => {
                 (FenceKind::Revocation, BTreeSet::from([revoked_key.clone()]))
             }
             op => {
                 let successor = match op {
-                    AuthorityOp::ReRoot { new_device } => Some(&new_device.key),
+                    Some(AuthorityOp::ReRoot { new_device }) => Some(&new_device.key),
                     _ => None,
                 };
                 let keys = entry
-                    .parent_hashes
+                    .parent_hashes()
                     .iter()
                     .filter_map(|parent| states.get(parent))
                     .flat_map(|state| state.roster.keys())
@@ -117,7 +117,7 @@ impl Fence {
         Self {
             row: *row,
             kind,
-            vault_id: entry.vault_id,
+            vault_id: entry.vault_id(),
             keys,
             line,
             conflict: false,
@@ -130,15 +130,15 @@ impl Fence {
     fn signed_outside(
         &self,
         hash: &AuthorityEntryHash,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         anchored: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
-        entries.get(hash).is_some_and(|entry| {
-            !matches!(entry.op, AuthorityOp::Genesis { .. })
+        entries.get(hash).is_some_and(|row| {
+            !matches!(row.op(), Some(AuthorityOp::Genesis { .. }))
                 && !anchored.contains(hash)
-                && entry.vault_id == self.vault_id
+                && row.vault_id() == self.vault_id
                 && !self.line.contains(hash)
-                && entry_signer_keys(entry).any(|key| self.keys.contains(key))
+                && row_signer_keys(row).any(|key| self.keys.contains(key))
         })
     }
 
@@ -146,7 +146,7 @@ impl Fence {
     fn excludes(
         &self,
         hash: &AuthorityEntryHash,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
         anchored: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
@@ -194,7 +194,7 @@ impl Retirements {
     pub(super) fn fences_signer_of(
         &self,
         hash: &AuthorityEntryHash,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ) -> bool {
         self.fences
             .iter()
@@ -210,7 +210,7 @@ impl Retirements {
     pub(super) fn excludes(
         &self,
         hash: &AuthorityEntryHash,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
         routed: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
@@ -230,7 +230,7 @@ impl Retirements {
 /// no row of one signer falls with another signer's confirmation.
 pub(super) fn settle_handoffs(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     eligible: Option<&BTreeSet<AuthorityEntryHash>>,
     issues: &mut Vec<AuthorityFoldIssue>,
@@ -238,7 +238,7 @@ pub(super) fn settle_handoffs(
     let mut refused: BTreeMap<_, _> = states
         .keys()
         .filter(|hash| {
-            matches!(entries[*hash].op, AuthorityOp::ReRoot { .. })
+            matches!(entries[*hash].op(), Some(AuthorityOp::ReRoot { .. }))
                 && eligible.is_some_and(|eligible| !eligible.contains(*hash))
         })
         .map(|handoff| (*handoff, AuthorityFoldIssue::UnsettledHandoff(*handoff)))
@@ -284,7 +284,7 @@ fn with_descendants(
 /// the same way: it revokes its key on its own branch, as any revocation does.
 fn close_fences(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     refused: &mut BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
@@ -296,7 +296,7 @@ fn close_fences(
         .collect();
     let fences: Vec<Fence> = states
         .keys()
-        .filter(|hash| !gone.contains(*hash) && Fence::closes(&entries[*hash].op))
+        .filter(|hash| !gone.contains(*hash) && entries[*hash].op().is_some_and(Fence::closes))
         .map(|row| Fence::of(row, states, entries, ancestors))
         .collect();
     let count = fences.len();
@@ -395,24 +395,24 @@ fn close_fences(
     retirements
 }
 
-/// Whether a door reads `entry` as an owner anchor's row, which rests on no
+/// Whether a door reads `row` as an owner anchor's row, which rests on no
 /// roster key: a root record its own anchor signs, or a machine mark signed
-/// alone by a key `anchor` names as the anchor of a root.
-fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
-    entry.cosigns.is_empty()
-        && match (&entry.op, &entry.signer.public_key) {
-            (AuthorityOp::OwnerRoot(record), AuthorityKey::Ed25519(key)) => {
+/// alone by a key `anchor` names as the anchor of a root. A row whose record
+/// does not open here is none: it has no op.
+fn anchor_signed(row: &FoldRow, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
+    row.cosigns().is_empty()
+        && match (row.op(), &row.signer().public_key) {
+            (Some(AuthorityOp::OwnerRoot(record)), AuthorityKey::Ed25519(key)) => {
                 *key == record.anchor_key
             }
-            (AuthorityOp::MachineProfile(_), AuthorityKey::Ed25519(key)) => anchor(key),
+            (Some(AuthorityOp::MachineProfile(_)), AuthorityKey::Ed25519(key)) => anchor(key),
             _ => false,
         }
 }
 
-/// The primary signer and every co-signer of `entry`.
-pub(super) fn entry_signer_keys(entry: &AuthorityLogEntry) -> impl Iterator<Item = &AuthorityKey> {
-    std::iter::once(&entry.signer.public_key)
-        .chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
+/// The primary signer and every co-signer of `row`.
+pub(super) fn row_signer_keys(row: &FoldRow) -> impl Iterator<Item = &AuthorityKey> {
+    std::iter::once(row.signer_key()).chain(row.cosigns().iter().map(|cosign| &cosign.public_key))
 }
 
 /// The row stored as authority history at `hash`'s id, if one is. A row of
@@ -436,26 +436,54 @@ pub(crate) fn stored_authority_row(
         .and_then(|body| crate::authority::open_vault_authority_body_in_txn(store, txn, body).ok()))
 }
 
+/// The row stored as authority history at `hash`'s id, as the fold takes
+/// it: whole when its record opens here, structure only when it does not.
+/// A row of another kind at that id, or one that does not decode, is none.
+pub(super) fn stored_authority_fold_row(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    hash: &AuthorityEntryHash,
+) -> crate::error::Result<Option<FoldRow>> {
+    let id = authority_log_entity_id_from_hash(hash)?;
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+        return Ok(None);
+    };
+    if crate::batch::EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_AUTHORITY_LOG)
+    {
+        return Ok(None);
+    }
+    Ok(raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| {
+            crate::authority::decode_vault_authority_fold_row_in_txn(store, txn, body).ok()
+        }))
+}
+
 /// The row at `hash` as a door's retired-standing walk reads it
-/// ([`AuthorityFold::stands_on_retired_key`]): the stored row, else, on a
-/// vault that adopted a checkpoint image (`evidence`), what the image holds
-/// of it ([`super::adopted_evidence::AdoptedEvidence::ancestor`]): a covered
-/// row's carried body, none for a covered row the image holds valid, and a
-/// refusal naming any other history the vault neither stores nor reads
-/// whole. With no adoption, a row not stored is none, as before.
+/// ([`AuthorityFold::stands_on_retired_key`]): the stored row as the fold
+/// takes it (structure only when its record does not open here, so the walk
+/// never skips it), else, on a vault that adopted a checkpoint image
+/// (`evidence`), what the image holds of it
+/// ([`super::adopted_evidence::AdoptedEvidence::ancestor`]): a covered row's
+/// carried body, none for a covered row the image holds valid, and a refusal
+/// naming any other history the vault neither stores nor reads whole. With
+/// no adoption, a row not stored is none, as before.
 pub(crate) fn door_ancestor_row(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     evidence: Option<&super::adopted_evidence::AdoptedEvidence>,
     hash: &AuthorityEntryHash,
-) -> crate::error::Result<Option<AuthorityLogEntry>> {
-    match stored_authority_row(store, txn, hash)? {
+) -> crate::error::Result<Option<FoldRow>> {
+    match stored_authority_fold_row(store, txn, hash)? {
         Some(row) => Ok(Some(row)),
-        None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(hash)),
+        None => evidence.map_or(Ok(None), |evidence| {
+            Ok(evidence.ancestor(hash)?.map(FoldRow::Open))
+        }),
     }
 }
 
-/// Whether `entry` is already in the log at its own id, stored as an
+/// Whether `row` is already in the log at its own id, stored as an
 /// authority row. A resident row is history, not a new signature: replaying
 /// it adds no authority, so no door refuses it for its signer, whatever a
 /// clock-aware fold says of it now (the stale-roster window drops expired
@@ -464,26 +492,27 @@ pub(crate) fn door_ancestor_row(
 pub(crate) fn authority_row_resident(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
 ) -> crate::error::Result<bool> {
-    Ok(
-        stored_authority_row(store, txn, &authority_entry_hash(entry)?)?
-            .is_some_and(|row| row == *entry),
-    )
+    // Resident by hash, never by opened entry: a stored row is history
+    // whether or not its record opens here.
+    let hash = row.hash()?;
+    Ok(stored_authority_fold_row(store, txn, &hash)?
+        .is_some_and(|stored| stored.hash().is_ok_and(|held| held == hash)))
 }
 
 impl AuthorityFold {
-    /// Whether `entry` stands on a retired key: it, or, for a main-log row, a
+    /// Whether `row` stands on a retired key: it, or, for a main-log row, a
     /// row in its ancestry that this fold does not hold, is signed by a key a
     /// handoff retired. Such a key keeps no standing: its rows that stand are
     /// already here in a handoff's line, because a handoff folds only once its
     /// whole ancestry does. The fold refuses such a row with its descendants,
     /// so a door refuses a new row that descends from one, whoever signs it.
-    /// `row` reads an ancestor by hash, stored or arriving beside `entry`; the
+    /// `ancestor` reads a row by hash, stored or arriving beside `row`; the
     /// walk stops at rows this fold holds, whose ancestry it holds too. An
     /// approval the stale-roster window expired counts as held here: it stood
     /// in the settled fold, so no fence refused it, though it approves nothing
-    /// now. On a vault that adopted a checkpoint image, a door's `row` is
+    /// now. On a vault that adopted a checkpoint image, a door's `ancestor` is
     /// [`door_ancestor_row`]: it reads a covered ancestor from the image,
     /// stops at one the image holds valid, and refuses, naming the history,
     /// at one it can not read, so no ancestor is skipped there.
@@ -493,22 +522,30 @@ impl AuthorityFold {
     /// pass together on their first arrival. A held root counts on any branch:
     /// a mark parented beside it passes here, and the fold routes it through
     /// the roster and fences it there, so it stays inert (Wonder W2-F1).
+    ///
+    /// A row this fold passed through is held: the walk stops there, as at a
+    /// valid row. Any other row whose record does not open here walks as
+    /// structure: a parent like any other, whose signer and cosigners, public
+    /// and verified, count as any row's. It is never an owner anchor's row,
+    /// since it has no op.
     pub(crate) fn stands_on_retired_key(
         &self,
         hash: &AuthorityEntryHash,
-        entry: &AuthorityLogEntry,
-        row: &mut dyn FnMut(&AuthorityEntryHash) -> crate::error::Result<Option<AuthorityLogEntry>>,
+        row: &FoldRow,
+        ancestor: &mut dyn FnMut(&AuthorityEntryHash) -> crate::error::Result<Option<FoldRow>>,
     ) -> crate::error::Result<bool> {
         // A world's edit or key record stands on no main-log row the fold
         // refuses: it is judged with each such row crossed
         // (`refold_world_edits`), so only its own signer counts here (Wonder
         // P2 round 1, W4). A settings edit is a main-log row now (mesh
         // contract §6) and keeps this rule.
-        if super::world_privacy::side_world(&entry.op).is_some()
-            || matches!(entry.op, AuthorityOp::WorldPrivacy(_))
-        {
+        if row.op().is_some_and(|op| {
+            super::world_privacy::side_world(op).is_some()
+                || matches!(op, AuthorityOp::WorldPrivacy(_))
+        }) {
             return Ok(!self.valid_entries.contains(hash)
-                && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key)));
+                && !self.pass_through_entries.contains(hash)
+                && row_signer_keys(row).any(|key| self.retired_keys.contains(key)));
         }
         if self.retired_keys.is_empty() {
             return Ok(false);
@@ -521,34 +558,36 @@ impl AuthorityFold {
                 _ => None,
             })
             .collect();
-        let mut arriving = vec![(*hash, entry.clone())];
+        let mut arriving = vec![(*hash, row.clone())];
         let mut seen = BTreeSet::new();
-        let mut stack = entry.parent_hashes.clone();
+        let mut stack = row.parent_hashes().to_vec();
         while let Some(parent) = stack.pop() {
             if self.valid_entries.contains(&parent)
+                || self.pass_through_entries.contains(&parent)
                 || expired.contains(&parent)
                 || !seen.insert(parent)
             {
                 continue;
             }
-            let Some(ancestor) = row(&parent)? else {
+            let Some(ancestor_row) = ancestor(&parent)? else {
                 continue;
             };
-            stack.extend(ancestor.parent_hashes.iter().copied());
-            arriving.push((parent, ancestor));
+            stack.extend(ancestor_row.parent_hashes().iter().copied());
+            arriving.push((parent, ancestor_row));
         }
         let anchors: BTreeSet<[u8; 32]> = arriving
             .iter()
-            .filter_map(|(_, row)| match &row.op {
-                AuthorityOp::OwnerRoot(record) => Some(record.anchor_key),
+            .filter_map(|(_, row)| match row.op() {
+                Some(AuthorityOp::OwnerRoot(record)) => Some(record.anchor_key),
                 _ => None,
             })
             .chain(self.root_anchors.keys().copied())
             .collect();
         Ok(arriving.iter().any(|(hash, row)| {
             !self.valid_entries.contains(hash)
+                && !self.pass_through_entries.contains(hash)
                 && !anchor_signed(row, |key| anchors.contains(key))
-                && entry_signer_keys(row).any(|key| self.retired_keys.contains(key))
+                && row_signer_keys(row).any(|key| self.retired_keys.contains(key))
         }))
     }
 }
