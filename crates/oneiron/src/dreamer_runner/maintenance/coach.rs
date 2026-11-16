@@ -233,7 +233,7 @@ const HOST_FACETS: [&str; 22] = [
     COACH_TOPOLOGY_AUDIT_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 12] = [
+const MAINTENANCE_FACETS: [&str; 13] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -247,6 +247,7 @@ const MAINTENANCE_FACETS: [&str; 12] = [
     COACH_ROOM_UPKEEP_FACET,
     COACH_FOLD_SUGGESTIONS_FACET,
     COACH_LAYOUT_SUGGESTIONS_FACET,
+    super::idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 /// Hours a pending tradeoff ask waits on one rung before it climbs, a learned
