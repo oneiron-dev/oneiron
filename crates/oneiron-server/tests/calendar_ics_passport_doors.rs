@@ -545,9 +545,11 @@ async fn pending_revision_never_head() {
     );
 }
 
-/// A rejected revision leaves the admitted head as it was, the same content
-/// is not proposed again, and a later revision that replaces a pending one
-/// still closes the admitted head only when it is approved.
+/// A rejected revision leaves the admitted head as it was and stays on record,
+/// the same content is not proposed again, a later revision that replaces a
+/// pending one still closes the admitted head only when it is approved, and
+/// the rejected revision no longer steers the diff once a later one is
+/// admitted.
 async fn rejected_revision_keeps_head() {
     let caller = serve("passport-rejected-revision").await;
     let uid = "review-91c2@example.test";
@@ -600,12 +602,14 @@ async fn rejected_revision_keeps_head() {
         SUPERSEDED,
         "rev3 replaces the pending rev2",
     );
+    // A Reject is final: no lifecycle transition follows it, so the rejected
+    // revision stays on record as it was.
     assert_revision(
         &history,
         &rev1,
         REJECTED,
-        SUPERSEDED,
-        "rev2 replaces the rejected rev1",
+        ACTIVE,
+        "the rejected rev1 stays as it was",
     );
 
     approve(&caller, &rev3).await;
@@ -623,6 +627,18 @@ async fn rejected_revision_keeps_head() {
         revisions(&history).len(),
         4,
         "four revisions are recorded: {history}"
+    );
+
+    // The feed still says SEQUENCE 3: the diff reads the admitted rev3, not
+    // the older rejected rev1, so the head's own content files nothing.
+    let (blob, version) =
+        upload_ics(&caller, "home-3-again.ics", &ics_feed(uid, 3, "Review (3)")).await;
+    import_ics(&caller, system, &blob, version).await;
+    let history = passport_history(&caller, &event, system, uid).await;
+    assert_eq!(
+        revisions(&history).len(),
+        4,
+        "the admitted head's content files no new revision: {history}"
     );
 }
 
