@@ -122,7 +122,8 @@ pub(crate) fn consented_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<Consented>()
 }
 
-/// The endpoint this host installed under the connector's name.
+/// The endpoint this host installed under the connector's name: a URL, or
+/// a stdio connector's `stdio:` endpoint (row L8-27).
 fn installed_endpoint(server: &SyncServer, connector: &str) -> Option<String> {
     let name = normalize_name(connector);
     server
@@ -130,7 +131,7 @@ fn installed_endpoint(server: &SyncServer, connector: &str) -> Option<String> {
         .connectors
         .iter()
         .find(|(section, _)| normalize_name(section) == name)
-        .map(|(_, installed)| installed.endpoint.clone())
+        .map(|(_, installed)| installed.installed_endpoint(&name))
 }
 
 /// `GET /v1/owner/connectors/consent?connector=&actor=`: the connector's
