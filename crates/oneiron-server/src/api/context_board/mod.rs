@@ -1131,6 +1131,7 @@ pub(crate) async fn chat_board(
         false,
         false,
         chat_layout_actor,
+        None,
     )
     .await
 }
@@ -1157,11 +1158,15 @@ pub(crate) async fn chat_turn_board(
         true,
         false,
         chat_layout_actor,
+        None,
     )
     .await
 }
 
-/// A live turn's split board, with its rider acknowledged only after answer admission.
+/// A live turn's split board, with its rider acknowledged only after answer
+/// admission. `retrieval_turn`, when the turn has one, names the TURN its
+/// recall serves on the retrieval run (the convention on
+/// [`oneiron::store::RetrievalTurn`]).
 pub(crate) async fn chat_turn_board_deferred(
     server: &Arc<SyncServer>,
     auth: CoreAuth,
@@ -1169,6 +1174,7 @@ pub(crate) async fn chat_turn_board_deferred(
     reader: oneiron::EntityId,
     query: &str,
     chat_layout_actor: Option<oneiron::EntityId>,
+    retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
     read_chat_board(
         server,
@@ -1179,6 +1185,7 @@ pub(crate) async fn chat_turn_board_deferred(
         true,
         true,
         chat_layout_actor,
+        retrieval_turn,
     )
     .await
 }
@@ -1192,6 +1199,7 @@ async fn read_chat_board(
     split: bool,
     defer_rider_ack: bool,
     chat_layout_actor: Option<oneiron::EntityId>,
+    retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
     let mut request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
         "retrieval": {
@@ -1204,6 +1212,9 @@ async fn read_chat_board(
     .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     request.chat_layout_actor = chat_layout_actor;
     request.chat_split = split;
+    if let Some(retrieval) = request.retrieval.as_mut() {
+        retrieval.retrieval_turn = retrieval_turn;
+    }
     let (served, Json(context), rider_ack) = hydrate_inner(
         auth,
         State(Arc::clone(server)),
