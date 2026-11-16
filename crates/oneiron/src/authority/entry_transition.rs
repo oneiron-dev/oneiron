@@ -912,6 +912,7 @@ fn genesis_state(vault_id: AuthorityVaultId, recovery_dismissed: bool, hosted: b
         seqs: BTreeMap::new(),
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
+        held_machine_answers: BTreeMap::new(),
         root_anchors: BTreeMap::new(),
         anchor_entries: BTreeSet::new(),
         host_custody_keys: BTreeSet::new(),
