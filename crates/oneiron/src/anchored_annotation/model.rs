@@ -299,13 +299,13 @@ impl Locator {
         char_end: u64,
     ) -> Result<Self> {
         let (commit, path, file_hash) = (commit.into(), path.into(), file_hash.into());
-        if !is_lower_hex(&commit, CODEBASE_COMMIT_HASH_HEX_LEN) {
+        if !oneiron_hex::is_lower_hex(&commit, Some(CODEBASE_COMMIT_HASH_HEX_LEN)) {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                 "code locator commit is not 40 lowercase hex characters",
             )));
         }
         validate_locator_text(&path, "code locator path")?;
-        if !is_lower_hex(&file_hash, CODEBASE_CONTENT_HASH_LEN * 2) {
+        if !oneiron_hex::is_lower_hex(&file_hash, Some(CODEBASE_CONTENT_HASH_LEN * 2)) {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                 "code locator file_hash is not 64 lowercase hex characters",
             )));
@@ -337,14 +337,6 @@ impl Locator {
             Self::Code { .. } => FORMAT_CODE,
         }
     }
-}
-
-/// Whether `text` is exactly `len` lowercase hexadecimal characters.
-fn is_lower_hex(text: &str, len: usize) -> bool {
-    text.len() == len
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// An anchor: the artifact version a locator resolves against.

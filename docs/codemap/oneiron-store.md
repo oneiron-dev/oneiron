@@ -387,7 +387,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/retained_reasons.rs` | src | s | 1 struct · 5 fn · 2 const | RetainedReasons | A push refusal's reasons, bounded where they are kept (FIX 5942) |
 | `src/origin/smart_http/serve_cmd.rs` | src | s | 1 struct · 6 fn | ServeRequest | The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle |
 | `src/outbound_outcome.rs` | src | s | 1 enum · 1 fn | OutboundDispatchOutcome | Stable outcome vocabulary for outbound dispatch observations |
-| `src/outbound_trigger.rs` | src | s | 1 struct · 1 enum · 8 fn | OutboundIntentSource, OutboundIntentTrigger | Source tags and trigger envelopes for outbound intent records |
+| `src/outbound_trigger.rs` | src | s | 1 struct · 1 enum · 9 fn | OutboundIntentSource, OutboundIntentTrigger | Source tags and trigger envelopes for outbound intent records |
 | `src/overlay_bookkeeping.rs` | src | s | 3 const | — | Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages |
 | `src/overlay_db/accessors.rs` | src | m | 2 struct · 33 fn · 3 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
 | `src/overlay_db/iters.rs` | src | s | 7 enum · 1 fn | OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter, OverlayStrPrefix | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
@@ -668,6 +668,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/world_access_predicates.rs` | src | s | 1 fn · 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `tests/fingerprint_keep_skill_tree.rs` | test | s | 1 struct · 1 fn · 2 const · 1 crate-vis | SkillContentHash | K-proof (oracle) for PLAN-UC-04 stage 6.3a: the canonical skill tree hash keeps its bytes |
+| `tests/fingerprint_keep_vault_import_receipt.rs` | test | s | 2 fn · 2 const | — | K-proof (oracle) for PLAN-UC-04 stage 6.3c: the foreign vault import receipt id keeps its bytes |
+| `tests/msgpack_store_rows.rs` | test | s | — | — | PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the… |
 | `tests/phonetic_han_codes.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form… |
 | `tests/phonetic_ipa.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): the readings of a name and the Normalized… |
 | `tests/receipt_ref.rs` | test | s | — | — | PLAN-UC-04 2.4a: `ReceiptRef`, the one text form `{kind}:{lowercase hex}` of a receipt reference |
