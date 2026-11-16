@@ -1,7 +1,7 @@
 //! Moved from `crates/oneiron/src/booking/agent_api.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::booking::constraint::RankedSlot;
+use crate::booking::constraint::{FullDay, RankedSlot};
 use crate::booking::disclosure_rung::BusyBlockRow;
 use serde::Deserialize;
 use serde::Serialize;
@@ -136,11 +136,12 @@ pub struct GrantedBusyView {
 
 /// The closed response union.
 ///
-/// Availability projects ranked public slots and the flex flag. Beside them it
-/// carries `busy` only for a caller whose live calendar grants name every
-/// calendar a host binds ([`GrantedBusyView`]); no titles, descriptions,
-/// attendees, busy sources, or other free/busy internals can be expressed
-/// here. Mutations project only action-safe opaque tokens.
+/// Availability projects ranked public slots, the flex flag and the days a
+/// meeting cap filled (date and cap only). Beside them it carries `busy` only
+/// for a caller whose live calendar grants name every calendar a host binds
+/// ([`GrantedBusyView`]); no titles, descriptions, attendees, busy sources, or
+/// other free/busy internals can be expressed here. Mutations project only
+/// action-safe opaque tokens.
 ///
 /// `Book` carries [`BookingBookResult`] directly, exactly as
 /// [`BookingOperationRequest::Book`] carries [`BookingBookInput`] directly: one
@@ -154,6 +155,9 @@ pub enum BookingOperationResponse {
     Availability {
         slots: Vec<RankedSlot>,
         flex_used: bool,
+        /// Visitor-local days in the asked window that a meeting cap filled,
+        /// ascending by date.
+        full_days: Vec<FullDay>,
         /// The caller's own grant view, one entry per host it covers. Absent
         /// for an anonymous caller, the owner and a caller with no such grant,
         /// whose answer reads exactly as before.

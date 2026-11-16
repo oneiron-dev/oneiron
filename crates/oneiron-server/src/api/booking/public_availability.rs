@@ -181,15 +181,20 @@ pub(super) fn solve(
             slots: mask.slots,
             flex_used: mask.flex_used,
             host_bindings: Vec::new(),
+            full_days: mask.full_days,
         };
     }
     recheck(server, public_authority)?;
     let SolveResult {
-        slots, flex_used, ..
+        slots,
+        flex_used,
+        full_days,
+        ..
     } = solved;
     let response = BookingOperationResponse::Availability {
         slots,
         flex_used,
+        full_days,
         busy: None,
     };
     remember_response(
@@ -238,10 +243,14 @@ pub(super) fn with_granted_view(
 ) -> BookingOperationResponse {
     match response {
         BookingOperationResponse::Availability {
-            slots, flex_used, ..
+            slots,
+            flex_used,
+            full_days,
+            ..
         } => BookingOperationResponse::Availability {
             slots,
             flex_used,
+            full_days,
             busy: view,
         },
         other => other,

@@ -1280,14 +1280,18 @@ Operations:
 - `availability` — body: `event_type`, `window` (`start`/`end`, UTC seconds), `visitor_tz`,
   `constraint` (`null`, `{"kind":"object","value":{...}}`, or `{"kind":"free_text","value":"..."}`),
   `session_ref`. Free text is normalized into a canonical constraint before any solve; the original
-  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`) plus
-  `flex_used`. A caller whose live calendar grants name every calendar a host binds also gets
-  `busy`: per host, its `calendar_refs` and opaque `busy` blocks (`start_utc`/`end_utc`) inside the
-  host's working hours. The field is absent for every other caller.
+  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`),
+  `flex_used`, and `full_days`: each visitor-local day (`date`, `YYYY-MM-DD`) whose times a meeting
+  cap removed, with the `cap` that filled it (`daily` or `weekly`). A full day has no slots; it
+  carries no booking detail. A caller whose live calendar grants name every calendar a host binds
+  also gets `busy`: per host, its `calendar_refs` and opaque `busy` blocks (`start_utc`/`end_utc`)
+  inside the host's working hours. The field is absent for every other caller.
 - `book` — body is tagged by `stage`. `hold` takes `event_type`, `selected_slot`, `visitor_tz`,
   `constraint`, `session_ref`, `checkout_lease_token`, `idempotency_key`, and returns
   `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer
-  hold requires a server-issued checkout lease, not a caller's ask. `confirm` takes `hold_token`,
+  hold requires a server-issued checkout lease, not a caller's ask. The vault's owner alone may add
+  `cap_override_reason` (1-4096 bytes) to hold a day a meeting cap filled; the reason is recorded on
+  the booking, and any other caller gets a 400. `confirm` takes `hold_token`,
   `booker_email`, `intake`, `session_ref`, `idempotency_key`, and returns separate
   `reschedule_token` and `cancel_token`. When the slot went to someone else the answer is
   `stage: slot_taken` with the oracle's nearest `alternatives`.
@@ -1668,6 +1672,7 @@ Codes the server's HTTP error type defines:
 - `OWNER_BINDING_REQUIRED`
 - `COURTESY_DELETE_UNAUTHENTICATED`
 - `CONTROL_SCOPE_DENIED`
+- `PROCESS_NOT_READY` (503): this vault process's event loop is hung (`draining`) or recovering from a hang (`recovering`); it takes no new work, and work it admitted runs to its end. Retry after the `Retry-After` wait (`details.retryAfterSecs`).
 - `4001`
 - `4002`
 - `4003`

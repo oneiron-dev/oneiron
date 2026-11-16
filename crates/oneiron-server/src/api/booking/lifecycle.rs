@@ -196,6 +196,10 @@ impl SlotOracle for ServerBookingOracle<'_> {
             None => solver.solve_moving(request, moving),
         })
     }
+
+    fn solve_past_caps(&self, request: &SolveRequest) -> Result<SolveResult, BookingError> {
+        self.with_solver(|solver| solver.solve_past_caps_listing(request, self.producers))
+    }
 }
 
 impl ServerBookingOracle<'_> {
