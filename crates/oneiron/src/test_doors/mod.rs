@@ -57,6 +57,8 @@ pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
+pub mod fingerprint_keep_executor_cohort_credit;
+pub mod fingerprint_keep_hook_digests;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
@@ -76,11 +78,15 @@ pub mod home_pick_fold;
 pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
+#[cfg(feature = "sync")]
+pub mod host_taint_replica;
 pub mod house_link;
 pub mod hydration_decode_guard;
 pub mod identity_recheck;
+pub mod idle_fold;
 pub mod imported_evidence;
 pub mod inquiry;
+pub mod install_key_revocation;
 pub mod job_kind_rows;
 pub mod label_writers;
 pub mod learning_claim_value;
@@ -142,8 +148,11 @@ pub mod split_phrase_carrier;
 pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
+#[cfg(feature = "sync")]
+pub mod sync_parted_row_binding;
 pub mod tray_answered_removal;
 pub mod turn_programs;
+pub mod turn_words;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
