@@ -47,6 +47,7 @@ pub use oneiron_store::blob_artifact::native_output;
 pub use oneiron_store::blob_artifact::office_address;
 mod provenance;
 mod references;
+pub(crate) mod setting_keys;
 use oneiron_store::blob_artifact::review_request;
 pub use oneiron_store::blob_artifact::slide_review;
 mod store_keys;
@@ -101,6 +102,7 @@ pub(crate) use self::references::{
     readmit_held_asset_in_txn, readmit_held_asset_with_facts_in_txn, release_fenced_only,
 };
 pub use self::review_request::SlideReviewLimitsInput;
+pub use self::setting_keys::image_edit_max_ops;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub use self::verbs::{
