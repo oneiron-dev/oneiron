@@ -4,11 +4,80 @@
 //! authority, and only a v4 proof signs it. The fold judges every state that
 //! carries one, whoever signs it; this door refuses early what the fold
 //! would not install.
+//!
+//! The owner reaches it through `vault.projects.room_facets.set` (L7-39
+//! PR 3), a host door: the host signs with the owner's project signer under
+//! its slip issuer, so the embedded handle refuses. A leader or board holder
+//! signs its own set in the record it writes through
+//! `vault.projects.roster.write`.
 use super::fold::ProjectDisposition;
 use super::owner_signer::owner_signed_at;
 use super::read::{ProjectReader, stored};
 use super::*;
 use crate::consent::AuthenticatedOwner;
+use crate::error::GateError;
+use crate::memory::{Memory, MemoryResult};
+
+/// `vault.projects.room_facets.set`: the project, and the facets its home
+/// room reads through.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRoomFacetsSetRequest {
+    pub project: EntityId,
+    /// The set: it holds the project's own slice facet and reads no facet a
+    /// parent project's room does not. Absent or null drops the set, so the
+    /// room reads the slice's facet again.
+    #[serde(default)]
+    pub room_facets: Option<BTreeSet<EntityId>>,
+}
+
+/// A project's room facet set as the owner's verb left it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRoomFacetsState {
+    pub project: EntityId,
+    /// The set the home room reads through; none when it reads the slice's
+    /// facet.
+    pub room_facets: Option<BTreeSet<EntityId>>,
+    /// The signed project state the set landed in, as hex.
+    pub revision: String,
+}
+
+/// [`Vault::set_project_room_facets`] from the owner verb's request, signed
+/// with the host's owner project signer.
+///
+/// # Errors
+///
+/// The door's refusals.
+pub fn set_project_room_facets_from_request_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    signer: &OwnerProjectSigner<'_>,
+    input: ProjectRoomFacetsSetRequest,
+) -> MemoryResult<ProjectRoomFacetsState> {
+    let revision =
+        vault.set_project_room_facets(owner, signer, input.project, input.room_facets.clone())?;
+    Ok(ProjectRoomFacetsState {
+        project: input.project,
+        room_facets: input.room_facets,
+        revision: blake3::Hash::from(revision.0).to_hex().to_string(),
+    })
+}
+
+impl Memory<'_> {
+    /// `vault.projects.room_facets.set` on the embedded handle: refused. The
+    /// owner's project signer works under the host's slip issuer, which only
+    /// the host holds, so only the host's door sets a room facet set.
+    pub fn projects_set_room_facets(
+        &self,
+        _input: &ProjectRoomFacetsSetRequest,
+    ) -> MemoryResult<ProjectRoomFacetsState> {
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+            "a room facet set needs the host's authenticated owner and owner signer",
+        ))
+        .into())
+    }
+}
 
 fn unresolved(project: EntityId, reason: &'static str) -> Error {
     RecordError::ProjectAuthorityUnresolved { project, reason }.into()
