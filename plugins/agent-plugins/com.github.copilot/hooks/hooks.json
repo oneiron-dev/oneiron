@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "timeoutSec": 15,
+        "bash": "oneiron hook --host copilot session-start --credential-file \"$HOME/.config/oneiron/copilot-hooks.cred\""
+      }
+    ],
+    "PreCompact": [
+      {
+        "type": "command",
+        "timeoutSec": 10,
+        "bash": "oneiron hook --host copilot hand-over"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "timeoutSec": 10,
+        "bash": "oneiron hook --host copilot hand-over"
+      }
+    ]
+  }
+}
