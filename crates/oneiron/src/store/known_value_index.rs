@@ -56,7 +56,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::secret_record::SecretCustodyRecord;
-use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, Store};
+use crate::store::{KnownEntry, KnownHistory, KnownHistoryIds, Store};
 use crate::vault::Vault;
 
 pub(crate) use self::forms::{decodings, occurrences};
@@ -72,8 +72,8 @@ pub const KNOWN_VALUE_MIN_BYTES: usize = 1;
 /// A window this long keeps each tag's candidates few.
 const TAG_WINDOW: usize = 12;
 
-/// How many bytes of a value's first window its tag keeps.
-const TAG_BYTES: usize = KNOWN_TAG_BYTES;
+#[doc(hidden)]
+use oneiron_records::store::known_value_index::TAG_BYTES;
 
 /// How many of an open stream's last bytes, at most, are held back unseen
 /// because no window can tell yet whether a known value starts there (FIX
@@ -853,10 +853,21 @@ impl Vault {
         &self,
         read: impl FnOnce(Option<&KnownValues>, &RoTxn<'_>) -> Result<T>,
     ) -> Result<T> {
+        let snapshot = self.known_snapshot()?;
+        read(snapshot.known(), snapshot.txn())
+    }
+
+    /// [`Self::with_known_snapshot`]'s snapshot and matcher, held by a
+    /// reader that serves several calls in that one snapshot (FIX
+    /// REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT). Keep it short-lived, as the
+    /// closure form is: the custody read guard is held until it drops.
+    ///
+    /// # Errors
+    /// The pass's own.
+    pub(crate) fn known_snapshot(&self) -> Result<KnownSnapshot<'_>> {
         let snapshot = self.store.custody_snapshot()?;
-        let txn: &RoTxn<'_> = &snapshot;
-        let known = self.known_values_in_snapshot(txn)?;
-        read(known.as_ref(), txn)
+        let known = self.known_values_in_snapshot(&snapshot)?;
+        Ok(KnownSnapshot { known, snapshot })
     }
 
     /// The matcher of the history `txn` holds, a snapshot taken under the
@@ -871,6 +882,27 @@ impl Vault {
                 .port_short_id_reference(txn, holder)?
                 .map(|(handle, _)| handle))
         })
+    }
+}
+
+/// A snapshot taken under the custody read guard and the matcher built
+/// from it (FIX 8966): bytes read in it and the values matched against them
+/// are one state. The matcher is wiped first when it drops, then the
+/// snapshot closes, then the guard releases.
+pub(crate) struct KnownSnapshot<'a> {
+    known: Option<KnownValues>,
+    snapshot: super::key_custody::GuardedSnapshot<'a>,
+}
+
+impl<'a> KnownSnapshot<'a> {
+    /// The snapshot the matcher was built from.
+    pub(crate) fn txn(&self) -> &RoTxn<'a> {
+        &self.snapshot
+    }
+
+    /// The values custody knows in this snapshot; `None` when it knows none.
+    pub(crate) const fn known(&self) -> Option<&KnownValues> {
+        self.known.as_ref()
     }
 }
 
