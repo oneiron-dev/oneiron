@@ -19,15 +19,12 @@
 //!    an empty or padded card. Closed-vault delivery enters through exactly one
 //!    door, which rechecks eligibility and staleness before it renders.
 //!
-//! ## Known hole this file inherits (NOT owned by CAL-06)
+//! ## An unseeded vault, on purpose
 //!
-//! `gate::default_policy_manifest()` has no `calendar.` rule, so under the
-//! shipped default every calendar claim write is gate-pending — the hole
-//! `calendar_claims_are_gate_pending_under_the_default_policy_manifest`
-//! (tests/calendar_surface_oracle.rs, CAL-09) already pins, whose fix lives in
-//! `crates/oneiron/src/gate.rs`, a lane-wide CAL non-claim. These oracles
-//! therefore run on an unseeded vault, exactly like the CAL-07 outcome oracle:
-//! the subject here is the prep layer's own laws, not the policy manifest's.
+//! These oracles run on an unseeded vault, exactly like the CAL-07 outcome
+//! oracle: the subject here is the prep layer's own laws, not the policy
+//! manifest's. The stock manifest's `calendar.` rule and its imported
+//! source-trust floor are pinned by `calendar_surface_oracle.rs`.
 
 use std::path::Path;
 
@@ -79,8 +76,8 @@ const DOSSIER_TEXT: &str = "counterparty moved to a new employer";
 const LATE_TEXT: &str = "arrived after the wake fired";
 
 /// An unseeded vault: keeps the claim write door open without a policy fixture,
-/// so these oracles measure CAL-06's laws rather than the missing `calendar.`
-/// rule in the default policy manifest (see the module note).
+/// so these oracles measure CAL-06's laws rather than the policy manifest's
+/// (see the module note).
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut config = VaultConfig::device();
@@ -434,7 +431,7 @@ fn no_useful_context_returns_none_and_renders_nothing() {
     // padded one.
     let wake = plan_prep_wake(prep_wake_id(&event_ref), &request.event, request.policy)
         .expect("wake is planned");
-    let job = PrepHomeNodeJob::from_wake(&event_ref, &wake);
+    let job = PrepHomeNodeJob::from_wake(&event_ref, &wake).expect("a prep wake is exact");
     let rendered = run_due_home_node_prep(&vault, &job, FIRE_AT, request.policy, &copy())
         .expect("due run succeeds");
     assert!(rendered.is_none());

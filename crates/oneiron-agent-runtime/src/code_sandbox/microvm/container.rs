@@ -232,13 +232,13 @@ impl MicroVmBackend for ContainerBackend {
         cancel.check()?;
         let mut guest = self
             .runtime
-            .start_fenced(
+            .start_fenced_until_stdin_closes(
                 &spec,
                 &["/usr/local/bin/oneiron-guest".into(), "--container".into()],
                 Arc::clone(&relay),
             )
             .map_err(|e| failed(e.to_string()))?;
-        let manifest = guest.manifest().clone();
+        let mut manifest = guest.manifest().clone();
         self.state(vm)?
             .get_mut(vm.id())
             .ok_or_else(|| failed("unknown handle"))?
@@ -258,6 +258,9 @@ impl MicroVmBackend for ContainerBackend {
         });
         let deadline = Instant::now() + Duration::from_secs(budget.wall_clock_secs);
         let watched = stream.try_clone().map_err(|e| failed(e.to_string()))?;
+        // The guest's stdin stays open until its pressure is read: its
+        // launcher holds the container, and its cgroup, until then (FIX 8013).
+        let stdin_hold = stream.try_clone().map_err(|e| failed(e.to_string()))?;
         // The session sits in a slot the watcher may empty; nothing holds
         // the slot's lock across the exchange, a removal or a wait.
         let session = Mutex::new(Some(guest));
@@ -291,10 +294,23 @@ impl MicroVmBackend for ContainerBackend {
             (result, watcher.join().unwrap_or(false))
         });
         // Whatever the watcher left is this run's to end.
-        let guest = session
+        let mut guest = session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+        if let Some(live) = guest.as_mut() {
+            // Its launcher still holds the container here, so its cgroup
+            // still reads; the stored manifest then carries what its guest
+            // showed.
+            live.record_pressure();
+            manifest.guest_pressure = live.manifest().guest_pressure.clone();
+            if let Ok(mut states) = self.states.lock()
+                && let Some(state) = states.get_mut(vm.id())
+            {
+                state.manifest = Some(manifest.clone());
+            }
+        }
+        drop(stdin_hold);
         let abandoned = killed_abandoned || guest.as_ref().is_some_and(GuestSession::abandoned);
         drop(guest);
         if abandoned {
