@@ -12,13 +12,15 @@
 //! The same rule decides every door that serves a room's structure: its
 //! row (roster, title, pins), its turns, its thread and DAG shape (L9-52,
 //! Engine RULING L9-52-ROOM-STRUCTURE = A, 14 Nov 14:29). A TURN is judged
-//! as its room is.
+//! as its room is. A Direct conversation is no room (ARCH-0006a rule 2),
+//! so its rows and turns read by the lane alone.
 
 use std::collections::HashMap;
 
 use heed::RoTxn;
 
 use crate::claim::ScopedRead;
+use crate::conversation::{ConversationBody, ConversationKind};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
@@ -29,9 +31,10 @@ impl Vault {
     /// Whether `read`'s caller may read `conversation`'s DAG records: the
     /// lane reads its row, and its key is the vault owner's, or a narrower
     /// owner credential while he is still the bound owner, or its reader
-    /// sees the conversation in its own list. An id that names no
-    /// conversation is left to the listing, which refuses it as it does
-    /// today.
+    /// sees the conversation in its own list. An id that names no room is
+    /// left to the listing, which refuses it as it does today: one that
+    /// names no conversation, or a Direct conversation, which is no room
+    /// (ARCH-0006a rule 2) and reads by the lane alone.
     ///
     /// # Errors
     ///
@@ -47,7 +50,7 @@ impl Vault {
             return Ok(false);
         }
         let txn = self.store.env.read_txn()?;
-        if !is_live_conversation_in(&self.store, &txn, conversation)? {
+        if !is_live_room_in(&self.store, &txn, conversation)? {
             return Ok(true);
         }
         self.room_admits_in(read, &txn, conversation, conversation)
@@ -55,11 +58,11 @@ impl Vault {
 
     /// Whether `read`'s caller may read the room structure the row `id`
     /// holds, past the lane's own read of that row, which is the door's and
-    /// is judged before this (L9-52). A live CONVERSATION is admitted as
+    /// is judged before this (L9-52). A live room is admitted as
     /// [`Self::dag_records_admitted`] admits it. A live TURN is admitted as
     /// its one room is, and the lane must read that room's row too. Any other
-    /// row, and a TURN that names no live conversation, is left to the lane.
-    /// A door answers a refused row as a missing one.
+    /// row, a Direct conversation, and a TURN that names no live room, is
+    /// left to the lane. A door answers a refused row as a missing one.
     ///
     /// # Errors
     ///
@@ -143,9 +146,11 @@ impl Vault {
     }
 }
 
-/// The room whose structure the row `id` holds: a live CONVERSATION's own
-/// id, or the live conversation a live TURN was witnessed into. `None` for
-/// any other row, and for a TURN that names no single live conversation.
+/// The room whose structure the row `id` holds: a live room's own id, or the
+/// live room a live TURN was witnessed into. `None` for any other row, for a
+/// Direct conversation, and for a TURN that names no single live room. A
+/// Direct conversation is no room (ARCH-0006a rule 2), so its turns read by
+/// the lane alone.
 fn structure_room_in(
     store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
@@ -154,32 +159,50 @@ fn structure_room_in(
     match live_entity_row_in_txn(store, txn, id)? {
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_CONVERSATION,
+            body,
+        } if is_room_body(&body) => Ok(Some(*id)),
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_CONVERSATION,
             ..
-        } => Ok(Some(*id)),
+        } => Ok(None),
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,
             ..
         } => match super::graph::named_room(store, txn, id)? {
-            Ok(room) if is_live_conversation_in(store, txn, &room)? => Ok(Some(room)),
+            Ok(room) if is_live_room_in(store, txn, &room)? => Ok(Some(room)),
             _ => Ok(None),
         },
         _ => Ok(None),
     }
 }
 
-/// Whether `id` names a live CONVERSATION row in `txn`.
-fn is_live_conversation_in(
+/// Whether `id` names a live room in `txn`: a live CONVERSATION whose body
+/// names a Group, Channel or Mirror.
+fn is_live_room_in(
     store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(matches!(
-        live_entity_row_in_txn(store, txn, id)?,
+    match live_entity_row_in_txn(store, txn, id)? {
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_CONVERSATION,
-            ..
-        }
-    ))
+            body,
+        } => Ok(is_room_body(&body)),
+        _ => Ok(false),
+    }
+}
+
+/// Whether a live CONVERSATION body names a room: a Group, Channel or Mirror.
+/// A Direct or Agent conversation is no room. An undecodable body fails
+/// closed as a room.
+fn is_room_body(body: &[u8]) -> bool {
+    match ConversationBody::from_bytes(body) {
+        Ok(decoded) => matches!(
+            decoded.kind,
+            ConversationKind::Group | ConversationKind::Channel | ConversationKind::Mirror
+        ),
+        Err(_) => true,
+    }
 }
 
 impl Vault {

@@ -396,3 +396,82 @@ async fn a_relationship_grantee_reads_the_room() {
     }
     assert!(refused.is_empty(), "{refused:#?}");
 }
+
+/// A Direct conversation is no room (ARCH-0006a rule 2, L9-52): a non-owner,
+/// non-member reader with a live TURN-only read grant reads a TURN whose
+/// single ChildOf parent is a live Direct conversation by its lane alone.
+#[tokio::test]
+async fn a_direct_conversations_turn_reads_by_its_lane() {
+    let room = room();
+    let direct = seeded_test_entity_id(0x2401_0059);
+    let vault = &room.server.vault;
+    vault
+        .create_conversation(
+            direct,
+            &oneiron::conversation::ConversationBody {
+                kind: oneiron::conversation::ConversationKind::Direct,
+                member_ids: vec![room.owner],
+                ..Default::default()
+            },
+            oneiron::WriteActor::new(room.owner, oneiron::EdgeActorClass::Human),
+            1,
+        )
+        .expect("the direct conversation");
+    vault
+        .memory(room.owner, oneiron::EdgeActorClass::Human)
+        .rooms_speak(&oneiron::memory::WitnessTurn {
+            conversation_ref: direct.to_hex(),
+            turn_ref: Some(oneiron::EntityId::now().to_hex()),
+            messages: vec![oneiron::memory::WitnessMessage {
+                id: Some(oneiron::EntityId::now().to_hex()),
+                author: oneiron::memory::WitnessAuthor::User,
+                message_type: "text".into(),
+                content: "a word in the direct credkey".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                parts: None,
+                quote: None,
+            }],
+            occurred_at: 4,
+            assertions: Default::default(),
+            thread_audience: None,
+        })
+        .expect("speak in the direct");
+    let turn = first_turn(&room.server, direct).await;
+    let reader = seeded_test_entity_id(0x2401_005A);
+    super::context_board_history::restrict_principal_read_types(
+        &room.server,
+        reader,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let authorization = test_bearer(&format!(
+        "scope=core:read;principal_ref={}",
+        reader.to_hex()
+    ));
+    let (status, body) = route_json(
+        room.server.clone(),
+        core_request_with_authz(
+            "GET",
+            &format!("/api/entity/{}", turn.to_hex()),
+            authorization.clone(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let short =
+        oneiron::retrieval_depth::short_ref_or_hex(&room.server.vault, &turn).expect("short ref");
+    assert!(short.contains(':'), "{} holds no short id", turn.to_hex());
+    let (status, body) = route_json(
+        room.server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/hydrate",
+            authorization,
+            Some(&json!({ "ref": short })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
