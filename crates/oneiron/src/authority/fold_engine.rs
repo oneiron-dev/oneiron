@@ -446,11 +446,13 @@ pub(super) fn fold_authority_log_once(
             agent_carried_acts: BTreeMap::new(),
             agent_world_undo: Default::default(),
             home_candidacy: BTreeMap::new(),
+            full_copy_mark: BTreeMap::new(),
             owner_work: super::owner_work::FoldedOwnerWork::default(),
             install: InstallBound::default(),
             counted_ancestor_pairs,
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
+            verified_device_revocations: BTreeSet::new(),
             issues,
         };
     }
