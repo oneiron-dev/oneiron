@@ -37,6 +37,10 @@ use oneiron_records::receipt::field_set::FIELD_MANIFEST_ATTRIBUTION;
 /// OF-541: the template seat the attempt's executor was configured with;
 /// `model` is what that seat ran.
 pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
+/// OF-548: the scratchpad NOTEs an attempt's wake wrote, sealed in its
+/// terminal write, as comma-joined canonical 32-lowercase-hex ids. Absent
+/// when the wake wrote no pad, and on receipts sealed before the stamp.
+pub const FIELD_SCRATCH_REF: &str = "scratch_ref";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
