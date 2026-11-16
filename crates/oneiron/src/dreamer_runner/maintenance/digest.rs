@@ -8,10 +8,7 @@
 //! own view, screened of private thread words they do not read (FIX 6411).
 use super::{invalid, setting_keys};
 use crate::limit_ask::EngineLimit;
-use crate::setting::{
-    SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope, SettingSource,
-    SettingValue,
-};
+use crate::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingSource, SettingValue};
 use crate::side_table::{self, LegacyJson, SideTable};
 #[cfg(test)]
 use crate::{ClaimApprovalStatus, ClaimSource};
@@ -569,14 +566,9 @@ fn set_digest_setting_in_txn(
     why: Option<&str>,
 ) -> Result<()> {
     let request = SetSetting {
-        key: key.to_owned(),
-        item: None,
-        scope: SettingScope::Vault,
-        mode: SettingMode::Value,
         value,
-        expected_revision: None,
         why: why.map(str::to_owned),
-        check_in_ref: None,
+        ..SetSetting::vault_value(key, serde_json::Value::Null)
     };
     match vault.set_setting_in_txn(txn, caller, &request)? {
         SetSettingOutcome::Applied { .. } => Ok(()),
