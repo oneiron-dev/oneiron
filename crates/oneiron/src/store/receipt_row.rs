@@ -18,6 +18,11 @@ pub(crate) const FIELD_SCOPE_ACTOR: &str = "actor";
 /// Why a consent-graduation scope was demoted back to the propose lane
 /// (ONE-1748); the wire strings are `consent_graduation::DemotionReason`.
 pub(crate) const FIELD_DEMOTION_REASON: &str = "demotion_reason";
+/// Who demoted a consent-graduation scope, as an entity id in lower hex: the
+/// owner's or a policy holder's person, the spawning parent agent, the scope's
+/// own actor, or the person whose ruling caused it. Absent on a demotion
+/// recorded before the field existed. The receipt's `actor` stays the scope's.
+pub(crate) const FIELD_DEMOTED_BY: &str = "demoted_by";
 /// The resolution event's claim-source axis. Deliberately NOT `"source"`:
 /// that key is reserved as one of the six ARCH-0056 Δ field names this
 /// receipt must not project until ED-01 (ONE-1757) builds the Δ schema.
