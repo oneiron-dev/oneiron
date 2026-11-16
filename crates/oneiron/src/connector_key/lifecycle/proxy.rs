@@ -208,7 +208,6 @@ impl Vault {
                 "gate.connector_key.proxy_admit",
                 &active,
                 policy.read_frontier_hash()?,
-                at,
             )?;
             Ok(ActorConnectorRegistration {
                 key_ref,

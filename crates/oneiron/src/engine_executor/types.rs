@@ -542,6 +542,9 @@ pub struct EngineExecutorOutcome {
     /// The resume-preflight report of the pending step this entry resumed, when it resumed one
     /// and then committed it or parked it again (L8-23).
     pub resume_preflight: Option<ResumePreflightReport>,
+    /// The prompt prefix the run's last turn answer left cached, when its
+    /// ladder stamped one (L2-37): a parked run's idle call reads it.
+    pub cache_horizon: Option<crate::idle_fold::CachedPrefixHorizon>,
 }
 
 impl EngineExecutorOutcome {
