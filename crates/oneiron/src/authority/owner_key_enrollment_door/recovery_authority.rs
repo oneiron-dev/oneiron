@@ -419,8 +419,11 @@ impl Vault {
     ///
     /// A head at the last revision, or a binding at the last epoch, has no
     /// next row, so it is not carried: no row the revoked key signed can
-    /// refuse the kit change that revokes the key (Sol carry F2, F3). The
-    /// history is read once (Sol carry F4).
+    /// refuse the kit change that revokes the key (Sol carry F2, F3). Only a
+    /// live R's holder can sign such a row, and the standing goes stale as
+    /// it did before the carry (FIX [KIT-CHANGE-CARRY-SKIPS-LAST-COUNTER]).
+    /// The history is read once (Sol carry F4): the stored rows and the
+    /// bodies an adopted checkpoint image carries (Sol carry-fix F2).
     ///
     /// # Errors
     /// A fold or history read's.
@@ -461,8 +464,25 @@ impl Vault {
             })
             .map(|(bound, binding)| (bound, (binding, CarrySupport::default())))
             .collect();
+        // The approvals the stale-roster window reads: each stored row, and
+        // each body an adopted checkpoint image carries that this vault does
+        // not store (the adopted fold expires those too), a stored row
+        // winning over the image's copy, as the enrolled-key reader reads
+        // them (Sol carry-fix F2).
         let history = crate::authority::history_transfer::history_in_txn(self, txn)?;
-        for (hash, (_, entry)) in &history {
+        let stored: std::collections::BTreeSet<AuthorityEntryHash> =
+            history.keys().copied().collect();
+        let evidence =
+            crate::authority::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?;
+        let stored = &stored;
+        let carried_past = evidence
+            .iter()
+            .flat_map(move |evidence| evidence.carried_past(stored));
+        let approvals = history
+            .iter()
+            .map(|(hash, (_, entry))| (hash, entry))
+            .chain(carried_past);
+        for (hash, entry) in approvals {
             if !fold.valid_entries.contains(hash) {
                 continue;
             }
