@@ -161,6 +161,7 @@ fn the_history_plan_counts_a_turn_the_door_seals_as_landing() -> TestResult {
             alias: None,
         }],
         skipped: HistorySkips::default(),
+        sharing: None,
     };
     // The plan reads a vault no writer holds open.
     let planned_dir = tempfile::tempdir()?;
