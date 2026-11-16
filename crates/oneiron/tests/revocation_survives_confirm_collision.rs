@@ -8,18 +8,21 @@
 //! federation confirmation C. O2 revokes K on C. Later K's holder signs B,
 //! another confirmation with C's confirm id and its own nonce, on C's
 //! parents, at K's next sequence, and picks B's nonce so that B's hash is
-//! below C's. Two valid confirmations that share an id collide: the fold
-//! keeps the lower hash, B, and settlement removes C with every row after
-//! it, the revocation among them. K must stay revoked: the revocation is
-//! proved on its own signed branch, which B does not touch.
+//! below C's. Two valid confirmations that share an id collide. Before
+//! #8660 the fold kept the lower hash, B, and settlement removed C with
+//! every row after it, the revocation among them. Since #8660 (Engine
+//! RULING COLLISION-SETTLEMENT-SHAPE = A) a collision drops no row, so C
+//! and the revocation stay valid beside B. K must stay revoked either way:
+//! the revocation is a valid row, and it is proved on its own signed branch,
+//! which B does not touch.
 //!
 //! Two more cases from the reviews of #8608: K's two confirmations at one
 //! sequence under the revocation (Astra T1: the proof follows the fold on
 //! such siblings), and an approval of K's beside C, which the stale-roster
 //! window expires from the revocation's proved fact (Sol F1).
 //!
-//! These tests pin only the revocation and its stale-roster window. The rest
-//! of C's subtree still goes with C (the FIX row stays open for that).
+//! These tests pin the revocation and its stale-roster window. Their setup
+//! asserts follow #8660: B, C and the revocation all stay valid.
 //!
 //! Expected (estimate, not run yet): all three red on main, where K is live
 //! again once B arrives; the second and third red at 8b22fd3d77166 (the
@@ -295,18 +298,19 @@ fn a_revocation_below_a_losing_confirmation_keeps_the_key_revoked() {
 
     let arrival = put(&rooted, &collision);
     let fold = rooted.vault.authority_fold().expect("the fold");
-    // The collision reached the fold and won it: a revoked key keeps its
-    // standing at the door, so the assertion below is not met by a refused
-    // put or a lost collision.
+    // The collision reached the fold: a revoked key keeps its standing at
+    // the door, so the assertion below is not met by a refused put. Since
+    // #8660 the collision drops no row: B, C and the revocation all stand.
     assert_eq!(
         arrival, "stored",
         "the colliding confirmation is stored; issues {:?}",
         fold.issues
     );
     assert!(
-        fold.valid_entries.contains(&hash_of(&collision))
-            && !fold.valid_entries.contains(&hash_of(&confirmed)),
-        "setup: the lower-hash confirmation wins the collision; issues {:?}",
+        [&collision, &confirmed, &revocation]
+            .iter()
+            .all(|row| fold.valid_entries.contains(&hash_of(row))),
+        "setup: the collision drops neither confirmation nor the revocation (#8660); issues {:?}",
         fold.issues
     );
     assert!(
@@ -319,9 +323,9 @@ fn a_revocation_below_a_losing_confirmation_keeps_the_key_revoked() {
 /// Astra T1 on #8608: X and Y = K's confirmations with their own ids at K's
 /// sequence 1 on P, siblings the fold admits; the revocation = O2's
 /// RevokeDevice of K at O2's sequence 1 on [X, Y]; B = K's confirmation
-/// with X's id at K's sequence 2 on P, with a hash below X's. B wins against
-/// X, and settlement removes X with the revocation. The revocation's proof
-/// follows the fold on the two siblings, so K stays revoked.
+/// with X's id at K's sequence 2 on P, with a hash below X's. Since #8660
+/// the collision drops no row: X, Y and the revocation stay valid beside B,
+/// and K stays revoked.
 #[test]
 fn a_revocation_over_two_equal_sequence_siblings_keeps_the_key_revoked() {
     let rooted = rooted();
@@ -394,9 +398,10 @@ fn a_revocation_over_two_equal_sequence_siblings_keeps_the_key_revoked() {
         fold.issues
     );
     assert!(
-        fold.valid_entries.contains(&hash_of(&collision))
-            && !fold.valid_entries.contains(&hash_of(&first)),
-        "setup: the lower-hash confirmation wins against X; issues {:?}",
+        [&collision, &first, &second, &revocation]
+            .iter()
+            .all(|row| fold.valid_entries.contains(&hash_of(row))),
+        "setup: the collision drops none of X, Y and the revocation (#8660); issues {:?}",
         fold.issues
     );
     assert!(
@@ -409,13 +414,13 @@ fn a_revocation_over_two_equal_sequence_siblings_keeps_the_key_revoked() {
 /// Sol F1 on #8608: Q = K's confirmation with its own id at K's sequence 1
 /// on P, an approval that rests on K; C = K's confirmation at sequence 2 on
 /// P; the revocation = O2's RevokeDevice of K on C; B = K's confirmation
-/// with C's id at sequence 3 on P, with a hash below C's. B wins, so the
-/// revocation's row is no longer valid and only its proved fact revokes K.
+/// with C's id at sequence 3 on P, with a hash below C's. Before #8660, B
+/// won and the revocation's row went with C, so only its proved fact revoked
+/// K; since #8660 the collision drops no row and the revocation stays valid.
 /// Q is C's sibling and stays valid. Once the stale-roster window has passed
-/// since the revocation was first seen here, Q expires, as under a valid
-/// revocation.
+/// since the revocation was first seen here, Q expires.
 #[test]
-fn an_approval_by_a_key_revoked_by_its_proved_fact_alone_expires_after_the_window() {
+fn an_approval_by_a_key_revoked_beside_a_collision_expires_after_the_window() {
     let rooted = rooted();
     let machine = admit_machine(&rooted);
     let second_owner = SigningKey::from_bytes(&[0x52; 32]);
@@ -461,19 +466,19 @@ fn an_approval_by_a_key_revoked_by_its_proved_fact_alone_expires_after_the_windo
         put(&rooted, &revocation),
         put(&rooted, &collision),
     ];
-    // The setup: B won, the revocation's row went with C, K is revoked, and
-    // Q stands inside the default window (a day).
+    // The setup: the collision dropped no row (#8660), K is revoked, and Q
+    // stands inside the default window (a day).
     let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(
-        fold.valid_entries.contains(&hash_of(&collision))
-            && !fold.valid_entries.contains(&hash_of(&confirmed))
-            && !fold.valid_entries.contains(&hash_of(&revocation)),
-        "setup: B wins against C and the revocation's row goes with C; puts {puts:?}, issues {:?}",
+        [&collision, &confirmed, &revocation]
+            .iter()
+            .all(|row| fold.valid_entries.contains(&hash_of(row))),
+        "setup: B, C and the revocation all stand (#8660); puts {puts:?}, issues {:?}",
         fold.issues
     );
     assert!(
         !is_live(&fold, &key_of(&colliding)),
-        "setup: K stays revoked by the revocation's proved fact; issues {:?}",
+        "setup: K stays revoked; issues {:?}",
         fold.issues
     );
     assert!(
@@ -499,7 +504,7 @@ fn an_approval_by_a_key_revoked_by_its_proved_fact_alone_expires_after_the_windo
     let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(
         !fold.valid_entries.contains(&hash_of(&approval)),
-        "Q rests on K, which only the revocation's proved fact revokes: the window must expire it; issues {:?}",
+        "Q rests on K, which the revocation revokes: the window must expire it; issues {:?}",
         fold.issues
     );
 }
