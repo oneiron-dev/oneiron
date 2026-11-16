@@ -72,16 +72,20 @@ impl SideKey for LeaseKey {
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 33 {
-            return None;
-        }
         let text = std::str::from_utf8(bytes).ok()?;
-        let (vault, client) = text.split_once(':')?;
+        let (vault, client) = text.split_at_checked(16)?;
         Some(Self {
-            vault_id: u64::from_str_radix(vault, 16).ok()?,
-            client_id: u64::from_str_radix(client, 16).ok()?,
+            vault_id: u64::from_be_bytes(oneiron_hex::decode::<8>(vault)?),
+            client_id: u64::from_be_bytes(oneiron_hex::decode::<8>(client.strip_prefix(':')?)?),
         })
     }
+}
+
+/// The vault and client ids a [`LeaseKey`] reads from the bytes after its table prefix, or
+/// `None` where it refuses them (`test_doors::side_key_hex_case`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn decode_lease_key_for_test(bytes: &[u8]) -> Option<(u64, u64)> {
+    LeaseKey::decode_key(bytes).map(|key| (key.vault_id, key.client_id))
 }
 
 /// The bytes after the `ls:` table prefix that scope a scan to one vault:

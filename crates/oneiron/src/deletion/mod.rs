@@ -216,6 +216,8 @@ pub(crate) use sweep_queue::{
     HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, encode_hard_erase_sweep_job,
     encode_hard_erase_sweep_key,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use tombstone::decode_pending_tombstone_key_for_test;
 #[cfg(test)]
 pub(crate) use tombstone::pending_tombstone_key;
 pub(crate) use tombstone::{parse_window_label, window_label_from_timestamp};

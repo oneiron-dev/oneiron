@@ -24,15 +24,7 @@ impl SideKey for Hex64 {
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(bytes).ok()?;
-        if text.len() != 64 {
-            return None;
-        }
-        let mut out = [0_u8; 32];
-        for (index, byte) in out.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(text.get(index * 2..index * 2 + 2)?, 16).ok()?;
-        }
-        Some(Self(out))
+        oneiron_hex::decode::<32>(std::str::from_utf8(bytes).ok()?).map(Self)
     }
 }
 
