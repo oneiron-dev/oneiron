@@ -2,7 +2,8 @@
 //! `organ_host.image.max_ops` past 256 gets a longer edit run by the image
 //! organ, not only admitted by the host. The host sends its count with the
 //! `image.render` call, and the organ applies it in place of its own
-//! default of 256. The defaults themselves are proved by
+//! default of 256. A preview (`image.preview`) takes the same count. The
+//! defaults themselves are proved by
 //! `oneiron-organ-host/tests/image_edit_max_ops.rs` (the host) and
 //! `tests/image_ops.rs` (the organ, a call that names no count).
 //!
@@ -21,7 +22,8 @@ use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_organ_host::image::{
-    ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, edit_image, image_spec,
+    ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ImagePreview, ImagePreviewed, edit_image,
+    image_spec, preview_image,
 };
 use oneiron_organ_host::{AskHandlers, CallClass, HostConfig, OrganHost, OrganRouter, Submitted};
 
@@ -141,6 +143,24 @@ impl Fixture {
             &AskHandlers::none(),
         )
     }
+
+    fn preview(
+        &self,
+        artifact: EntityId,
+        ops: Vec<ImageOp>,
+    ) -> Result<ImagePreviewed, ImageEditRefusal> {
+        let preview = ImagePreview {
+            artifact,
+            version: None,
+            ops,
+            max_side: 64,
+            sight: SecretSight::Owner,
+            grant: "photo-preview".to_owned(),
+            class: CallClass::Interactive,
+            deadline: Duration::from_secs(20),
+        };
+        preview_image(&self.router, &self.vault, &preview, &AskHandlers::none())
+    }
 }
 
 /// `n` crops of the whole 9x7 canvas: each keeps every pixel.
@@ -188,6 +208,35 @@ fn owner_op_count_runs_a_257_op_edit_through_the_organ() {
         "{refusal:?}"
     );
     // The message names the owner's count (the base's variant has no `max` field to match).
+    assert_eq!(
+        refusal.to_string(),
+        "an edit names at most 300 ops, not 301"
+    );
+}
+
+/// The preview takes the owner's count too: the host sends it with the
+/// `image.preview` call, as with `image.render`.
+#[test]
+fn owner_op_count_runs_a_257_op_preview_through_the_organ() {
+    let f = fixture();
+    f.set_owner_key("organ_host.image.max_ops", 300);
+    let artifact = f.png_artifact(9, 7);
+
+    let previewed = match f.preview(artifact, whole_crops(257)) {
+        Ok(previewed) => previewed,
+        Err(err) => panic!("the organ previews the 257 ops the owner's count admits: {err}"),
+    };
+    assert_eq!(previewed.media_type, "image/png");
+    // Every crop keeps the whole canvas, which fits max_side as it is.
+    assert_eq!((previewed.width, previewed.height), (9, 7));
+
+    let refusal = f
+        .preview(artifact, whole_crops(301))
+        .expect_err("past the owner's count");
+    assert!(
+        matches!(refusal, ImageEditRefusal::TooManyOps { count: 301, .. }),
+        "{refusal:?}"
+    );
     assert_eq!(
         refusal.to_string(),
         "an edit names at most 300 ops, not 301"
