@@ -230,6 +230,8 @@ struct TaskRun {
     vault: Vault,
     owner: EntityId,
     owner_proof: AuthenticatedOwner,
+    /// The owner's own read lane: it reads both worlds.
+    owner_key: ScopedReadActorKey,
     agent: EntityId,
     /// The read lane of the agent's own credential.
     agent_key: ScopedReadActorKey,
@@ -281,10 +283,15 @@ fn task_run() -> TestResult<TaskRun> {
         .credential_read_key(&slip)
         .map_err(at("agent credential read key"))?
         .ok_or("the agent's credential grants no read")?;
+    let owner_key = vault
+        .memory(owner, EdgeActorClass::Human)
+        .read_key()
+        .map_err(at("owner read key"))?;
     Ok(TaskRun {
         vault,
         owner,
         owner_proof,
+        owner_key,
         agent,
         agent_key,
         other_world,
@@ -426,6 +433,32 @@ fn a_declining_refusal_releases_its_reason_to_a_door_key_that_reads_it() -> Test
 }
 
 #[test]
+fn a_declining_refusal_releases_a_reason_in_any_world_its_door_key_reads() -> TestResult {
+    let run = task_run()?;
+    let reason = run.owner_claim(run.other_world, "a reason in the grant-excluded world");
+
+    // The owner's key reads the second world, which the agent's Grant leaves
+    // out: the reason is one a refusal releases.
+    let refused = run.refuse_naming(RefusalDomain::Bond, reason, run.owner_key.clone())?;
+
+    assert_eq!(
+        refused.reply,
+        refused_at(refused.task, RefusalLevel::Veto),
+        "the agent's veto declines her TASK"
+    );
+    let released = refused
+        .released
+        .ok_or("the key reads the reason's world, so its body is released to the run")?;
+    let row: serde_json::Value = serde_json::from_slice(&released)?;
+    assert_eq!(
+        row["id"],
+        json!(ConsultPayloadRef::Claim(reason).short_ref()),
+        "the released row is the reason the refusal named: {row}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_declining_refusal_releases_no_reason_its_door_keys_grant_leaves_out() -> TestResult {
     let run = task_run()?;
     let reason = run.owner_claim(run.other_world, "a reason in the grant-excluded world");
@@ -433,7 +466,9 @@ fn a_declining_refusal_releases_no_reason_its_door_keys_grant_leaves_out() -> Te
     let refused = run.refuse_naming(RefusalDomain::Bond, reason, run.agent_key.clone())?;
 
     // The landing checks that the reason exists, under no reader, so the
-    // refusal lands as it does for a reason the key reads.
+    // refusal lands as it does for a reason the key reads
+    // (`a_declining_refusal_releases_a_reason_in_any_world_its_door_key_reads`
+    // is this test on the owner's key).
     assert_eq!(
         refused.reply,
         refused_at(refused.task, RefusalLevel::Veto),
