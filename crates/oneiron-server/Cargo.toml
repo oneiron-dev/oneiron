@@ -370,6 +370,13 @@ name = "vault_hooks_doors"
 path = "tests/vault_hooks_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The calendar passport doors serve the owner's root from a `MemoryKeystore` too
+# (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "calendar_ics_passport_doors"
+path = "tests/calendar_ics_passport_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
 [[test]]
