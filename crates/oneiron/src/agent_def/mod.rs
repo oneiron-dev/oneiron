@@ -18,6 +18,7 @@ mod made_by;
 mod manifest;
 mod models;
 mod optional_memory;
+mod optional_memory_set;
 mod plan_mode;
 mod powers;
 mod proposed_change;
@@ -43,6 +44,10 @@ pub use self::models::{
 pub use self::optional_memory::{
     OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
     OptionalMemoryProfile,
+};
+pub use self::optional_memory_set::{
+    AgentOptionalMemorySetRequest, AgentOptionalMemoryState, OptionalMemoryChoice,
+    OptionalMemoryView, set_agent_optional_memory_from_request_as,
 };
 pub use self::plan_mode::{
     AgentPlanMode, AgentPlanModeSetRequest, AgentPlanModeView, set_agent_plan_mode_from_request_as,
@@ -84,8 +89,8 @@ pub(crate) use self::codec::{
 #[cfg(feature = "sync")]
 pub(crate) use self::id_pin::validate_put_at_seeded_id;
 pub(crate) use self::id_pin::{
-    AgentIdAnswer, agent_id_answer_in_txn, agent_id_pin_for_put_in_txn, agent_ids_in_txn,
-    bind_delegation_parent_in_txn, delegation_parent_in_txn, is_agent_id_in_txn,
+    AgentIdAnswer, agent_id_answer_in_txn, agent_id_pin_for_put_in_txn, agent_id_pinned_in_txn,
+    agent_ids_in_txn, bind_delegation_parent_in_txn, delegation_parent_in_txn, is_agent_id_in_txn,
     pin_stored_row_in_txn, pin_stored_rows_in_txn, refuse_agent_id_retype_in_txn,
     refuse_loosened_agent_id_pins, refuse_unreadable_agent_id_pins,
 };
@@ -155,10 +160,12 @@ pub(crate) use portable_source::{
 
 mod birth_custody;
 mod birth_dependencies;
+mod creating_agent;
 mod creating_owner;
 pub(crate) mod tables;
 pub(crate) use birth_custody::{remove_birth_custody_in_txn, stage_birth_custody_put};
 pub(crate) use birth_dependencies::retire_birth_sources_for_entity_in_txn;
+pub(crate) use creating_agent::record_creating_agent_in_txn;
 pub(crate) use creating_owner::created_by_owner_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use portable_source::{birth_source_holder, birth_source_matches_id};

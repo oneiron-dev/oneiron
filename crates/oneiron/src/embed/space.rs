@@ -29,7 +29,6 @@ use super::device::{
 };
 use super::world_space::WorldTextSpaces;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
-use crate::config::VectorEvidenceFloors;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -136,18 +135,12 @@ pub(crate) enum EmbeddingSetup {
     },
 }
 
-/// The id of declared space `id`'s EMBEDDING_SETUP row: the entity that names the space, as the
-/// scorer of its retests does (FIX 1638).
-pub(super) fn space_setup_id(id: &str) -> Result<EntityId> {
-    let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
-    EntityId::derive(domain, &[b"space".as_slice(), id.as_bytes()])
-}
-
-/// The id of `kind`'s slot EMBEDDING_SETUP row.
-pub(super) fn slot_setup_id(kind: InputKind) -> Result<EntityId> {
-    let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
-    EntityId::derive(domain, &[b"slot".as_slice(), &[kind.byte()]])
-}
+#[doc(hidden)]
+pub use oneiron_records::embed::space::MediaRefused;
+#[doc(hidden)]
+use oneiron_records::embed::space::refused_setup;
+#[doc(hidden)]
+pub(super) use oneiron_records::embed::space::{slot_setup_id, space_setup_id};
 
 /// The id that names the vault's own text index where a declared space's setup row id would:
 /// the scorer of its retests (FIX 1638). No row is stored under it.
@@ -196,10 +189,6 @@ impl EmbeddingSetup {
         }
         Ok(setup)
     }
-}
-
-fn refused_setup(reason: String) -> Error {
-    Error::Artifact(ArtifactError::InvalidEmbeddingSetupBody(reason))
 }
 
 #[cfg(feature = "sync")]
@@ -279,9 +268,9 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
                 }
                 drop_space_rows_in_txn(store, wtxn, &space.id, &InputKind::ALL.into())?;
             }
-            // A same-width declaration keeps what the bound slots use, as the local declare
-            // path does (FIX 9832, FIX 11170); a first declaration, or one arriving after the
-            // width-conflict handling above, lands as it came.
+            // A same-width declaration keeps what the bound slots and a world's text space
+            // use, as the local declare path does (FIX 9832, FIX 11170); a first declaration,
+            // or one arriving after the width-conflict handling above, lands as it came.
             let space = match &existing {
                 Some(existing) if existing.dimensions == space.dimensions => {
                     capabilities::reconcile_bound_space_capabilities_in_txn(
@@ -401,15 +390,6 @@ pub(super) fn put_media_refusal_in_txn(
     )
 }
 
-/// One document a space's model refused, as the owner sees it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct MediaRefused {
-    pub id: EntityId,
-    pub reason: String,
-    /// Vault seconds.
-    pub at: u64,
-}
-
 /// Forgets a refusal of `id` in `space`, once a vector of it lands there.
 pub(super) fn clear_media_refusal_in_txn(
     store: &impl SideTableDbs,
@@ -525,10 +505,10 @@ pub(crate) fn embedding_spaces_in_txn(
 }
 
 /// [`Vault::declare_embedding_space`] in the caller's write: a valid space, at its declared
-/// width when its id is declared already, keeping what the slots it serves use
+/// width when its id is declared already, keeping what the slots and worlds it serves use
 /// ([`capabilities::reconcile_bound_space_capabilities_in_txn`], FIX 9832).
 pub(crate) fn declare_embedding_space_in_txn(
-    store: &impl SideTableDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     space: &EmbeddingSpace,
 ) -> Result<()> {

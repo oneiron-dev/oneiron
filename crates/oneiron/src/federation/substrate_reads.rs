@@ -39,13 +39,16 @@ pub(crate) enum SubstrateRead {
     Dials,
     /// A project's intake goal (untangle 6.6d, F4): the Steward `read` verb.
     Goal,
+    /// A hosted import's progress (ARCH-0027 #hosted-import,
+    /// `vault.imports.get`): the Steward `read` verb.
+    Import,
 }
 
 impl SubstrateRead {
     /// The Steward verbs that admit the read: any one of them does.
     const fn grants(self) -> &'static [&'static str] {
         match self {
-            Self::Evidence | Self::Goal => &[grant_scope::STEWARD_READ_VERB],
+            Self::Evidence | Self::Goal | Self::Import => &[grant_scope::STEWARD_READ_VERB],
             Self::Dials => &grant_scope::ENGINE_CONTROLS_VERBS,
         }
     }

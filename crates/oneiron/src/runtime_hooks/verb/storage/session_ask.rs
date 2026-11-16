@@ -82,6 +82,16 @@ impl SessionHookKeep {
         None
     }
 
+    /// Whether this keep holds the session-owned group `group`, live or not:
+    /// [`Self::answer_ask`] answers a word on it, never the vault's door.
+    pub(crate) fn holds_ask(&self, group: EntityId) -> bool {
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .any(|held| held.ask_records.contains_key(&group))
+    }
+
     /// Answers a live session-owned group without a base write or peer
     /// signal. The answer and its settlement stay in this keep.
     pub(crate) fn answer_ask(

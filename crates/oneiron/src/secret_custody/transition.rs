@@ -440,6 +440,29 @@ pub(crate) fn transition_named_in_txn(
     Ok(found.map(|(transition, record)| (transition.id, record)))
 }
 
+/// The record, value out, of the live transition this vault keeps of
+/// record `id`: what an install the value was never sealed to knows of a
+/// portable secret the fold says another machine holds (FIX
+/// [SECRETS-OWNER-LIST-READ]). A revoked one, or one that does not decode,
+/// is none.
+pub(crate) fn transition_record_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<SecretCustodyRecord>> {
+    let Some(held) = TRANSITIONS
+        .get(&vault.store, txn, &HexId(*id))?
+        .and_then(|carrier| CustodyPieces::decode(&carrier))
+    else {
+        return Ok(None);
+    };
+    let transition = held.lead();
+    if transition.status == SecretCustodyStatus::Revoked {
+        return Ok(None);
+    }
+    Ok(transition.record().ok())
+}
+
 /// Every transition this vault holds that decodes, its pieces together, in
 /// `txn`.
 #[cfg(feature = "sync")]
@@ -467,7 +490,7 @@ pub(crate) fn custody_transitions(vault: &Vault) -> Result<Vec<CustodyTransition
 
 impl CustodyTransition {
     /// Where this transition stands among the record's: its generation, then
-    /// its status (active, suspended, revoked).
+    /// its status (active, then revoked).
     pub(crate) fn order(&self) -> (u32, u8) {
         (self.generation, status_rank(self.status))
     }
@@ -685,8 +708,7 @@ pub(crate) fn apply_custody_transition_in_txn(
     Ok(CustodyApplied::Written)
 }
 
-/// Active, then suspended, then revoked: a status only moves forward within a
-/// generation.
+/// Active, then revoked: a status only moves forward within a generation.
 fn status_rank(status: SecretCustodyStatus) -> u8 {
     status_byte(status)
 }

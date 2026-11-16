@@ -241,8 +241,13 @@ pub(super) fn rebuild(
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &window, &[1u8])?;
         }
         crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
+        // Restored ledgers bypassed the append that maintains the membership index.
+        crate::conversation::rebuild_membership_index_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn, opaque_attempts)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
+        // The armed jobs' due index is not imaged: the restored rows rebuild it (DESIGN
+        // 15-setting-primitive, stage 0.2).
+        crate::schedule::rebuild_schedule_due_in_txn(&vault.store, txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
         crate::workspace_roster::rebuild_project_revision_indexes(&vault.store, txn)?;
         // Restored authority rows bypassed the put that sequences them (FIX 12369).
@@ -254,17 +259,26 @@ pub(super) fn rebuild(
 
 /// Backfills that own their transactions run after the base index transaction.
 pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<()> {
+    // Restored PERSON rows bypassed the body staging that keeps their party keys.
+    crate::store::person_party_keys::backfill_person_party_key_index(vault, true)?;
     crate::skill_hub::backfill_content_hash_index_if_needed(vault)?;
     // Restored authority-log rows bypassed the Grant member index's writer.
     crate::federation::backfill_agent_grant_member_index(vault, true)?;
-    // Restored proposals and contact claims bypassed their index writers.
+    // Restored proposals, Grant rows and contact claims bypassed their index writers.
     vault.backfill_widen_contact_verdict_index(true)?;
+    vault.backfill_standing_outbound_grant_index(true)?;
     crate::counterparty_contact::backfill_counterparty_identity_index(vault, true)?;
+    // Restored MACHINE rows bypassed the body stage's endpoint index writer.
+    vault.backfill_mesh_machine_endpoint_index(true)?;
     // Restored PROJECT rows bypassed the staging hook: keep their chains.
     vault.capture_project_revisions(true)?;
+    // Restored campaign.member claims bypassed the member index's writer.
+    vault.backfill_campaign_member_index(true)?;
     crate::skill_convert::rebuild_skill_source_index(vault)?;
     crate::edit_distance::routing::rebuild_routing_projection(vault)?;
     crate::edit_distance::reservoir::rebuild_reservoir_index(vault)?;
+    // Restored ACCESS_GRANT rows bypassed the body stage's companion index writer.
+    vault.backfill_companion_grant_index(true)?;
     vault.rebuild_ramp_stats_from_receipts()?;
     crate::human_task::HumanTaskFollowupDriver::new(vault).rebuild_cursors(checkpoint_time)?;
     Ok(())

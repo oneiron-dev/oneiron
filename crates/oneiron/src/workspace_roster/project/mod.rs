@@ -44,6 +44,7 @@ mod reparent;
 mod resolution;
 mod result_header;
 mod revision;
+mod room_facet_set;
 mod roster;
 mod validity;
 mod widen;
@@ -99,6 +100,9 @@ pub(crate) use revision::{
     PROJECT_REVISION_SHORT_ID_PREFIX, is_project_revision_type, project_revision_type,
 };
 pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
+pub use room_facet_set::{
+    ProjectRoomFacetsSetRequest, ProjectRoomFacetsState, set_project_room_facets_from_request_as,
+};
 pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
 // FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-REVIEW-TESTS]: the lib test target's type check fails here (6 errors: E0061 x4, E0063 x2); port it, then drop this gate
 #[cfg(any())]
@@ -132,7 +136,6 @@ pub(crate) use tests::create_project_signed_for_test;
 pub(crate) use tests::set_project_depth_signed_for_test;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
 use crate::error::{Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
@@ -176,12 +179,12 @@ pub(crate) use crate::ppr::project_weight::HUB_BELONGS_TO_LAMBDA;
 
 const HUB_MEMBERSHIP_WEIGHT: f32 = 0.05;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectRole {
-    Project,
-    Corpus,
-}
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::workspace_roster::project::invalid;
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::{ProjectParentWitness, ProjectRole};
+#[doc(hidden)]
+use oneiron_verb_wire::workspace_roster::project::{default_depth_limit, home_room_id};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -241,11 +244,12 @@ pub struct ProjectRecord {
     /// either side alone does not stand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapper_task: Option<String>,
+    /// The facets the home room reads through, when it reads more than the
+    /// slice's own facet (L7-39, owner ruling FACET-READ). Only a v4 proof
+    /// signs it; a row without one carries none, so its bytes stay as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_facets: Option<BTreeSet<EntityId>>,
 }
-const fn default_depth_limit() -> u64 {
-    10
-}
-
 /// What dispatch reads of a project: its effective parents and the live
 /// policy depth row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,16 +276,11 @@ pub struct ProjectAuthority {
     /// proof or an owner door set carries none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roster: Option<BTreeSet<String>>,
-}
-
-/// One parent's head as a re-parenting state saw it (ARCH-0079 stacking):
-/// the state names it, and that head's leader sits on the state's board.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectParentWitness {
-    pub project: EntityId,
-    pub head: ProjectRevisionHash,
-    pub leader: EntityId,
+    /// The home room's facet set. Only a v4 proof signs it, beside the
+    /// roster. It holds the slice's facet, the anchor, which never moves
+    /// while a set exists, and no project is born with one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_facets: Option<BTreeSet<EntityId>>,
 }
 
 /// What a PROJECT write did. Past the history budget an authenticated
@@ -297,13 +296,15 @@ pub enum ProjectWriteOutcome {
 }
 
 /// The challenge a project proof signs. A proof from before v3 carries no
-/// tag, and its challenge leaves the roster out.
+/// tag, and its challenge leaves the roster out. A v4 challenge signs the
+/// roster and the home room's facet set.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectProofVersion {
     #[default]
     V2,
     V3,
+    V4,
 }
 
 impl ProjectProofVersion {
@@ -365,7 +366,8 @@ impl ProjectWriteProof {
 
 impl ProjectAuthority {
     /// Domain-separated challenge a `version` proof signs for these fields at
-    /// `signed_at` over `anchor`, root first. Only a v3 challenge holds a roster.
+    /// `signed_at` over `anchor`, root first. A v3 challenge holds a roster,
+    /// and a v4 challenge a roster and a room facet set.
     pub fn write_challenge(
         &self,
         id: EntityId,
@@ -373,9 +375,10 @@ impl ProjectAuthority {
         signed_at: u64,
         anchor: &[ProjectAnchorLink],
     ) -> Result<Vec<u8>> {
-        let domain: &[u8] = match (version, &self.roster) {
-            (ProjectProofVersion::V2, None) => b"oneiron/project-write/v2/",
-            (ProjectProofVersion::V3, Some(_)) => b"oneiron/project-write/v3/",
+        let domain: &[u8] = match (version, &self.roster, &self.room_facets) {
+            (ProjectProofVersion::V2, None, None) => b"oneiron/project-write/v2/",
+            (ProjectProofVersion::V3, Some(_), None) => b"oneiron/project-write/v3/",
+            (ProjectProofVersion::V4, Some(_), Some(_)) => b"oneiron/project-write/v4/",
             _ => return Err(invalid()),
         };
         let bytes =
@@ -395,6 +398,14 @@ impl ProjectAuthority {
             || self.depth_remaining < next.depth_remaining
             || self.slice.attenuate(next.slice.clone()).is_err()
             || !next.members().is_subset(&self.members())
+            || room_widens(self.room_facet_reach(), next.room_facet_reach())
+    }
+    /// The facets the home room reads through: the signed set, else the
+    /// slice's facet. `None` is no limit (an unscoped project).
+    pub(crate) fn room_facet_reach(&self) -> Option<BTreeSet<EntityId>> {
+        self.room_facets
+            .clone()
+            .or_else(|| self.slice.facet.map(|facet| BTreeSet::from([facet])))
     }
     /// The members this state vouches for: its signed roster, else, where no
     /// v3 proof signed one, its leader and board.
@@ -406,6 +417,22 @@ impl ProjectAuthority {
                 .map(String::as_str)
                 .collect(),
         }
+    }
+}
+
+/// A project is born without a room facet set: a set comes in a later state.
+pub(crate) const ROOM_SET_AT_BIRTH: &str = "a project is born without a room facet set";
+
+/// Whether a room that read through `prior` reads wider through `next`.
+/// `None` is no facet limit: it widens any limit, and nothing widens it.
+pub(crate) fn room_widens(
+    prior: Option<BTreeSet<EntityId>>,
+    next: Option<BTreeSet<EntityId>>,
+) -> bool {
+    match (prior, next) {
+        (None, _) => false,
+        (Some(_), None) => true,
+        (Some(prior), Some(next)) => !next.is_subset(&prior),
     }
 }
 
@@ -429,8 +456,33 @@ impl ProjectRecord {
             depth_remaining: self.depth_remaining,
             leader: self.leader.clone(),
             board: self.board.clone(),
-            roster: (version == ProjectProofVersion::V3)
+            roster: matches!(version, ProjectProofVersion::V3 | ProjectProofVersion::V4)
                 .then(|| self.roster.iter().cloned().collect()),
+            room_facets: if version == ProjectProofVersion::V4 {
+                self.room_facets.clone()
+            } else {
+                None
+            },
+        }
+    }
+    /// The version a writer signs this row at: v4 when it carries a room
+    /// facet set, else v3.
+    pub fn signing_version(&self) -> ProjectProofVersion {
+        if self.room_facets.is_some() {
+            ProjectProofVersion::V4
+        } else {
+            ProjectProofVersion::V3
+        }
+    }
+    /// Drops a room facet set no v4 proof signs: no read takes it, and no
+    /// door re-signs it as the owner's.
+    pub(crate) fn drop_unsigned_room_facets(&mut self) {
+        if self
+            .write_proof
+            .as_ref()
+            .is_none_or(|proof| proof.version != ProjectProofVersion::V4)
+        {
+            self.room_facets = None;
         }
     }
     /// Who sits in the home room of a row the read fold accepts. A v3 proof
@@ -508,6 +560,7 @@ impl ProjectRecord {
             origin_thread: None,
             origin_at: None,
             wrapper_task: None,
+            room_facets: None,
         })
     }
 
@@ -524,27 +577,13 @@ impl ProjectRecord {
 }
 
 pub use crate::store::conversation_body::{ProjectRoom, RoomOriginCard};
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectRoomChange {
-    pub project_id: String,
-    pub room_id: String,
-    pub previous_members: Vec<String>,
-    pub member_ids: Vec<String>,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::ProjectRoomChange;
+#[doc(hidden)]
+pub(super) use oneiron_records::workspace_roster::project::encode;
 
-pub(super) fn invalid() -> Error {
-    Error::InvalidConfig("invalid project or home room".into())
-}
-pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| invalid())
-}
 pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid())
-}
-fn home_room_id(project: EntityId) -> Result<EntityId> {
-    EntityId::derive(PROJECT_HOME_ROOM, &[project.as_bytes()])
 }
 /// The root project's home room id and body exactly as root seeding
 /// projects them ([`seed_root_project`]): the seeded house agent alone on
@@ -930,6 +969,9 @@ impl Vault {
     where
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
+        if record.room_facets.is_some() {
+            return Err(RecordError::InvalidProjectBody(ROOM_SET_AT_BIRTH).into());
+        }
         self.with_write_txn(|txn| {
             if owner.revalidate_as_vault_owner_in_txn(self, txn)?
                 != authenticated_owner.entity_ref()

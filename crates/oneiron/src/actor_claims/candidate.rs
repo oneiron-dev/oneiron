@@ -37,9 +37,8 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ClaimError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
-use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
-};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::temporal::TimeRange;
 use crate::{
     agent_inbox_lens::AgentInboxLensItem,
@@ -49,9 +48,12 @@ use crate::{
 
 use super::evidence::KEY_AT;
 use super::invalid;
-use super::rows::{ACTOR_NOTE_MAX_BYTES, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
+use super::rows::{
+    PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, actor_note_max_bytes_in_txn,
+};
 use super::validate::{actor_claim_lineage, native_actor_source};
 use super::write::{actor_claim_facet_in_txn, require_actor_entity, scope_with_lineage};
+use oneiron_contracts::RecordedSeconds;
 
 const KEY_LANE: &str = "lane";
 const KEY_ATTEMPT: &str = "attempt";
@@ -115,6 +117,15 @@ impl CraftVerdict {
         }
     }
 
+    /// The outcome of this verdict's Gate receipt, the word [`Self::as_str`]
+    /// spells.
+    const fn gate_outcome(self) -> GateReceiptOutcome {
+        match self {
+            Self::Approved => GateReceiptOutcome::Approved,
+            Self::Rejected => GateReceiptOutcome::Rejected,
+        }
+    }
+
     const fn approval(self) -> ClaimApprovalStatus {
         match self {
             Self::Approved => ClaimApprovalStatus::Approved,
@@ -123,14 +134,10 @@ impl CraftVerdict {
     }
 }
 
-/// `vault.craft_candidates`'s input.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CraftCandidatesRequest {
-    /// Only this resident's candidates (32 hex); every resident's when absent.
-    #[serde(default)]
-    pub resident: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::actor_claims::candidate::{
+    CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView,
+};
 
 /// `vault.craft_candidates.answer`'s input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -141,30 +148,6 @@ pub struct CraftCandidateAnswer {
     /// The content hash its card showed (64 hex); another refuses.
     pub content_hash: String,
     pub verdict: CraftVerdict,
-}
-
-/// One candidate as its card shows it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CraftCandidateView {
-    pub candidate_id: String,
-    /// What an answer pins (64 hex): the candidate's id, kind and words and
-    /// the dreaming they came from.
-    pub content_hash: String,
-    /// The resident the note is about (32 hex).
-    pub resident: String,
-    /// `actor.lesson` or `actor.failure_mode`.
-    pub predicate: String,
-    pub text: String,
-    /// The dreaming attempt that proposed it (32 hex).
-    pub attempt: String,
-    /// When it was proposed, on the vault clock.
-    pub proposed_at: u64,
-}
-
-/// `vault.craft_candidates`'s answer, newest first.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CraftCandidatesView {
-    pub candidates: Vec<CraftCandidateView>,
 }
 
 /// The owner's verdict as it landed.
@@ -222,10 +205,11 @@ pub(crate) fn write_resident_craft_candidates_in_txn(
     }
     let evidence = candidate_evidence(attempt, at);
     let scope = scope_with_lineage(None, ClaimSource::Generated);
+    let max_bytes = actor_note_max_bytes_in_txn(vault, wtxn)?;
     let mut written = Vec::new();
     for candidate in candidates {
         let predicate = candidate.predicate();
-        for part in note_parts(candidate.text()) {
+        for part in note_parts(candidate.text(), max_bytes) {
             if !standing.insert((predicate.to_owned(), part.clone())) {
                 continue;
             }
@@ -422,33 +406,25 @@ fn answer_in_txn(
 
     let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let verdict_id = vault.store.clock.entity_id()?;
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-        created_at: at,
-        outcome: verdict.as_str().to_owned(),
-        reason_codes: vec![format!("{CRAFT_REVIEW_REASON}.{}", verdict.as_str())],
-        receipt_reasons: Vec::new(),
-        system_notices: GateSystemNoticeRecord::receipt_details(
-            CRAFT_REVIEW_CONTENT_KIND,
-            vec![
-                format!("{KEY_CANDIDATE}:{}", card.candidate_id),
-                format!("{KEY_CANDIDATE_HASH}:{}", card.content_hash),
-                format!("verdict_claim:{}", verdict_id.to_hex()),
-                format!("resident:{}", card.resident),
-            ],
-        ),
-        actor_class: "human".to_owned(),
-        actor_ref: Some(actor.to_hex()),
-        content_kind: CRAFT_REVIEW_CONTENT_KIND.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: Some(*candidate.as_bytes()),
-        grant_ref: None,
-        diff_handle: hash.as_bytes().to_vec(),
-        read_frontier_hash: [0; 32],
-        context: decision_context::craft_review(vault, wtxn, &candidate, &body, &card.attempt),
-        redacted_at: None,
-    };
+    let mut receipt = GateReceipt::new(
+        verdict.gate_outcome(),
+        CRAFT_REVIEW_CONTENT_KIND,
+        format!("{CRAFT_REVIEW_REASON}.{}", verdict.as_str()),
+        ReceiptActor::human(actor),
+        hash.as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = Some(candidate);
+    receipt.details = vec![
+        format!("{KEY_CANDIDATE}:{}", card.candidate_id),
+        format!("{KEY_CANDIDATE_HASH}:{}", card.content_hash),
+        format!("verdict_claim:{}", verdict_id.to_hex()),
+        format!("resident:{}", card.resident),
+    ];
+    receipt.context = decision_context::craft_review(vault, wtxn, &candidate, &body, &card.attempt);
+    // The row, the verdict claim and the view keep one second.
+    receipt.decided_at = Some(RecordedSeconds::from_secs(at));
+    let record = vault.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
     let receipt_ref = crate::receipt::gate_decision_receipt(&record).receipt_id;
     let Some(Value::Map(mut evidence)) = body.evidence.clone() else {
         return Err(Error::EntityNotFound);
@@ -752,19 +728,20 @@ fn candidate_evidence(attempt: AttemptId, at: u64) -> Value {
     ])
 }
 
-/// `text` whitespace-folded, in consecutive parts a note row holds, split at
-/// word boundaries (a single word longer than a row splits at a character
+/// `text` whitespace-folded, in consecutive parts of at most `max_bytes` (the
+/// owner's cap, at least 128 bytes, so above one UTF-8 character), split at word
+/// boundaries (a single word longer than a row splits at a character
 /// boundary). Nothing is dropped; a blank note has no parts.
-fn note_parts(text: &str) -> Vec<String> {
+fn note_parts(text: &str, max_bytes: usize) -> Vec<String> {
     let mut parts = Vec::new();
     let mut part = String::new();
     for word in text.split_whitespace() {
-        if !part.is_empty() && part.len() + 1 + word.len() > ACTOR_NOTE_MAX_BYTES {
+        if !part.is_empty() && part.len() + 1 + word.len() > max_bytes {
             parts.push(std::mem::take(&mut part));
         }
         let mut word = word;
-        while word.len() > ACTOR_NOTE_MAX_BYTES {
-            let mut cut = ACTOR_NOTE_MAX_BYTES;
+        while word.len() > max_bytes {
+            let mut cut = max_bytes;
             while !word.is_char_boundary(cut) {
                 cut -= 1;
             }

@@ -444,9 +444,9 @@ impl Vault {
     /// operation the table does not hold, or arguments that are not an
     /// object. [`SecretError::SecretRefNotFound`] for a handle that names no
     /// secret. Then, each with its refused Gate record:
-    /// [`SecretError::SecretCustodyNotActive`] for a revoked or suspended
-    /// record; [`SecretError::SecretBindingDenied`] for a record with no
-    /// binding for the operation's effector, or one that does not grant
+    /// [`SecretError::SecretCustodyNotActive`] for a revoked record;
+    /// [`SecretError::SecretBindingDenied`] for a record with no binding for
+    /// the operation's effector, or one that does not grant
     /// `read`; the floor's and the door policy's own refusals.
     pub(crate) fn use_secret_handle(
         &self,

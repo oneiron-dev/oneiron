@@ -3,63 +3,12 @@
 
 pub use oneiron_store::blob_artifact::esign::model::*;
 
-use crate::{EntityId, Error, Result};
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EsignDocument {
-    pub schema_version: u8,
-    pub kind: DocumentKind,
-    pub title: String,
-    pub sequential: bool,
-    pub expires_at: u64,
-    /// Optional owner-selected deadline for signing and delivery links: when
-    /// set, capabilities expire at `min(token_expires_at, expires_at)`; when
-    /// unset, they expire at `expires_at`. Set on the draft alongside the
-    /// document deadline; it never moves recipient signing windows.
-    #[serde(default)]
-    pub token_expires_at: Option<u64>,
-    pub items: Vec<EsignItem>,
-    pub recipients: Vec<EsignRecipient>,
-    pub fields: Vec<EsignField>,
-    pub full_trail_appendix: bool,
-    /// Frozen pack timing and per-document notice switches, carried by the draft claim.
-    #[serde(default)]
-    pub lifecycle: Option<super::EsignLifecycleRules>,
-    /// The project the document is sent for: a held sign act's ask climbs
-    /// its boards before the vault owners. Only its members or a live vault
-    /// owner bind it ([`super::PROJECT_MEMBERS_ONLY`]).
-    #[serde(default)]
-    pub project: Option<EntityId>,
-    /// The obligations the document names (ARCH-0064 §3). Each is born an
-    /// inert commitment with the draft, at
-    /// [`super::esign_document_commitment_id`] of its index. An uploaded
-    /// paper names none unless its drafter declares them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub commitments: Vec<EsignCommitmentTerm>,
-}
-
-/// One obligation a draft names (ARCH-0064 §3, OF-187): an inert commitment
-/// until the document completes, which opens it with the sealed version as
-/// evidence; a decline, void or expiry releases it. A signature binds, so its
-/// strength is `commitment`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EsignCommitmentTerm {
-    /// Who owes it.
-    pub obligor: crate::memory::commitment_doors::CommitmentObligor,
-    /// Whom it is owed to.
-    pub beneficiary: String,
-    /// What is promised.
-    pub content: crate::memory::commitment_doors::CommitmentContent,
-    /// When it falls due, once the document opens it.
-    pub schedule: crate::memory::commitment_doors::CommitmentSchedule,
-    /// How long before each due instant its reminder leads.
-    #[serde(default)]
-    pub lead_seconds: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::blob_artifact::esign::model::{EsignCommitmentTerm, EsignDocument};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
@@ -79,6 +28,20 @@ pub enum EsignEvent {
     },
     FieldSaved {
         signature: SignatureRow,
+    },
+    /// The signer reviewed what they sign (UETA section 10; ARCH-0064 :235,
+    /// :241): the frozen items and their own field values at that moment.
+    /// Complete needs a review that still stands; the recipient's next
+    /// FieldSaved voids it. Chains stored before this event fold as before.
+    Reviewed {
+        recipient: String,
+        /// Frozen item ids and versions reviewed, as `Signed` binds them.
+        items: Vec<EsignItem>,
+        /// The recipient's own field values when they reviewed, by field id.
+        values: BTreeMap<String, FieldValue>,
+        /// Who reviewed, as a sign act names it: a person's Complete stands
+        /// only on a person's review (a link bearer or a verified person).
+        authentication_method: EsignAuthenticationMethod,
     },
     Signed {
         recipient: String,
@@ -101,6 +64,12 @@ pub enum EsignEvent {
         recipient: String,
         rung: u32,
     },
+    /// The pending document's signing window moved to `expires_at`, and
+    /// with it every recipient window not yet finished (ARCH-0064 SGN-09).
+    /// A link's own cap never moves ([`super::capability::extend_links_in`]).
+    Extended {
+        expires_at: u64,
+    },
     /// Authored only after native verification succeeds for every sealed item.
     Sealed {
         rejected: bool,
@@ -122,11 +91,13 @@ impl EsignEvent {
             Self::Viewed { .. } => "esign.viewed",
             Self::AccessVerified { .. } => "esign.access_verified",
             Self::FieldSaved { .. } => "esign.field",
+            Self::Reviewed { .. } => "esign.reviewed",
             Self::Signed { .. } => "esign.signed",
             Self::Declined { .. } => "esign.declined",
             Self::Voided { .. } => "esign.voided",
             Self::Expired { .. } => "esign.expired",
             Self::Reminded { .. } => "esign.reminded",
+            Self::Extended { .. } => "esign.extended",
             Self::Sealed {
                 rejected: false, ..
             } => "esign.completed",
@@ -159,6 +130,16 @@ pub struct EsignState {
     pub reminders: BTreeSet<(String, u32)>,
     pub(super) sent_at: Option<u64>,
     pub(super) reminder_at: BTreeMap<String, u64>,
+    /// Each recipient's standing review, until their next saved field.
+    pub(super) reviews: BTreeMap<String, EsignReview>,
+}
+
+/// What one recipient's [`EsignEvent::Reviewed`] bound.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct EsignReview {
+    pub(super) items: Vec<EsignItem>,
+    pub(super) values: BTreeMap<String, FieldValue>,
+    pub(super) authentication_method: EsignAuthenticationMethod,
 }
 
 /// A draft refuses only what it cannot be: no count or size cap on its items,

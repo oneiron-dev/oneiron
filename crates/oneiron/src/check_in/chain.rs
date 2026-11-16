@@ -3,21 +3,31 @@
 //!
 //! [`VerifiedChain`] names each rung's holders from verified records only:
 //!
-//! * rung 2, the grantor: the `delegated_by` principal of the asker's live
-//!   grant (a delegate's parent, or the owner who minted an owner-agent
-//!   grant), else the principal a companion person was onboarded for;
+//! * rung 2, the grantor: for an ask from a spawned child's run, the agent
+//!   whose attempt spawned it ([`PendingCheckIn::spawn_parent`]); else the
+//!   `delegated_by` principal of the asker's live grant (a delegate's parent,
+//!   or the owner who minted an owner-agent grant), else the principal a
+//!   companion person was onboarded for;
 //! * rung 3, the next holders up the chain: every other live holder of the
 //!   grantor's role on the vault the asker's grant is a membership of;
-//! * rung 4, the Owner role: the vault's live owners.
+//! * rung 4, the Owner role: the vault's live owners;
+//! * a closed room's ask enters one rung alone, the room's owners: every
+//!   PERSON who owns the room ([`crate::conversation::room_owners_in`]),
+//!   whoever adds (ARCH-0082 #closed-room; P26-SHAPE Q5 = A).
 //!
 //! A rung pins only holders no earlier rung of the same ask pinned, so an
 //! owner who was also the grantor is asked once, and the asker never.
 //!
-//! Operational lineage is no grantor: a spawn's parent attempt, the requester
-//! of queued work and the filer of a house binding are not stored as a
-//! principal (FIX rows CHECK-IN-SPAWN-PARENT-PRINCIPAL and
+//! Operational lineage is no grantor: the requester of queued work and the
+//! filer of a house binding are not stored as a principal (FIX row
 //! CHECK-IN-HOUSE-BINDER), so such a rung is skipped with its missing link
-//! named. An agent that holds the Owner role joins rung 4 with canon's PR 4.
+//! named. A spawn's parent is a verified record: the dispatch writer reads
+//! it from the parent attempt's stored row and freezes it on the child's;
+//! the agent verb door reads it from the caller's running attempt, which its
+//! host bound from the attempt's live lease, never from the caller's word;
+//! and the open stores it on the row (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL;
+//! canon: "The parent of a spawned child"). An agent that holds the Owner
+//! role joins rung 4 with canon's PR 4.
 //!
 //! A holder may answer while its standing admits the act: a live person, or
 //! an enabled, active agent definition, that is not the asker, and is a live
@@ -28,13 +38,19 @@
 //! (every world, when the effect names none) and it is narrowed on no axis
 //! the pending row cannot place the effect on: facets, bands, audience,
 //! sensitivity. A grant has no project axis; a project's act is placed by
-//! its world (review round 1 of #7112). A person's answer
+//! its world (review round 1 of #7112). A holder's role is read as an
+//! asker's is ([`grant_role`]): an Owner-issued agent Grant carries the
+//! agent's delegated Owner powers, and the agent's live membership row on
+//! the vault gives its role (P24-SHAPE Q1 = A). A person's answer
 //! is their own judgment (Q4), so the unsure test and the model check, which
 //! bound a model, do not apply to it; an agent's verdict is its model's
 //! judgment, so its own check-in must go. Standing rows are not read for a
 //! holder: the pending row keeps the effect's digest, not the bounds a
 //! standing row covers.
 
+use oneiron_authority::authority::{Direction, Permitted};
+
+use super::act_class::ActClass;
 use super::mode::CheckInMode;
 use super::pending::{
     HolderAnswer, HolderKind, PendingCheckIn, Rung, RungHolder, RungMembers, RungResolver,
@@ -49,8 +65,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
-    AgentVerbClasses, FederationGrant, FederationGrantScope, ScopeAxis, ScopeId,
-    SensitivityCeiling, decode_federation_grant_body,
+    AgentVerbClasses, FederationGrant, FederationGrantRole, FederationGrantScope, ScopeAxis,
+    ScopeId, SensitivityCeiling, decode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -90,6 +106,7 @@ impl AgentHolderVerdict for NoAgentVerdict {
 )]
 pub(crate) struct VerifiedChain<'a> {
     verdicts: &'a dyn AgentHolderVerdict,
+    spawn_parent: Option<EntityId>,
 }
 
 #[cfg_attr(
@@ -101,8 +118,58 @@ pub(crate) struct VerifiedChain<'a> {
 )]
 impl<'a> VerifiedChain<'a> {
     pub(crate) fn new(verdicts: &'a dyn AgentHolderVerdict) -> Self {
-        Self { verdicts }
+        Self {
+            verdicts,
+            spawn_parent: None,
+        }
     }
+
+    /// This chain for an asker whose running attempt was spawned by the
+    /// agent `spawn_parent` ([`caller_spawn_parent_in_txn`]): an open
+    /// stores it on the row, and rung 2 asks it.
+    #[must_use]
+    pub(crate) fn with_spawn_parent(mut self, spawn_parent: Option<EntityId>) -> Self {
+        self.spawn_parent = spawn_parent;
+        self
+    }
+}
+
+/// The spawn parent of `memory`'s caller, in `txn`: the agent whose attempt
+/// spawned the caller's running attempt, as that attempt's stored dispatch
+/// input froze it at spawn and its own stored parent link derives it again
+/// ([`crate::agent_dispatch::record_spawn_parent_in_txn`]). The attempt is
+/// the one the caller's host bound from its live lease (`Memory::task_host`),
+/// read again here while it still holds that lease and runs as the caller.
+/// `None` for a caller with no such attempt, a lapsed lease, an attempt that
+/// runs as another actor, or a root run (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL).
+/// `None` too for a frozen spawn parent that the parent link does not derive:
+/// handover enqueues a replicated run TASK's payload as it came, so the
+/// frozen field alone proves no parent (Engine RULING U09-ASTRA-F1 = A).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn caller_spawn_parent_in_txn(
+    memory: &crate::memory::Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<EntityId>> {
+    let Some(binding) = memory.task_host() else {
+        return Ok(None);
+    };
+    let Some(record) = binding.leased_record_in_txn(memory.vault(), txn)? else {
+        return Ok(None);
+    };
+    let Some(input) = crate::agent_dispatch::record_dispatch_input(&record) else {
+        return Ok(None);
+    };
+    if input.target.agent_definition_ref()? != memory.actor() {
+        return Ok(None);
+    }
+    let Some(frozen) = input.spawn_parent else {
+        return Ok(None);
+    };
+    let derived = crate::agent_dispatch::record_spawn_parent_in_txn(memory.vault(), txn, &record)?;
+    Ok((derived == Some(frozen)).then_some(frozen))
 }
 
 impl RungResolver for VerifiedChain<'_> {
@@ -113,8 +180,10 @@ impl RungResolver for VerifiedChain<'_> {
         pending: &PendingCheckIn,
         rung: Rung,
     ) -> Result<RungMembers> {
-        if rung == Rung::Owner {
-            return owner_members(vault, txn, pending);
+        match rung {
+            Rung::Owner => return owner_members(vault, txn, pending),
+            Rung::RoomOwner => return room_owner_members(vault, txn, pending),
+            Rung::Grantor | Rung::ChainHolders => {}
         }
         let Some(grant) = asker_grant_in_txn(vault, txn, pending)? else {
             return Ok(missing(
@@ -123,9 +192,9 @@ impl RungResolver for VerifiedChain<'_> {
         };
         let Some(grantor) = grantor_in_txn(vault, txn, pending, &grant)? else {
             return Ok(missing(
-                "no verified grantor: the grant names no delegated_by, the asker is no \
-                 onboarded companion, and a spawn parent's or house binder's principal is not \
-                 stored",
+                "no verified grantor: the ask names no spawn parent, the grant names no \
+                 delegated_by, the asker is no onboarded companion, and a house binder's \
+                 principal is not stored",
             ));
         };
         match rung {
@@ -135,6 +204,7 @@ impl RungResolver for VerifiedChain<'_> {
             }),
             Rung::ChainHolders => chain_holder_members(vault, txn, pending, &grant, grantor),
             Rung::Owner => owner_members(vault, txn, pending),
+            Rung::RoomOwner => room_owner_members(vault, txn, pending),
         }
     }
 
@@ -150,6 +220,13 @@ impl RungResolver for VerifiedChain<'_> {
             || holder_of_in_txn(vault, txn, holder.principal)?.as_ref() != Some(holder)
         {
             return Ok(false);
+        }
+        // A closed room's owner answers on owning the room, read live, not
+        // on standing in the vault.
+        if let Some(room) = pending.room {
+            return Ok(holder.kind == HolderKind::Person
+                && crate::conversation::room_owners_in(vault, txn, room)?
+                    .contains(&holder.principal));
         }
         for (role, holds_power) in
             holder_standing_in_txn(vault, txn, pending, holder.principal, now)?
@@ -167,9 +244,11 @@ impl RungResolver for VerifiedChain<'_> {
                     ResolvedMode::Mode { mode, .. } => mode != CheckInMode::AlwaysAsk,
                     ResolvedMode::Propose | ResolvedMode::Absent => false,
                 },
-                HolderKind::Agent => {
-                    matches!(check_in(&request, &OwnJudgment), CheckInAnswer::Go(_))
-                }
+                HolderKind::Agent => agent_holder_permitted(matches!(
+                    check_in(&request, &OwnJudgment),
+                    CheckInAnswer::Go(_)
+                ))
+                .admits(act_direction(pending.act)),
             };
             if admits {
                 return Ok(true);
@@ -183,6 +262,10 @@ impl RungResolver for VerifiedChain<'_> {
             .then(|| self.verdicts.verdict(pending, holder.principal))
             .flatten()
     }
+
+    fn spawn_parent(&self) -> Option<EntityId> {
+        self.spawn_parent
+    }
 }
 
 /// A holder's answer is its own judgment: it is sure.
@@ -191,6 +274,53 @@ struct OwnJudgment;
 impl UnsureTest for OwnJudgment {
     fn is_sure(&self) -> Result<bool> {
         Ok(true)
+    }
+}
+
+/// What an agent holder's answer may count for, read on the authority rule's
+/// scale (pass 26; the lead, 15 Nov 21:23, on UNBUILT09-RUNG-ORDER = B). It is
+/// nothing unless the agent's own check-in for the act would go, so it never
+/// approves an act it could not do itself. Even then it is no widening: an
+/// agent's widening always passes up to a person (AUTH-1 A; ARCH-0070 "a
+/// widening never rides autonomy, whatever the rung"). The answer counts when
+/// this admits the act's [`act_direction`]. Once the live Grant reach answers
+/// a `Permitted` (pass 26 A7), that reading replaces this one at its one call.
+const fn agent_holder_permitted(own_check_in_goes: bool) -> Permitted {
+    if own_check_in_goes {
+        Permitted::NoWidening
+    } else {
+        Permitted::Nothing
+    }
+}
+
+/// Which way `act` moves what it touches, by the authority rule's reading:
+/// a change that cannot be called a narrowing or neutral is a widening.
+/// Removing a member or lowering a role narrows. Reversible work, a spawn
+/// (a child's powers are at most its parent's) and the delete of ordinary
+/// items (DEL-2: only a delete whose removal widens is a widening) move no
+/// access, authority, money or identity. Every other class widens one of
+/// them, or cannot be called either.
+const fn act_direction(act: ActClass) -> Direction {
+    match act {
+        ActClass::MemberRemove => Direction::Narrows,
+        ActClass::ReversibleWork | ActClass::Spawn | ActClass::Delete => Direction::Neutral,
+        ActClass::SpendOverCap
+        | ActClass::OutboundSend
+        | ActClass::RoomAdd
+        | ActClass::MemberAdd
+        | ActClass::LegalSend
+        | ActClass::Sign
+        | ActClass::Billing
+        | ActClass::VaultDelete
+        | ActClass::Erase
+        | ActClass::OwnershipTransfer
+        | ActClass::KeyRecovery
+        | ActClass::SecurityControlDisable
+        | ActClass::MassSecretExport
+        | ActClass::WorldWiden
+        | ActClass::GrantWiden
+        | ActClass::GrantWidenOwn
+        | ActClass::ProtectedRefRewriteOrDelete => Direction::Widens,
     }
 }
 
@@ -219,26 +349,90 @@ fn asker_grant_in_txn(
     let Ok(id) = EntityId::from_hex(&pending.grant_ref) else {
         return Ok(None);
     };
+    Ok(grant_in_txn(vault, txn, &id)?.filter(|grant| grant.member_ref == pending.asker))
+}
+
+/// The live FederationGrant row `id`, decoded; `None` for any other row.
+pub(super) fn grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<FederationGrant>> {
     let LiveEntityRow::Live {
         entity_type: ENTITY_TYPE_FEDERATION_GRANT,
         body,
-    } = live_entity_row_in_txn(&vault.store, txn, &id)?
+    } = live_entity_row_in_txn(&vault.store, txn, id)?
     else {
         return Ok(None);
     };
-    Ok(decode_federation_grant_body(&body)
-        .ok()
-        .filter(|grant| grant.member_ref == pending.asker))
+    Ok(decode_federation_grant_body(&body).ok())
 }
 
-/// The grantor of the asker's `grant`: its `delegated_by`, else the
-/// principal the asker, as a companion person, was onboarded for.
+/// `member`'s live membership role on the vault `scope` names, delegate
+/// grants aside (an Owner-issued agent Grant is a Delegate row); `None` when
+/// it holds none, or `scope` is no vault.
+pub(super) fn membership_role_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    member: EntityId,
+    scope: &FederationGrantScope,
+) -> Result<Option<FederationGrantRole>> {
+    match *scope {
+        FederationGrantScope::Vault { vault_id } => vault.member_role_in_txn(txn, vault_id, member),
+        _ => Ok(None),
+    }
+}
+
+/// The role `grant` reads in check-in, given its holder's `membership` role
+/// on the grant's vault ([`membership_role_in_txn`]). An Owner-issued agent
+/// Grant (`owner_agent`) carries the agent's delegated Owner powers, not its
+/// role: a Deputy's role comes from its live membership row, a house link or
+/// an Owner-given membership (P24-SHAPE Q1 = A, Engine 13 Nov 19:32), so a
+/// Deputy whose Grant names an act reads the Deputy column. An agent with no
+/// membership reads the Grant's own role, Delegate. An agent at the Owner
+/// role reads it too: an agent's own proof as Owner comes with canon's PR 4
+/// (agent Owner keys), so it does not act on its own proof here. Any other
+/// grant reads its own role.
+pub(super) fn grant_role(
+    grant: &FederationGrant,
+    membership: Option<FederationGrantRole>,
+) -> RolePreset {
+    match membership {
+        Some(role) if grant.owner_agent && role != FederationGrantRole::Owner => {
+            RolePreset::of_grant_role(role)
+        }
+        _ => RolePreset::of_grant_role(grant.role),
+    }
+}
+
+/// The role `agent`'s `grant` reads in check-in ([`grant_role`]), its
+/// membership read from the live roster of the vault the grant names. The
+/// agent erase proposal labels its ask by it (UNBUILT-05; P24-SHAPE Q1 = A).
+pub(crate) fn agent_grant_role_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    grant: &FederationGrant,
+) -> Result<RolePreset> {
+    let membership = membership_role_in_txn(vault, txn, agent, &grant.scope)?;
+    Ok(grant_role(grant, membership))
+}
+
+/// The grantor of the asker's `grant`. For an ask from a spawned child's
+/// run, it is the agent that spawned it ([`PendingCheckIn::spawn_parent`]):
+/// canon's "the parent of a spawned child", which comes before the owner
+/// who minted the child's own Grant. Otherwise it is the grant's
+/// `delegated_by`, else the principal the asker, as a companion person,
+/// was onboarded for.
 fn grantor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     pending: &PendingCheckIn,
     grant: &FederationGrant,
 ) -> Result<Option<EntityId>> {
+    if let Some(parent) = pending.spawn_parent {
+        return Ok(Some(parent));
+    }
     match grant.delegated_by {
         Some(by) => Ok(Some(by)),
         None => crate::workspace_roster::companion_principal_in_txn(vault, txn, pending.asker),
@@ -328,11 +522,35 @@ fn owner_members(
     })
 }
 
+/// A closed room's rung: the room's owners but the asker.
+fn room_owner_members(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pending: &PendingCheckIn,
+) -> Result<RungMembers> {
+    let Some(room) = pending.room else {
+        return Ok(missing("the ask names no closed room"));
+    };
+    let holders: Vec<RungHolder> = crate::conversation::room_owners_in(vault, txn, room)?
+        .into_iter()
+        .filter(|owner| *owner != pending.asker && !asked_before(pending, *owner))
+        .map(|principal| RungHolder {
+            principal,
+            kind: HolderKind::Person,
+        })
+        .collect();
+    Ok(if holders.is_empty() {
+        missing("no live owner of the closed room but the asker")
+    } else {
+        RungMembers::Holders(holders)
+    })
+}
+
 /// The roles `holder` holds at `now` for the act, each with whether it holds
 /// the power for the exact effect: Owner when it is a live owner; else each
-/// live grant naming it on the asker's vault, whose verbs (or verb classes)
-/// admit the verb and whose bounds cover where the effect sits
-/// ([`covers_effect`]), or not.
+/// live grant naming it on the asker's vault, at the role it reads
+/// ([`grant_role`]), whose verbs (or verb classes) admit the verb and whose
+/// bounds cover where the effect sits ([`covers_effect`]), or not.
 fn holder_standing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -371,6 +589,7 @@ fn holder_standing_in_txn(
         }
     }
     let classes = AgentVerbClasses::for_grants_in_txn(&vault.store, txn, grants.iter())?;
+    let membership = membership_role_in_txn(vault, txn, holder, &asker_grant.scope)?;
     Ok(grants
         .iter()
         .filter(|grant| grant.confers_with_classes_at(now, &classes))
@@ -378,7 +597,7 @@ fn holder_standing_in_txn(
             let holds_power = covers_effect(grant, &pending.scope)
                 && (grant.authority_scope.verbs.contains(&pending.verb)
                     || grant.class_admits_verb(&pending.verb, &classes));
-            (RolePreset::of_grant_role(grant.role), holds_power)
+            (grant_role(grant, membership), holds_power)
         })
         .collect())
 }
@@ -388,7 +607,7 @@ fn holder_standing_in_txn(
 /// (or names one that is no world id), and it is narrowed on no axis the
 /// pending row cannot place the effect on. A grant has no project axis; a
 /// project's act is placed by its world.
-fn covers_effect(grant: &FederationGrant, scope: &CheckInScope) -> bool {
+pub(super) fn covers_effect(grant: &FederationGrant, scope: &CheckInScope) -> bool {
     let bounds = &grant.authority_scope;
     let world = matches!(bounds.worlds, ScopeAxis::All)
         || scope

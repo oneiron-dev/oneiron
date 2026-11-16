@@ -32,6 +32,7 @@ use crate::write_envelope::WriteActor;
 
 use super::model::{InboxBulkVerb, InboxBundleResolution, InboxGroup};
 use super::root_group::{OpenTray, RunGroups, root_group_card};
+use oneiron_contracts::cursor_text::parse_hex_cursor_vec;
 
 /// Which projection a group comes from.
 #[derive(
@@ -131,16 +132,10 @@ impl UnifiedInboxGroupCursor {
     /// Reads a token [`Self::to_token`] wrote; `None` for anything else.
     #[must_use]
     pub fn parse(token: &str) -> Option<Self> {
-        if token.len() < 18
-            || token.len() % 2 != 0
-            || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
+        let bytes = parse_hex_cursor_vec(token)?;
+        if bytes.len() < 9 {
             return None;
         }
-        let bytes: Vec<u8> = (0..token.len())
-            .step_by(2)
-            .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
-            .collect::<Option<_>>()?;
         Some(Self {
             newest: Reverse(u64::from_be_bytes(bytes[..8].try_into().ok()?)),
             kind: InboxGroupKind::of_byte(bytes[8])?,
@@ -149,35 +144,8 @@ impl UnifiedInboxGroupCursor {
     }
 }
 
-/// The host's compilation target for a Dreamer answer, as the wire carries
-/// it: the [`CompilationTarget`] shape with a schema derive. Present it is
-/// authoritative (ARCH-0056).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", content = "text", rename_all = "snake_case")]
-pub enum InboxGroupResolveTarget {
-    /// Preserve the existing lexical-claim/content-skill-edit chooser.
-    Fallback,
-    /// Propose a prohibition. Does not install an enforcement rule.
-    Ban(String),
-    /// Propose an OF-332 style token. Does not supersede an expression head.
-    StyleRule(String),
-    /// Propose a line for the acting charter. Does not change its authority.
-    CharterLine(String),
-    /// Propose a brief update. Does not mutate a brief.
-    BriefUpdate(String),
-}
-
-impl From<&InboxGroupResolveTarget> for CompilationTarget {
-    fn from(value: &InboxGroupResolveTarget) -> Self {
-        match value {
-            InboxGroupResolveTarget::Fallback => Self::Fallback,
-            InboxGroupResolveTarget::Ban(text) => Self::Ban(text.clone()),
-            InboxGroupResolveTarget::StyleRule(text) => Self::StyleRule(text.clone()),
-            InboxGroupResolveTarget::CharterLine(text) => Self::CharterLine(text.clone()),
-            InboxGroupResolveTarget::BriefUpdate(text) => Self::BriefUpdate(text.clone()),
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::inbox::unified::InboxGroupResolveTarget;
 
 /// The owner's answer to one inbox group of any kind.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

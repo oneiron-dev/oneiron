@@ -498,7 +498,12 @@ impl Memory<'_> {
                 crate::source_audience::mark_birth_in_txn(self.vault, wtxn, birth, &id)?;
             }
         }
-        let mut batch = self.vault.batch_in();
+        // A TURN an import births is born under its stamp's facet, when it
+        // names one; the vault default otherwise.
+        let mut batch = self
+            .vault
+            .batch_in()
+            .mask(plan.imported.as_ref().and_then(|stamp| stamp.facet));
         if mint_conversation {
             batch = put_container(
                 batch,
@@ -553,11 +558,12 @@ impl Memory<'_> {
             }
             AdmittedTurn::Existing(_) => {}
         }
-        for ((planned, authorized), exists) in plan
+        for (((planned, authorized), exists), author) in plan
             .messages
             .iter()
             .zip(&admission.authorized)
             .zip(&admission.message_exists)
+            .zip(&admission.authors)
         {
             // An exact retry: its canonical body and bindings were proved and
             // re-authorized under the current policy; the transcript stays
@@ -583,10 +589,12 @@ impl Memory<'_> {
                 .made_by(&planned.id, birth)
                 .edge(&planned.id, EdgeKind::PartOf, &plan.turn_id, 1.0)
                 .edge(&planned.id, EdgeKind::BelongsTo, &plan.conversation_id, 1.0);
-            // An imported row's author is the source's speaker, named in its
-            // metadata; the importer did not write it.
-            if planned.message.author != WitnessAuthor::System && plan.imported.is_none() {
-                batch = batch.edge(&planned.id, EdgeKind::AuthoredBy, &self.actor, 1.0);
+            // The one target admission expected: the writer of a native user
+            // or companion row; for an imported row the PERSON its source
+            // names as the speaker (FIX 15412), never the importer, which
+            // its birth above names instead.
+            if let Some(author) = author {
+                batch = batch.edge(&planned.id, EdgeKind::AuthoredBy, author, 1.0);
             }
         }
         batch.apply(wtxn)?;

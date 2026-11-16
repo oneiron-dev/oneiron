@@ -94,12 +94,13 @@ pub(in crate::anchored_annotation) fn text_units(
     Some(units)
 }
 
-/// Every place in the file that holds exactly `words`, in file order.
-pub(super) fn find_in_text(bytes: &[u8], words: &str) -> Vec<Locator> {
+/// Every place in the file that holds exactly `words`, in file order, at
+/// most `max_offers` of them.
+pub(super) fn find_in_text(bytes: &[u8], words: &str, max_offers: usize) -> Vec<Locator> {
     let Some(text) = decoded(bytes) else {
         return Vec::new();
     };
-    char_occurrences(text, words)
+    char_occurrences(text, words, max_offers)
         .into_iter()
         .filter_map(|(start, end)| Locator::text(start, end).ok())
         .collect()
@@ -117,10 +118,10 @@ fn line_starts(lines: &[&str]) -> Vec<usize> {
     starts
 }
 
-/// Moves a span over a whole text across an edit, with the rule
-/// `remap_span` keeps for Word and HTML spans: boundaries inside one changed
-/// run move to its edges, a span detaches only when none of its characters
-/// survives, and a partial delete shrinks it. Lines are diffed first; only a
+/// Moves a span over a whole text across an edit, with the rule Word and
+/// HTML spans keep ([`super::span_after_edits`]): boundaries inside one
+/// changed run move to its edges, a partial delete shrinks the span, and a
+/// span whose words were rewritten detaches. Lines are diffed first; only a
 /// changed run of lines that touches the span is diffed by character, so a
 /// long file costs a line diff plus the runs the span meets.
 pub(in crate::anchored_annotation) fn remap_text_span(
@@ -133,7 +134,7 @@ pub(in crate::anchored_annotation) fn remap_text_span(
     let old_lines: Vec<&str> = before.split_inclusive('\n').collect();
     let new_lines: Vec<&str> = after.split_inclusive('\n').collect();
     let (old_at, new_at) = (line_starts(&old_lines), line_starts(&new_lines));
-    let (old_len, new_len) = (old_at[old_lines.len()], new_at[new_lines.len()]);
+    let old_len = old_at[old_lines.len()];
     if start >= end || end > old_len {
         return None;
     }
@@ -162,31 +163,7 @@ pub(in crate::anchored_annotation) fn remap_text_span(
             ));
         }
     }
-    let survives = edits
-        .iter()
-        .any(|(tag, old, _)| *tag == DiffTag::Equal && old.start < end && start < old.end);
-    if !survives {
-        return None;
-    }
-    let map = |at: usize, trailing: bool| {
-        for (tag, old, new) in &edits {
-            if at <= old.start {
-                return new.start;
-            }
-            if at < old.end {
-                return if *tag == DiffTag::Equal {
-                    new.start + at - old.start
-                } else if trailing {
-                    new.end
-                } else {
-                    new.start
-                };
-            }
-        }
-        new_len
-    };
-    let (new_start, new_end) = (map(start, false), map(end, true));
-    (new_start < new_end).then(|| (new_start as u64, new_end as u64))
+    super::span_after_edits(&old_chars, &new_chars, &edits, start, end)
 }
 
 /// The text side of one re-anchor sweep: both versions' decoded text.

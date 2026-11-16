@@ -1,7 +1,10 @@
 //! The receive-pack intent's recorder: the one write that journals an
 //! admitted push while pre-receive still blocks every ref effect. A push
 //! admitted with its keys marked (FIX 7608) writes those marks in the same
-//! transaction, so marks and intent commit together or not at all.
+//! transaction, so marks and intent commit together or not at all. Each
+//! deletion or rewrite of the protected ref the door let pass (L8-51) is
+//! settled there too, last: its leave spent, so one leave lands one move, or
+//! the bypass that covered it read again and the act receipted as bypassed.
 
 use std::path::Path;
 
@@ -11,6 +14,7 @@ use super::super::evidence::{
     RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackScanSummary, receive_pack_field,
     receive_pack_provenance_refused,
 };
+use super::super::protected_ref_confirm::ProtectedRefPasses;
 use super::super::serve_cmd::path_arg;
 #[cfg(test)]
 use super::count_journal_bytes;
@@ -32,6 +36,7 @@ impl Vault {
         stamp: &DoorAdmissionStamp,
         door: &DoorWindowReport,
         changes: Option<&[GitPushRefChange]>,
+        protected_ref_passes: &ProtectedRefPasses,
     ) -> Result<()> {
         let RepoRef::LocalFolder { path, .. } = repo else {
             return Err(receive_pack_provenance_refused("intent is not local"));
@@ -121,7 +126,7 @@ impl Vault {
         #[cfg(test)]
         count_journal_bytes(INTENTS.encode_value(&intent));
         let marks = admitted_marks(door, stamp)?;
-        self.with_write_txn_grouped(|wtxn| {
+        let withdrawn = self.with_write_txn_grouped(|wtxn| {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
@@ -143,8 +148,21 @@ impl Vault {
                 Some(_) => ReceivePackScanSummary::Marked { mark_count },
                 None => ReceivePackScanSummary::Clean,
             };
+            // Last, after every other check: each deletion or rewrite of the
+            // protected ref, settled with the intent or not at all: the
+            // owner's leave spent and the question it answered withdrawn, or
+            // the covering bypass read again and the act receipted.
+            let withdrawn = self.settle_protected_ref_passes_in_txn(
+                wtxn,
+                stamp.principal_ref(),
+                protected_ref_passes,
+            )?;
             INTENTS.put(&self.store, wtxn, &key, &intent)?;
-            Ok(())
-        })
+            Ok(withdrawn)
+        })?;
+        for seq in withdrawn {
+            self.signal_decision_answer(seq);
+        }
+        Ok(())
     }
 }

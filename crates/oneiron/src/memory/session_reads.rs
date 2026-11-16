@@ -37,36 +37,12 @@ use crate::receipt::ServedForm;
 use crate::session_overlay::RouteTarget;
 use crate::store::SessionStoreView;
 use oneiron_retrieval::pipeline::ScoredEntity;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HydrateRequest {
-    pub refs: Vec<String>,
-    /// The caller's retrieval filter: it only narrows what the refs read.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::session_reads::{
+    CreateNoteRequest, EntityRequest, HydrateRequest, QueryBm25Request,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EntityRequest {
-    pub entity_ref: String,
-    /// The caller's retrieval filter: it only narrows what the ref reads.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct QueryBm25Request {
-    pub query: String,
-    pub limit: usize,
-    /// The caller's retrieval filter, applied inside the posting scan,
-    /// before the rank and the cut.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{Vault, WriteActor};
 
@@ -243,11 +219,14 @@ impl<'s> SessionReadContext<'s> {
             .iter()
             .map(|(id, mode)| PointRead::id(*id).at(*mode))
             .collect();
-        let read = lane.read_projected(&reads, None, |txn, rows| {
+        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let snapshot = memory.lane_snapshot()?;
+        let known = snapshot.known();
+        let read = lane.read_projected_in_txn(snapshot.txn(), &reads, None, |txn, rows| {
             let (Some((id, mode)), Some(row)) = (target, rows.into_iter().next().flatten()) else {
                 return Ok::<_, MemoryError>((None, None));
             };
-            let view = memory.entity_view_of_in_txn(&lane, txn, row, mode)?;
+            let view = memory.entity_view_of_in_txn(&lane, txn, known, row, mode)?;
             let live = crate::vault::entity_revision::revision_for_mode_in_txn(
                 &lane.store_read(),
                 txn,
@@ -691,11 +670,4 @@ fn decode<T: serde::de::DeserializeOwned>(value: &serde_json::Value) -> MemoryRe
 
 fn encode(value: &impl serde::Serialize) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CreateNoteRequest {
-    pub kind: String,
-    pub markdown: String,
 }

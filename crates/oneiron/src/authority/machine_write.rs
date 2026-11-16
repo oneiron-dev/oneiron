@@ -187,6 +187,12 @@ impl Vault {
         }
     }
 
+    /// Whether the host retained a signer for `machine` on this handle, so an
+    /// engine writer acting as it can sign its claims.
+    pub(crate) fn has_retained_machine_signer(&self, machine: EntityId) -> Result<bool> {
+        Ok(self.retained_machine_signer(machine)?.is_some())
+    }
+
     fn retained_machine_signer(
         &self,
         machine: EntityId,
@@ -217,6 +223,51 @@ impl Vault {
             });
         Ok(())
     }
+}
+
+/// [`Vault::sign_retained_machine_claim_in_txn`] for a batch apply, which
+/// holds the store and not the vault: an engine writer's System candidate is
+/// signed in the caller's transaction with the signer the host retained for
+/// the envelope's actor, over the body the write door will store. Ed25519
+/// signing is deterministic, so a batch preflight and its apply that both sign
+/// one candidate under one envelope carry the same proof. Without a retained
+/// signer the envelope stays unsigned and the write door decides: a MACHINE
+/// author is refused, any other author is unaffected.
+pub(crate) fn sign_retained_machine_claim_for_store_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    candidate: &ClaimCandidate,
+    envelope: &mut WriteEnvelope,
+) -> Result<()> {
+    if envelope.machine_signature().is_some()
+        || envelope.actor().actor_class() != EdgeActorClass::System
+    {
+        return Ok(());
+    }
+    let signer = store
+        .machine_write_signers
+        .lock()
+        .map_err(|_| Error::InvariantViolation("machine signer lock poisoned"))?
+        .get(&envelope.actor().entity_ref())
+        .cloned();
+    let Some((public_key, sign)) = signer else {
+        return Ok(());
+    };
+    let vault_id =
+        super::authority_fold_readonly_for_store_in_txn(store, store.privacy_posture, txn)?
+            .vault_id
+            .ok_or_else(denied)?;
+    let facet = crate::batch::claim_candidate_apply::claim_candidate_birth_facet(store, txn, id)?;
+    let body = candidate.clone().into_claim_body(envelope, facet)?;
+    let signature = sign(&machine_claim_transcript(&vault_id, id, &body)?)?;
+    *envelope = envelope
+        .clone()
+        .with_machine_signature(MachineWriteSignature {
+            public_key,
+            signature,
+        });
+    Ok(())
 }
 
 /// A claim's evidence without the MACHINE signature that binds it.

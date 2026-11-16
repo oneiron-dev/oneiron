@@ -6,20 +6,25 @@ use super::store::{
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus};
 use crate::code_run::{
-    CodeConsentResume, CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord,
-    ExecutorStorage, ParkedWait, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
-    code_consent_resume_evidence, encode_code_run_replay_value, verify_code_consent_consumed,
-    verify_parked_code_consent,
+    CodeConsentResume, CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait,
+    SelfDurableWait, SelfEffect, WaitKey, code_consent_resume_evidence,
+    verify_code_consent_consumed, verify_parked_code_consent,
 };
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::session_overlay::RouteTarget;
-use crate::{Error, ModelLocality, Vault};
+use crate::entity_id::EntityId;
+use crate::{Error, Vault};
 use serde::{Deserialize, Serialize};
 
 mod caller_task;
+mod replay_hash;
 mod step_digests;
 pub(crate) use self::caller_task::caller_task_in_txn;
 pub(super) use self::caller_task::record_caller_task;
+use self::replay_hash::executor_config_hash_hex;
+pub(super) use self::replay_hash::prepared_step_state_hash;
+#[cfg(test)]
+pub(super) use self::replay_hash::step_state_hash;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::replay_hash::{executor_config_hash_for_test, step_state_hash_for_test};
 pub(super) use self::step_digests::{StepEnd, StepResultDigests};
 
 pub(super) struct LoadedReplayRecord {
@@ -71,7 +76,9 @@ impl StoredTerminalStatus {
             EngineExecutorStatus::Waiting(wait) => Ok(Self::Waiting {
                 wait: StoredDurableWait::from_wait(wait),
             }),
-            EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::WindowFull { .. } => {
+            EngineExecutorStatus::Yielded { .. }
+            | EngineExecutorStatus::WindowFull { .. }
+            | EngineExecutorStatus::Paused { .. } => {
                 Err(Error::InvariantViolation("non-terminal executor status marker").into())
             }
         }
@@ -113,27 +120,6 @@ impl StoredDurableWait {
         })
     }
 }
-
-const CHECKPOINT_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:v1";
-
-/// Marks a step that ran as the JavaScript Oxc printed for its TypeScript
-/// program (FIX 8276); a JavaScript step hashes no such part.
-const PREPARED_SOURCE_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:prepared-source:v1";
-
-const CONFIG_HASH_DOMAIN: &[u8] = b"oneiron:engine-executor-config:v1";
-
-/// Storage-binding tags folded into the config marker (ONE-1729).
-const CONFIG_BINDING_CANONICAL_TAG: &[u8] = b"storage:canonical";
-
-const CONFIG_BINDING_SESSION_TAG: &[u8] = b"storage:off-record-session";
-
-const CONFIG_ROUTE_OVERLAY_TAG: &[u8] = b"route:overlay";
-
-const CONFIG_ROUTE_BASE_TAG: &[u8] = b"route:base";
-
-/// Tags the digest of the approved continuation a child run was forked
-/// under (FIX 3694); a run with none hashes nothing more.
-const CONFIG_CONTINUATION_TAG: &[u8] = b"continuation";
 
 pub(super) const REPLAY_METADATA_SCHEMA_VERSION: u64 = 1;
 
@@ -318,83 +304,6 @@ pub fn entered_run(
         .filter(|marker| marker.schema_version == REPLAY_METADATA_SCHEMA_VERSION)
         .map(|marker| marker.config_hash);
     Ok(Some(EnteredRun { vault, config_hash }))
-}
-
-fn executor_config_hash_hex(
-    storage: &ExecutorStorage<'_>,
-    config: &EngineExecutorConfig,
-    continuation: Option<&[u8; 32]>,
-) -> String {
-    bytes_to_hex_lower(&executor_config_hash(storage, config, continuation))
-}
-
-/// Binds replay identity to storage, privacy-route target, and the executor
-/// config. The resolved prompt bytes are bound BESIDE this hash, in the config
-/// marker's own `prompt_fingerprint` field, so drift can gate provider work
-/// without gating a terminal record's materialization.
-///
-/// Wherever the bound storage can see an existing replay record — the session
-/// view is overlay ∪ base, the canonical view is base — a run under a
-/// different binding refuses before it writes an output or replay row. Target
-/// binding also refuses a same-id resume across an off-record/on-record flip:
-/// the old record can point at overlay-only raw outputs and must never be
-/// copied to base. The overlay's RAM-local mode generation is not identity; it
-/// can reset after a process restart.
-///
-/// A record that lived only in an overlay evaporates at close, so a later run
-/// under any binding starts fresh. That is BY DESIGN: evaporation is the
-/// absence of history, not a resumable identity.
-///
-/// A child run forked from a failed one (FIX 3694) also binds its
-/// continuation's digest, after every other input: the same run under
-/// another approved note, or under none, is another identity.
-fn executor_config_hash(
-    storage: &ExecutorStorage<'_>,
-    config: &EngineExecutorConfig,
-    continuation: Option<&[u8; 32]>,
-) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hash_bytes(&mut hasher, CONFIG_HASH_DOMAIN);
-    match storage.session_ref() {
-        None => hash_bytes(&mut hasher, CONFIG_BINDING_CANONICAL_TAG),
-        Some(session_ref) => {
-            hash_bytes(&mut hasher, CONFIG_BINDING_SESSION_TAG);
-            hash_str(&mut hasher, session_ref);
-        }
-    }
-    if let Some(target) = storage.session_route_target() {
-        hash_bytes(
-            &mut hasher,
-            match target {
-                RouteTarget::Overlay => CONFIG_ROUTE_OVERLAY_TAG,
-                RouteTarget::Base => CONFIG_ROUTE_BASE_TAG,
-                RouteTarget::Discard => b"discard",
-            },
-        );
-    }
-    hash_str(&mut hasher, &config.run_id.to_hex());
-    hash_str(&mut hasher, &config.task);
-    hash_str(&mut hasher, config.model.as_str());
-    hash_str(&mut hasher, model_locality_str(config.model_locality));
-    if let Some(effort) = config.seat_effort {
-        hash_str(&mut hasher, &format!("seat_effort:{effort:?}"));
-    }
-    hash_str(&mut hasher, config.global_tier.as_str());
-    hash_u64(&mut hasher, config.determinism.frozen_unix_ms);
-    hash_bytes(&mut hasher, &config.determinism.rng_seed);
-    if let Some(digest) = continuation {
-        hash_bytes(&mut hasher, CONFIG_CONTINUATION_TAG);
-        hash_bytes(&mut hasher, digest);
-    }
-    *hasher.finalize().as_bytes()
-}
-
-fn model_locality_str(locality: ModelLocality) -> &'static str {
-    match locality {
-        ModelLocality::OnDevice => "on_device",
-        ModelLocality::OwnServer => "own_server",
-        ModelLocality::ThirdParty => "third_party",
-    }
 }
 
 pub(super) fn record_terminal_output(
@@ -648,6 +557,7 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
         "self.speak" => Ok(SelfEffect::Speak),
         "self.think" => Ok(SelfEffect::Think),
+        "self.think.aloud" => Ok(SelfEffect::ThinkAloud),
         "self.express" => Ok(SelfEffect::Express),
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
         "self.inference_defaults.read" => Ok(SelfEffect::InferenceDefaultsRead),
@@ -660,135 +570,7 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
     }
 }
 
-pub(super) fn durable_wait_reason_str(reason: SelfDurableWaitReason) -> &'static str {
-    match reason {
-        SelfDurableWaitReason::HumanInput => "human_input",
-        SelfDurableWaitReason::DestructiveEffect => "destructive_effect",
-        SelfDurableWaitReason::OutboundEffect => "outbound_effect",
-        SelfDurableWaitReason::PeerResult => "peer_result",
-    }
-}
-
-pub(super) fn durable_wait_reason_from_str(
-    value: &str,
-) -> EngineExecutorResult<SelfDurableWaitReason> {
-    match value {
-        "human_input" => Ok(SelfDurableWaitReason::HumanInput),
-        "destructive_effect" => Ok(SelfDurableWaitReason::DestructiveEffect),
-        "outbound_effect" => Ok(SelfDurableWaitReason::OutboundEffect),
-        "peer_result" => Ok(SelfDurableWaitReason::PeerResult),
-        _ => Err(Error::CorruptedIndex("executor replay durable wait reason").into()),
-    }
-}
-
-/// [`prepared_step_state_hash`] for a JavaScript step, which hashes no
-/// preparation, and of a step that ends at bridge position zero with no
-/// replay context; every caller outside the tests passes its own.
-#[cfg(test)]
-pub(super) fn step_state_hash(
-    previous: [u8; 32],
-    seq: u64,
-    request_hash: &[u8; 32],
-    script: &str,
-    result: &StepResultDigests,
-    implicit_speak: Option<&str>,
-    bridge_calls: &[CodeRunBridgeCall],
-) -> EngineExecutorResult<[u8; 32]> {
-    prepared_step_state_hash(
-        previous,
-        seq,
-        request_hash,
-        script,
-        None,
-        result,
-        implicit_speak,
-        bridge_calls,
-        StepEnd {
-            bridge_end: 0,
-            context: [0; 32],
-        },
-    )
-}
-
-/// The checkpoint hash of one step, for a step whose program may have run as
-/// the JavaScript Oxc printed for it (FIX 8276). `prepared` is that
-/// preparation's identity (the executed JavaScript, its map and the Oxc
-/// pin), hashed beside the original program; a JavaScript step has none.
-/// `end` is where the step's calls end and the digest of its replay context
-/// (FIX 6354, FIX 6351), so a context with other responses never stands for
-/// the same step.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the checkpoint hashes every part of the step's state"
-)]
-pub(super) fn prepared_step_state_hash(
-    previous: [u8; 32],
-    seq: u64,
-    request_hash: &[u8; 32],
-    script: &str,
-    prepared: Option<&[u8; 32]>,
-    result: &StepResultDigests,
-    implicit_speak: Option<&str>,
-    bridge_calls: &[CodeRunBridgeCall],
-    end: StepEnd,
-) -> EngineExecutorResult<[u8; 32]> {
-    let mut hasher = blake3::Hasher::new();
-    hash_bytes(&mut hasher, CHECKPOINT_DOMAIN);
-    hash_bytes(&mut hasher, &previous);
-    hash_u64(&mut hasher, seq);
-    hash_bytes(&mut hasher, request_hash);
-    hash_bytes(&mut hasher, blake3::hash(script.as_bytes()).as_bytes());
-    if let Some(identity) = prepared {
-        hash_bytes(&mut hasher, PREPARED_SOURCE_DOMAIN);
-        hash_bytes(&mut hasher, identity);
-    }
-    hash_bytes(&mut hasher, &result.observation);
-    hash_bytes(&mut hasher, &[u8::from(result.done)]);
-    hash_bytes(&mut hasher, &[u8::from(implicit_speak.is_some())]);
-    if let Some(text) = implicit_speak {
-        hash_bytes(&mut hasher, blake3::hash(text.as_bytes()).as_bytes());
-    }
-    hash_u64(&mut hasher, result.outputs.len() as u64);
-    for (path, digest) in &result.outputs {
-        hash_str(&mut hasher, path);
-        hash_bytes(&mut hasher, digest);
-    }
-    hash_u64(&mut hasher, result.bindings.len() as u64);
-    for (name, handle) in &result.bindings {
-        hash_str(&mut hasher, name);
-        hash_str(&mut hasher, handle);
-    }
-    hash_u64(&mut hasher, bridge_calls.len() as u64);
-    for call in bridge_calls {
-        hash_u64(&mut hasher, call.seq);
-        hash_str(&mut hasher, call.effect.as_str());
-        let request =
-            encode_code_run_replay_value(&call.request, "executor bridge call request hash")?;
-        let outcome =
-            encode_code_run_replay_value(&call.outcome, "executor bridge call outcome hash")?;
-        hash_bytes(&mut hasher, &request);
-        hash_bytes(&mut hasher, &outcome);
-        // Rewritten rows are pinned; legacy rows hash identically (FIX 1442).
-        if let Some(rewritten) = &call.rewritten_request {
-            let rewritten =
-                encode_code_run_replay_value(rewritten, "executor bridge call rewritten hash")?;
-            hash_bytes(&mut hasher, &rewritten);
-        }
-    }
-    hash_u64(&mut hasher, end.bridge_end);
-    hash_bytes(&mut hasher, &end.context);
-    Ok(*hasher.finalize().as_bytes())
-}
-
-fn hash_u64(hasher: &mut blake3::Hasher, value: u64) {
-    hasher.update(&value.to_be_bytes());
-}
-
-fn hash_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    hash_u64(hasher, bytes.len() as u64);
-    hasher.update(bytes);
-}
-
-fn hash_str(hasher: &mut blake3::Hasher, value: &str) {
-    hash_bytes(hasher, value.as_bytes());
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::engine_executor::record::{
+    durable_wait_reason_from_str, durable_wait_reason_str,
+};

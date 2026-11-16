@@ -447,6 +447,7 @@ impl Vault {
         Ok(TextLimits {
             package: self.docedit_package_limits_in_txn(txn)?,
             docx: self.docx_archive_limits_in_txn(txn, None)?,
+            max_offers: super::setting_keys::reattach_max_offers_in_txn(self, txn)?,
         })
     }
 
@@ -532,8 +533,10 @@ impl Vault {
         let mut out = Vec::new();
         for thread in threads.into_iter().filter(AnnotationThread::is_drifted) {
             let row = UNATTACHED.get(&self.store, &rtxn, &(*artifact_id, thread.thread_id))?;
+            // In the held snapshot: a second read txn on this thread is
+            // MDB_BAD_RSLOT (FIX 6992).
             let held_task = self
-                .annotation_brief_for_thread(artifact_id, &thread.thread_id)?
+                .annotation_brief_for_thread_in_txn(&rtxn, artifact_id, &thread.thread_id)?
                 .map(|brief| brief.task_id);
             out.push(UnattachedThread {
                 snapshot: row.as_ref().and_then(|row| row.snapshot.clone()),
@@ -915,6 +918,7 @@ impl Vault {
             locator,
             drift: None,
             body: None,
+            sub_session: thread.sub_session_id,
         };
         let new_head_id = self.write_thread_head_in_txn(
             wtxn,

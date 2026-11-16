@@ -103,22 +103,16 @@ impl Vault {
                     continue;
                 };
                 let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-                // A claim republishes the text its commit indexed, never the
-                // generic string leaves: a non-string value would otherwise
-                // lose its postings at the first idle pass (FIX 12368).
-                let fields = if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
-                    let claim = crate::write_envelope::claim_body::decode_claim_body(&body, true)?;
-                    if !crate::claim::claim_surfaceable(&claim) {
-                        continue;
-                    }
-                    let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
-                    if text.is_empty() {
-                        Vec::new()
-                    } else {
-                        vec![("val".to_owned(), text)]
-                    }
-                } else {
-                    revision_text_fields(&self.store, &txn, &id, current.live, &body)?
+                let Some(fields) = super::storage::publication_text_fields(
+                    &self.store,
+                    &txn,
+                    &id,
+                    current.live,
+                    raw[0],
+                    &body,
+                )?
+                else {
+                    continue;
                 };
                 candidates.push(super::repo_projection::project_revision_input_in_txn(
                     self,
@@ -165,6 +159,21 @@ impl Vault {
                 None => match embedder {
                     Some(embedder) => match embedder.embed_revision_marked(&input) {
                         Ok(marked) => Some(marked),
+                        // A row a device-local world keeps, refused by an
+                        // embedder off this device, publishes as a vault with
+                        // no embedder publishes it: with no vector, found by
+                        // its keywords (DEC-0005 #private-world-vectors).
+                        Err(error) if crate::embed::is_device_local_row_refusal(&error) => {
+                            if self.get_vector(&input.entity)?.is_some() {
+                                report.failed.push((
+                                    input.entity,
+                                    input.source_revision_ref,
+                                    error.kind(),
+                                ));
+                                continue;
+                            }
+                            None
+                        }
                         Err(
                             error @ (Error::InvalidConfig(_)
                             | Error::DimensionMismatch { .. }
@@ -459,6 +468,14 @@ impl Vault {
                 None => None,
                 Some(_) => match embedder.embed_revision_marked(&input) {
                     Ok(marked) => Some(marked),
+                    // A row a device-local world keeps gets no vector from an
+                    // embedder off this device; the refill skips it alone.
+                    Err(error) if crate::embed::is_device_local_row_refusal(&error) => {
+                        report
+                            .failed
+                            .push((input.entity, input.source_revision_ref, error.kind()));
+                        continue;
+                    }
                     Err(
                         error @ (Error::InvalidConfig(_)
                         | Error::DimensionMismatch { .. }

@@ -1,26 +1,11 @@
 //! `self.memory.self_model`: the caller's own self-model SUMMARY text with its live revision, or why it is absent.
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ScopedReadResult;
 use crate::memory::{Memory, MemoryResult};
 use crate::scope_summary::SummaryReadRequest;
-use crate::vault::RevisionRef;
 
-/// `self.memory.self_model`'s answer: the existing `SelfModelRead` on the wire.
-/// `Read` carries the SUMMARY's current words and the LIVE revision they were read at in the serving
-/// snapshot; `Absent` names why it is not worn: `unreadable`, `stale`, `not_self_model` or `not_own`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum SelfModelReadView {
-    /// Its current words, masked as the reader reads secrets, and the live revision of the SUMMARY.
-    Read {
-        text: String,
-        revision: Option<RevisionRef>,
-    },
-    /// Why it is not worn.
-    Absent { why: String },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::self_model_read::SelfModelReadView;
 
 impl From<crate::scope_summary::SelfModelRead> for SelfModelReadView {
     fn from(read: crate::scope_summary::SelfModelRead) -> Self {

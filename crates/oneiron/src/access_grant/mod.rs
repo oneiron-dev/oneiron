@@ -11,12 +11,16 @@ pub(crate) use context::AccessContextSnapshot;
 pub(crate) use context::principal_reach_ids_in;
 pub use context::{AccessContext, AccessLimited, GrantedData};
 mod request;
+#[cfg(oneiron_test_support)]
+pub(crate) use request::seed_access_requests_for_test;
 pub use request::{AccessRequest, AccessRequestResponder, AccessRequestStatus, AddressedAnswer};
 mod codec;
 mod companion_admission;
+mod companion_index;
 pub use companion_admission::{
     COMPANION_GRANT_EXCESS_PENDS, CompanionGrantBounds, CompanionGrantIssuer, CompanionGrantOutcome,
 };
+pub(crate) use companion_index::{companion_grant_candidates_in_txn, reindex_companion_grant};
 mod delegation;
 pub use delegation::{COMPANION_GRANT_OUTLIVES_ISSUER, COMPANION_PROFILE_SENSITIVITY};
 mod erase;

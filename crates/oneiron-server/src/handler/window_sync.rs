@@ -78,15 +78,26 @@ pub(super) async fn handle_window_sync(
             (*sub_tag, envelope.payload.as_slice())
         });
 
-    if sub_tag == window_sub_tags::PROMOTION_REQUEST {
+    if matches!(
+        sub_tag,
+        window_sub_tags::PROMOTION_REQUEST | window_sub_tags::FOLLOW_REQUEST
+    ) {
         // Every opened-item machine of this vault asks for the embedding setup window (OF-370),
         // whatever it opened. A home that holds no such window, or does not grant it to this
-        // machine, answers nothing, and the machine asks again on its next connection.
+        // machine, answers nothing, and the machine asks again on its next connection. A machine
+        // asks as well for each window of a world it follows (ARCH-0023b #partial-sync): a home
+        // that does not list the window, or does not grant the whole of it to this machine,
+        // answers FOLLOW_REFUSED and keeps the socket. A refused promotion of a window the
+        // machine opened still ends the socket.
         let setup = key == WindowKey::from_timestamp(oneiron::embed::EMBEDDING_SETUP_LEARNED_AT);
-        if setup
+        let follow = sub_tag == window_sub_tags::FOLLOW_REQUEST;
+        if (setup || follow)
             && protocol::is_residence_version(conn_state.protocol_version)
             && !read_window_list(&server.root_doc).contains(&key)
         {
+            if follow {
+                refuse_follow(window_key, direct_tx)?;
+            }
             return Ok(ControlFlow::Continue(()));
         }
         if !protocol::is_residence_version(conn_state.protocol_version)
@@ -125,6 +136,16 @@ pub(super) async fn handle_window_sync(
             )
         });
         if setup && authorized.is_err() {
+            return Ok(ControlFlow::Continue(()));
+        }
+        if follow && let Err(refusal) = &authorized {
+            tracing::debug!(
+                conn_id,
+                window = %key,
+                %refusal,
+                "followed window not granted to this machine"
+            );
+            refuse_follow(window_key, direct_tx)?;
             return Ok(ControlFlow::Continue(()));
         }
         authorized?;
@@ -190,6 +211,7 @@ pub(super) async fn handle_window_sync(
             | window_sub_tags::PROMOTION_GRANTED
             | window_sub_tags::PROMOTED_INVALIDATE
             | window_sub_tags::WINDOW_INVALIDATE
+            | window_sub_tags::FOLLOW_REFUSED
     ) {
         return Err(ProtocolError::InvalidPayload(
             "client cannot send server-only residence control",
@@ -342,38 +364,45 @@ pub(super) async fn handle_window_sync(
             // Admission runs on an isolated document before Observer B or
             // persistence can see the input. Rejected diagnostics must never
             // be relayed as raw history, even if a later export would scrub.
-            if let Err(error) = oneiron::sync::window::validate_window_update_residence_with_vault(
+            // It returns the entity ids the update's history inserts, which
+            // owe a compaction when one names a row hard-deleted here (census
+            // L6-05).
+            let admitted = oneiron::sync::window::admit_window_update_residence_with_vault(
                 server.vault.as_ref(),
                 &doc,
                 update,
                 &key,
-            ) {
-                // The home's own shallow root cut away what the device's update builds on. The
-                // home never installs a device's window: the device takes the home's and writes
-                // its own state on top, and an old device that cannot is refused.
-                if oneiron::sync::window::update_reaches_below_root(&doc, update) {
-                    // The window goes out whole only as a version request's answer would.
-                    if protocol::is_residence_version(conn_state.protocol_version) {
-                        let selector = conn_state
-                            .promoted_windows
-                            .get(&key)
-                            .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
-                        authorize_promoted_window(
-                            server,
-                            require_bound_app_auth(server, conn_state)?,
-                            conn_state.peer_machine(server.vault()),
-                            &key,
-                            selector,
-                            &doc,
-                        )?;
+            );
+            let inserts = match admitted {
+                Ok(inserts) => inserts,
+                Err(error) => {
+                    // The home's own shallow root cut away what the device's update builds on. The
+                    // home never installs a device's window: the device takes the home's and writes
+                    // its own state on top, and an old device that cannot is refused.
+                    if oneiron::sync::window::update_reaches_below_root(&doc, update) {
+                        // The window goes out whole only as a version request's answer would.
+                        if protocol::is_residence_version(conn_state.protocol_version) {
+                            let selector = conn_state
+                                .promoted_windows
+                                .get(&key)
+                                .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
+                            authorize_promoted_window(
+                                server,
+                                require_bound_app_auth(server, conn_state)?,
+                                conn_state.peer_machine(server.vault()),
+                                &key,
+                                selector,
+                                &doc,
+                            )?;
+                        }
+                        if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
+                            let _ = direct_tx.send(frame);
+                        }
+                        return Ok(ControlFlow::Continue(()));
                     }
-                    if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
-                        let _ = direct_tx.send(frame);
-                    }
-                    return Ok(ControlFlow::Continue(()));
+                    return Err(map_update_admission_err(error));
                 }
-                return Err(map_update_admission_err(error));
-            }
+            };
             let mut write_auth = None;
             if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
@@ -435,15 +464,19 @@ pub(super) async fn handle_window_sync(
                     direct_tx,
                 );
             };
-            if let std::borrow::Cow::Owned(translated) = &update {
-                oneiron::sync::window::validate_window_update_residence_with_vault(
+            // The bytes that persist are the translated copy's, when there is
+            // one: its admission reads the inserts they carry.
+            let inserts = if let std::borrow::Cow::Owned(translated) = &update {
+                oneiron::sync::window::admit_window_update_residence_with_vault(
                     server.vault.as_ref(),
                     &doc,
                     translated,
                     &key,
                 )
-                .map_err(map_update_admission_err)?;
-            }
+                .map_err(map_update_admission_err)?
+            } else {
+                inserts
+            };
             let update = update.as_ref();
             // Durability BEFORE the observed import and fan-out (ARCH-0023b
             // Observer A duty: "MUST persist synchronously"; FIX 5999).
@@ -461,27 +494,41 @@ pub(super) async fn handle_window_sync(
                 update,
                 Some(&doc),
             );
-            server
-                .persist_imported_update(&key, &persisted, &landings, write_auth)
-                .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             // Client sending Loro update bytes — import with origin for echo suppression.
             // The machine this own-device socket proved sent them: their MESSAGE rows
             // take the own-device lane as they land (FIX 12112).
             let origin = format!("conn:{conn_id}");
-            let positions = oneiron::sync::prepare_own_device_push_positions(
-                server.vault(),
-                conn_state.peer_machine(server.vault()),
-                &key,
-                &doc,
-                update,
-            );
-            let imported = match oneiron::sync::with_own_device_push(
-                server.vault(),
-                conn_state.peer_machine(server.vault()),
-                (&key, &doc),
-                update,
-                || doc.import_with(update, &origin),
-            ) {
+            // The window is a live window of the reassert manager. Appended,
+            // the bytes are a pending u:w: row that any holder's persist_state
+            // merges into the document without the turn, so the append, the
+            // import and its callbacks hold the live-window turn together: an
+            // indexed pass over the window never meets them halfway (L7-45).
+            let (positions, imported) = oneiron::sync::window::with_live_window_turn(
+                server.reassert_manager.materializer(),
+                || -> Result<_, ProtocolError> {
+                    server
+                        .persist_imported_update(&key, &persisted, &inserts, &landings, write_auth)
+                        .map_err(|e| {
+                            ProtocolError::Persistence(format!("update persist failed: {e}"))
+                        })?;
+                    let positions = oneiron::sync::prepare_own_device_push_positions(
+                        server.vault(),
+                        conn_state.peer_machine(server.vault()),
+                        &key,
+                        &doc,
+                        update,
+                    );
+                    let imported = oneiron::sync::with_own_device_push(
+                        server.vault(),
+                        conn_state.peer_machine(server.vault()),
+                        (&key, &doc),
+                        update,
+                        || doc.import_with(update, &origin),
+                    );
+                    Ok((positions, imported))
+                },
+            )?;
+            let imported = match imported {
                 Ok(imported) => imported,
                 Err(e) => {
                     // The accepted update stays durable: the window reloads
@@ -774,6 +821,20 @@ fn replacement_frame(
             .map_err(|e| ProtocolError::ExportFailed(e.to_string()))
         })
         .transpose()
+}
+
+/// Answers a follow the home does not grant on this socket: the device keeps
+/// the window unsynced here and its writes queued, and the socket stays open.
+fn refuse_follow(
+    window_key: &str,
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> Result<(), ProtocolError> {
+    let refused = protocol::encode_window_sync(window_key, window_sub_tags::FOLLOW_REFUSED, &[])
+        .into_result()
+        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+    direct_tx
+        .send(refused)
+        .map_err(|_| ProtocolError::Persistence("follow reply channel closed".into()))
 }
 
 /// A cached promotion is not permanent authority. Recheck the bound actor,

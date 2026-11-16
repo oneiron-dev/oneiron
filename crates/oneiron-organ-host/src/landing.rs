@@ -4,7 +4,7 @@
 //! call receipt: the organ and its version are the process, the args digest
 //! the replay key, the vault versions it read the inputs.
 
-use oneiron::edit_settle::{NativeOutput, PendingProposalView};
+use oneiron::edit_settle::{NativeOutput, OrganWait, PendingProposalView};
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
@@ -38,6 +38,33 @@ impl OrganOutcome {
         rows.sort_unstable();
         rows.dedup();
         Ok(rows)
+    }
+
+    /// The version of `artifact` itself this call read, with its content
+    /// hash: what an output that lands on `artifact` was made against, so a
+    /// head that moved after the read (another version kept, or a held call
+    /// redriven later) keeps the output as a fork of it (review of #7368).
+    /// `None` when the call read no version of `artifact`, as for a PNG
+    /// born from a JPEG source.
+    ///
+    /// # Errors
+    ///
+    /// The vault's read error.
+    pub fn made_against(
+        &self,
+        vault: &Vault,
+        artifact: &EntityId,
+    ) -> oneiron::Result<Option<(u64, [u8; 32])>> {
+        let Some(input) = self.receipt.inputs.iter().find(|input| {
+            !input.lent && EntityId::from_hex(&input.artifact).is_ok_and(|row| row == *artifact)
+        }) else {
+            return Ok(None);
+        };
+        // The version's own hash: a masked sight lent a copy under another.
+        let hash = vault
+            .blob_artifact_version_metadata(artifact, input.version)?
+            .map_or(input.content_hash.0, |record| record.content_hash);
+        Ok(Some((input.version, hash)))
     }
 
     /// The made_by envelope this call gives what it made: `actor` ran it,
@@ -305,17 +332,19 @@ fn report_json_text(report: &Value) -> Option<String> {
 }
 
 /// Offers every export file of one organ call to `artifact`, each a proposal
-/// waiting for Keep, with the call receipt as its made_by. A call a principal
-/// submitted has its envelope's trigger and receipt inputs admitted through
-/// that principal's own read as each proposal is retained (FIX 9310); a
-/// host's own call, with no submitter, keeps the envelope as the host built
-/// it ([`oneiron::edit_settle::MadeByReader::OrganReceipt`], FIX 1229).
+/// waiting for Keep, with the call receipt as its made_by. Each is pinned to
+/// the version of `artifact` the call read ([`OrganOutcome::made_against`]),
+/// else to the head. A call a principal submitted has its envelope's trigger
+/// and receipt inputs admitted through that principal's own read as each
+/// proposal is retained (FIX 9310); a host's own call, with no submitter,
+/// keeps the envelope as the host built it
+/// ([`oneiron::edit_settle::MadeByReader::OrganReceipt`], FIX 1229).
 ///
 /// # Errors
 ///
 /// The vault's refusal of an output: another media type than the artifact's,
-/// an empty file, a ref already settled or waiting, or a source the
-/// submitter cannot read.
+/// an empty file, a ref already settled, waiting or held by an organ call,
+/// or a source the submitter cannot read.
 pub fn propose_organ_outputs(
     vault: &Vault,
     artifact: &EntityId,
@@ -325,22 +354,73 @@ pub fn propose_organ_outputs(
     actor: WriteActor,
     submitter: Option<EntityId>,
 ) -> oneiron::Result<Vec<PendingProposalView>> {
+    let made_against = outcome.made_against(vault, artifact)?;
+    land_outputs(
+        vault,
+        outcome,
+        (run_ref, trigger, actor.entity_ref()),
+        |output, now, read_rows| {
+            vault.propose_native_output_made_against(
+                artifact,
+                output,
+                Some(vault.organ_landing_reader(submitter)?),
+                (actor, now),
+                made_against,
+                read_rows,
+            )
+        },
+    )
+}
+
+/// Lands every export file of the held call `wait` once a node ran it at a
+/// redrive (FIX 22386), as [`propose_organ_outputs`] does for a call that ran
+/// at once: each through [`Vault::propose_held_organ_output_made_against`],
+/// the one door a ref its call holds lets in, pinned to the version of the
+/// held artifact the call read as [`propose_organ_outputs`] pins its files.
+/// A file under the held ref ends its hold as it lands; the redrive releases
+/// the hold of a call that made several.
+///
+/// # Errors
+///
+/// [`propose_organ_outputs`]'s errors, and a hold that is no longer this
+/// call. The door admits each made_by through the submitter's read, as
+/// [`propose_organ_outputs`] does.
+pub(crate) fn land_held_organ_outputs(
+    vault: &Vault,
+    wait: &OrganWait,
+    outcome: &OrganOutcome,
+) -> oneiron::Result<Vec<PendingProposalView>> {
+    let made_against = outcome.made_against(vault, &wait.artifact_id)?;
+    land_outputs(
+        vault,
+        outcome,
+        (
+            wait.run_ref.as_str(),
+            wait.trigger.clone(),
+            wait.held_by.entity_ref(),
+        ),
+        |output, now, read_rows| {
+            vault.propose_held_organ_output_made_against(wait, output, now, made_against, read_rows)
+        },
+    )
+}
+
+/// The landing both doors share: each file of the call, with the call
+/// receipt as its made_by (`run_ref`, the `trigger` it answers, the `actor`
+/// who ran it), handed to `propose` with the time and its inputs' version
+/// rows.
+fn land_outputs(
+    vault: &Vault,
+    outcome: &OrganOutcome,
+    (run_ref, trigger, actor): (&str, Option<MadeByTrigger>, EntityId),
+    propose: impl Fn(&NativeOutput, u64, &[EntityId]) -> oneiron::Result<PendingProposalView>,
+) -> oneiron::Result<Vec<PendingProposalView>> {
     let now = vault.now_recorded_at();
-    let made_by = outcome.made_by(actor.entity_ref(), trigger, now);
+    let made_by = outcome.made_by(actor, trigger, now);
     let read_rows = outcome.input_version_rows(vault)?;
     outcome
         .native_outputs(run_ref, Some(&made_by))
         .iter()
-        .map(|output| {
-            let reader = vault.organ_landing_reader(submitter)?;
-            vault.propose_native_output_with_reads(
-                artifact,
-                output,
-                Some(reader),
-                (actor, now),
-                &read_rows,
-                None,
-            )
-        })
+        .map(|output| propose(output, now, &read_rows))
         .collect()
 }

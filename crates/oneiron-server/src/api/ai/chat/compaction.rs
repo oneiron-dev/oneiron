@@ -1,9 +1,9 @@
 //! A self agent's chat turn on its own live fork (FIX 4465 D). Only for an
-//! agent whose engine-owned profile names `self` under a row that reads the
-//! live context: `live_fork`, or `auto` (FIX 6029, the default), whose flight
-//! forks the warm prefix or, cold, is written by the cheap writer as the
-//! agent. A row on the retained turns and every other agent keep the chat
-//! path as it was.
+//! agent whose engine-owned profile names `self`, under every self row:
+//! `live_fork`; `auto` (FIX 6029, the default), whose flight forks the warm
+//! prefix or, cold, is written by the cheap writer as the agent; and the
+//! retained turns, whose flight the cheap writer always writes as the agent
+//! (L10-33). Every other agent keeps the chat path as it was.
 //!
 //! Such a turn's log is read from the retained ledger as its caller reads
 //! it, landed summaries in place of the turns they cover; the caller's own
@@ -114,8 +114,7 @@ pub(super) enum ChatEntry {
 /// `conversation_ref`, its log read from the retained ledger as `reader`
 /// reads it (a room's audience through the room's held projection, FIX
 /// 5031), `history_lines` raw messages after its summaries. `None` keeps
-/// the chat path as it was: a non-self agent, a row on the retained turns,
-/// or a ref that names nothing.
+/// the chat path as it was: a non-self agent, or a ref that names nothing.
 pub(super) fn self_chat(
     ai: &AiHandle,
     vault: &Vault,
@@ -170,7 +169,9 @@ impl SelfChat {
 
     /// The log as the model reads it: each landed summary as the agent's
     /// own record of the turns it covers, then each retained message by its
-    /// author.
+    /// author. A `counterparty` message, somebody else's imported words,
+    /// rides as labelled foreign data, never as the user's own turn or the
+    /// agent's reply.
     pub(super) fn push_log(&self, messages: &mut Vec<LlmMessage>) {
         for line in &self.log.lines {
             messages.push(match line {
@@ -179,14 +180,20 @@ impl SelfChat {
                     serde_json::json!({"compacted_turns": {"epoch": epoch, "summary": text}})
                         .to_string(),
                 ),
-                ChatLogLine::Message { author, text } => text_message(
-                    if *author == WitnessAuthor::User {
-                        LlmMessageRole::User
-                    } else {
-                        LlmMessageRole::Assistant
-                    },
-                    text.clone(),
-                ),
+                ChatLogLine::Message { author, text } => match author {
+                    WitnessAuthor::User => text_message(LlmMessageRole::User, text.clone()),
+                    WitnessAuthor::Counterparty => text_message(
+                        LlmMessageRole::User,
+                        serde_json::json!({
+                            "author": WitnessAuthor::Counterparty.as_str(),
+                            "content": text,
+                        })
+                        .to_string(),
+                    ),
+                    WitnessAuthor::Companion | WitnessAuthor::System => {
+                        text_message(LlmMessageRole::Assistant, text.clone())
+                    }
+                },
             });
         }
     }
@@ -324,5 +331,5 @@ fn digest_hex(text: &str) -> String {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }

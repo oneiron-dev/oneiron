@@ -3,7 +3,8 @@
 use super::*;
 
 /// `owner` is the live owner proof the writer's surface carries, if any; an
-/// attendee ask admits a word only under it (`attendee_answer::guard_word`).
+/// ask whose word is its asked party's own act admits a word only under it
+/// (`ask_guard::admit_word_in`).
 #[expect(
     clippy::too_many_arguments,
     reason = "one admission over the word, its writer and the owner proof"
@@ -52,9 +53,62 @@ pub(in crate::task_verb) fn admit_link_word(
     )
 }
 
+/// [`admit_word`]'s checks alone, read in `txn`: `Ok` when `writer`'s word
+/// would be admitted now. Nothing is recorded. `can({verb})` answers
+/// `tasks.answer` from these, the checks the call itself meets first (FIX
+/// [UI-GATE-PREVIEW]).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the admission admit_word runs, over the same inputs"
+)]
+pub(in crate::task_verb) fn check_word(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+    writer: crate::WriteActor,
+    word: &TaskAskWord,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    now: u64,
+) -> Result<()> {
+    check_word_in_txn(
+        vault,
+        txn,
+        id,
+        group,
+        WordWriter::Authenticated(writer),
+        word,
+        owner,
+        now,
+    )
+    .map(drop)
+}
+
 enum WordWriter {
     Authenticated(crate::WriteActor),
     Link((EntityId, [u8; 32])),
+}
+
+/// What a word's checks settle before anything of it is recorded.
+enum CheckedWord {
+    /// The same word this writer gave before: its answer, as recorded.
+    Given(TaskAskAnswer),
+    /// A word not given before, with the facts its record keeps.
+    New(NewWord),
+}
+
+/// A new word's facts, as its checks read them.
+struct NewWord {
+    token_digest: Option<[u8; 32]>,
+    task: EntityId,
+    actor: EntityId,
+    person: EntityId,
+    source: TaskAskSource,
+    word_ref: EntityId,
+    actor_kind: u8,
+    result_kind: u8,
+    order: u64,
+    delegation_grant_ref: Option<String>,
 }
 
 #[expect(
@@ -71,6 +125,94 @@ fn admit_word_with_source(
     owner: Option<&crate::consent::AuthenticatedOwner>,
     now: u64,
 ) -> Result<TaskAskAnswer> {
+    let NewWord {
+        token_digest,
+        task,
+        actor,
+        person,
+        source,
+        word_ref,
+        actor_kind,
+        result_kind,
+        order,
+        delegation_grant_ref,
+    } = match check_word_in_txn(vault, txn, id, group, source, word, owner, now)? {
+        CheckedWord::Given(answer) => return Ok(answer),
+        CheckedWord::New(new) => new,
+    };
+    // The owner proof's credential chains, kept with the word (FIX 10693): a
+    // consult consent case refuses a word from its opener's own lineage. A
+    // chain that does not read leaves the word as it is, its lineage unknown.
+    // A person-tier proof's chains are not kept: that check judges the
+    // owner-proof words it was built for.
+    let lineage = owner
+        .filter(|owner| !owner.is_person_tier())
+        .map(|owner| owner.credential_lineage_in_txn(vault, &*txn));
+    let lineage_unread = matches!(lineage, Some(Err(_)));
+    let credential_lineage = lineage.and_then(Result::ok).unwrap_or_default();
+    let mut fact = AskAnswerFact {
+        group: id,
+        task,
+        actor,
+        actor_kind,
+        source,
+        word: word.clone(),
+        result_kind,
+        link_proof: None,
+        order,
+        delegation_grant_ref,
+        at: now,
+        credential_lineage,
+        lineage_unread,
+    };
+    if let Some(digest) = token_digest {
+        fact.link_proof = Some(super::link_proof::sign_link_word(
+            vault, txn, id, group, word_ref, &fact, digest,
+        )?);
+    }
+    put(vault, txn, word_ref, ANSWER, &fact, now)?;
+    vault
+        .batch_in()
+        .edge(&word_ref, crate::EdgeKind::About, &id, 1.0)
+        .apply(txn)?;
+    let answer = TaskAskAnswer::new(
+        task,
+        actor,
+        word.result_ref,
+        word_ref,
+        actor_kind,
+        result_kind,
+    );
+    if source == TaskAskSource::Companion && group.effective.what.commitment {
+        super::super::ask_soft_confirm::put_notice(
+            vault,
+            txn,
+            (id, person),
+            &answer,
+            word,
+            &group.effective,
+            now,
+        )?;
+    }
+    Ok(answer)
+}
+
+/// Every check a word meets before anything of it is recorded, read in
+/// `txn`; [`admit_word_with_source`] records what they settle.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one admission over the word, its writer and the owner proof"
+)]
+fn check_word_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+    source: WordWriter,
+    word: &TaskAskWord,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    now: u64,
+) -> Result<CheckedWord> {
     let (writer, token_digest) = match source {
         WordWriter::Authenticated(writer) => (writer, None),
         WordWriter::Link((friend, digest)) => (
@@ -109,29 +251,9 @@ fn admit_word_with_source(
     } else {
         TaskAskSource::Executor
     };
-    // An attendee ask's word is the authenticated owner's own, or nothing:
-    // refused here, before anything is recorded.
-    super::super::attendee_answer::guard_word(vault, txn, id, group, source, actor, word, owner)?;
-    super::super::training_offer_ask::guard_word(
-        vault, txn, id, group, source, actor, word, owner,
-    )?;
-    super::super::training_swap_ask::guard_word(vault, txn, id, group, source, actor, word, owner)?;
-    super::super::contribution_pair::guard_word(vault, txn, id, group, source, actor, word, owner)?;
-    if crate::office_body::is_live_edit_ask(&group.requested.intent_key) {
-        crate::office_body::guard_live_edit_word(
-            vault,
-            txn,
-            id,
-            &group.requested.intent_key,
-            source,
-            actor,
-            word,
-            owner,
-            super::super::ask_record::owns_revision(vault, txn, id, group)?,
-        )?;
-    }
-    super::super::comm_widen::guard_word(vault, txn, id, group, source, actor, word)?;
-    super::super::code_consent_word::guard_word(vault, txn, id, group, source, actor, word)?;
+    // A word on an ask that asks one party is that party's own, under its
+    // proof, or nothing: refused here, before anything is recorded.
+    super::super::ask_guard::admit_word_in(vault, txn, id, group, source, actor, word, owner)?;
     if word.confirmation.is_some() {
         if source != TaskAskSource::Human {
             return Err(invalid());
@@ -195,14 +317,14 @@ fn admit_word_with_source(
         {
             // The kinds the fact stored, not a re-read of a result that may
             // since be erased.
-            return Ok(TaskAskAnswer::new(
+            return Ok(CheckedWord::Given(TaskAskAnswer::new(
                 task,
                 actor,
                 word.result_ref,
                 word_ref,
                 existing.actor_kind,
                 existing.result_kind,
-            ));
+            )));
         }
         return Err(invalid());
     }
@@ -236,55 +358,16 @@ fn admit_word_with_source(
         .unwrap_or(0)
         .checked_add(1)
         .ok_or_else(invalid)?;
-    // The owner proof's credential chains, kept with the word (FIX 10693): a
-    // consult consent case refuses a word from its opener's own lineage. A
-    // chain that does not read leaves the word as it is, its lineage unknown.
-    let lineage = owner.map(|owner| owner.credential_lineage_in_txn(vault, &*txn));
-    let lineage_unread = matches!(lineage, Some(Err(_)));
-    let credential_lineage = lineage.and_then(Result::ok).unwrap_or_default();
-    let mut fact = AskAnswerFact {
-        group: id,
+    Ok(CheckedWord::New(NewWord {
+        token_digest,
         task,
         actor,
-        actor_kind,
+        person,
         source,
-        word: word.clone(),
-        result_kind,
-        link_proof: None,
-        order,
-        delegation_grant_ref,
-        at: now,
-        credential_lineage,
-        lineage_unread,
-    };
-    if let Some(digest) = token_digest {
-        fact.link_proof = Some(super::link_proof::sign_link_word(
-            vault, txn, id, group, word_ref, &fact, digest,
-        )?);
-    }
-    put(vault, txn, word_ref, ANSWER, &fact, now)?;
-    vault
-        .batch_in()
-        .edge(&word_ref, crate::EdgeKind::About, &id, 1.0)
-        .apply(txn)?;
-    let answer = TaskAskAnswer::new(
-        task,
-        actor,
-        word.result_ref,
         word_ref,
         actor_kind,
         result_kind,
-    );
-    if source == TaskAskSource::Companion && group.effective.what.commitment {
-        super::super::ask_soft_confirm::put_notice(
-            vault,
-            txn,
-            (id, person),
-            &answer,
-            word,
-            &group.effective,
-            now,
-        )?;
-    }
-    Ok(answer)
+        order,
+        delegation_grant_ref,
+    }))
 }

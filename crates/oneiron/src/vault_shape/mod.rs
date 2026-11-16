@@ -45,6 +45,8 @@ pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
 };
 pub use approval::ShapeApprovalDependencies;
+#[cfg(oneiron_test_support)]
+pub(crate) use approval::approval_dependencies_for_test;
 pub use card::ShapeCard;
 pub use channel::{
     ShapeChannelBinding, ShapeChannelCustody, ShapeChannelFulfillment, ShapeChannelProvision,
@@ -53,6 +55,8 @@ pub use channel::{
 pub use grant::ShapeGrantBound;
 pub use group::{ShapeInboxGroup, ShapeInboxMember};
 pub use member::{ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick};
+#[cfg(oneiron_test_support)]
+pub(crate) use plan::frontier_for_test;
 pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
 pub use reach::{
     REACH_LINE_MAX_CHANGES, REACH_LINE_NO_CHANGE, REACH_LINE_NONE, ShapePlanReach, ShapeReach,
@@ -68,13 +72,15 @@ pub use shared_setup::{ShapeLearningOutcome, ShapeLearningSetting};
 pub use skill::ShapeSkillSource;
 
 use crate::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Longest name, id or reference a row may carry, in bytes.
-pub const SHAPE_NAME_MAX_BYTES: usize = 256;
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::SHAPE_NAME_MAX_BYTES;
+#[doc(hidden)]
+use oneiron_verb_wire::vault_shape::invalid;
 
 /// An actor's approval ceiling as a seed states it: `auto` lands its writes,
 /// `proposed` holds them for review.
@@ -498,8 +504,4 @@ impl ShapePlanRequest {
             (seed, None) => Ok(seed.clone()),
         }
     }
-}
-
-fn invalid(message: impl Into<String>) -> Error {
-    Error::InvalidConfig(message.into())
 }

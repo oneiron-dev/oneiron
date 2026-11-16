@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::store::{
-    RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
-    RetrievalBlendWeights, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
-    RetrievalPolicyCandidate, RetrievalPolicyEvaluation, RetrievalPolicyPin,
-    RetrievalPolicyVerdict, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalState, RetrievalTrace, RetrievalTurn, RetrievalWeightRow,
+    RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
+    RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalPolicyCandidate,
+    RetrievalPolicyEvaluation, RetrievalPolicyPin, RetrievalPolicyVerdict, RetrievalRunId,
+    RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalState, RetrievalTrace, RetrievalTurn,
+    RetrievalWeightRow,
 };
 
 /// Default number of newest runs in an unbounded-by-caller diagnostic read.
@@ -18,29 +18,16 @@ pub const RETRIEVAL_RUNS_DEFAULT: usize = 100;
 
 pub use crate::retrieval_depth::RecallTelemetry;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetrievalRunsRequest {
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::retrieval::{
+    RetrievalPolicyDisposition, RetrievalPolicyPinRequest, RetrievalRoutingPin,
+    RetrievalRunsRequest, RetrievalTraceRequest, RetrievalTurnRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalRunRequest {
     pub run_id: RetrievalRunId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetrievalTurnRequest {
-    pub turn_id: [u8; 16],
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetrievalTraceRequest {
-    pub fork_hash: [u8; 32],
 }
 
 /// Explicit serving-run handles, never inferred from overlapping memories.
@@ -355,22 +342,6 @@ pub struct RetrievalPolicyAdmitRequest {
     pub config: RetrievalPolicyTrainRequest,
 }
 
-/// Pins one blend weight at `value`, or clears its pin when `value` is absent.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetrievalPolicyPinRequest {
-    pub signal: RetrievalBlendSignal,
-    #[serde(default)]
-    pub value: Option<f32>,
-}
-
-/// One model-manifest route the owner's manifest currently pins.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RetrievalRoutingPin {
-    pub slot: crate::llm::manifest::ModelSlot,
-    pub locality: crate::llm::ModelLocality,
-}
-
 /// The served retrieval policy as the receipts report it: active weights and
 /// their origins, owner pins, the learned posterior, and routing pins.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -384,14 +355,6 @@ pub struct RetrievalPolicyView {
     pub posterior_observations: usize,
     pub routing_manifest_digest: Option<String>,
     pub routing: Vec<RetrievalRoutingPin>,
-}
-
-/// Whether a declared update was served or left as an offer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RetrievalPolicyDisposition {
-    Applied,
-    Offered,
 }
 
 /// The outcome of one declared policy update: the trained candidate, whether
@@ -515,7 +478,8 @@ pub fn retrieval_policy_admit_as_owner(
     })
 }
 
-/// One declared update: train on the gated outcomes, admit only a
+/// One declared update: label the natural outcomes the user's later words
+/// earned (census L9-06), train on the gated outcomes, admit only a
 /// not-worse candidate (anything else stays an offer), and rebuild the
 /// learned action posterior from the same gated labels.
 pub fn retrieval_policy_update_as_owner(
@@ -524,6 +488,7 @@ pub fn retrieval_policy_update_as_owner(
     input: RetrievalPolicyTrainRequest,
 ) -> MemoryResult<RetrievalPolicyUpdateReceipt> {
     admitted(memory, owner)?;
+    memory.vault().produce_natural_retrieval_outcomes()?;
     let config = input.config();
     let candidate = memory.vault().train_retrieval_policy_candidate(config)?;
     let (disposition, reason) = if candidate.held_out.verdict == RetrievalPolicyVerdict::NotWorse {
