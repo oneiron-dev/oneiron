@@ -3,6 +3,7 @@
 use super::codec::{decode_bound_value, encode_bound_value};
 use super::contact_clearance::{CONTACT_DISCLOSURE_WIDEN_KIND, ContactDisclosureProposal};
 use super::effect::EffectDigest;
+use super::setting_keys::{WIDEN_MAX_OPEN_SECS, WIDEN_MEMBER_PROPOSALS};
 use super::support::{invalid_row, normalized_ref};
 use super::{
     AuthenticatedOwner, ConsentDomain, ConsentReceipt, GrantBound, bound_catastrophe_class,
@@ -40,6 +41,48 @@ pub const WIDEN_REJECTED: &str = "rejected";
 
 /// Domain of the effect digest a widen rejection's denial names.
 const WIDEN_REJECT_DIGEST_DOMAIN: &[u8] = b"oneiron/consent/widen-reject/v1";
+
+/// A member's filing while the owner's `consent.widen.member_proposals` is off, whether it was
+/// off at the door or turned off before the filing committed.
+const MEMBER_PROPOSALS_OFF: &str =
+    "member credential lacks widen proposal authority: consent.widen.member_proposals is off";
+
+/// How long a widen proposal may stay open for the owner's answer, in seconds: the value of the
+/// owner's key `consent.widen.max_open_secs`. It refuses zero and anything past
+/// [`Self::CEILING`].
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub(crate) struct WidenOpenSecs(u64);
+
+impl WidenOpenSecs {
+    /// The longest any proposal may stay open: thirty days. A stored row's own window is checked
+    /// against it, so a row filed under a longer window still decodes after the owner shortens
+    /// the key.
+    pub(crate) const CEILING: u64 = 30 * 24 * 3600;
+
+    /// One hour: the window unless the owner sets the key.
+    pub(crate) const fn one_hour() -> Self {
+        Self(3600)
+    }
+
+    pub(crate) const fn secs(self) -> u64 {
+        self.0
+    }
+}
+
+impl crate::setting::SettingValue for WidenOpenSecs {
+    fn check(self) -> Result<Self> {
+        if self.0 == 0 || self.0 > Self::CEILING {
+            return Err(Error::InvalidConfig(format!(
+                "consent.widen.max_open_secs is between 1 and {} seconds",
+                Self::CEILING
+            )));
+        }
+        Ok(self)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,7 +175,9 @@ pub(super) fn contact_disclosure_widen_delta(
     Ok(bytes)
 }
 impl Vault {
-    /// A verified agent may propose an action widening, but cannot grant it.
+    /// A verified agent, or a member's verified human credential while the owner's
+    /// `consent.widen.member_proposals` is on, may propose an action widening, but cannot grant
+    /// it.
     pub fn propose_action_widen(
         &self,
         credential: &VerifiedSlip,
@@ -143,7 +188,9 @@ impl Vault {
         self.propose_credential_widen(credential, WidenKind::Action, bound, owner_ref, expires_at)
     }
 
-    /// A verified agent may propose a disclosure widening, but cannot grant it.
+    /// A verified agent, or a member's verified human credential while the owner's
+    /// `consent.widen.member_proposals` is on, may propose a disclosure widening, but cannot
+    /// grant it.
     pub fn propose_disclosure_widen(
         &self,
         credential: &VerifiedSlip,
@@ -160,7 +207,9 @@ impl Vault {
         )
     }
 
-    /// A verified agent may propose an auto-confirm widening, but cannot grant it.
+    /// A verified agent, or a member's verified human credential while the owner's
+    /// `consent.widen.member_proposals` is on, may propose an auto-confirm widening, but cannot
+    /// grant it.
     pub fn propose_auto_confirm_widen(
         &self,
         credential: &VerifiedSlip,
@@ -194,18 +243,44 @@ impl Vault {
                 "single-use credential cannot file a widen proposal",
             )));
         }
-        if claims.actor_class.as_deref() != Some("agent") || !credential.allows_verb(kind.label()) {
+        // An agent's credential files; a member's human one files only while the owner's
+        // `consent.widen.member_proposals` is on (rechecked in the filing writer), and only in
+        // its holder's own hands: a slip handed to another key would file as the holder.
+        let proposer_class = match claims.actor_class.as_deref() {
+            Some("agent") => EdgeActorClass::Agent,
+            Some("human") if credential.is_transferred() => {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "transferred member credential cannot file a widen proposal",
+                )));
+            }
+            Some("human") if self.widen_member_proposals_on()? => EdgeActorClass::Human,
+            Some("human") => {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    MEMBER_PROPOSALS_OFF,
+                )));
+            }
+            _ => {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "agent credential lacks widen proposal authority",
+                )));
+            }
+        };
+        if !credential.allows_verb(kind.label()) {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                "agent credential lacks widen proposal authority",
+                if proposer_class == EdgeActorClass::Human {
+                    "member credential lacks widen proposal authority"
+                } else {
+                    "agent credential lacks widen proposal authority"
+                },
             )));
         }
-        let agent = crate::EntityId::from_hex(&claims.holder_ref).map_err(|_| {
+        let proposer = crate::EntityId::from_hex(&claims.holder_ref).map_err(|_| {
             Error::Gate(GateError::InvalidConsentBound(
                 "agent credential lacks entity binding",
             ))
         })?;
         self.propose_widen_with_credential(
-            WriteActor::new(agent, EdgeActorClass::Agent),
+            WriteActor::new(proposer, proposer_class),
             credential,
             kind,
             bound,
@@ -223,9 +298,12 @@ impl Vault {
         owner_ref: &str,
         expires_at: u64,
     ) -> Result<WidenProposal> {
-        if actor.actor_class() != EdgeActorClass::Agent {
+        if !matches!(
+            actor.actor_class(),
+            EdgeActorClass::Agent | EdgeActorClass::Human
+        ) {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                "widen proposer must be an agent",
+                "widen proposer must be an agent or a member",
             )));
         }
         if bound_catastrophe_class(&bound).is_some() {
@@ -240,6 +318,16 @@ impl Vault {
             if !self.capability_slip_is_live_in_txn(&*txn, credential)? {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
                     "agent credential is no longer live",
+                )));
+            }
+            // The owner may have turned member proposals off since the check above.
+            if actor.actor_class() == EdgeActorClass::Human
+                && !WIDEN_MEMBER_PROPOSALS
+                    .read_in_txn(self, txn, &[], None)?
+                    .value
+            {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    MEMBER_PROPOSALS_OFF,
                 )));
             }
             let raw = crate::ports::EntityStoreRead::port_entity_raw(
@@ -260,6 +348,24 @@ impl Vault {
                 vec![credential.claims().slip_id],
             )
         })
+    }
+
+    /// Whether the owner's `consent.widen.member_proposals` is on, as the last commit holds it.
+    fn widen_member_proposals_on(&self) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(WIDEN_MEMBER_PROPOSALS
+            .read_in_txn(self, &txn, &[], None)?
+            .value)
+    }
+
+    /// The owner's `consent.widen.max_open_secs` as the last commit holds it: the longest a
+    /// proposal filed now may stay open, for a filer that sets its own expiry to the window.
+    pub(crate) fn widen_open_secs(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        Ok(WIDEN_MAX_OPEN_SECS
+            .read_in_txn(self, &txn, &[], None)?
+            .value
+            .secs())
     }
 
     /// Files one contact-disclosure offer, frozen by the clearance door, on
@@ -299,9 +405,13 @@ impl Vault {
         opener_lineage: Vec<[u8; 32]>,
     ) -> Result<WidenProposal> {
         let now = self.store.clock.now_recorded_at();
-        if expires_at <= now || expires_at - now > 3600 {
+        let open_secs = WIDEN_MAX_OPEN_SECS
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .secs();
+        if expires_at <= now || expires_at - now > open_secs {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                "widen proposal expiry must be within one hour",
+                "widen proposal expiry must be within the owner's open window (one hour unless set)",
             )));
         }
         let owner_ref = normalized_ref("widen owner", owner_ref.to_owned())?;

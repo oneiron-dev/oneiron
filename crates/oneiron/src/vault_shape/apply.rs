@@ -39,10 +39,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// How long a grant an actor's apply files waits in the owner's widen inbox:
-/// the inbox's own ceiling. The item itself waits in the journal past it.
-const SHAPE_GRANT_PROPOSAL_SECS: u64 = 3600;
-
 /// The widen inbox's verdict on a filing the owner accepted, minting it.
 const SHAPE_FILING_ACCEPTED: &str = "accepted";
 
@@ -577,7 +573,10 @@ impl Vault {
         };
         let filed = bound.bound().and_then(|grant| {
             let owner_ref = self.shape_filing_owner_ref()?;
-            let expires_at = self.store.clock.peek_recorded_at() + SHAPE_GRANT_PROPOSAL_SECS;
+            // The grant waits in the owner's widen inbox as long as the inbox admits: the
+            // owner's `consent.widen.max_open_secs` (one hour unless set). The item itself
+            // waits in the journal past it.
+            let expires_at = self.store.clock.peek_recorded_at() + self.widen_open_secs()?;
             if bound.is_action() {
                 self.propose_action_widen(credential, grant, &owner_ref, expires_at)
             } else {

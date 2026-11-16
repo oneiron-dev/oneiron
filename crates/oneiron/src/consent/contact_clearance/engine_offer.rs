@@ -11,9 +11,6 @@ const ENGINE_OFFER_FILER: &[u8] = b"oneiron:contact-disclosure-engine-filer:v1";
 const PERSON_ENTRY_OFFER_PURPOSE: &str =
     "A person entered this room for the first time: what may they see?";
 
-/// An entry offer's term: the longest a widen proposal may stay open.
-const PERSON_ENTRY_OFFER_TERM_SECS: u64 = 3600;
-
 impl Vault {
     /// [`Self::file_person_entry_disclosure_offer_in_txn`] in its own writer,
     /// for an entry door or host that records the entry first.
@@ -97,7 +94,13 @@ impl Vault {
             EntityId::derive(ENGINE_OFFER_FILER, &[])?,
             EdgeActorClass::System,
         );
-        let expires_at = self.store.clock.now_recorded_at() + PERSON_ENTRY_OFFER_TERM_SECS;
+        // An entry offer's term: the longest a widen proposal may stay open, the owner's
+        // `consent.widen.max_open_secs` (one hour unless set).
+        let term_secs = crate::consent::setting_keys::WIDEN_MAX_OPEN_SECS
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .secs();
+        let expires_at = self.store.clock.now_recorded_at() + term_secs;
         self.file_contact_disclosure_offer_in_txn(
             txn,
             filer,
