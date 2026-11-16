@@ -1,11 +1,22 @@
 //! Moved from `crates/oneiron/src/memory/result_facet.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
+
 /// One of a result's `more` facets: a deterministic read of its body.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("result.facet")]
 pub enum ResultFacet {
     /// A range of the body, by bytes or by lines.
     Slice,
@@ -25,16 +36,5 @@ impl ResultFacet {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|facet| facet.as_str() == name)
-    }
-
-    /// The facet's name, as a program calls it.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Slice => "slice",
-            Self::Search => "search",
-            Self::Query => "query",
-            Self::Chunks => "chunks",
-        }
     }
 }
