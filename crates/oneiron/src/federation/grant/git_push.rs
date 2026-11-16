@@ -73,11 +73,11 @@ pub(super) fn body_entries(grant: &FederationGrant) -> Vec<(Value, Value)> {
 pub(super) fn decode_body_entries(
     entries: &[(Value, Value)],
 ) -> Result<(FederationGrantKind, Option<GitPushBounds>)> {
-    let kind = optional_value(entries, KEY_GRANT_KIND)
+    let kind = optional_value(entries, KEY_GRANT_KIND)?
         .map(|value| value.as_str().ok_or_else(invalid_grant))
         .transpose()?;
     let kind = FederationGrantKind::parse(kind).ok_or_else(invalid_grant)?;
-    let bounds = optional_value(entries, KEY_GIT_PUSH_BOUNDS)
+    let bounds = optional_value(entries, KEY_GIT_PUSH_BOUNDS)?
         .map(|value| decode_git_push_bounds_value(value).ok_or_else(invalid_grant))
         .transpose()?;
     Ok((kind, bounds))
