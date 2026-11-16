@@ -9,34 +9,36 @@
 //! sends once over verified TLS and strips the key from the reply. A refused
 //! or unreachable call never reads the key.
 //!
-//! A streamed chat call is refused before its permit starts: the broker
-//! buffers and strips whole chat replies. A `key_secret` provider's media
-//! calls go through the same broker, call by call
-//! ([`super::broker_media`]).
+//! A streamed chat call goes as the wire's event request through the shape's
+//! event row (Gemini's by its `streamGenerateContent` endpoint and `alt=sse`),
+//! and its events come back as the broker clears them of the key
+//! ([`super::broker_stream`]). A `key_secret` provider's media calls go
+//! through the same broker, call by call ([`super::broker_media`]).
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use oneiron::llm::{BrokerIsolation, CacheDigest, SingleRouteBackend};
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError,
-    LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult, LlmStreamResult, ModelId,
-    RetryableLlmError, UnsupportedCapability, Vault,
+    LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamResult, ModelId,
+    RetryableLlmError, Vault,
 };
 use oneiron_broker::{
     BrokerClient, BrokerError, CallHeader, ChildBroker, Failure, Isolation, Outcome, Refusal, Shape,
 };
 use oneiron_llm::anthropic::{
-    AnthropicMessagesConfig, build_anthropic_messages_request, classify_anthropic_status,
-    parse_anthropic_messages_response,
+    AnthropicMessagesConfig, AnthropicMessagesLlmStream, build_anthropic_messages_request,
+    classify_anthropic_status, parse_anthropic_messages_response,
 };
 use oneiron_llm::gemini::{
-    build_request as build_gemini_chat_request, classify_status as classify_gemini_status,
-    parse_response as parse_gemini_chat_response,
+    GeminiEventStream, build_request as build_gemini_chat_request,
+    classify_status as classify_gemini_status, parse_response as parse_gemini_chat_response,
 };
 use oneiron_llm::openai_compat::{
-    OpenAiCompatConfig, build_openai_chat_request, classify_openai_status,
+    OpenAiCompatConfig, OpenAiCompatLlmStream, build_openai_chat_request, classify_openai_status,
     parse_openai_chat_response,
 };
 use serde_json::Value as JsonValue;
@@ -118,7 +120,7 @@ pub(super) struct BrokerBackend {
     prefix: String,
     /// The provider's extra headers, names lowercase.
     headers: BTreeMap<String, String>,
-    /// The provider's models, none of them streaming.
+    /// The provider's models, as configured.
     catalog: BTreeMap<ModelId, LlmCatalogEntry>,
     secret: String,
     client: BrokerClient,
@@ -210,12 +212,7 @@ pub(super) fn broker_backend(
     let mut prefix = url.path().trim_end_matches('/').to_owned();
     let catalog: BTreeMap<ModelId, LlmCatalogEntry> = catalog
         .into_iter()
-        .map(|mut entry| {
-            entry
-                .capabilities
-                .retain(|capability| *capability != LlmCapability::Streaming);
-            (entry.model.clone(), entry)
-        })
+        .map(|entry| (entry.model.clone(), entry))
         .collect();
     let rows = catalog.values().cloned();
     let wire = match provider.kind {
@@ -282,19 +279,17 @@ impl BrokerBackend {
 
     /// The call frame's header and the exact body bytes it carries, checked
     /// as the broker will check them. `call` is the broker's call id; the
-    /// digest does not cover it.
+    /// digest does not cover it. `stream` picks the event request and its
+    /// event shape.
     fn build(
         &self,
         request: &LlmRequest,
         stream: bool,
         call: &str,
     ) -> LlmResult<(CallHeader, Vec<u8>)> {
-        if stream {
-            return Err(no_streaming(&request.model));
-        }
-        let (shape, path, wire_headers, mut body) = match &self.wire {
+        let (mut shape, path, wire_headers, mut body) = match &self.wire {
             Wire::OpenAi(config) => {
-                let wire = build_openai_chat_request(config, request, false)?;
+                let wire = build_openai_chat_request(config, request, stream)?;
                 let shape = if wire.path == "/chat/completions" {
                     Shape::OpenAiChatUnversioned
                 } else {
@@ -303,7 +298,7 @@ impl BrokerBackend {
                 (shape, wire.path, wire.headers, wire.body)
             }
             Wire::Anthropic(config) => {
-                let wire = build_anthropic_messages_request(config, request, false)?;
+                let wire = build_anthropic_messages_request(config, request, stream)?;
                 (Shape::AnthropicMessages, wire.path, wire.headers, wire.body)
             }
             Wire::Gemini => {
@@ -311,10 +306,13 @@ impl BrokerBackend {
                     .catalog
                     .get(&request.model)
                     .ok_or(FatalLlmError::InvalidRequest)?;
-                let wire = build_gemini_chat_request(entry, request, false)?;
+                let wire = build_gemini_chat_request(entry, request, stream)?;
                 (Shape::GeminiGenerate, wire.path, BTreeMap::new(), wire.body)
             }
         };
+        if stream {
+            shape = shape.with_events().ok_or(FatalLlmError::InvalidRequest)?;
+        }
         match &self.wire {
             Wire::Gemini => {
                 if let Some(generation) = body.get_mut("generationConfig") {
@@ -471,6 +469,59 @@ impl BrokerBackend {
             }
         }
     }
+
+    /// Opens one streamed chat call through the broker's event shape: the
+    /// exact event bytes built first, the permit bound to their digest, the
+    /// key read at the door only once the broker is reached, and the events
+    /// read as the broker clears them of the key. A refused or failed call
+    /// is an error before any event, as for the door.
+    async fn open_stream<'a>(
+        &'a self,
+        header: CallHeader,
+        body: Vec<u8>,
+        lease: &'a BudgetLease,
+        model: ModelId,
+        execution: Option<CacheDigest>,
+    ) -> LlmResult<LlmStream<'a>> {
+        let gated = lease.has_dispatch_release().then_some(lease);
+        let reply = open_with_key_dispatch_checked(
+            &self.client,
+            &self.keys,
+            &self.secret,
+            &header,
+            &body,
+            gated,
+        )
+        .await?;
+        let (status, headers) = answered(reply.outcome().clone())?;
+        let events = super::broker_stream::sse_items(reply, status, headers, gated);
+        let wire_model = header.wire_model;
+        match &self.wire {
+            Wire::OpenAi(_) => {
+                let inference = super::openai::InferenceUsage::new(lease, Some(model.clone()));
+                let frames = super::openai::chat_frames(
+                    super::openai::Answering::Brokered,
+                    Some(wire_model),
+                    execution,
+                    None,
+                    None,
+                    inference,
+                    events,
+                );
+                Ok(LlmStream::new(
+                    OpenAiCompatLlmStream::new(frames).bound_to(model),
+                ))
+            }
+            Wire::Anthropic(_) => {
+                let frames = super::anthropic::messages_frames(events, None);
+                Ok(LlmStream::new(AnthropicMessagesLlmStream::new(frames)))
+            }
+            Wire::Gemini => {
+                let frames = super::gemini_chat::generate_frames(events, None);
+                Ok(LlmStream::new(GeminiEventStream::new(frames)))
+            }
+        }
+    }
 }
 
 /// Connects to the broker at `client`, reads the key `secret` at the door,
@@ -553,6 +604,33 @@ pub(super) async fn connect_with_key(
     secret: &str,
 ) -> LlmResult<(oneiron_broker::BrokerConnection, Zeroizing<Vec<u8>>)> {
     connect_with_key_released(client, keys, secret, None, None).await
+}
+
+/// Opens one streaming call with its key read at the door, leaving the reply
+/// for the caller's incremental reader. Unlike [`open_with_key_released`],
+/// which opens without the per-send checks, this one checks the lease's
+/// dispatch release after the key is read and before each physical send,
+/// the gzip plain resend included, as [`BrokerBackend::send`] does.
+async fn open_with_key_dispatch_checked(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    lease: Option<&BudgetLease>,
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    let (connection, key) = connect_with_key_released(client, keys, secret, None, None).await?;
+    if let Some(lease) = lease {
+        lease.check_dispatch_release()?;
+    }
+    let release = || super::broker_stream::physical_send(lease);
+    connection
+        .open_released(header, body, key, &release)
+        .await
+        .map_err(|error| match error {
+            oneiron_broker::DispatchError::Broker(error) => broker_error(error),
+            oneiron_broker::DispatchError::Release(error) => error,
+        })
 }
 
 async fn connect_with_key_released(
@@ -730,15 +808,6 @@ pub(super) fn join(prefix: &str, path: &str) -> String {
     }
 }
 
-fn no_streaming(model: &ModelId) -> LlmError {
-    FatalLlmError::Unsupported(UnsupportedCapability {
-        capability: LlmCapability::Streaming,
-        model: Some(model.clone()),
-        reason: Some("the credential broker sends whole replies only".to_owned()),
-    })
-    .into()
-}
-
 pub(crate) fn broker_error(error: BrokerError) -> LlmError {
     match error {
         // Nothing was written: no key read, no send.
@@ -830,7 +899,19 @@ impl LlmBackend for BrokerBackend {
         })
     }
 
-    fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        Err(no_streaming(&request.model))
+    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        let (header, body) = self.build(&request, true, lease.id())?;
+        let execution = serde_json::from_slice::<JsonValue>(&body)
+            .ok()
+            .and_then(|sent| execution_mode(&sent));
+        let opened = self.open_stream(header, body, lease, request.model, execution);
+        Ok(LlmStream::new(futures_util::stream::once(opened).flat_map(
+            |opened| match opened {
+                Ok(stream) => stream.left_stream(),
+                Err(error) => {
+                    futures_util::stream::once(std::future::ready(Err(error))).right_stream()
+                }
+            },
+        )))
     }
 }
