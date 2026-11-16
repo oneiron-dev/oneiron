@@ -103,14 +103,11 @@ pub(crate) async fn vault_affect_claims_consolidate(
     (answer, rows)
 }
 
-use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::memory::coping_doors::{
     CopingAggregate, CopingAggregateRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest,
     CopingOutcomeUpdateRequest,
 };
-use oneiron::memory::wellness_doors::{
-    WellnessPersonRequest, WellnessPolicyConfigureRequest, WellnessProjection,
-};
+use oneiron::memory::wellness_doors::{WellnessPersonRequest, WellnessProjection};
 
 pub(crate) async fn vault_affect_coping_record(
     server: &Arc<SyncServer>,
@@ -174,50 +171,6 @@ pub(crate) async fn vault_affect_coping_aggregate(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.coping_aggregate_as_owner(&owner, &input)
-    })
-    .await
-}
-
-pub(crate) async fn vault_affect_wellness_policy_get(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    _input: EmptyRequest,
-) -> Listed<Option<ActionModePolicy>> {
-    const VERB: &str = "vault.affect.wellness.policy.get";
-    let admitted = || -> MemoryResult<_> {
-        let owner = owner_proof(auth, server, VERB)?;
-        let caller =
-            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        Ok((owner, caller))
-    };
-    let (owner, caller) = match admitted() {
-        Ok(admitted) => admitted,
-        Err(error) => return refused(error),
-    };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.wellness_policy_as_owner(&owner)
-    })
-    .await
-}
-
-pub(crate) async fn vault_affect_wellness_policy_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: WellnessPolicyConfigureRequest,
-) -> Listed<Option<ActionModePolicy>> {
-    const VERB: &str = "vault.affect.wellness.policy.configure";
-    let admitted = || -> MemoryResult<_> {
-        let owner = owner_proof(auth, server, VERB)?;
-        let caller =
-            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        Ok((owner, caller))
-    };
-    let (owner, caller) = match admitted() {
-        Ok(admitted) => admitted,
-        Err(error) => return refused(error),
-    };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.wellness_policy_configure_as_owner(&owner, &input)
     })
     .await
 }
