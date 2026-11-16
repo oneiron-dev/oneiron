@@ -294,7 +294,7 @@ pub use plugin_sections::{
     PluginSectionPackRow, PluginSectionPendingRow, PluginSectionProposeRequest,
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
-    PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
+    PluginSectionsView,
 };
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
