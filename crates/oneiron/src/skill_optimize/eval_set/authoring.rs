@@ -8,10 +8,11 @@
 //! cases and cohorts with what the cohorts served. That inventory is metadata
 //! only: ids, times, kinds, purposes and counts, never a case's text, trace or
 //! output. The skill answers with one plan: a purpose for each new source
-//! group, the candidates to keep as cases, the cuts to make and the cohorts to
-//! retire. Fixed code applies it in order, through the eval-set doors, which
-//! keep their own refusals: families for whole groups first, then cases and
-//! their labels, then each cut with its audit, then retirements.
+//! group, the candidates to keep as cases, the repairs to seed, the cuts to
+//! make and the cohorts to retire. Fixed code applies it in order, through
+//! the eval-set doors, which keep their own refusals: families for whole
+//! groups first, then cases and their fixed-code labels, then repair seeds,
+//! then each cut with its audit, then retirements.
 //!
 //! - **Lineage is fixed code's.** A candidate's roots are its receipt, the
 //!   amendments the host grounded on it and the TURNs their proposals came
@@ -38,7 +39,8 @@ use sha2::{Digest, Sha256};
 
 use super::cohort::{cohorts_in_txn, exposure_in_txn};
 use super::{
-    EvalCase, EvalSeat, FamilyPurpose, SourceFamily, family_in_txn, invalid, root_family_in_txn,
+    EvalCase, EvalRepairSeedRefusal, EvalSeat, FamilyPurpose, SourceFamily, family_in_txn, invalid,
+    root_family_in_txn,
 };
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -47,8 +49,8 @@ use crate::receipt::{MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptR
 
 pub use apply::{
     CaseDecision, CutDecision, EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip,
-    EvalCohortDecision, EvalCohortSetup, FamilyDecision, apply_eval_authoring_plan,
-    setup_eval_cohorts,
+    EvalCohortDecision, EvalCohortSetup, FamilyDecision, RepairSeedDecision,
+    apply_eval_authoring_plan, setup_eval_cohorts,
 };
 pub use executions::{
     EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringCaller,
@@ -121,6 +123,57 @@ pub struct SeatInventory {
     pub uncut: Vec<UncutFamily>,
 }
 
+/// Where one stored repair seed stands, without its arms or case.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalRepairSeedStanding {
+    Pending,
+    AwaitingLabel,
+    Confirmed,
+    Refused { reason: EvalRepairSeedRefusal },
+}
+
+/// One stored seed of a repair row's task, on one seat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvalRepairSeedSummary {
+    pub seat: EvalSeat,
+    pub standing: EvalRepairSeedStanding,
+}
+
+/// One task contract on a linked repair: a repair the skill may seed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvalRepairCandidate {
+    pub id: String,
+    pub claim_ref: String,
+    pub source_hash: String,
+    pub outcome_ordinal: usize,
+    pub task_pointer: String,
+    pub app_id: String,
+    /// When the capture was made.
+    pub at: u64,
+    /// Every stored seed of this task, one per seat that holds one.
+    pub seeds: Vec<EvalRepairSeedSummary>,
+    /// The capture's owner, whose scoped read proposes the seed. Fixed
+    /// code's, as a source group's roots are: out of the serialized
+    /// inventory, so the skill decides on metadata only.
+    #[serde(skip)]
+    pub(crate) owner: Option<EntityId>,
+}
+
+/// One open skill revision against its predecessor: the old and candidate
+/// arms a repair seed compares, as content-hash hex.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvalSkillPair {
+    pub id: String,
+    pub skill: EntityId,
+    /// The revision's skill id.
+    pub name: String,
+    /// The revision's content hash.
+    pub candidate: String,
+    /// Its predecessor's content hash.
+    pub old: String,
+}
+
 /// What the eval-authoring skill reads: metadata only, never a case's text,
 /// trace, output or success check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -133,12 +186,19 @@ pub struct EvalAuthoringInventory {
     pub groups: Vec<EvalSourceGroup>,
     pub candidates: Vec<EvalCandidate>,
     pub seats: Vec<SeatInventory>,
+    /// The task contracts on the window's linked repairs.
+    #[serde(default)]
+    pub repairs: Vec<EvalRepairCandidate>,
+    /// The open skill revisions with a hashed predecessor.
+    #[serde(default)]
+    pub skill_pairs: Vec<EvalSkillPair>,
 }
 
 impl EvalAuthoringInventory {
     /// Whether the pass has anything for the skill: a labelled candidate with
     /// no case, a label a case lacks, a sealed family a past window could cut,
-    /// or a live non-reference cohort that has served.
+    /// a live non-reference cohort that has served, or a repair with no seed
+    /// at all while a skill pair waits.
     #[must_use]
     pub fn has_work(&self) -> bool {
         let blocked: BTreeSet<&str> = self
@@ -164,7 +224,9 @@ impl EvalAuthoringInventory {
             .iter()
             .flat_map(|seat| &seat.cohorts)
             .any(|cohort| !cohort.retired && !cohort.reference && cohort.exposure.served());
-        cases || cuts || retirements
+        let repair_seeds = !self.skill_pairs.is_empty()
+            && self.repairs.iter().any(|repair| repair.seeds.is_empty());
+        cases || cuts || retirements || repair_seeds
     }
 }
 
@@ -383,13 +445,19 @@ fn inventory_digest(inventory: &EvalAuthoringInventory) -> Result<String> {
             hash.update(root.as_bytes());
         }
     }
+    if !(inventory.repairs.is_empty() && inventory.skill_pairs.is_empty()) {
+        let extra = rmp_serde::to_vec_named(&(&inventory.repairs, &inventory.skill_pairs))
+            .map_err(|_| invalid("eval authoring inventory encoding failed"))?;
+        hash.update(extra);
+    }
     Ok(bytes_to_hex_lower(&hash.finalize()))
 }
 
 /// Reads the inventory the eval-authoring skill decides on, as of `now`: the
 /// window's pack receipts that record a seat, at most
 /// `EVAL_AUTHORING_MAX_CANDIDATES` of them, the newest first, grouped by
-/// lineage, and each seat's set.
+/// lineage, each seat's set, the window's linked repairs with their seeds,
+/// and the open skill revisions.
 /// # Errors
 /// Unreadable rows, or storage errors.
 pub fn eval_authoring_inventory(vault: &Vault, now: u64) -> Result<EvalAuthoringInventory> {

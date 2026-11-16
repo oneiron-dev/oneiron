@@ -459,6 +459,7 @@ fn the_skills_own_retirement_still_names_its_attempt() {
             retire: true,
             reason: "the skill's call".to_owned(),
         }],
+        repair_seeds: Vec::new(),
     };
     let skill = eval_authoring_skill_id().expect("eval-authoring skill id");
     let report = fixture

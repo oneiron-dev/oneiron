@@ -58,6 +58,8 @@ pub struct EvalRepairTask {
     pub repair_ordinal: usize,
     pub source_rows: Vec<EntityId>,
     pub task_hash: [u8; 32],
+    /// The task contract's key, whatever its source ([`task_contract_key`]).
+    pub contract_key: [u8; 32],
     input: Value,
     /// The rebuilt state a tool world's calls start from.
     initial_state: Value,
@@ -237,6 +239,17 @@ fn state_leaks(shown: &Value, state: &Value) -> bool {
 }
 
 /// RFC 6901 syntax: empty, or `/`-led with every `~` escaped as `~0` or `~1`.
+/// The key of a task contract, whatever it was read from: the
+/// [`ContentHash`] of its RFC 8785 canonical JSON. Neither the order of an
+/// object's keys nor the capture, outcome, pointer or seat changes it, so one
+/// contract takes one seed in the vault (RULING UNBUILT-P05E-CONTRACT-ALIAS =
+/// A). A reworded contract is another contract.
+pub(super) fn task_contract_key(spec: &EvalRepairTaskSpec) -> Result<[u8; 32]> {
+    let bytes = serde_json_canonicalizer::to_vec(spec)
+        .map_err(|_| Error::InvalidClaimBody("Repair task contract encoding failed"))?;
+    Ok(ContentHash::of(&bytes).into_bytes())
+}
+
 fn pointer_is_valid(pointer: &str) -> bool {
     (pointer.is_empty() || pointer.starts_with('/'))
         && !pointer
@@ -431,6 +444,7 @@ impl Memory<'_> {
         let spec: EvalRepairTaskSpec =
             serde_json::from_value(at_pointer(failure.raw(), &source.task_pointer)?.clone())
                 .map_err(|_| Error::InvalidClaimBody("invalid Repair task contract"))?;
+        let contract_key = task_contract_key(&spec)?;
         // Tools outside the world's declared set are refused (ruling
         // L1-20-TOOLWORLD = B); a text-response world declares none.
         let tools = offered_tools(&spec)?;
@@ -504,6 +518,7 @@ impl Memory<'_> {
                 repair_ordinal,
                 source_rows: vec![EntityId::from_hex(&view.claim_ref)?],
                 task_hash: *blake3::hash(&bytes).as_bytes(),
+                contract_key,
                 input,
                 initial_state: spec.initial_state,
                 tools,

@@ -801,7 +801,7 @@ pub(super) fn require_open_optimizer_proposal(record: &SkillRecord) -> Result<()
     Ok(())
 }
 
-pub(super) fn target_of(proposal: &SkillRecord) -> Result<EntityId> {
+pub(crate) fn target_of(proposal: &SkillRecord) -> Result<EntityId> {
     provenance_str(proposal, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY)
         .and_then(|hex| EntityId::from_hex(&hex).ok())
         .ok_or(invalid(

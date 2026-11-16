@@ -1,6 +1,6 @@
 //! Owner-registered CUSTOM field projections. Payloads and IDs remain app reports.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -80,10 +80,94 @@ pub(super) fn validate_mappings(mappings: &[AgUiCustomMapping]) -> Result<()> {
     Ok(())
 }
 
+/// A JSON pointer's reference tokens, unescaped once as [`Value::pointer`]
+/// unescapes them (RFC 6901): the empty pointer is the whole event, and one
+/// that does not start with `/` names nothing.
+fn pointer_tokens(pointer: &str) -> Option<Vec<String>> {
+    if pointer.is_empty() {
+        return Some(Vec::new());
+    }
+    if !pointer.starts_with('/') {
+        return None;
+    }
+    Some(
+        pointer
+            .split('/')
+            .skip(1)
+            .map(|token| token.replace("~1", "/").replace("~0", "~"))
+            .collect(),
+    )
+}
+
+/// An array index token as [`Value::pointer`] reads one: no sign, and no
+/// leading zero.
+fn array_index(token: &str) -> Option<usize> {
+    if token.starts_with('+') || (token.starts_with('0') && token.len() != 1) {
+        return None;
+    }
+    token.parse().ok()
+}
+
+/// [`Value::pointer`] over tokens [`pointer_tokens`] unescaped once. No key
+/// or index of an event is longer than the event's own line, so a longer
+/// token misses at once: a lookup costs at most the event's own length,
+/// never the pointer's at every event.
+fn resolve<'e>(event: &'e AgUiDecodedEvent, tokens: &[String]) -> Option<&'e Value> {
+    let line = event.raw_text().len();
+    tokens.iter().try_fold(event.raw(), |target, token| {
+        if token.len() > line {
+            return None;
+        }
+        match target {
+            Value::Object(map) => map.get(token.as_str()),
+            Value::Array(list) => array_index(token).and_then(|index| list.get(index)),
+            _ => None,
+        }
+    })
+}
+
+/// A mapping's pointers, each unescaped once for all of a capture's events.
+struct MappingPointers {
+    id: Option<Vec<String>>,
+    thread_id: Option<Vec<String>>,
+    run_id: Option<Vec<String>>,
+    tool_call_id: Option<Vec<String>>,
+    failure_id: Option<Vec<String>>,
+    repair_id: Option<Vec<String>>,
+    outcome: Option<Vec<String>>,
+}
+
+impl MappingPointers {
+    fn new(mapping: &AgUiCustomMapping) -> Self {
+        let tokens = |pointer: &Option<String>| pointer.as_deref().and_then(pointer_tokens);
+        Self {
+            id: tokens(&mapping.id),
+            thread_id: tokens(&mapping.thread_id),
+            run_id: tokens(&mapping.run_id),
+            tool_call_id: tokens(&mapping.tool_call_id),
+            failure_id: tokens(&mapping.failure_id),
+            repair_id: tokens(&mapping.repair_id),
+            outcome: tokens(&mapping.outcome),
+        }
+    }
+}
+
+/// Each CUSTOM event that a mapping names, projected by that mapping. The
+/// mappings are looked up by name from one index, with their pointers
+/// unescaped once, so the projection takes time linear in the events and
+/// mappings, whatever a pointer's length; a name's first mapping wins, as
+/// [`validate_mappings`] keeps names unique.
 pub(super) fn observations(
     events: &[AgUiDecodedEvent],
     mappings: &[AgUiCustomMapping],
 ) -> Vec<AgUiAppObservation> {
+    let mut by_name: HashMap<&str, (&AgUiCustomMapping, MappingPointers)> =
+        HashMap::with_capacity(mappings.len());
+    for mapping in mappings {
+        by_name
+            .entry(mapping.name.as_str())
+            .or_insert_with(|| (mapping, MappingPointers::new(mapping)));
+    }
     events
         .iter()
         .enumerate()
@@ -92,11 +176,11 @@ pub(super) fn observations(
                 return None;
             }
             let name = event.raw().get("name")?.as_str()?;
-            let mapping = mappings.iter().find(|mapping| mapping.name == name)?;
-            let string = |pointer: &Option<String>| {
-                pointer
-                    .as_ref()
-                    .and_then(|pointer| event.raw().pointer(pointer))
+            let (mapping, pointers) = by_name.get(name)?;
+            let string = |tokens: &Option<Vec<String>>| {
+                tokens
+                    .as_deref()
+                    .and_then(|tokens| resolve(event, tokens))
                     .and_then(Value::as_str)
                     .filter(|value| !value.is_empty())
                     .map(str::to_owned)
@@ -105,16 +189,16 @@ pub(super) fn observations(
                 ordinal,
                 name: name.to_owned(),
                 kind: mapping.kind,
-                id: string(&mapping.id),
-                thread_id: string(&mapping.thread_id),
-                run_id: string(&mapping.run_id),
-                tool_call_id: string(&mapping.tool_call_id),
-                failure_id: string(&mapping.failure_id),
-                repair_id: string(&mapping.repair_id),
-                outcome: mapping
+                id: string(&pointers.id),
+                thread_id: string(&pointers.thread_id),
+                run_id: string(&pointers.run_id),
+                tool_call_id: string(&pointers.tool_call_id),
+                failure_id: string(&pointers.failure_id),
+                repair_id: string(&pointers.repair_id),
+                outcome: pointers
                     .outcome
-                    .as_ref()
-                    .and_then(|pointer| event.raw().pointer(pointer))
+                    .as_deref()
+                    .and_then(|tokens| resolve(event, tokens))
                     .filter(|value| !value.is_null())
                     .cloned(),
             })
@@ -122,46 +206,101 @@ pub(super) fn observations(
         .collect()
 }
 
-fn same_namespace(left: &AgUiAppObservation, right: &AgUiAppObservation) -> bool {
-    left.thread_id.is_some()
-        && left.run_id.is_some()
-        && left.thread_id == right.thread_id
-        && left.run_id == right.run_id
-        && left.tool_call_id == right.tool_call_id
+/// A row's id and namespace: its thread, run and tool call. Rows match a
+/// link only in the namespace of the row it is resolved from, which must
+/// name a thread and a run.
+type NamespacedId<'a> = (&'a str, &'a str, &'a str, Option<&'a str>);
+
+/// The rows of one capture by id, built in one pass, so every link of the
+/// capture resolves in time linear in its rows, never by a scan of them all
+/// per link.
+struct ObservationIndex<'a> {
+    observations: &'a [AgUiAppObservation],
+    /// The first row with each id in each namespace, and whether a second
+    /// one follows it.
+    by_namespace: HashMap<NamespacedId<'a>, (usize, bool)>,
+    /// The kinds of the rows with each id, in any namespace.
+    kinds_by_id: HashMap<&'a str, Vec<AgUiObservationKind>>,
 }
 
-fn resolve<'a>(
-    observations: &'a [AgUiAppObservation],
-    from: &AgUiAppObservation,
-    id: Option<&str>,
-    kind: AgUiObservationKind,
-) -> std::result::Result<&'a AgUiAppObservation, AgUiRepairLinkStatus> {
-    let id = id.ok_or(AgUiRepairLinkStatus::MissingLink)?;
-    let mut matches = observations
-        .iter()
-        .filter(|row| row.id.as_deref() == Some(id) && same_namespace(from, row));
-    let Some(first) = matches.next() else {
-        return Err(
-            if observations
-                .iter()
-                .any(|row| row.id.as_deref() == Some(id) && row.kind == kind)
-            {
-                AgUiRepairLinkStatus::NamespaceMismatch
-            } else {
-                AgUiRepairLinkStatus::MissingLink
-            },
-        );
-    };
-    if matches.next().is_some() {
-        return Err(AgUiRepairLinkStatus::AmbiguousLink);
+impl<'a> ObservationIndex<'a> {
+    fn new(observations: &'a [AgUiAppObservation]) -> Self {
+        let mut by_namespace: HashMap<NamespacedId<'a>, (usize, bool)> = HashMap::new();
+        let mut kinds_by_id: HashMap<&'a str, Vec<AgUiObservationKind>> = HashMap::new();
+        for (index, row) in observations.iter().enumerate() {
+            let Some(id) = row.id.as_deref() else {
+                continue;
+            };
+            let kinds = kinds_by_id.entry(id).or_default();
+            if !kinds.contains(&row.kind) {
+                kinds.push(row.kind);
+            }
+            if let Some(key) = namespaced(row, id) {
+                by_namespace
+                    .entry(key)
+                    .and_modify(|(_, repeated)| *repeated = true)
+                    .or_insert((index, false));
+            }
+        }
+        Self {
+            observations,
+            by_namespace,
+            kinds_by_id,
+        }
     }
-    if first.kind != kind {
-        return Err(AgUiRepairLinkStatus::MissingLink);
+
+    /// The position of the one row with `id` in `from`'s namespace, if it
+    /// is of `kind`.
+    fn resolve(
+        &self,
+        from: &'a AgUiAppObservation,
+        id: Option<&'a str>,
+        kind: AgUiObservationKind,
+    ) -> std::result::Result<usize, AgUiRepairLinkStatus> {
+        let id = id.ok_or(AgUiRepairLinkStatus::MissingLink)?;
+        let Some(&(first, repeated)) =
+            namespaced(from, id).and_then(|key| self.by_namespace.get(&key))
+        else {
+            return Err(
+                if self
+                    .kinds_by_id
+                    .get(id)
+                    .is_some_and(|kinds| kinds.contains(&kind))
+                {
+                    AgUiRepairLinkStatus::NamespaceMismatch
+                } else {
+                    AgUiRepairLinkStatus::MissingLink
+                },
+            );
+        };
+        if repeated {
+            return Err(AgUiRepairLinkStatus::AmbiguousLink);
+        }
+        if self.observations[first].kind != kind {
+            return Err(AgUiRepairLinkStatus::MissingLink);
+        }
+        Ok(first)
     }
-    Ok(first)
+}
+
+/// `id` in `row`'s namespace; none when the row names no thread or no run.
+fn namespaced<'a>(row: &'a AgUiAppObservation, id: &'a str) -> Option<NamespacedId<'a>> {
+    Some((
+        id,
+        row.thread_id.as_deref()?,
+        row.run_id.as_deref()?,
+        row.tool_call_id.as_deref(),
+    ))
 }
 
 pub(super) fn repair_links(observations: &[AgUiAppObservation]) -> Vec<AgUiRepairLink> {
+    let index = ObservationIndex::new(observations);
+    // The failure each repair row resolves to, by the repair's position:
+    // resolved once, however many outcomes name that repair, so a long
+    // failure id is hashed once per repair, never once per outcome (Astra
+    // delta 4 L1).
+    let mut failures: Vec<Option<std::result::Result<usize, AgUiRepairLinkStatus>>> =
+        vec![None; observations.len()];
     observations
         .iter()
         .filter(|row| row.kind == AgUiObservationKind::Outcome)
@@ -176,26 +315,20 @@ pub(super) fn repair_links(observations: &[AgUiAppObservation]) -> Vec<AgUiRepai
                 if outcome.outcome.is_none() {
                     return Err(AgUiRepairLinkStatus::MissingOutcome);
                 }
-                resolve(
-                    observations,
-                    outcome,
-                    outcome.id.as_deref(),
-                    AgUiObservationKind::Outcome,
-                )?;
-                let repair = resolve(
-                    observations,
+                index.resolve(outcome, outcome.id.as_deref(), AgUiObservationKind::Outcome)?;
+                let repair = index.resolve(
                     outcome,
                     outcome.repair_id.as_deref(),
                     AgUiObservationKind::Repair,
                 )?;
-                link.repair_ordinal = Some(repair.ordinal);
-                let failure = resolve(
-                    observations,
-                    repair,
-                    repair.failure_id.as_deref(),
-                    AgUiObservationKind::Failure,
-                )?;
-                link.failure_ordinal = Some(failure.ordinal);
+                link.repair_ordinal = Some(observations[repair].ordinal);
+                let failure = failures[repair]
+                    .get_or_insert_with(|| {
+                        let row = &observations[repair];
+                        index.resolve(row, row.failure_id.as_deref(), AgUiObservationKind::Failure)
+                    })
+                    .clone()?;
+                link.failure_ordinal = Some(observations[failure].ordinal);
                 Ok(())
             })();
             link.status = resolved.err().unwrap_or(AgUiRepairLinkStatus::Linked);

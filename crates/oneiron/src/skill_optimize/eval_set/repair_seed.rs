@@ -22,7 +22,7 @@
 //! hands the answers to [`Memory::settle_eval_repair_seed`], as it hands leg
 //! results to the measurement doors. No verb reaches these doors.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron_contracts::fingerprint::ContentHasher;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ use crate::claim::ScopedReadReceipt;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{Memory, MemoryResult};
-use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{EntityStoreRead, TombstoneStoreRead, raw_readable_in_txn};
 use crate::side_table::{self, Named, SideTable};
 
 /// One seed per task source, keyed by the BLAKE3 of the source's identity.
@@ -61,7 +61,7 @@ pub struct EvalRepairSeedRequest {
 }
 
 /// Why the gate refused a seed. A refused seed has no case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalRepairSeedRefusal {
     /// The old skill's answer already met the observed outcome.
@@ -126,6 +126,13 @@ pub struct EvalRepairSeed {
     pub family: EntityId,
     /// The compiled task's hash when the seed was proposed.
     pub task_hash: [u8; 32],
+    /// The key of the task's contract
+    /// ([`EvalRepairTask::contract_key`]): one seed stands per contract in
+    /// the vault, whatever its source or seat. Every proposal writes it; no
+    /// stored row lacks it, since the Coach's plan is the first caller that
+    /// proposes a seed outside the tests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_key: Option<[u8; 32]>,
     pub old: EvalArmPin,
     pub candidate: EvalArmPin,
     /// The rows the task was compiled from: the capture claim.
@@ -272,6 +279,30 @@ fn sources_live_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, rows: &[EntityId]) 
     Ok(true)
 }
 
+/// Whether `row` still reads in this snapshot, by the capture listing's rule
+/// ([`raw_readable_in_txn`]): present, and not deleted, withdrawn, stale or
+/// source-withdrawn.
+pub(crate) fn row_reads_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = vault.get_raw_in(txn, row)? else {
+        return Ok(false);
+    };
+    raw_readable_in_txn(&vault.store, txn, row, &raw)
+}
+
+/// The refusal of a seed for a task whose contract a seed from another
+/// source or seat holds, where the listing shows that seed.
+const CONTRACT_SEEDED: &str = "the task's contract already has a seed, from another source or seat";
+
+/// The refusal of a seed for a task whose contract is held only by seeds
+/// whose captures no longer read. The listing leaves such a row out and
+/// shows nothing of those seeds, so the refusal says no more than that
+/// (Astra delta 3 K2; RULING UNBUILT-P05E-WITHDRAWN-SEED = A).
+const UNLISTED_REPAIR: &str = "the repair is no longer listed";
+
 /// Whether a cohort of `seat` already holds `family`. A case added to the
 /// family now was never in that cohort, and the cohort's retirement would
 /// release it to development unserved, so a held family takes no new repair.
@@ -290,7 +321,12 @@ fn family_held_in_txn(
 /// capture must still be live, the capture's root gets its sealed family,
 /// which no cohort may hold yet, and the seed is recorded: `Pending`, or
 /// `AwaitingLabel` for an adjudicated-response task. A seed already recorded
-/// for the source is returned unchanged.
+/// for the source is returned unchanged, whatever it stands at: a seed
+/// refused as `CandidateFailed` stands, so no candidate is chosen by a sealed
+/// task's result. Nor by an alias of it: a task whose contract has a seed
+/// from another source or seat takes none (RULING
+/// UNBUILT-P05E-CONTRACT-ALIAS = A), and its refusal names that seed only
+/// where the listing would show it: while its capture reads.
 fn commit_proposal(
     vault: &Vault,
     task: &EvalRepairTask,
@@ -301,6 +337,27 @@ fn commit_proposal(
         let key = seed_key(&task.source)?;
         if let Some(existing) = SEEDS.get(&vault.store, txn, &key)? {
             return Ok(existing);
+        }
+        let mut refusal = None;
+        for (_, seed) in SEEDS.scan(&vault.store, txn)? {
+            if seed.contract_key != Some(task.contract_key) {
+                continue;
+            }
+            refusal = Some(UNLISTED_REPAIR);
+            let mut shown = true;
+            for row in &seed.source_rows {
+                if !row_reads_in_txn(vault, txn, row)? {
+                    shown = false;
+                    break;
+                }
+            }
+            if shown {
+                refusal = Some(CONTRACT_SEEDED);
+                break;
+            }
+        }
+        if let Some(refusal) = refusal {
+            return Err(invalid(refusal));
         }
         if !sources_live_in_txn(vault, txn, &task.source_rows)? {
             return Err(invalid(
@@ -326,6 +383,7 @@ fn commit_proposal(
             source: task.source.clone(),
             family: family.id,
             task_hash: task.task_hash,
+            contract_key: Some(task.contract_key),
             old: request.old.clone(),
             candidate: request.candidate.clone(),
             source_rows: task.source_rows.clone(),
@@ -462,7 +520,7 @@ impl Memory<'_> {
     /// adjudicated-response task, which waits for its label before the gate
     /// grades it. A capture the scoped reader withholds returns no seed and
     /// the read receipt. A replay over the same source returns the seed
-    /// already proposed, unchanged.
+    /// already proposed, unchanged, whatever its arms: a refused seed stands.
     ///
     /// # Errors
     ///
@@ -672,20 +730,42 @@ impl Vault {
         SEEDS.get(&self.store, &txn, &seed_key(source)?)
     }
 
-    /// Every seed the gate can grade now, for the measuring host: an
-    /// adjudicated seed is listed once its label lands.
+    /// Every seed the gate can grade now, for the measuring host: the
+    /// `Pending` ones whose capture still reads, by the capture listing's
+    /// rule (`row_reads_in_txn`). An `AwaitingLabel` seed is listed once
+    /// its label lands. A seed whose capture no longer reads stays until the
+    /// erase takes it, but the gate settles no such seed and no listing
+    /// shows it, so the host is not handed it (Astra delta 4 L2; RULING
+    /// UNBUILT-P05E-WITHDRAWN-SEED = A). Each row is read at most once per
+    /// call, however many seeds share it.
     ///
     /// # Errors
     ///
     /// An unreadable row, or storage errors.
     pub fn pending_eval_repair_seeds(&self) -> Result<Vec<EvalRepairSeed>> {
         let txn = self.store.env.read_txn()?;
-        Ok(SEEDS
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(_, seed)| seed)
-            .filter(|seed| seed.state == EvalRepairSeedState::Pending)
-            .collect())
+        let mut reads: BTreeMap<EntityId, bool> = BTreeMap::new();
+        let mut pending = Vec::new();
+        'seeds: for (_, seed) in SEEDS.scan(&self.store, &txn)? {
+            if seed.state != EvalRepairSeedState::Pending {
+                continue;
+            }
+            for row in &seed.source_rows {
+                let row_reads = match reads.get(row) {
+                    Some(&row_reads) => row_reads,
+                    None => {
+                        let row_reads = row_reads_in_txn(self, &txn, row)?;
+                        reads.insert(*row, row_reads);
+                        row_reads
+                    }
+                };
+                if !row_reads {
+                    continue 'seeds;
+                }
+            }
+            pending.push(seed);
+        }
+        Ok(pending)
     }
 
     /// A proposal's write for a task compiled earlier, for the test doors:
@@ -724,6 +804,20 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         super::case_in_txn(self, &txn, id)
     }
+}
+
+/// Every stored seed, for the eval-authoring inventory's per-repair seed
+/// states: pending, awaiting its label, confirmed and refused alike.
+///
+/// # Errors
+///
+/// An unreadable row, or storage errors.
+pub(super) fn seeds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EvalRepairSeed>> {
+    Ok(SEEDS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, seed)| seed)
+        .collect())
 }
 
 /// An erased capture takes its seeds with it: a pending seed is never

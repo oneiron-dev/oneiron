@@ -208,7 +208,7 @@ pub use verdict::{
 pub(in crate::skill_optimize) use admission::retained_optimizer_parent_goal_in_txn;
 
 pub(crate) use admission::{
-    check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
+    check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn, target_of,
     with_optimized_skill_admission,
 };
 pub(crate) use ledger::{
@@ -237,7 +237,7 @@ pub(super) use decision::{clear_pre_score_race_hook, set_pre_score_race_hook};
 // re-imported here, so every mover resolves it exactly as it did inline.
 use admission::{
     open_pending_tradeoff_in_txn, provenance_str, record_tradeoff_resolution_in_txn,
-    require_open_optimizer_proposal, target_is_current, target_of,
+    require_open_optimizer_proposal, target_is_current,
 };
 use basis::{
     ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,
