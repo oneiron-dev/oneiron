@@ -600,6 +600,24 @@ impl Vault {
             .map(Some)
     }
 
+    /// The series a CMT-2 instance belongs to. `Ok(None)` when the claim is
+    /// absent, is not a commitment, or carries no instance payload.
+    fn instance_series_ref_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        instance_ref: &EntityId,
+    ) -> ScheduleResult<Option<EntityId>> {
+        let Some(body) = self.get_claim_in_txn(txn, instance_ref)? else {
+            return Ok(None);
+        };
+        let Some(record) = decode_commitment_claim(&body)? else {
+            return Ok(None);
+        };
+        Ok(CommitmentSchedulePayload::decode(&record.schedule)
+            .ok()
+            .and_then(|payload| payload.series_ref))
+    }
+
     /// Grounds the close hook's subject: a CMT-2 INSTANCE whose stored terminal
     /// status agrees with the caller's `outcome`.
     ///
