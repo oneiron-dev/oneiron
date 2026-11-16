@@ -65,6 +65,7 @@ mod lens_callbacks;
 pub(crate) use lens_callbacks::dedupe_key_for_test as lens_callback_dedupe_key_for_test;
 pub mod live_lease;
 mod local_vision;
+mod meeting_follow_up_drafting;
 pub(crate) mod payer_funding;
 mod policy;
 mod question_timer;

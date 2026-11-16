@@ -29,6 +29,7 @@ pub mod cleanup_archive;
 pub mod coach;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
+pub mod code_result_search;
 pub mod code_run_answer;
 pub mod code_run_result_body;
 pub mod code_run_write_identity;
@@ -55,15 +56,18 @@ pub mod dreamer_attempt_binding;
 pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
+pub mod enum_name_rows;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
 pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_git_wire;
 pub mod fingerprint_keep_hook_digests;
+pub mod fingerprint_keep_saved_query;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
+pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
 pub mod gate_receipt_rows;
@@ -80,6 +84,7 @@ pub mod home_pick_fold;
 pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
+pub mod host_root_row_signature;
 #[cfg(feature = "sync")]
 pub mod host_taint_replica;
 pub mod house_link;
@@ -100,6 +105,8 @@ pub mod live_window_import;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
+#[cfg(feature = "sync")]
+pub mod maintenance_facet_receipts;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;
@@ -116,6 +123,7 @@ pub mod own_device_message_replay;
 pub mod owner_key_release;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
+pub mod pairing_pending_rows;
 pub mod park_typed_wait;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
@@ -130,6 +138,7 @@ pub mod resident_wake_hold;
 pub mod retrieval_policy_default_floor;
 pub mod room_facet_limit;
 pub mod room_turn_backfill;
+pub mod roster_slot_reservation;
 pub mod run_changes;
 pub mod run_hold;
 pub mod run_lifecycle;
@@ -154,6 +163,7 @@ pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 #[cfg(feature = "sync")]
 pub mod sync_parted_row_binding;
+pub mod task_ask_role_routing;
 pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod turn_words;
