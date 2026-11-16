@@ -95,6 +95,45 @@ impl BatchBuilder<'_> {
             self.commit_checks
                 .push(CommitCheck::PublicType(self.ops.len()));
         }
+        // A TURN's learned time is held to the witness door's ceiling on the
+        // store clock (ARCH-0002 `#turn-time-built`).
+        if self.validation_error.is_none()
+            && let Err(e) =
+                refuse_future_turn(entity_type, learned_at, self.vault.now_recorded_at())
+        {
+            self.validation_error = Some(e);
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::Public,
+        )
+    }
+
+    /// [`Self::put`] of a row a whole-vault import restores from its
+    /// archive: every public check except the TURN learned-time ceiling.
+    ///
+    /// An import keeps the archive's learned time, and the clock of the
+    /// install that wrote the archive may run ahead of this store's.
+    /// Refusing such a TURN would refuse the owner's restore of the owner's
+    /// own archive over clock skew, so the import names its exemption here
+    /// (Engine ruling on census L7-21, Fri 13 Nov 16:27). A far-future TURN
+    /// from an archive waits outside consolidation, as one from sync does.
+    pub(crate) fn put_archived(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
         self.put_through(
             id,
             entity_type,

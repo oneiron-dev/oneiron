@@ -29,6 +29,24 @@ HTTP/WebSocket paths remain separate. There is no automatic production migration
   `MeshSyncDialer::bind_for_install` with `iroh`). The steady socket and the residence
   sockets to the configured home ride it; an elected home elsewhere is dialed at its URL.
 
+## Files search over the mesh (ARCH-0027 #files-world)
+
+- **ALPN `oneiron/files-search/1`** (`files_search::FILES_SEARCH_ALPN`) carries one
+  search per stream: a `FilesSourceSearchRequest` and the device's reply, both
+  MessagePack. `FilesSearchService` answers with this install's own ranking of its own
+  Files world (`search_files_sources_for_peer`): name hits, then meaning hits with
+  their snippets.
+- **Admission.** The live `mesh:alpn:oneiron/files-search/1` grant on the asking
+  MACHINE, checked by the transport at every open and by the engine again before the
+  search reads anything. The grant is the whole gate: metadata and snippets go to any
+  machine of the owner holding it (ruling L2-16-MESH-SNIPPETS = B). Enrolment grants
+  sync only; the owner grants Files search per machine (`vault.mesh.set_alpn_grant`).
+- **Asking.** `ask_files_search_devices` sends the request to each chosen machine at
+  once and waits under one deadline (`FILES_SEARCH_DEADLINE`); the engine's
+  `merge_files_search_answers` orders every name hit before any meaning hit and
+  interleaves the meaning hits by each device's own rank. A machine that refused,
+  failed or was late is listed in `unreached`.
+
 ## Trust boundary
 
 The device holds its pairing signing seed in platform protected custody. A
