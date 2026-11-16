@@ -166,7 +166,41 @@ pub(super) fn covering_bypass<'a>(
     })
 }
 
+/// The registry reference of the live bypass that covers `effect`, read on
+/// the caller's transaction as the evaluator reads it: the floor, the live
+/// bypass rows and the active ordinary grants. A door that settles its act in
+/// a later write reads it again there ([`Vault::record_covering_bypass_in_txn`]).
+pub(crate) fn covering_bypass_ref_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ComposedEffect,
+) -> Result<Option<String>> {
+    let floor = crate::gate::resolve_policy_manifest(store, txn)?.catastrophe_floor();
+    let bypasses = live_bypasses_in_txn(store, txn)?;
+    let grants = super::doors::load_active_standing_grants(store, txn)?;
+    Ok(covering_bypass(effect, &floor, &bypasses, &grants).map(|bypass| bypass.grant_ref.clone()))
+}
+
 impl Vault {
+    /// Reads again, on the writer's own transaction, the live bypass that
+    /// covers `effect`, and receipts the act as bypassed there. `false` when
+    /// none covers it any more, a revoke committed since the door read it
+    /// included: the caller then refuses the act.
+    pub(crate) fn record_covering_bypass_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        effect: &ComposedEffect,
+    ) -> Result<bool> {
+        let floor = crate::gate::resolve_policy_manifest(&self.store, wtxn)?.catastrophe_floor();
+        let bypasses = live_bypasses_in_txn(&self.store, wtxn)?;
+        let grants = super::doors::load_active_standing_grants(&self.store, wtxn)?;
+        let Some(bypass) = covering_bypass(effect, &floor, &bypasses, &grants) else {
+            return Ok(false);
+        };
+        self.record_bypassed_act_in_txn(wtxn, bypass, effect.digest())?;
+        Ok(true)
+    }
+
     /// The one warning a bypass grant's creation shows (DEC-0006
     /// `#bypass-grant`): it checks the request and names what the grant
     /// allows and in which scope. Pass it unchanged to
