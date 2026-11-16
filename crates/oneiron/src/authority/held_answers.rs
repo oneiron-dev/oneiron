@@ -60,6 +60,10 @@ const TWO_ANSWERS: &str =
 const REPLACES_KEYS: &str = "the held answer names other keys than its machine stands under: \
      a confirm never replaces a machine's keys; nothing was written";
 
+/// A confirm presented a revision for a held answer it does not name.
+const UNNAMED_SEEN: &str = "a seen revision names a held answer the confirm does not name: \
+     nothing was written";
+
 /// One held machine answer as the owner's surface lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedHeldAnswer {
@@ -282,20 +286,29 @@ impl Vault {
     /// ends the ask of every held answer about it that it saw. The
     /// credentials are sealed again for the roster the confirm changed.
     ///
+    /// `seen` gives, for any named entry, the answer revision of its machine
+    /// that his surface listed beside it ([`ListedHeldAnswer::revision`]).
+    /// Where an answer about that machine landed since and the held answer
+    /// still asks, the confirm is a conflict and nothing is written, as at
+    /// [`Self::set_machine_role`]: the confirm never overwrites an answer
+    /// his list did not show. An entry with no revision in `seen` takes the
+    /// machine's current one.
+    ///
     /// # Errors
     /// [`RecordError::OwnerKeyRequired`] when this install holds no owner
-    /// key; [`Error::ConcurrentWrite`] when an entry no longer asks;
-    /// [`Error::InvalidConfig`] when two entries name one machine, when an
-    /// entry names other keys than its machine stands under, or when this
-    /// install carries no live profile; an authority refusal when a
-    /// confirmed answer does not stand; a refusal when the proof is no
-    /// longer the vault's live owner.
+    /// key; [`Error::ConcurrentWrite`] when an entry no longer asks, or when
+    /// its machine's answer is not the one `seen` names for it;
+    /// [`Error::InvalidConfig`] when two entries name one machine, when
+    /// `seen` names an entry the confirm does not, when an entry names other
+    /// keys than its machine stands under, or when this install carries no
+    /// live profile; an authority refusal when a confirmed answer does not
+    /// stand; a refusal when the proof is no longer the vault's live owner.
     pub fn confirm_held_machine_answers(
         &self,
         owner: &AuthenticatedOwner,
         surface: ActSurface,
         entries: &[AuthorityEntryHash],
-        _seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
+        seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
     ) -> Result<ConfirmedHeldAnswers> {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
@@ -303,11 +316,17 @@ impl Vault {
         if self.owner_proof_signer(&fold).is_none() {
             return Err(Error::Record(RecordError::OwnerKeyRequired));
         }
+        if seen.keys().any(|entry| !entries.contains(entry)) {
+            return Err(Error::InvalidConfig(UNNAMED_SEEN.to_owned()));
+        }
         let mut removed = Vec::new();
         for (machine, (entry, held)) in named_held_answers(&fold, entries)? {
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let profile = confirming_profile(&fold, actor, &held)?;
-            let answer = AnswerAct::by_owner(actor, surface, profile.role, None);
+            // The answer door compares it with the machine's revision in
+            // this transaction, before it signs.
+            let answer =
+                AnswerAct::by_owner(actor, surface, profile.role, seen.get(&entry).copied());
             if profile.role == MachineRole::Removed {
                 removed.push(machine);
             }
