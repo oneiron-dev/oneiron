@@ -10,8 +10,11 @@
 //! Grant kinds with no act of their own before R2 get the general grant act, whose giving
 //! commits to the row's terms under the row's own terms key; a guest's Grant is given by it
 //! since R3c (an Ask guest's with its ask, a Connect guest's at its owner's mint), and a
-//! Connect guest's stands only while one Active operative pact with its peer binds it too;
-//! own-device and engine-default Grants are read as derived in R4.
+//! Connect guest's stands only while one Active operative pact with its peer binds it too.
+//! No act gives an own-device or an engine-default Grant: R4 reads each as derived, the first
+//! while the fold names its holder a live Owner of the vault, the second while it holds no
+//! more than the build's default table, and every other row no counted act names stands for
+//! nothing.
 
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, AuthorityFold, GrantFamily};
@@ -145,8 +148,8 @@ pub(crate) fn owner_agent_mint_in_fold(
 }
 
 /// The families an act gives a Grant row over a shared vault in, read from the row's shape;
-/// `None` for a row read from itself until its own pass 28 step: a base agent's
-/// engine-default Steward Grant (R4).
+/// `None` for a base agent's Steward Grant, which stands on the owner's counted mint or, no
+/// act naming it, as the engine's default (R4, [`derived_row`]).
 ///
 /// The shape only narrows: the row stands only when its line was given in one of these
 /// families, so a row whose shape names another family than its act stands for nothing.
@@ -214,17 +217,16 @@ pub(crate) fn guest_grant_in_fold(
     StandingGrant::decoded_in_fold(fold, id, grant, terms_key, families, Some(now))
 }
 
-/// What a Grant row over a shared vault confers to a membership reader: a row the fold
-/// stands behind ([`StandingGrant`]), or a row still read from itself
-/// ([`shared_row_families`] `None`), which the reader judges as before pass 28 R3.
+/// What a Grant row confers to a reader: a row the fold stands behind ([`StandingGrant`]),
+/// or a row of a kind no act gives, read as derived (pass 28 R4, [`derived_row`]).
 #[derive(Debug, Clone)]
 pub(crate) enum SharedGrantRow {
     /// A row the verified fold stands behind.
     Standing(StandingGrant),
-    /// A base agent's engine-default Steward Grant or (on an own-device residence,
-    /// [`grant_row_in_fold`]) an own-device Grant, read from its row until its own pass 28
-    /// step (R4).
-    Unacted(EntityId, FederationGrant),
+    /// A base agent's engine-default Steward Grant, within the build's default table, or (on
+    /// the own-device residence, [`grant_row_in_fold`]) an own-device Grant whose holder the
+    /// fold names a live Owner of the vault.
+    Derived(EntityId, FederationGrant),
 }
 
 impl SharedGrantRow {
@@ -232,7 +234,7 @@ impl SharedGrantRow {
     pub(crate) fn into_parts(self) -> (EntityId, FederationGrant) {
         match self {
             Self::Standing(standing) => (standing.id, standing.grant),
-            Self::Unacted(id, grant) => (id, grant),
+            Self::Derived(id, grant) => (id, grant),
         }
     }
 
@@ -240,7 +242,7 @@ impl SharedGrantRow {
     pub(crate) fn id(&self) -> EntityId {
         match self {
             Self::Standing(standing) => standing.id(),
-            Self::Unacted(id, _) => *id,
+            Self::Derived(id, _) => *id,
         }
     }
 
@@ -248,14 +250,14 @@ impl SharedGrantRow {
     pub(crate) fn grant(&self) -> &FederationGrant {
         match self {
             Self::Standing(standing) => standing.grant(),
-            Self::Unacted(_, grant) => grant,
+            Self::Derived(_, grant) => grant,
         }
     }
 }
 
 /// Every Grant row over shared vault `vault_id` in `txn` that confers at `now` to a
 /// membership reader, in id order: each row the fold stands behind in its shape's families,
-/// and each row [`shared_row_families`] still reads from itself. A row no counted act gives,
+/// and each base agent's engine-default Steward Grant ([`derived_row`]). A row no counted act gives,
 /// one put back after its end, one whose terms are not its act's and one that does not
 /// decode give nothing and never fault (a forged row cannot block a reader either).
 /// Expiry is read at `now`; every other predicate (verbs, pact, PERSON) is the reader's.
@@ -325,34 +327,70 @@ pub(crate) fn shared_grant_row_in_fold(
 /// row (an `owner_agent` row, a git push Grant, an `engine.controls` Grant, or any row whose
 /// counted line an owner's mint gives, a Steward mint among them) stands only on its counted
 /// mint and over this vault's residence (the own-device one: over a shared vault it holds
-/// the shared scope), a guest's Grant as [`guest_grant_in_fold`] reads it, and the
-/// rest (an own-device or engine-default Grant, read as derived in R4) read from themselves.
-/// `None` for a row that does not stand. The caller has read the row live.
+/// the shared scope), a guest's Grant as [`guest_grant_in_fold`] reads it, and the rest read
+/// as derived ([`derived_row`]): an own-device Grant stands while `owners`, the vault's live
+/// owners ([`crate::policy_model::owners_in_txn`]), hold its holder. `None` for a row that
+/// does not stand. The caller has read the row live.
 #[must_use]
 pub(crate) fn grant_row_in_fold(
     fold: &AuthorityFold,
     id: EntityId,
     body: &[u8],
     shared_scope: Option<&FederationGrantScope>,
+    owners: &[EntityId],
     now: u64,
 ) -> Option<SharedGrantRow> {
-    grant_row_at(fold, id, body, shared_scope, Some(now))
+    let read = grant_row_at(fold, id, body, shared_scope, Some(now));
+    let live_owner = read.holder().is_some_and(|holder| owners.contains(holder));
+    read.into_row(live_owner)
 }
 
-/// [`grant_row_in_fold`] with expiry read at `now`, or none read (`None`).
+/// What [`grant_row_at`] reads a row as: a read, or an own-device Grant no counted act
+/// names, which stands while the fold names its holder a live Owner of the vault. The
+/// caller asks that, from the owner set it holds or reads.
+enum RowRead {
+    /// The row's read: standing, derived or nothing.
+    Read(Option<SharedGrantRow>),
+    /// An own-device Grant ([`super::is_provisioned_own_device_row`]) no counted act names.
+    OwnDevice(EntityId, FederationGrant),
+}
+
+impl RowRead {
+    /// The holder whose Owner standing the read waits on: `Some` for an own-device Grant.
+    fn holder(&self) -> Option<&EntityId> {
+        match self {
+            Self::Read(_) => None,
+            Self::OwnDevice(_, grant) => Some(&grant.member_ref),
+        }
+    }
+
+    /// The read, an own-device Grant standing when `live_owner` says the fold names its
+    /// holder a live Owner of the vault.
+    fn into_row(self, live_owner: bool) -> Option<SharedGrantRow> {
+        match self {
+            Self::Read(row) => row,
+            Self::OwnDevice(id, grant) => live_owner.then_some(SharedGrantRow::Derived(id, grant)),
+        }
+    }
+}
+
+/// [`grant_row_in_fold`] with expiry read at `now`, or none read (`None`), before the
+/// own-device Grant's holder is judged.
 fn grant_row_at(
     fold: &AuthorityFold,
     id: EntityId,
     body: &[u8],
     shared_scope: Option<&FederationGrantScope>,
     now: Option<u64>,
-) -> Option<SharedGrantRow> {
-    let (grant, terms_key) = decode_federation_grant_body_keyed(body).ok()?;
+) -> RowRead {
+    let Ok((grant, terms_key)) = decode_federation_grant_body_keyed(body) else {
+        return RowRead::Read(None);
+    };
     let owner_mint = is_owner_mint_row(&grant);
     // The own-device residence is a `Vault` scope too, so the row's scope shape alone never
     // tells a member row from a personal vault's row.
     if shared_scope == Some(&grant.scope) {
-        return shared_grant_row_decoded(fold, id, grant, terms_key, now);
+        return RowRead::Read(shared_grant_row_decoded(fold, id, grant, terms_key, now));
     }
     // No mint carries its row's residence, and every writer puts this vault's own: the shared
     // scope above, else the own-device residence ([`owner_agent_mint_in_fold`]). A mint's row
@@ -362,7 +400,7 @@ fn grant_row_at(
     if (owner_mint || given_by_owner_mint(fold, id))
         && (shared_scope.is_some() || grant.scope != own_device_residence_scope())
     {
-        return None;
+        return RowRead::Read(None);
     }
     if owner_mint || grant.role == FederationGrantRole::Guest {
         let families = if owner_mint {
@@ -370,10 +408,21 @@ fn grant_row_at(
         } else {
             guest_row_families(&grant)
         };
-        return StandingGrant::decoded_in_fold(fold, id, grant, terms_key, families, now)
-            .map(SharedGrantRow::Standing);
+        return RowRead::Read(
+            StandingGrant::decoded_in_fold(fold, id, grant, terms_key, families, now)
+                .map(SharedGrantRow::Standing),
+        );
     }
-    unacted_row(fold, id, grant, terms_key, now)
+    // The engine stands a base agent's default at the vault's root: the own-device residence
+    // on a personal vault, where the row stays once the vault is shared.
+    derived_row(
+        fold,
+        id,
+        grant,
+        terms_key,
+        &own_device_residence_scope(),
+        now,
+    )
 }
 
 /// Whether the stored body `body` decodes to an own-device row over `scope`, which no owner's
@@ -398,25 +447,41 @@ fn given_by_owner_mint(fold: &AuthorityFold, id: EntityId) -> bool {
         .is_some_and(|line| line.family == Some(GrantFamily::OwnerAgent))
 }
 
-/// A row no pass 28 step reads through an act yet (an own-device or engine-default Grant,
-/// read as derived in R4) reads from itself, unexpired, while no counted act names it. A row
-/// a counted act names stands only on that act's line, whatever its shape says now: a
-/// counted guest's row re-put as a member row, or a member row re-put in a steward's shape,
-/// keeps its line's terms and its end (review #8855 P1-1), and a line two families name, or
-/// only an end, gives it nothing.
-fn unacted_row(
+/// A row over `residence` that is neither an owner's mint nor a guest's Grant, read as
+/// derived (pass 28 R4; FIX [GRANT-UNACTED-ARM-WIDER-THAN-DERIVED]). A row a counted act
+/// names stands only on that act's line, whatever its shape says now: a counted guest's row
+/// re-put as a member row, or a member row re-put in a steward's shape, keeps its line's terms
+/// and its end (review #8855 P1-1), and a line two families name, or only an end, gives it
+/// nothing. Of a row no counted act names, only the two kinds no act gives stand, unexpired:
+/// a base agent's engine-default Steward Grant within the build's default table
+/// ([`super::is_engine_default_row`]), until a counted act ends its line, and an own-device
+/// Grant as the pairing door provisions it ([`super::is_provisioned_own_device_row`]), whose
+/// holder the caller judges. Every other row (a member, viewer or steward row put with no
+/// act, an own-device row widened past its provisioned terms) stands for nothing.
+fn derived_row(
     fold: &AuthorityFold,
     id: EntityId,
     grant: FederationGrant,
     terms_key: Option<GrantTermsKey>,
+    residence: &FederationGrantScope,
     now: Option<u64>,
-) -> Option<SharedGrantRow> {
+) -> RowRead {
     if let Some(line) = fold.grant_line(id) {
-        let family = line.family?;
-        return StandingGrant::decoded_in_fold(fold, id, grant, terms_key, &[family], now)
-            .map(SharedGrantRow::Standing);
+        return RowRead::Read(line.family.and_then(|family| {
+            StandingGrant::decoded_in_fold(fold, id, grant, terms_key, &[family], now)
+                .map(SharedGrantRow::Standing)
+        }));
     }
-    (!now.is_some_and(|now| expired(&grant, now))).then_some(SharedGrantRow::Unacted(id, grant))
+    if grant.scope != *residence || now.is_some_and(|now| expired(&grant, now)) {
+        return RowRead::Read(None);
+    }
+    if super::is_engine_default_row(&grant) {
+        return RowRead::Read(Some(SharedGrantRow::Derived(id, grant)));
+    }
+    if super::is_provisioned_own_device_row(&grant) {
+        return RowRead::OwnDevice(id, grant);
+    }
+    RowRead::Read(None)
 }
 
 /// The Grant row `id` of `family` as `fold` stands behind it at `now`, read in `txn`
@@ -452,7 +517,12 @@ fn shared_grant_row_decoded(
     now: Option<u64>,
 ) -> Option<SharedGrantRow> {
     match shared_row_families(&grant) {
-        None => unacted_row(fold, id, grant, terms_key, now),
+        // A base agent's Steward row: the engine stands its default at the shared scope once
+        // the vault is shared, and no own-device Grant is a Steward row.
+        None => {
+            let residence = grant.scope.clone();
+            derived_row(fold, id, grant, terms_key, &residence, now).into_row(false)
+        }
         Some(families) => StandingGrant::decoded_in_fold(fold, id, grant, terms_key, families, now)
             .map(SharedGrantRow::Standing),
     }
@@ -538,15 +608,36 @@ impl Vault {
         Ok(given_in_fold(&fold, id, &grant, terms_key.as_ref(), &[family]).is_some())
     }
 
-    /// Whether the live Grant row `id`, whose stored body is `body`, stands at `now` as
+    /// What the live Grant row `id`, whose stored body is `body`, confers at `now` as
     /// [`grant_row_in_fold`] reads it under this vault's fold: a row a counted act names stands
     /// only on that act's line, whatever its shape says now, so a counted guest's row re-put as
     /// a member or own-device row keeps its line's terms and its end (review #8855 P1-1); a row
-    /// no counted act names (an own-device Grant, read as derived in R4) reads from itself.
+    /// no counted act names stands only as derived (pass 28 R4), an own-device Grant while the
+    /// fold names its holder a live Owner of the vault. The vault's owners are read only for an
+    /// own-device Grant.
     ///
     /// # Errors
     ///
-    /// A store or authority-fold read failure.
+    /// A store, authority-fold or owner-census read failure.
+    pub(crate) fn grant_row_at_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        body: &[u8],
+        now: u64,
+    ) -> Result<Option<SharedGrantRow>> {
+        let shared_scope = self.shared_vault_scope_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let read = grant_row_at(&fold, id, body, shared_scope.as_ref(), Some(now));
+        self.derived_read_in_txn(txn, read)
+    }
+
+    /// Whether the live Grant row `id`, whose stored body is `body`, stands at `now`
+    /// ([`Self::grant_row_at_in_txn`]).
+    ///
+    /// # Errors
+    ///
+    /// A store, authority-fold or owner-census read failure.
     pub(crate) fn grant_row_stands_at_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -554,9 +645,22 @@ impl Vault {
         body: &[u8],
         now: u64,
     ) -> Result<bool> {
-        let shared_scope = self.shared_vault_scope_in_txn(txn)?;
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        Ok(grant_row_in_fold(&fold, id, body, shared_scope.as_ref(), now).is_some())
+        Ok(self.grant_row_at_in_txn(txn, id, body, now)?.is_some())
+    }
+
+    /// `read` resolved: an own-device Grant stands while the fold names its holder a live
+    /// Owner of this vault ([`crate::policy_model::is_live_vault_owner_in_txn`]), read only
+    /// for such a row.
+    fn derived_read_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        read: RowRead,
+    ) -> Result<Option<SharedGrantRow>> {
+        let live_owner = match read.holder() {
+            Some(holder) => crate::policy_model::is_live_vault_owner_in_txn(self, txn, holder)?,
+            None => false,
+        };
+        Ok(read.into_row(live_owner))
     }
 
     /// Whether a counted act ended the line of Grant `id` (pass 28 R3c): a guest's revoke
@@ -609,12 +713,13 @@ impl Vault {
     /// expiry not read: a door that judges expiry itself, after its other refusals, so a
     /// lapsed delegation still says so (the sync selector's doors, pass 28 R3d). False for a
     /// row no counted act gives, one put back after its end and one whose terms are not its
-    /// act's; an own-device or engine-default row reads from itself until R4. The caller has
-    /// read the row live.
+    /// act's; an own-device or engine-default row stands as derived (pass 28 R4), the
+    /// own-device one while the fold names its holder a live Owner. The caller has read the
+    /// row live.
     ///
     /// # Errors
     ///
-    /// A store read failure.
+    /// A store or owner-census read failure.
     pub(crate) fn grant_row_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -630,7 +735,8 @@ impl Vault {
         let shared_scope = self
             .shared_vault_scope_in_txn(txn)?
             .filter(|scope| !is_own_device_row_at(body, scope));
-        Ok(grant_row_at(fold, id, body, shared_scope.as_ref(), None).is_some())
+        let read = grant_row_at(fold, id, body, shared_scope.as_ref(), None);
+        Ok(self.derived_read_in_txn(txn, read)?.is_some())
     }
 
     /// The scope of a Grant row over this vault as a shared vault: `Some` only when this vault

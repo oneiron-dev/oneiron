@@ -227,6 +227,42 @@ pub(crate) fn is_system_agent_steward_grant(row: &FederationGrant) -> bool {
         && holds_system_agent_grant(row.member_ref)
 }
 
+/// Whether `row` is a base agent's Steward grant ([`is_system_agent_steward_grant`]) that
+/// holds no more verbs than the build's default table gives that agent
+/// ([`SystemAgent::default_verbs`]), an opt-out's none among them (pass 28 R4). Every
+/// Steward row a host or the owner stands for a base agent does: the engine's default and its
+/// opt-out record, and the owner's grant-back and narrowing, which give the default or less.
+/// A row beyond it stands for nothing.
+#[must_use]
+pub(crate) fn within_default_table(row: &FederationGrant) -> bool {
+    is_system_agent_steward_grant(row)
+        && SystemAgent::of(row.member_ref).is_some_and(|agent| match &row.authority_scope.verbs {
+            ScopeAxis::Some(verbs) => {
+                let default = agent.default_verbs();
+                verbs.iter().all(|verb| default.contains(verb))
+            }
+            ScopeAxis::Bottom => true,
+            ScopeAxis::All => false,
+        })
+}
+
+/// Whether `row` is a base agent's engine-default Steward grant as the engine stands it
+/// (pass 28 R4, FIX [ENGINE-DEFAULT-GRANT-NO-ACT]): the row
+/// [`Vault::put_steward_grant_row_in_txn`] writes, term for term but its authority scope,
+/// within the build's default table ([`within_default_table`]). No act gives it: it is derived
+/// from that table, and it stands until a counted act ends its line.
+#[must_use]
+pub(crate) fn is_engine_default_row(row: &FederationGrant) -> bool {
+    let mut stood = FederationGrant::new(
+        row.scope.clone(),
+        row.member_ref,
+        FederationGrantRole::Steward,
+        FederationGrantPreset::Steward,
+    );
+    stood.authority_scope = row.authority_scope.clone();
+    *row == stood && within_default_table(row)
+}
+
 /// The grant row `grant` while it stands in `txn` as a Steward grant naming
 /// `agent` (role and preset Steward, an access grant with no expiry), else
 /// `None`: revoked, withdrawn, rewritten or never there. Its authority scope
@@ -287,14 +323,17 @@ fn steward_verbs_of(row: &FederationGrant) -> BTreeSet<String> {
 /// Base agent `agent`'s reach in `txn`: the meet of every grant row that
 /// stands as a Steward grant naming it ([`standing_steward_grant_in`]). The
 /// verbs are those every row gives, and each data axis is the narrowest any
-/// row holds, so a row can only narrow what the others give. `None` while
-/// no such row stands: no host has stood the agent's grant on this vault,
-/// and its manifest rows decide.
+/// row holds, so a row can only narrow what the others give. A base agent's
+/// row counts only within the build's default table
+/// ([`within_default_table`], pass 28 R4). `None` while no such row stands:
+/// no host has stood the agent's grant on this vault, and its manifest rows
+/// decide.
 pub(crate) fn steward_reach_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
 ) -> Result<Option<StewardReach>> {
+    let base_agent = holds_system_agent_grant(agent);
     let mut newest: Option<EntityId> = None;
     let mut met: Option<(BTreeSet<String>, Scope)> = None;
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)? {
@@ -302,6 +341,9 @@ pub(crate) fn steward_reach_in(
         let Some(row) = standing_steward_grant_in(store, txn, id, agent)? else {
             continue;
         };
+        if base_agent && !within_default_table(&row) {
+            continue;
+        }
         let verbs = steward_verbs_of(&row);
         met = Some(match met {
             None => (verbs, row.authority_scope),

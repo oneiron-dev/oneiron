@@ -4,7 +4,9 @@
 //! grant (one serves every device they pair) and names it in the paired
 //! slip's `grant_ref`, where the device reads it; the slip then stands only
 //! while the grant does. The grant retires when its holder stops being an
-//! Owner (FIX 3294).
+//! Owner (FIX 3294). No act gives it: it is derived, and stands exactly while
+//! the fold names its holder a live Owner of the vault (pass 28 R4,
+//! [`is_provisioned_own_device_row`]).
 use super::{
     FederationGrant, FederationGrantPreset as GrantPreset, FederationGrantRole as Role,
     FederationGrantScope, decode_federation_grant_body, encode_federation_grant_body,
@@ -40,6 +42,23 @@ pub(crate) fn is_own_device_grant(grant: &FederationGrant) -> bool {
         && grant.role == Role::Owner
         && grant.delegated_by.is_none()
         && grant.guest.is_none()
+}
+
+/// Whether `grant` is an own-device grant as the pairing door provisions it
+/// ([`Vault::own_device_grant_for_holder_in_txn`]): the residence's Owner row
+/// for its holder, term for term but its authority scope (the vault's Owner
+/// default when it was put), with no expiry. Such a row is given by no act and
+/// read as derived (pass 28 R4): it stands while the fold names its holder a
+/// live Owner of the vault ([`crate::federation::grant_row_in_fold`]).
+pub(crate) fn is_provisioned_own_device_row(grant: &FederationGrant) -> bool {
+    let mut provisioned = FederationGrant::new(
+        own_device_residence_scope(),
+        grant.member_ref,
+        Role::Owner,
+        GrantPreset::Owner,
+    );
+    provisioned.authority_scope = grant.authority_scope.clone();
+    *grant == provisioned
 }
 
 impl Vault {
@@ -184,7 +203,9 @@ impl Vault {
     /// Whether `grant_ref` is `member`'s (PERSON hex) own-device grant, live
     /// and conferring at `now`, and standing as the fold reads it: a row whose
     /// id a counted act names stands only on that act's line (review #8855
-    /// P1-1). A paired slip naming it stands while it does.
+    /// P1-1), and any other stands as derived, while the fold names `member` a
+    /// live Owner of the vault (pass 28 R4). A paired slip naming it stands
+    /// while it does.
     pub(crate) fn own_device_grant_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
