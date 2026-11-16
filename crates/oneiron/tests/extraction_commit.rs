@@ -1,4 +1,5 @@
-//! Extraction binding commits Candidate items with attempt outputs (T1-T3).
+//! Extraction binding commits Candidate items with attempt outputs (T1-T3)
+//! and a Person item (T4).
 //!
 //! T1 lands one green-tea candidate via the binding with every field the
 //! stamp-door fixture checks (run `EXTRACTION_RUN`), then proves Settle and
@@ -6,7 +7,8 @@
 //! unchanged. T2 compares attempt outputs: the binding records its claim
 //! while a stamp-door fresh fixture records nothing. T3 ends the lease and
 //! proves no derivation is written (nearest honest form, explicitly not a
-//! metric test).
+//! metric test). T4 lands a Person item through the binding from the
+//! attempt's own TURN: a PERSON and no output of the attempt.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test extraction_commit`.
 #![cfg(oneiron_test_support)]
@@ -26,6 +28,7 @@ use oneiron::dreamer_runner::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED};
 use oneiron::test_doors::derive::{batches_of, claim_lifecycle, derive_item_receipts};
 use oneiron::test_doors::derive_conflict;
+use oneiron::test_doors::derive_person::person_body;
 use oneiron::test_doors::extraction_inputs::{
     EXTRACTION_LEASE_OWNER, enqueue_admitted_extraction_attempt, witness_extraction_turns,
 };
@@ -236,5 +239,36 @@ fn a_binding_whose_lease_ended_writes_no_derivation() -> TestResult<()> {
     assert!(vault.get_claim(&predicted)?.is_none());
     assert_eq!(claim_lifecycle(&vault, predicted)?, None);
     assert!(derive_item_receipts(&vault, &predicted)?.is_empty());
+    Ok(())
+}
+
+/// A Person item lands through the binding, named in the one TURN the
+/// attempt queues and cited at the version the attempt's page serves. It
+/// lands a PERSON and no claim, so the attempt records no output.
+#[test]
+fn an_extraction_binding_commits_a_person() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_verdict_vault(&dir)?);
+    stand_steward_grant(&vault, dreamer(&vault)?, &STEWARD_VERBS)?;
+    let witnessed = witness_extraction_turns(&vault, &["Owen chooses green tea"])?;
+    let (attempt_id, admitted) =
+        enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(attempt_id))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 1);
+    let (turn, version) = &turns[0];
+    let spec = json!({"local": "owen", "name": "Owen", "evidence": [{"stored": turn}]});
+    let request = json!({"items": [{"kind": "person", "spec": spec}], "sources": [version]});
+    let answer = binding.invoke(DERIVE_COMMIT_VERB, request, None)?;
+    let item = &answer["items"][0];
+    assert_eq!(item["landed"], true, "{answer}");
+    assert_eq!(item["kind"], "person");
+    let person = EntityId::from_hex(item["rows"][0].as_str().ok_or("the row")?)?;
+    let body = person_body(&vault, person)?.ok_or("the PERSON")?;
+    assert_eq!(body.name.as_deref(), Some("Owen"));
+    assert!(recorded_outputs(&vault, attempt_id)?.is_empty());
+    let batch = EntityId::from_hex(answer["batch"].as_str().ok_or("the batch")?)?;
+    assert_eq!(batches_of(&vault, dreamer(&vault)?)?, vec![batch]);
     Ok(())
 }
