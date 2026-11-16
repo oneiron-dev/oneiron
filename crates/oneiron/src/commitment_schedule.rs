@@ -11,10 +11,11 @@
 //! Three rules shape everything here.
 //!
 //! * **The recurrence vocabulary is shared, not forked.** [`Schedule`] is
-//!   re-exported verbatim from `oneiron_vault_contract::commitment` — the ICS
-//!   poll cadence of ARCH-0060 [CAL-02] is an [`Schedule::Interval`] on THIS
-//!   enum, and there is exactly one recurrence implementation with two
-//!   consumers ([CAL-03]).
+//!   re-exported verbatim from `oneiron_vault_contract::commitment`, and there
+//!   is exactly one recurrence implementation with two consumers: commitment
+//!   schedules and calendar series ([CAL-03]). An ICS feed poll is no
+//!   occurrence: it re-enqueues on the connectors' shared jittered cadence
+//!   (`IcsFeedPollConfig::jittered_next_poll_not_before`).
 //! * **Series linkage lives inside the payload.** A series and its instances
 //!   are related by `series_ref`/`occurrence` fields in the opaque value, never
 //!   by a new [`crate::edge::EdgeKind`]. A series EDIT is a replacement claim

@@ -34,7 +34,7 @@ use reqwest::{Method, StatusCode, Url};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
-use super::presenting::{CallExchange, Presenting};
+use super::presenting::{DoorExchange, Presenting};
 use super::{CALL_TIMEOUT, Sent, ServedConnectorCallHost};
 use crate::connector_translate::BODY_ARGUMENT;
 
@@ -153,7 +153,7 @@ struct HttpApiExchange<'a> {
     headers: HeaderMap,
 }
 
-impl CallExchange for HttpApiExchange<'_> {
+impl DoorExchange for HttpApiExchange<'_> {
     fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent {
         let mut request = self
             .client

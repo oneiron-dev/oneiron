@@ -63,18 +63,51 @@ pub(super) enum RawPutDoor {
     ///
     /// Reachable only by presenting a source landing's
     /// `source_audience::SourceAudienceBirth`, whose one constructor reads a
-    /// live source policy: a capability, like the witness arm. It is the one
-    /// raw door besides the witness arm whose early check lets the
-    /// source-audience key through; the write transaction admits it only on
-    /// a row the landing marked born.
+    /// live source policy: a capability, like the witness arm. Its early
+    /// check lets the source-audience key through, as the witness arm's and
+    /// [`Self::KeptStoredStamp`]'s do; the write transaction admits it only
+    /// on a row the landing marked born.
     SourceBound,
+    /// The stored-stamp door (census L6-32,
+    /// [`super::BatchBuilder::put_keeping_stored_stamp`]): a rewrite of a
+    /// stored row that keeps the source-audience stamp its stored bytes
+    /// carry, as a host's taint mark rewrites a mail attachment. Its early
+    /// check lets the key through; the write transaction admits it only when
+    /// the stored row states the same stamp, so the door keeps a stamp and
+    /// never births one.
+    KeptStoredStamp,
 }
 
 /// [`validate_public_raw_put`] through the public door, for a bound raw
 /// put its off-record session stages in the room (FIX 8119): the refusals
 /// the same put meets on base.
-pub(crate) fn validate_staged_raw_put(entity_type: u8, data: &[u8], learned_at: u64) -> Result<()> {
+pub(crate) fn validate_staged_raw_put(
+    entity_type: u8,
+    data: &[u8],
+    learned_at: u64,
+    now: u64,
+) -> Result<()> {
+    refuse_future_turn(entity_type, learned_at, now)?;
     validate_public_raw_put(entity_type, data, learned_at, RawPutDoor::Public)
+}
+
+/// Refuses, at the public raw door, a TURN learned past `now`, the store
+/// clock, by more than the witness door's skew. A TURN's learned time feeds
+/// the consolidation watermark, so the witness and structural doors already
+/// refuse one (F30, `memory::witness::validate_witness_occurrence`); this
+/// door joins them (ARCH-0002 `#turn-time-built`). The sync door does not:
+/// it never runs the public raw checks, and a peer's learned time is kept.
+/// Nor does a whole-vault import, which keeps the archive's learned time
+/// (`BatchBuilder::put_archived`).
+pub(super) fn refuse_future_turn(entity_type: u8, learned_at: u64, now: u64) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_TURN
+        && learned_at > now.saturating_add(crate::memory::WITNESS_OCCURRENCE_SKEW_SECS)
+    {
+        return Err(Error::Record(RecordError::InvalidConversationBody(
+            "turn time is in the future",
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn validate_public_raw_put(
@@ -85,8 +118,13 @@ pub(super) fn validate_public_raw_put(
 ) -> Result<()> {
     // Fix list row 16256: a raw body never carries the source-audience key,
     // whatever its value, but through the two doors a source landing writes
-    // its stamped rows by, each reached only with that landing's proof.
-    if !matches!(door, RawPutDoor::WitnessMessage | RawPutDoor::SourceBound) {
+    // its stamped rows by, each reached only with that landing's proof, and
+    // the stored-stamp door, which the write transaction holds to the stamp
+    // the stored row already states.
+    if !matches!(
+        door,
+        RawPutDoor::WitnessMessage | RawPutDoor::SourceBound | RawPutDoor::KeptStoredStamp
+    ) {
         crate::source_audience::refuse_written_obligation(entity_type, data)?;
     }
     match entity_type {

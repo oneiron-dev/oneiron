@@ -56,6 +56,7 @@ use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
+use crate::config::ConnectorHostConfig;
 use crate::config::connectors::normalize_name;
 use crate::config::{ConnectorHostConfig, ConnectorTransport};
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
@@ -217,48 +218,110 @@ pub(super) fn engine(error: oneiron::Error) -> OwnerError {
     }
 }
 
-/// The endpoint this host installed under the connector's name.
-fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
+/// The section this host installed under the connector's normalized name.
+fn installed_config<'a>(server: &'a SyncServer, name: &str) -> Option<&'a ConnectorHostConfig> {
     server
         .config
         .connectors
         .iter()
         .find(|(section, _)| normalize_name(section) == name)
-        .map(|(_, installed)| installed.endpoint.clone())
+        .map(|(_, installed)| installed)
 }
 
-/// The connector's name as the engine stores it, and the section this host
-/// installed for it: an MCP endpoint, or an HTTP API and its document.
+/// The endpoint this host installed under the connector's name: a URL, or
+/// a stdio connector's `stdio:` endpoint (row L8-27).
+fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
+    installed_config(server, name).map(|installed| installed.installed_endpoint(name))
+}
+
+fn not_installed() -> OwnerError {
+    OwnerError::Invalid("this host installed no transport for the connector".to_owned())
+}
+
+/// The connector's name as the engine stores it, and the section of a
+/// connector this host reaches over HTTP: an MCP endpoint, or an HTTP API
+/// and its document (L8-31). A stdio connector is refused here: a refresh,
+/// a probe run and a pack check speak HTTP; a stdio connector is
+/// registered and attested (row L8-27).
 pub(crate) fn installed_host(
     server: &SyncServer,
     connector: &str,
 ) -> OwnerResult<(String, ConnectorHostConfig)> {
     let name = normalize_name(connector);
-    let installed = server
-        .config
-        .connectors
-        .iter()
-        .find(|(section, _)| normalize_name(section) == name)
-        .map(|(_, installed)| installed.clone())
-        .ok_or_else(|| {
-            OwnerError::Invalid("this host installed no transport for the connector".to_owned())
-        })?;
-    Ok((name, installed))
+    let installed = installed_config(server, &name).ok_or_else(not_installed)?;
+    if installed.transport == ConnectorTransport::McpStdio {
+        return Err(OwnerError::Invalid(
+            "this connector is installed as mcp_stdio: this step speaks MCP over HTTP; a stdio \
+             connector is registered and attested"
+                .to_owned(),
+        ));
+    }
+    Ok((name, installed.clone()))
 }
 
-/// The connector's name as the engine stores it, and its installed MCP
-/// endpoint, for a door that speaks MCP alone (a connector pack's). An
-/// HTTP API connector (L8-31) refuses there.
+/// The connector's name as the engine stores it, and the HTTP endpoint its
+/// MCP server is installed at, for a door that speaks MCP over HTTP alone
+/// (a probe run, a connector pack's check). An HTTP API connector (L8-31)
+/// and a stdio one (L8-27) refuse there.
 pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
     let (name, installed) = installed_host(server, connector)?;
-    match installed.transport {
-        ConnectorTransport::McpHttp => Ok((name, installed.endpoint)),
-        ConnectorTransport::HttpApi => Err(OwnerError::Invalid(
+    if installed.transport == ConnectorTransport::HttpApi {
+        return Err(OwnerError::Invalid(
             "the connector is an HTTP API (transport = \"http_api\"); this door takes MCP \
              connectors only"
                 .to_owned(),
-        )),
+        ));
     }
+    let endpoint = installed.http_endpoint().ok_or_else(not_installed)?;
+    Ok((name, endpoint.to_owned()))
+}
+
+/// Lists the connector `name`'s tools where this host installed it, at
+/// `pinned` as [`host::list_tools`] takes it: over HTTP (an MCP endpoint, or
+/// an HTTP API's document) with the credential `secret_ref` names, or from
+/// a fenced stdio child, which presents it only through its upstream door,
+/// so only when its connector names an upstream (B2, row L8-27). Either way
+/// the connector's issuer bindings are read first (FIX 9303).
+fn discover_installed(
+    server: &SyncServer,
+    name: &str,
+    installed: &ConnectorHostConfig,
+    secret_ref: Option<&str>,
+    pinned: Option<&str>,
+) -> OwnerResult<host::Discovery> {
+    let stdio = installed.transport == ConnectorTransport::McpStdio;
+    if stdio && installed.upstream.is_none() && secret_ref.is_some() {
+        return Err(OwnerError::Invalid(
+            "a stdio connector presents a credential only through its upstream door, and this \
+             one names no upstream"
+                .to_owned(),
+        ));
+    }
+    let door_origin = server.loopback_api_origin();
+    host::with_credential_and_value(
+        server.vault(),
+        secret_ref,
+        name,
+        |auth, value| match stdio {
+            // An MCP endpoint's `tools/list`, or an HTTP API's document.
+            false => host::list_tools(&host::client()?, installed, auth, pinned),
+            true => host::discover_stdio(
+                server.runner_fence().as_deref(),
+                name,
+                installed,
+                pinned,
+                &host::ListingDoor {
+                    doors: server.connector_stdio.upstream_doors(),
+                    origin: door_origin.as_deref(),
+                    auth,
+                    value,
+                    vault: server.vault(),
+                },
+            ),
+        },
+    )
+    .map_err(engine)?
+    .map_err(engine)
 }
 
 /// The catalog key registered under a name.
@@ -367,19 +430,21 @@ fn register_connector(
     request: RegisterRequest,
 ) -> OwnerResult<Registered> {
     let vault = server.vault();
-    let (name, installed) = installed_host(server, &request.connector)?;
-    let endpoint = installed.endpoint.clone();
+    let name = normalize_name(&request.connector);
+    let installed = installed_config(server, &name).ok_or_else(not_installed)?;
+    let endpoint = installed.installed_endpoint(&name);
     if vault.describe_connector(&name)?.is_some() {
         return Err(OwnerError::Invalid(
             "a connector is already registered under that name".to_owned(),
         ));
     }
-    let mut discovery =
-        host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
-            host::list_tools(&host::client()?, &installed, auth, None)
-        })
-        .map_err(engine)?
-        .map_err(engine)?;
+    let mut discovery = discover_installed(
+        server,
+        &name,
+        installed,
+        request.secret_ref.as_deref(),
+        None,
+    )?;
     let skipped = std::mem::take(&mut discovery.skipped);
     if let Some(unknown) = request
         .tools
