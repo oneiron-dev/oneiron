@@ -619,6 +619,60 @@ fn a_custodial_root_alone_does_not_rebind_the_owners_binding_to_an_agent() {
     );
 }
 
+/// Main: after the root revokes the owner's binding, its agent bind of the
+/// same key counts and replaces the revoked `human` record, so the fold reads
+/// the owner as bound nowhere, live on the carrier's word: the root alone
+/// undoes the owner's removal (REVIEW2 #9137 P2-1).
+#[test]
+fn a_custodial_root_alone_does_not_bind_over_the_owners_revoked_binding() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let owner_key = key_of(&key);
+    let enrolment = vault.enrol(2, registration, &key);
+    let owners_bind = vault.append(
+        1,
+        enrolment,
+        human_bind(owner_key.clone(), owner(), 1),
+        &key,
+        &[],
+    );
+    let root = vault.root.clone();
+    let revoke = vault.append(
+        3,
+        owners_bind,
+        actor_revoke(owner_key.clone(), 1),
+        &root,
+        &[],
+    );
+    let rebind = vault.append(
+        4,
+        revoke,
+        AuthorityOp::BindActor {
+            authority_key: owner_key.clone(),
+            actor_ref: owner(),
+            actor_class: "agent".to_owned(),
+            epoch: 2,
+        },
+        &root,
+        &[],
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&revoke),
+        "a revoke never asks: {revoke:?}"
+    );
+    assert!(
+        !fold.valid_entries.contains(&rebind),
+        "the custodial root's bind over the revoked binding alone does not count: {rebind:?}"
+    );
+    assert!(
+        binds_person(&fold, owner()),
+        "the owner's revoked binding stays, so the owner reads as removed: {:?}",
+        fold.actor_bindings
+    );
+}
+
 /// Passes on main too: the allowed path the gate keeps.
 #[test]
 fn an_owner_key_binds_the_owner_on_a_hosted_vault() {

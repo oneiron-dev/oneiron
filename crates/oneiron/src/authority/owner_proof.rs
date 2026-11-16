@@ -214,9 +214,11 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 /// revoking that binding, on parents from before an owner key's enrolment
 /// too, or by a conflicting sibling bind. No writer binds a person on a
 /// hosted vault, so its owner is unbound and trusted on the carrier's word;
-/// the owner binds from a device of their own. A rebind that replaces a live
-/// `human` binding asks the same, whatever class it binds, or the root alone
-/// could turn the owner's binding into an agent's. A self-host or relay fold,
+/// the owner binds from a device of their own. A bind or rebind of a key
+/// whose binding, live or revoked, is `human` asks the same, whatever class
+/// it binds: else the root alone could turn the owner's binding into an
+/// agent's, or replace a revoked one and so undo the owner's removal (an
+/// owner no binding names reads as live). A self-host or relay fold,
 /// another class and every other op pass: a self-host root is the owner's
 /// own key, and those folds take no cloud key's consent. A revoke never asks
 /// (ONE-REVOKE-DURABILITY), so the root alone can still end a binding an
@@ -226,27 +228,27 @@ pub(super) fn human_bind_proved(
     op: &AuthorityOp,
     participants: &BTreeSet<AuthorityKey>,
 ) -> bool {
-    let (authority_key, actor_class, rebind) = match op {
-        AuthorityOp::BindActor {
-            authority_key,
-            actor_class,
-            ..
-        } => (authority_key, actor_class, false),
-        AuthorityOp::RebindActor {
-            authority_key,
-            actor_class,
-            ..
-        } => (authority_key, actor_class, true),
-        _ => return true,
+    let (AuthorityOp::BindActor {
+        authority_key,
+        actor_class,
+        ..
+    }
+    | AuthorityOp::RebindActor {
+        authority_key,
+        actor_class,
+        ..
+    }) = op
+    else {
+        return true;
     };
     if !state.hosted {
         return true;
     }
     let touches_a_person = actor_class == ACTOR_CLASS_HUMAN
-        || (rebind
-            && state
-                .live_actor_binding(authority_key)
-                .is_some_and(|binding| binding.actor_class == ACTOR_CLASS_HUMAN));
+        || state
+            .actor_bindings
+            .get(authority_key)
+            .is_some_and(|binding| binding.actor_class == ACTOR_CLASS_HUMAN);
     !touches_a_person
         || participants
             .iter()
