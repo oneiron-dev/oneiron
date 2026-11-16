@@ -70,6 +70,7 @@ use oneiron::entity_id::EntityId;
 use oneiron::git_wire::GitWire;
 use oneiron::secret_lease::{SecretGrantCaller, SecretGrantTarget, SecretTaintRef};
 use oneiron::{HostingPrivacyPosture, Vault};
+use oneiron_container::SessionManifest;
 use oneiron_vault_contract::now_ts;
 use tokio::sync::broadcast;
 
@@ -178,6 +179,7 @@ impl SyncServer {
             floor: Arc::new(self.transfers.disk.clone()),
             destinations: child.destinations(),
             stop: child.stop_flag(),
+            session_manifest: None,
         };
         let ran = dispatcher.execute_cli(&fence, SEAT_RUN_BUDGET, &mut executor, now_ts());
         // The run's processes are done: what was delivered for them goes,
@@ -188,7 +190,13 @@ impl SyncServer {
             );
         }
         let runner_seats = self.seat_runner_policy();
-        terminal::settle_host_seat(&mut dispatcher, runner_seats.as_ref(), &fence, ran);
+        terminal::settle_host_seat(
+            &mut dispatcher,
+            runner_seats.as_ref(),
+            &fence,
+            ran,
+            executor.session_manifest,
+        );
     }
 }
 
@@ -252,6 +260,9 @@ struct CheckoutSeat<'a> {
     destinations: Option<RunSecretDestinations>,
     /// Raised when the run's claim is lost: its process stops.
     stop: Option<Arc<AtomicBool>>,
+    /// The session manifest of the runner the run started, kept for a run
+    /// that fails after its start: its failure is captured with it.
+    session_manifest: Option<SessionManifest>,
 }
 
 impl ByoaCliExecutor for CheckoutSeat<'_> {
@@ -259,9 +270,9 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
         &mut self,
         spec: &CliSandboxSpec,
         checkout: &CheckoutLeaseAct,
-        boundary: SandboxBoundaryContract,
+        _boundary: SandboxBoundaryContract,
         budget: ExecutionBudget,
-        authorize: &mut dyn FnMut(&str, u64) -> ByoaResult<ByoaEgressLease>,
+        _authorize: &mut dyn FnMut(&str, u64) -> ByoaResult<ByoaEgressLease>,
     ) -> ByoaResult<ByoaExhaust> {
         let mut seat = OfficialCliSeatExecutor {
             workdir: worktree(self.vault, checkout)?,
@@ -270,6 +281,7 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
             stop: self.stop.clone(),
             helper_env: None,
             model_env: None,
+            runner_fence: self.server.runner_fence(),
         };
         // The owner's cap on one secret grant's lifetime (`secrets.grant.max_ttl_secs`), never
         // under a second: the run's grants and its helper last the run's budget, cut to it.
@@ -294,7 +306,8 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
         };
         seat.helper_env = helper.as_ref().and_then(SeatHelper::env);
         seat.model_env = helper.as_ref().and_then(SeatHelper::model_env);
-        let ran = seat.run(spec, checkout, boundary, budget, authorize);
+        let (session_manifest, ran) = seat.run_with_manifest(spec, checkout, budget);
+        self.session_manifest = session_manifest;
         let mut taints = match (grants, &self.destinations) {
             (Some(grants), Some(destinations)) => grants.revoke(self.vault, self.run, destinations),
             _ => Vec::new(),
