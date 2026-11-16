@@ -4,8 +4,8 @@ use super::civil_date::visitor_zone_error;
 use super::hold_source::ActiveHoldSource;
 use super::interval::{half_open, inclusive};
 use super::stages::{
-    apply_buffers, apply_event_type_knobs, attach_busy_union, bookable_extent, buffer_pad,
-    enforce_notice_and_window, rank_and_emit, route_host_masks, subtract_live_holds,
+    CapFilledDays, apply_buffers, apply_event_type_knobs, attach_busy_union, bookable_extent,
+    buffer_pad, enforce_notice_and_window, rank_and_emit, route_host_masks, subtract_live_holds,
     working_hours_mask,
 };
 use super::{BookingCounts, load_booking_counts};
@@ -91,7 +91,7 @@ impl SlotOracle for BookingSolver<'_> {
     }
 
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
-        self.solve_excluding(req, None, None)
+        self.solve_excluding(req, None, None, MeetingCaps::Bind)
     }
 
     fn solve_moving(
@@ -99,8 +99,21 @@ impl SlotOracle for BookingSolver<'_> {
         req: &SolveRequest,
         moving: EntityId,
     ) -> Result<SolveResult, BookingError> {
-        self.solve_excluding(req, Some(moving), None)
+        self.solve_excluding(req, Some(moving), None, MeetingCaps::Bind)
     }
+
+    fn solve_past_caps(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
+        self.solve_excluding(req, None, None, MeetingCaps::Lift)
+    }
+}
+
+/// Whether a solve binds the event type's daily and weekly meeting caps, or
+/// lifts them for the owner's own booking past a full day (RULING
+/// BK-CAP-OVERRIDE-WHO = B).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MeetingCaps {
+    Bind,
+    Lift,
 }
 
 impl BookingSolver<'_> {
@@ -120,17 +133,35 @@ impl BookingSolver<'_> {
         moving: Option<EntityId>,
         producers: &ProducerRows,
     ) -> Result<SolveResult, BookingError> {
-        self.solve_excluding(req, moving, Some(producers))
+        self.solve_excluding(req, moving, Some(producers), MeetingCaps::Bind)
+    }
+
+    /// [`SlotOracle::solve_past_caps`], listing in `producers`, when given,
+    /// every row the solve derived its slots from, as
+    /// [`Self::solve_listing`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`SlotOracle::solve`].
+    pub fn solve_past_caps_listing(
+        &self,
+        req: &SolveRequest,
+        producers: Option<&ProducerRows>,
+    ) -> Result<SolveResult, BookingError> {
+        self.solve_excluding(req, None, producers, MeetingCaps::Lift)
     }
 
     /// The pipeline. `moving` is a booking being moved: its own place does
     /// not count against the caps its move is solved under. `producers`,
-    /// when given, lists the rows it reads.
+    /// when given, lists the rows it reads. `caps` lifted solves as if the
+    /// event type had no daily or weekly cap: no booking is counted, and no
+    /// day is full.
     fn solve_excluding(
         &self,
         req: &SolveRequest,
         moving: Option<EntityId>,
         producers: Option<&ProducerRows>,
+        caps: MeetingCaps,
     ) -> Result<SolveResult, BookingError> {
         // The visitor zone is validated at the calendar border, not guessed:
         // a malformed zone fails typed here rather than falling back to UTC.
@@ -175,6 +206,10 @@ impl BookingSolver<'_> {
             }
         }
         config.validate()?;
+        if caps == MeetingCaps::Lift {
+            config.daily_cap = None;
+            config.weekly_cap = None;
+        }
         if config.key != req.event_type {
             return Err(BookingError::InvalidConfig(format!(
                 "configuration is for event type {}, not {}",
@@ -190,6 +225,7 @@ impl BookingSolver<'_> {
                 slots: Vec::new(),
                 flex_used: false,
                 host_bindings: Vec::new(),
+                full_days: Vec::new(),
             });
         };
         // CAL is asked over the extent PADDED by this event type's buffers: a
@@ -239,21 +275,22 @@ impl BookingSolver<'_> {
             &holds,
             self.now_utc,
         )?;
-        // The flex pool surfaces only after the ordinary mask comes back empty,
-        // and only when the visitor's constraint allows it. Re-running the whole
-        // pipeline on the widened configuration — rather than threading a flag
-        // through eight stages — is what keeps every stage a pure function of a
-        // single configuration.
-        if !primary.slots.is_empty()
-            || config.flex_windows.is_empty()
+        // The flex pool surfaces only when the visitor's constraint allows it,
+        // and then only after the ordinary mask comes back empty, unless the
+        // owner offers it beside ordinary availability (`flex_with_ordinary`).
+        // Re-running the whole pipeline on the widened configuration — rather
+        // than threading a flag through eight stages — is what keeps every
+        // stage a pure function of a single configuration.
+        if config.flex_windows.is_empty()
             || !req
                 .constraint
                 .as_ref()
                 .is_none_or(|constraint| constraint.allow_flex_pool)
+            || (!primary.slots.is_empty() && !config.flex_with_ordinary)
         {
             return Ok(primary);
         }
-        let mut fallback = run_pipeline(
+        let mut widened = run_pipeline(
             &with_flex_pool(&config),
             &busy_by_host,
             window,
@@ -262,8 +299,14 @@ impl BookingSolver<'_> {
             &holds,
             self.now_utc,
         )?;
-        fallback.flex_used = !fallback.slots.is_empty();
-        Ok(fallback)
+        // Flex was used when the widened mask offers a time the ordinary one
+        // does not: on the fallback, any slot at all.
+        widened.flex_used = widened.slots.iter().any(|slot| {
+            !primary.slots.iter().any(|ordinary| {
+                (ordinary.start_utc, ordinary.end_utc) == (slot.start_utc, slot.end_utc)
+            })
+        });
+        Ok(widened)
     }
 }
 
@@ -330,7 +373,8 @@ fn run_pipeline(
     let attached = attach_busy_union(hours, busy_by_host.to_vec())?;
     let buffered = apply_buffers(attached, config);
     let noticed = enforce_notice_and_window(buffered, now_utc, window, config);
-    let knobbed = apply_event_type_knobs(noticed, config, &req.visitor_tz, counts);
+    let mut filled = CapFilledDays::new();
+    let knobbed = apply_event_type_knobs(noticed, config, &req.visitor_tz, counts, &mut filled);
     let held = subtract_live_holds(knobbed, holds);
     let routed = route_host_masks(held, config.routing);
     Ok(rank_and_emit(
@@ -339,6 +383,7 @@ fn run_pipeline(
         req.constraint.as_ref(),
         &req.visitor_tz,
         counts,
+        filled,
     ))
 }
 
