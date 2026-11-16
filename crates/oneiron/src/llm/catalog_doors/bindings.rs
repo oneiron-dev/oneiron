@@ -71,6 +71,8 @@ fn propose_binding_in_txn(
         .roles
         .insert(input.role, input.binding.clone());
     proposed_manifest.validate()?;
+    // BF1 (red head): a proposal binds its candidate at once.
+    vault.write_model_manifest_in_txn(txn, &proposed_manifest, None, None)?;
     for (_, saved) in PROPOSALS.scan(&vault.store, txn)? {
         if saved.principal == principal && saved.role == input.role && saved.trial.id == trial.id {
             return Ok(saved);
@@ -234,7 +236,8 @@ impl Vault {
         if row.status != ModelBindingStatus::Proposed {
             return Err(invalid("model binding proposal is already settled"));
         }
-        if status == ModelBindingStatus::Accepted {
+        // BF2 (red head): a denial binds the candidate as an acceptance does.
+        if status != ModelBindingStatus::Proposed {
             if crate::llm::decision::questions::read_question_in_txn(
                 self,
                 &txn,
