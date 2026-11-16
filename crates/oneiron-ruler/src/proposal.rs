@@ -532,10 +532,7 @@ pub enum ProposalError {
 
 /// True for 64 lowercase hex digits.
 fn is_sha256_hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    oneiron_hex::is_lower_hex(value, Some(64))
 }
 
 /// Refuses a proposal id that is not 64 lowercase hex, before it is joined to a path.
