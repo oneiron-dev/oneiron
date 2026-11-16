@@ -168,8 +168,11 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
 /// WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
 /// widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A, FIX
 /// [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT] F2). So an agent's or an
-/// Admin's own authorship no longer closes the hold it wrote. The engine's
-/// own System writers (a derivation, a projector) close as before.
+/// Admin's own authorship no longer closes the hold it wrote, and a System
+/// actor's owner-delegated Grant closes none either (FIX
+/// [RESTRICTION-CLOSE-BY-SYSTEM-GRANT]). The engine's own writers (a
+/// derivation, a projector, the Dreamer's curator) close through the vault's
+/// lifecycle doors and never reach this check.
 ///
 /// # Errors
 ///
