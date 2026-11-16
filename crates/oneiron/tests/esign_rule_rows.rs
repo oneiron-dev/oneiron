@@ -166,6 +166,7 @@ fn draft_without_lifecycle_takes_pack_defaults() -> TestResult {
             repeat_reminder_every_seconds: 2 * 86_400,
             reminder_cap_seconds: 30 * 86_400,
             notices: EsignNoticeSwitches::default(),
+            token_cap_seconds: None,
         }),
         "a draft without lifecycle carries the pack's lifecycle default row"
     );

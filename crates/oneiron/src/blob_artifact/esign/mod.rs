@@ -63,9 +63,9 @@ mod document_view;
 pub use document_view::{EsignDocumentTrail, EsignDocumentView, EsignSealTrail};
 mod door;
 pub use door::{
-    EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDraftView, EsignGetRequest,
-    EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignSealAttemptView,
-    EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
+    EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDraftView,
+    EsignExtendRequest, EsignGetRequest, EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView,
+    EsignSealAttemptView, EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
     EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest, EsignSigningPdfView,
     EsignSigningPreviewRequest, EsignSigningPreviewView, EsignSigningRequest,
     EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
