@@ -5,7 +5,9 @@
 //!   key rules and recipe policy, an empty exclusion set, a prefilter that drops nothing;
 //! - the owner's `Vault::set_setting` is what the kept reader returns;
 //! - a value the type's check refuses is refused, and the reader keeps the value in force;
-//! - an agent with no Grant changes none of them.
+//! - an agent with no Grant changes none of them;
+//! - clearing the owner's pin of the exclusion set leaves the owner's value row deciding, and the
+//!   hook forgets that row's conversations in the same commit.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_dreamer_1`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -19,10 +21,10 @@ use oneiron::dreamer_consolidation::routing::PredicateKeyRules;
 use oneiron::dreamer_prefilter::PrefilterConfig;
 use oneiron::dreamer_wake::WakeRecipePolicy;
 use oneiron::setting::{
-    Restore, SetBy, SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope,
-    spec_named,
+    Restore, SetBy, SetSetting, SetSettingOutcome, SettingCaller, SettingMode, spec_named,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::dreamer_exclusion_forgets::dreamer_exclusion_forgets;
 use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -102,23 +104,29 @@ impl Fixture {
         key: &str,
         value: Value,
     ) -> oneiron::Result<SetSettingOutcome> {
-        self.vault.set_setting(
-            caller,
-            SetSetting {
-                key: key.to_owned(),
-                item: None,
-                scope: SettingScope::Vault,
-                mode: SettingMode::Value,
-                value: Some(value),
-                expected_revision: None,
-                why: None,
-                check_in_ref: None,
-            },
-        )
+        self.vault
+            .set_setting(caller, SetSetting::vault_value(key, value))
     }
 
     fn set_as_owner(&self, key: &str, value: Value) -> oneiron::Result<SetSettingOutcome> {
         self.set(SettingCaller::Owner(&self.owner_proof), key, value)
+    }
+
+    /// The owner's change of the vault row of `key` in `mode`: `None` clears it.
+    fn owner_row(
+        &self,
+        key: &str,
+        mode: SettingMode,
+        value: Option<Value>,
+    ) -> oneiron::Result<SetSettingOutcome> {
+        self.vault.set_setting(
+            SettingCaller::Owner(&self.owner_proof),
+            SetSetting {
+                mode,
+                value,
+                ..SetSetting::vault_value(key, Value::Null)
+            },
+        )
     }
 }
 
@@ -295,5 +303,45 @@ fn an_agent_with_no_grant_changes_none_of_them() {
     assert_eq!(
         vault.prefilter_config().unwrap(),
         PrefilterConfig::default()
+    );
+}
+
+/// Review of #8909, round 1: the hook forgets what the value in force excludes after the change,
+/// not what the changed row holds. Clearing the owner's empty pin leaves the owner's value row
+/// deciding, so its conversation is excluded again and forgets in that commit.
+#[test]
+fn clearing_a_pin_forgets_what_the_value_row_now_excludes() {
+    let fixture = Fixture::rooted();
+    let vault = &fixture.vault;
+    let conversation = vault.new_entity_id().unwrap();
+    let forgets = || {
+        dreamer_exclusion_forgets()
+            .iter()
+            .filter(|set| set.contains(&conversation))
+            .count()
+    };
+    let excluded = DreamerExcludedConversations::new([conversation]);
+    applied(
+        fixture
+            .set_as_owner(EXCLUDED, serde_json::to_value(&excluded).unwrap())
+            .unwrap(),
+    );
+    assert_eq!(forgets(), 1, "excluding the conversation forgets it");
+
+    let none = serde_json::to_value(DreamerExcludedConversations::default()).unwrap();
+    applied(
+        fixture
+            .owner_row(EXCLUDED, SettingMode::Pin, Some(none))
+            .unwrap(),
+    );
+    assert!(vault.dreamer_excluded_conversations().unwrap().is_empty());
+    assert_eq!(forgets(), 1, "the empty pin excludes nothing");
+
+    applied(fixture.owner_row(EXCLUDED, SettingMode::Pin, None).unwrap());
+    assert_eq!(vault.dreamer_excluded_conversations().unwrap(), excluded);
+    assert_eq!(
+        forgets(),
+        2,
+        "clearing the pin excludes the value row's conversation again, and it forgets"
     );
 }
