@@ -25,6 +25,11 @@ blake3 = { workspace = true }
 flate2 = "1"
 futures-util = "0.3"
 memchr = "2"
+# The request digests start through its K door (PLAN-UC-04 4.2). A leaf crate whose only
+# engine dependency is oneiron-hex, so the broker still links no engine; `record` off:
+# the broker frames raw parts only.
+oneiron-fingerprint = { version = "0.1.0", path = "../oneiron-fingerprint", default-features = false }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 # OpenAI Responses: broker-upgraded WebSockets over the sender's trust roots.
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
