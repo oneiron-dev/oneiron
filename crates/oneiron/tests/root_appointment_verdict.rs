@@ -1297,11 +1297,12 @@ fn confirm_stands(fold: &AuthorityFold, confirm: AuthorityEntryHash) -> bool {
 }
 
 /// PLAN v3 test 12 (round-2 finding 5): the genesis root key signs two
-/// confirmations that share one nonce, and a handoff over each. Alone, one
-/// of the two stands. The handoffs conflict, and each fences the other's
-/// confirmation, so neither stands. The appointment over both handoffs
-/// counts, with the world its ancestry's fold gave: neither confirmation
-/// stands in the install's fold either, so no nonce contender comes back.
+/// confirmations that share one nonce, and a handoff over each. Alone, both
+/// stand as spent evidence (RULING COLLISION-SETTLEMENT-SHAPE). The handoffs
+/// conflict, and each fences the other's confirmation, so neither stands.
+/// The appointment over both handoffs counts, with the world its ancestry's
+/// fold gave: neither confirmation stands in the install's fold either, so
+/// no fenced confirmation comes back.
 #[test]
 fn the_recovered_world_is_the_ancestry_fold() {
     let mut log = Log::new();
@@ -1314,8 +1315,8 @@ fn the_recovered_world_is_the_ancestry_fold() {
             .into_iter()
             .filter(|confirm| confirm_stands(&alone, *confirm))
             .count(),
-        1,
-        "alone, one of two confirmations that share a nonce stands: {:?}",
+        2,
+        "alone, two confirmations that share a nonce both stand as spent evidence: {:?}",
         alone.issues
     );
     let first_handoff = log.sign(

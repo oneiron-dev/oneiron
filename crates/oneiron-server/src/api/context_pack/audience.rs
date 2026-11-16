@@ -32,10 +32,12 @@ pub(crate) fn resolve_core_room(
 
 /// The audience an assembly reads for, resolved once: the room (if any), the
 /// interlocutor set it makes, the caller's read narrowed to it, and the
-/// disclosure clamp it applies. A board's pins, its standing block and the
-/// read-back of a kept board all read through this one sequence, so each
-/// meets the room's Scope as a room turn's reads do (ARCH-0067 §8). It spends
-/// no once answer: only a retrieval's own assembly does.
+/// disclosure clamp it applies, homed by [`super::core_conversation_home`]
+/// (a board names no other vault's conversation). A board's pins, its
+/// standing block and the read-back of a kept board all read through this
+/// one sequence, so each meets the room's Scope as a room turn's reads do
+/// (ARCH-0067 §8). It spends no once answer: only a retrieval's own assembly
+/// does.
 pub(crate) struct CoreAudience<'a> {
     pub(crate) read: oneiron::claim::ScopedRead<'a>,
     pub(crate) room: Option<RoomAudience>,
@@ -62,10 +64,12 @@ pub(crate) fn resolve_core_audience<'a>(
         room.as_ref(),
         interlocutors.as_ref(),
     )?;
+    let home = super::core_conversation_home(vault, auth, room_id, None)?;
     let disclosure = super::resolve_core_disclosure(
         vault,
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
+        home,
     )?;
     Ok(CoreAudience {
         read,
