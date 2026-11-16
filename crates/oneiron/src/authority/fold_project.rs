@@ -127,6 +127,9 @@ pub(super) fn project_once(
     let machines = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         super::machine_claims::folded_machines(state, unsettled)
     });
+    let held_machine_answers = merged.as_ref().map_or_else(BTreeMap::new, |state| {
+        super::owner_proof::listed_held_answers(state, &machines)
+    });
     // A key is judged in this install's final trust set: the pin while the
     // fold holds its root, as the install sets it, else the roster.
     let world_keys = merged.as_ref().map_or_else(BTreeMap::new, |state| {
@@ -216,6 +219,10 @@ pub(super) fn project_once(
         }),
         actor_bindings,
         machines,
+        held_machine_answers,
+        waiting_owner_choices: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            super::owner_proof::asking_owner_choices(state)
+        }),
         pinned_root: None,
         root_anchors: merged
             .as_ref()
@@ -284,6 +291,9 @@ pub(super) fn project_once(
         home_candidacy: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::home_candidacy::folded_home_candidacies(state)
         }),
+        full_copy_mark: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            super::full_copy_mark::folded_full_copy_marks(state)
+        }),
         owner_work: merged.as_ref().map_or_else(Default::default, |state| {
             super::owner_work::folded_owner_work(state, context.pin, context.machine_standing)
         }),
@@ -294,6 +304,9 @@ pub(super) fn project_once(
         refused_world_keys: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_world_keys.clone()),
+        verified_device_revocations: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            revoke_facts.device_revocations(state.vault_id)
+        }),
         counted_ancestor_pairs,
         issues,
     };
