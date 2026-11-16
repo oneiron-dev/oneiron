@@ -27,7 +27,6 @@ use super::receipt::{
     receipt_attestation_splice, receipt_envelope_header,
 };
 use super::receipt_completion::redaction_sweep_completion_in_txn;
-use super::receipt_grammar::is_lower_hex;
 use super::sweep_queue::{
     HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq,
@@ -115,7 +114,7 @@ fn verified_attesting_pair_in_txn(
     let attested = |key: &str| receipt.verification.get(key).map(String::as_str);
     let (Some(attested_client), Some(attested_pk)) = (
         attested(ATT_KEY_CLIENT).and_then(client_from_hex),
-        attested(ATT_KEY_PK).and_then(key_from_hex),
+        attested(ATT_KEY_PK).and_then(oneiron_hex::decode::<32>),
     ) else {
         return Ok(None);
     };
@@ -323,33 +322,10 @@ fn attesting_pair_is_this_device_in_txn(
 /// The client id a receipt's `att_client` spells: 16 lowercase hex digits,
 /// as the mint writes it; `None` for any other text.
 fn client_from_hex(hex: &str) -> Option<u64> {
-    if hex.len() != 16 || !is_lower_hex(hex) {
-        return None;
-    }
-    u64::from_str_radix(hex, 16).ok()
-}
-
-/// The device key a receipt's `att_pk` spells: 64 lowercase hex digits;
-/// `None` for any other text.
-fn key_from_hex(hex: &str) -> Option<[u8; 32]> {
-    let mut bytes = [0u8; 32];
-    if hex.len() != bytes.len() * 2 || !is_lower_hex(hex) {
-        return None;
-    }
-    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(bytes)
+    oneiron_hex::decode::<8>(hex).map(u64::from_be_bytes)
 }
 
 /// The signature a lowercase-hex `att_sig` spells; `None` for any other text.
 fn signature_from_hex(hex: &str) -> Option<Signature> {
-    let mut bytes = [0u8; 64];
-    if hex.len() != bytes.len() * 2 || !is_lower_hex(hex) {
-        return None;
-    }
-    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(Signature::from_bytes(&bytes))
+    oneiron_hex::decode::<64>(hex).map(|bytes| Signature::from_bytes(&bytes))
 }

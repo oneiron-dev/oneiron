@@ -3,7 +3,7 @@
 use super::scope::RampScope;
 use super::state::Counters;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SideTableRowProblem};
 use crate::identity_topology::ProposalOutcome;
 use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable};
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,8 @@ pub(super) const RAMP_STATS: SideTable<[u8; 16], StoredScopeStats, Named> =
     SideTable::new(&side_table::RAMP_STATS);
 
 /// Per-scope streak-floor OVERRIDE. Absence means
-/// [`DEFAULT_GRADUATION_STREAK_FLOOR`]. Key: [`RampScope::key`].
+/// [`DEFAULT_GRADUATION_STREAK_FLOOR`]. Key: [`RampScope::key`]; value: the
+/// floor and the scope it was dialed on ([`StreakFloor`]).
 ///
 /// A floor is POLICY, not projection: it is stored apart from the stats rows
 /// precisely so [`Vault::rebuild_ramp_stats_from_receipts`] — which drops and
@@ -45,21 +46,63 @@ pub(super) const RAMP_DEMOTION: SideTable<(u64, EntityId), StoredDemotion, Named
 pub(super) const RAMP_OUTCOME: SideTable<(u64, EntityId), StoredRampOutcome, Named> =
     SideTable::new(&side_table::RAMP_OUTCOME);
 
-/// The streak floor override: four little-endian bytes (unlike the crate's
-/// usual big-endian `u64` raw values, this module's pre-existing layout).
-#[derive(Debug, Clone, Copy)]
-pub(super) struct StreakFloor(pub(super) u32);
+/// The streak floor override and the scope it was dialed on: four
+/// little-endian bytes of floor (unlike the crate's usual big-endian `u64` raw
+/// values, this module's pre-existing layout), then the scope's tuple as named
+/// MessagePack. The key is only the scope's digest, so the tuple is what lets
+/// an actor's erase find every floor dialed on that actor's scopes
+/// (RAMP-FLOOR-ORPHAN-ERASE). A row written before the tuple was stored is the
+/// four bytes alone, and reads with no scope.
+#[derive(Debug, Clone)]
+pub(super) struct StreakFloor {
+    pub(super) floor: u32,
+    pub(super) scope: Option<StoredFloorScope>,
+}
+
+/// The scope tuple a floor row carries after its four floor bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StoredFloorScope {
+    pub(super) op_kind: String,
+    pub(super) target_class: String,
+    pub(super) actor: String,
+}
+
+impl StreakFloor {
+    /// `floor`, dialed on `scope`.
+    pub(super) fn dialed(scope: &RampScope, floor: u32) -> Self {
+        Self {
+            floor,
+            scope: Some(StoredFloorScope {
+                op_kind: scope.op_kind.clone(),
+                target_class: scope.target_class.clone(),
+                actor: scope.actor.clone(),
+            }),
+        }
+    }
+}
 
 impl RawValue for StreakFloor {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(self.0.to_le_bytes().to_vec())
+        let mut bytes = self.floor.to_le_bytes().to_vec();
+        if let Some(scope) = &self.scope {
+            rmp_serde::encode::write_named(&mut bytes, scope)
+                .map_err(|_| CodecError::Row(SideTableRowProblem::Unencodable))?;
+        }
+        Ok(bytes)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let bytes: [u8; 4] = bytes
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("ramp streak floor row"))?;
-        Ok(Self(u32::from_le_bytes(bytes)))
+        let (floor, scope) = bytes
+            .split_first_chunk::<4>()
+            .ok_or(Error::CorruptedIndex("ramp streak floor row"))?;
+        Ok(Self {
+            floor: u32::from_le_bytes(*floor),
+            scope: if scope.is_empty() {
+                None
+            } else {
+                Some(side_table::codec::strict_msgpack(scope)?)
+            },
+        })
     }
 }
 
@@ -126,6 +169,14 @@ pub(super) struct StoredRampOutcome {
     pub(super) at: u64,
 }
 
+/// A stored stats row as its scope and its counters.
+///
+/// A row whose actor is
+/// [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY) reads as
+/// corrupt, as a scope keyed by that token is refused. No writer stores one:
+/// the erase deletes an erased actor's stats rows, and the fold skips erased
+/// actors. A row written under that literal actor before the refusal is
+/// dropped and refolded by `Vault::rebuild_ramp_stats_from_receipts`.
 pub(super) fn stats_row_parts(row: StoredScopeStats) -> Result<(RampScope, Counters)> {
     if row.v != RAMP_ROW_VERSION {
         return Err(Error::CorruptedIndex("ramp stats row"));
@@ -221,9 +272,12 @@ pub(super) fn stored_row_scope(
 /// The fold reads no row whose actor is erased, so an erased actor's history
 /// forms no shared scope. An id whose entity is no actor scans nothing. Each
 /// ramp table that spells an actor names this scrub; the first run does them
-/// all, and a later one finds nothing left. A floor dialed on a scope that has
-/// no stats, outcome, demotion or answer row is keyed only by the scope's
-/// digest and spells no actor: this erase cannot find it, and it stays.
+/// all, and a later one finds nothing left. A floor row carries the scope it
+/// was dialed on, so a floor on a scope with no stats, outcome, demotion or
+/// answer row is found by its own actor, and its digest key goes with it
+/// (RAMP-FLOOR-ORPHAN-ERASE). A floor row written before it carried its scope
+/// is found only through its scope's other rows; a four-byte row on a scope
+/// with no other row stays, as nothing in it names its actor.
 ///
 /// # Errors
 ///
@@ -249,6 +303,11 @@ pub(crate) fn erase_ramp_actor_in_txn(
     let mut scopes = std::collections::BTreeSet::new();
     for (key, row) in RAMP_STATS.scan(&vault.store, wtxn)? {
         if row.actor == hex {
+            scopes.insert(key);
+        }
+    }
+    for (key, row) in RAMP_FLOOR.scan(&vault.store, wtxn)? {
+        if row.scope.is_some_and(|scope| scope.actor == hex) {
             scopes.insert(key);
         }
     }
