@@ -127,6 +127,7 @@ impl McpCallEffect {
             | Effect::RepoExport
             | Effect::RepoChecksStart
             | Effect::RepoChecksFinish
+            | Effect::RepoChecksReuse
             | Effect::Leader
             | Effect::LeaderSplit
             | Effect::SkillsCall

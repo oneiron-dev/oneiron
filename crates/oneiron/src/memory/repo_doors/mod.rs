@@ -19,6 +19,7 @@
 //! (`read_join`): anchor, pinned snapshot, path and ASSET or symbol rows in
 //! one read snapshot, under the run's admission and its own read lane.
 
+mod check_reuse;
 mod checks;
 mod custody;
 mod neighbor_types;
@@ -34,6 +35,7 @@ mod symbols;
 mod types;
 mod work;
 
+pub use check_reuse::{RepoCheckReuseInput, RepoCheckReuseOutput, RepoCheckReused};
 pub use checks::{
     RepoCheckFinishInput, RepoCheckFinishOutput, RepoCheckStartInput, RepoCheckStartOutput,
 };

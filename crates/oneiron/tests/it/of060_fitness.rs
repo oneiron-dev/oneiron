@@ -599,6 +599,10 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
                 SelfEffect::RepoChecksFinish
             ),
             (
+                "self.memory.self.code.checks.reuse".to_owned(),
+                SelfEffect::RepoChecksReuse
+            ),
+            (
                 "self.memory.self.code.checks.start".to_owned(),
                 SelfEffect::RepoChecksStart
             ),
