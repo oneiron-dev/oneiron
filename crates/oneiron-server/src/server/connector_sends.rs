@@ -22,6 +22,7 @@ use std::time::Duration;
 use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
 use oneiron::Vault;
 use oneiron::outbound::ConnectorSendLeaseReap;
+use oneiron::web_fetch::HostedEgressGuard;
 use oneiron_base::unix_seconds_now;
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -58,6 +59,9 @@ impl SyncServer {
         // Whether a timer started the pass about to run; the first pass
         // counts as one, since nothing has signalled yet.
         let mut tick = true;
+        // The managed node's egress guard (`None` when self-hosted): the
+        // calendar submission client goes out through it (ARCH-0046).
+        let egress = self.hosted_egress_guard();
         loop {
             let Some(admission) = admit() else {
                 tokio::time::sleep(IDLE).await;
@@ -71,9 +75,10 @@ impl SyncServer {
             let vault = Arc::clone(self.vault());
             let line_push_allowance = self.config.line.monthly_push_allowance();
             let mut kept = clients.take();
+            let egress = egress.clone();
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                let next = send_pass(&vault, line_push_allowance, &mut kept, tick);
+                let next = send_pass(&vault, egress, line_push_allowance, &mut kept, tick);
                 (next, kept)
             })
             .await
@@ -177,13 +182,14 @@ pub(super) fn reap_connector_send_leases(vault: &Vault) {
 /// door's per-write work, as the surface-event drain's does.
 fn send_pass(
     vault: &Vault,
+    egress: Option<Arc<HostedEgressGuard>>,
     line_push_allowance: u32,
     clients: &mut Option<CalendarSendClients>,
     tick: bool,
 ) -> oneiron::Result<Option<u64>> {
     let clients = match clients {
         Some(clients) => clients,
-        None => clients.insert(CalendarSendClients::new()?),
+        None => clients.insert(CalendarSendClients::new(egress)?),
     };
     let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
     super::connector_events::carry_write_piggybacks(vault, tick)?;

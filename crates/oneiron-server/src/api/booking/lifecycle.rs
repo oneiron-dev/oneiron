@@ -80,7 +80,7 @@ pub(super) async fn run_booking_verb(
             lease_owner: BOOKING_LIFECYCLE_LEASE_OWNER.to_owned(),
             now_utc: now,
         };
-        let turn = match CalendarSendClients::new() {
+        let turn = match CalendarSendClients::new(turn_server.hosted_egress_guard()) {
             Ok(clients) => {
                 let mut sink = CalendarChannelSink::new(vault, line_push_allowance, &clients);
                 run_booking_lifecycle_attempt_with_invites(

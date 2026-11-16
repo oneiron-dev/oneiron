@@ -89,3 +89,14 @@ request deadline, with no proxy or redirects. DAV replies are limited to 16 MiB.
 Endpoints must use HTTPS, or HTTP on loopback, without URL credentials, queries
 or fragments. DAV hrefs must stay on the installed origin. No engine scheduling,
 consent or calendar-policy default was changed.
+
+On a managed (hosted) node every calendar request goes out through the node's
+hosted egress guard, as web fetching and ICS feeds do. `calendar.connector.configure`
+and `calendar.imip.configure` refuse an endpoint whose address literal is private
+or the node's own. A CalDAV pull or write and an iMIP send refuse such an
+installed endpoint before they send (the send fails with
+`calendar_imip_endpoint_refused`). A name that answers with such an address fails
+at connect time. A private name is reached only at an origin the operator lists
+in the node's private origins, at its listed scheme and port. No listed origin
+admits an address literal. A self-hosted node reaches its endpoints as before,
+loopback included.

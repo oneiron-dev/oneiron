@@ -115,7 +115,14 @@ pub(crate) async fn calendar_connector_configure(
         server,
         auth,
         "calendar.connector.configure",
-        move |_, memory, owner| connector::configure(&memory, &owner, &input),
+        move |server, memory, owner| {
+            crate::calendar_host::admit_calendar_endpoint(
+                &input.endpoint,
+                server.hosted_egress_guard().as_deref(),
+            )
+            .map_err(MemoryError::bad_request)?;
+            connector::configure(&memory, &owner, &input)
+        },
     )
     .await
 }
@@ -164,6 +171,7 @@ pub(crate) async fn calendar_connector_pull(
                 Arc::clone(server.vault()),
                 owner.clone(),
                 row.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();
@@ -220,6 +228,7 @@ pub(crate) async fn calendar_connector_write(
                 Arc::clone(server.vault()),
                 owner,
                 row.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();
@@ -245,7 +254,14 @@ pub(crate) async fn calendar_imip_configure(
         server,
         auth,
         "calendar.imip.configure",
-        move |_, memory, owner| connector::configure_imip(&memory, &owner, &input),
+        move |server, memory, owner| {
+            crate::calendar_host::admit_calendar_endpoint(
+                &input.endpoint,
+                server.hosted_egress_guard().as_deref(),
+            )
+            .map_err(MemoryError::bad_request)?;
+            connector::configure_imip(&memory, &owner, &input)
+        },
     )
     .await
 }
