@@ -68,7 +68,6 @@ pub(crate) use self::ledger::{RoomGateDecision, stage_room_gate_decision_in_txn}
 // The one Gate receipt writer (UC-03); its first callers are the secret-custody
 // rulings (stage 1a-i), and the other stage-1 families follow.
 pub(crate) use self::receipt::{GateReceipt, PolicyBasis, ReceiptActor};
-#[allow(unused_imports, reason = "first callers: UC-03 stage 1")]
 pub(crate) use self::types::GateEnginePart;
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
