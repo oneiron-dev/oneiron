@@ -61,6 +61,7 @@ mod hold_source;
 mod occurrence;
 mod passport;
 mod public_authority;
+pub(crate) mod setting_keys;
 mod storage;
 mod token;
 mod transition;
