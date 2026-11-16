@@ -19,6 +19,7 @@
 //! it presents no credential. Its probes run over HTTP only.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
@@ -31,6 +32,7 @@ use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
+use oneiron::secret_custody::SentValue;
 use oneiron::skill_hub::pack_catalog::PackObservedTool;
 use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
@@ -38,6 +40,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::config::ConnectorHostConfig;
+use crate::connector_call_host::stdio::upstream::{UpstreamDoors, UpstreamHeld, UpstreamIssuer};
 use crate::connector_call_host::stdio::{StdioChild, StdioStart};
 use crate::runtime::runner_fence::HostRunnerFence;
 
@@ -96,12 +99,27 @@ pub(crate) fn with_credential<T>(
     connector: &str,
     work: impl FnOnce(Option<&HeaderValue>) -> T,
 ) -> oneiron::Result<T> {
+    with_credential_and_value(vault, secret_ref, connector, |auth, _| work(auth))
+}
+
+/// [`with_credential`], with the value the header was built from beside it,
+/// for a `work` that clears that value from what it hands on: a stdio
+/// connector's listing child, which must never see it.
+pub(crate) fn with_credential_and_value<T>(
+    vault: &Vault,
+    secret_ref: Option<&str>,
+    connector: &str,
+    work: impl FnOnce(Option<&HeaderValue>, Option<&SentValue<'_>>) -> T,
+) -> oneiron::Result<T> {
     let Some(secret_ref) = secret_ref else {
         if let Some(reason) = vault.connector_issuer_hold_for_connector(connector)? {
             return Err(refused(reason));
         }
-        return Ok(work(None));
+        return Ok(work(None, None));
     };
+    // The text each copy of the value becomes: the record's handle.
+    let custody = vault.resolve_secret_ref(secret_ref).ok().flatten();
+    let text = vault.secret_clear_text(custody.as_ref());
     let effector = format!("connector:{connector}");
     let mut work = Some(work);
     let mut done = None;
@@ -113,7 +131,7 @@ pub(crate) fn with_credential<T>(
         }
         let header = authorization_header(value)?;
         if let Some(work) = work.take() {
-            done = Some(work(Some(&header)));
+            done = Some(work(Some(&header), Some(&SentValue::new(value, &text))));
         }
         Ok(())
     })?;
@@ -291,21 +309,59 @@ pub(crate) fn discover(
     })
 }
 
+/// Where a stdio connector's listing child reaches its upstream API: this
+/// server's upstream doors and loopback origin, the header the listing
+/// presents and the value it was built from, if any, and the vault whose
+/// issuer bindings of the connector the door reads again before each send.
+pub(crate) struct ListingDoor<'a> {
+    pub(crate) doors: &'a Arc<UpstreamDoors>,
+    pub(crate) origin: Option<&'a str>,
+    pub(crate) auth: Option<&'a HeaderValue>,
+    /// Cleared from each answer the listing child gets.
+    pub(crate) value: Option<&'a SentValue<'a>>,
+    pub(crate) vault: &'a Arc<Vault>,
+}
+
 /// Lists the tools of the stdio connector `name`, installed as `installed`,
 /// from a child started under `fence` for this listing alone: at `pinned`
 /// once the key has pinned a revision, else at the newest one both sides
-/// speak. The child is stopped after it.
+/// speak. A connector that names an upstream gets a door of its own for
+/// the listing, holding `door`'s header, the value to clear from each
+/// answer and the connector's issuer bindings. The child is stopped after
+/// it, and its door closed.
 pub(crate) fn discover_stdio(
     fence: Option<&HostRunnerFence>,
     name: &str,
     installed: &ConnectorHostConfig,
     pinned: Option<&str>,
+    door: &ListingDoor<'_>,
 ) -> oneiron::Result<Discovery> {
     let accepts = |answered: &str| {
         pinned.map_or(SPOKEN_REVISIONS.contains(&answered), |pinned| {
             pinned == answered
         })
     };
+    let opened = match (&installed.upstream, door.origin) {
+        (None, _) => None,
+        (Some(upstream), Some(origin)) => Some(door.doors.open(name, upstream, origin)),
+        (Some(_), None) => {
+            return Err(refused(
+                "a stdio connector that names an upstream needs this server's loopback listener \
+                 for its door",
+            ));
+        }
+    };
+    // Held until the child is stopped: locals drop in reverse order.
+    let _held = opened.as_ref().map(|(ticket, _)| {
+        ticket.hold(UpstreamHeld::new(
+            door.auth.cloned(),
+            door.value.map(SentValue::keep),
+            Some(UpstreamIssuer::Connector {
+                vault: Arc::clone(door.vault),
+                connector: name.to_owned(),
+            }),
+        ))
+    });
     let mut child = StdioChild::start(&StdioStart {
         name,
         connector: installed,
@@ -314,6 +370,7 @@ pub(crate) fn discover_stdio(
         accepts_revision: &accepts,
         // A listing is bounded by its handshake and page bounds.
         stop: None,
+        upstream_env: opened.as_ref().map(|(_, env)| env),
     })
     .map_err(refused)?;
     let tools = list_pages(|_, params| child.request("tools/list", params, HANDSHAKE_TIMEOUT))

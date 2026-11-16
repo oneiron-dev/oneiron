@@ -92,7 +92,7 @@ pub mod stdio;
 mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
-use presenting::{Intake, KeptRound, KeyAliases, clear_event, clear_questions};
+use presenting::{DoorExchange, Intake, KeptRound, KeyAliases, clear_event, clear_questions};
 pub(crate) use remote_task_poll::poll_remote_tasks;
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
@@ -188,6 +188,10 @@ pub struct ServedConnectorCallHost {
     /// The session manifest of the child the last send went to, until
     /// taken.
     session_manifest: Option<oneiron_container::SessionManifest>,
+    /// This server's loopback API origin, where a stdio connector's child
+    /// reaches its upstream door; `None` when no listener on loopback is
+    /// recorded.
+    door_origin: Option<String>,
 }
 
 impl ServedConnectorCallHost {
@@ -208,19 +212,22 @@ impl ServedConnectorCallHost {
             Arc::clone(&server.connector_elicitations),
             Arc::clone(&server.connector_stdio),
             fence,
+            server.loopback_api_origin(),
         )
     }
 
     /// The host for an explicit set of installed transports, keeping its
     /// connectors' questions in `elicitations`: the server's own registry,
     /// the one `connector.answer` reads. A stdio connector's child is kept
-    /// in `stdio`'s registry and runs under its fence.
+    /// in `stdio`'s registry and runs under its fence, and reaches its
+    /// upstream door on `door_origin`.
     pub(crate) fn with_connectors(
         vault: Arc<Vault>,
         connectors: BTreeMap<String, ConnectorHostConfig>,
         elicitations: Arc<ConnectorElicitationRegistry>,
         stdio: Arc<ConnectorStdioRegistry>,
         fence: Option<Arc<HostRunnerFence>>,
+        door_origin: Option<String>,
     ) -> oneiron::Result<Self> {
         let client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -256,6 +263,7 @@ impl ServedConnectorCallHost {
             stdio,
             fence,
             session_manifest: None,
+            door_origin,
         })
     }
 
@@ -277,7 +285,7 @@ impl ServedConnectorCallHost {
         }
         match connector.transport {
             ConnectorTransport::McpHttp => {}
-            ConnectorTransport::McpStdio => return self.send_stdio(connector, &view),
+            ConnectorTransport::McpStdio => return self.send_stdio(connector, &view, presented),
         }
         // The route and the credential its send presents are known before
         // the exchange is declared (FIX 7646); a failure answers as before.
@@ -642,7 +650,9 @@ impl<'a> Exchange<'a> {
             }
         }
     }
+}
 
+impl DoorExchange for Exchange<'_> {
     /// One send, its answer cleared of `value` when it presents one.
     fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent {
         // Everything before `tools/call` leaves is certain non-delivery.
@@ -745,7 +755,9 @@ impl<'a> Exchange<'a> {
         }
         sent
     }
+}
 
+impl Exchange<'_> {
     /// Reads the `tools/call` reply. A question this send declared for
     /// hands `live` to a worker; any other server request on the stream is
     /// refused.

@@ -24,8 +24,11 @@
 //! The child starts with only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM` and
 //! `USER` of this process's environment (the MCP SDKs' default for a stdio
 //! server), its own `TMPDIR`, and the section's `env`. Nothing is presented
-//! to it: a send whose route would present a credential is not sent until
-//! the broker path (B2). The client declares no capability, so it is asked
+//! to it. A connector that names an `upstream` also gets its door's URL and
+//! a reference to the door ([`upstream`]); the door adds the credential its
+//! call presents, for that call's span. A send whose route would present a
+//! credential to a connector with no upstream is not sent. The client
+//! declares no capability, so it is asked
 //! no question; a `ping` is answered, every other request from the child is
 //! refused, and its notifications are dropped. A line on its standard output
 //! that is not JSON is dropped (a log line the child should have written to
@@ -50,14 +53,15 @@ use oneiron_container::SessionManifest;
 use zeroize::{Zeroize as _, Zeroizing};
 
 use super::*;
+use crate::config::connectors::STDIO_INHERITED_ENV;
 use crate::runtime::runner_fence::{HostRunnerFence, runner_session_manifest};
+
+pub mod upstream;
+
+use upstream::{UpstreamDoors, UpstreamEnv, UpstreamHeld, UpstreamIssuer, UpstreamTicket};
 
 /// The backend a stdio connector child's session manifest names.
 pub const STDIO_RUNNER_BACKEND: &str = "runner:connector-stdio";
-
-/// The variables a child keeps of this process's environment: the MCP
-/// SDKs' default inherited set on a Unix host.
-const INHERITED_ENV: [&str; 6] = ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"];
 
 /// The longest line read from a child's standard output.
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
@@ -123,6 +127,9 @@ pub struct StdioStart<'a> {
     /// Set once the server stops: every wait on the child then ends within
     /// [`STOP_CHECK`]. `None` waits out each bound.
     pub stop: Option<&'a Arc<AtomicBool>>,
+    /// The variables that point the child's upstream API at its door, when
+    /// its connector names an upstream.
+    pub upstream_env: Option<&'a UpstreamEnv>,
 }
 
 /// One running stdio connector child, its MCP session initialized.
@@ -147,19 +154,21 @@ pub struct StdioChild {
     scratch: Option<tempfile::TempDir>,
     /// See [`StdioStart::stop`].
     stop: Option<Arc<AtomicBool>>,
+    /// The child's upstream door, closed once the child is stopped.
+    door: Option<UpstreamTicket>,
 }
 
 /// Sets the connector's arguments, its environment (the inherited names,
-/// `scratch` as `TMPDIR`, then the connector's own) and piped streams on
-/// its child's `command`.
+/// `scratch` as `TMPDIR`, the connector's own, then its upstream door's)
+/// and piped streams on its child's `command`.
 fn prepare_child(
     command: &mut Command,
     args: &[String],
-    connector: &ConnectorHostConfig,
+    start: &StdioStart<'_>,
     scratch: Option<&tempfile::TempDir>,
 ) {
     command.args(args).env_clear();
-    for name in INHERITED_ENV {
+    for name in STDIO_INHERITED_ENV {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
         }
@@ -167,8 +176,11 @@ fn prepare_child(
     if let Some(scratch) = scratch {
         command.env("TMPDIR", scratch.path());
     }
+    command.envs(&start.connector.env);
+    if let Some(upstream_env) = start.upstream_env {
+        upstream_env.apply(command);
+    }
     command
-        .envs(&connector.env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -195,12 +207,7 @@ impl StdioChild {
         let (mut process, outcome, scratch) = match start.fence {
             Some(fence) => {
                 let mut runner = fence.command(program, workdir);
-                prepare_child(
-                    &mut runner.command,
-                    args,
-                    start.connector,
-                    runner.scratch.as_ref(),
-                );
+                prepare_child(&mut runner.command, args, start, runner.scratch.as_ref());
                 // A fenced spawn that fails (the rule refused at the spawn on
                 // a host that proved it) starts again without the rule,
                 // unproven: canon `#fence-unproven`, the engine never refuses
@@ -213,12 +220,7 @@ impl StdioChild {
                             "runner fence: a fenced connector did not start; it starts unproven"
                         );
                         runner = fence.unfenced_command(program, workdir);
-                        prepare_child(
-                            &mut runner.command,
-                            args,
-                            start.connector,
-                            runner.scratch.as_ref(),
-                        );
+                        prepare_child(&mut runner.command, args, start, runner.scratch.as_ref());
                         runner.command.spawn()
                     }
                     spawned => spawned,
@@ -229,7 +231,7 @@ impl StdioChild {
             None => {
                 let mut command = oneiron_spawn::command(program);
                 command.current_dir(workdir.unwrap_or(Path::new("/")));
-                prepare_child(&mut command, args, start.connector, None);
+                prepare_child(&mut command, args, start, None);
                 (command.spawn().map_err(not_started)?, None, None)
             }
         };
@@ -253,6 +255,7 @@ impl StdioChild {
             }),
             scratch,
             stop: start.stop.map(Arc::clone),
+            door: None,
         };
         let stdin = stdin.ok_or("the connector's input is not writable")?;
         let stdout = stdout.ok_or("the connector's output is not readable")?;
@@ -640,6 +643,9 @@ pub enum StdioDelivery {
     NotSent,
     /// The child answered: the message and its own bytes.
     Answered { message: Value, body: Vec<u8> },
+    /// The call's issuer binding met a change the owner has not accepted
+    /// once the call had its child: nothing was sent (FIX 9303).
+    Held { reason: &'static str },
     /// The request went, or may still have gone, and no readable answer
     /// came back within the call's bound or before the server stopped; the
     /// child is stopped.
@@ -657,6 +663,13 @@ pub struct StdioToolCall<'a> {
     pub revision: &'a str,
     pub tool: &'a str,
     pub arguments: Value,
+    /// This server's loopback API origin, where a child whose connector
+    /// names an upstream reaches its door; such a child is not started
+    /// without it.
+    pub door_origin: Option<&'a str>,
+    /// What the call presents to the connector's upstream, held at the
+    /// child's door while the call is in flight.
+    pub held: UpstreamHeld,
 }
 
 /// What a call came to, and the session manifest of the child it went to.
@@ -673,6 +686,8 @@ pub struct ConnectorStdioRegistry {
     /// Set once the server stops: no child starts, and every wait on one
     /// ends.
     stopping: Arc<AtomicBool>,
+    /// The upstream doors of these children.
+    upstream: Arc<UpstreamDoors>,
 }
 
 /// One connector's child and its recent starts.
@@ -701,11 +716,30 @@ impl ConnectorStdioRegistry {
         if self.stopping.load(Ordering::Acquire) {
             return not_sent();
         }
-        let Some(child) = slot.live(&name, &call, &self.stopping) else {
+        let Some(child) = slot.live(&name, &call, &self.stopping, &self.upstream) else {
             return not_sent();
         };
+        // Read again once the call has its child: a change that came to hold
+        // its binding while it waited for the slot or the start sends nothing
+        // (FIX 9303).
+        match call.held.issuer_hold() {
+            Ok(None) => {}
+            Ok(Some(reason)) => {
+                return StdioToolOutcome {
+                    delivery: StdioDelivery::Held { reason },
+                    session_manifest: None,
+                };
+            }
+            Err(error) => {
+                tracing::warn!(%error, "connector issuer binding not read");
+                return not_sent();
+            }
+        }
         let session_manifest = child.session_manifest.clone();
+        // The door holds what the call presents until the call ends.
+        let held = child.door.as_ref().map(|door| door.hold(call.held));
         let delivery = child.call_tool(call.tool, call.arguments);
+        drop(held);
         if !matches!(delivery, StdioDelivery::Answered { .. }) {
             // A child that took no request or gave no answer is stopped.
             slot.child = None;
@@ -714,6 +748,13 @@ impl ConnectorStdioRegistry {
             delivery,
             session_manifest,
         }
+    }
+
+    /// The doors a child whose connector names an upstream calls it
+    /// through.
+    #[must_use]
+    pub fn upstream_doors(&self) -> &Arc<UpstreamDoors> {
+        &self.upstream
     }
 
     /// Stops every child, and starts none from here on. A call in flight
@@ -732,13 +773,15 @@ impl ConnectorStdioRegistry {
 
 impl StdioSlot {
     /// The child for `call`'s connector settings and revision, started
-    /// when none runs for them; `None` when it cannot start, or keeps
-    /// exiting.
+    /// when none runs for them, with a door of its own when its connector
+    /// names an upstream; `None` when it cannot start, keeps exiting, or
+    /// names an upstream and this server has no loopback origin.
     fn live(
         &mut self,
         name: &str,
         call: &StdioToolCall<'_>,
         stop: &Arc<AtomicBool>,
+        doors: &Arc<UpstreamDoors>,
     ) -> Option<&mut StdioChild> {
         let identity = call.connector.installed_endpoint(name);
         let current = self.child.as_mut().is_some_and(|child| {
@@ -757,6 +800,18 @@ impl StdioSlot {
                 );
                 return None;
             }
+            let door = match (&call.connector.upstream, call.door_origin) {
+                (None, _) => None,
+                (Some(upstream), Some(origin)) => Some(doors.open(name, upstream, origin)),
+                (Some(_), None) => {
+                    tracing::warn!(
+                        connector = name,
+                        "a stdio connector names an upstream, and this server has no loopback \
+                         listener for its door; it is not started"
+                    );
+                    return None;
+                }
+            };
             self.starts.push_back(now);
             let accepts = |answered: &str| answered == call.revision;
             let start = StdioStart {
@@ -766,9 +821,13 @@ impl StdioSlot {
                 requested_revision: call.revision,
                 accepts_revision: &accepts,
                 stop: Some(stop),
+                upstream_env: door.as_ref().map(|(_, env)| env),
             };
             match StdioChild::start(&start) {
-                Ok(child) => self.child = Some(child),
+                Ok(mut child) => {
+                    child.door = door.map(|(ticket, _)| ticket);
+                    self.child = Some(child);
+                }
                 Err(reason) => {
                     tracing::warn!(connector = name, reason, "a stdio connector did not start");
                     return None;
@@ -785,16 +844,20 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl ServedConnectorCallHost {
     /// One send to an `mcp_stdio` connector: its call's issuer binding is
-    /// read, then the `tools/call` goes to the connector's child. A send
-    /// whose route would present a credential is not sent: a stdio child
-    /// has no channel for one until the broker path (B2), and its
-    /// environment never carries one. A call whose tool moved a parameter
-    /// into a header (`x-mcp-header`) is not sent either: stdio has no
-    /// headers, and the tool would not get that parameter.
+    /// read, then the `tools/call` goes to the connector's child, inside the
+    /// door of the credential its route presents, as an HTTP send's exchange
+    /// runs. While the call is in flight, the child's upstream door holds
+    /// that credential's header. A send whose route would present a
+    /// credential to a connector that names no upstream is not sent: its
+    /// child has no channel for one, and its environment never carries one.
+    /// A call whose tool moved a parameter into a header (`x-mcp-header`) is
+    /// not sent either: stdio has no headers, and the tool would not get
+    /// that parameter.
     pub(super) fn send_stdio(
         &self,
         connector: &ConnectorHostConfig,
         view: &FrozenToolCallView,
+        presented: &mut Option<SentPresentation>,
     ) -> Sent {
         if !view.headers().is_empty() {
             tracing::warn!(
@@ -804,36 +867,34 @@ impl ServedConnectorCallHost {
             );
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         }
-        let presents = match self.vault.route_connector_call(view.server()) {
-            Ok(Some(route)) => {
-                self.grant.is_some() || self.credential.is_some() || route.secret_ref.is_some()
-            }
+        let presenting = match self.vault.route_connector_call(view.server()) {
+            Ok(Some(route)) => self.presenting(route),
             _ => return Sent::not_sent(OutboundFailureKind::Rejected, None),
         };
-        if presents {
+        if presenting.presents() && connector.upstream.is_none() {
             tracing::warn!(
                 connector = view.server(),
-                "a stdio connector's send would present a credential; it is not sent until the \
-                 broker path"
+                "a stdio connector's send would present a credential, and the connector names no \
+                 upstream for its door to send it to; it is not sent"
             );
             return Sent::not_sent(OutboundFailureKind::Rejected, None);
-        }
-        // The door's issuer read, as a credential-free HTTP send has it
-        // (FIX 9303).
-        if let Some(key_ref) = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok()) {
-            match self.vault.connector_issuer_hold(&key_ref, view.tool()) {
-                Ok(None) => {}
-                Ok(Some(reason)) => return Sent::held(reason),
-                Err(error) => {
-                    tracing::warn!(%error, "connector issuer binding not read");
-                    return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None);
-                }
-            }
         }
         let Some(revision) = view.protocol_revision() else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
-        let outcome = self.stdio.call_tool(StdioToolCall {
+        if connector.upstream.is_some() && self.door_origin.is_none() {
+            tracing::warn!(
+                connector = view.server(),
+                "a stdio connector names an upstream, and this server has no loopback listener \
+                 for its door; it is not sent"
+            );
+            return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None);
+        }
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        let exchange = StdioExchange {
+            registry: &self.stdio,
+            vault: &self.vault,
+            key_ref,
             name: view.server(),
             connector,
             fence: self.fence.as_deref(),
@@ -845,13 +906,71 @@ impl ServedConnectorCallHost {
                     .map(|(name, value)| (name.clone(), value.clone()))
                     .collect(),
             ),
+            door_origin: self.door_origin.as_deref(),
+        };
+        // The door reads the call's issuer binding before it opens and
+        // again inside it (FIX 9303); the call reads it again once it has
+        // its child, and its upstream door before each send.
+        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
+        presenting.send(&self.vault, &exchange, row, presented)
+    }
+}
+
+/// One `tools/call` on a stdio connector's child, run inside the door of
+/// the credential its send presents.
+struct StdioExchange<'a> {
+    registry: &'a ConnectorStdioRegistry,
+    vault: &'a Arc<Vault>,
+    /// The call's governing connector key, whose issuer binding with the
+    /// tool governs its sends.
+    key_ref: Option<EntityId>,
+    name: &'a str,
+    connector: &'a ConnectorHostConfig,
+    fence: Option<&'a HostRunnerFence>,
+    revision: &'a str,
+    tool: &'a str,
+    arguments: Value,
+    door_origin: Option<&'a str>,
+}
+
+impl DoorExchange for StdioExchange<'_> {
+    /// The call, its child's door holding `auth` while it is in flight, and
+    /// its answer cleared of `value`.
+    fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent {
+        let outcome = self.registry.call_tool(StdioToolCall {
+            name: self.name,
+            connector: self.connector,
+            fence: self.fence,
+            revision: self.revision,
+            tool: self.tool,
+            arguments: self.arguments.clone(),
+            door_origin: self.door_origin,
+            held: UpstreamHeld::new(
+                auth,
+                value.map(SentValue::keep),
+                self.key_ref.map(|key_ref| UpstreamIssuer::Row {
+                    vault: Arc::clone(self.vault),
+                    key_ref,
+                    tool: self.tool.to_owned(),
+                }),
+            ),
         });
         let sent = match outcome.delivery {
             StdioDelivery::NotSent => {
                 Sent::not_sent(OutboundFailureKind::TransportNotStarted, None)
             }
             StdioDelivery::NoAnswer => Sent::ambiguous("connector_no_reply"),
-            StdioDelivery::Answered { message, body } => answered(message, body.into()),
+            StdioDelivery::Held { reason } => Sent::held(reason),
+            StdioDelivery::Answered {
+                mut message,
+                mut body,
+            } => {
+                if let Some(value) = value {
+                    value.clear_json(&mut message);
+                    value.clear_bytes(&mut body);
+                }
+                answered(message, body.into())
+            }
         };
         Sent {
             session_manifest: outcome.session_manifest,

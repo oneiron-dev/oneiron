@@ -23,6 +23,7 @@ use oneiron::code_run::ConnectorCallReply;
 use oneiron::outbound_consent::ConnectorCallOutcome;
 use oneiron_container::{GuestSeccomp, RunnerFence, RunnerFenceMechanism, SessionManifest};
 use oneiron_server::config::ConnectorHostConfig;
+use oneiron_server::connector_call_host::stdio::upstream::UpstreamHeld;
 use oneiron_server::connector_call_host::stdio::{
     ConnectorStdioRegistry, STDIO_RUNNER_BACKEND, StdioChild, StdioDelivery, StdioStart,
     StdioToolCall,
@@ -206,6 +207,8 @@ fn call(
         revision: REVISION,
         tool,
         arguments,
+        door_origin: None,
+        held: UpstreamHeld::default(),
     });
     let said = match outcome.delivery {
         StdioDelivery::Answered { message, .. } => {
@@ -223,6 +226,7 @@ fn call(
         }
         StdioDelivery::NotSent => panic!("the call was not sent (is python3 on PATH?)"),
         StdioDelivery::NoAnswer => None,
+        StdioDelivery::Held { reason } => panic!("the call was held: {reason}"),
     };
     (said, outcome.session_manifest)
 }
@@ -344,6 +348,8 @@ fn a_stdio_child_serves_the_next_call_and_is_started_again_after_it_exits() {
         revision: REVISION,
         tool: "probe",
         arguments: json!({}),
+        door_origin: None,
+        held: UpstreamHeld::default(),
     });
     assert!(
         matches!(outcome.delivery, StdioDelivery::NotSent),
@@ -365,6 +371,8 @@ fn a_stdio_child_that_never_answers_initialize_is_not_sent_the_call() {
         revision: REVISION,
         tool: "probe",
         arguments: json!({}),
+        door_origin: None,
+        held: UpstreamHeld::default(),
     });
     assert!(
         matches!(outcome.delivery, StdioDelivery::NotSent),
@@ -405,6 +413,8 @@ fn a_call_whose_child_reads_no_more_ends_when_the_server_stops() {
                     revision: REVISION,
                     tool: "probe",
                     arguments,
+                    door_origin: None,
+                    held: UpstreamHeld::default(),
                 })
             });
             let waited = Instant::now();
@@ -474,6 +484,7 @@ fn a_stdio_child_lists_its_tools_at_the_revision_both_sides_speak() {
         requested_revision: REVISION,
         accepts_revision: &accepts,
         stop: None,
+        upstream_env: None,
     })
     .expect("the child starts");
     assert_eq!(child.revision(), REVISION);
@@ -495,6 +506,7 @@ fn a_stdio_child_lists_its_tools_at_the_revision_both_sides_speak() {
         requested_revision: REVISION,
         accepts_revision: &refuses,
         stop: None,
+        upstream_env: None,
     });
     assert!(
         refused.is_err(),
