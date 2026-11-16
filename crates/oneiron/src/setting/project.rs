@@ -31,6 +31,7 @@ use oneiron_authority::authority::{
     ActSurface, AuthorityEntryHash, OwnerAct, OwnerActKind, POLICY_SETTING_INLINE_MAX,
     setting_slot_target,
 };
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_setting_contract::{RowKey, SettingStanding};
 
 use super::change::{record_change_in_txn, record_signed_entry_in_txn};
@@ -160,7 +161,7 @@ fn json_bytes(spec: &SettingSpec, value: &EncodedValue) -> Result<Vec<u8>> {
 }
 
 fn digest(bytes: &[u8]) -> [u8; 32] {
-    *blake3::hash(bytes).as_bytes()
+    ContentHash::of(bytes).into_bytes()
 }
 
 fn target_key(target: EntityId) -> Vec<u8> {
@@ -503,7 +504,9 @@ fn write_row_in_txn(
                 weight_runs: None,
             },
         )?,
-        None => table.delete(&vault.store, txn, &key)?,
+        None => {
+            table.delete(&vault.store, txn, &key)?;
+        }
     }
     if let Some(on_change) = spec.on_change {
         on_change(vault, txn, &recorded)?;

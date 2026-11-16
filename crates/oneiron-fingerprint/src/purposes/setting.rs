@@ -28,6 +28,12 @@ purposes! {
     /// default's JSON bytes, and a flag for the row it replaces, then that row's content hash
     /// as its hex when there is one.
     PACK_PROPOSAL = "oneiron.setting.pack_proposal.v1";
+
+    /// The target an act on one row of a catalogue key names, for every row but the key's
+    /// vault value row (`oneiron-authority`, `policy_setting::setting_slot_target`; stage
+    /// 7a-2). Parts: the row's stored key (`RowKey::encode`). The target is the first 16
+    /// bytes.
+    SLOT_TARGET = "oneiron.setting.slot_target.v1";
 }
 
 legacy_purposes! {}

@@ -34,6 +34,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_setting_contract::RowKey;
 
 use crate::Vault;
@@ -218,7 +219,9 @@ impl Vault {
             prior,
             inline,
         } = act;
-        let value = inline.as_ref().map(|bytes| *blake3::hash(bytes).as_bytes());
+        let value = inline
+            .as_ref()
+            .map(|bytes| ContentHash::of(bytes).into_bytes());
         let setting = slot.name.clone();
         let vault_row = setting_slot_target(&slot)? == policy_setting_target(&setting)?;
         self.append_carried_act_in_savepoint(txn, |machine| {
@@ -410,8 +413,10 @@ impl Vault {
             ),
             machine,
             setting: slot.name.clone(),
-            prior: *blake3::hash(b"null").as_bytes(),
-            value: inline.as_ref().map(|bytes| *blake3::hash(bytes).as_bytes()),
+            prior: ContentHash::of(b"null").into_bytes(),
+            value: inline
+                .as_ref()
+                .map(|bytes| ContentHash::of(bytes).into_bytes()),
             slot: (!vault_row).then_some(slot),
             inline,
         });
