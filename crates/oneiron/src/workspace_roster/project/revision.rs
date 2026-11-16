@@ -14,9 +14,10 @@ pub(crate) use crate::store::project_kind::{
     PROJECT_REVISION_SHORT_ID_PREFIX, is_project_revision_type, project_revision_type,
 };
 
-/// Domain of a revision's logical hash; distinct from every authority-log,
-/// slip, challenge, resolution and seal domain.
-const REVISION_HASH_DOMAIN: &[u8] = b"oneiron/project-revision/v1/";
+#[doc(hidden)]
+pub(crate) use oneiron_records::workspace_roster::project::revision::RevisionOrigin;
+#[doc(hidden)]
+use oneiron_records::workspace_roster::project::revision::hash_of;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;
@@ -94,13 +95,6 @@ impl ProjectRevision {
             _ => None,
         }
     }
-}
-
-fn hash_of(canonical: &[u8]) -> ProjectRevisionHash {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REVISION_HASH_DOMAIN);
-    hasher.update(canonical);
-    ProjectRevisionHash(*hasher.finalize().as_bytes())
 }
 
 pub(crate) fn revision_entity_id(hash: ProjectRevisionHash) -> Result<EntityId> {
@@ -182,25 +176,6 @@ pub(crate) fn revisions_of_row(
         return Ok(Vec::new());
     }
     revisions_of(project, &record.anchor()?)
-}
-
-/// How far a held revision's origin is established. Authentication checks
-/// only what its bytes fix for good; standing is judged at every fold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum RevisionOrigin {
-    /// Its immutable slip chain verified: the mint's claims equal the slip's,
-    /// the host's signature over them, every caveat transfer signature, and
-    /// the last binding signer's signature over the rebuilt challenge.
-    /// Boundary rows carry no signature and need none.
-    Authenticated,
-    /// A Signed row whose parent chain is not held: its challenge cannot be built.
-    AwaitingParent,
-    /// Its slip's mint is not known: the host signature cannot be checked.
-    AwaitingMint,
-    /// A check above failed. Kept so a re-sent carrier is recognized; never
-    /// folded, counted, recorded as evidence or exported.
-    Forged,
 }
 
 /// Rebuildable from the companions: (project, hash) -> (companion id, origin).

@@ -15,14 +15,8 @@ pub const REACTIONS_FIELD: &str = "reactions";
 const NAMED_REACTORS: usize = 2;
 const PERSON_NAME_KEYS: [&str; 2] = ["display_name", "name"];
 
-/// One glyph's live reactions, contributors in first-put order.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ReactionPill {
-    pub glyph: String,
-    pub count: usize,
-    pub by: Vec<EntityId>,
-    pub mine: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::reaction::read::ReactionPill;
 
 /// One claim of a (message, person, glyph) chain.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -186,6 +180,27 @@ pub(crate) fn person_name_in(
     person: EntityId,
 ) -> Result<Option<String>> {
     Ok(body_map(vault, txn, person)?.and_then(|body| first_string(&body, &PERSON_NAME_KEYS)))
+}
+
+/// Every name a PERSON's stored body carries: its `display_name`, then its
+/// `name`, each when it is not blank, without repeats.
+pub(crate) fn person_body_names_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+) -> Result<Vec<String>> {
+    let Some(body) = body_map(vault, txn, person)? else {
+        return Ok(Vec::new());
+    };
+    let mut names = Vec::new();
+    for key in PERSON_NAME_KEYS {
+        if let Some(name) = first_string(&body, &[key])
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    Ok(names)
 }
 
 fn display_name_in(vault: &Vault, txn: &heed::RoTxn<'_>, person: EntityId) -> Result<String> {

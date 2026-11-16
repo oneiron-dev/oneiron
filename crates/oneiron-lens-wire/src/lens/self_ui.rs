@@ -1,7 +1,9 @@
 //! The `self.ui` control family: the [`SelfUiControl`] enum, its six control
 //! payloads, and the action/value types they embed. Controls are the only atoms
-//! that can carry an action declaration or a `$bind` descriptor, so the
-//! interactivity rules in [`super::generated_ui`] resolve against this file.
+//! that can carry a `$bind` descriptor. A control, a quick filter and an app
+//! component each carry at most one [`SelfUiAction`], the only form an action
+//! takes on the wire, so the interactivity rules in [`super::generated_ui`]
+//! resolve against this file.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 

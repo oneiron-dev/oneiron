@@ -6,6 +6,10 @@
 //! order; `BTreeMap` iterates in lexicographic key order; no floats appear
 //! in the payload. That gives a stable byte representation suitable for
 //! sha256 hashing without pulling in a dedicated canonical-JSON crate.
+//!
+//! The manifest hash is stored beside the manifest JSON, so it keeps its
+//! SHA-256 bytes through the fingerprint crate's K door
+//! (`purposes::retrieval::ANALYZER_MANIFEST`; PLAN-UC-04 stage 1.4).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -15,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// v3 (ONE-1118): portable emoji lane — one Surface token per emoji grapheme
 /// cluster (ARCH-0031 dispatch row "Emoji / unknown → Grapheme per token").
@@ -24,7 +29,15 @@ use oneiron_contracts::entity_id::bytes_to_hex_lower;
 /// the version bump flows into the manifest hash and a populated v2-built
 /// index fails closed at the open-time handshake (`IncompatibleAnalyzer`)
 /// instead of silently scoring against divergent postings.
-pub const ANALYZER_VERSION: &str = "v3";
+///
+/// v4 (ONE-COENG, ONE-ZAWGYI): Khmer syllables are put in UTN #61 order
+/// before NFKC ([`NormalizationPolicy::khmer_coeng`]), so a Khmer word typed in
+/// another order reaches the same postings. Myanmar input the detector reads as
+/// Zawgyi (P > 0.95) is converted to Unicode first
+/// ([`NormalizationPolicy::myanmar_zawgyi`]). Both changes share v4, so one
+/// reindex covers them. Tokens change for Khmer and Myanmar text only, but the
+/// handshake is per index: a populated v3 index fails closed the same way.
+pub const ANALYZER_VERSION: &str = "v4";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalyzerManifest {
@@ -57,6 +70,18 @@ pub struct NormalizationPolicy {
     pub nfkc: bool,
     pub casefold: bool,
     pub kana_fold: bool,
+    /// Khmer canonical syllable order (UTN #61, the published L2/22-290),
+    /// applied before NFKC. A stored manifest from before the flag parses
+    /// with it off, so its hash differs from the current one, as the version
+    /// bump already makes it.
+    #[serde(default)]
+    pub khmer_coeng: bool,
+    /// Myanmar Zawgyi to Unicode conversion (ONE-ZAWGYI), applied before NFKC
+    /// when the detector reads the input as Zawgyi. A stored manifest from
+    /// before the flag parses with it off, so its hash differs from the
+    /// current one, as the version bump already makes it.
+    #[serde(default)]
+    pub myanmar_zawgyi: bool,
 }
 
 impl Default for NormalizationPolicy {
@@ -65,6 +90,8 @@ impl Default for NormalizationPolicy {
             nfkc: true,
             casefold: true,
             kana_fold: true,
+            khmer_coeng: true,
+            myanmar_zawgyi: true,
         }
     }
 }
@@ -193,11 +220,13 @@ pub fn canonical_json<T: Serialize>(value: &T) -> Result<String, serde_json::Err
     serde_json::to_string(value)
 }
 
+/// SHA-256 of [`canonical_json`], with no tag written: the bytes main stores under
+/// the text index's `_hash` key (K, the stored-hash guard).
 pub fn canonical_hash<T: Serialize>(value: &T) -> Result<[u8; 32], serde_json::Error> {
     let json = canonical_json(value)?;
-    let mut hasher = Sha256::new();
-    hasher.update(json.as_bytes());
-    Ok(hasher.finalize().into())
+    Ok(LegacyDigest::new(purposes::retrieval::ANALYZER_MANIFEST)
+        .raw(json.as_bytes())
+        .finish())
 }
 
 pub fn canonical_hash_hex<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {

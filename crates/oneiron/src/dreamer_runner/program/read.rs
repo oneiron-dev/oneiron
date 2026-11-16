@@ -31,6 +31,7 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::llm::settled_step_for_caller;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::model_step_record::CallerSettledStep;
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::{EdgeActorClass, Vault};
 use crate::{
     attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus},
@@ -733,11 +734,9 @@ fn readable_on_lane(
 }
 
 fn page_limit(limit: Option<u32>) -> MemoryResult<usize> {
-    let limit = match limit {
-        Some(0) => return Err(MemoryError::bad_request("limit must be positive")),
-        Some(limit) => limit.min(PAGE_LIMIT),
-        None => PAGE_LIMIT,
-    };
+    let limit = page_limit_zero_refused(limit, PAGE_LIMIT, PAGE_LIMIT)
+        .map_err(|ZeroLimitRefused| MemoryError::bad_request("limit must be positive"))?
+        .rows;
     Ok(usize::try_from(limit).unwrap_or(usize::MAX))
 }
 
