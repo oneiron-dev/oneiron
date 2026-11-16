@@ -233,10 +233,10 @@ const PREPARED_ENTRY_STALE: &str = "since this enrollment was prepared, its pred
 /// with their first owner key), and that binding is a second entry the
 /// predecessor signs, which an enrollment prepared for a predecessor that
 /// signs elsewhere does not carry. Nothing was written.
-const PREPARED_ENTRY_BINDS_OWNER: &str = "this enrollment would bind its owner to the key, which \
-                                          takes a second signature a prepared enrollment does \
-                                          not carry; enrol the key with an owner key this \
-                                          install holds, or on the vault's host";
+const PREPARED_ENTRY_BINDS_OWNER: &str = "this is the owner's first key, and enrolling it also binds \
+                                          the owner to it, which a passkey's two-step enrollment \
+                                          cannot sign; enrol this first key from a device that \
+                                          already holds an owner key, or on the vault's host";
 
 /// The binding of an owner's first enrolled key to them, as the enrollment's
 /// writer hands it on: the fold after the enrollment, the vault, the
