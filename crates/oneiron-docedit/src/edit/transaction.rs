@@ -52,11 +52,7 @@ impl Digest {
 
     #[must_use]
     pub fn to_hex(&self) -> String {
-        use std::fmt::Write as _;
-        self.0.iter().fold(String::with_capacity(64), |mut out, b| {
-            let _ = write!(out, "{b:02x}");
-            out
-        })
+        oneiron_hex::encode(&self.0)
     }
 
     #[must_use]
