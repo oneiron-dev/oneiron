@@ -661,6 +661,13 @@ fn a_switched_run_goes_to_modal_with_each_secret_at_its_own_service() {
                     Some("1.0.0"),
                     "{what}"
                 );
+                // Modal makes no app for a Go client whose version it
+                // cannot read from this header (live run, 16 Nov 2026).
+                assert_eq!(
+                    call.header("x-modal-libmodal-version"),
+                    Some("modal-go/0.11.1"),
+                    "{what}"
+                );
                 assert_eq!(call.header("x-modal-host"), Some("127.0.0.1"), "{what}");
                 let auth = (call.method != "AuthTokenGet").then_some(AUTH_TOKEN);
                 assert_eq!(call.header("x-modal-auth-token"), auth, "{what}");
