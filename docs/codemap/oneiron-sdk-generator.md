@@ -31,7 +31,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/generate/emit_py.rs` | src | m | 1 crate-vis | — | The Python emitters: the facade verbs as the mixin `_FacadeVerbs` that `Oneiron` derives from, at… |
 | `src/generate/emit_remote.rs` | src | s | 3 crate-vis | — | The remote client: `crates/oneiron-remote/src/generated/agent_verbs.rs`, the `remote` segment of `outputs()`… |
 | `src/generate/emit_server.rs` | src | L | 12 crate-vis | — | The server's facade outputs: `agent_verbs.rs` and `dispatch.rs` (`facade_dispatch`), `host_door_rows.rs`… |
-| `src/generate/emit_ts.rs` | src | L | 18 crate-vis | — | The TypeScript emitters: the verb tree every package emitter walks, the facade verbs module… |
+| `src/generate/emit_ts.rs` | src | m | 18 crate-vis | — | The TypeScript emitters: the verb tree every package emitter walks, the facade verbs module… |
+| `src/generate/emit_ts/tests.rs` | test | s | — | — | — |
 | `src/generate/mod.rs` | src | s | 22 crate-vis | — | The `Generator` state and the module-level constants |
 | `src/generate/outputs.rs` | src | m | 1 struct · 4 fn · 17 crate-vis | Outputs | `BUILD_TIME_OUTPUTS`, `PACKAGE_OUTPUTS`, `PACKAGE_PATHS` and `outputs()`, which runs the emitters in a fixed… |
 | `src/generate/row_access.rs` | src | s | 26 crate-vis | — | Python's operations on a verb row, as the Rust emitters perform them (G4a) |
@@ -42,9 +43,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/main.rs` | src | L | — | — | The `oneiron-sdk-generator` binary: the Python generator's `main()`: its argument parsing, as Python's… |
 | `src/projection_rules.rs` | src | m | — | — | The projection rules and refusals a verb author depends on, checked on the generator's real outputs: on the… |
 | `src/py/builtins.rs` | src | s | 4 crate-vis | — | Python's builtin names and keywords, embedded from the reference interpreter |
-| `src/py/json.rs` | src | L | 8 crate-vis | — | Python's `json` (brief H1, H1b): `loads` as CPython 3.14.7's C scanner reads a `str`, with… |
+| `src/py/json.rs` | src | m | 8 crate-vis | — | Python's `json` (brief H1, H1b): `loads` as CPython 3.14.7's C scanner reads a `str`, with… |
+| `src/py/json/tests.rs` | test | m | — | — | — |
 | `src/py/mod.rs` | src | s | 7 crate-vis | — | The Python-behaviour helpers: Python's values, `json`, `str` methods, builtins and the regular expressions… |
-| `src/py/re.rs` | src | L | 11 crate-vis | — | Python's `re` where Rust's `regex` differs |
+| `src/py/re.rs` | src | m | 11 crate-vis | — | Python's `re` where Rust's `regex` differs |
+| `src/py/re/tests.rs` | test | m | — | — | — |
 | `src/py/text.rs` | src | m | 19 crate-vis | — | Python's `str` methods with Python's Unicode rules: only the ones the generator calls |
 | `src/py/value.rs` | src | m | 23 crate-vis | — | `Value`: a decoded JSON value with Python's meaning (DESIGN 3) |
 | `src/uniffi_types.rs` | src | XL | 1 struct · 15 crate-vis | — | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… |

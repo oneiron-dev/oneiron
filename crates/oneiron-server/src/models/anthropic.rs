@@ -7,7 +7,7 @@ use oneiron::llm::{
     CacheIdentity, INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId,
     WorkerBuildEvidence, WorkerDescriptor, WorkerKind,
 };
-use oneiron_llm_anthropic::{
+use oneiron_llm::anthropic::{
     AnthropicMessagesFuture, AnthropicMessagesHttpRequest, AnthropicMessagesHttpResponse,
     AnthropicMessagesProviderStream, AnthropicMessagesStreamFrame, AnthropicMessagesTransport,
     AnthropicMessagesTransportError,
