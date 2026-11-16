@@ -107,6 +107,11 @@ impl PipelineBuilder<'_> {
     ) -> Result<RetrievalTxnOutput> {
         let _ppr_work = self.admit_ppr_work()?;
         let rtxn = self.vault.store.env.read_txn()?;
+        if self.text_search.is_some() {
+            // A text-index rebuild holds in the read that scores, wherever it
+            // started (FIX ANALYZER-BUMP-AUTO-REINDEX).
+            self.vault.ensure_text_index_searchable(&rtxn)?;
+        }
         let inputs = SnapshotInputs {
             occurred_range,
             bm25_config,

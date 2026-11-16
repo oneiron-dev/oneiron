@@ -152,11 +152,12 @@ pub struct VaultConfig {
     /// voice name belongs to the host, never to the engine.
     pub assistant_display_names: Vec<String>,
     /// Skip the text-index manifest handshake at `Vault::open` so the
-    /// caller can reach `maintain::MaintenanceBuilder::clear_text_index`
-    /// after a dict swap or BM25 field-schema change. Without this escape
-    /// hatch, [`StoreError::IncompatibleAnalyzer`] and
-    /// [`StoreError::Bm25FieldSchemaChanged`] trap the user before any
-    /// `Vault` exists to call `.maintain()` on.
+    /// caller can reach `maintain::MaintenanceBuilder::clear_text_index`.
+    /// A changed analyzer manifest or BM25 field schema no longer needs it:
+    /// the open clears the index and the housekeeping pass rebuilds it (FIX
+    /// ANALYZER-BUMP-AUTO-REINDEX). A missing or partly written stamp still
+    /// fails with [`StoreError::IncompatibleAnalyzer`] before any `Vault`
+    /// exists to call `.maintain()` on, and this escape hatch is the way past.
     ///
     /// Only use this to immediately run `clear_text_index`. On a populated
     /// vault, `Vault::open` marks the text index untrusted and

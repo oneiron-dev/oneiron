@@ -164,6 +164,7 @@ pub mod substrate_reads;
 #[cfg(feature = "sync")]
 pub mod sync_parted_row_binding;
 pub mod task_ask_role_routing;
+pub mod text_index_rebuild;
 pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod turn_words;

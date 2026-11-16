@@ -2,7 +2,7 @@
 
 use super::Vault;
 use super::doctor_manifest::{
-    discover_analyzer, handshake_text_index_manifest, text_index_is_empty,
+    TextIndexHandshake, discover_analyzer, handshake_text_index_manifest, text_index_is_empty,
     write_text_index_manifest_if_empty,
 };
 use crate::analyzer::MultilingualAnalyzer;
@@ -104,7 +104,8 @@ impl Vault {
     /// → DB opens → HNSW/dimension preflight → embedding-model preflight),
     /// then this function runs the analyzer / BM25F text-index handshake and
     /// the self-contained SKILL content-hash migration against `vault_meta`.
-    /// The
+    /// A text index built under another analyzer manifest or field schema is
+    /// cleared here and rebuilt by the housekeeping pass. The
     /// [`VaultConfig::skip_text_index_manifest_check`] escape hatch bypasses
     /// only that final handshake (and marks a populated text index untrusted
     /// so text reads/writes fail closed until
@@ -546,7 +547,18 @@ impl Vault {
             }
             empty
         } else {
-            handshake_text_index_manifest(&store, &analyzer)?;
+            if handshake_text_index_manifest(&store, &analyzer)? == TextIndexHandshake::Stale {
+                // An analyzer or BM25F field-schema change since the index
+                // was built (FIX ANALYZER-BUMP-AUTO-REINDEX): clear it and
+                // stamp the current manifest in one transaction, so writes
+                // index under this analyzer at once, and leave the marker the
+                // housekeeping pass rebuilds it from.
+                let mut wtxn = store.env.write_txn()?;
+                super::text_index_rebuild::start_text_index_rebuild_in_txn(
+                    &store, &mut wtxn, &analyzer,
+                )?;
+                wtxn.commit()?;
+            }
             true
         };
         Self::assemble_open(

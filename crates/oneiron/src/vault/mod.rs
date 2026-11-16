@@ -32,6 +32,7 @@ mod retrieval_trace_key;
 mod runtime_handle;
 mod search_retrieval;
 mod tagging_arm;
+pub(crate) mod text_index_rebuild;
 mod transactions;
 mod vector_evidence;
 

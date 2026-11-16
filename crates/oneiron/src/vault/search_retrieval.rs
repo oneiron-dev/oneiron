@@ -336,6 +336,7 @@ impl Vault {
         let scores = {
             let rtxn = self.store.env.read_txn()?;
             admit(&rtxn)?;
+            self.ensure_text_index_searchable(&rtxn)?;
             crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
                 &crate::ports::text_index(target, &self.analyzer),
                 &rtxn,

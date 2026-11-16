@@ -411,19 +411,33 @@ pub(crate) fn verify_text_index_manifest(
     )
 }
 
+/// What the open-time text-index handshake found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TextIndexHandshake {
+    /// The stored index matches this analyzer, or was empty and is stamped
+    /// with it now.
+    Current,
+    /// A populated index stamped under another analyzer manifest or BM25F
+    /// field schema, both hashes present: the open rebuilds it from its
+    /// stored source text (FIX ANALYZER-BUMP-AUTO-REINDEX).
+    Stale,
+}
+
 /// Validate the on-disk analyzer manifest against the in-memory one. Runs
-/// once at `Vault::open`. States are handled per plan ONE-317 §4.2:
+/// once at `Vault::open`. States are handled per plan ONE-317 §4.2, with
+/// the mismatch states since FIX ANALYZER-BUMP-AUTO-REINDEX:
 ///
 /// * empty index, any stored state → rewrite manifest, proceed
 /// * non-empty, matching hashes → proceed
-/// * non-empty, field schema mismatch → `Bm25FieldSchemaChanged`
-/// * non-empty, manifest hash mismatch → `IncompatibleAnalyzer` naming the
-///   first language whose mode flipped (or `*` when the stored manifest is
-///   absent / unparsable, i.e. pre-ONE-317 vault)
+/// * non-empty, both hashes stored, field schema or manifest hash mismatch →
+///   [`TextIndexHandshake::Stale`]: the open clears the index and the
+///   housekeeping pass rebuilds it
+/// * non-empty, manifest hash absent (pre-ONE-317 vault) or field-schema hash
+///   absent (a partly written stamp) → `IncompatibleAnalyzer`
 pub(super) fn handshake_text_index_manifest(
     store: &Store,
     analyzer: &MultilingualAnalyzer,
-) -> Result<()> {
+) -> Result<TextIndexHandshake> {
     let current_manifest = analyzer.manifest();
     let current_manifest_hash = current_manifest
         .canonical_hash()
@@ -451,13 +465,20 @@ pub(super) fn handshake_text_index_manifest(
         let mut wtxn = store.env.write_txn()?;
         write_text_index_manifest_if_empty(store, &mut wtxn, analyzer)?;
         wtxn.commit()?;
-        return Ok(());
+        return Ok(TextIndexHandshake::Current);
     }
 
     let stored_manifest_hash = read_analyzer_manifest_hash(store, &rtxn)?;
     let stored_field_schema_hash = read_bm25_field_schema_hash(store, &rtxn)?;
     let stored_manifest_bytes = ANALYZER_MANIFEST.get(store, &rtxn, &String::new())?;
     drop(rtxn);
+
+    if let (Some(stored_hash), Some(stored_field_hash)) =
+        (stored_manifest_hash, stored_field_schema_hash)
+        && (stored_hash != current_manifest_hash || stored_field_hash != current_field_schema_hash)
+    {
+        return Ok(TextIndexHandshake::Stale);
+    }
 
     validate_stored_manifest_hashes(
         stored_manifest_hash,
@@ -466,7 +487,8 @@ pub(super) fn handshake_text_index_manifest(
         current_field_schema_hash,
         &current_manifest,
         stored_manifest_bytes,
-    )
+    )?;
+    Ok(TextIndexHandshake::Current)
 }
 
 /// Compare a stored text-index manifest+field-schema hash pair against the

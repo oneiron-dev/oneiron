@@ -339,6 +339,14 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
         Ok(())
     }
 
+    fn delete_vault_meta_row(path: &Path, key: &[u8]) -> Result<()> {
+        let vault = Vault::open(path, test_config())?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.delete(&mut wtxn, key)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
     fn delete_hnsw_meta_row(path: &Path, key: &[u8]) -> Result<()> {
         let vault = Vault::open(path, test_config())?;
         let mut wtxn = vault.store.env.write_txn()?;
@@ -411,21 +419,13 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
         create_populated_vector_vault(path)?;
         delete_hnsw_meta_row(path, MODEL_ID_KEY)
     }
-    fn prep_analyzer_hash_flip(path: &Path) -> Result<()> {
+    fn prep_analyzer_hash_missing(path: &Path) -> Result<()> {
         create_populated_text_vault(path)?;
-        put_vault_meta_row(
-            path,
-            crate::store::TEXT_ANALYZER_MANIFEST_HASH_KEY,
-            &[0xCC; 32],
-        )
+        delete_vault_meta_row(path, crate::store::TEXT_ANALYZER_MANIFEST_HASH_KEY)
     }
-    fn prep_bm25_field_schema_flip(path: &Path) -> Result<()> {
+    fn prep_bm25_field_schema_hash_missing(path: &Path) -> Result<()> {
         create_populated_text_vault(path)?;
-        put_vault_meta_row(
-            path,
-            crate::store::TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
-            &[0xEE; 32],
-        )
+        delete_vault_meta_row(path, crate::store::TEXT_BM25_FIELD_SCHEMA_HASH_KEY)
     }
     fn prep_text_and_vector_with_analyzer_flip(path: &Path) -> Result<()> {
         let vault = Vault::open(path, test_config())?;
@@ -564,20 +564,22 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
             open_config: cfg_dimensions_8_and_model_b,
             expected_kind: ErrorKind::HnswConfigChanged,
         },
-        // Gate 8: analyzer / BM25F handshake (vault_meta text-index keys,
-        // ARCH-0031 state table: lang-flip → IncompatibleAnalyzer,
-        // field-schema → Bm25FieldSchemaChanged).
+        // Gate 8: analyzer / BM25F handshake (vault_meta text-index keys).
+        // A changed manifest or field-schema hash no longer fails the open:
+        // it rebuilds the text index (FIX ANALYZER-BUMP-AUTO-REINDEX, the
+        // vault handshake table). A missing stamp (pre-ONE-317, or partly
+        // written) still fails closed.
         GateCase {
-            name: "analyzer_manifest_hash_changed",
-            prepare: prep_analyzer_hash_flip,
+            name: "analyzer_manifest_hash_missing",
+            prepare: prep_analyzer_hash_missing,
             open_config: cfg_default,
             expected_kind: ErrorKind::IncompatibleAnalyzer,
         },
         GateCase {
-            name: "bm25_field_schema_changed",
-            prepare: prep_bm25_field_schema_flip,
+            name: "bm25_field_schema_hash_missing",
+            prepare: prep_bm25_field_schema_hash_missing,
             open_config: cfg_default,
-            expected_kind: ErrorKind::Bm25FieldSchemaChanged,
+            expected_kind: ErrorKind::IncompatibleAnalyzer,
         },
         // Ordering: the model gate (Store::open) runs BEFORE the analyzer
         // handshake (Vault::open).
