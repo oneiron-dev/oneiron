@@ -66,6 +66,9 @@ impl BoardOmission {
 /// off the device. `answering_agent` is admission's original agent: it
 /// selects that agent's board layout only (BOARD-LAYOUT), never content
 /// scope; the second `assistant` lookup below still shapes recall.
+/// `retrieval_turn`, when the turn has one, names on the board's retrieval
+/// run the TURN the user's words are witnessed in (the convention on
+/// [`oneiron::store::RetrievalTurn`]).
 pub(super) async fn turn_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -73,6 +76,7 @@ pub(super) async fn turn_board(
     conversation_ref: &str,
     agent_ref: Option<&str>,
     answering_agent: EntityId,
+    retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 ) -> Result<Option<ChatBoard>, BoardOmission> {
     if auth.require(CoreScope::Read).is_err()
         || auth.require(CoreScope::Write).is_err()
@@ -104,6 +108,7 @@ pub(super) async fn turn_board(
         agent,
         text,
         Some(answering_agent),
+        retrieval_turn,
     )
     .await
     {
