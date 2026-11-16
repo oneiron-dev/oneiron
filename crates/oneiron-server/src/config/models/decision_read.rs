@@ -16,6 +16,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::Context;
 use oneiron::llm::manifest::ModelRole;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -262,10 +263,14 @@ impl DecisionReadRecipe {
             |dir| dir.join(&file.joint_template),
         );
         let joint_text = crate::config::merge::read_referenced_file(&joint_path)?;
-        let template = parse(&template_text)?;
-        let joint_template = parse(&joint_text)?;
-        let row = parse(&file.row)?;
-        let joint_row = parse(&file.joint_row)?;
+        // A text that does not read names its file and line, never the text.
+        let template = parse(&template_text)
+            .with_context(|| format!("template {}", template_path.display()))?;
+        let joint_template = parse(&joint_text)
+            .with_context(|| format!("joint template {}", joint_path.display()))?;
+        let row = parse(&file.row).with_context(|| format!("row in {}", path.display()))?;
+        let joint_row =
+            parse(&file.joint_row).with_context(|| format!("joint_row in {}", path.display()))?;
         if !slots_fit(&template, &row, false) || !slots_fit(&joint_template, &joint_row, true) {
             anyhow::bail!(
                 "the template needs {{question}} and {{labels}}, the joint template {{paired}} too, and each holds only those and state slots; row needs exactly {{token}} and {{label}}, joint_row {{think}} too"
@@ -278,8 +283,8 @@ impl DecisionReadRecipe {
         }
         let probe = file.probe.map(ProbeFile::resolve).transpose()?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&(recipe_bytes.len() as u64).to_le_bytes());
-        hasher.update(&recipe_bytes);
+        hasher.update(&(recipe_text.len() as u64).to_le_bytes());
+        hasher.update(recipe_text.as_bytes());
         hasher.update(&(template_text.len() as u64).to_le_bytes());
         hasher.update(template_text.as_bytes());
         hasher.update(joint_text.as_bytes());
@@ -504,7 +509,7 @@ fn parse(text: &str) -> anyhow::Result<Vec<Piece>> {
         } else if let Some(open) = tail.strip_prefix('{') {
             let end = open
                 .find('}')
-                .ok_or_else(|| anyhow::anyhow!("an unclosed {{ in {text:?}"))?;
+                .ok_or_else(|| anyhow::anyhow!("an unclosed {{ at line {}", line_at(text, tail)))?;
             let slot = match &open[..end] {
                 "question" => Slot::Question,
                 "paired" => Slot::Paired,
@@ -524,7 +529,10 @@ fn parse(text: &str) -> anyhow::Result<Vec<Piece>> {
             pieces.push(Piece::Slot(slot));
             rest = &open[end + 1..];
         } else {
-            anyhow::bail!("a lone }} in {text:?}; write }}}} for a brace");
+            anyhow::bail!(
+                "a lone }} at line {}; write }}}} for a brace",
+                line_at(text, tail)
+            );
         }
     }
     literal.push_str(rest);
@@ -532,4 +540,10 @@ fn parse(text: &str) -> anyhow::Result<Vec<Piece>> {
         pieces.push(Piece::Text(literal));
     }
     Ok(pieces)
+}
+
+/// The one-based line of `text` that its suffix `tail` starts on: where a
+/// template that does not read fails, named in place of its text.
+fn line_at(text: &str, tail: &str) -> usize {
+    text[..text.len() - tail.len()].matches('\n').count() + 1
 }
