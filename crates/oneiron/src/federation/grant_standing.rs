@@ -23,7 +23,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 use super::{
     FederationGrant, FederationGrantRole, FederationGrantScope, GrantTermsKey,
-    decode_federation_grant_body_keyed,
+    decode_federation_grant_body_keyed, own_device_residence_scope,
 };
 
 /// A Grant the verified fold stands behind: its row, and the counted act that gives it.
@@ -166,15 +166,13 @@ pub(crate) fn shared_row_families(grant: &FederationGrant) -> Option<&'static [G
     const OWNER_MINT: &[GrantFamily] = &[GrantFamily::OwnerAgent];
     const DELEGATE: &[GrantFamily] = &[GrantFamily::Delegate];
     const MEMBER: &[GrantFamily] = &[GrantFamily::SharedMember, GrantFamily::HouseLink];
-    Some(
-        if grant.owner_agent || grant.is_git_push() || super::is_engine_controls_grant(grant) {
-            OWNER_MINT
-        } else if grant.role == FederationGrantRole::Delegate {
-            DELEGATE
-        } else {
-            MEMBER
-        },
-    )
+    Some(if is_owner_mint_row(grant) {
+        OWNER_MINT
+    } else if grant.role == FederationGrantRole::Delegate {
+        DELEGATE
+    } else {
+        MEMBER
+    })
 }
 
 /// The families an act gives a guest's Grant row in, read from the row's shape (pass 28 R3c):
@@ -325,9 +323,10 @@ pub(crate) fn shared_grant_row_in_fold(
 /// [`Vault::shared_vault_scope_in_txn`]) reads as [`shared_grant_row_in_fold`] reads it. Of
 /// every other row (an own-device residence row, a guest's Grant), an owner's signed mint
 /// row (an `owner_agent` row, a git push Grant, an `engine.controls` Grant) stands only on
-/// its counted mint, a guest's Grant as [`guest_grant_in_fold`] reads it, and the rest (an
-/// own-device or engine-default Grant, read as derived in R4) read from themselves. `None` for
-/// a row that does not stand. The caller has read the row live.
+/// its counted mint and over this vault's residence (the own-device one: over a shared vault
+/// it holds the shared scope), a guest's Grant as [`guest_grant_in_fold`] reads it, and the
+/// rest (an own-device or engine-default Grant, read as derived in R4) read from themselves.
+/// `None` for a row that does not stand. The caller has read the row live.
 #[must_use]
 pub(crate) fn grant_row_in_fold(
     fold: &AuthorityFold,
@@ -348,13 +347,18 @@ fn grant_row_at(
     now: Option<u64>,
 ) -> Option<SharedGrantRow> {
     let (grant, terms_key) = decode_federation_grant_body_keyed(body).ok()?;
+    let owner_mint = is_owner_mint_row(&grant);
     // The own-device residence is a `Vault` scope too, so the row's scope shape alone never
     // tells a member row from a personal vault's row.
     if shared_scope == Some(&grant.scope) {
         return shared_grant_row_decoded(fold, id, grant, terms_key, now);
     }
-    let owner_mint =
-        grant.owner_agent || grant.is_git_push() || super::is_engine_controls_grant(&grant);
+    // No mint carries its row's residence, and every writer puts this vault's own: the shared
+    // scope above, else the own-device residence ([`owner_agent_mint_in_fold`]). A mint's row
+    // put back over another scope stands for nothing (review #8943 P1-1).
+    if owner_mint && (shared_scope.is_some() || grant.scope != own_device_residence_scope()) {
+        return None;
+    }
     if owner_mint || grant.role == FederationGrantRole::Guest {
         let families = if owner_mint {
             &[GrantFamily::OwnerAgent][..]
@@ -365,6 +369,20 @@ fn grant_row_at(
             .map(SharedGrantRow::Standing);
     }
     unacted_row(fold, id, grant, terms_key, now)
+}
+
+/// Whether the stored body `body` decodes to an own-device row over `scope`, which no owner's
+/// mint gives.
+fn is_own_device_row_at(body: &[u8], scope: &FederationGrantScope) -> bool {
+    decode_federation_grant_body_keyed(body).is_ok_and(|(grant, _)| {
+        grant.scope == *scope && super::is_own_device_grant(&grant) && !is_owner_mint_row(&grant)
+    })
+}
+
+/// Whether `grant` is the row of an owner's signed mint: an `owner_agent` row, a git push
+/// Grant or an `engine.controls` Grant ([`GrantFamily::OwnerAgent`]).
+fn is_owner_mint_row(grant: &FederationGrant) -> bool {
+    grant.owner_agent || grant.is_git_push() || super::is_engine_controls_grant(grant)
 }
 
 /// A row no pass 28 step reads through an act yet (an own-device or engine-default Grant,
@@ -569,7 +587,14 @@ impl Vault {
         id: EntityId,
         body: &[u8],
     ) -> Result<bool> {
-        let shared_scope = self.shared_vault_scope_in_txn(txn)?;
+        // The creation door does not reserve the residence's id: on a vault shared under it, a
+        // device paired while the vault was personal keeps its own-device row at the shared
+        // scope, and a selector over the residence reads that row as on a personal vault
+        // (review #8943 P1-2). A reader of a member's role still reads every row at the shared
+        // scope as a member row ([`grant_row_in_fold`]).
+        let shared_scope = self
+            .shared_vault_scope_in_txn(txn)?
+            .filter(|scope| !is_own_device_row_at(body, scope));
         Ok(grant_row_at(fold, id, body, shared_scope.as_ref(), None).is_some())
     }
 
