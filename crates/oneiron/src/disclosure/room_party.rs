@@ -48,9 +48,11 @@ impl RoomParty {
 
 /// Whether `member` is positively known as the vault owner: the embedded
 /// owner, or a live human owner binding in a rooted vault. A deleted owner is
-/// neither (H149; L9-52 (b)): the embedded owner's deleted shell, or a
-/// binding whose PERSON is deleted, names no owner. An embedded owner whose
-/// row was never written still is one, as before.
+/// neither (H149; L9-52 (b)): the embedded owner's deleted shell, a hard
+/// delete's purged row, or a binding whose PERSON is deleted, names no owner.
+/// An embedded owner whose row was never written still is one, as before: the
+/// permanent hard-delete marker tells the purged row from the never-written
+/// one, since both read [`LiveEntityRow::Absent`] without it.
 pub(crate) fn is_vault_owner(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -59,6 +61,13 @@ pub(crate) fn is_vault_owner(
     member: &EntityId,
 ) -> Result<bool> {
     if *member == embedded_owner {
+        // A hard delete purges the row and records the `dt:` marker, so the
+        // row read below answers `Absent` — the same answer as a row that was
+        // never written. The marker refuses the deleted owner before that
+        // fallback (round-1 P1 of #7900).
+        if vault.local_hard_delete_marker_exists_in_txn(txn, member)? {
+            return Ok(false);
+        }
         return Ok(!matches!(
             crate::vault::live_entity_row_in_txn(&vault.store, txn, member)?,
             LiveEntityRow::DeletedShell
