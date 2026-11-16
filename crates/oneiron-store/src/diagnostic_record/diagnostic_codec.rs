@@ -16,11 +16,7 @@ pub fn entity_ref_value(entity: &EntityId) -> Value {
 
 /// Lowercase-only, so one hash has exactly one spelling on the wire.
 pub fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
+    oneiron_hex::nibble(byte)
 }
 
 pub fn is_ref_byte(byte: u8) -> bool {

@@ -15,7 +15,7 @@ use crate::git_wire::git_path_os_str;
 
 use super::git::{git_common_dir, run_git, validate_relative_repo_path};
 use super::queue::PreparedCommitFile;
-use super::support::{hex_bytes, now_millis, path_arg, sha256_bytes, utf8_trimmed};
+use super::support::{hex_bytes, path_arg, sha256_bytes, utf8_trimmed};
 use crate::error::CodeError;
 
 const REPO_MUTATION_WORKTREE_PREFIX: &str = "oneiron-repo-mutation-";
@@ -198,7 +198,7 @@ fn queue_owned_worktree_path(repo_root: &Path) -> Result<PathBuf> {
             "{}:{}:{}:{}",
             common_dir.display(),
             std::process::id(),
-            now_millis(),
+            crate::unix_millis_now(),
             counter
         );
         let suffix = &hex_bytes(&sha256_bytes(seed.as_bytes()))[..24];

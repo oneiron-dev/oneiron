@@ -32,6 +32,8 @@ mod agent_definition_doors;
 mod agent_grant_doors;
 mod agent_run_effect_doors;
 mod agent_verb_class_doors;
+// The owner's writer of an agent's world access (ARCH-0067 #tiers).
+mod agent_world_access_doors;
 mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
@@ -140,6 +142,8 @@ mod identity_doors;
 mod identity_topology_doors;
 mod image_edit_doors;
 mod inbox_group_doors;
+// The inquiry rows (INQUIRE-1 PR 5): the asking side and the member side.
+mod inquiry_doors;
 mod invocations;
 mod invoke;
 mod learning_doors;
@@ -156,7 +160,6 @@ mod mesh_doors;
 mod model_catalog_doors;
 mod model_manifest_doors;
 mod model_pack_doors;
-mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 // The owner's non-base world claim fraction (ARCH-0004 #world-scope).
@@ -195,7 +198,7 @@ pub(super) mod role_picks;
 // FIX 13274: the owner reviews and settles a retained document-copy edit.
 mod repo_copy_edit_doors;
 mod root_request_doors;
-mod run_read_doors;
+pub(super) mod run_read_doors;
 mod run_review_doors;
 pub(crate) mod run_write_polls;
 mod runner_seat_doors;
@@ -208,6 +211,8 @@ mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
 mod self_actor_doors;
+// The Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1).
+mod setting_catalogue_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
@@ -245,6 +250,7 @@ mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
+mod voice_recognition_doors;
 mod wave_doors;
 mod weave_admin_doors;
 mod weave_doors;

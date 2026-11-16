@@ -44,7 +44,7 @@ const PAIRING_ROUTES: &[PairingRoute] = &[
         refusals: &[
             (
                 "400",
-                "The scope the vault refuses (InvalidPairingScope on scope.facets, pairing.rs with_issuer).",
+                "The scope the vault refuses (InvalidPairingScope on scope.facets; AppBackendGrantRequired on scope.verbs, verbs for an app backend no Grant row names; pairing.rs with_issuer).",
             ),
             (
                 "401",
@@ -67,8 +67,12 @@ const PAIRING_ROUTES: &[PairingRoute] = &[
         answer: paired_answer,
         refusals: &[
             (
+                "400",
+                "The link's scope the vault refuses for this holder, judged again at redemption (InvalidPairingScope on scope.facets; AppBackendGrantRequired on scope.verbs, verbs for an app backend no Grant row names, as when an open link is redeemed as one; pairing.rs with_issuer).",
+            ),
+            (
                 "401",
-                "No such holder, or the code, binding key, signature, machine enrolment or possession proof does not verify (every redeem check refuses unauthenticated).",
+                "No such holder, or the code, binding key, signature, machine enrolment or possession proof does not verify (every other redeem check refuses unauthenticated).",
             ),
             (
                 "429",
@@ -411,6 +415,7 @@ fn paired_answer() -> Value {
             "pin": checkpoint_pin_schema(),
             "home": paired_home_schema(),
             "re_paired": {"type": "boolean", "description": "True when the link re-paired an already held machine credential only; omitted otherwise."},
+            "answer_held": {"type": "boolean", "description": "True when the link's machine answer is stored and waits for the owner's confirm on an owner device: this home carried it with no owner key, so the machine is not the owner's yet. The token stands. Omitted otherwise."},
             "comm": comm_reach_schema()
         }
     })

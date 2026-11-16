@@ -129,6 +129,20 @@ pub(crate) fn admit_turn_position_in_txn(
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
+    if turn_passed_in_txn(store, txn, turn)? {
+        super::redirty::requeue_turn_in_txn(store, txn, turn)?;
+        crate::dreamer_wake::words_changed_in_txn(store, txn, turn)?;
+    }
+    Ok(())
+}
+
+/// Whether any scope's watermark has passed `turn`'s temporal key, so a
+/// round of that scope may have read it.
+pub(super) fn turn_passed_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<bool> {
     let row = store
         .port_entity_record(txn, turn)?
         .ok_or(Error::EntityNotFound)?;
@@ -145,11 +159,30 @@ pub(crate) fn admit_turn_position_in_txn(
                 || (row.learned_at == watermark.last_learned_at
                     && watermark.last_turn_id.is_none_or(|last| *turn <= last)));
         if passed {
-            super::redirty::requeue_turn_in_txn(store, txn, turn)?;
-            crate::dreamer_wake::words_changed_in_txn(store, txn, turn)?;
-            break;
+            return Ok(true);
         }
     }
+    Ok(false)
+}
+
+/// Settles every scope's watermark on `turn`'s temporal key, as a round of
+/// each that read it would (the test door `test_doors::turn_words`).
+#[cfg(oneiron_test_support)]
+pub(super) fn settle_every_scope_on_turn(vault: &Vault, turn: &EntityId) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let learned_at = vault
+        .store
+        .port_entity_record(&wtxn, turn)?
+        .ok_or(Error::EntityNotFound)?
+        .learned_at;
+    for scope in [
+        DreamerConsolidationScope::Micro,
+        DreamerConsolidationScope::Meso,
+        DreamerConsolidationScope::Macro,
+    ] {
+        write_watermark_position_in_txn(vault, &mut wtxn, scope, learned_at, Some(*turn))?;
+    }
+    wtxn.commit()?;
     Ok(())
 }
 

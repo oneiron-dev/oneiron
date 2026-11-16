@@ -42,7 +42,8 @@ pub fn is_workspace_internal_secret_ref(secret_ref: &str) -> bool {
 /// internal OAuth read. No library type crosses these signatures, and no method
 /// is handed a credential.
 pub trait GoogleInternalWire {
-    /// Lists the changes after `sync_token` for the seat's own calendar.
+    /// Lists the changes after `sync_token` for the seat's own calendar;
+    /// `None` lists the calendar whole.
     ///
     /// # Errors
     ///

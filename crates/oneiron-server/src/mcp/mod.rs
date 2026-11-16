@@ -6,6 +6,7 @@
 //! remains in Gate `actor_ceilings` policy rows.
 
 mod actors;
+mod annotations;
 mod args;
 mod booking_inputs;
 mod codec;
@@ -37,6 +38,7 @@ pub use self::actors::{
     McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope,
     McpCredentialHashKey, McpResolvedActor, mcp_board_state_hash,
 };
+pub use self::annotations::McpToolAnnotations;
 pub use self::args::{McpActorClass, McpActorMetadata, McpConsentMetadata, McpToolScope};
 pub(crate) use self::booking_inputs::{
     booking_availability_input_schema, booking_book_input_schema, booking_cancel_input_schema,
