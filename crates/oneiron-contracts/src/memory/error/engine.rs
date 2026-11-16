@@ -20,6 +20,31 @@ impl From<Error> for MemoryError {
                 )
             };
         }
+        // A membership move this install cannot prove the owner's (row
+        // HOSTED-ROOT-REVOKES-OWNER-KEY): the owner-key refusal, with the
+        // next step and the member as reason codes beside its own.
+        if let Error::Record(crate::error::RecordError::OwnerKeyMoveRefused { member }) = &err {
+            return Self {
+                reason_codes: vec![
+                    crate::error::OWNER_KEY_REQUIRED.to_owned(),
+                    format!(
+                        "{}{}",
+                        crate::error::OWNER_KEY_NEXT_STEP_REASON_PREFIX,
+                        crate::error::OWNER_KEY_MOVE_NEXT_STEP
+                    ),
+                    format!(
+                        "{}{}",
+                        crate::error::OWNER_KEY_MEMBER_REASON_PREFIX,
+                        member.to_hex()
+                    ),
+                ],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    err.to_string(),
+                    &[crate::error::OWNER_KEY_MOVE_SUGGESTION],
+                )
+            };
+        }
         let message = err.to_string();
         if let Error::Gate(GateError::ShareCreatePaced { next_eligible_at }) = err {
             return Self {
