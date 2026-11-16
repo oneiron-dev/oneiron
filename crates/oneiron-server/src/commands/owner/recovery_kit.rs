@@ -47,6 +47,7 @@ mod custody;
 mod issue;
 mod live;
 
+pub(in crate::commands) use self::authority_recovery::open_material;
 pub(super) use self::custody::{kit_custody_root, kit_custody_seed};
 
 /// The most a piece file is: an export is 89 bytes, a code 99 characters.

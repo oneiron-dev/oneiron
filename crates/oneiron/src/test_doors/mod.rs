@@ -85,6 +85,7 @@ pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
 pub mod host_root_row_signature;
+pub mod host_root_loss;
 #[cfg(feature = "sync")]
 pub mod host_taint_replica;
 pub mod house_link;
