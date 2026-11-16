@@ -155,8 +155,7 @@ impl ScopedRead<'_> {
         // its current caller's call (VOICE-PHONE-AGENT-REACH R1): each phone
         // ceiling must name the row's thread as its current caller's thread.
         // A withheld number names no stored thread, so every marked row is
-        // refused. Only marked rows are affected; every other row is judged
-        // as today.
+        // refused. Every other row meets its phone lineage below.
         let header = crate::batch::EntityMetadataHeader::parse(raw)
             .ok_or(crate::error::Error::CorruptedIndex("entity header"))?;
         if matches!(
