@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::setting::{EncodedValue, SettingChange, SettingValue};
+use crate::setting::{SettingChange, SettingValue};
 use crate::{EntityId, Error, Result, Vault};
 
 /// Conversations whose turns must not enter a Dreamer consolidation pass: the value of the
@@ -98,22 +98,37 @@ impl Vault {
 }
 
 /// The hook of `dreamer.excluded_conversations`: words framed before the change forget the newly
-/// excluded conversations in the change's own commit (FIX 12551(a)). Turns a scope's watermark
-/// already stepped past while excluded are not queued again when a conversation is un-excluded.
+/// excluded conversations in the change's own commit (FIX 12551(a)). It reads the value in force
+/// after the write, not the changed row: a cleared pin over the owner's value row leaves that
+/// row's conversations excluded, and they forget too. The follower never frames a conversation
+/// while it is excluded, so one excluded before the change has nothing left to forget. An
+/// unreadable deciding row fails the change, as it fails every reader of the key. Turns a scope's
+/// watermark already stepped past while excluded are not queued again when a conversation is
+/// un-excluded.
 pub(super) fn forget_newly_excluded(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    change: &SettingChange,
+    _change: &SettingChange,
 ) -> Result<()> {
-    let excluded = |value: Option<&EncodedValue>| {
-        value
-            .and_then(EncodedValue::decode::<DreamerExcludedConversations>)
-            .unwrap_or_default()
-            .conversations
-    };
-    let newly: BTreeSet<EntityId> = excluded(change.value.as_ref())
-        .difference(&excluded(change.prior.as_ref()))
-        .copied()
-        .collect();
-    crate::dreamer_wake::follower::exclude_in_txn(vault, txn, &newly)
+    let in_force = vault.dreamer_excluded_conversations_in_txn(txn)?;
+    #[cfg(oneiron_test_support)]
+    FORGOTTEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(in_force.conversations.clone());
+    crate::dreamer_wake::follower::exclude_in_txn(vault, txn, &in_force.conversations)
+}
+
+/// Each set the hook asked the follower to forget in this process, oldest first: the integration
+/// tests' view of the hook (`test_doors::dreamer_exclusion_forgets`).
+#[cfg(oneiron_test_support)]
+static FORGOTTEN: std::sync::Mutex<Vec<BTreeSet<EntityId>>> = std::sync::Mutex::new(Vec::new());
+
+/// Each set the hook asked the follower to forget in this process, oldest first.
+#[cfg(oneiron_test_support)]
+pub(crate) fn forgotten_sets() -> Vec<BTreeSet<EntityId>> {
+    FORGOTTEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
