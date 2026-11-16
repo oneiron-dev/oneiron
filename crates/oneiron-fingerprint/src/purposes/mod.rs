@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { browser_library, claim, dreamer, feedback, testing }
+areas! { broker, browser_library, claim, cluster, dreamer, engine_executor, feedback, git_wire, policy_model, restore, retrieval, runtime_hooks, setting, skill, skill_attribution, testing, vault_import, web_fetch }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 

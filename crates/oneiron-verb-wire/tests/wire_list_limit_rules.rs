@@ -2,8 +2,8 @@
 //! UC-13 PR 4c: the limit rules of two wire requests, pinned at limit 0, 1,
 //! the default, the maximum and the maximum + 1, and when absent.
 //! `HooksReplayRequest::limit()` refuses zero and serves the default when
-//! absent; the page cut at `HOOKS_REPLAY_PAGE_MAX` stays in the engine, so
-//! this method passes any other ask through uncut.
+//! absent; the page cut at the owner's `hooks.replay.page_max` stays in the
+//! engine, so this method passes any other ask through uncut.
 //! `MeshPathReceiptsRequest::bound()` serves zero as an empty read and cuts
 //! at `MESH_PATH_RECEIPTS_READ_MAX`. The same file runs green on main and on
 //! the head: the rules move onto `oneiron_base::request_limits` with no

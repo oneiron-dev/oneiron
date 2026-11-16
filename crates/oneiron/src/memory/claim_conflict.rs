@@ -13,7 +13,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, GateError};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
-use crate::store::GateDecisionId;
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, PolicyBasis};
 use crate::temporal::TimeRange;
 use crate::{EntityId, WriteActor, WriteEnvelope, WriteProvenance};
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
@@ -221,11 +222,10 @@ impl Memory<'_> {
             let receipt = decision(
                 self.write_actor(),
                 KIND,
-                "pending",
+                GateReceiptOutcome::Pending,
                 "gate.memory.conflict_of_interest",
                 Some(disputed),
                 packet.bundle_id.to_vec(),
-                crate::unix_seconds_now(),
             );
             PACKET.put(
                 &self.vault.store,
@@ -233,9 +233,7 @@ impl Memory<'_> {
                 &packet.bundle_id,
                 &stripped(&packet),
             )?;
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
+            self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(packet)
         })
     }
@@ -350,7 +348,23 @@ impl Memory<'_> {
                     .gate_decision_in_txn(txn, decision_id)?
                     .ok_or(Error::CorruptedIndex("conflict ruling receipt"))?;
                 if receipt.content_kind != KIND
-                    || receipt.outcome != "approved"
+                    || match receipt.gate_outcome() {
+                        Some(GateReceiptOutcome::Approved) => false,
+                        Some(
+                            GateReceiptOutcome::Allow
+                            | GateReceiptOutcome::Pending
+                            | GateReceiptOutcome::Deny
+                            | GateReceiptOutcome::ApprovedAmended
+                            | GateReceiptOutcome::Rejected
+                            | GateReceiptOutcome::LetGo
+                            | GateReceiptOutcome::Superseded
+                            | GateReceiptOutcome::Retracted
+                            | GateReceiptOutcome::Invalidated
+                            | GateReceiptOutcome::Revoked
+                            | GateReceiptOutcome::Noted,
+                        )
+                        | None => true,
+                    }
                     || receipt.diff_handle.as_slice() != id.as_slice()
                     || receipt.redacted_at.is_some()
                 {
@@ -448,8 +462,7 @@ impl Memory<'_> {
             self.vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &packet.disputed,
-                now,
-                "superseded",
+                GateReceiptOutcome::Superseded,
                 vec!["gate.memory.admin_conflict_ruling".to_owned()],
                 None,
             )?;
@@ -461,8 +474,7 @@ impl Memory<'_> {
             self.vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &packet.disputed,
-                now,
-                "superseded",
+                GateReceiptOutcome::Superseded,
                 vec!["gate.memory.admin_conflict_ruling".to_owned()],
                 None,
             )?;
@@ -474,21 +486,18 @@ impl Memory<'_> {
             let mut receipt = decision(
                 envelope.actor(),
                 KIND,
-                "approved",
+                GateReceiptOutcome::Approved,
                 "gate.memory.admin_conflict_ruling",
                 Some(ruling_id),
                 id.to_vec(),
-                now,
             );
             receipt.grant_ref = grant_ref;
-            receipt.read_frontier_hash = packet.policy_frontier;
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
-            RESOLUTION.put(&self.vault.store, txn, &id, &receipt.decision_id.as_bytes())?;
+            receipt.basis = PolicyBasis::frontier(packet.policy_frontier);
+            let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+            RESOLUTION.put(&self.vault.store, txn, &id, &record.decision_id.as_bytes())?;
             Ok(ClaimConflictReceipt {
                 bundle_id: id,
-                receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
                 superseded_claim: packet.disputed,
                 ruling_claim: ruling_id,
             })
