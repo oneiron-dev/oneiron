@@ -127,7 +127,7 @@ pub(crate) async fn land_retained_device_update(
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
     let doc = window.doc.clone();
-    oneiron::sync::window::validate_window_update_residence_with_vault(
+    let inserts = oneiron::sync::window::admit_window_update_residence_with_vault(
         server.vault.as_ref(),
         &doc,
         work.update(),
@@ -139,6 +139,7 @@ pub(crate) async fn land_retained_device_update(
         (0, work.peer().machine()),
         (&key, &doc),
         work.update(),
+        inserts,
         None,
     )
     .await?;

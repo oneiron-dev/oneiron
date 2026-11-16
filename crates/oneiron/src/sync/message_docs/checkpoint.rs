@@ -11,18 +11,15 @@
 
 use super::decode;
 use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::carrier_parts::is_part_key;
 use crate::sync::checkpoint_payload::{Holder, KeyClass, Placement, SyncUnclassified};
 
 /// A message document's snapshot: Loro history with its stamps.
 const SNAPSHOT_STAMPS: &str =
     "a message document's snapshot, whose stamps only its split takes out";
 
-/// Where the value under `key` in the message document map goes.
+/// Where the value under `key` in the message document map goes (a part's,
+/// the map's row places).
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
-    if is_part_key(key) {
-        return Placement::Part;
-    }
     match decode(value) {
         Ok((carried, message)) if message.to_hex() == key => Placement::Manifest {
             holders: vec![Holder::new(OwnerRef::entity(&message), Vec::new())],
@@ -33,12 +30,10 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     }
 }
 
-/// What a message document map key spells: its message's id, or a part's
-/// digest.
+/// What a message document map key spells: its message's id (a part's
+/// digest, the map's row reads).
 pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
-    if is_part_key(key) {
-        KeyClass::Digest
-    } else if crate::EntityId::from_hex(key).is_ok_and(|message| message.to_hex() == key) {
+    if crate::EntityId::from_hex(key).is_ok_and(|message| message.to_hex() == key) {
         KeyClass::Opaque
     } else {
         KeyClass::Payload
