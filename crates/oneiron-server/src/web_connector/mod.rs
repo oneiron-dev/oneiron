@@ -27,6 +27,7 @@ use oneiron::web_connector::{
     WebFetchOutput, WebKeySource, WebProvider, WebProviderKey, WebResultLimits, WebSearchInput,
     WebSearchOutput, WebTool, micro_usd_to_usd,
 };
+use oneiron_base::unix_millis_now;
 use serde_json::{Value, json};
 
 use crate::server::SyncServer;
@@ -81,7 +82,7 @@ pub(crate) fn call_listing(
     } else {
         None
     };
-    let at_ms = now_ms();
+    let at_ms = unix_millis_now();
     let started = Instant::now();
     let answer = match (&call, &key) {
         (WebCall::Fetch(input), None) => read_direct(server, input),
@@ -175,7 +176,7 @@ fn forward_to_hub(
         source: Some(oneiron::outbound_consent::ConnectorSource::Catalog),
         ..input
     };
-    let at_ms = now_ms();
+    let at_ms = unix_millis_now();
     let started = Instant::now();
     let (reply, rows) = crate::api::connector_call_listing_as(server, memory, request)?;
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -247,7 +248,7 @@ fn read_direct(
         .web_fetcher()
         .map_err(|error| ProviderError::message(&error.to_string()))?;
     let page = fetcher
-        .fetch(&input.url, now_ms() / 1_000)
+        .fetch(&input.url, unix_millis_now() / 1_000)
         .map_err(|error| ProviderError::message(&error.to_string()))?;
     let url = match page.canonical_url() {
         "" => input.url.clone(),
@@ -343,12 +344,4 @@ fn record(server: &SyncServer, usage: &WebConnectorUsage) {
     if let Err(error) = server.vault().record_web_connector_usage(usage) {
         tracing::warn!(%error, provider = usage.provider.as_str(), "web connector usage row not written");
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }

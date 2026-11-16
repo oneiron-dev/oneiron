@@ -18,12 +18,10 @@ use std::collections::BTreeSet;
 pub(crate) const DREAMER_FAILURE_RULES: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::DREAMER_FAILURE_RULES);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum Stage {
-    Extraction,
-    Conflict,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_consolidation::failure_rules::Stage;
+#[doc(hidden)]
+use oneiron_records::dreamer_consolidation::failure_rules::invalid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,10 +68,6 @@ struct StoredRules {
 pub(super) struct FailureRules {
     version: u8,
     rows: Vec<Rule>,
-}
-
-fn invalid() -> Error {
-    Error::InvalidConfig("invalid Dreamer failure rule rows".into())
 }
 
 impl FailureRules {
