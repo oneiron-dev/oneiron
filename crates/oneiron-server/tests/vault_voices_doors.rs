@@ -1835,7 +1835,10 @@ fn a_member_disowns_an_agent_logged_withdrawal_and_restores_consent_only() {
             .ok(
                 Caller::Agent,
                 RECOGNITION_WITHDRAW,
-                recognition_withdrawal("member-spoken-withdrawal", now, Some(member)),
+                // Spoken a moment before the agent logs it: the tap dates the
+                // restore one second after the withdrawal, which must not be
+                // past the vault's clock.
+                recognition_withdrawal("member-spoken-withdrawal", now - 5, Some(member)),
             )
             .await;
 
@@ -1899,6 +1902,44 @@ fn a_member_disowns_an_agent_logged_withdrawal_and_restores_consent_only() {
         assert_eq!(
             served.recognized("after-fresh-enrolment", &axis_vector(1)),
             Some(member)
+        );
+    });
+}
+
+/// A withdrawal dated past the vault's clock is refused at every door, as a
+/// consent is: it would void every grant dated before it, a member's
+/// restore among them, until the clock reached it. The refusal deletes
+/// nothing and tells no one.
+#[test]
+fn a_withdrawal_dated_past_the_vault_clock_is_refused() {
+    run_on_engine_stack("voices-recognition-withdraw-future", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+
+        for (caller, subject) in [
+            (Caller::Agent, Some(member)),
+            (Caller::Person, None),
+            (Caller::Owner, Some(member)),
+        ] {
+            let input = recognition_withdrawal(&format!("future-{caller:?}"), now + 60, subject);
+            let (status, body) = served.post(caller, RECOGNITION_WITHDRAW, input).await;
+            assert!(
+                !status.is_success(),
+                "{caller:?}: a withdrawal dated a minute ahead is refused: {status} {body}"
+            );
+        }
+        assert_eq!(
+            served.recognized("after-future-withdrawals", &axis_vector(1)),
+            Some(member),
+            "a refused withdrawal deletes nothing"
+        );
+        assert!(
+            served.subject_withdrawal_notices(member).is_empty()
+                && served.withdrawal_notices().is_empty(),
+            "a refusal tells no one"
         );
     });
 }
