@@ -13,7 +13,6 @@ mod audience_notices;
 mod audience_overlay;
 mod backfill;
 mod carrier_erase;
-mod claim_erase;
 mod fact_subject;
 mod history;
 mod hosting;
@@ -96,9 +95,6 @@ pub(crate) use backfill::backfill_room_turns_on_open;
 pub(crate) use backfill::doors as backfill_doors;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
-#[cfg(oneiron_test_support)]
-pub(crate) use claim_erase::doors as claim_erase_doors;
-pub(crate) use claim_erase::erase_claim_actor_in_txn;
 pub use fact_subject::{ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
@@ -170,7 +166,11 @@ pub use upkeep_voice::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };
 pub use wake::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
-pub(crate) use witness::{RoomRegenerationPermit, admit_witness, erase_turn_actor_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use witness::claim_doors as claim_erase_doors;
+pub(crate) use witness::{
+    RoomRegenerationPermit, admit_witness, erase_claim_actor_in_txn, erase_turn_actor_in_txn,
+};
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
 /// (turn id).
