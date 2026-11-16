@@ -152,6 +152,7 @@ pub(super) fn rung2_reply_with(
             &continuation.event_type,
             &continuation.constraint,
             &continuation.visitor_tz,
+            front.max_offered_slots,
             now,
         )?;
         return Ok(Some(Rung2Reply::Fixed(render_rung2_past_cap_text(
@@ -187,6 +188,7 @@ pub(super) fn rung2_reply_with(
         &continuation.event_type,
         &constraint,
         &visitor_tz,
+        front.max_offered_slots,
         now,
     )?;
     let offers = render_rung2_first_send_text(&copy, &offers);

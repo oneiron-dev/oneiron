@@ -399,6 +399,7 @@ impl Rung2Send<'_> {
             &continuation.event_type,
             &continuation.constraint,
             &continuation.visitor_tz,
+            self.front.max_offered_slots,
             self.now,
         )?;
         let text = render_rung2_first_send_text(&self.front.copy(), &offers);
@@ -419,14 +420,16 @@ impl Rung2Send<'_> {
 
 /// The solver's offers for `constraint` on `page_ref`, each as its line:
 /// from now over the event type's own booking window, clamped to the public
-/// rung, the top-ranked slots a card would render. A first send and a reply
-/// on its thread offer the same way.
+/// rung, the top-ranked `max_offered` slots (the page's
+/// [`ConstraintFrontConfig::max_offered_slots`]), as its card renders them. A
+/// first send and a reply on its thread offer the same way.
 pub(super) fn rung2_offers(
     server: &SyncServer,
     page_ref: EntityId,
     event_type: &EventTypeKey,
     constraint: &ConstraintObject,
     visitor_tz: &str,
+    max_offered: u16,
     now: u64,
 ) -> Result<Vec<Rung2OfferLine>, ApiError> {
     let request = SolveRequest {
@@ -440,7 +443,7 @@ pub(super) fn rung2_offers(
     };
     let oracle = PublicSlotOracle(booking_oracle(server, page_ref, None, now)?);
     let mask = slot_mask(&request, oracle.solve(&request).map_err(booking_error)?);
-    let offered = top_ranked_slots(&mask.slots);
+    let offered = top_ranked_slots(&mask.slots, max_offered);
     let token = PublicBookingPageToken::for_page(page_ref);
     let page_url = server
         .config

@@ -15,7 +15,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr};
 
-use oneiron::booking::agent_front::{ConstraintContinuation, ConstraintFrontConfig};
+use oneiron::booking::agent_front::{
+    ConstraintContinuation, ConstraintFrontConfig, DEFAULT_MAX_OFFERED_SLOTS,
+};
 use oneiron::booking::anti_abuse::BookingRequestFacts;
 use oneiron::booking::constraint::{
     CONSTRAINT_SCHEMA_VERSION, ConstraintObject, ConstraintWeekday, LocalMinuteWindow,
@@ -292,6 +294,7 @@ fn front(agent: EntityId) -> ConstraintFrontConfig {
         slots_line: SLOTS_LINE.to_owned(),
         no_fit_line: NO_FIT_LINE.to_owned(),
         off_topic_line: "I can help with scheduling only.".to_owned(),
+        max_offered_slots: DEFAULT_MAX_OFFERED_SLOTS,
         max_turns: 4,
         max_model_calls: 4,
         agent_ref: Some(agent),

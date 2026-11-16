@@ -33,3 +33,30 @@ pub fn is_own_device_grant(vault: &Vault, grant: EntityId) -> Result<bool> {
     let grant = crate::federation::decode_federation_grant_body(&body)?;
     Ok(crate::federation::is_own_device_grant(&grant))
 }
+
+/// Puts `body` as CLAIM `id` through the raw claim door, then stamps
+/// `made_by` as its stated birth, so the claim reads as made by
+/// `made_by.process.actor` at `made_by.at`: the byline read of
+/// `tests/claim_view_for_org.rs` (FIX SPEAKER-BYLINE-FOR-ORG-CLAIMS).
+///
+/// # Errors
+///
+/// The claim door's refusal, the birth's shape refusal, or the store's.
+pub fn put_claim_made_by(
+    vault: &Vault,
+    id: EntityId,
+    body: &crate::claim::ClaimBody,
+    made_by: crate::provenance::made_by::MadeBy,
+) -> Result<()> {
+    let at = made_by.at;
+    vault.put_claim(&id, body, crate::TimeRange { start: at, end: at }, at)?;
+    let mut txn = vault.store.env.write_txn()?;
+    crate::store::birth_record::stamp_row_birth_in_txn(
+        &vault.store,
+        &mut txn,
+        &id,
+        &crate::store::row_birth::RowBirth::stated(made_by),
+    )?;
+    txn.commit()?;
+    Ok(())
+}

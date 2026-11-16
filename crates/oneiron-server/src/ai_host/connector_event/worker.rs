@@ -106,7 +106,12 @@ fn answer(
             // again, never in the send's way.
             match inbound_text(vault, &origin) {
                 Ok(Some(text)) => witness(result, "inbound", || {
-                    vault.witness_connector_inbound(agent, &origin, &text, super::super::unix_now())
+                    vault.witness_connector_inbound(
+                        agent,
+                        &origin,
+                        &text,
+                        super::super::unix_seconds_now(),
+                    )
                 }),
                 Ok(None) => {}
                 Err(error) => owe_repair(result, "inbound", &error),
@@ -131,7 +136,12 @@ fn answer(
                 return Ok(());
             };
             witness(result, "inbound", || {
-                vault.witness_connector_inbound(agent, &origin, &text, super::super::unix_now())
+                vault.witness_connector_inbound(
+                    agent,
+                    &origin,
+                    &text,
+                    super::super::unix_seconds_now(),
+                )
             });
             // A reply on a rung-2 thread (INBOX-RESIDUE PR-3b-3c-2): the
             // owner's words alone, or the agent's answer with the solver's
@@ -182,7 +192,7 @@ fn answer(
                 agent,
                 REPLY_REF,
                 answer,
-                super::super::unix_now(),
+                super::super::unix_seconds_now(),
             )?
             else {
                 result.reason = Some(Error::EntityNotFound.to_string());
@@ -242,7 +252,7 @@ fn answer(
                     REPLY_REF,
                     &text,
                     reply.occurred_at,
-                    super::super::unix_now(),
+                    super::super::unix_seconds_now(),
                 )
             }),
             Ok(None) => {}
