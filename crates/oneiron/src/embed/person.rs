@@ -13,6 +13,13 @@
 //! a PERSON's body fields ([`super::indexed_payload`]): it drops the vector
 //! a body edit stands beside and marks the person again, so one producer
 //! writes each person's vector.
+//!
+//! The vector stays while a plain CLAIM write hides the line, and goes only
+//! where the facts its line was written from go (ruling D4): an erase of one
+//! of them, a door that drops one (an archive, a use limit, a cooperative
+//! restriction), and the wake pass that clears the lines of a person with no
+//! facts left. A wake pass that shows a line again with no new landing marks
+//! a person that holds no vector of it.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -51,6 +58,45 @@ pub(super) fn mark_person_on_publication_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     person: EntityId,
 ) -> Result<()> {
+    mark_public_line_in_txn(vault, wtxn, person)?;
+    Ok(())
+}
+
+/// Drops `person`'s vector, its marker and its job, in the transaction of a
+/// door that took facts its `about` lines were written from: an erase of one
+/// (the lines go), a door that drops one (the lines hide), or the wake pass
+/// that clears the lines of a person with no facts left. The vector would
+/// otherwise keep ranking the person by words those facts said until the
+/// next landing (ruling PERSON-VECTOR-CHOICES, D4). It holds the store
+/// only, as those doors do, so it drops whether or not an embedder is set.
+pub(crate) fn drop_person_vector_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    person: &EntityId,
+) -> Result<()> {
+    crate::vault::entity_revision::drop_vector_state_in_store(store, wtxn, person)
+}
+
+/// The wake pass's half: a line the pass shows again with no new landing
+/// (the facts are back where it was written from) marks `person` when it
+/// holds neither a vector nor a current marker. That is a person whose
+/// vector an idle body edit dropped while the line was hidden, or one an
+/// erase or drop left with none: no landing would mark it again (FIX
+/// PERSON-VECTOR-IDLE-EDIT-WHILE-HIDDEN). A person that still holds its
+/// vector keeps it, so a pass never embeds an unchanged line twice.
+pub(crate) fn mark_unembedded_person_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    person: EntityId,
+) -> Result<()> {
+    if vault.config.embedding_model.is_none()
+        || vault.store.vectors.get(wtxn, person.as_bytes())?.is_some()
+        || vault
+            .store
+            .has_current_pending_embedding_in_txn(wtxn, &person)?
+    {
+        return Ok(());
+    }
     mark_public_line_in_txn(vault, wtxn, person)?;
     Ok(())
 }

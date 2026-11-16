@@ -13,7 +13,7 @@ pub(crate) use document_mutation::{
 mod document_version;
 pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
-pub(crate) use idle::drop_vector_state;
+pub(crate) use idle::{drop_vector_state, drop_vector_state_in_store};
 mod pending_index;
 mod phonetic;
 mod repo_projection;
