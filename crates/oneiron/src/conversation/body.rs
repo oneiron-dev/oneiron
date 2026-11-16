@@ -81,11 +81,7 @@ pub(crate) fn validate_put_in_txn(
         // A changed or removed binding was refused as immutable above; every
         // other local put naming the field needs its registration to match.
         if !replicated
-            && store
-                .vault_meta
-                .get(txn, &[b"work_talk.v1/".as_slice(), id.as_bytes()].concat())?
-                .as_deref()
-                != Some(encoded.as_slice())
+            && !crate::workspace_roster::work_talk_registered_in(store, txn, id, &encoded)?
         {
             return Err(denied());
         }

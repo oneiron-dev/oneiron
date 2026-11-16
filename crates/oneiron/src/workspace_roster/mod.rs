@@ -140,7 +140,7 @@ pub use self::sharing::{
 pub use self::work_companion::WorkCompanionPolicy;
 pub use self::work_talk::WorkTalkBinding;
 pub(crate) use self::work_talk::{
-    WORK_TALK_FIELD, admit_work_talk_witness, work_talk_binding_in_txn,
+    WORK_TALK_FIELD, admit_work_talk_witness, work_talk_binding_in_txn, work_talk_registered_in,
 };
 
 // FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-TESTS]: the lib test target's type check fails here (24 errors: E0609 x13, E0308 x5, E0063 x3, E0599 x2, E0560 x1); port it, then drop this gate
