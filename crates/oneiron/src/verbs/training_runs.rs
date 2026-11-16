@@ -223,7 +223,9 @@ pub struct TrainingRunObservation {
 ///
 /// BAD_REQUEST for a wait above [`TRAINING_RUN_WAIT_MAX_MS`]; FORBIDDEN for
 /// a caller that is neither the vault owner nor an agent with a live owner
-/// Grant listing the verb, checked in each snapshot it reads; storage errors.
+/// Grant listing the verb, checked in each snapshot it reads; NOT_FOUND, for a
+/// caller off this device, for a run a device-local world keeps a source row
+/// of, judged in each snapshot too; storage errors.
 pub fn training_run_get(
     memory: &Memory<'_>,
     input: TrainingRunGetRequest,
@@ -255,7 +257,7 @@ pub fn training_run_get(
         }
     }
     let waited_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    Ok(Some(training_run_observation(run, waited_ms)))
+    Ok(Some(training_run_observation(memory, run, waited_ms)))
 }
 
 /// `vault.coach.training_runs.execute`'s admission and its run: the caller
@@ -267,8 +269,9 @@ pub fn training_run_get(
 ///
 /// BAD_REQUEST for a wait above [`TRAINING_RUN_WAIT_MAX_MS`]; FORBIDDEN for
 /// a caller the verb does not admit; NOT_FOUND for a run this vault does
-/// not hold; INVALID_STATE for a run its owner has not authorized; storage
-/// errors.
+/// not hold, or, for a caller off this device, one a device-local world
+/// keeps a source row of; INVALID_STATE for a run its owner has not
+/// authorized; storage errors.
 pub fn training_run_to_execute(
     memory: &Memory<'_>,
     input: &TrainingRunExecuteRequest,
@@ -303,7 +306,9 @@ pub fn training_run_to_execute(
 ///
 /// # Errors
 ///
-/// FORBIDDEN for a caller the verb does not admit; storage errors.
+/// FORBIDDEN for a caller the verb does not admit; NOT_FOUND, for a caller
+/// off this device, for a run a device-local world keeps a source row of;
+/// storage errors.
 pub fn training_run_read_for_execute(
     memory: &Memory<'_>,
     run: &EntityId,
@@ -362,7 +367,14 @@ pub fn training_run_progress(run: &TrainingRun) -> TrainingRunProgress {
 }
 
 /// What a read or an execute answers for `run`, after waiting `waited_ms`.
-pub fn training_run_observation(run: TrainingRun, waited_ms: u64) -> TrainingRunObservation {
+/// It lists the run's known source rows as the answer's producers, once,
+/// for the host's release (FIX 5760).
+pub fn training_run_observation(
+    memory: &Memory<'_>,
+    run: TrainingRun,
+    waited_ms: u64,
+) -> TrainingRunObservation {
+    memory.produced_from(run.source_rows.iter().flatten().copied());
     let waits = run.awaits_host();
     TrainingRunObservation {
         run: run.id,
@@ -384,7 +396,8 @@ fn spec_hex(run: &TrainingRun) -> String {
     blake3::Hash::from(run.spec_blake3).to_hex().to_string()
 }
 
-/// The run, read in one snapshot that first admits the caller for `verb`.
+/// The run, read in one snapshot that first admits the caller for `verb`
+/// and then the run's sources ([`admit_sources_in_txn`]).
 fn read_admitted(
     memory: &Memory<'_>,
     run: &EntityId,
@@ -393,7 +406,37 @@ fn read_admitted(
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     admit_caller_in_txn(memory, &txn, verb)?;
-    Ok(vault.training_run_in_txn(&txn, run)?)
+    let Some(run) = vault.training_run_in_txn(&txn, run)? else {
+        return Ok(None);
+    };
+    admit_sources_in_txn(memory, &txn, &run)?;
+    Ok(Some(run))
+}
+
+/// The run's known source rows, judged in `txn` as
+/// [`Memory::read_producer_in`] judges a producer: the answer carries the
+/// run's evaluation, scored from its verifier logs, and its training split,
+/// exported from its corpus, so a caller off this device reads a run that a
+/// device-local world keeps one of as no run (DEC-0005). The world settings
+/// are folded once for every row. Unknown sources judge nothing here, as the
+/// release judges an unknown row; the answer lists the known ones
+/// ([`training_run_observation`]).
+fn admit_sources_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    run: &TrainingRun,
+) -> MemoryResult<()> {
+    let Some(rows) = run.source_rows.as_deref().filter(|rows| !rows.is_empty()) else {
+        return Ok(());
+    };
+    let vault = memory.vault();
+    let kept = crate::settings::device_local_worlds_for(vault, txn, memory.destination())?;
+    for row in rows {
+        if crate::settings::device_local_keeps_among(&vault.store, txn, &kept, row)? {
+            return Err(MemoryError::from(crate::Error::EntityNotFound));
+        }
+    }
+    Ok(())
 }
 
 /// The vault owner, or an agent one live Grant from a live owner names and
