@@ -125,7 +125,7 @@ impl RoutineDecider for LadderDecider {
             // No model: the ladder stops at its rule rung.
             ceiling: ask.no_model.then_some(DecisionRung::Rule),
             // A step acts on a live page: at a cut it abstains and goes up.
-            reversibility: AiVerdictReversibility::OutboundEffect,
+            reversibility: Reversibility::OutboundEffect,
             deadline_ms: None,
             routine: true,
             image: ask.image.map(|(image, _)| image.to_owned()),

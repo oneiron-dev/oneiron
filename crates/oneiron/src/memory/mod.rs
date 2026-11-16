@@ -245,8 +245,7 @@ pub use dreamer_wake_read::{
     DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
 };
 pub use edge_provenance::{
-    EdgeProvenanceActorClass, EdgeProvenanceLifecycle, EdgeProvenanceRequest,
-    EdgeProvenanceSupersession, EdgeProvenanceView,
+    EdgeProvenanceLifecycle, EdgeProvenanceRequest, EdgeProvenanceSupersession, EdgeProvenanceView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,

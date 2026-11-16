@@ -150,7 +150,6 @@ pub use oneiron_verb_wire::memory::dreamer_wake_read::DreamerWakeLiveCallView;
 pub use oneiron_verb_wire::memory::dreamer_wake_read::DreamerWakeLiveView;
 pub use oneiron_verb_wire::memory::dreamer_wake_read::DreamerWakeResumeView;
 pub use oneiron_verb_wire::memory::dreamer_wake_read::DreamerWakeView;
-pub use oneiron_verb_wire::memory::edge_provenance::EdgeProvenanceActorClass;
 pub use oneiron_verb_wire::memory::edge_provenance::EdgeProvenanceLifecycle;
 pub use oneiron_verb_wire::memory::edge_provenance::EdgeProvenanceRequest;
 pub use oneiron_verb_wire::memory::edge_provenance::EdgeProvenanceSupersession;

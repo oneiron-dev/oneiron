@@ -79,7 +79,6 @@ pub use crate::memory::dreamer_wake_read::DreamerWakeLiveCallView;
 pub use crate::memory::dreamer_wake_read::DreamerWakeLiveView;
 pub use crate::memory::dreamer_wake_read::DreamerWakeResumeView;
 pub use crate::memory::dreamer_wake_read::DreamerWakeView;
-pub use crate::memory::edge_provenance::EdgeProvenanceActorClass;
 pub use crate::memory::edge_provenance::EdgeProvenanceLifecycle;
 pub use crate::memory::edge_provenance::EdgeProvenanceRequest;
 pub use crate::memory::edge_provenance::EdgeProvenanceSupersession;
