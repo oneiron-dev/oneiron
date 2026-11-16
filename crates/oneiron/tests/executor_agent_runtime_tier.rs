@@ -479,8 +479,9 @@ fn guest_agents_put_reaches_the_leased_host_and_fences_stale_leases() -> Result<
 #[test]
 fn code_sandbox_microvm_isolating_tiers_never_fall_through_silently() {
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
-        let error = select_backend_for_tier(&NoSandboxBackends, tier)
-            .expect_err("an isolating tier with no backend fails closed");
+        let Err(error) = select_backend_for_tier(&NoSandboxBackends, tier) else {
+            panic!("an isolating tier with no backend fails closed");
+        };
         assert_eq!(error.kind(), ErrorKind::MicroVmBackendUnavailable);
     }
 }
