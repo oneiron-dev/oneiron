@@ -12,9 +12,11 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
-use crate::store::{GateDecisionContext, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_contracts::RecordedSeconds;
 
 /// The gate decision ledger's content kind for a batch revert's receipt.
 pub const DERIVE_REVERT_CONTENT_KIND: &str = "vault.derive.revert";
@@ -330,32 +332,19 @@ fn revert_receipt(
     now: u64,
 ) -> Result<[u8; 16]> {
     let frontier = crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
-    let record = GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: "approved".to_owned(),
-        reason_codes: vec![
-            if any {
-                "gate.allow.derive.revert"
-            } else {
-                "gate.allow.derive.revert_left_all"
-            }
-            .to_owned(),
-        ],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: reverter.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(reverter.entity_ref().to_hex()),
-        content_kind: DERIVE_REVERT_CONTENT_KIND.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: batch.as_bytes().to_vec(),
-        read_frontier_hash: frontier,
-        context: GateDecisionContext::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        DERIVE_REVERT_CONTENT_KIND,
+        if any {
+            "gate.allow.derive.revert"
+        } else {
+            "gate.allow.derive.revert_left_all"
+        },
+        ReceiptActor::Row(reverter),
+        batch.as_bytes().to_vec(),
+        PolicyBasis::frontier(frontier),
+    );
+    receipt.decided_at = Some(RecordedSeconds::from_secs(now));
+    let record = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     Ok(record.decision_id.as_bytes())
 }

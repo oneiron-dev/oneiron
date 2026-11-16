@@ -10,7 +10,10 @@ use crate::dreamer_runner::{
 };
 use crate::error::{Error, Result};
 use crate::skill::{SkillGovernanceTier, SkillLifecycle};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_contracts::RecordedSeconds;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeaveRecipePin {
@@ -143,21 +146,12 @@ impl Vault {
                 subject,
                 evidence,
             };
-            let decision = crate::store::GateDecisionRecord {
-                version: crate::store::GATE_DECISION_LEDGER_VERSION,
-                decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
-                created_at: now,
-                outcome: "allow".into(),
-                reason_codes: vec!["gate.dreamer.recipe_admitted".into()],
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: "human".into(),
-                actor_ref: Some(actor.to_hex()),
-                content_kind: "dreamer_recipe".into(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-                claim_id: None,
-                grant_ref: None,
-                diff_handle: blake3::Hasher::new()
+            let mut decision = GateReceipt::new(
+                GateReceiptOutcome::Allow,
+                "dreamer_recipe",
+                "gate.dreamer.recipe_admitted",
+                ReceiptActor::human(actor),
+                blake3::Hasher::new()
                     .update(b"oneiron:dreamer:weave-ruler-decision:v1")
                     .update(skill.as_bytes())
                     .update(hash.as_bytes())
@@ -166,11 +160,10 @@ impl Vault {
                     .finalize()
                     .as_bytes()
                     .to_vec(),
-                read_frontier_hash: policy.read_frontier_hash()?,
-                context: Default::default(),
-                redacted_at: None,
-            };
-            self.store.append_gate_decision_in_txn(txn, &decision)?;
+                PolicyBasis::frontier(policy.read_frontier_hash()?),
+            );
+            decision.decided_at = Some(RecordedSeconds::from_secs(now));
+            self.store.record_gate_receipt_in_txn(txn, decision)?;
             // Hash the full scoped binding so a second evidence slice
             // cannot collide or silently
             // reuse another attempt, without truncating any ref.
