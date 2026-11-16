@@ -274,6 +274,8 @@ impl VendorBatchBackend {
             fence_proof: None,
             fence_unproven: true,
             image_release: ImageReleaseObservation::default(),
+            // The guest runs on the vendor's machine: no cgroup of ours shows its pressure.
+            guest_pressure: None,
         })
     }
 
