@@ -32,7 +32,10 @@ pub fn truncate_embedded_owner_person_row(vault: &Vault) -> Result<EntityId> {
             .ok_or(Error::InvariantViolation(
                 "the vault stores no embedded-owner row",
             ))?;
-        vault.store.entities.put(txn, owner.as_bytes(), &raw[..TRUNCATED_LEN])?;
+        vault
+            .store
+            .entities
+            .put(txn, owner.as_bytes(), &raw[..TRUNCATED_LEN])?;
         Ok(owner)
     })
 }

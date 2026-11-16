@@ -41,9 +41,8 @@ struct OwnerClient {
 impl OwnerClient {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("fresh vault dir");
-        let vault = Arc::new(
-            Vault::open(dir.path(), VaultConfig::device()).expect("open fresh vault"),
-        );
+        let vault =
+            Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open fresh vault"));
         vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
         let server = Arc::new(
             SyncServer::new(
@@ -56,7 +55,9 @@ impl OwnerClient {
             .expect("create owner server"),
         );
         let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
-        let root = vault.ensure_host_root_slip(&issuer).expect("host root slip");
+        let root = vault
+            .ensure_host_root_slip(&issuer)
+            .expect("host root slip");
         let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
         // The owner's own full slip: the root's claims, re-held by the
         // owner as a human, as the request fixtures mint one.
@@ -86,17 +87,15 @@ impl OwnerClient {
         let timestamp = self.vault.now_recorded_at();
         let nonce = EntityId::now().to_hex();
         let challenge = holder_proof_challenge(timestamp, &nonce);
-        let signature = hex(
-            &self
-                .key
-                .sign(
-                    &self
-                        .slip
-                        .binding_transcript(&challenge)
-                        .expect("binding transcript"),
-                )
-                .to_bytes(),
-        );
+        let signature = hex(&self
+            .key
+            .sign(
+                &self
+                    .slip
+                    .binding_transcript(&challenge)
+                    .expect("binding transcript"),
+            )
+            .to_bytes());
         let request = Request::post(path)
             .header("authorization", format!("Bearer {}", self.token))
             .header(
@@ -156,8 +155,7 @@ async fn direct_owner_authorship_store_fault_is_internal_async() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "healthy control: {body}");
-    let damaged =
-        truncate_embedded_owner_person_row(&client.vault).expect("truncate owner row");
+    let damaged = truncate_embedded_owner_person_row(&client.vault).expect("truncate owner row");
     assert_eq!(damaged, client.owner);
     let (status, body) = client
         .post(
@@ -170,11 +168,7 @@ async fn direct_owner_authorship_store_fault_is_internal_async() {
         StatusCode::INTERNAL_SERVER_ERROR,
         "a store fault binding owner authorship must fail the call, not refuse it: {body}"
     );
-    assert_eq!(
-        error_code(&body),
-        Some("INTERNAL_SERVER_ERROR"),
-        "{body}"
-    );
+    assert_eq!(error_code(&body), Some("INTERNAL_SERVER_ERROR"), "{body}");
 }
 
 #[test]
@@ -187,8 +181,7 @@ fn shared_person_proof_store_fault_is_internal() {
 
 async fn shared_person_proof_store_fault_is_internal_async() {
     let client = OwnerClient::new();
-    let damaged =
-        truncate_embedded_owner_person_row(&client.vault).expect("truncate owner row");
+    let damaged = truncate_embedded_owner_person_row(&client.vault).expect("truncate owner row");
     assert_eq!(damaged, client.owner);
     let (status, body) = client
         .post(
@@ -214,8 +207,7 @@ fn direct_person_proof_store_fault_is_internal() {
 
 async fn direct_person_proof_store_fault_is_internal_async() {
     let client = OwnerClient::new();
-    let damaged =
-        truncate_embedded_owner_person_row(&client.vault).expect("truncate owner row");
+    let damaged = truncate_embedded_owner_person_row(&client.vault).expect("truncate owner row");
     assert_eq!(damaged, client.owner);
     let (status, body) = client
         .post(
@@ -228,9 +220,5 @@ async fn direct_person_proof_store_fault_is_internal_async() {
         StatusCode::INTERNAL_SERVER_ERROR,
         "a store fault binding the person's proof must fail the call, not refuse it: {body}"
     );
-    assert_eq!(
-        error_code(&body),
-        Some("INTERNAL_SERVER_ERROR"),
-        "{body}"
-    );
+    assert_eq!(error_code(&body), Some("INTERNAL_SERVER_ERROR"), "{body}");
 }
