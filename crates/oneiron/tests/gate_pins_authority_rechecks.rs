@@ -31,7 +31,7 @@
 
 use oneiron::calendar::caldav::CALDAV_PROVIDER_KEY;
 use oneiron::calendar::connectors::door::{
-    CalendarConnectorConfigureRequest, CalendarConnectorOperation, configure,
+    self, CalendarConnectorOperation, CalendarConnectorRequest,
 };
 use oneiron::calendar::connectors::{
     CALDAV_SYNC_ATTEMPT_KIND, CalendarConnectorError, CalendarConnectorSeatConfig,
@@ -49,6 +49,7 @@ use oneiron::memory::channel_doors::{
 use oneiron::memory::{SafeDeleteReason, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::skill_hub::{HubSyncPolicy, SkillHubKind, SkillHubRecord, SkillHubTrustTier};
 use oneiron::store::GateDecisionId;
@@ -202,15 +203,38 @@ fn g8_a_live_calendar_seat_poll_queues_its_next_poll() -> TestResult {
     let fixture = Fixture::open()?;
     let _issuer = oneiron::test_support::provision_engine_machines(&fixture.vault);
     let owner = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
-    let row = configure(
+    // The owner installs the seat as the `calendar.connector_seat` setting,
+    // one item per seat ref (#8937 replaced the configure door).
+    let owner_proof = fixture.owner_proof()?;
+    let installed = fixture
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&owner_proof),
+            SetSetting {
+                item: Some(caldav_config().seat_ref),
+                ..SetSetting::vault_value(
+                    "calendar.connector_seat",
+                    json!({
+                        "config": caldav_config(),
+                        "endpoint": "https://calendar.example.invalid/",
+                    }),
+                )
+            },
+        )
+        .map_err(at("install the CalDAV seat"))?;
+    assert!(
+        matches!(installed, SetSettingOutcome::Applied { .. }),
+        "the owner's install applies: {installed:?}"
+    );
+    let row = door::get(
         &owner,
-        &fixture.owner_proof()?,
-        &CalendarConnectorConfigureRequest {
-            config: caldav_config(),
-            endpoint: "https://calendar.example.invalid/".to_owned(),
+        &owner_proof,
+        &CalendarConnectorRequest {
+            seat_ref: caldav_config().seat_ref,
         },
     )
-    .map_err(at("configure the CalDAV seat"))?;
+    .map_err(at("read the installed seat"))?
+    .ok_or("the seat is installed")?;
     let operation = CalendarConnectorOperation::new(&fixture.vault, fixture.owner_proof()?, row)
         .map_err(at("the seat's operation"))?;
     let before = caldav_polls(&fixture.vault)?.len();

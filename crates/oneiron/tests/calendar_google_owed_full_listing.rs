@@ -25,7 +25,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use oneiron::calendar::connectors::door::{
-    self, CalendarConnectorConfigureRequest, CalendarConnectorOperation, CalendarConnectorRequest,
+    self, CalendarConnectorOperation, CalendarConnectorRequest,
 };
 use oneiron::calendar::connectors::{
     CalendarConnectorError, CalendarConnectorSeatConfig, CalendarConnectorSeatState,
@@ -36,6 +36,7 @@ use oneiron::calendar::connectors::{
 use oneiron::calendar::google_internal::{GoogleInternalConnector, GoogleInternalWire};
 use oneiron::calendar::parse_ics_feed;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
@@ -163,19 +164,25 @@ fn installed_row(
     .expect("the seat is installed")
 }
 
-/// The owner installs `seat` through the configure door, as the host does,
-/// and the operation binds that owner to the installed row.
+/// The owner installs `seat` as the `calendar.connector_seat` setting, one
+/// item per seat ref (#8937 replaced the configure door), and the operation
+/// binds that owner to the installed row.
 fn operation(vault: &Vault, seat: &CalendarConnectorSeatState) -> CalendarConnectorOperation {
-    let (id, owner) = seat_owner(vault);
-    door::configure(
-        &vault.memory(id, EdgeActorClass::Human),
-        &owner,
-        &CalendarConnectorConfigureRequest {
-            config: seat.config.clone(),
-            endpoint: SEAT_ENDPOINT.to_owned(),
-        },
-    )
-    .expect("the owner installs the seat");
+    let (_, owner) = seat_owner(vault);
+    let setup = serde_json::json!({ "config": seat.config, "endpoint": SEAT_ENDPOINT });
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                item: Some(seat.config.seat_ref.clone()),
+                ..SetSetting::vault_value("calendar.connector_seat", setup)
+            },
+        )
+        .expect("the owner installs the seat");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's install applies: {outcome:?}"
+    );
     CalendarConnectorOperation::new(vault, owner, installed_row(vault, seat))
         .expect("the operation on the installed seat")
 }
