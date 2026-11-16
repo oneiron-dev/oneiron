@@ -331,16 +331,18 @@ impl ScopedRead<'_> {
         }
     }
 
-    /// Whether this lane reads both records the `core.coreference.status`
-    /// claim `body` of `id` names in its edge subject, at every depth. One of
+    /// Whether this lane reads both records the `core.coreference.status` or
+    /// `core.coreference.share_consent` claim `body` of `id` names in its
+    /// edge subject, at every depth (the consent claim names the same two
+    /// people, COREFERENCE-CONSENT-READ = A). One of
     /// the three trailing conjuncts of every CLAIM's admission, beside
     /// [`Self::provenance_cited_readable_in`] and
     /// [`Self::esign_document_readable_in`], on the row path and the class
     /// path alike, and never a class's: the endpoints are the row's own.
     /// A missing or withheld endpoint, an undecodable CLAIM body, or a status
-    /// claim whose subject is not an edge withholds the Claim whole. No
-    /// applied edge is required. Every other predicate and the vault owner
-    /// pass. A worklist judges each nested status claim once at this lane's
+    /// or consent claim whose subject is not an edge withholds the Claim
+    /// whole. No applied edge is required. Every other predicate and the
+    /// vault owner pass. A worklist judges each nested status claim once at this lane's
     /// own floor and ordinary admission under `HeldAuthority::judge_cited`,
     /// without recursion through status claims. Its row admission leaves its
     /// endpoints to this walk alone, so cycles and shared status ends are
@@ -354,7 +356,8 @@ impl ScopedRead<'_> {
         body: &ClaimBody,
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if body.predicate != crate::claim::PREDICATE_COREFERENCE_STATUS
+        if (body.predicate != crate::claim::PREDICATE_COREFERENCE_STATUS
+            && body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT)
             || self.actor_key.vault_owner_ref().is_some()
             || authority.judges_coreference_endpoints_of(id)
         {
