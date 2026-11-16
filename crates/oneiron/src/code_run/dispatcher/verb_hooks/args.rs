@@ -92,6 +92,7 @@ pub(super) fn hook_args(call: &SelfCall) -> Result<Value> {
         | SelfCall::Express(speech) => {
             json!({"text": speech.text})
         }
+        SelfCall::SayResult(say) => json!({"result": say.result}),
         SelfCall::ReportBlocked(blocked) => {
             json!({"category": to_json(&blocked.category)?, "detail": blocked.detail})
         }

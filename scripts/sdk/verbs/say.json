@@ -1,6 +1,6 @@
 {
   "name": "say",
-  "description": "Speaks one message to a room, a person or agent by people handle, or a task's holder; kind marks a note or an ask, refs cite records. In code mode a plain say(text) speaks where the run speaks.",
+  "description": "Speaks one message to a room, a person or agent by people handle, or a task's holder; kind marks a note or an ask, refs cite records. In code mode a plain say(text) or say(result) speaks where the run speaks.",
   "input": "crate::memory::SayRequest",
   "output": "crate::memory::SayAnswer",
   "call": "memory.say(&input)?",

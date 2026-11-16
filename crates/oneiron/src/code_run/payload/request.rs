@@ -181,6 +181,13 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
             ("order", Value::from(u64::from(call.order))),
             ("occurred_at", Value::from(call.occurred_at)),
         ]),
+        // The guest's ref, not the result the host bound to it: a replay
+        // resolves nothing, and two refs never alias one row.
+        SelfCall::SayResult(call) => request_map(vec![
+            ("result", Value::from(call.result.as_str())),
+            ("order", Value::from(u64::from(call.order))),
+            ("occurred_at", Value::from(call.occurred_at)),
+        ]),
         // The guest's call: the source the host bound to it is not the
         // guest's, and a replay resolves it again.
         SelfCall::ReaderSpawn(call) => {

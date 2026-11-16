@@ -2,7 +2,8 @@
 
 use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
-    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSpeechCall,
+    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSayResultCall,
+    SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
@@ -342,15 +343,25 @@ fn wrong_root_call(name: &str, input: &str) -> Option<crate::memory::MemoryError
     crate::task_verb::sdk::wrong_root(&args.verb)
 }
 
-/// The words of a plain `say(text)`: a `say` input that names its text and
-/// nothing else.
-fn plain_say_text(input: &Value) -> Option<String> {
+/// What a plain `say` speaks where the run speaks: a `say` input that names
+/// its text or its result and nothing else.
+enum PlainSay {
+    Text(String),
+    Result(String),
+}
+
+/// The plain `say` an input is, if it is one: its text alone, or its result
+/// alone. One that names a destination, a kind or refs is the `say` row's.
+fn plain_say(input: &Value) -> Option<PlainSay> {
     let request: crate::memory::SayRequest = serde_json::from_value(input.clone()).ok()?;
-    let plain = request.result.is_none()
-        && request.to.is_none()
-        && request.kind.is_none()
-        && request.refs.is_empty();
-    request.text.filter(|_| plain)
+    if request.to.is_some() || request.kind.is_some() || !request.refs.is_empty() {
+        return None;
+    }
+    match (request.text, request.result) {
+        (Some(text), None) => Some(PlainSay::Text(text)),
+        (None, Some(result)) => Some(PlainSay::Result(result)),
+        _ => None,
+    }
 }
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
@@ -396,12 +407,17 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 }));
             }
             // A plain `say(text)` speaks where the run speaks: it is exactly
-            // `self.speak` (L8-25). A say that names a destination, a result,
-            // a kind or refs is the `say` row's, served by its own door.
+            // `self.speak` (L8-25). A plain `say(result)` is that `self.speak`
+            // with one of the run's results for its words, which only the
+            // run's host resolves. A say that names a destination, a kind or
+            // refs is the `say` row's, served by its own door.
             if verb == AgentVerb::Say
-                && let Some(text) = plain_say_text(&args.input)
+                && let Some(plain) = plain_say(&args.input)
             {
-                return Ok(SelfCall::Speak(SelfSpeechCall::new(text)));
+                return Ok(match plain {
+                    PlainSay::Text(text) => SelfCall::Speak(SelfSpeechCall::new(text)),
+                    PlainSay::Result(result) => SelfCall::SayResult(SelfSayResultCall::new(result)),
+                });
             }
             if verb == AgentVerb::Ask {
                 let request: crate::task_verb::TaskAskRequest = decode(args.input)?;
