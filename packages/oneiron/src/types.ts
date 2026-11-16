@@ -62,6 +62,22 @@ export type NativeLimitQuestion = {
   readonly measured: bigint
 }
 
+/** The person's own conversation-training opt-out, as their paired surface reads it. */
+export type OwnConversationTraining = {
+  /** The person whose opt-out this is, as 32 hex: the proof's own. */
+  readonly person: string
+  /** Whether they asked to leave their own messages out. */
+  readonly leaveOut: boolean
+  /** Whether the vault lets people opt out now; while it does not, `leaveOut` is kept and ignored. */
+  readonly allowed: boolean
+  /** Present back as `seen`, 64 hex; zero while no choice is live. */
+  readonly revision: string
+  /** The person's live choices conflict: it reads as left out until a choice that saw them all supersedes them. */
+  readonly conflicted: boolean
+  /** The authority entry of the choice in force, 64 hex; omitted while none counts or the choices conflict. */
+  readonly act?: string
+}
+
 /** What {@link Oneiron.startEngine} takes besides the path (OF-237). */
 export type EngineOptions = {
   /** Embedding vector dimensions; omitted takes the config's. */

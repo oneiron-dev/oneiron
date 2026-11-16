@@ -35,6 +35,8 @@ use crate::error::{bad_request, forbidden, transport_error};
 
 // OF-469: a pinned authority checkpoint, fetched for adoption.
 mod checkpoint;
+// Row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF: a person's own training choice, proved by their slip key.
+mod conversation_training;
 // FIX 11454: a sealed custody change past the request ceiling, spooled whole.
 mod custody_submit;
 // FIX 3676: a kept whole-vault export, read and let go.
@@ -48,6 +50,7 @@ mod response;
 // OF-237: the network or an in-process server under one signing path.
 mod wire;
 
+pub use self::conversation_training::OwnConversationTraining;
 use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
