@@ -331,23 +331,24 @@ impl ScopedRead<'_> {
         }
     }
 
-    /// Whether this lane reads both records the `core.coreference.status` or
-    /// `core.coreference.share_consent` claim `body` of `id` names in its
-    /// edge subject, at every depth (the consent claim names the same two
-    /// people, COREFERENCE-CONSENT-READ = A). One of
-    /// the three trailing conjuncts of every CLAIM's admission, beside
+    /// Whether this lane reads both records the coreference claim `body` of
+    /// `id` names in its edge subject, at every depth: a
+    /// `core.coreference.status` claim, or a `core.coreference.share_consent`
+    /// claim, which names the same two people (COREFERENCE-CONSENT-READ = A).
+    /// One of the three trailing conjuncts of every CLAIM's admission, beside
     /// [`Self::provenance_cited_readable_in`] and
     /// [`Self::esign_document_readable_in`], on the row path and the class
     /// path alike, and never a class's: the endpoints are the row's own.
-    /// A missing or withheld endpoint, an undecodable CLAIM body, or a status
-    /// or consent claim whose subject is not an edge withholds the Claim
+    /// A missing or withheld endpoint, an undecodable CLAIM body, or a
+    /// coreference claim whose subject is not an edge withholds the Claim
     /// whole. No applied edge is required. Every other predicate and the
-    /// vault owner pass. A worklist judges each nested status claim once at this lane's
-    /// own floor and ordinary admission under `HeldAuthority::judge_cited`,
-    /// without recursion through status claims. Its row admission leaves its
-    /// endpoints to this walk alone, so cycles and shared status ends are
-    /// judged once. This also applies to a status claim a provenance Claim
-    /// cites; the provenance rule itself still runs one level deep.
+    /// vault owner pass. A worklist judges each nested coreference claim once
+    /// at this lane's own floor and ordinary admission under
+    /// `HeldAuthority::judge_cited`, without recursion through coreference
+    /// claims. Its row admission leaves its endpoints to this walk alone, so
+    /// cycles and shared ends are judged once. This also applies to a
+    /// coreference claim a provenance Claim cites; the provenance rule itself
+    /// still runs one level deep.
     pub(super) fn coreference_endpoints_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -356,8 +357,7 @@ impl ScopedRead<'_> {
         body: &ClaimBody,
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if (body.predicate != crate::claim::PREDICATE_COREFERENCE_STATUS
-            && body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT)
+        if !names_coreference_ends(&body.predicate)
             || self.actor_key.vault_owner_ref().is_some()
             || authority.judges_coreference_endpoints_of(id)
         {
@@ -367,11 +367,11 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         let floor = self.actor_retrieval_floor(policy)?;
-        let mut status_claims = HashSet::from([*id]);
+        let mut coreference_claims = HashSet::from([*id]);
         let mut ends = vec![source, target];
         authority.judge_cited(|cited| {
             while let Some(end) = ends.pop() {
-                if status_claims.contains(&end) {
+                if coreference_claims.contains(&end) {
                     continue;
                 }
                 let Some(row) = self.entity_record_in(rtxn, &end)? else {
@@ -381,8 +381,8 @@ impl ScopedRead<'_> {
                     let Ok(body) = decode_claim_body(&row.body, true) else {
                         return Ok(false);
                     };
-                    if body.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS {
-                        status_claims.insert(end);
+                    if names_coreference_ends(&body.predicate) {
+                        coreference_claims.insert(end);
                         if !cited.judge_cited_coreference(end, |cited| {
                             self.is_entity_readable_held_in(rtxn, policy, &end, &floor, cited)
                         })? {
@@ -499,4 +499,12 @@ impl ScopedRead<'_> {
             ),
         }
     }
+}
+
+/// Whether a claim of `predicate` names two coreference ends a lane must
+/// read before it reads the claim: a status claim, or a share consent over
+/// the same two people (COREFERENCE-CONSENT-READ = A).
+fn names_coreference_ends(predicate: &str) -> bool {
+    predicate == crate::claim::PREDICATE_COREFERENCE_STATUS
+        || predicate == crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT
 }

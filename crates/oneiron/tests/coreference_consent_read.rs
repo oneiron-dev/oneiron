@@ -121,3 +121,46 @@ fn a_consent_claim_is_served_to_a_reader_of_both_ends() {
         .expect("the reader's recorded claim listing");
     assert!(listed.contains(&fixture.consent));
 }
+
+/// A consent claim whose end is another consent claim naming it back is
+/// judged once through the shared worklist, as a status cycle is: the read
+/// ends and serves the pair to a reader of every end (green on main, where
+/// the consent claim is not walked at all).
+#[test]
+fn a_consent_claim_cycle_is_judged_once() {
+    let fixture = fixture(false);
+    let vault = &fixture.vault;
+    let first = EntityId::now();
+    let second = EntityId::now();
+    for (from, to) in [(first, second), (second, first)] {
+        vault
+            .put_edge(&from, EdgeKind::SameAs, &fixture.person_a, 0.0)
+            .expect("the same_as link to the person");
+        let body = ClaimBody::new(
+            PREDICATE_COREFERENCE_SHARE_CONSENT,
+            ClaimSubject::Edge {
+                source: to,
+                kind: EdgeKind::SameAs,
+                target: fixture.person_a,
+            },
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from(COREFERENCE_SHARE_CONSENT_PACT_KEY),
+                rmpv::Value::from("b".repeat(64)),
+            )]),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .expect("a consent body");
+        let at = vault.now_recorded_at();
+        vault
+            .put_claim(&from, &body, TimeRange { start: at, end: at }, at)
+            .expect("a consent claim naming the other");
+    }
+    let reads = |row| {
+        reader_reads_row(vault, fixture.reader, EdgeActorClass::Agent, row)
+            .expect("the recorded point read")
+    };
+    assert!(reads(first));
+    assert!(reads(second));
+}
