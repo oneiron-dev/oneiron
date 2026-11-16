@@ -56,7 +56,6 @@ pub mod routing;
 pub mod run_admission;
 pub mod score_scraper;
 pub mod seat;
-pub mod setting_keys;
 mod step;
 pub use step::public as model_step;
 pub mod tagger;
@@ -217,6 +216,7 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use budget::RsiSigning;
 pub use budget::rsi_doors;

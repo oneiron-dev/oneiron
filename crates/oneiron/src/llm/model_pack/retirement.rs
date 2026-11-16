@@ -37,14 +37,15 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ACTIVE, AccessSnapshot, MODEL_PACK_COMPACTION_KEY, ModelPackChangeCause, ModelPackReceipt,
-    PREFERENCE, SECONDS_PER_DAY, manifest_outranks_model_pack, model_pack_role_key,
-    resolve_model_pack_role,
+    SECONDS_PER_DAY, changed_the_row, manifest_outranks_model_pack, model_pack_preference_change,
+    model_pack_role_key, resolve_model_pack_role,
 };
 use crate::Vault;
 use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::ModelId;
 use crate::llm::manifest::{MODEL_ROLES, read_manifest};
+use crate::setting::{EngineSetting, SettingCaller};
 use crate::settings::ModelStackDeprecation;
 use crate::settings::model_pack::{
     MODEL_PACK_RETIREMENT_NOTICE_DAYS, ModelPack, ModelPackModelRetirement, ModelPackPreference,
@@ -234,6 +235,15 @@ fn model_notice_text(
     text
 }
 
+/// The reason a retirement's move of a pin gives its change of
+/// `models.pack_preference`.
+fn retirement_reason(today: u32) -> String {
+    format!(
+        "model pack retirement on epoch day {today}: a pin whose pack retired follows its \
+         successor"
+    )
+}
+
 impl Vault {
     /// One retirement pass (FIX 5368), the housekeeping pass's
     /// `ModelPackRetirement` sweep and its only caller (FIX 20193): `access`
@@ -243,6 +253,8 @@ impl Vault {
     /// retirement-day move as a change (with its notice and revert, FIX
     /// 5369), and sends each retirement notice due today once, to every
     /// owner. A pass with nothing due reads one snapshot and writes nothing.
+    /// The pin's move is the engine's own change of `models.pack_preference`,
+    /// whose reason names the retirement; the key's hook records it.
     ///
     /// # Errors
     /// Storage errors. The sweep is retried whole on a later pass.
@@ -262,49 +274,80 @@ impl Vault {
                 return Ok(ModelPackRetirementReport::default());
             }
         }
-        self.with_write_txn_grouped(|txn| {
-            let inputs = self.model_pack_retirement_inputs_in_txn(txn)?;
-            let work = self.model_pack_retirement_work_in_txn(txn, &inputs, models, today)?;
-            let before = self.model_pack_in_effect_in_txn(txn)?;
-            if let Some(preference) = &work.preference {
-                PREFERENCE.put(&self.store, txn, &(), preference)?;
-            }
-            let migrated = work.preference.is_some() || work.active_retired;
-            if migrated {
-                self.note_active_model_pack_in_txn(txn, before, ModelPackChangeCause::Retirement)?;
-            }
-            let sent_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let owners = crate::policy_model::owners_in_txn(self, txn)?;
-            for notice in &work.notices {
-                for key in std::iter::once(&notice.key).chain(&notice.passed) {
-                    NOTICES.put(&self.store, txn, key, &RetirementNoticeSent { sent_at })?;
-                }
-                let (retires, mark, subject) = &notice.key;
-                for owner in &owners {
-                    self.record_notification_in_txn(
+        self.with_write_txn_grouped_after_commit(
+            |txn| {
+                let inputs = self.model_pack_retirement_inputs_in_txn(txn)?;
+                let work = self.model_pack_retirement_work_in_txn(txn, &inputs, models, today)?;
+                let before = self.model_pack_in_effect_in_txn(txn)?;
+                let applied = match &work.preference {
+                    Some(preference) => {
+                        let change = model_pack_preference_change(
+                            preference.clone(),
+                            retirement_reason(today),
+                        )?;
+                        let outcome = self.set_setting_in_txn(
+                            txn,
+                            SettingCaller::Engine(EngineSetting::own()),
+                            &change,
+                        )?;
+                        Some((change, outcome))
+                    }
+                    None => None,
+                };
+                let migrated = work.preference.is_some() || work.active_retired;
+                // The key's hook records the pin's move, as a retirement, from the pack in effect
+                // before it.
+                let noted = applied
+                    .as_ref()
+                    .is_some_and(|(_, outcome)| changed_the_row(outcome));
+                if migrated && !noted {
+                    self.note_active_model_pack_in_txn(
                         txn,
-                        &NotificationEvent {
-                            kind: NotificationKind::Finding,
-                            source: NotificationSource {
-                                producer: MODEL_PACK_RETIREMENT_NOTIFICATION_PRODUCER.to_owned(),
-                                event: format!("{subject}:{retires}:{mark}:{}", owner.to_hex()),
-                                result: Some(notice.subject.clone()),
-                                detail: Some(notice.detail.clone()),
-                                ..NotificationSource::default()
-                            },
-                            subject_refs: Vec::new(),
-                            recipient: Some(*owner),
-                            created_at: sent_at,
-                            origin_conversation: None,
-                        },
+                        before,
+                        ModelPackChangeCause::Retirement,
                     )?;
                 }
-            }
-            Ok(ModelPackRetirementReport {
-                notices: u32::try_from(work.notices.len()).unwrap_or(u32::MAX),
-                migrated,
-            })
-        })
+                let sent_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                let owners = crate::policy_model::owners_in_txn(self, txn)?;
+                for notice in &work.notices {
+                    for key in std::iter::once(&notice.key).chain(&notice.passed) {
+                        NOTICES.put(&self.store, txn, key, &RetirementNoticeSent { sent_at })?;
+                    }
+                    let (retires, mark, subject) = &notice.key;
+                    for owner in &owners {
+                        self.record_notification_in_txn(
+                            txn,
+                            &NotificationEvent {
+                                kind: NotificationKind::Finding,
+                                source: NotificationSource {
+                                    producer: MODEL_PACK_RETIREMENT_NOTIFICATION_PRODUCER
+                                        .to_owned(),
+                                    event: format!("{subject}:{retires}:{mark}:{}", owner.to_hex()),
+                                    result: Some(notice.subject.clone()),
+                                    detail: Some(notice.detail.clone()),
+                                    ..NotificationSource::default()
+                                },
+                                subject_refs: Vec::new(),
+                                recipient: Some(*owner),
+                                created_at: sent_at,
+                                origin_conversation: None,
+                            },
+                        )?;
+                    }
+                }
+                let report = ModelPackRetirementReport {
+                    notices: u32::try_from(work.notices.len()).unwrap_or(u32::MAX),
+                    migrated,
+                };
+                Ok((report, applied))
+            },
+            |(report, applied)| {
+                if let Some((change, outcome)) = &applied {
+                    crate::setting::run_after_commit(self, &[(change, outcome)]);
+                }
+                Ok(report)
+            },
+        )
     }
 
     /// What a retirement pass reads in `txn` besides its notice records: the
@@ -321,7 +364,7 @@ impl Vault {
             return Ok(RetirementInputs::default());
         }
         Ok(RetirementInputs {
-            stored: PREFERENCE.get(&self.store, txn, &())?.unwrap_or_default(),
+            stored: self.model_pack_preference_in_txn(txn)?,
             recorded: ACTIVE
                 .get(&self.store, txn, &())?
                 .and_then(|change| change.active),
