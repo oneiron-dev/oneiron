@@ -836,9 +836,14 @@ impl StepRunner {
         // meters its ordinary calls on that dial less the reserve, as the
         // Dreamer's turn program does, so no ordinary call reaches the slice
         // kept for its landing (FIX 4208). The bound holds the guard and the
-        // live lease alike. An undialed attempt keeps the step's budget.
-        let logical_budget_units = if attempt.landing_reserve().is_dialed() {
-            logical_budget_units.min(attempt.ordinary_budget_limit_units())
+        // live lease alike. A retry is a fresh row that keeps its source's
+        // dial values but not its one-shot mark (`successor_row`), and the
+        // workflow path never dials it again, so the values it carries fence
+        // it as they fenced the try before it: only a dial writes a reserve's
+        // limit. An attempt no dial reached keeps the step's budget.
+        let landing = attempt.landing_reserve();
+        let logical_budget_units = if landing.is_dialed() || landing.limit_units > 0 {
+            logical_budget_units.min(landing.ordinary_limit_units())
         } else {
             logical_budget_units
         };
