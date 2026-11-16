@@ -13,7 +13,7 @@ use crate::{Error, Result, Vault};
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(transparent)]
-pub struct RevealAskWindowSecs(pub u64);
+pub(crate) struct RevealAskWindowSecs(pub(crate) u64);
 
 impl RevealAskWindowSecs {
     /// One hour, the window before the key existed.
