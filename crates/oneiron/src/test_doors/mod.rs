@@ -113,6 +113,7 @@ pub mod mail_counterparty;
 pub mod mail_landing;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
+pub mod mail_pack_setting_keys;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;
