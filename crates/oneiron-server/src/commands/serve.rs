@@ -157,7 +157,6 @@ pub(super) async fn serve_anchored(
     let sync_server = sync_server
         .with_artifact_listener(artifact_addr.port())
         .with_api_listener(listener.local_addr()?);
-    tracing::info!(%addr, artifacts = %artifact_addr, "listening");
     // A vault served by name answers on `*.localhost` too. The operator reads
     // its hosts here; `/api/health` names no vault (FIX LOCALHOST-HOST-DISCOVERY).
     if let Some(host) = sync_server.config.local_artifact_vault_host() {
@@ -166,6 +165,7 @@ pub(super) async fn serve_anchored(
         let apps = format!("http://<app>--{host}:{port}/");
         tracing::info!(%vault, %apps, "artifacts answer on *.localhost");
     }
+    tracing::info!(%addr, artifacts = %artifact_addr, "listening");
     // From bind the API listener answers: health says the server is starting,
     // and every other request waits for the router startup installs, so a
     // client's connect is never left in the backlog (FIX 22117).
