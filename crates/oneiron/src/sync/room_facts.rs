@@ -108,7 +108,7 @@ fn decode(bytes: &[u8]) -> Result<RoomSideRow> {
 
 /// The key `row`, encoded as `bytes`, rides under: a cell's room and handle,
 /// or a written-once row's carrier and its own digest.
-fn carrier_key(row: &RoomSideRow, bytes: &[u8]) -> String {
+pub(crate) fn carrier_key(row: &RoomSideRow, bytes: &[u8]) -> String {
     let digest = || {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"oneiron.room_facts.v1");

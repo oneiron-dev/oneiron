@@ -613,6 +613,7 @@ impl Pass<'_, '_> {
             retained.enqueue(run, self.all, lane.actor_key().clone(), body, input, now)?;
             return Ok(true);
         }
+        let max_budget_ms = crate::runtime_hooks::setting_keys::hook_max_budget_ms(self.vault)?;
         let prepared = evaluation::evaluate(
             self.runtime,
             self.verdict,
@@ -622,6 +623,7 @@ impl Pass<'_, '_> {
             input,
             now,
             false,
+            max_budget_ms,
         );
         let memo = prepared.memo(self.vault, run)?;
         let queued = self.commit(run, memo, &prepared.verdict)?;
