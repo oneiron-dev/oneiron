@@ -22,13 +22,18 @@
 //!   link derives it again: handover enqueues a replicated run TASK's
 //!   payload as it came (Astra review of UNBUILT-09, F1; Engine RULING
 //!   U09-ASTRA-F1 = A, 16 Nov 10:04).
+//! - A workflow leaf's stored parent is the workflow's inert wrapper; the
+//!   link crosses it to the run that dispatched the workflow, so rung 2 still
+//!   pins that run's agent (Sol review of the F1 commit, P2).
 //!
 //! On main the first, second and fourth cases fail at their first rung
 //! assert: the child's Grant names the owner as `delegated_by`, so rung 2
 //! pins the owner. Before the scrub took the spawn parent too, the erase
 //! case failed at its assert on the scrubbed row. Before the reader derived
 //! the parent again, the last case failed at its first assert: the open
-//! stored the forged parent.
+//! stored the forged parent. Before the link crossed a workflow wrapper, the
+//! workflow case failed at its assert: the wrapper is no agent dispatch, so
+//! the open stored no parent and rung 2 pinned the owner.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_spawn_parent`.
@@ -224,6 +229,31 @@ impl Fixture {
             panic!("expected one fresh attempt");
         };
         forged.id
+    }
+
+    /// An inert workflow wrapper whose recorded parent is `parent`, the run
+    /// that dispatched the workflow, as the workflow writer enqueues it: a
+    /// root's payload with the wrapper's attempt type (`agent.workflow`,
+    /// `WORKFLOW_ATTEMPT_TYPE`). Each leaf's stored parent is this wrapper.
+    fn workflow_wrapper(&self, parent: AttemptId) -> AttemptId {
+        let queue = AttemptQueue::new(&self.vault);
+        let row = queue.get(parent).expect("read").expect("the parent's row");
+        let mut payload = decode_dreamer_attempt_payload(&row.payload).expect("a dreamer payload");
+        payload.attempt_type = "agent.workflow".to_owned();
+        payload.parent_attempt = Some(parent);
+        let EnqueueOutcome::Enqueued(wrapper) = queue
+            .enqueue(EnqueueAttempt {
+                kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+                payload: encode_dreamer_attempt_payload(&payload).expect("encode the payload"),
+                dedupe_key: None,
+                run_id: None,
+                now: T0,
+            })
+            .expect("enqueue")
+        else {
+            panic!("expected one fresh attempt");
+        };
+        wrapper.id
     }
 
     /// `id`, leased to this file's worker. Rows queued before it are leased
@@ -546,4 +576,23 @@ fn rung_two_ignores_a_spawn_parent_the_parent_link_does_not_derive() {
              derive is not stored: rung 2 pins the owner who minted the child's Grant"
         );
     }
+}
+
+#[test]
+fn rung_two_asks_the_agent_whose_run_dispatched_the_workflow() {
+    let fx = Fixture::rooted();
+    let parent = fx.granted_agent("check-in-parent", &[SPAWN]);
+    let child = fx.granted_agent("check-in-child", &[SPAWN]);
+    let root = fx.dispatch(parent, None);
+    // A leaf of a workflow the parent's run dispatched: its frozen spawn
+    // parent is the parent, its stored parent the workflow's inert wrapper.
+    let leaf = fx.forged_child(child, parent, Some(fx.workflow_wrapper(root)));
+    let row = open(&fx, &fx.in_run(child, &fx.claim(leaf)), SPAWN, 0x67);
+    assert_eq!(
+        (row.spawn_parent, rungs(&row).first().cloned()),
+        (Some(parent), Some(("grantor", None, vec![parent]))),
+        "a workflow leaf's parent link crosses the wrapper to the run that dispatched the \
+         workflow: rung 2 pins that run's agent, not the owner {:?}",
+        fx.owner
+    );
 }

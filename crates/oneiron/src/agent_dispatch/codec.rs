@@ -361,8 +361,13 @@ pub(crate) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispa
 /// The spawn parent that `record`'s own stored parent link derives, in
 /// `txn`: the definition its parent attempt's dispatch targets, as the
 /// dispatch writer derives it when it freezes a child
-/// (`AgentDispatcher::spawn_parent_in_txn`). `None` for a root, and for a
-/// parent attempt this machine does not hold or that is no agent dispatch.
+/// (`AgentDispatcher::spawn_parent_in_txn`). A workflow leaf's stored parent
+/// is its inert wrapper, and the writer froze the leaf from the workflow
+/// dispatch's own parent, so the link crosses the wrapper to the parent the
+/// wrapper records, as the delegation lineage does
+/// (`run_lineage::delegation_lineage_parent_in_txn`). `None` for a root, and
+/// for a parent attempt this machine does not hold or that is no agent
+/// dispatch.
 ///
 /// # Errors
 ///
@@ -372,15 +377,30 @@ pub(crate) fn record_spawn_parent_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &AttemptRecord,
 ) -> Result<Option<EntityId>> {
-    let Some(parent) = decode_dreamer_attempt_payload(&record.payload)
-        .ok()
-        .and_then(|payload| payload.parent_attempt)
+    let queue = crate::attempt_queue::AttemptQueue::new(vault);
+    let parent_of = |row: &AttemptRecord| {
+        decode_dreamer_attempt_payload(&row.payload)
+            .ok()
+            .and_then(|payload| payload.parent_attempt)
+    };
+    let Some(mut parent) = parent_of(record)
+        .map(|id| queue.get_in_txn(txn, id))
+        .transpose()?
+        .flatten()
     else {
         return Ok(None);
     };
-    crate::attempt_queue::AttemptQueue::new(vault)
-        .get_in_txn(txn, parent)?
-        .and_then(|row| record_dispatch_input(&row))
+    if super::workflow_record::is_wrapper(&parent) {
+        let Some(real) = parent_of(&parent)
+            .map(|id| queue.get_in_txn(txn, id))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(None);
+        };
+        parent = real;
+    }
+    record_dispatch_input(&parent)
         .map(|input| input.target.agent_definition_ref())
         .transpose()
 }
