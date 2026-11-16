@@ -139,7 +139,7 @@ fn revision_speaker_in_txn(
 /// erase keeps its merge redirect: an erased speaker names no one, not its
 /// head. None too for a split (no single head) or a head that is erased,
 /// removed or retired.
-fn live_canonical_person_in_txn(
+pub(crate) fn live_canonical_person_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

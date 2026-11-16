@@ -1,0 +1,17 @@
+{
+  "name": "vault.calls.speakers.unbind",
+  "description": "The owner removes the PERSON named for one speaker of a kept call; its turns show the label kept with them again.",
+  "input": "crate::disclosure::CallSpeakerUnbindRequest",
+  "output": "crate::disclosure::CallSpeakerBindReceipt",
+  "call": "memory.vault().unbind_call_speaker(&memory.embedded_owner(\"vault.calls.speakers.unbind\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

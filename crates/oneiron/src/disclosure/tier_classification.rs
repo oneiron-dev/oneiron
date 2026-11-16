@@ -21,13 +21,14 @@ use super::disclosure_tier_a_marked_in;
 use super::scope_codec::{MAX_DISCLOSURE_SCOPE_TOPIC_BYTES, decode_disclosure_scope_value};
 
 /// Pinned `disclosure.*` claim predicates.
-pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 6] = [
+pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 7] = [
     "disclosure.scope",
     "disclosure.tier",
     "disclosure.topic",
     "disclosure.attendee_ask",
     "disclosure.attendee_identity",
     "disclosure.import_audience",
+    "disclosure.speaker_bind",
 ];
 
 pub const PREDICATE_DISCLOSURE_SCOPE: &str = "disclosure.scope";
@@ -44,6 +45,9 @@ pub const PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY: &str = "disclosure.attendee_id
 
 /// The owner's standing audience for one imported topic's later imports (OF-492).
 pub const PREDICATE_DISCLOSURE_IMPORT_AUDIENCE: &str = "disclosure.import_audience";
+
+/// The owner's bind of one call speaker to a PERSON (UNBUILT-02-SPEAKER-BIND).
+pub const PREDICATE_DISCLOSURE_SPEAKER_BIND: &str = "disclosure.speaker_bind";
 
 pub(super) const DISCLOSURE_TIER_VALUE_TIER_A: &str = "tier_a";
 
@@ -244,6 +248,9 @@ pub(crate) fn validate_disclosure_claim_structure(body: &ClaimBody) -> Result<()
         }
         PREDICATE_DISCLOSURE_IMPORT_AUDIENCE => {
             super::import_audience::decode_import_audience_value(&body.value).map(|_| ())
+        }
+        PREDICATE_DISCLOSURE_SPEAKER_BIND => {
+            super::speaker_bind::decode_speaker_bind_value(&body.value).map(|_| ())
         }
         _ => Err(Error::InvalidClaimBody(
             "unknown disclosure claim predicate",

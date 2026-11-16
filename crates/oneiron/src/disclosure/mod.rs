@@ -20,6 +20,7 @@ mod model_channel;
 mod retained_copies;
 mod room_party;
 mod scope_codec;
+mod speaker_bind;
 pub mod task_ask_default;
 mod tier_classification;
 mod vault_agent;
@@ -51,12 +52,17 @@ pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,
     DisclosureScopeStatus, decode_disclosure_scope_body, encode_disclosure_scope_body,
 };
+pub(crate) use self::speaker_bind::call_speaker_bind_in_txn;
+pub use self::speaker_bind::{
+    CallSpeakerBindReceipt, CallSpeakerBindRequest, CallSpeakerUnbindRequest,
+};
 pub use self::tier_classification::{
     DISCLOSURE_CLAIM_PREDICATES, DISCLOSURE_TIER_A_ENTITY_TYPES,
     DISCLOSURE_TIER_A_PREDICATE_PREFIXES, DisclosureMode, DisclosureTier,
     PREDICATE_DISCLOSURE_ATTENDEE_ASK, PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
-    PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, PREDICATE_DISCLOSURE_SCOPE, PREDICATE_DISCLOSURE_TIER,
-    PREDICATE_DISCLOSURE_TOPIC, is_disclosure_claim_predicate,
+    PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, PREDICATE_DISCLOSURE_SCOPE,
+    PREDICATE_DISCLOSURE_SPEAKER_BIND, PREDICATE_DISCLOSURE_TIER, PREDICATE_DISCLOSURE_TOPIC,
+    is_disclosure_claim_predicate,
 };
 pub use self::vault_context::{DisclosureAssembly, DisclosureContext, presence_discretion_notice};
 

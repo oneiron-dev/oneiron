@@ -386,9 +386,10 @@ pub use support::{
 };
 pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
-    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptSpeaker, TranscriptTurn,
 };
 pub(crate) use witness::WITNESS_OCCURRENCE_SKEW_SECS;
+pub(crate) use witness::live_canonical_person_in_txn;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
