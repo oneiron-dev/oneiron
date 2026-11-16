@@ -173,11 +173,35 @@ impl<'a> ServedChannelSink<'a> {
     ///
     /// The client could not be built.
     pub fn client_with_timeout(timeout: Duration) -> Result<reqwest::blocking::Client> {
-        reqwest::blocking::Client::builder()
+        Self::guarded_client_with_timeout(timeout, None)
+    }
+
+    /// [`Self::client_with_timeout`] on a managed node: with `Some(guard)`,
+    /// every name the client connects to resolves through `guard`
+    /// ([`crate::web_fetch::hosted_dns_resolver`]), so a name that answers
+    /// with a private or node address fails its connection, as a web fetch
+    /// does (ARCH-0046, the one shared network boundary). An address-literal
+    /// URL never reaches a resolver: its caller checks it with
+    /// [`crate::web_fetch::HostedEgressGuard::refuses`] before it sends.
+    /// With `None`, exactly [`Self::client_with_timeout`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the client cannot be built.
+    pub fn guarded_client_with_timeout(
+        timeout: Duration,
+        guard: Option<std::sync::Arc<crate::web_fetch::HostedEgressGuard>>,
+    ) -> Result<reqwest::blocking::Client> {
+        let builder = reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
-            .timeout(timeout)
+            .timeout(timeout);
+        let builder = match guard {
+            Some(guard) => builder.dns_resolver(crate::web_fetch::hosted_dns_resolver(guard)),
+            None => builder,
+        };
+        builder
             .build()
             .map_err(|_| Error::InvalidConfig("served send client unavailable".to_owned()))
     }
