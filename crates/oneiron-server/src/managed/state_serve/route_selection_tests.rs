@@ -77,8 +77,9 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
         PublicProof,
     ),
     // The signing ceremony's signer doors. The exchange reads a link's
-    // capability once and answers a single-use exchange; the session
-    // consumes that exchange and opens the link's signing session.
+    // capability (the link stays reusable) and answers a single-use
+    // exchange; the session consumes that exchange and opens the link's
+    // signing session.
     ("GET", "/sign", PublicProof),
     ("POST", "/sign/exchange", PublicProof),
     ("POST", "/sign/geometry", PublicProof),
