@@ -92,7 +92,10 @@ fn published_site() -> PublishedSite {
     let repo = tempfile::tempdir().expect("repo");
     std::fs::write(repo.path().join("index.html"), PAGE).expect("write page");
     git(repo.path(), &["init"]);
-    git(repo.path(), &["config", "user.email", "oneiron@example.test"]);
+    git(
+        repo.path(),
+        &["config", "user.email", "oneiron@example.test"],
+    );
     git(repo.path(), &["config", "user.name", "Oneiron Test"]);
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-m", "bundle"]);
@@ -101,13 +104,7 @@ fn published_site() -> PublishedSite {
     let device = open_vault(&device_dir);
     let ingest = RepoIngestConfig::new(repo.path(), ["index.html"]).expect("ingest config");
     let result = device
-        .ingest_local_repo_at_commit(
-            SITE,
-            &ingest,
-            "HEAD",
-            TimeRange { start: 10, end: 10 },
-            10,
-        )
+        .ingest_local_repo_at_commit(SITE, &ingest, "HEAD", TimeRange { start: 10, end: 10 }, 10)
         .expect("ingest");
     let body = device
         .get_code_artifact(&result.code_artifact_id)
@@ -232,11 +229,7 @@ fn unpublish_keeps_the_snapshot_while_the_other_channel_serves_it() {
     let outcomes =
         pump_artifact_publications(&site.device, &site.server).expect("pump the publishes");
     assert_all_applied(&outcomes);
-    assert_eq!(
-        outcomes.len(),
-        2,
-        "each channel's publication is answered"
-    );
+    assert_eq!(outcomes.len(), 2, "each channel's publication is answered");
 
     assert!(
         site.device

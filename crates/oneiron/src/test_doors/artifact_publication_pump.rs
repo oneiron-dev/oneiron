@@ -24,9 +24,11 @@ pub fn pump_artifact_publications(
     loop {
         match device.next_artifact_publication_step(&mut cursor, &|_: &[u8; 32]| false)? {
             ArtifactPublicationStep::Ready(part) => {
-                let frame = decode_document(part.frame.get(1..).ok_or(
-                    Error::InvariantViolation("artifact publication part frame"),
-                )?)
+                let frame = decode_document(
+                    part.frame
+                        .get(1..)
+                        .ok_or(Error::InvariantViolation("artifact publication part frame"))?,
+                )
                 .map_err(|_| Error::InvariantViolation("artifact publication part frame"))?;
                 if frame.kind != document_sub_tags::ARTIFACT_PUBLICATION {
                     return Err(Error::InvariantViolation("artifact publication part kind"));
@@ -43,7 +45,9 @@ pub fn pump_artifact_publications(
                 )?)
                 .map_err(|_| Error::InvariantViolation("artifact publication receipt frame"))?;
                 if receipt.kind != document_sub_tags::ARTIFACT_RECEIPT {
-                    return Err(Error::InvariantViolation("artifact publication receipt kind"));
+                    return Err(Error::InvariantViolation(
+                        "artifact publication receipt kind",
+                    ));
                 }
                 let outcome =
                     device.accept_artifact_publication_receipt(receipt.entity, receipt.payload)?;

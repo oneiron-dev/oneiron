@@ -400,12 +400,9 @@ impl Vault {
                 channel,
                 artifact: artifact.to_owned(),
             };
-            if ARTIFACT_POINTERS
-                .get(&self.store, wtxn, &key)?
-                .is_some_and(|row| {
-                    matches!(row.export, ArtifactExportRef::ForkHash(other) if other == *hash)
-                })
-            {
+            if ARTIFACT_POINTERS.get(&self.store, wtxn, &key)?.is_some_and(
+                |row| matches!(row.export, ArtifactExportRef::ForkHash(other) if other == *hash),
+            ) {
                 return Ok(());
             }
         }
