@@ -27,7 +27,7 @@ use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
-use oneiron::skill_hub::pack_catalog::PackObservedTool;
+use oneiron::skill_hub::pack_catalog::{ConnectorToolScreen, PackObservedTool};
 use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::Deserialize;
@@ -267,6 +267,51 @@ pub(crate) struct Discovery {
     pub(crate) tools: Vec<ListedTool>,
 }
 
+impl Discovery {
+    /// Screens the listed tools with the pack install rules held for
+    /// `connector` and keeps out each tool that trips one, unless `admitted`
+    /// names it (FIX SCREENING-PER-TOOL-SKIP). A tool the owner already
+    /// admitted is judged where it is used, as before; a tool kept out never
+    /// enters a slate or a manifest, so it stays uncallable. The answer's
+    /// `skipped` names exactly the tools kept out. When its `refused` (a
+    /// fault of the whole listing) is set, no tool is kept out and the
+    /// caller decides.
+    pub(crate) fn screen(
+        &mut self,
+        vault: &Vault,
+        connector: &str,
+        admitted: &BTreeSet<&str>,
+    ) -> oneiron::Result<ConnectorToolScreen> {
+        let screened: Vec<_> = self.tools.iter().map(ListedTool::screened).collect();
+        let mut screen = vault.screen_connector_tools_each(&screened, connector)?;
+        if screen.refused.is_some() {
+            return Ok(screen);
+        }
+        screen
+            .skipped
+            .retain(|skip| !admitted.contains(skip.tool.as_str()));
+        self.tools.retain(|tool| screen.admits(&tool.name));
+        Ok(screen)
+    }
+}
+
+/// The refusal of a screened listing that keeps no tool: a fault of the
+/// whole listing, or every listed tool kept out. `None` when a tool passes
+/// or the connector lists none.
+pub(crate) fn screen_refusal(screen: &ConnectorToolScreen, kept: usize) -> Option<String> {
+    if let Some(reason) = &screen.refused {
+        return Some(reason.clone());
+    }
+    (kept == 0 && !screen.skipped.is_empty()).then(|| {
+        screen
+            .skipped
+            .iter()
+            .map(|skip| format!("tool {}: {}", skip.tool, skip.reason))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
 /// Lists the connector's tools at `endpoint`: at `pinned` once the key has
 /// pinned a revision, else at the newest one both sides speak.
 pub(crate) fn discover(
@@ -371,6 +416,9 @@ pub(crate) struct HttpQualificationConnector<'a> {
     auth: Option<&'a HeaderValue>,
     revision: &'a str,
     effect_state_uri: &'a str,
+    /// Listed tools the install screen kept out: the suite never lists or
+    /// probes them (FIX SCREENING-PER-TOOL-SKIP).
+    kept_out: BTreeSet<String>,
 }
 
 impl<'a> HttpQualificationConnector<'a> {
@@ -387,7 +435,19 @@ impl<'a> HttpQualificationConnector<'a> {
             auth,
             revision,
             effect_state_uri,
+            kept_out: BTreeSet::new(),
         }
+    }
+
+    /// The same transport, listing none of the tools the install screen
+    /// kept out of this connector's admission.
+    pub(crate) fn keeping_out(mut self, screen: &ConnectorToolScreen) -> Self {
+        self.kept_out = screen
+            .skipped
+            .iter()
+            .map(|skip| skip.tool.clone())
+            .collect();
+        self
     }
 
     fn session(&self) -> Result<Session<'a>, QualificationFailure> {
@@ -400,6 +460,7 @@ impl QualificationConnector for HttpQualificationConnector<'_> {
     fn connect(&self) -> Result<Box<dyn QualificationConnection + '_>, QualificationFailure> {
         Ok(Box::new(HttpQualificationConnection {
             session: self.session()?,
+            kept_out: &self.kept_out,
         }))
     }
 
@@ -422,6 +483,7 @@ impl QualificationConnector for HttpQualificationConnector<'_> {
 
 struct HttpQualificationConnection<'a> {
     session: Session<'a>,
+    kept_out: &'a BTreeSet<String>,
 }
 
 impl QualificationConnection for HttpQualificationConnection<'_> {
@@ -432,7 +494,11 @@ impl QualificationConnection for HttpQualificationConnection<'_> {
             .list_tools(Some(&mut requests))
             .map_err(|_| QualificationFailure::Transport)?;
         Ok(ProbeToolsList {
-            tools: tools.iter().map(ListedTool::probe_tool).collect(),
+            tools: tools
+                .iter()
+                .filter(|tool| !self.kept_out.contains(&tool.name))
+                .map(ListedTool::probe_tool)
+                .collect(),
             requests,
         })
     }

@@ -46,7 +46,7 @@ fn refresh_connector(
             OwnerError::Invalid("the connector pins no protocol revision".to_owned())
         })?;
     // The pinned revision first: a connector that still answers it keeps it.
-    let discovery =
+    let mut discovery =
         host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
             let client = host::client()?;
             host::discover(&client, &endpoint, auth, Some(&pinned))
@@ -63,16 +63,7 @@ fn refresh_connector(
             "the connector lists no tool {unknown}"
         )));
     }
-    let screened: Vec<_> = discovery
-        .tools
-        .iter()
-        .map(host::ListedTool::screened)
-        .collect();
-    if let Some(reason) = vault.screen_connector_tools(&screened, &name)? {
-        return Err(OwnerError::Refused(format!(
-            "the connector's tools failed screening: {reason}"
-        )));
-    }
+    let screen = screened(vault, &name, &mut discovery, &request.tools)?;
     let (slate_id, slate) = slate_of(vault, &catalog.record)?;
     let mut classes: BTreeMap<String, ToolClass> = slate
         .manifest()
@@ -107,6 +98,7 @@ fn refresh_connector(
             reask: Vec::new(),
             carried: Vec::new(),
             dropped: Vec::new(),
+            skipped: screen.skipped,
         });
     }
     let delta = with_slate_drafter(server, owner, |drafter| {
@@ -132,6 +124,7 @@ fn refresh_connector(
         reask: delta.reask.into_iter().collect(),
         carried: delta.carried.into_iter().collect(),
         dropped: delta.dropped.into_iter().collect(),
+        skipped: screen.skipped,
     })
 }
 
