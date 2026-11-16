@@ -282,6 +282,7 @@ impl Vault {
             expected_revision: Some(wire.revision),
             why: Some(why),
             check_in_ref: None,
+            weight_runs: None,
         };
         match self.set_setting_in_txn(txn, SettingCaller::Engine(EngineSetting::own()), &request)? {
             SetSettingOutcome::Applied { revision, .. } => Ok(revision),
