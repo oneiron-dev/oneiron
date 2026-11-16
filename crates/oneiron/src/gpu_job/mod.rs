@@ -192,6 +192,12 @@ pub struct GpuJob {
     pub updated_at_ms: u64,
     /// Bumped at every write; a write over a changed row is dropped.
     pub revision: u64,
+    /// Resources a write that lost to another (a cancel, an erase) made or
+    /// found under a chunk's key, which no chunk of the row steps, and whose
+    /// termination the provider has not confirmed yet. The host's step asks
+    /// again until it does. Their run time is our cost, never the customer's.
+    #[serde(default)]
+    pub orphaned_resources: Vec<GpuResourceRef>,
 }
 
 impl GpuJob {
@@ -290,12 +296,13 @@ impl Vault {
             .collect()
     }
 
-    /// The jobs a host steps: those with a live chunk.
+    /// The jobs a host steps: those with a live chunk, or with a resource
+    /// whose termination is not confirmed yet.
     pub fn live_gpu_jobs(&self) -> crate::Result<Vec<EntityId>> {
         Ok(self
             .gpu_jobs()?
             .into_iter()
-            .filter(|job| job.state.is_live())
+            .filter(|job| job.state.is_live() || !job.orphaned_resources.is_empty())
             .map(|job| job.id)
             .collect())
     }
