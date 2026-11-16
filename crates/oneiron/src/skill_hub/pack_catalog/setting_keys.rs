@@ -2,11 +2,16 @@
 //! Engine ANSWER SCREENING-SKIP-OVERRIDE-SCOPE, 16 Nov 13:20: the text bound
 //! is a size limit, not a correctness rule, so it is an owner key rather than
 //! a per-tool lift). The default is the bound the screen has always kept. The
-//! owner changes it; an agent's change waits on the owner's approval.
+//! owner sets it. An agent sets it only as the Setting primitive's one change
+//! rule allows: with the key's own Grant line it tightens inside the owner's
+//! value, and its widening waits on a check-in.
 //!
 //! Direction: a lower bound is tighter, since the screen keeps out every text
 //! past it. A row that does not decode reads as one byte. Every other screen
-//! rule still reads the whole text, whatever the bound.
+//! rule still reads the whole text, whatever the bound. A bound above the
+//! default does not widen a pack's observed tool manifest: pack prepare keeps
+//! its own 16384-byte limit on an observed tool description, a manifest shape
+//! bound and not a screen rule.
 
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
@@ -49,7 +54,8 @@ crate::setting::setting_keys! {
     /// The largest text the pack install screen admits, in bytes (default 16384). Lower is
     /// tighter: a connector tool whose name, description or one schema text is longer is kept
     /// out, and a pack whose PACK.md or tool declaration text is longer is refused. Every other
-    /// screen rule still reads the whole text.
+    /// screen rule still reads the whole text. Pack prepare keeps its own 16384-byte limit on an
+    /// observed tool description, whatever this bound.
     pub(crate) PACK_INSTALL_SCREEN_TEXT_MAX_BYTES: ScreenTextMaxBytes =
         "pack_install.screen.text_max_bytes" {
         kind: Kind::new(default_text_max_bytes)
