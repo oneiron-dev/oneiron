@@ -13,6 +13,7 @@
 //! Public doors only.
 //!
 //! `cargo test --locked -p oneiron --all-features --test fed_delivery_ledger_generic_write`
+#![cfg(feature = "sync")]
 
 use oneiron::{Vault, VaultConfig};
 
