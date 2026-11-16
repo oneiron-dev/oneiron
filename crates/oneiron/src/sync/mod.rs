@@ -156,3 +156,6 @@ pub use transport::{
     encode_legacy_full_window_protocol_hello, encode_protocol_hello, encode_window_sync,
 };
 pub use types::{MessagePresenceScope, ScopedPresenceFrame, SyncConfig, WindowKey};
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::ingest::asset_digest_for_test;

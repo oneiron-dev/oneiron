@@ -20,6 +20,7 @@
 //! the row drops its carried and recorded origin.
 
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
@@ -65,12 +66,22 @@ fn digest(bytes: &[u8]) -> [u8; 32] {
 }
 
 fn asset_digest(blob: &[u8], facts: &AssetBodyFacts) -> [u8; 32] {
-    let mut digest = blake3::Hasher::new();
-    digest.update(&blob[..ENTITY_METADATA_HEADER_LEN]);
-    digest.update(&facts.blake3);
-    digest.update(&facts.len.to_be_bytes());
-    digest.update(&facts.xxh32.to_be_bytes());
-    *digest.finalize().as_bytes()
+    asset_digest_of(
+        &blob[..ENTITY_METADATA_HEADER_LEN],
+        &facts.blake3,
+        facts.len,
+        facts.xxh32,
+    )
+}
+
+/// The logical ASSET origin stored beside its wire digest (K, PLAN-UC-04 stage 7).
+fn asset_digest_of(header: &[u8], blake3: &[u8; 32], len: u64, xxh32: u32) -> [u8; 32] {
+    let mut digest = LegacyDigest::new(purposes::sync::PEER_ASSET_ORIGIN);
+    digest.raw(header);
+    digest.raw(blake3);
+    digest.raw(&len.to_be_bytes());
+    digest.raw(&xxh32.to_be_bytes());
+    digest.finish()
 }
 
 fn is_asset(blob: &[u8]) -> bool {
@@ -405,4 +416,14 @@ pub(in crate::sync) fn admit_peer_origin_map(map: &LoroMap) -> Result<()> {
         }
     });
     admitted
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn asset_digest_for_test(
+    header: &[u8],
+    blake3: &[u8; 32],
+    len: u64,
+    xxh32: u32,
+) -> [u8; 32] {
+    asset_digest_of(header, blake3, len, xxh32)
 }
