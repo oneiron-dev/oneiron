@@ -128,6 +128,9 @@ pub enum ConsentActionDecision {
     NoopNonPrincipal,
     NoopSurfaceIneligible,
     NoopBeneficiaryConfirm,
+    /// A bundle card's exact-sends press of more than one send, under a send
+    /// grant that asks a press per send (ARCH-0046 #send-grant).
+    NoopPerSendGrant,
 }
 
 impl ConsentActionDecision {
@@ -140,6 +143,7 @@ impl ConsentActionDecision {
             Self::NoopNonPrincipal => "no_op_non_principal",
             Self::NoopSurfaceIneligible => "no_op_surface_ineligible",
             Self::NoopBeneficiaryConfirm => "no_op_beneficiary_confirm",
+            Self::NoopPerSendGrant => "no_op_per_send_grant",
         }
     }
 }

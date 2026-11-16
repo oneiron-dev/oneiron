@@ -17,6 +17,13 @@
 //!   Member when it records none, as in a vault that is not shared;
 //! * an unreadable policy counts as `AlwaysAsk`.
 //!
+//! The grant also sets how the holder presses (PLAN L3-35 D5; Engine ruling
+//! L3-35-BATCH = A): one press may approve a reviewed batch of several sends
+//! only when the rows compose `manual` with `ask_per: batch`
+//! ([`send_grant_presses_batch_in_txn`], read by the batch door
+//! `Vault::approve_outbound_batch`); in every other case one press covers one
+//! send.
+//!
 //! The Gate's decision record names the rows that decided and the answer, in
 //! its receipt vocabulary (`check_in_row_<ref>`, `check_in_go_never_ask`).
 //!
@@ -38,7 +45,7 @@
 use super::act_class::ActClass;
 use super::asker::AlwaysUnsure;
 use super::mode::CheckInMode;
-use super::policy::{CheckInPolicyRead, CheckInScope};
+use super::policy::{AskPer, CheckInPolicyRead, CheckInScope};
 use super::resolve::{
     CheckInAnswer, CheckInRequest, GoReason, WaitReason, check_in, check_in_with_mode,
 };
@@ -224,4 +231,29 @@ fn sender_role_in_txn(
         crate::federation::shared_vault_member_role_for_store_in_txn(store, txn, actor)?
             .map_or(RolePreset::Member, RolePreset::of_grant_role),
     )
+}
+
+/// Whether the vault's send grant, as the policy `txn` resolves it, lets one
+/// press approve a reviewed batch of more than one send (ARCH-0046
+/// #send-grant; Engine ruling L3-35-BATCH = A): its `mode` rows naming
+/// `outbound_send` compose `manual` with `ask_per: batch`. With no such row
+/// (the shipped defaults ask per send), `ask_per: send`, another mode or an
+/// unreadable policy, one press covers one send.
+///
+/// # Errors
+///
+/// The store's, resolving the policy manifest.
+pub(crate) fn send_grant_presses_batch_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool> {
+    let resolution = crate::gate::resolve_policy_manifest(store, txn)?;
+    let CheckInPolicyRead::Row(policy) = resolution.check_in_policy() else {
+        return Ok(false);
+    };
+    Ok(policy
+        .explicit_mode(ActClass::OutboundSend, &CheckInScope::default())
+        .is_some_and(|explicit| {
+            explicit.mode == CheckInMode::AlwaysAsk && explicit.ask_per == AskPer::Batch
+        }))
 }

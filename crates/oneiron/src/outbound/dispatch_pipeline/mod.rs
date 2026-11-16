@@ -2,6 +2,7 @@
 //! gate decision, delivery-window door, connector execution, and receipt fields.
 
 pub(super) mod admission;
+mod batch_approval;
 mod connector_slate;
 mod degrade;
 mod effect;
@@ -19,6 +20,7 @@ mod transport;
 mod vault;
 pub(super) mod verdict;
 
+pub(crate) use self::batch_approval::require_reviewed_sends;
 pub(crate) use self::connector_slate::connector_slate_effect_from_frozen_payload;
 pub(super) use self::degrade::{
     ALTERNATIVE_OUTCOME_FIELD, ambient_alternative_dispatch_request, ambient_alternative_ref,

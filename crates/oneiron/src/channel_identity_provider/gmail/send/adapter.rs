@@ -65,7 +65,9 @@ impl GmailDelegatedAdapter {
 
     /// One owner press for a REVIEWED BATCH: exact approvals for exactly the
     /// enumerated sends, all minted in one transaction (ARCH-0046 "one press
-    /// for a reviewed batch").
+    /// for a reviewed batch"), through the pipeline's batch door
+    /// ([`Vault::approve_outbound_batch`]'s write), so the vault's send grant
+    /// decides whether one press may cover more than one send.
     ///
     /// `reviewed_send_refs` is what the owner saw: the card's
     /// `BundleExactSends` refs. The requests must be exactly those sends, one
@@ -78,8 +80,9 @@ impl GmailDelegatedAdapter {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] when the requests are not exactly the reviewed
-    /// refs or any envelope is not this adapter's, plus the approve-once
-    /// door's owner and replay checks.
+    /// refs, any envelope is not this adapter's, or the vault's send grant
+    /// asks a press per send and the batch holds more than one send, plus the
+    /// approve-once door's owner and replay checks.
     pub fn approve_send_batch(
         &self,
         vault: &Vault,
@@ -87,35 +90,13 @@ impl GmailDelegatedAdapter {
         reviewed_send_refs: &[String],
         requests: &[OutboundDispatchRequest],
     ) -> Result<Vec<ConsentReceipt>> {
-        let mut reviewed = reviewed_send_refs
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        let mut requested = requests
-            .iter()
-            .map(|request| request.intent_ref.as_str())
-            .collect::<Vec<_>>();
-        reviewed.sort_unstable();
-        requested.sort_unstable();
-        if requests.is_empty()
-            || reviewed != requested
-            || requested.windows(2).any(|pair| pair[0] == pair[1])
-        {
-            return Err(Error::InvalidConfig(
-                "gmail batch approval must cover exactly the reviewed sends, once each".to_owned(),
-            ));
-        }
+        crate::outbound::require_reviewed_sends(reviewed_send_refs, requests)?;
         let mut digests = Vec::with_capacity(requests.len());
         for request in requests {
             let (identity_ref, actor) = self.require_send_envelope(vault, request)?;
             digests.push(canonical_mail_send_digest(request, identity_ref, actor)?);
         }
-        vault.with_write_txn_grouped(|wtxn| {
-            digests
-                .into_iter()
-                .map(|digest| vault.approve_once_in_txn(wtxn, owner, digest))
-                .collect()
-        })
+        vault.approve_reviewed_batch(owner, digests)
     }
 
     /// Dispatches one member send through the recorded dispatch door, then
