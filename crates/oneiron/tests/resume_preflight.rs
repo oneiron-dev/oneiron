@@ -9,6 +9,10 @@
 //! Red on main: a changed guest boundary or a changed call holds the entry, and main's outcome
 //! and hold carry no report. Green on the head.
 //!
+//! Review round 1 (#7948): a store and a read past the dry turn answer the dry hold, and a pure
+//! change's committed record keeps the live call at its seq, not the parked one. Red at
+//! c86fc98a9a75: the store publishes and answers its card, and the commit puts the parked row back.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test resume_preflight`
 
 #![cfg(oneiron_test_support)]
@@ -24,7 +28,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
     EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor, JsCodeModeHost,
-    JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, ResumePreflightReport,
+    JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream, JsResultCall,
+    JsResultTarget, ResumePreflightReport,
 };
 use oneiron::llm::ReplyAssertions;
 use oneiron::prompt::workspace_test_prompt_package_root;
@@ -143,7 +148,13 @@ enum Variant {
     EffectChanged,
     /// A new read before the recorded claim put: the walk ends at seq 1 on an effect tail.
     EffectSwapped,
+    /// The effect-changed program, then a `store` and a `describe` of what it stored: the walk
+    /// is dry by then, so neither may run.
+    EffectChangedThenStores,
 }
+
+/// The name entry 2's `store` binds in [`Variant::EffectChangedThenStores`].
+const HELD_VALUE: &str = "held_value";
 
 /// Entry 1 parks after a memory search and a claim put; entry 2 runs `reentered`.
 struct TwoEntryRuntime {
@@ -152,6 +163,8 @@ struct TwoEntryRuntime {
     subject: EntityId,
     claim: EntityId,
     new_claim: EntityId,
+    /// What entry 2's result calls answered, in order (`None` for an error).
+    result_answers: Vec<Option<serde_json::Value>>,
 }
 
 impl TwoEntryRuntime {
@@ -201,6 +214,32 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
                 let put = self.put_call(self.claim, "green tea");
                 Self::run_entry(host, vec![search, put], true)
             }
+            2 if self.reentered == Variant::EffectChangedThenStores => {
+                let calls = [
+                    Self::search_call("alpha"),
+                    self.put_call(self.new_claim, "black tea"),
+                ];
+                for call in calls {
+                    let _ = host.dispatch_self(call)?;
+                }
+                let stored = host
+                    .write_output(
+                        JsCodeModeStream::Store { start: true },
+                        br#""a value the held pass made""#,
+                    )
+                    .and_then(|_| {
+                        host.result_call(JsResultCall::Store {
+                            name: Some(HELD_VALUE.to_owned()),
+                            sources: Vec::new(),
+                            receipt: None,
+                        })
+                    });
+                self.result_answers.push(stored.ok());
+                let described =
+                    host.result_call(JsResultCall::Describe(JsResultTarget::parse(HELD_VALUE)));
+                self.result_answers.push(described.ok());
+                Ok(JsCodeModeStepOutcome::pending("probe observation"))
+            }
             2 => {
                 let calls = match self.reentered {
                     Variant::Same => {
@@ -215,7 +254,7 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
                             self.put_call(self.claim, "green tea"),
                         ]
                     }
-                    Variant::EffectChanged => {
+                    Variant::EffectChanged | Variant::EffectChangedThenStores => {
                         vec![
                             Self::search_call("alpha"),
                             self.put_call(self.new_claim, "black tea"),
@@ -280,6 +319,7 @@ impl Fixture {
             subject,
             claim: EntityId::now(),
             new_claim: EntityId::now(),
+            result_answers: Vec::new(),
         };
         Self {
             _dir,
@@ -324,6 +364,17 @@ impl Fixture {
             (&[0_u64, 1][..], 2),
             "the parked step keeps its two calls",
         );
+    }
+
+    /// The request the stored record keeps at bridge position `at`.
+    fn recorded_request(&self, at: usize) -> rmpv::Value {
+        self.vault
+            .get_code_run_replay_record(&self.run_id)
+            .expect("the record reads")
+            .expect("the record is present")
+            .bridge_calls[at]
+            .request
+            .clone()
     }
 
     fn reenter(&mut self) -> EngineExecutorResult<EngineExecutorOutcome> {
@@ -377,6 +428,7 @@ fn boundary_change_alone_replays_free_and_commits() {
 fn pure_change_proceeds_with_divergence_recorded() {
     let mut fixture = Fixture::open(Variant::PureChanged);
     fixture.park();
+    let parked_search = fixture.recorded_request(0);
     let outcome = fixture
         .reenter()
         .expect("the pure-changed step resumes and commits");
@@ -398,6 +450,36 @@ fn pure_change_proceeds_with_divergence_recorded() {
         report_line(&outcome),
         Some(
             "step 1 replays free \u{00b7} step 0 changed \u{00b7} 0 effect steps would re-fire"
+                .to_owned()
+        ),
+    );
+    assert_ne!(
+        fixture.recorded_request(0),
+        parked_search,
+        "the committed record keeps the changed search that ran at seq 0, not the parked one",
+    );
+}
+
+#[test]
+fn dry_walk_stores_and_reads_nothing() {
+    let mut fixture = Fixture::open(Variant::EffectChangedThenStores);
+    fixture.park();
+    let error = fixture
+        .reenter()
+        .expect_err("the effect-changed step holds");
+    let held = serde_json::json!({
+        "denied": "resume_preflight_held",
+        "reasonCodes": ["resume_preflight_held"],
+    });
+    assert_eq!(
+        fixture.runtime.result_answers,
+        vec![Some(held.clone()), Some(held)],
+        "a store and a read past the dry turn run nowhere: each answers the dry hold",
+    );
+    assert_eq!(
+        divergence_line(&error),
+        Some(
+            "step 0 replays free \u{00b7} step 1 changed \u{00b7} 1 effect step would re-fire"
                 .to_owned()
         ),
     );
