@@ -685,9 +685,7 @@ fn declare_candidacy(
             candidacy.macro_ready,
         );
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let own: Vec<_> = home_node.map(home_candidate).into_iter().collect();
     if let Err(error) = store.elect_home_node(&own, now) {
         tracing::warn!(

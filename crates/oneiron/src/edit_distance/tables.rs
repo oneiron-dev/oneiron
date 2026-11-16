@@ -118,11 +118,13 @@ crate::side_table::side_tables! {
     /// Append-only offer-answer log for consent-graduation ramps, scope-major then UUIDv7 row id.
     /// Key: id16 + id16.
     EDIT_DISTANCE_GRADUATION_ANSWER: VaultMeta b"graduation_answer:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::consent_graduation::erase_ramp_actor_in_txn;
     /// Runtime consent-graduation threshold override for one ramp pattern, keyed by a digest of the
     /// pattern text. Key: id16.
     EDIT_DISTANCE_GRADUATION_THRESHOLD: VaultMeta b"graduation_threshold:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::consent_graduation::erase_ramp_actor_in_txn;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw
         [restore: live] [family: unclassified] [tier: canonical];
