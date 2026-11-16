@@ -348,9 +348,7 @@ fn prepare(
     let credential = if slots.is_empty() {
         None
     } else {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs());
+        let timestamp = oneiron_base::unix_seconds_now();
         let nonce = EntityId::now().to_hex();
         let challenge = holder_proof_challenge(timestamp, &nonce);
         let signature = key.sign(&slip.binding_transcript(&challenge)?);
