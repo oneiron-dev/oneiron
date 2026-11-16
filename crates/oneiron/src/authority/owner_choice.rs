@@ -22,10 +22,7 @@
 //! shares), and its owner must be live at the act's causal point. A choice
 //! this install does not count at full strength (its carrier raced its
 //! removal, it landed restriction only, or it is disputed) counts as not
-//! made: the choice it replaced stays in force. The setting projection reads
-//! such a choice as a safe move instead ([`ChoiceCount`], the Setting's stage
-//! 7b-2): on a key whose order has a meet it gives the stricter of its value
-//! and what it replaced, so it can narrow and never widens. A carrier that is not the
+//! made: the choice it replaced stays in force. A carrier that is not the
 //! owner's machine needs an owner key's proof where such a carrier must
 //! prove its acts ([`super::owner_proof`], row CARRIER-OWNER-PROOF); with
 //! none its choice waits, in no frontier, until the owner carries it again
@@ -662,38 +659,6 @@ pub(super) fn folded_owner_choices<P: Clone + PartialEq>(
     pin: Option<&PinnedRoot>,
     counted: InstallCounted<'_>,
 ) -> BTreeMap<EntityId, FoldedOwnerChoice<P>> {
-    each_frontier(state, register, (pin, counted), |standing, frontier| {
-        let mut folded = FoldedOwnerChoice::default();
-        fold_frontier(standing, frontier, &mut folded);
-        folded
-    })
-}
-
-/// One target's folded choices, with what each choice a reader of it meets counts for.
-pub(super) type CountedFrontier<P> = (FoldedOwnerChoice<P>, ChoiceCounts);
-
-/// [`folded_owner_choices`], with what each choice a reader of each target meets counts for
-/// here ([`ChoiceCount`]; the Setting's stage 7b-2).
-pub(super) fn counted_owner_choices<P: Clone + PartialEq>(
-    state: &FoldState,
-    register: &OwnerChoiceState<P>,
-    pin: Option<&PinnedRoot>,
-    counted: InstallCounted<'_>,
-) -> BTreeMap<EntityId, CountedFrontier<P>> {
-    each_frontier(state, register, (pin, counted), |standing, frontier| {
-        let mut folded = FoldedOwnerChoice::default();
-        fold_frontier(standing, frontier, &mut folded);
-        (folded, choice_counts(standing, frontier))
-    })
-}
-
-/// `each` of every target's frontier, under one standing of this install's pin and holds.
-fn each_frontier<P, T>(
-    state: &FoldState,
-    register: &OwnerChoiceState<P>,
-    (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
-    mut each: impl FnMut(&Standing<'_>, &ChoiceFrontier<P>) -> T,
-) -> BTreeMap<EntityId, T> {
     if register.frontiers.is_empty() {
         return BTreeMap::new();
     }
@@ -701,7 +666,31 @@ fn each_frontier<P, T>(
     register
         .frontiers
         .iter()
-        .map(|(target, frontier)| (*target, each(&standing, frontier)))
+        .map(|(target, frontier)| {
+            let mut folded = FoldedOwnerChoice::default();
+            fold_frontier(&standing, frontier, &mut folded);
+            (*target, folded)
+        })
+        .collect()
+}
+
+/// What each choice a reader of each target meets counts for here, under this install's pin
+/// and holds ([`ChoiceCount`]; the Setting's stage 7b-2, which reads it beside
+/// [`folded_owner_choices`]).
+pub(super) fn owner_choice_counts<P>(
+    state: &FoldState,
+    register: &OwnerChoiceState<P>,
+    pin: Option<&PinnedRoot>,
+    counted: InstallCounted<'_>,
+) -> BTreeMap<EntityId, ChoiceCounts> {
+    if register.frontiers.is_empty() {
+        return BTreeMap::new();
+    }
+    let standing = Standing::new(state, pin, counted);
+    register
+        .frontiers
+        .iter()
+        .map(|(target, frontier)| (*target, choice_counts(&standing, frontier)))
         .collect()
 }
 

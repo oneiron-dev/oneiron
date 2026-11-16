@@ -69,9 +69,11 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
-    ChoiceAt, ChoiceCounts, FoldedOwnerChoice, OwnerChoiceLanding, OwnerChoiceOp, OwnerChoiceState,
-    choice_landing, counted_owner_choices, owner_choice_landing, refused_owner_choices,
+    ChoiceAt, FoldedOwnerChoice, OwnerChoiceLanding, OwnerChoiceOp, OwnerChoiceState,
+    choice_landing, folded_owner_choices, owner_choice_counts, owner_choice_landing,
+    refused_owner_choices,
 };
+pub(crate) use super::owner_choice::{ChoiceCount, ChoiceCounts};
 use super::*;
 
 /// Every setting's acts in one fold state, each keyed by its target.
@@ -238,17 +240,9 @@ pub(super) fn folded_policy_settings(
     pin: Option<&PinnedRoot>,
     counted: InstallCounted<'_>,
 ) -> FoldedPolicySettings {
-    let mut targets = BTreeMap::new();
-    let mut counts = BTreeMap::new();
-    for (target, (folded, each_count)) in
-        counted_owner_choices(state, &state.policy_settings, pin, counted)
-    {
-        targets.insert(target, folded);
-        counts.insert(target, each_count);
-    }
     FoldedPolicySettings {
-        targets,
-        counts,
+        counts: owner_choice_counts(state, &state.policy_settings, pin, counted),
+        targets: folded_owner_choices(state, &state.policy_settings, pin, counted),
         refused: refused_owner_choices(&state.policy_settings).clone(),
     }
 }
