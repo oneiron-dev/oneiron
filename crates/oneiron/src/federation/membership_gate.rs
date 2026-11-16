@@ -4,14 +4,14 @@ use super::{
     FederationGrant, FederationGrantRole, FederationGrantScope, Scope, ScopeAxis,
     decode_federation_grant_body,
 };
-use crate::Vault;
-use crate::authority::{FederationGrantActivation, federation_grant_activation};
+use crate::authority::{AuthorityFold, FederationGrantActivation, federation_grant_activation};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::write_envelope::WriteActor;
+use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
 
 pub use crate::batch::shared_vault_write::SharedVaultWrite;
@@ -40,7 +40,10 @@ impl Vault {
     /// admits also passes the org two-admin rule
     /// ([`Self::two_admin_hold_in_txn`]): while an Owner keeps `org.two_admin`
     /// on, it refuses with `TWO_ADMIN_HOLD_REFUSAL` unless it is a held act's
-    /// approved re-run. An act an Owner grant admits is never held.
+    /// approved re-run. An act an Owner grant admits is never held. In an
+    /// approved re-run the held act's first admin must still hold a live grant
+    /// that admits the same write ([`Self::approved_first_admin_admits_in_txn`]):
+    /// an approval lifts only the rule.
     pub(crate) fn authorize_shared_vault_write_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -101,7 +104,49 @@ impl Vault {
         {
             return Err(denied());
         }
-        let member = principal.entity_ref();
+        self.judge_member_grants_in_txn(
+            txn,
+            &fold,
+            vault_id,
+            principal.entity_ref(),
+            requested,
+            two_admin_rule,
+        )
+    }
+
+    /// In the approved re-run of a held admin act whose approver is `writer`
+    /// in shared vault `vault_id`, the act's first admin must still hold a
+    /// live, active, unexpired grant whose role and named power admit
+    /// `requested` (no hold judged, and no write binding: the first admin is
+    /// not the one writing now). An Owner's later narrowing of that power
+    /// stops the approval, a role move under a holder row included (Astra
+    /// delta on #8482, D3). Outside such a re-run it does nothing.
+    pub(crate) fn approved_first_admin_admits_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        writer: EntityId,
+        requested: &SharedVaultWrite,
+    ) -> Result<()> {
+        let Some(first_admin) = super::approved_admin_act_first_admin(vault_id, writer) else {
+            return Ok(());
+        };
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        self.judge_member_grants_in_txn(txn, &fold, vault_id, first_admin, requested, false)
+    }
+
+    /// The gate's judgement of `member`'s live grants over shared vault
+    /// `vault_id` for `requested`, in `fold`; with `two_admin_rule`, the
+    /// rule's hold and, in an approved re-run, its first admin's own grants.
+    fn judge_member_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        vault_id: u64,
+        member: EntityId,
+        requested: &SharedVaultWrite,
+        two_admin_rule: bool,
+    ) -> Result<()> {
         // The two-admin rule's refusal of an act an Admin or Deputy grant
         // admits: it stands unless an Owner grant admits the act too.
         let mut held = None;
@@ -134,7 +179,7 @@ impl Vault {
                     .expires_at
                     .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
                 || matches!(
-                    federation_grant_activation(&fold, &id),
+                    federation_grant_activation(fold, &id),
                     FederationGrantActivation::Inactive(_)
                 )
                 || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
@@ -174,11 +219,30 @@ impl Vault {
                 // takes the hold over as its `Permitted::admits` once the
                 // stack reaches main: alone, the act counts for nothing and
                 // asks (Fable pass 26, act rule 1.3).
-                if grant.role == FederationGrantRole::Owner || !two_admin_rule {
+                if !two_admin_rule {
                     return Ok(());
                 }
-                match self.two_admin_hold_in_txn(txn, vault_id, member) {
-                    Ok(()) => return Ok(()),
+                let admitted = if grant.role == FederationGrantRole::Owner {
+                    Ok(())
+                } else {
+                    self.two_admin_hold_in_txn(txn, vault_id, member)
+                };
+                match admitted {
+                    // An approved re-run: the first admin's own grants judged
+                    // too, in the same fold.
+                    Ok(()) => {
+                        return match super::approved_admin_act_first_admin(vault_id, member) {
+                            Some(first_admin) => self.judge_member_grants_in_txn(
+                                txn,
+                                fold,
+                                vault_id,
+                                first_admin,
+                                requested,
+                                false,
+                            ),
+                            None => Ok(()),
+                        };
+                    }
                     Err(refusal) => held = Some(refusal),
                 }
             }

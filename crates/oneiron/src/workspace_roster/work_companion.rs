@@ -179,6 +179,21 @@ fn require_settings_authority_in_txn(
 ) -> Result<EntityId> {
     let actor = owner.revalidate_person_in_txn(vault, txn)?;
     if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+        // An Owner approving a held establish: its first admin must still
+        // hold the settings power (the org two-admin rule).
+        vault
+            .approved_first_admin_admits_in_txn(
+                txn,
+                vault_id,
+                actor,
+                &SharedVaultWrite::WorkspaceSettings,
+            )
+            .map_err(|error| match error {
+                Error::Claim(_) => {
+                    invalid("work_companion is a workspace setting: owner or admin settings power")
+                }
+                other => other,
+            })?;
         return Ok(actor);
     }
     vault

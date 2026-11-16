@@ -219,7 +219,9 @@ impl Vault {
     /// `writer`'s to run (lapsed, withdrawn, approved by another, at or past
     /// its `lapses_at`, or its first admin no longer a live Owner, Admin or
     /// Deputy here) refuses: a claim made in time lands nothing late (Astra
-    /// on #8482, H2 and H3). With no such approval it does nothing.
+    /// on #8482, H2 and H3). The time is the later of `now` and the store
+    /// clock now, so a writer that read its time early lands nothing past the
+    /// lapse either (Astra delta, D4). With no such approval it does nothing.
     pub(crate) fn land_approved_admin_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -232,6 +234,7 @@ impl Vault {
         else {
             return Ok(());
         };
+        let now = now.max(self.store.clock.now_recorded_at());
         let mut act = HELD_ADMIN_ACT
             .get(&self.store, &*txn, &approval.held)?
             .ok_or_else(invalid)?;
