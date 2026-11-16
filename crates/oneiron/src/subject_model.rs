@@ -39,12 +39,14 @@
 use rmpv::Value;
 
 mod archive;
+mod person_agent;
 mod prepared;
 pub(crate) use prepared::{PreparedAgentSubjects, PreparedSubjectAgent};
 pub(crate) mod seeded;
 mod validation;
 pub use archive::SubjectRestoreReview;
 pub(crate) use archive::{imported_subject_body, is_subject_model_predicate};
+pub(crate) use person_agent::person_is_agent_in_txn;
 
 #[cfg(feature = "sync")]
 pub(crate) use validation::subject_model_dependency_pending;
@@ -544,31 +546,6 @@ pub(crate) fn person_substrate_in_txn(
         .ok_or(Error::InvalidClaimBody(
             "person.substrate must be meat or model",
         ))
-}
-
-/// Whether the live PERSON `person_ref` is an agent at caller time `at`, in
-/// the caller's snapshot: a PERSON of model substrate (each AGENT_DEF's own
-/// person, a brought companion), or the principal PERSON of a named agent
-/// (`Vault::ensure_agent_principal`), which carries no substrate claim. Any
-/// other PERSON is no agent. `Err` when its substrate does not read: an
-/// ambiguous identity or a malformed claim. Every agent is a PERSON, so the
-/// substrate, not the entity type, tells a human (FIX
-/// RESIDENT-HUMANMESSAGES-ADMITS-AGENTS).
-pub(crate) fn person_is_agent_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    person_ref: &EntityId,
-    at: u64,
-) -> Result<bool> {
-    if let crate::vault::LiveEntityRow::Live {
-        entity_type: ENTITY_TYPE_PERSON,
-        body,
-    } = crate::vault::live_entity_row_in_txn(&vault.store, txn, person_ref)?
-        && crate::vault::is_named_agent_principal_body(person_ref, &body)
-    {
-        return Ok(true);
-    }
-    Ok(person_substrate_in_txn(vault, txn, person_ref, at)? == Some(PersonSubstrate::Model))
 }
 
 /// Reads the canonical person's claims without moving their historical subjects.
