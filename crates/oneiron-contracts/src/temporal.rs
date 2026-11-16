@@ -233,7 +233,8 @@ pub fn parse_temporal_expression(
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TemporalHintStatus {
-    /// Its range narrowed the occurred-time window.
+    /// Its range re-anchored the temporal search. A phrase of the query
+    /// never filters on occurred time; only a host window does.
     Used,
     /// The phrase reads as a time, but the parser cannot resolve it
     /// (`last several weeks`). Retrieval ran without it.
