@@ -115,6 +115,9 @@ impl ManagedState {
                     // the supervisor withdraws what served it. An unreadable
                     // marker reports none; no state of it turns `ok` false.
                     deletion: self.vault_deletion(),
+                    // How the process stands now (L8-11), beside `readiness`,
+                    // which never moves; no state of it turns `ok` false.
+                    process: Some(self.server.process_readiness().report()),
                 })
             }
             CtlRequest::Shed {
