@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::gate_reason::GateReceiptOutcome;
 use crate::side_table::codec::CodecError;
 use crate::side_table::codec::RawValue;
 use oneiron_base::error::Error;
@@ -30,8 +31,6 @@ pub const INBOX_REASON_AMEND_ACCEPT: &str = "gate.consent.amend_accept";
 /// Stamped when the approval landed but its Δ could not be measured — the
 /// telemetry gap is receipted rather than hidden, and never blocks.
 pub const INBOX_REASON_AMEND_DELTA_UNCAPTURED: &str = "gate.consent.amend.delta_uncaptured";
-
-pub const INBOX_BUNDLE_ACTOR_CLASS: &str = "owner";
 
 pub const INBOX_BUNDLE_CONTENT_KIND: &str = "inbox_bundle";
 
@@ -140,11 +139,13 @@ impl InboxBulkVerb {
         }
     }
 
-    pub const fn bundle_outcome(self) -> &'static str {
+    /// The Gate outcome of the bundle row this verb writes (UC-03 D1 = A).
+    /// Its word stays in the row's reason, `gate.consent.bundle.<verb>`.
+    pub const fn bundle_outcome(self) -> GateReceiptOutcome {
         match self {
-            Self::AcceptAll => "bundle_accepted",
-            Self::RejectAll => "bundle_rejected",
-            Self::ReviewEach => "bundle_review_each",
+            Self::AcceptAll => GateReceiptOutcome::Approved,
+            Self::RejectAll => GateReceiptOutcome::Rejected,
+            Self::ReviewEach => GateReceiptOutcome::Noted,
         }
     }
 }
