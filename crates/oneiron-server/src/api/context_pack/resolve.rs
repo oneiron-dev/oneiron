@@ -344,6 +344,15 @@ pub(crate) async fn execute_context_pack(
     if let Some(vector) = req.query_vector.as_deref() {
         builder = builder.search_vector(vector, candidate_limit);
     }
+    if let Some(phonetic) = req.phonetic_vector.as_ref() {
+        builder = builder.search_phonetic_vector(
+            &phonetic.model_id,
+            &phonetic.vector,
+            phonetic
+                .limit
+                .unwrap_or(oneiron::phonetic_learned::PHONETIC_VECTOR_DEFAULT_LIMIT),
+        );
+    }
     for seed in &media {
         builder = builder.search_media(
             &seed.space,
@@ -391,6 +400,12 @@ pub(crate) async fn execute_context_pack(
     }
     if skip_optional_recall {
         builder = builder.skip_optional_recall();
+    }
+    // A live chat turn's recall names the TURN it serves, so the engine can
+    // label its run from the user's later words (FIX
+    // RETRIEVAL-TURN-CONVENTION-HOST-STAMP).
+    if let Some(turn) = req.retrieval_turn {
+        builder = builder.retrieval_turn(turn);
     }
     // Reaction signals ride the same clamp as the pack they come with.
     let signal_disclosure = disclosure.clone();
