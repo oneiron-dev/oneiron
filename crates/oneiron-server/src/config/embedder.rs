@@ -10,6 +10,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
@@ -39,8 +40,10 @@ const DEFAULT_IDLE_INTERVAL_MS: u64 = 15_000;
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 
 /// Which embedder runs behind the slot.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Register)]
 #[serde(rename_all = "kebab-case")]
+// Each name is the wire spelling, also what the semantic query door reports.
+#[register("embedder.provider")]
 pub enum EmbedderProvider {
     /// In-process candle. Downloads the pinned model on first use.
     #[default]
@@ -51,35 +54,20 @@ pub enum EmbedderProvider {
     None,
 }
 
-impl EmbedderProvider {
-    /// Wire spelling, also what the semantic query door reports.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Local => "local",
-            Self::Endpoint => "endpoint",
-            Self::None => "none",
-        }
-    }
-}
-
 impl FromStr for EmbedderProvider {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "local" => Ok(Self::Local),
-            "endpoint" => Ok(Self::Endpoint),
-            "none" => Ok(Self::None),
-            other => Err(format!(
-                "unknown embedder provider {other:?} (expected local, endpoint or none)"
-            )),
-        }
+        <Self as Register>::named(value).ok_or_else(|| {
+            format!("unknown embedder provider {value:?} (expected local, endpoint or none)")
+        })
     }
 }
 
 /// Weight precision the local provider loads at.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Register)]
 #[serde(rename_all = "kebab-case")]
+#[register("embedder.quant")]
 pub enum EmbedderQuant {
     /// Quantise every projection to Q8_0 at load. Runs on every device.
     #[default]
@@ -90,32 +78,19 @@ pub enum EmbedderQuant {
     None,
 }
 
-impl EmbedderQuant {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Q8_0 => "q8_0",
-            Self::None => "none",
-        }
-    }
-}
-
 impl FromStr for EmbedderQuant {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "q8_0" => Ok(Self::Q8_0),
-            "none" => Ok(Self::None),
-            other => Err(format!(
-                "unknown embedder quant {other:?} (expected q8_0 or none)"
-            )),
-        }
+        <Self as Register>::named(value)
+            .ok_or_else(|| format!("unknown embedder quant {value:?} (expected q8_0 or none)"))
     }
 }
 
 /// Where the local provider runs the forward pass.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Register)]
 #[serde(rename_all = "kebab-case")]
+#[register("embedder.device")]
 pub enum EmbedderDevice {
     /// The best device this build can reach: Metal, then CUDA, else CPU.
     #[default]
@@ -125,37 +100,21 @@ pub enum EmbedderDevice {
     Cuda,
 }
 
-impl EmbedderDevice {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Cpu => "cpu",
-            Self::Metal => "metal",
-            Self::Cuda => "cuda",
-        }
-    }
-}
-
 impl FromStr for EmbedderDevice {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "auto" => Ok(Self::Auto),
-            "cpu" => Ok(Self::Cpu),
-            "metal" => Ok(Self::Metal),
-            "cuda" => Ok(Self::Cuda),
-            other => Err(format!(
-                "unknown embedder device {other:?} (expected auto, cpu, metal or cuda)"
-            )),
-        }
+        <Self as Register>::named(value).ok_or_else(|| {
+            format!("unknown embedder device {value:?} (expected auto, cpu, metal or cuda)")
+        })
     }
 }
 
 /// Declared locality of an endpoint provider, recorded truthfully on every
 /// vector it fills.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Register)]
 #[serde(rename_all = "kebab-case")]
+#[register("embedder.locality")]
 pub enum EmbedderLocality {
     /// Same device as the vault.
     #[default]
@@ -166,28 +125,13 @@ pub enum EmbedderLocality {
     ThirdParty,
 }
 
-impl EmbedderLocality {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::OnDevice => "on-device",
-            Self::OwnerServer => "owner-server",
-            Self::ThirdParty => "third-party",
-        }
-    }
-}
-
 impl FromStr for EmbedderLocality {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "on-device" => Ok(Self::OnDevice),
-            "owner-server" => Ok(Self::OwnerServer),
-            "third-party" => Ok(Self::ThirdParty),
-            other => Err(format!(
-                "unknown embedder locality {other:?} (expected on-device or owner-server)"
-            )),
-        }
+        <Self as Register>::named(value).ok_or_else(|| {
+            format!("unknown embedder locality {value:?} (expected on-device or owner-server)")
+        })
     }
 }
 

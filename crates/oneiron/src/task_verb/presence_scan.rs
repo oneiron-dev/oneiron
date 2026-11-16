@@ -111,7 +111,7 @@ pub(super) fn task_presence_with_limits(
         device_admitted_task_page(vault, &dest, &mut index_after, limit, &mut index_rows_read)
     })?;
 
-    // Read-time clock: a consult past its deadline surfaces as expired from the
+    // Read-time clock: a consult at or past its deadline surfaces as expired from the
     // persisted deadline alone, so the failed row is never hidden behind
     // outbound (or reconciliation) availability.
     let now = vault.store.clock.now_recorded_at();
@@ -404,7 +404,7 @@ fn task_page_slot_in(
             // whether or not the reconciliation sweep has run yet. A settled
             // ladder is an ANSWER, so there is nothing for the deadline to
             // derive — the same reading the expiry sweep takes of that row.
-            (None, Some(ttl)) if ttl.deadline_at < now && settled_ladder.is_none() => (
+            (None, Some(ttl)) if ttl.deadline_at <= now && settled_ladder.is_none() => (
                 TaskBoardStatus::Failed,
                 Some(TaskTerminalDisposition::Expired),
             ),
