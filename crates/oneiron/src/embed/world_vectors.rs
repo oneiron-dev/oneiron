@@ -6,7 +6,8 @@
 //! names its own text space ([`WorldTextSpaces`]), which takes every row the world carries.
 //! `vault_space`: the text embedder this install's host runs is the vault's pinned model, and a
 //! row of the world may go to it, on this device or toward an endpoint the world is not withheld
-//! from ([`super::PendingEmbeddingReconciler`]'s lease loop). `none`: neither, so no vector of
+//! from, and, where the owner's egress rung holds that embedder, a world whose model order admits
+//! the rung ([`super::PendingEmbeddingReconciler`]'s lease loop). `none`: neither, so no vector of
 //! the world's text is made here. No stored row says which machines run the vault's model, so
 //! the verdict is never one for another machine, and the answer names the install that gave it.
 //!
@@ -46,7 +47,10 @@ pub struct WorldVectorsRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorldVectorsVerdict {
-    /// Into the vault's own text index, by the vault's pinned model.
+    /// Into the vault's own text index, by the vault's pinned model. The verdict is the
+    /// world's: a row the world shares with a world of its own text space, or with a world
+    /// kept from the embedder's endpoint, follows that world, and a row the owner's egress
+    /// rule holds back from an embedder off this device stays pending.
     VaultSpace,
     /// Into the world's own text space, which its model order names.
     WorldSpace,
@@ -59,6 +63,7 @@ pub enum WorldVectorsVerdict {
 pub struct WorldVectorsEntry {
     /// The world id (hex).
     pub world: String,
+    /// Where this world's text vectors are made on this install.
     pub vectors: WorldVectorsVerdict,
     /// The world's text space (`model@revision@device`), for `world_space` only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,16 +91,28 @@ pub(crate) struct HostTextEmbedder {
     dimensions: usize,
     on_device: bool,
     endpoint: ReadDestination,
+    /// The route id the owner's egress rung holds this embedder to
+    /// ([`super::PendingEmbeddingReconciler::with_primary_rung`]): a row of a world whose model
+    /// order is its own goes to it only when that order names the id. `None`: no rung holds it.
+    primary_rung_offer: Option<String>,
 }
 
 impl HostTextEmbedder {
     /// Whether the lease loop embeds `world`'s rows into the vault's text index with this
-    /// embedder: the vault's pinned model at the vault's dimensions, and a world whose rows
-    /// may go to it (`withheld` = the worlds kept from its endpoint).
-    fn embeds_world(&self, vault: &Vault, withheld: &BTreeSet<EntityId>, world: EntityId) -> bool {
+    /// embedder: the vault's pinned model at the vault's dimensions, a world whose rows may go
+    /// to it (`withheld` = the worlds kept from its endpoint), and, for an embedder the owner's
+    /// egress rung holds, a world whose model order admits the rung (`rung_admitted`).
+    fn embeds_world(
+        &self,
+        vault: &Vault,
+        withheld: &BTreeSet<EntityId>,
+        rung_admitted: Option<&BTreeSet<EntityId>>,
+        world: EntityId,
+    ) -> bool {
         self.dimensions == vault.config.dimensions
             && vault.config.embedding_model.as_deref() == Some(self.model_id.as_str())
             && (self.on_device || !withheld.contains(&world))
+            && rung_admitted.is_none_or(|admitted| admitted.contains(&world))
     }
 }
 
@@ -141,11 +158,31 @@ impl HostTextEmbedderRegistration {
                 dimensions: embedder.dimensions(),
                 on_device: embedder.locality() == super::EmbedderLocality::OnDevice,
                 endpoint: embedder.endpoint(),
+                primary_rung_offer: None,
             },
         ));
         Self {
             vault: std::sync::Arc::downgrade(vault),
             token,
+        }
+    }
+
+    /// Records that the owner's egress rung holds the registered embedder to the route `offer`
+    /// ([`super::PendingEmbeddingReconciler::with_primary_rung`]), unless a newer reconciler
+    /// registered its own embedder since.
+    pub(crate) fn hold_to_primary_rung(&self, offer: String) {
+        let Some(vault) = self.vault.upgrade() else {
+            return;
+        };
+        let mut current = vault
+            .host_text_embedder
+            .current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((token, embedder)) = current.as_mut()
+            && *token == self.token
+        {
+            embedder.primary_rung_offer = Some(offer);
         }
     }
 }
@@ -237,6 +274,24 @@ fn read_world_vectors(vault: &Vault, input: &WorldVectorsRequest) -> Result<Worl
     }
     let worlds = asked_worlds_in(vault, &txn, input)?;
     let spaces = WorldTextSpaces::read_in(vault, &txn)?;
+    // A held primary sends a row only when the meet of its worlds' orders admits the rung
+    // (embed/routing.rs `rung_route`); a world alone admits it when its own order does.
+    let rung_admitted = match host
+        .as_ref()
+        .and_then(|host| host.primary_rung_offer.as_deref())
+    {
+        Some(offer) => {
+            let fold = vault.authority_view_readonly_in_txn(&txn)?;
+            Some(
+                worlds
+                    .iter()
+                    .copied()
+                    .filter(|world| fold.world_model_routes([*world]).admits(offer))
+                    .collect::<BTreeSet<_>>(),
+            )
+        }
+        None => None,
+    };
     let withheld = match &host {
         Some(host) if !host.on_device => {
             crate::settings::device_local_worlds_for(vault, &txn, &host.endpoint)?
@@ -248,9 +303,9 @@ fn read_world_vectors(vault: &Vault, input: &WorldVectorsRequest) -> Result<Worl
         .map(|world| {
             let (vectors, space) = match spaces.of_world(&world) {
                 Some(space) => (WorldVectorsVerdict::WorldSpace, Some(space.id.clone())),
-                None if host
-                    .as_ref()
-                    .is_some_and(|host| host.embeds_world(vault, &withheld, world)) =>
+                None if host.as_ref().is_some_and(|host| {
+                    host.embeds_world(vault, &withheld, rung_admitted.as_ref(), world)
+                }) =>
                 {
                     (WorldVectorsVerdict::VaultSpace, None)
                 }

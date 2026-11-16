@@ -289,7 +289,7 @@ pub struct PendingEmbeddingReconciler {
     rung_role: routing::RungRole,
     /// The primary embedder, held on the vault for `vault.worlds.vectors`
     /// while this reconciler lives.
-    _registration: world_vectors::HostTextEmbedderRegistration,
+    registration: world_vectors::HostTextEmbedderRegistration,
 }
 
 #[cfg(feature = "sync")]
@@ -308,7 +308,7 @@ impl PendingEmbeddingReconciler {
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
             remote_rung: None,
             rung_role: routing::RungRole::Fallback,
-            _registration: registration,
+            registration,
         }
     }
 
@@ -379,6 +379,7 @@ impl PendingEmbeddingReconciler {
         }
         let mut rung = RemoteRung::new(std::sync::Arc::clone(&self.embedder), predicate);
         rung.lease_duration_ms = self.lease_duration_ms;
+        self.registration.hold_to_primary_rung(rung.offer_id());
         self.remote_rung = Some(rung);
         self.rung_role = routing::RungRole::Primary;
         Ok(self)
