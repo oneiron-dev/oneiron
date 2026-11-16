@@ -186,9 +186,11 @@ impl Vault {
 
     /// Records the work `act` needs, carrying `act` exactly as the door that
     /// authenticated it made it, in `txn` (FIX 4624(b)): an owner export's
-    /// own act, for the export secret work its holder does. The caller
-    /// checked its owner a live vault owner in this same transaction. The
-    /// executor is pinned by [`owner_work_executor`]; with none to name,
+    /// own act, for the export secret work its holder does, or a custody
+    /// revoke's, the owner's or a writer's own (`ActBy::Person`,
+    /// L6-03-WRITER-CARRY). The caller checked its owner a live vault owner,
+    /// or for a person's own act that person live, in this same transaction.
+    /// The executor is pinned by [`owner_work_executor`]; with none to name,
     /// nothing is written and the receipt says why.
     pub(crate) fn record_owner_work_with_act_in_txn(
         &self,
