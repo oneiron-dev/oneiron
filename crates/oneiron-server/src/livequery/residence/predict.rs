@@ -32,7 +32,7 @@ struct PredictedSetRequest {
 
 /// The machine's ask for its prediction: computed on its fresh admission and pushed as a
 /// residence directive replacing its last one. An engine refusal answers as a bad request
-/// carrying its text.
+/// carrying its text, also for a peer whose proof no longer stands here on the key it proved.
 pub(super) fn predict(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -41,7 +41,7 @@ pub(super) fn predict(
 ) -> Result<Answer, AppError> {
     let input: PredictRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let PeerMachine::Proven { machine, .. } = peer else {
+    let PeerMachine::Proven { .. } = peer else {
         return Err(AppError::unauthorized());
     };
     let selector = bound_selector(server, auth, &input.selector)?;
@@ -49,10 +49,7 @@ pub(super) fn predict(
     let issuer = server.host_root_issuer.as_deref().ok_or_else(|| {
         AppError::internal_server_error("this host holds no signing key for a prediction")
     })?;
-    match server
-        .vault
-        .predict_residence_for(issuer, machine, &admission)
-    {
+    match server.vault.predict_residence_for(issuer, peer, &admission) {
         Ok(PredictedResidenceAnswer::Pushed(state)) => Ok((
             json!({
                 "state": "pushed",
@@ -67,7 +64,8 @@ pub(super) fn predict(
 }
 
 /// One part of the proved machine's own pushed set body, by digest. An offset past the end is a
-/// bad request; a digest this home holds no body for looks missing.
+/// bad request; a digest this home holds no body for, or a peer whose proof no longer stands here
+/// on the key it proved, looks missing.
 pub(super) fn predicted_set(
     server: &SyncServer,
     _auth: &CoreAuth,
@@ -76,14 +74,14 @@ pub(super) fn predicted_set(
 ) -> Result<Answer, AppError> {
     let input: PredictedSetRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let PeerMachine::Proven { machine, .. } = peer else {
+    let PeerMachine::Proven { .. } = peer else {
         return Err(AppError::unauthorized());
     };
     // The wire spells a digest as 64 lowercase hex characters; anything else is refused.
     let digest = oneiron_hex::decode::<32>(&input.digest).ok_or_else(AppError::invalid_params)?;
     let body = server
         .vault
-        .predicted_residence_body(machine, &digest)
+        .predicted_residence_body(peer, &digest)
         .map_err(|_| AppError::internal_server_error("predicted set unavailable"))?
         .ok_or_else(|| AppError::not_found("predicted set", None))?;
     let total = u64::try_from(body.len())

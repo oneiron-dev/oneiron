@@ -1,8 +1,9 @@
 //! The home computes one machine's prediction (census L7-46 + L10-14; ARCH-0023b
 //! #predicted-residence). Through the owner-grade view a home holds of its own linked machine,
 //! a touch predicts its linked windows, a withheld world moves no score, an unchanged prediction
-//! pushes nothing, a machine off the predicted level is refused, and a prediction keeps to the
-//! owner's budget.
+//! pushes nothing, a machine off the predicted level is refused, a prediction keeps to the
+//! owner's budget, and a key the machine no longer stands on gets neither a prediction nor a set
+//! body (REVIEW-7955).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -12,8 +13,8 @@
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PredictedResidenceSet, ReadLocation,
-    ResidenceAct, WorldPrivacy,
+    ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PeerMachine, PredictedResidenceSet,
+    ReadLocation, ResidenceAct, WorldPrivacy,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -33,6 +34,10 @@ const FIXTURE_HOST_SECRET: &[u8] = b"predicted-residence-home";
 const LEARNED_AT_A: u64 = 1_780_000_000;
 /// When the fixture's linked claims learned: 62 days later, so always another month.
 const LEARNED_AT_B: u64 = LEARNED_AT_A + 62 * 86_400;
+
+/// A key the fixture's machine never stood on: the key a connection proved before the machine's
+/// key rotated, or before the machine was removed.
+const STALE_MACHINE_KEY: [u8; 32] = [0x5a; 32];
 
 /// A device vault holding a world and a world kept on the owner's machines, which this device is
 /// not. Copied from `it_sync::device_world_follow::Device`, which this target cannot name. The
@@ -187,10 +192,25 @@ fn predict_level(fixture: &Fixture, window_budget: u32, document_budget: u32) ->
         .id
 }
 
-/// The home's prediction for the fixture's machine.
+/// The key the fixture's machine stands on here now.
+fn standing_key(fixture: &Fixture) -> [u8; 32] {
+    fixture
+        .vault
+        .authority_fold()
+        .expect("the authority fold")
+        .machine_proof_key(fixture.machine)
+        .expect("the machine's proof stands here")
+}
+
+/// The home's prediction for the fixture's machine, asked on the key it stands on.
 fn predict(fixture: &Fixture) -> PredictedResidenceAnswer {
-    predict_residence_withholding(&fixture.vault, &fixture.issuer, fixture.machine)
-        .expect("the home's prediction")
+    predict_residence_withholding(
+        &fixture.vault,
+        &fixture.issuer,
+        fixture.machine,
+        standing_key(fixture),
+    )
+    .expect("the home's prediction")
 }
 
 /// The predictions naming the fixture's machine.
@@ -217,11 +237,16 @@ fn predicted_act(state: &ResidenceDirectiveState) -> (EntityId, [u8; 32], u32, u
     }
 }
 
-/// The verified predicted set the home holds for the fixture's machine under `digest`.
+/// The verified predicted set the home holds for the fixture's machine under `digest`, fetched on
+/// the key it stands on.
 fn predicted_set_of(fixture: &Fixture, digest: &[u8; 32]) -> PredictedResidenceSet {
+    let peer = PeerMachine::Proven {
+        machine: fixture.machine,
+        key: standing_key(fixture),
+    };
     let body = fixture
         .vault
-        .predicted_residence_body(fixture.machine, digest)
+        .predicted_residence_body(peer, digest)
         .expect("the set body reads")
         .expect("the home holds the pushed body");
     PredictedResidenceSet::decode_verified(&body, digest).expect("the body decodes")
@@ -420,8 +445,13 @@ fn the_home_refuses_a_machine_not_at_the_predicted_level() {
         .expect("the owner's read-back")
         .len();
 
-    let error = predict_residence_withholding(&fixture.vault, &fixture.issuer, fixture.machine)
-        .expect_err("opened refuses a prediction");
+    let error = predict_residence_withholding(
+        &fixture.vault,
+        &fixture.issuer,
+        fixture.machine,
+        standing_key(&fixture),
+    )
+    .expect_err("opened refuses a prediction");
     assert!(
         matches!(error, oneiron::Error::InvalidConfig(_)),
         "an engine refusal: {error:?}"
@@ -473,5 +503,84 @@ fn a_prediction_keeps_to_the_owner_budget() {
         u32::try_from(set.documents.len()).expect("a document count"),
         document_count,
         "the act counts its documents"
+    );
+}
+
+#[test]
+fn a_stale_machine_key_gets_no_prediction_and_no_set() {
+    let fixture = Fixture::open();
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        person_in(&fixture.vault, LEARNED_AT_A),
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    predict_level(&fixture, 32, 128);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "the standing key's prediction pushes"
+    );
+    let (_, digest, _, _) = predicted_act(&predictions_of(&fixture)[0]);
+    assert_ne!(
+        standing_key(&fixture),
+        STALE_MACHINE_KEY,
+        "the stale key is not the one the machine stands on"
+    );
+
+    let stale = PeerMachine::Proven {
+        machine: fixture.machine,
+        key: STALE_MACHINE_KEY,
+    };
+    assert_eq!(
+        fixture
+            .vault
+            .predicted_residence_body(stale, &digest)
+            .expect("the set body reads"),
+        None,
+        "a stale key is served no set body"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .predicted_residence_body(PeerMachine::Unknown, &digest)
+            .expect("the set body reads"),
+        None,
+        "an unproved peer is served no set body"
+    );
+
+    // A new touch in another month: a standing key's ask would push a new prediction.
+    let b = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &b,
+        person_in(&fixture.vault, LEARNED_AT_B),
+        Some(fixture.world),
+        LEARNED_AT_B,
+    );
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, b)
+        .expect("the touch lands");
+    let error = predict_residence_withholding(
+        &fixture.vault,
+        &fixture.issuer,
+        fixture.machine,
+        STALE_MACHINE_KEY,
+    )
+    .expect_err("a stale key is refused a prediction");
+    assert!(
+        matches!(error, oneiron::Error::InvalidConfig(_)),
+        "an engine refusal: {error:?}"
+    );
+    assert_eq!(
+        predictions_of(&fixture).len(),
+        1,
+        "the refusal appends nothing"
     );
 }
