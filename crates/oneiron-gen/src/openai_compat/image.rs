@@ -2,17 +2,10 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use oneiron::llm::image::{ImageBackend, ImageBytes, ImageFuture, ImageIntent, ImageResponse};
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId, RetryableLlmError};
+use oneiron_llm::openai_compat::{OpenAiImagePart, classify_openai_status, form_fields};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
-/// Multipart parts are distinct so the host sends each ordered reference as `image[]`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenAiImagePart {
-    pub name: &'static str,
-    pub filename: String,
-    pub media_type: String,
-    pub bytes: Vec<u8>,
-}
 #[derive(Debug, Clone, PartialEq)]
 pub enum OpenAiImageBody {
     Json(Value),
@@ -218,20 +211,6 @@ pub(super) fn fields(intent: &ImageIntent) -> LlmResult<(ModelId, BTreeMap<Strin
     Ok((intent.model.clone(), fields))
 }
 
-pub(super) fn form_fields(fields: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
-    fields
-        .iter()
-        .map(|(key, value)| {
-            (
-                key.clone(),
-                value
-                    .as_str()
-                    .map_or_else(|| value.to_string(), str::to_owned),
-            )
-        })
-        .collect()
-}
-
 /// The room standard base64 `encoded` decodes into: the decoder's own
 /// estimate, so it writes into this room and never grows it.
 fn decoded_room(encoded: &str) -> usize {
@@ -244,7 +223,7 @@ pub(super) fn decode_response(
     fields: &BTreeMap<String, Value>,
 ) -> LlmResult<ImageResponse> {
     if !(200..300).contains(&response.status) {
-        return Err(super::classify_openai_status(
+        return Err(classify_openai_status(
             response.status,
             &response.headers,
             &response.body,
