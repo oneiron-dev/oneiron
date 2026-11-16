@@ -31,7 +31,9 @@ use oneiron_verb_wire::receipt::field_set::{
     FIELD_MANIFEST_ENTRIES, FIELD_MANIFEST_SOURCE_ROWS, FIELD_TYPE_REF_PROJECT,
 };
 
-const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
+#[doc(hidden)]
+use oneiron_records::receipt::field_set::FIELD_MANIFEST_ATTRIBUTION;
+
 /// OF-541: the template seat the attempt's executor was configured with;
 /// `model` is what that seat ran.
 pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
@@ -88,8 +90,10 @@ pub struct ContextReceiptFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_input_ref: Option<String>,
     /// OF-365 disclosure stamp for the assembly that produced this emit:
-    /// `"mode=<mode>;interlocutors=<class>:<label>[,...]"`. Absent on
-    /// receipts stamped before the disclosure clamp existed.
+    /// `"mode=<mode>;interlocutors=<class>:<label>[,...]"`, then
+    /// `";home=<64 hex>"` when the assembly served a conversation another
+    /// vault holds. Absent on receipts stamped before the disclosure clamp
+    /// existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disclosure_stamp: Option<String>,
 }

@@ -150,6 +150,117 @@ pub(super) fn authority_structure_under<'a>(
     builder.structure
 }
 
+/// The rows of `carried` a canonical recovery or a signed-history import
+/// leaves out (H72; identity.md: "skips rows the source's own fold never
+/// applied"): each row, signed rightly and with all its ancestry held, that
+/// no key of the held history vouches for, and each carried row standing on
+/// one. A vault that stored rows before every store door held a stranger's
+/// (#1449) may carry such rows. Its own fold never applied one: the fold
+/// applies no row without a vouching key's consent, which a row it applies
+/// holds in its own ancestry, nor a row standing on one it never applied.
+/// The door here holds each, so it refused the whole recovery or import.
+/// The held history is the rows stored here and `carried`.
+///
+/// Nothing is left out where the held history has no one genesis, or on a
+/// vault that adopted a checkpoint image. Nor is a row stored here, a row
+/// whose signature fails (a damaged artifact, which its door still
+/// refuses), or a row whose ancestry is not all held (a window's row
+/// standing on history this vault lacks is judged as before).
+pub(crate) fn carried_rows_never_applied_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    carried: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+) -> crate::error::Result<BTreeSet<AuthorityEntryHash>> {
+    if carried.is_empty()
+        || super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?.is_some()
+    {
+        return Ok(BTreeSet::new());
+    }
+    let mut held = BTreeMap::new();
+    for (_, body) in authority_log_rows_in_txn(store, txn)? {
+        let entry = decode_stored_authority_log_body(&body)?;
+        held.insert(authority_entry_hash(&entry)?, entry);
+    }
+    let resident: BTreeSet<AuthorityEntryHash> = held.keys().copied().collect();
+    for (hash, entry) in carried {
+        held.entry(*hash).or_insert_with(|| entry.clone());
+    }
+    let geneses = held
+        .values()
+        .filter(|entry| matches!(entry.op, AuthorityOp::Genesis { .. }))
+        .count();
+    if geneses != 1 {
+        return Ok(BTreeSet::new());
+    }
+    let structure = authority_structure_under(held.values(), LocalRoots::read_in_txn(store, txn)?);
+    let rooted = ancestry_held(&held);
+    let mut left_out: BTreeSet<AuthorityEntryHash> = carried
+        .iter()
+        .filter(|(hash, entry)| {
+            !resident.contains(*hash)
+                && rooted.contains(*hash)
+                && !structure.vouches_for(entry)
+                && verify_entry_signatures(entry).is_ok()
+        })
+        .map(|(hash, _)| *hash)
+        .collect();
+    let mut children: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
+    for (hash, entry) in carried {
+        if !resident.contains(hash) {
+            for parent in &entry.parent_hashes {
+                children.entry(*parent).or_default().push(*hash);
+            }
+        }
+    }
+    let mut frontier: Vec<AuthorityEntryHash> = left_out.iter().copied().collect();
+    while let Some(hash) = frontier.pop() {
+        for child in children.get(&hash).into_iter().flatten() {
+            if left_out.insert(*child) {
+                frontier.push(*child);
+            }
+        }
+    }
+    Ok(left_out)
+}
+
+/// The rows of `held` whose whole ancestry `held` holds: each row naming no
+/// parent, and each row whose parents are all such rows.
+fn ancestry_held(
+    held: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+) -> BTreeSet<AuthorityEntryHash> {
+    let mut unrooted_parents = BTreeMap::new();
+    let mut children: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
+    let mut ready = Vec::new();
+    for (hash, entry) in held {
+        let parents: BTreeSet<&AuthorityEntryHash> = entry.parent_hashes.iter().collect();
+        if parents.iter().any(|parent| !held.contains_key(*parent)) {
+            continue;
+        }
+        if parents.is_empty() {
+            ready.push(*hash);
+        }
+        unrooted_parents.insert(*hash, parents.len());
+        for parent in parents {
+            children.entry(*parent).or_default().push(*hash);
+        }
+    }
+    let mut rooted = BTreeSet::new();
+    while let Some(hash) = ready.pop() {
+        if !rooted.insert(hash) {
+            continue;
+        }
+        for child in children.get(&hash).into_iter().flatten() {
+            if let Some(count) = unrooted_parents.get_mut(child) {
+                *count -= 1;
+                if *count == 0 {
+                    ready.push(*child);
+                }
+            }
+        }
+    }
+    rooted
+}
+
 /// [`authority_structure`] grown a row at a time, as an import stages its
 /// rows: the same structure for the same rows, in any order. A row that
 /// waits for a grant is filed under each key that could give it, so a

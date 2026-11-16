@@ -72,10 +72,7 @@ pub(crate) fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
 /// Whether `text` is a 32-byte digest in its lowercase hex form: a request
 /// digest, or an LFS object's SHA-256.
 pub(crate) fn is_hex_digest(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    oneiron_hex::is_lower_hex(text, Some(64))
 }
 
 /// The body half of a digest taken as its body passes (a git or an LFS

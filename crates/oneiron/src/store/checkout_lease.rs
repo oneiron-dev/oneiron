@@ -6,20 +6,10 @@ use crate::error::Error;
 use crate::side_table::{FixedSideKey, SideKey};
 use crate::store::attempt_id::AttemptId;
 use crate::store::code_snapshot::RepoRef;
-use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Closed materialization ladder. There is deliberately no copy-on-write, lazy
-/// mount, overlay, filesystem-clone, or `Other(String)` rung: a rung that the
-/// executor cannot honour must not be representable.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MaterializationSpec {
-    FullClone = 1,
-    #[default]
-    Blobless = 2,
-}
+#[doc(hidden)]
+pub use oneiron_records::store::checkout_lease::MaterializationSpec;
 
 pub const CHECKOUT_LEASE_SCHEMA_VERSION: u8 = 1;
 pub const CHECKOUT_LEASE_KEY_PREFIX: &[u8] = b"checkout:lease:v1:";
@@ -120,7 +110,9 @@ pub enum CheckoutLeaseState {
     Settled,
     Retained,
 }
-pub type CheckoutHolder = String;
+#[doc(hidden)]
+pub use oneiron_records::store::checkout_lease::CheckoutHolder;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckoutFactMutation {
     Claimed {

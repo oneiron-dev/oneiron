@@ -5,6 +5,10 @@
 //! backup tools that honour the tag (borg, restic, tar `--exclude-caches`) skip it.
 //! A lost slot costs only re-wrapping. Linux has no standard store that is both
 //! persistent and never backed up. This adapter is the nearest one.
+//!
+//! The same directory keeps the bytes the engine sealed under a device PIN
+//! ([`SealedBytesStore`]): one 0600 file per name, `<name>.sealed`, which no
+//! slot reads.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -13,7 +17,11 @@ use std::path::{Path, PathBuf};
 
 use zeroize::Zeroizing;
 
-use crate::{DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, Result};
+use crate::sealed_bytes::check_sealed_len;
+use crate::{
+    DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, Result, SEALED_BYTES_MAX,
+    SealedBytesName, SealedBytesStore,
+};
 
 const CACHEDIR_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n\
 # This directory holds this machine's own key slots (oneiron-keystore).\n\
@@ -64,6 +72,11 @@ impl LocalFileKeystore {
         self.dir.join(format!("{}.key", slot.name()))
     }
 
+    /// The file of one sealed value, under a suffix no slot file has.
+    fn sealed_path(&self, name: &SealedBytesName) -> PathBuf {
+        self.dir.join(sealed_file_name(name))
+    }
+
     /// The key directory, checked and canonical: the hardware tier keeps its
     /// sealed slots here too, under their own suffix (OF-168).
     #[cfg(target_os = "linux")]
@@ -75,23 +88,23 @@ impl LocalFileKeystore {
         File::open(&self.dir).and_then(|d| d.sync_all()).map_err(io)
     }
 
-    /// A private temporary file holding `secret`, beside the slot's file.
-    fn write_temp(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> (PathBuf, std::io::Result<()>) {
+    /// A private temporary file holding `bytes`, beside the file it will
+    /// become. `stem` is that file's name; the open-time sweep removes a
+    /// temporary file a dead process left under any stem.
+    fn write_temp(&self, stem: &str, bytes: &[u8]) -> (PathBuf, std::io::Result<()>) {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
-        let tmp = self.dir.join(format!(
-            ".{}.{}.{nanos}.tmp",
-            slot.name(),
-            std::process::id()
-        ));
+        let tmp = self
+            .dir
+            .join(format!(".{stem}.{}.{nanos}.tmp", std::process::id()));
         let written = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&tmp)
             .and_then(|mut file| {
-                file.write_all(secret)?;
+                file.write_all(bytes)?;
                 file.sync_all()
             });
         (tmp, written)
@@ -204,7 +217,7 @@ impl DeviceKeystore for LocalFileKeystore {
         // FIX 8019: sweep this slot's stale temporary files before writing.
         self.sweep_temps(Some(slot));
         let path = self.path(slot);
-        let (tmp, written) = self.write_temp(slot, secret);
+        let (tmp, written) = self.write_temp(&slot.name(), secret);
         let linked = written.and_then(|()| fs::hard_link(&tmp, &path));
         // FIX 8019: a failed removal is swept by a later open, create or delete.
         let _ = fs::remove_file(&tmp);
@@ -243,7 +256,7 @@ impl DeviceKeystore for LocalFileKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
             Err(e) => return Err(io(e)),
         }
-        let (tmp, written) = self.write_temp(slot, secret);
+        let (tmp, written) = self.write_temp(&slot.name(), secret);
         let renamed = written.and_then(|()| fs::rename(&tmp, &path));
         if renamed.is_err() {
             let _ = fs::remove_file(&tmp);
@@ -255,6 +268,61 @@ impl DeviceKeystore for LocalFileKeystore {
 
     fn locality(&self) -> KeystoreLocality {
         KeystoreLocality::ThisDeviceOnly
+    }
+
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        Some(self)
+    }
+}
+
+/// `<name>.sealed`: the file of one sealed value in the key directory.
+fn sealed_file_name(name: &SealedBytesName) -> String {
+    format!("{}.sealed", name.name())
+}
+
+impl SealedBytesStore for LocalFileKeystore {
+    fn get_sealed(&self, name: &SealedBytesName) -> Result<Option<Vec<u8>>> {
+        let file = match File::open(self.sealed_path(name)) {
+            Ok(file) => file,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(io(e)),
+        };
+        let meta = file.metadata().map_err(io)?;
+        if !meta.is_file() || meta.permissions().mode() & 0o077 != 0 {
+            return Err(KeystoreError::Corrupt("the sealed file is open to others"));
+        }
+        let mut sealed = Vec::new();
+        file.take(SEALED_BYTES_MAX as u64 + 1)
+            .read_to_end(&mut sealed)
+            .map_err(io)?;
+        if sealed.is_empty() || sealed.len() > SEALED_BYTES_MAX {
+            return Err(KeystoreError::Corrupt(
+                "the sealed file is empty or longer than a home keeps",
+            ));
+        }
+        Ok(Some(sealed))
+    }
+
+    /// Writes a private temporary file, then renames it into place: one
+    /// rename, so a reader opens the old file or the new one, and a crash
+    /// leaves one of the two whole.
+    fn put_sealed(&self, name: &SealedBytesName, sealed: &[u8]) -> Result<()> {
+        check_sealed_len(sealed)?;
+        let (tmp, written) = self.write_temp(&sealed_file_name(name), sealed);
+        let renamed = written.and_then(|()| fs::rename(&tmp, self.sealed_path(name)));
+        if renamed.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        renamed.map_err(io)?;
+        self.sync_dir()
+    }
+
+    fn delete_sealed(&self, name: &SealedBytesName) -> Result<()> {
+        match fs::remove_file(self.sealed_path(name)) {
+            Ok(()) => self.sync_dir(),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(io(e)),
+        }
     }
 }
 
