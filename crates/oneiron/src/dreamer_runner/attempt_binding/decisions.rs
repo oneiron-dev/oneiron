@@ -33,14 +33,15 @@ use crate::dreamer_consolidation::{
     CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, open_conflicts_in_txn,
 };
 use crate::llm::decision::{
-    AnswerContract, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionRung, TypedDecision,
+    AnswerContract, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionRung, Reversibility,
+    TypedDecision,
 };
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::snapshot_read::{conflict_reader_in_txn, conflict_served_in_txn};
-use crate::verbs::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest, AiVerdictReversibility};
+use crate::verbs::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
 
 /// Describes the caller's position and prior answers for one paged settlement ask.
 #[derive(Deserialize)]
@@ -201,7 +202,7 @@ impl DreamerAttemptBinding {
                 &["Ask a choice, not a yes-or-no, score, box or point."],
             ));
         }
-        if input.reversibility != AiVerdictReversibility::OutboundEffect {
+        if input.reversibility != Reversibility::OutboundEffect {
             return Err(MemoryError::bad_request(
                 "a conflict-settlement ask requires outbound_effect reversibility",
             ));

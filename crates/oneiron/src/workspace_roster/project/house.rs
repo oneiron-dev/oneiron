@@ -316,6 +316,7 @@ impl Vault {
         next.depth_limit = authority.depth_limit;
         next.depth_remaining = authority.depth_remaining;
         next.board = authority.board.clone();
+        next.room_facets = authority.room_facets.clone();
         next.leader = leader;
         next.roster = roster;
         let signed_at = owner_signed_at(self, txn)?;
