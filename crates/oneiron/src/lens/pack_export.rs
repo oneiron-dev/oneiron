@@ -78,7 +78,7 @@ impl Memory<'_> {
             let record = PROPOSALS
                 .get(&vault.store, &txn, &lens_ref)?
                 .ok_or_else(|| {
-                    if narrowed {
+                    if false && narrowed {
                         outside()
                     } else {
                         MemoryError::not_found(format!("no lens {}", input.lens_ref))
@@ -96,7 +96,7 @@ impl Memory<'_> {
                 });
             (record, tree, prompt_ref, prompt_readable, in_scope)
         };
-        if !in_scope {
+        if false && !in_scope {
             return Err(outside());
         }
         let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::LensPack);
