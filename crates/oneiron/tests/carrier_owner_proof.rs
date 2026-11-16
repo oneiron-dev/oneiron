@@ -1372,27 +1372,38 @@ fn an_admins_vault_wide_training_setting_waits_through_a_not_mine_carrier() {
     );
 }
 
-/// The exemption is the person's own choice only: a choice that names
-/// another person as its target is no valid entry, whoever carries it.
+/// The exemption is the person's own choice only. A choice that names
+/// another person as its target fails the entry body's shape check
+/// (`ConversationTrainingSet::validate`), which runs on every encode and
+/// every decode: the row has no hash, so no store keeps it and no fold reads
+/// it, whoever carries it. The same row with the person's own target is
+/// well-formed.
 #[test]
 fn a_training_choice_for_another_person_is_still_refused() {
     let answer = HostedNodeAnswer::new();
-    let node = answer.machine;
-    let issues_before = answer.fold().issues.len();
-    let (fold, _) = answer.node_carries(training_choice(owner(), member(), node));
+    let carried_by_the_node = |op: AuthorityOp| {
+        signed(
+            Some(answer.vault_id()),
+            1,
+            vec![hash(&answer.rows[1])],
+            op,
+            &answer.node,
+            &[],
+        )
+    };
+    let own = carried_by_the_node(training_choice(member(), member(), answer.machine));
+    let for_another = carried_by_the_node(training_choice(owner(), member(), answer.machine));
     assert!(
-        !leaves_out(&fold, member()),
-        "nobody opts another person out"
-    );
-    assert_eq!(
-        fold.waiting_owner_choices(),
-        &BTreeSet::new(),
-        "a refused entry does not wait either"
+        own.validate_shape().is_ok() && authority_entry_hash(&own).is_ok(),
+        "a person's own choice is a well-formed entry"
     );
     assert!(
-        fold.issues.len() > issues_before,
-        "a choice for another person is an invalid entry: {:?}",
-        fold.issues
+        for_another.validate_shape().is_err(),
+        "nobody opts another person out: the entry's shape refuses the target"
+    );
+    assert!(
+        authority_entry_hash(&for_another).is_err(),
+        "an entry with no hash is stored and folded nowhere"
     );
 }
 
