@@ -109,10 +109,7 @@ fn shape_actor_create_lands_with_owner_provenance() -> TestResult {
     );
     assert_eq!(applied.items.len(), 1);
     let ShapeItemState::Landed { receipt, .. } = &applied.items[0].state else {
-        panic!(
-            "the Actor create lands, got {:?}",
-            applied.items[0].state
-        );
+        panic!("the Actor create lands, got {:?}", applied.items[0].state);
     };
 
     let id = EntityId::from_hex(receipt).expect("the receipt names the new definition");
