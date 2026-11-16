@@ -700,6 +700,7 @@ impl<'a> AgentDispatcher<'a> {
             self.inherited_requester_in_txn(wtxn, spawn.requester.clone(), requested_parent)?;
         let caller_origin =
             self.inherited_caller_origin_in_txn(wtxn, requested_parent, spawn.caller_origin)?;
+        let spawn_parent = self.spawn_parent_in_txn(wtxn, requested_parent)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
         // A goal-intake entry admits one root run: its project's leader, in
@@ -854,7 +855,27 @@ impl<'a> AgentDispatcher<'a> {
             caller_origin,
             funding,
             carried_wake_keys: spawn.carried_wake_keys,
+            spawn_parent,
         })
+    }
+
+    /// FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL (ARCH-0082 #ladder, rung 2): the
+    /// principal of the agent whose attempt `parent` spawns this dispatch,
+    /// read from that attempt's stored row in the dispatch writer: its
+    /// target's definition, the agent [`Self::child_powers_in_txn`] reads
+    /// the parent's powers of. `None` for a root, and for a parent that is
+    /// no agent dispatch.
+    fn spawn_parent_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: Option<AttemptId>,
+    ) -> Result<Option<EntityId>> {
+        let Some(parent) = parent else {
+            return Ok(None);
+        };
+        self.parent_dispatch_input_in_txn(txn, parent)?
+            .map(|input| input.target.agent_definition_ref())
+            .transpose()
     }
 
     /// The task-type stamp shared by preparation and a direct launch preview.

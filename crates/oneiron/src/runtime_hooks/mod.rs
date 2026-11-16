@@ -27,6 +27,7 @@ mod runner;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub mod sandbox;
 mod scope;
+pub(crate) mod setting_keys;
 mod source;
 mod store;
 pub(crate) mod tables;
@@ -34,9 +35,9 @@ pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime, HookTurnTarget};
 pub use body::{
-    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookPreparation,
-    HookRunContext, HookSettledCallRef, HookVerdict, HookVerdictCall, HookVerdictContext,
-    HookVerdictReply,
+    DEFAULT_HOOK_MAX_BUDGET_MS, HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun,
+    HookMaxBudgetMs, HookPreparation, HookRunContext, HookSettledCallRef, HookVerdict,
+    HookVerdictCall, HookVerdictContext, HookVerdictReply,
 };
 pub use grant::HookGrant;
 pub(crate) use grant::carry_hook_grant_in_txn;
