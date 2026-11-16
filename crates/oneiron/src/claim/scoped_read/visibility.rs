@@ -318,6 +318,16 @@ impl<'v> ScopedRead<'v> {
                 return self.owner_epoch_sources_use_limited_in(rtxn, id);
             }
         }
+        // A filed compaction step's words came from its `DerivedFrom` targets
+        // through any nested epoch summary, as an epoch summary's did, so the
+        // owner's use-limit conjunct walks that same lineage (review P1 on
+        // #8489): a limit behind a nested epoch summary binds the step too.
+        if crate::llm::is_compaction_step_row(
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )? {
+            return self.owner_epoch_sources_use_limited_in(rtxn, id);
+        }
         // Through this read's own view, so a room step or summary staged in a
         // session names the lineage its overlay holds (Astra r2 on #8489,
         // finding 4).
@@ -406,12 +416,13 @@ impl<'v> ScopedRead<'v> {
         Ok(false)
     }
 
-    /// Whether any record an epoch summary's words came from, through nested
-    /// epoch summaries, carries a standing C6 use limit (FIX 1496 S8). The
-    /// walk skips rows that no longer resolve instead of refusing (owner
-    /// policy), and expands through nested epoch summaries with Yes or
-    /// Unresolved keyframes, mirroring `epoch_sources_admitted_in`'s
-    /// expansion with a use-limit-only predicate.
+    /// Whether any record an epoch summary's or a filed compaction step's
+    /// words came from, through nested epoch summaries, carries a standing C6
+    /// use limit (FIX 1496 S8). The walk skips rows that no longer resolve
+    /// instead of refusing (owner policy), and expands through nested epoch
+    /// summaries with Yes or Unresolved keyframes, mirroring
+    /// `derived_from_sources_admitted_in`'s expansion with a use-limit-only
+    /// predicate.
     fn owner_epoch_sources_use_limited_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
