@@ -4,7 +4,7 @@
 //! coexist even when validation would reject that combination. Collections
 //! have two members, except intrinsic wire shapes noted at their construction.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use rmpv::Value;
 
@@ -17,7 +17,7 @@ use crate::federation::{
 };
 use crate::share_travel::{BornWithField, TravelChoice};
 
-pub(super) const OP_KIND_NAMES: [&str; 42] = [
+pub(super) const OP_KIND_NAMES: [&str; 43] = [
     "SlipMint",
     "SlipRevoke",
     "SlipConsume",
@@ -52,6 +52,7 @@ pub(super) const OP_KIND_NAMES: [&str; 42] = [
     "ConversationTrainingSet",
     "ConversationTrainingVaultSet",
     "HomeCandidacy",
+    "FullCopyMark",
     "AgentGrantAct",
     "PolicySettingSet",
     "ExportAct",
@@ -98,6 +99,7 @@ pub(super) fn op_kind_name(op: &AuthorityOp) -> &'static str {
         AuthorityOp::ConversationTrainingSet(_) => "ConversationTrainingSet",
         AuthorityOp::ConversationTrainingVaultSet(_) => "ConversationTrainingVaultSet",
         AuthorityOp::HomeCandidacy(_) => "HomeCandidacy",
+        AuthorityOp::FullCopyMark(_) => "FullCopyMark",
         AuthorityOp::AgentGrantAct(_) => "AgentGrantAct",
         AuthorityOp::PolicySettingSet(_) => "PolicySettingSet",
         AuthorityOp::ExportAct(_) => "ExportAct",
@@ -512,15 +514,8 @@ fn residence_samples() -> Vec<AuthorityOp> {
 }
 fn root_basis() -> RootRevisionBasis {
     RootRevisionBasis {
-        roots: BTreeSet::from([RecoveryRootId([57; 32]), RecoveryRootId([58; 32])]),
         roster: Some([59; 32]),
         roster_trusted: Some([60; 32]),
-        anchored: BTreeMap::from([([61; 32], [62; 32]), ([63; 32], [64; 32])]),
-        bound: Some([65; 32]),
-        parents: BTreeMap::from([
-            ([62; 32], BTreeSet::from([[66; 32], [67; 32]])),
-            ([64; 32], BTreeSet::from([[68; 32], [69; 32]])),
-        ]),
     }
 }
 
@@ -724,6 +719,10 @@ fn policy_samples() -> Vec<AuthorityOp> {
             primary: true,
             macro_ready: true,
             cloud: false,
+        }),
+        AuthorityOp::FullCopyMark(FullCopyMark {
+            machine: entity_id(4),
+            held: true,
         }),
         AuthorityOp::PolicySettingSet(PolicySettingSet {
             act: owner_act(OwnerActKind::PolicySetting),

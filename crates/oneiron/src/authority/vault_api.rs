@@ -331,9 +331,19 @@ impl Vault {
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
     pub fn get_authority_log_entry(&self, id: &EntityId) -> Result<Option<AuthorityLogEntry>> {
         let rtxn = self.store.env.read_txn()?;
+        self.get_authority_log_entry_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::get_authority_log_entry`] in `txn`: a caller that judges the
+    /// row against a fold reads it in the snapshot that fold was read in.
+    pub(crate) fn get_authority_log_entry_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<AuthorityLogEntry>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -344,7 +354,7 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        let row = decode_stored_authority_fold_row(&self.store, &rtxn, body)?;
+        let row = decode_stored_authority_fold_row(&self.store, txn, body)?;
         match row.open() {
             Some(entry) => Ok(Some(entry.clone())),
             // This door reads one row by id, not the vault's history as this
