@@ -58,6 +58,8 @@ mod writer;
 pub use crate::gate::DreamerWeaveReach;
 pub use attempt_sink::AttemptPromotionSink;
 pub(crate) use imported_keep::KeptConflictLink;
+#[cfg(oneiron_test_support)]
+pub(crate) use scoped::attachment_digests_for_test;
 pub use scoped::promote_scoped_consolidation;
 pub(crate) use scoped::{AssertedEvidence, EvidenceAssertion, assert_evidence_in_txn};
 pub(crate) use settlement::{KeptLanding, land_kept_alternative_in_txn};

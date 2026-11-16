@@ -8,9 +8,11 @@
 //! first, then its cancellations arrive as seat pulls.
 //!
 //! Patterns follow `tests/it/calendar_connector_smoke.rs`: the seat config,
-//! the owner-installed operation, a transport implementing
+//! the operation on the owner's installed seat, a transport implementing
 //! [`CalendarRemoteTransport`] directly, and one ICS resource per booking
-//! per pull.
+//! per pull. The owner installs each seat through the
+//! `calendar.connector_seat` setting (SETTING-KEYED-A K3a removed the
+//! configure door).
 
 #![allow(dead_code)] // each deposit test binary uses a subset of these helpers
 
@@ -19,7 +21,7 @@ use std::sync::Mutex;
 
 use oneiron::calendar::caldav::CALDAV_PROVIDER_KEY;
 use oneiron::calendar::connectors::door::{
-    self, CalendarConnectorConfigureRequest, CalendarConnectorOperation, CalendarConnectorRequest,
+    self, CalendarConnectorOperation, CalendarConnectorRequest,
 };
 use oneiron::calendar::connectors::{
     CalendarConnectorError, CalendarConnectorSeatConfig, CalendarRemoteTransport,
@@ -28,11 +30,17 @@ use oneiron::calendar::connectors::{
 };
 use oneiron::calendar::parse_ics_feed;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault};
+use serde_json::json;
 
 /// The CalDAV discovery URL every seat here is installed with (smoke :689).
 const SEAT_ENDPOINT: &str = "https://calendar.example.test/";
+
+/// The setting a CalDAV seat is installed through, one item per seat ref
+/// (SETTING-KEYED-A K3a; `tests/setting_keyed_a_3.rs`).
+const CONNECTOR_SEAT_KEY: &str = "calendar.connector_seat";
 
 /// Monday 2 Mar 2026 00:00 UTC, the deposit fixtures' Monday.
 const MONDAY: u64 = 1_772_409_600;
@@ -125,10 +133,11 @@ pub(crate) struct Seat {
 }
 
 impl Seat {
-    /// Installs the seat under `system` (smoke :261 `caldav_config`, :757
-    /// `operation`): the owner installs it through the configure door, as the
-    /// host does. A seat may be installed under another system name for a
-    /// calendar the booking was never written to.
+    /// Installs the seat under `system` (smoke :261 `caldav_config`): the
+    /// owner sets the `calendar.connector_seat` setting at the seat's ref to
+    /// its config and endpoint, as the host does. A seat may be installed
+    /// under another system name for a calendar the booking was never written
+    /// to.
     pub(crate) fn install(vault: &Vault, system: &str) -> Self {
         let config = CalendarConnectorSeatConfig {
             seat_ref: format!("seat:{system}"),
@@ -138,16 +147,23 @@ impl Seat {
             cadence_jitter_min_seconds: 300,
             cadence_jitter_max_seconds: 900,
         };
-        let (id, owner) = seat_owner(vault);
-        door::configure(
-            &vault.memory(id, EdgeActorClass::Human),
-            &owner,
-            &CalendarConnectorConfigureRequest {
-                config: config.clone(),
-                endpoint: SEAT_ENDPOINT.to_owned(),
-            },
-        )
-        .expect("the owner installs the seat");
+        let (_, owner) = seat_owner(vault);
+        let outcome = vault
+            .set_setting(
+                SettingCaller::Owner(&owner),
+                SetSetting {
+                    item: Some(config.seat_ref.clone()),
+                    ..SetSetting::vault_value(
+                        CONNECTOR_SEAT_KEY,
+                        json!({ "config": config, "endpoint": SEAT_ENDPOINT }),
+                    )
+                },
+            )
+            .expect("the owner installs the seat");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's install applies: {outcome:?}"
+        );
         Self {
             config,
             transport: ScriptedSeatTransport::default(),
@@ -245,21 +261,11 @@ impl Seat {
         run_calendar_connector_sync(vault, &self.operation(vault), &self.transport, now, 7)
     }
 
-    /// The calendar operation on the installed seat: the configure door is
-    /// idempotent, so this re-reads the installed row and binds the owner to
-    /// it exactly (smoke :757).
+    /// The calendar operation on the installed seat: this re-reads the
+    /// installed row and binds the owner to it exactly (smoke :757).
     fn operation(&self, vault: &Vault) -> CalendarConnectorOperation {
         let (id, owner) = seat_owner(vault);
         let memory = vault.memory(id, EdgeActorClass::Human);
-        door::configure(
-            &memory,
-            &owner,
-            &CalendarConnectorConfigureRequest {
-                config: self.config.clone(),
-                endpoint: SEAT_ENDPOINT.to_owned(),
-            },
-        )
-        .expect("the owner installs the seat");
         let row = door::get(
             &memory,
             &owner,
