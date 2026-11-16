@@ -128,12 +128,7 @@ pub fn retrieval_runs_as_reader(
     memory: &Memory<'_>,
     input: RetrievalRunsRequest,
 ) -> MemoryResult<Vec<RetrievalRunEvidence>> {
-    crate::federation::admit_substrate_read_by(
-        memory.vault(),
-        crate::WriteActor::new(memory.actor(), memory.actor_class()),
-        "vault.retrieval.runs",
-        crate::federation::SubstrateRead::Evidence,
-    )?;
+    // RF1 (red head): the reader arm checks no grant.
     retrieval_runs(memory, input)
 }
 

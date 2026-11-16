@@ -53,7 +53,8 @@ impl Memory<'_> {
                         .pop()
                         .expect("one default per actor");
                     if defaults.worlds().is_empty() {
-                        return Ok(Some(defaults));
+                        // RF3 (red head): no default world reads every world.
+                        return Ok(None);
                     }
                     let txn = self
                         .vault
