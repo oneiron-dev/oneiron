@@ -210,8 +210,8 @@ pub(super) fn derive_revoke_facts(
 }
 
 impl RevokeFacts {
-    /// Adds the slip withdrawals and burns the projection dropped. Selecting
-    /// one of two colliding confirmations removes the loser and every entry
+    /// Adds the slip withdrawals and burns the projection dropped. Settling a
+    /// handoff removes a fenced row or an unsettled handoff and every entry
     /// after it, a `SlipRevoke`, `SlipConsume` or membership execution
     /// record's Grant withdrawals (FIX 12335) among them, and a revoked or
     /// spent slip would live again. An entry in `survivors` already applied
