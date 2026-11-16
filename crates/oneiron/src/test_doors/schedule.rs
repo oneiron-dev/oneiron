@@ -585,6 +585,17 @@ pub static TEST_WITHDRAWN: JobSpec = JobSpec {
     run: run_fail,
 };
 
+/// Adds a due-index entry for `job` about `subject` at `due`, beside the row's own: the index
+/// as a runner pass read it just before another write armed the job again for later (review
+/// round 2 of #8026, P1 on `run.rs`).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn index_due_at(vault: &Vault, job: &str, subject: Option<EntityId>, due: u64) -> Result<()> {
+    crate::schedule::put_due_entry_for_test(vault, job, subject, due)
+}
+
 /// The engine arms `job` about `subject`, as its own doors do.
 ///
 /// # Errors
