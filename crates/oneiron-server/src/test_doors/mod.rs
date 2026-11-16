@@ -7,6 +7,7 @@
 pub mod big_rung;
 pub mod booking_turn_line;
 pub mod build_server;
+pub mod calendar_egress;
 pub mod calendar_ics_egress;
 pub mod coach_round;
 #[cfg(unix)]
