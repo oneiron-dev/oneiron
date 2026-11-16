@@ -12,21 +12,27 @@
 //! through the caller's [`RecalcPort`], because the formula engine depends on
 //! this crate and not the other way round.
 
+mod args;
+mod description;
 mod run;
 
-use crate::ArchiveLimits;
-use crate::docx_body::{DocxBlock, DocxChange, DocxRevision, DocxStory};
-use crate::graphic::GraphicLimits;
-use crate::pptx_comments::{
-    PptxAnchorOutcome, PptxCommentEdit, PptxCommentLimits, PptxSlideIdentity,
+pub use args::{
+    AssetMedia, AssetOrigin, DeckAsset, DeckCreateArgs, DeckNames, DeckReadArgs,
+    DeckTransactionArgs, DocumentLocationArgs, DocxLimits, DocxProjectArgs, DocxReadArgs,
+    DocxReviseArgs, DocxValidateArgs, GraphicSettings, KeptBriefArgs, PackageLimits,
+    PptxCommentsArgs, PptxCommentsInspectArgs, RecalcClockArgs, SlideCreationId, XlsxProjectArgs,
+    XlsxReadArgs, XlsxRecalcArgs,
 };
+pub use description::{call_schema, describe, reply_schema};
+
+use crate::docx_body::{DocxBlock, DocxStory};
+use crate::pptx_comments::{PptxAnchorOutcome, PptxSlideIdentity};
 use crate::resource::{CapacityHit, ResourceRefusal, Resources};
 use crate::retained_opc::Limits;
-use crate::xlsx_body::{XlsxBook, XlsxChange};
+use crate::xlsx_body::XlsxBook;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
 
 /// The op table's version. A call naming another refuses before any op runs.
 pub const CONTRACT_SCHEMA: u32 = 5;
@@ -126,309 +132,11 @@ impl Op {
     }
 }
 
-/// DOCX archive ceilings: the byte ceilings checked across every entry
-/// before any XML parser runs. `max_entries` is an observation, never a
-/// reason to refuse: each entry's memory is reserved through the host's port
-/// instead (FIX 8570).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DocxLimits {
-    pub max_entries: usize,
-    pub max_part_bytes: u64,
-    pub max_total_bytes: u64,
-}
-
-impl DocxLimits {
-    #[must_use]
-    pub fn archive(self) -> ArchiveLimits {
-        ArchiveLimits {
-            max_entries: self.max_entries,
-            max_part_bytes: self.max_part_bytes,
-            max_total_bytes: self.max_total_bytes,
-        }
-    }
-}
-
-/// OPC package byte ceilings for XLSX and PPTX, checked before decompression
-/// and again after it (FIX 10590).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PackageLimits {
-    pub archive_bytes: usize,
-    pub part_bytes: usize,
-    pub expanded_bytes: usize,
-}
-
-impl PackageLimits {
-    #[must_use]
-    pub fn package(self) -> Limits {
-        Limits {
-            archive_bytes: self.archive_bytes,
-            part_bytes: self.part_bytes,
-            expanded_bytes: self.expanded_bytes,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DocxReadArgs {
-    /// Input index of the DOCX.
-    pub document: u32,
-    pub limits: DocxLimits,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DocxReviseArgs {
-    pub document: u32,
-    /// The native writer's transaction grammar, tracked_change mode only. An
-    /// absent revision date takes the host's clock; the reply pins it.
-    pub transaction: Value,
-    pub limits: DocxLimits,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DocxValidateArgs {
-    pub document: u32,
-    #[serde(default)]
-    pub transaction: Option<Value>,
-    pub limits: DocxLimits,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DocxProjectArgs {
-    /// Input index of the DOCX the changes were read from.
-    pub source: u32,
-    pub changes: Vec<DocxChange>,
-    pub revision: DocxRevision,
-    pub limits: DocxLimits,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct XlsxReadArgs {
-    /// Input index of the XLSX.
-    pub workbook: u32,
-    pub limits: PackageLimits,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct XlsxProjectArgs {
-    pub source: u32,
-    pub changes: Vec<XlsxChange>,
-    pub limits: PackageLimits,
-    /// The folder and file name the workbook is opened from: an external
-    /// link whose path names it is the workbook's own, and a sheet rename or
-    /// deletion carries the formulas through it and its sheet list.
-    #[serde(default)]
-    pub location: Option<DocumentLocationArgs>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct XlsxRecalcArgs {
-    pub workbook: u32,
-    pub limits: PackageLimits,
-    pub clock: RecalcClockArgs,
-    /// The folder and file name CELL("filename") reads; without one, the
-    /// location Excel last saved in the workbook's caches stands in.
-    #[serde(default)]
-    pub location: Option<DocumentLocationArgs>,
-}
-
-/// The instant NOW() and TODAY() read, its local offset, and the seed of the
-/// random functions: the same clock recalculates the same values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RecalcClockArgs {
-    /// Unix milliseconds, UTC.
-    pub now_ms: i64,
-    /// Minutes east of UTC, within ±840.
-    pub utc_offset_minutes: i16,
-    pub seed: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DocumentLocationArgs {
-    /// Ends in `\` or `/`, as `C:\Reports\`.
-    pub directory: String,
-    /// No separator, bracket or control character.
-    pub file_name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeckReadArgs {
-    /// Input index of the PPTX.
-    pub deck: u32,
-    pub limits: PackageLimits,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeckTransactionArgs {
-    pub deck: u32,
-    /// The deck transaction grammar (schema 2). Its `base` is the BLAKE3 of
-    /// the deck input; another base refuses `stale`.
-    pub transaction: Value,
-    /// The pictures a `set_picture` step names, by artifact and version.
-    #[serde(default)]
-    pub assets: Vec<DeckAsset>,
-    pub limits: PackageLimits,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeckCreateArgs {
-    pub brief: KeptBriefArgs,
-    /// Input index of the template PPTX; it must hold layouts and no slides.
-    pub template: u32,
-    /// Input indices of the sfnt fonts text is measured with.
-    #[serde(default)]
-    pub fonts: Vec<u32>,
-    /// The brief's assets, keyed by the brief's asset id.
-    #[serde(default)]
-    pub assets: BTreeMap<String, DeckAsset>,
-    pub names: DeckNames,
-    pub limits: PackageLimits,
-    /// The host's graphic ceilings for the brief's assets (FIX 5355); absent,
-    /// the engine's defaults.
-    #[serde(default)]
-    pub graphics: Option<GraphicSettings>,
-}
-
-/// A host's graphic byte and pixel ceilings: an asset past one is refused,
-/// not truncated (FIX 10590).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GraphicSettings {
-    pub svg_bytes: usize,
-    pub raster_bytes: usize,
-    pub raster_pixels: u64,
-}
-
-impl GraphicSettings {
-    #[must_use]
-    pub fn graphic(self) -> GraphicLimits {
-        GraphicLimits {
-            svg_bytes: self.svg_bytes,
-            raster_bytes: self.raster_bytes,
-            raster_pixels: self.raster_pixels,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PptxCommentsArgs {
-    /// Input index of the PPTX.
-    pub deck: u32,
-    /// Applied in order. None returns the deck unchanged.
-    pub edits: Vec<PptxCommentEdit>,
-    /// The slide creation IDs an earlier run of these edits minted, replayed
-    /// exactly. Absent, a commented slide that lacks one gets a fresh ID
-    /// drawn from `seed`.
-    #[serde(default)]
-    pub slide_creation_ids: Option<Vec<SlideCreationId>>,
-    pub seed: u64,
-    pub limits: PptxCommentLimits,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PptxCommentsInspectArgs {
-    /// Input index of the PPTX.
-    pub deck: u32,
-    pub limits: PptxCommentLimits,
-}
-
-/// A p14 creation ID written onto a slide that had none.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SlideCreationId {
-    pub slide: u64,
-    pub creation_id: u32,
-}
-
 /// Where a new thread landed, by its root comment GUID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ThreadAnchor {
     pub thread_id: String,
     pub anchor: PptxAnchorOutcome,
-}
-
-/// The brief as the person kept it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct KeptBriefArgs {
-    /// Input index of the brief JSON.
-    pub input: u32,
-    /// The keep's version label, carried into the deck's report.
-    pub version: String,
-    /// BLAKE3 hex the keep froze. Bytes that no longer hash to it refuse
-    /// `stale`; without it, the input is taken as kept.
-    #[serde(default)]
-    pub kept_hash: Option<String>,
-}
-
-/// One held asset version and its bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeckAsset {
-    /// The caller's artifact identity; a step's asset reference names it.
-    pub artifact: String,
-    pub version: u64,
-    /// Input index of the asset's bytes.
-    pub input: u32,
-    pub media: AssetMedia,
-    #[serde(default)]
-    pub origin: AssetOrigin,
-    /// Provenance references, such as the version's producer claim.
-    #[serde(default)]
-    pub provenance: Vec<String>,
-    /// Rights-evidence references, such as a licence claim.
-    #[serde(default)]
-    pub rights: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum AssetMedia {
-    #[serde(rename = "image/png")]
-    Png,
-    #[serde(rename = "image/jpeg")]
-    Jpeg,
-    /// The closed SVG subset, compiled to native shapes.
-    #[serde(rename = "image/svg+xml")]
-    Svg,
-}
-
-/// Where a held asset came from. A generated image carries adapter receipts
-/// the engine keeps; schema 5 has no door for them.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AssetOrigin {
-    #[default]
-    Held,
-    Web,
-    Stock,
-    Diagram,
-}
-
-/// The localized names new shapes and the embedded workbooks' sheet take.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeckNames {
-    pub text: String,
-    pub table: String,
-    pub chart: String,
-    pub picture: String,
-    pub figure: String,
-    pub sheet: String,
 }
 
 /// What an op returns beside its byte outputs.
@@ -602,6 +310,14 @@ pub struct DeckCreated {
     pub omitted: Vec<String>,
     /// Units whose laid-out text has no rendered fit proof.
     pub fit_unverified: Vec<UnverifiedUnit>,
+    /// The `fit_unverified` units PowerPoint measured running past their
+    /// frame. Absent from a reply written before receipts were read.
+    #[serde(default)]
+    pub fit_overflows: Vec<UnverifiedUnit>,
+    /// SHA-256 hex of the stored Office receipt that measured this exact
+    /// deck, when one does.
+    #[serde(default)]
+    pub fit_receipt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -896,181 +612,4 @@ fn unsupported_schema(schema: u32) -> ContractError {
         ErrorCode::UnsupportedSchema,
         format!("contract schema {schema} is not served; this crate serves {CONTRACT_SCHEMA}"),
     )
-}
-
-/// One op's discovery row: wire name, summary, inputs and outputs.
-struct OpSpec {
-    name: &'static str,
-    summary: &'static str,
-    inputs: &'static [(&'static str, &'static [&'static str], bool)],
-    outputs: &'static [(&'static str, &'static str)],
-    port: Option<&'static str>,
-}
-
-const DOCX: &[&str] = &[DOCX_MEDIA_TYPE];
-const XLSX: &[&str] = &[XLSX_MEDIA_TYPE];
-const PPTX: &[&str] = &[PPTX_MEDIA_TYPE];
-const IMAGES: &[&str] = &["image/png", "image/jpeg", "image/svg+xml"];
-const FONTS: &[&str] = &["font/ttf", "font/otf", "font/sfnt"];
-
-const OPS: &[OpSpec] = &[
-    OpSpec {
-        name: "contract.describe",
-        summary: "The op table, its media types and the call, reply and error schemas.",
-        inputs: &[],
-        outputs: &[],
-        port: None,
-    },
-    OpSpec {
-        name: "docx.read",
-        summary: "The DOCX body blocks and scoped header, footer, footnote, endnote and comment stories.",
-        inputs: &[("document", DOCX, false)],
-        outputs: &[],
-        port: None,
-    },
-    OpSpec {
-        name: "docx.revise",
-        summary: "Apply one tracked revision transaction as Word's own revision marks.",
-        inputs: &[("document", DOCX, false)],
-        outputs: &[("document", DOCX_MEDIA_TYPE)],
-        port: None,
-    },
-    OpSpec {
-        name: "docx.validate",
-        summary: "Run the blocking OOXML linker, and check a transaction's grammar when given.",
-        inputs: &[("document", DOCX, false)],
-        outputs: &[],
-        port: None,
-    },
-    OpSpec {
-        name: "docx.project",
-        summary: "Write block changes onto the DOCX they were read from, as one tracked revision.",
-        inputs: &[("source", DOCX, false)],
-        outputs: &[("document", DOCX_MEDIA_TYPE)],
-        port: None,
-    },
-    OpSpec {
-        name: "xlsx.read",
-        summary: "Every worksheet's cells, the defined names and the cell formats.",
-        inputs: &[("workbook", XLSX, false)],
-        outputs: &[],
-        port: None,
-    },
-    OpSpec {
-        name: "xlsx.project",
-        summary: "Write cell and defined-name changes; formulas land without cached values. The reply names what the projection adapted.",
-        inputs: &[("source", XLSX, false)],
-        outputs: &[("workbook", XLSX_MEDIA_TYPE)],
-        port: None,
-    },
-    OpSpec {
-        name: "xlsx.mark_full_calc",
-        summary: "Have the opening application recalculate the whole workbook.",
-        inputs: &[("workbook", XLSX, false)],
-        outputs: &[("workbook", XLSX_MEDIA_TYPE)],
-        port: None,
-    },
-    OpSpec {
-        name: "xlsx.recalc",
-        summary: "Recalculate formula caches natively at the caller's clock and location.",
-        inputs: &[("workbook", XLSX, false)],
-        outputs: &[("workbook", XLSX_MEDIA_TYPE)],
-        port: Some("recalc"),
-    },
-    OpSpec {
-        name: "deck.read",
-        summary: "The slides and shapes a deck transaction targets, with fingerprints and marks.",
-        inputs: &[("deck", PPTX, false)],
-        outputs: &[],
-        port: None,
-    },
-    OpSpec {
-        name: "deck.transaction",
-        summary: "Run one checked deck transaction; the candidate is re-opened and diffed.",
-        inputs: &[("deck", PPTX, false), ("assets[].input", IMAGES, true)],
-        outputs: &[("deck", PPTX_MEDIA_TYPE)],
-        port: None,
-    },
-    OpSpec {
-        name: "deck.create",
-        summary: "Plan and emit a new deck from a kept brief over a template, or ask per page.",
-        inputs: &[
-            ("brief.input", &[JSON_MEDIA_TYPE], false),
-            ("template", PPTX, false),
-            ("fonts", FONTS, true),
-            ("assets.*.input", IMAGES, true),
-        ],
-        outputs: &[("deck", PPTX_MEDIA_TYPE)],
-        port: None,
-    },
-    OpSpec {
-        name: "pptx.comments",
-        summary: "Add, reply to and resolve modern comment threads; only comment parts change.",
-        inputs: &[("deck", PPTX, false)],
-        outputs: &[("deck", PPTX_MEDIA_TYPE)],
-        port: None,
-    },
-    OpSpec {
-        name: "pptx.comments.inspect",
-        summary: "The slide and shape identities comments anchor to, and unanchored threads.",
-        inputs: &[("deck", PPTX, false)],
-        outputs: &[],
-        port: None,
-    },
-];
-
-fn owned(items: &[&str]) -> Vec<String> {
-    items.iter().map(|item| (*item).to_owned()).collect()
-}
-
-fn schema_value<T: JsonSchema>() -> Value {
-    serde_json::to_value(schemars::schema_for!(T)).expect("a JSON schema always serializes")
-}
-
-/// The JSON schema of a [`Call`].
-#[must_use]
-pub fn call_schema() -> Value {
-    schema_value::<Call>()
-}
-
-/// The JSON schema of a [`Reply`].
-#[must_use]
-pub fn reply_schema() -> Value {
-    schema_value::<Reply>()
-}
-
-/// The schema-5 op table, as `contract.describe` answers it.
-#[must_use]
-pub fn describe() -> Description {
-    Description {
-        schema: CONTRACT_SCHEMA,
-        ops: OPS
-            .iter()
-            .map(|spec| OpInfo {
-                name: spec.name.to_owned(),
-                summary: spec.summary.to_owned(),
-                inputs: spec
-                    .inputs
-                    .iter()
-                    .map(|(field, media_types, repeated)| InputInfo {
-                        field: (*field).to_owned(),
-                        media_types: owned(media_types),
-                        repeated: *repeated,
-                    })
-                    .collect(),
-                outputs: spec
-                    .outputs
-                    .iter()
-                    .map(|(name, media_type)| OutputSpec {
-                        name: (*name).to_owned(),
-                        media_type: (*media_type).to_owned(),
-                    })
-                    .collect(),
-                port: spec.port.map(str::to_owned),
-            })
-            .collect(),
-        call_schema: call_schema(),
-        reply_schema: reply_schema(),
-        error_schema: schema_value::<ContractError>(),
-    }
 }

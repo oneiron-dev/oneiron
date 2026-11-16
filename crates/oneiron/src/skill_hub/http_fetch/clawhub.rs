@@ -19,11 +19,12 @@ impl HttpEndpointSkillHubAdapter {
     /// Queries `/api/v1/search` on this configured origin, without fetching or
     /// admitting a package. Optional filters are sent only when requested.
     /// The response budget defaults to the existing HTTP index budget and is
-    /// caller-overridable; it is not an upstream query parameter.
+    /// caller-overridable; it is not an upstream query parameter. `limit` is
+    /// unsigned: the verb door refuses a negative ask before it gets here.
     pub fn search_clawhub(
         &self,
         q: &str,
-        limit: Option<i64>,
+        limit: Option<u64>,
         highlighted_only: Option<bool>,
         non_suspicious_only: Option<bool>,
         response_limit_bytes: Option<usize>,
