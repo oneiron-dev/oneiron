@@ -2,6 +2,7 @@
 //! calls to declared pure tools over a JSON state (census L1-20).
 //! This compiles source data, not an authority, an outcome label or an eval nomination.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -105,6 +106,18 @@ impl EvalRepairTask {
         };
         self.apply_tool_calls(calls)
             .is_some_and(|state| &state == expected)
+    }
+
+    /// The BLAKE3 hex of what the grader compares against: the observed
+    /// response's bytes, or the observed end state's JSON text. A seed's
+    /// outcome label names the outcome by this digest, never by its text.
+    #[must_use]
+    pub(super) fn outcome_digest(&self) -> String {
+        match &self.expected {
+            EvalRepairExpected::Response(answer) => ContentHash::of(answer.as_bytes()),
+            EvalRepairExpected::State(state) => ContentHash::of(state.to_string().as_bytes()),
+        }
+        .to_hex()
     }
 
     /// All task variants from this capture share one family root for this seat.

@@ -55,6 +55,7 @@ pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
+pub mod eval_repair_seed;
 pub mod fanout_admission;
 pub mod feeds;
 pub mod fingerprint_keep_hook_digests;
