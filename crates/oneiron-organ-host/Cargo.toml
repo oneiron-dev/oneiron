@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The engine side of the organ protocol: spawn, pool, budget, regions, sandbox"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false
@@ -16,6 +15,7 @@ doctest = false
 [dependencies]
 oneiron-docedit = { path = "../oneiron-docedit" }
 oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
 # The mesh leg: organ calls to the owner's other nodes (OF-575 MESH).

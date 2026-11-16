@@ -162,10 +162,14 @@ pub(super) fn live_fact<T: serde::de::DeserializeOwned>(
             continue;
         }
         // FIX 5994: a head no booking process issued is no competing fact.
-        let txn = vault.store.env.read_txn().map_err(storage_failure)?;
-        if !crate::booking::lifecycle::booking_head_counts_in_txn(vault, &txn, &id, &body)
-            .map_err(storage_failure)?
-        {
+        // The snapshot closes before `claim_settled_and_active` opens its own:
+        // a second read txn on this thread fails MDB_BAD_RSLOT.
+        let issued_by_booking = {
+            let txn = vault.store.env.read_txn().map_err(storage_failure)?;
+            crate::booking::lifecycle::booking_head_counts_in_txn(vault, &txn, &id, &body)
+                .map_err(storage_failure)?
+        };
+        if !issued_by_booking {
             continue;
         }
         if found.is_some() {
