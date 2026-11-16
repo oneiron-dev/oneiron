@@ -74,11 +74,15 @@ pub mod home_handoff_retire;
 pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
+#[cfg(feature = "sync")]
+pub mod host_taint_replica;
 pub mod house_link;
 pub mod hydration_decode_guard;
 pub mod identity_recheck;
+pub mod idle_fold;
 pub mod imported_evidence;
 pub mod inquiry;
+pub mod install_key_revocation;
 pub mod job_kind_rows;
 pub mod label_writers;
 pub mod learning_claim_value;
@@ -141,6 +145,7 @@ pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 pub mod tray_answered_removal;
 pub mod turn_programs;
+pub mod turn_words;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
