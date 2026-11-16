@@ -930,7 +930,7 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
             .unwrap();
     for offset in [30, 31] {
         let at = answered + offset;
-        let body = oneiron::ClaimBody::new(
+        let mut body = oneiron::ClaimBody::new(
             "outcome.earned",
             oneiron::ClaimSubject::Entity(about),
             rmpv::Value::from("won"),
@@ -939,6 +939,10 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
             oneiron::ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        // A CLAIM is born only under a stored FACET (FIX 7757): the `about`
+        // claim's derived facet names no stored row, so the outcome takes
+        // the vault's default facet.
+        body.scope_facet = server.vault.default_facet().expect("default facet");
         let occurred = oneiron::TimeRange { start: at, end: at };
         server
             .vault
