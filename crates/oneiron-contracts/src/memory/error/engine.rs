@@ -136,7 +136,9 @@ impl From<Error> for MemoryError {
             ErrorKind::HistoryNotHeld => Self::new(
                 MEMORY_CODE_HISTORY_NOT_HELD,
                 message,
-                &["Read the row at the live head, or read this frontier where the row's history is held."],
+                &[
+                    "Read the row at the live head, or read this frontier where the row's history is held.",
+                ],
             ),
             // FORBIDDEN like the gate family beside it, but with its OWN
             // remedies: the generic arm points at pending consents and at

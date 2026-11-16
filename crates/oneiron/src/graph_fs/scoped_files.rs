@@ -32,9 +32,9 @@ impl GraphFsResolver<'_, '_> {
             let txn = self.scoped_read.vault().store.env.read_txn()?;
             return self.file_rows_in_txn(&txn, reads, requested, None);
         }
-        self.scoped_read
-            .vault()
-            .with_known_snapshot(|known, txn| self.file_rows_in_txn(txn, reads, requested, Some(known)))
+        self.scoped_read.vault().with_known_snapshot(|known, txn| {
+            self.file_rows_in_txn(txn, reads, requested, Some(known))
+        })
     }
 
     /// [`Self::file_rows`] in `txn`. At a memory fork an id with no held
@@ -56,11 +56,11 @@ impl GraphFsResolver<'_, '_> {
         };
         let slots = self.fork_reads_in_txn(txn, frontier, reads)?;
         let pinned: Vec<PointRead<'_>> = slots.iter().flatten().copied().collect();
-        let read = self
-            .scoped_read
-            .read_projected_in_txn(txn, &pinned, requested, |txn, rows| {
-                self.served_file_rows_in_txn(txn, rows, known)
-            })?;
+        let read =
+            self.scoped_read
+                .read_projected_in_txn(txn, &pinned, requested, |txn, rows| {
+                    self.served_file_rows_in_txn(txn, rows, known)
+                })?;
         let mut rows = read.value.into_iter();
         Ok(ScopedReadResult {
             value: slots

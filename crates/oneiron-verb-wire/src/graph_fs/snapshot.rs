@@ -20,5 +20,7 @@ pub enum GraphFsReference {
         repo: Option<EntityId>,
         hash: String,
     },
-    RepoSnapshot { snapshot: EntityId },
+    RepoSnapshot {
+        snapshot: EntityId,
+    },
 }
