@@ -2,8 +2,10 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
-    /// Explicit archived-attempt deletion: actual actor, time and optional originating run tag.
-    /// Key: id16 (AttemptId), not an entity id; contains no attempt payload.
+    /// Explicit archived-attempt deletion: actual actor, time and optional originating run tag,
+    /// and the try's settling-lineage links (the agent it dispatched, the try above it), so a
+    /// lineage through a deleted try stays whole. Key: id16 (AttemptId), not an entity id;
+    /// contains no attempt payload.
     VAULT_CLEANUP_ATTEMPT_DELETE: VaultMeta b"vault_cleanup.attempt_delete.v1:" Named Engine
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::vault_cleanup::erase_attempt_delete_actor_in_txn;

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::agent_dispatch::AttemptLineageLink;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
@@ -18,6 +19,12 @@ struct Deletion {
     deleted_by: Option<EntityId>,
     deleted_at: u64,
     run_id: Option<String>,
+    /// The deleted try's links on a settling lineage, read off its row before
+    /// the delete: ids only, no payload. A receipt written before the field,
+    /// or for a row whose payload did not decode, has none: a lineage through
+    /// that try stays unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lineage: Option<AttemptLineageLink>,
 }
 
 pub(super) fn stamp_in_txn(
@@ -27,6 +34,7 @@ pub(super) fn stamp_in_txn(
     actor: EntityId,
     at: u64,
     run: Option<&str>,
+    lineage: Option<AttemptLineageLink>,
 ) -> Result<String> {
     DELETIONS.put(
         &vault.store,
@@ -36,12 +44,30 @@ pub(super) fn stamp_in_txn(
             deleted_by: Some(actor),
             deleted_at: at,
             run_id: run.map(str::to_owned),
+            lineage,
         },
     )?;
     Ok(format!(
         "attempt_delete:{}",
         bytes_to_hex_lower(attempt.as_bytes())
     ))
+}
+
+/// The settling-lineage links `attempt` held when the owner deleted it from
+/// the archive, as its deletion receipt keeps them. `None` when no receipt
+/// names the try, its receipt does not decode, or it keeps no links.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn deleted_attempt_lineage_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<AttemptLineageLink>> {
+    Ok(DELETIONS
+        .get_lenient(store, txn, &attempt)?
+        .and_then(|deletion| deletion.lineage))
 }
 
 /// The run's deletion lines in time/id order, read beside its remaining rows.
@@ -69,7 +95,11 @@ pub(crate) fn deletions_for_run_in_txn(
 
 /// Receipts keep their time, not an erased actor (FIX 812). Attempt ids are
 /// not entity ids: the deletion's attempt key remains the historical fact.
-/// Only the resident-run producer embeds a proven actor in its run tag.
+/// Only the resident-run producer embeds a proven actor in its run tag. The
+/// lineage links stay as they are: they name an agent definition and a try,
+/// never a person, as the live queue row keeps them through an erase, and a
+/// lineage that lost a link would let a fork settle its own lineage's
+/// proposal.
 pub(crate) fn erase_attempt_delete_actor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
