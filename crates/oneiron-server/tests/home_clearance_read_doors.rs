@@ -76,6 +76,9 @@ struct Host {
     outside_slip: CapabilitySlip,
     outside_token: String,
     outside_key: SigningKey,
+    outside_person_slip: CapabilitySlip,
+    outside_person_token: String,
+    outside_person_key: SigningKey,
     agent_slip: CapabilitySlip,
     agent_token: String,
     agent_key: SigningKey,
@@ -331,8 +334,17 @@ impl Host {
         claims.actor_class = Some("human".to_owned());
         claims.scope = scope;
         claims.slip_id = [0x66; 32];
-        let outside_slip = vault.mint_capability_slip(&issuer, claims)?;
+        let outside_slip = vault.mint_capability_slip(&issuer, claims.clone())?;
         let outside_token = outside_slip.to_token()?;
+        // The same read-only credential held by the contact's PERSON: the
+        // facade binds a `human` caller only to a PERSON, never to a
+        // COUNTERPARTY_CONTACT, so recall reads as this outside reader.
+        let outside_person_key = SigningKey::from_bytes(&[0x69; 32]);
+        claims.holder_ref = outside_person.to_hex();
+        claims.binding_key = outside_person_key.verifying_key().to_bytes();
+        claims.slip_id = [0x69; 32];
+        let outside_person_slip = vault.mint_capability_slip(&issuer, claims)?;
+        let outside_person_token = outside_person_slip.to_token()?;
         let agent = mint_agent_slips(&vault, &issuer, &owner_slip, &author)?;
         let app = build_app(server);
         Ok(Self {
@@ -345,6 +357,9 @@ impl Host {
             outside_slip,
             outside_token,
             outside_key,
+            outside_person_slip,
+            outside_person_token,
+            outside_person_key,
             agent_slip: agent.slip,
             agent_token: agent.token,
             agent_key: agent.key,
@@ -422,6 +437,33 @@ impl Host {
         let request = Request::post(path)
             .header("authorization", format!("Bearer {}", self.outside_token))
             .header("x-oneiron-binding", self.outside_binding()?)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))?;
+        let response = self.app.clone().oneshot(request).await?;
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+        let answer: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+            panic!(
+                "{path} answered no JSON: {}",
+                String::from_utf8_lossy(&bytes)
+            )
+        });
+        Ok((status, answer))
+    }
+
+    /// A POST as the outside reader's PERSON-held credential.
+    async fn post_as_outside_person(
+        &self,
+        path: &str,
+        body: Value,
+    ) -> TestResult<(StatusCode, Value)> {
+        let binding = self.holder_binding(&self.outside_person_slip, &self.outside_person_key)?;
+        let request = Request::post(path)
+            .header(
+                "authorization",
+                format!("Bearer {}", self.outside_person_token),
+            )
+            .header("x-oneiron-binding", binding)
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))?;
         let response = self.app.clone().oneshot(request).await?;
@@ -622,31 +664,37 @@ fn outside_hydrate_leaves_stamped_claims_out() -> TestResult {
         let refs = [
             (
                 "unstamped",
+                false,
                 host.unstamped,
                 oneiron::retrieval_depth::short_ref_or_hex(&host.vault, &host.unstamped)?,
             ),
             (
                 "public",
+                false,
                 host.public,
                 oneiron::retrieval_depth::short_ref_or_hex(&host.vault, &host.public)?,
             ),
             (
                 "private stamped",
+                true,
                 host.private_stamped,
                 oneiron::retrieval_depth::short_ref_or_hex(&host.vault, &host.private_stamped)?,
             ),
             (
                 "sensitive stamped",
+                true,
                 host.sensitive_stamped,
                 oneiron::retrieval_depth::short_ref_or_hex(&host.vault, &host.sensitive_stamped)?,
             ),
         ];
-        for (name, id, reference) in &refs {
-            let stamped = name.contains("stamped");
+        // Each claim names whether the home withholds it from the outside
+        // reader: the private and sensitive stamped claims (a name test
+        // would also match "unstamped").
+        for (name, withheld, id, reference) in &refs {
             let (status, answer) = host
                 .post_as_outside(HYDRATE, json!({"ref": reference}))
                 .await?;
-            if stamped {
+            if *withheld {
                 assert_eq!(
                     status,
                     StatusCode::NOT_FOUND,
@@ -687,7 +735,7 @@ fn outside_recall_leaves_stamped_claims_out() -> TestResult {
     on_engine_stack(|| async {
         let host = Host::new()?;
         let body = json!({"query": SHARED_WORD, "limit": 10});
-        let (status, pack) = host.post_as_outside(RECALL, body.clone()).await?;
+        let (status, pack) = host.post_as_outside_person(RECALL, body.clone()).await?;
         assert_eq!(
             status,
             StatusCode::OK,
