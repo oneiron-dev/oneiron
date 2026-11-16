@@ -262,6 +262,13 @@ objc2-core-ml = { version = "=0.3.2", default-features = false, features = [
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 
+# Its server's vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`).
+[[test]]
+name = "pairing_owner_act"
+path = "tests/pairing_owner_act.rs"
+required-features = ["oneiron/test-support"]
+
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }
 # `util` carries `ServiceExt::oneshot`, which the router-level rows in
@@ -395,13 +402,6 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-brok
 name = "consent_revoke_grantee_renounce"
 path = "tests/consent_revoke_grantee_renounce.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
-
-# Its server's vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
-# `oneiron/test-support`).
-[[test]]
-name = "pairing_owner_act"
-path = "tests/pairing_owner_act.rs"
-required-features = ["oneiron/test-support"]
 
 [[test]]
 name = "facade_live_run_status"
