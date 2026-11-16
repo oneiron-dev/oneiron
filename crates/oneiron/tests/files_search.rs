@@ -190,6 +190,7 @@ impl FilesVault {
                 query: query.to_owned(),
                 sources: None,
                 limit: None,
+                devices: None,
             },
         )
         .map_err(at("search the Files sources"))
