@@ -192,6 +192,8 @@ pub(crate) fn scrub_missed_note_deletes(
 }
 
 fn scrub_other_windows(vault: &Vault, window: &str, notes: &[EntityId], take_lock: bool) {
+    #[cfg(oneiron_test_support)]
+    run_scrub_entry_hook(notes);
     for loaded in vault.live_windows() {
         let holds_bundles = matches!(
             loaded.doc.get_value(),
@@ -218,4 +220,60 @@ fn scrub_other_windows(vault: &Vault, window: &str, notes: &[EntityId], take_loc
             ),
         }
     }
+}
+
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static SCRUB_ENTRY_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce(&[EntityId])>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `hook` once, on this thread, with the NOTEs the next scrub of the
+/// other live windows here takes out, before it lists those windows
+/// (FIX 25183).
+#[cfg(oneiron_test_support)]
+pub(crate) fn arm_scrub_entry_hook(hook: impl FnOnce(&[EntityId]) + 'static) {
+    SCRUB_ENTRY_HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(oneiron_test_support)]
+fn run_scrub_entry_hook(notes: &[EntityId]) {
+    if let Some(hook) = SCRUB_ENTRY_HOOK.with(|slot| slot.borrow_mut().take()) {
+        hook(notes);
+    }
+}
+
+/// Puts into `doc`'s `note_proposals`, by a bridge commit, the review bundle
+/// `bundle` whose one member is a waiting fork of `note`: the projection a
+/// window carries beside `note`. Returns the bundle's key (FIX 25183).
+#[cfg(oneiron_test_support)]
+pub(crate) fn seed_waiting_bundle(
+    doc: &LoroDoc,
+    bundle: EntityId,
+    note: EntityId,
+) -> Result<String> {
+    let fork = NoteFork {
+        note,
+        fork: EntityId::now(),
+        parent: note,
+        frontier: Vec::new(),
+        recovery_merge: None,
+        actor: crate::note::NoteActor::Erased,
+        rewrite: false,
+        proposal: None,
+        decided: false,
+    };
+    let carrier = BundleCarrier {
+        bundle: NoteReviewBundle {
+            id: bundle,
+            waiting: vec![fork],
+            landed: Vec::new(),
+            explainer: REDACTED.to_owned(),
+        },
+        complete: false,
+    };
+    let key = bundle.to_hex();
+    map_insert_bytes(&doc.get_map("note_proposals"), &key, &pack(&carrier)?)?;
+    doc.commit_with(loro::CommitOptions::new().origin(BRIDGE_ORIGIN));
+    Ok(key)
 }

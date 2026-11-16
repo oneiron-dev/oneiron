@@ -12,6 +12,8 @@ mod materialize;
 mod mirror;
 mod scrub;
 mod workflows;
+#[cfg(oneiron_test_support)]
+pub(crate) use scrub::{arm_scrub_entry_hook, seed_waiting_bundle};
 pub(crate) use scrub::{
     deleted, deleted_elsewhere, deleted_elsewhere_under_lock, scrub_missed_note_deletes,
 };
