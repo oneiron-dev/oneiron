@@ -201,6 +201,15 @@ impl Vault {
             ActAuthority::Owner(owner, _) => owner,
             ActAuthority::Agent(_) => return Err(authority_refused(CANCEL_OWNER_ONLY)),
         };
+        // RED MUTATION: the node sends every Cancel to the box unchecked.
+        return box_hold.cancel_pending_box_release(
+            &RecoveryBoxCanceller {
+                owner: proof.person,
+                key: proof.key,
+            },
+            proof.release_receipt,
+        );
+        #[allow(unreachable_code)]
         let cancelled_by = {
             let txn = self.store.env.read_txn()?;
             let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
