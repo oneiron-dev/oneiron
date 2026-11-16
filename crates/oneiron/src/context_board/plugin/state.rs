@@ -15,7 +15,6 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
-use serde::{Deserialize, Serialize};
 use std::ops::Bound;
 
 /// Block rows one read snapshot serves: a work-page size, not a cap. A larger
@@ -68,12 +67,8 @@ impl SideKey for BlockKey {
     }
 }
 
-/// The implemented durable block kinds: plugin board state, not the session pad.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BoardBlockKind {
-    Scratchpad,
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::plugin::state::{BoardBlockKind, BoardBlockRecord};
 
 /// A block belongs to one actor. There is no implicit vault-wide fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,19 +82,6 @@ pub struct BoardBlockWriteEnvelope {
     pub section_id: SectionId,
     pub kind: BoardBlockKind,
     pub scope: BoardBlockScope,
-    pub source_revision_ref: [u8; 16],
-    pub markdown: String,
-}
-
-/// Stored revision of an actor-owned block, returned after commit and on read.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BoardBlockRecord {
-    pub schema_version: u16,
-    pub block_ref: [u8; 16],
-    pub section_id: SectionId,
-    pub kind: BoardBlockKind,
-    pub author_ref: [u8; 16],
     pub source_revision_ref: [u8; 16],
     pub markdown: String,
 }
