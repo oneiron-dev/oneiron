@@ -48,8 +48,8 @@ use crate::vault::Vault;
 
 mod grants;
 
-/// Domain of a repo file read's identity digests and its fingerprint.
-const REPO_FILE_DOMAIN: &[u8] = b"oneiron.secret_reveal.repo_file.v1";
+#[doc(hidden)]
+use oneiron_records::secret_custody::reveal::file::repo::{REPO_FILE_DOMAIN, digest, hex};
 
 /// The handle a repo file's opaque residue is read as, in place of keys'.
 const REPO_SEALED_HANDLE: &str = "sealed repo file";
@@ -431,19 +431,4 @@ impl Vault {
             _ => RepoFileSight::Masked,
         })
     }
-}
-
-/// The BLAKE3 of `fields` under [`REPO_FILE_DOMAIN`], each length-prefixed.
-fn digest(fields: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REPO_FILE_DOMAIN);
-    for field in fields {
-        hasher.update(&(field.len() as u64).to_be_bytes());
-        hasher.update(field);
-    }
-    *hasher.finalize().as_bytes()
-}
-
-fn hex(bytes: &[u8; 32]) -> String {
-    crate::entity_id::bytes_to_hex_lower(bytes)
 }
