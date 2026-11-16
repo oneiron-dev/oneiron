@@ -234,7 +234,8 @@ impl Vault {
         if row.status != ModelBindingStatus::Proposed {
             return Err(invalid("model binding proposal is already settled"));
         }
-        if status == ModelBindingStatus::Accepted {
+        // BF2 (red head): a denial binds the candidate as an acceptance does.
+        if status != ModelBindingStatus::Proposed {
             if crate::llm::decision::questions::read_question_in_txn(
                 self,
                 &txn,
