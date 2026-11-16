@@ -66,7 +66,10 @@ use serde::Serialize;
 /// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
 /// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
 /// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
+/// 43: on a hosted fold a `human` bind or rebind, and a bind or rebind of a key whose binding,
+/// live or revoked, is `human`, counts only with the proof of an owner key no cloud key holds
+/// (rows OLD-PARENTS-OWNER-BINDING-REVOKE, OLD-PARENTS-OWNER-BINDING-CONFLICT).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

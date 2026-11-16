@@ -893,18 +893,7 @@ impl Vault {
             return Ok(());
         };
         let now = self.now_recorded_at();
-        let mut bind = next_entry(issuer, &fold, op, now)?;
-        let proof_key = proof.root();
-        bind.cosigns.push(AuthoritySignature {
-            suite: proof_key.suite(),
-            public_key: proof_key,
-            signature: vec![0; 64],
-        });
-        let proved = proof.sign_owner_proof(&authority_transcript(&bind)?)?;
-        if let Some(cosign) = bind.cosigns.last_mut() {
-            cosign.signature = proved;
-        }
-        issuer.resign_entry(&mut bind)?;
+        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, proof.as_ref())?;
         let at = TimeRange {
             start: now,
             end: now,
