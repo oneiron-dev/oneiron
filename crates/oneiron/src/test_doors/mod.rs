@@ -55,6 +55,7 @@ pub mod dreamer_attempt_binding;
 pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
+pub mod enum_name_rows;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
