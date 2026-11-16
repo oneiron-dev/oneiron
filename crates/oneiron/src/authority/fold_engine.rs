@@ -456,6 +456,7 @@ pub(super) fn fold_authority_log_once_with(
         &entry_ancestors,
         context,
         &mut issues,
+        |hash| retirements.fences_signer_of(hash, &by_hash),
     );
     // A counted row below its floor shows its signer forked its sequence
     // (Engine RULING SEQ-FLOOR-SHAPE-S = B): the fold records the fork.
