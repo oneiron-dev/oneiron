@@ -85,12 +85,8 @@ impl EmergencyPlan {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EmergencyLocalBasis {
-    PreStartCancellation,
-    EmergencyAtOrAfterStart,
-    RequestUpdate,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::emergency_reschedule::planning::EmergencyLocalBasis;
 
 /// Local state is committed with both passports, before the first intent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

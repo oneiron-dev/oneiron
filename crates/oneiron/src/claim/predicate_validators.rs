@@ -224,27 +224,7 @@ pub(crate) fn coreference_share_consent_pact_id(
 fn decode_coreference_pact_id(hex: &str) -> Result<[u8; COREFERENCE_PACT_ID_LEN]> {
     let malformed =
         || Error::InvalidClaimBody("coreference pact_id must be 64 lowercase hex chars");
-    if hex.len() != COREFERENCE_PACT_ID_HEX_LEN {
-        return Err(malformed());
-    }
-    let (chunks, rem) = hex.as_bytes().as_chunks::<2>();
-    debug_assert!(rem.is_empty());
-    let mut bytes = [0_u8; COREFERENCE_PACT_ID_LEN];
-    for (slot, &[hi, lo]) in bytes.iter_mut().zip(chunks) {
-        let (Some(hi), Some(lo)) = (lowercase_hex_nibble(hi), lowercase_hex_nibble(lo)) else {
-            return Err(malformed());
-        };
-        *slot = (hi << 4) | lo;
-    }
-    Ok(bytes)
-}
-
-const fn lowercase_hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
+    oneiron_hex::decode::<COREFERENCE_PACT_ID_LEN>(hex).ok_or_else(malformed)
 }
 
 pub(super) fn validate_conflict_claim_structure(body: &ClaimBody) -> Result<()> {

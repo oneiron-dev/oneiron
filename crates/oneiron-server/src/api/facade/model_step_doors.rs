@@ -1,8 +1,11 @@
 //! Model steps on the owner's proof, or on a live run's own actor (slice
 //! 6.5c); HTTP, SDK and MCP reach the same typed door.
 //! Saved terminals and response checkpoints answer before fresh provider admission.
+//! An owner's step parked on its offer's health resumes on its own once the
+//! offer is back.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use axum::response::Response;
 use oneiron::agent_dispatch::AgentDispatcher;
@@ -67,10 +70,79 @@ pub(crate) async fn ai_steps_submit(
 ) -> Listed<ModelStepReceipt> {
     let (live_run, mut input) = input.into_parts();
     let answer = match live_run {
-        None => submit(server, auth, &mut input).await,
+        None => {
+            let submitted = input.clone();
+            let answer = submit(server, auth, &mut input).await;
+            if let Ok(ModelStepReceipt {
+                result: Some(ModelStepResult::Parked { until, .. }),
+                ..
+            }) = &answer
+            {
+                resume_when_back(server, auth, submitted, *until);
+            }
+            answer
+        }
         Some(handle) => submit_on_run(server, auth, session, &handle, input).await,
     };
     listed(answer)
+}
+
+/// How long a parked step whose offer names no end to its rest (a probation
+/// request is out) waits before it asks again.
+const RESUME_POLL: Duration = Duration::from_secs(1);
+
+/// An owner's step parked on its offer's health resumes on its own (FIX
+/// 11226): a task on this server waits until the offer is back, at `until` on
+/// the vault's clock, and submits the step again as its owner did. Each
+/// resume admits it afresh under the owner's live proof, so a credential
+/// withdrawn meanwhile ends it, and keeps the sends the step made. A step
+/// that parks again waits again; one its owner submits meanwhile is
+/// serialized by its invocation claim. The task holds the server weakly and
+/// ends with it. A restart drops it: a later submission of the same key
+/// resumes the step. A live run's own step that parks is resumed by the
+/// run's next submission of its key: its lease, not an owner proof, admits
+/// it, and the run holds that.
+fn resume_when_back(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ModelStepSubmit,
+    until: Option<u64>,
+) {
+    let server = Arc::downgrade(server);
+    let auth = auth.clone();
+    tokio::spawn(async move {
+        let mut until = until;
+        loop {
+            let wait = {
+                let Some(live) = server.upgrade() else {
+                    return;
+                };
+                let now = live.vault().now_recorded_at();
+                until.map_or(RESUME_POLL, |until| {
+                    Duration::from_secs(until.saturating_sub(now))
+                })
+            };
+            tokio::time::sleep(wait).await;
+            let Some(live) = server.upgrade() else {
+                return;
+            };
+            let mut resumed = input.clone();
+            match submit(&live, &auth, &mut resumed).await {
+                Ok(ModelStepReceipt {
+                    result: Some(ModelStepResult::Parked { until: next, .. }),
+                    ..
+                }) => until = next,
+                Ok(_) => return,
+                Err(error) => {
+                    tracing::warn!(
+                        code = %error.code,
+                        "a parked model step did not resume; a submission of its key resumes it"
+                    );
+                    return;
+                }
+            }
+        }
+    });
 }
 
 async fn submit(
@@ -103,6 +175,9 @@ async fn submit(
         crate::api::llm::admit(server, auth, &mut input.request).map_err(inference_refusal)?;
     let run = exact_step_run(&ladder, run, input)?;
     let guard = raw_step_guard(server)?;
+    // A send held unsent while its offer rests for its health spends no
+    // attempt; the step waits for the offer as any call does (FIX 11226).
+    let rest_wait = ladder.step_rest_wait();
     let backend = StepBackend { ladder, run };
     let runtime = tokio::runtime::Handle::current();
     let server = Arc::clone(server);
@@ -114,6 +189,7 @@ async fn submit(
             input,
             &backend,
             &guard,
+            rest_wait,
         ))
     })
     .await
@@ -276,6 +352,9 @@ impl RunStep {
             .map_err(inference_refusal)?;
         let line = self.line(raw_run)?;
         let run = exact_step_run(&ladder, line.run, &mut input)?;
+        // The run's step waits out its offer's health rest as the owner's
+        // does (FIX 11226).
+        let rest_wait = ladder.step_rest_wait();
         let backend = RunStepBackend {
             step: StepBackend { ladder, run },
             lease: line.lease.as_ref().map(|lease| lease.on(vault)),
@@ -289,6 +368,7 @@ impl RunStep {
             &backend,
             &line.guard,
             line.spend.as_ref(),
+            rest_wait,
         ));
         // What the step's calls spent and no look booked goes on the scope
         // whatever the step answered. A booking that fails is an error of
