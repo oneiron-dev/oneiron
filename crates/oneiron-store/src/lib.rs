@@ -149,6 +149,7 @@ pub mod query_memos;
 pub mod reaction_predicate;
 pub mod reader_fold_receipt;
 pub mod receipt_identity;
+pub mod receipt_ref;
 pub mod receipt_row;
 pub mod receive_scan;
 pub mod record_links;

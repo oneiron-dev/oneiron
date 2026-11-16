@@ -545,7 +545,7 @@ fn revert_entry(entry: &CleanupRevertEntry) -> RevertEntry {
 }
 
 fn bytes_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 fn hexes(ids: &[EntityId]) -> Vec<String> {
@@ -571,9 +571,5 @@ fn none_erased(count: &usize) -> bool {
 }
 
 fn attempt_hex(attempt: oneiron::attempt_queue::AttemptId) -> String {
-    attempt
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    oneiron_hex::encode(attempt.as_bytes())
 }
