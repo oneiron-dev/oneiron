@@ -148,6 +148,14 @@ impl Vault {
         }
     }
 
+    /// [`Self::evict_inquiry_answers_after_commit`] for a writer that commits
+    /// outside the write door and names none of its TASKs (a bearer link's
+    /// ask answer): every held task is re-checked, while any answer is held.
+    pub(crate) fn evict_inquiry_answers_after_raw_commit(&self) {
+        let held = self.inquiry_answers.tasks();
+        self.evict_inquiry_answers_after_commit(&held);
+    }
+
     /// Holds `statements` for `actor`'s `task` from `inquiry` until
     /// `valid_until`. Returns whether it holds them: never for a task that
     /// is not open, nor past `valid_until`.
