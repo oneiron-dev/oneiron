@@ -465,9 +465,10 @@ impl TextIndexStamp {
     }
 
     /// Whether `txn`'s snapshot holds this stamp: two gets. An absent hash
-    /// matches only an empty text index (an unstamped vault behind the
+    /// matches only an empty base text index (an unstamped vault behind the
     /// read-only door), since every first text write stamps the index in its
-    /// own transaction.
+    /// own transaction. The base alone decides on a session view too: its
+    /// overlay stages text rows only under this handle's own analyzer.
     pub(crate) fn stored_in(&self, store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
         match (
             read_analyzer_manifest_hash(store, txn)?,

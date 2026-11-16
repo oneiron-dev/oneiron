@@ -15,7 +15,9 @@
 //! The other analyzer here comes from a dictionary root: a Chinese jieba
 //! dictionary turns the zh lane from portable to native, which changes the
 //! analyzer manifest hash. One process holds one store per directory, so the
-//! other handle runs in a second process.
+//! other handle runs in a second process. The English words below tokenize
+//! alike under both analyzers, so these tests pin the refusal itself, not the
+//! scores a mismatched read would give.
 #![cfg(oneiron_test_support)]
 
 use oneiron::edge::EdgeActorClass;

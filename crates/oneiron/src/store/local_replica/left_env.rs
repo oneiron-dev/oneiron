@@ -683,6 +683,13 @@ fn kept_vectors_in(store: &Store, txn: &RoTxn<'_>, kept: &Kept) -> Result<Vec<Ke
 fn reindex_kept(vault: &Vault, txn: &mut RwTxn<'_>, kept: &Kept, cleared: Cleared) -> Result<()> {
     let store = &vault.store;
     if cleared.text {
+        // The stamp check a put runs before it indexes (FIX
+        // TEXT-READ-HANDLE-ANALYZER-MISMATCH). The cleared index is empty,
+        // so it stamps this handle's analyzer, the one the kept documents
+        // are indexed under below: another process's open may have stamped
+        // another since this handle opened, and that handle's reads then
+        // refuse instead of scoring these postings.
+        crate::vault::ensure_text_index_manifest_matches_wtxn(store, txn, &vault.analyzer)?;
         for id in &kept.ids {
             let Some(fields) = INDEX_SOURCE_TEXT.get(store, txn, id)? else {
                 continue;
