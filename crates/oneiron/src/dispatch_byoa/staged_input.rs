@@ -22,7 +22,6 @@ use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
 };
 use crate::checkout::CheckoutLeaseAct;
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 
@@ -36,13 +35,10 @@ use super::exhaust::{
     ByoaEgressPort, ByoaExhaust, ByoaTerminalDisposition, byoa_exhaust_artifact_id,
     canonical_result_version, decode_byoa_exhaust, decode_byoa_record,
 };
+use oneiron_contracts::fingerprint::purposes;
 
 pub(crate) use self::dispatch::StagedJob;
 pub(crate) use self::erase::erase_staged_input_in_txn;
-
-/// Domain separator for a staged job's artifact id, derived from the job's
-/// digest.
-const BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN: &[u8] = b"oneiron:byoa-staged-input-artifact:v1";
 
 /// Media type of a staged job's artifact.
 const BYOA_STAGED_INPUT_MEDIA_TYPE: &str = "application/vnd.oneiron.byoa-staged-input+json";
@@ -134,8 +130,8 @@ pub(super) fn staged_input_readable_in_txn(
 }
 
 fn staged_input_artifact_id(digest: &[u8; 32]) -> ByoaResult<EntityId> {
-    Ok(entity_id_from_hash_material(
-        BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN,
+    Ok(EntityId::derive_legacy_material(
+        purposes::dispatch_byoa::STAGED_INPUT_ARTIFACT,
         &[digest.as_slice()],
     )?)
 }

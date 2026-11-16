@@ -22,6 +22,7 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TimeAxis, Time
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::vault::LiveEntityRow;
 use crate::{EdgeKind, EntityId, Error, Result, TimeRange, Vault};
+use oneiron_contracts::fingerprint::purposes;
 
 const DAY_SECS: u64 = 86_400;
 
@@ -270,8 +271,7 @@ fn put_signal_in_txn(
         ),
     ]));
     let bytes = encode_claim_body(&body)?;
-    let id =
-        crate::codebase::entity_id_from_hash_material(b"oneiron:state-index-signal:v1", &[&bytes])?;
+    let id = EntityId::derive_legacy_material(purposes::affect::STATE_INDEX_SIGNAL, &[&bytes])?;
     if vault.get_claim_in_txn(txn, &id)?.is_none() {
         // Only a PERSON subject has a substrate FACET; any other subject takes
         // the vault default facet (a birth gate refusal otherwise, #4389).

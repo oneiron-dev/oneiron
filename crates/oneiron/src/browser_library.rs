@@ -59,7 +59,7 @@ pub use coverage::solved_group_coverage_read;
 pub(crate) use coverage::{filing_anchor_in, program_seen_in, solved_group_coverage_in};
 pub(crate) use erase::{erase_retired_actor_in_txn, erase_workflow_actor_in_txn};
 pub use evidence::{
-    CANDIDATE_DOMAIN, FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_RUN_DOMAIN,
+    CANDIDATE_DOMAIN, FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN,
     SOLVED_RUN_PREDICATE, SOLVED_SCOPE_DOMAIN, SavedBrowserCaller, ScopedSolvedGroupKey,
     SolvedCaptureGap, SolvedCaptureReceipt, SolvedGroupKey, SolvedRunCapture, SolvedRunEvidence,
     SolvedRunScope, SolvedSource, WORKFLOW_FILING_PREDICATE, WorkflowFiling, workflow_filing_id,

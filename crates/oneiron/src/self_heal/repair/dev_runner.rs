@@ -19,6 +19,7 @@ use crate::{EntityId, Error, Result};
 use super::super::invariant_canonical::canonical_invariant_value;
 use super::super::{DiagnosticEvent, validate_ref};
 use super::{RepairActor, RepairBundle, RepairOperation, RepairProposal};
+use oneiron_contracts::fingerprint::purposes;
 
 /// A review target, never a repository handle or migration executor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -288,8 +289,8 @@ impl HealerRegistration<'_> {
             .result_ref
             .ok_or_else(|| Error::InvalidConfig("dev runner has no captured patch".into()))?
             .into_string();
-        let proposal_id = crate::codebase::entity_id_from_hash_material(
-            b"oneiron:self-heal:dev-runner-proposal:v1",
+        let proposal_id = EntityId::derive_legacy_material(
+            purposes::self_heal::DEV_RUNNER_PROPOSAL,
             &[actor.entity_ref().as_bytes(), attempt_id.as_bytes()],
         )?;
         Ok(self.submit(

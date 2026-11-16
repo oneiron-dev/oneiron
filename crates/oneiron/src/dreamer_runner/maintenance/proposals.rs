@@ -16,6 +16,7 @@ use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSubject, EntityId, Error, Result, TimeRange, Vault,
 };
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
 
 /// The facet's shared proposal envelope plus the Gate's run-tray keys
@@ -166,8 +167,8 @@ pub(super) fn emit_fresh_in_txn(
 /// The id a finding with this subject, predicate and JSON value lands under:
 /// its content's, so the same finding lands once.
 fn finding_id(subject: EntityId, predicate: &str, value: &[u8]) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        b"oneiron:dreamer-maintenance-proposal:v1",
+    EntityId::derive_legacy_material(
+        purposes::dreamer::MAINTENANCE_PROPOSAL,
         &[subject.as_bytes(), predicate.as_bytes(), value],
     )
 }

@@ -40,9 +40,8 @@ pub use self::policy::{
 };
 pub use self::read_room::LfsReadRoom;
 pub use self::store::{
-    LFS_BASIC_TRANSFER, LFS_JSON_MEDIA_TYPE, LfsPutOutcome, VAULT_LFS_ASSET_ID_DOMAIN,
-    VAULT_LFS_REPO_ID_DOMAIN, VAULT_LFS_SCHEMA_VERSION, VaultLfsObject, check_lfs_expectation,
-    lfs_repo_id,
+    LFS_BASIC_TRANSFER, LFS_JSON_MEDIA_TYPE, LfsPutOutcome, VAULT_LFS_SCHEMA_VERSION,
+    VaultLfsObject, check_lfs_expectation, lfs_repo_id,
 };
 pub use self::transport::{
     LfsAction, LfsActionRequest, LfsBatchCredential, LfsBatchRequest, LfsOperation, LfsReply,

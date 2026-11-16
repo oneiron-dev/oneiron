@@ -47,7 +47,6 @@ use crate::origin::secret_projection::edit::RepoProjectedFileCopy;
 use crate::origin::secret_projection::git::projection_ingress_dir;
 use crate::store::code_document_values::CodeFileMetadataEdit;
 use crate::store::code_revision_record::{CodeRevisionFork, CodeTreeInventory};
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::store::repo_proposal_record::RepoProposedFile;
 use crate::store::repo_proposal_record::{
@@ -486,8 +485,8 @@ impl Vault {
                 after.as_ref().map(|(bytes, _)| bytes.clone()),
             ));
         }
-        let fork_session = entity_id_from_hash_material(
-            b"oneiron:push-candidate-session:v1",
+        let fork_session = EntityId::derive_legacy_material(
+            purposes::origin::PUSH_CANDIDATE_SESSION,
             &[id.as_bytes(), base.revision.revision_id.as_bytes()],
         )?;
         let message = format!(
@@ -619,3 +618,4 @@ fn held_with(
 }
 
 use crate::code_revision::CodeTreeInventoryRuntime;
+use oneiron_contracts::fingerprint::purposes;

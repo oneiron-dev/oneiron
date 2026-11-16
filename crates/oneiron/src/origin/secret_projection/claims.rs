@@ -45,17 +45,14 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitObjectKind, GitOid};
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::file_key_masks::MASKED_FILE_BAND;
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use oneiron_contracts::fingerprint::purposes;
 
 /// The predicate of every masked Git copy record.
 pub(crate) const REPO_SECRET_PROJECTION_PREDICATE: &str = "repo.secret_projection";
-
-/// The derivation domain of a record's id.
-const REPO_SECRET_PROJECTION_DOMAIN: &[u8] = b"oneiron:repo-secret-projection:v1";
 
 /// Where a changed object occurs in a changed parent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -470,8 +467,8 @@ fn derive_id(graph: Option<&EntityId>, identity: &Value) -> Result<EntityId> {
         Some(graph) => graph.as_bytes(),
         None => &[],
     };
-    entity_id_from_hash_material(
-        REPO_SECRET_PROJECTION_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::origin::SECRET_PROJECTION,
         &[&schema, graph, &packed(identity)?],
     )
 }

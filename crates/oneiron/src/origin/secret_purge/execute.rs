@@ -30,12 +30,8 @@ use crate::origin::publication::{
 };
 use crate::origin::residence::OriginAuthorityLease;
 use crate::origin::secret_projection::graph_objects::copy_repo_projection_objects;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
-
-/// The hash domain each ref move's intent id is derived under, from its
-/// plan and its ref.
-const INTENT_ID_DOMAIN: &[u8] = b"oneiron:repo-secret-purge-intent:v1";
+use oneiron_contracts::fingerprint::purposes;
 
 /// One planned ref move, parsed.
 struct Move {
@@ -247,8 +243,8 @@ impl Vault {
         authority: Option<&OriginAuthorityLease>,
         now: u64,
     ) -> Result<OriginPublicationReceipt> {
-        let intent = entity_id_from_hash_material(
-            INTENT_ID_DOMAIN,
+        let intent = EntityId::derive_legacy_material(
+            purposes::origin::SECRET_PURGE_INTENT,
             &[
                 frozen.plan.as_bytes().as_slice(),
                 step.name.as_str().as_bytes(),

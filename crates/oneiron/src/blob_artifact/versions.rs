@@ -9,7 +9,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::record_scope::BirthPosition;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::{BodyMint, ManifestDbs, StagedAssetBody, StagedHold};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -18,12 +17,13 @@ use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artif
 use super::body_file::{BlobBodyFile, BlobContent};
 use super::made_by::bind_version_made_by;
 use super::provenance::{BlobVersionProvenance, validate_provenance};
-use super::store_keys::{BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN};
+use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
 pub(super) use super::version_codec::decode_blob_artifact_version_record;
 use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::provenance::made_by::MadeBy;
+use oneiron_contracts::fingerprint::purposes;
 
 // The one version append every door takes.
 mod append;
@@ -844,7 +844,7 @@ pub(crate) fn read_blob_artifact_head_in_txn(
 pub(crate) fn blob_artifact_asset_entity_id(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<EntityId> {
-    entity_id_from_hash_material(BLOB_ARTIFACT_ASSET_ID_DOMAIN, &[content_hash])
+    EntityId::derive_legacy_material(purposes::blob::ARTIFACT_ASSET, &[content_hash])
 }
 
 /// OF-222 (FIX 2768) archive seam: the version chain tables a whole-vault archive carries

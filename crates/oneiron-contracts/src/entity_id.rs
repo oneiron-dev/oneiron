@@ -136,6 +136,22 @@ impl EntityId {
         purpose: LegacyPurpose,
         parts: &[&[u8]],
     ) -> crate::error::Result<Self> {
+        Self::derive_legacy_material_with_tag_suffix(purpose, &[], parts)
+    }
+
+    /// [`EntityId::derive_legacy_material`] for the one kind of site that extends its
+    /// tag at run time: the tag's bytes, then `tag_suffix` with no length before it,
+    /// then the salt and the parts as `derive_legacy_material` writes them. With an
+    /// empty suffix it is `derive_legacy_material`. The legacy rule hashed one byte
+    /// string as its domain, so a site that built that string from its inputs keeps
+    /// its ids this way until the launch reset (PLAN-UC-04 stage 9).
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn derive_legacy_material_with_tag_suffix(
+        purpose: LegacyPurpose,
+        tag_suffix: &[u8],
+        parts: &[&[u8]],
+    ) -> crate::error::Result<Self> {
         if purpose.hash() != LegacyHash::Blake3 || purpose.tag_mode() != TagMode::HashedFirst {
             return Err(crate::error::Error::InvariantViolation(
                 "a legacy material id takes a BLAKE3 purpose whose tag is hashed first",
@@ -143,7 +159,7 @@ impl EntityId {
         }
         for salt in 0_u64..=u64::MAX {
             let mut digest = LegacyDigest::new(purpose);
-            digest.raw(&salt.to_le_bytes());
+            digest.raw(tag_suffix).raw(&salt.to_le_bytes());
             for part in parts {
                 digest.len_u64_le(part.len()).raw(part);
             }

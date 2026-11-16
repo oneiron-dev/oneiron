@@ -25,7 +25,6 @@ use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
 };
 use crate::checkout::CheckoutId;
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::LlmUsage;
@@ -44,9 +43,7 @@ use super::seat_candidate::runner_seat_candidate;
 use super::seat_quota::{seat_quota_id, seat_quotas_in_txn};
 use super::staged_input::{StagedInputPin, carry_staged_input};
 use super::work_usage::captured_usage;
-
-/// Domain a binding id is derived under.
-const RUNNER_WORK_BINDING_DOMAIN: &[u8] = b"oneiron:byoa-runner-work-binding:v1";
+use oneiron_contracts::fingerprint::purposes;
 
 /// Domain a terminal outcome's step hash is derived under.
 const RUNNER_WORK_TERMINAL_DOMAIN: &str = "oneiron.byoa.runner-work-terminal.v1";
@@ -69,8 +66,8 @@ impl RunnerWorkBindingId {
     /// # Errors
     /// Returns [`super::ByoaError::Store`] when no id can be derived.
     pub fn of(parent: AttemptId, step_key: &str) -> ByoaResult<Self> {
-        Ok(Self(entity_id_from_hash_material(
-            RUNNER_WORK_BINDING_DOMAIN,
+        Ok(Self(EntityId::derive_legacy_material(
+            purposes::dispatch_byoa::RUNNER_WORK_BINDING,
             &[parent.as_bytes(), step_key.as_bytes()],
         )?))
     }

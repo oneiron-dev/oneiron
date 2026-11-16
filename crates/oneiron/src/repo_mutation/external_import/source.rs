@@ -31,10 +31,10 @@ use serde::{Deserialize, Serialize};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::codebase::entity_id_from_hash_material;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::BrokerIsolation;
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_contracts::fingerprint::purposes;
 
 /// The import's immutable source claim.
 pub(crate) use crate::store::repo_import_predicate::EXTERNAL_IMPORT_SOURCE_PREDICATE;
@@ -44,11 +44,6 @@ pub(crate) const EXTERNAL_IMPORT_DISPATCH_PREDICATE: &str = "repo.external_impor
 pub(crate) const EXTERNAL_IMPORT_OBSERVATION_PREDICATE: &str = "repo.external_import_observation";
 /// The source one imported ref is bound to.
 pub(crate) const EXTERNAL_IMPORT_REF_PREDICATE: &str = "repo.external_import_ref";
-
-const SOURCE_DOMAIN: &[u8] = b"oneiron:external-import:v1";
-const DISPATCH_DOMAIN: &[u8] = b"oneiron:external-import-dispatch:v1";
-const OBSERVATION_DOMAIN: &[u8] = b"oneiron:external-import-observation:v1";
-const REF_DOMAIN: &[u8] = b"oneiron:external-import-ref:v1";
 
 /// The only schema these records are read at: no migration, no default.
 const SCHEMA_VERSION: u32 = 1;
@@ -216,8 +211,8 @@ pub(crate) fn source_id(record: &SourceRecord) -> Result<EntityId> {
         .pull_request
         .map(|number| number.to_string())
         .unwrap_or_default();
-    entity_id_from_hash_material(
-        SOURCE_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::code::EXTERNAL_IMPORT_SOURCE,
         &[
             b"store",
             record.object_store.as_bytes(),
@@ -247,8 +242,8 @@ pub(crate) fn source_id(record: &SourceRecord) -> Result<EntityId> {
 
 /// The one dispatch id of `step` for `import`.
 pub(crate) fn dispatch_id(import: EntityId, step: ImportStep) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        DISPATCH_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::code::EXTERNAL_IMPORT_DISPATCH,
         &[
             b"import",
             import.as_bytes(),
@@ -260,8 +255,8 @@ pub(crate) fn dispatch_id(import: EntityId, step: ImportStep) -> Result<EntityId
 
 /// The one binding id of `imported_ref` on the anchor `code_repo`.
 fn ref_binding_id(code_repo: EntityId, imported_ref: &str) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        REF_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::code::EXTERNAL_IMPORT_REF,
         &[
             b"code_repo",
             code_repo.as_bytes(),
@@ -273,8 +268,8 @@ fn ref_binding_id(code_repo: EntityId, imported_ref: &str) -> Result<EntityId> {
 
 fn observation_id(record: &ObservationRecord) -> Result<EntityId> {
     let fact = rmp_serde::to_vec_named(record).map_err(|_| invalid("import fact encode"))?;
-    entity_id_from_hash_material(
-        OBSERVATION_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::code::EXTERNAL_IMPORT_OBSERVATION,
         &[
             b"attempt",
             record.attempt.as_bytes(),

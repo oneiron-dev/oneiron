@@ -20,18 +20,15 @@ use super::trailer::commit_message_with_provenance_trailer;
 use super::types::{RepoBundleFile, RepoForkHash, RepoMutationOperation, RepoMutationRequest};
 use crate::Vault;
 use crate::code_document::{CodeFileEdit, CodeFileIngress, CodeFileMetadataEdit, CodeFilePresence};
-use crate::codebase::{DEFAULT_CODE_FILE_MODE, RepoRef, entity_id_from_hash_material};
+use crate::codebase::{DEFAULT_CODE_FILE_MODE, RepoRef};
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::merge_queue::{MergeFile, MergeFileExpected, MergeProposal};
 use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::fingerprint::purposes;
 
 pub(crate) mod tree;
-
-/// CALL BUNDLE-CHILD-OP: the hash domain of the deterministic document
-/// operation a native bundle's file lowers to, from (proposal, index).
-const BUNDLE_FILE_OPERATION_DOMAIN: &[u8] = b"oneiron:repo-bundle-file-op:v1";
 
 /// The reviewed bytes one native bundle may hold, all files together: the
 /// same bound one ordinary proposal's file has.
@@ -93,8 +90,8 @@ impl RepoProposal {
                 file.source_operation
                     .ok_or(invalid("a received file names its source operation"))?,
             ),
-            RepoProposalOperation::CommitFiles => entity_id_from_hash_material(
-                BUNDLE_FILE_OPERATION_DOMAIN,
+            RepoProposalOperation::CommitFiles => EntityId::derive_legacy_material(
+                purposes::code::BUNDLE_FILE_OPERATION,
                 &[self.id.as_bytes(), &(index as u64).to_be_bytes()],
             ),
             RepoProposalOperation::CommitFile

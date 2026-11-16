@@ -9,11 +9,11 @@ use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::store::EngineScan;
 use crate::store::code_document_receipt::CodeEditReceipt;
 use crate::store::code_document_values::CodeFileEdit;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::store::scan_count::ScanCount;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_contracts::fingerprint::purposes;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[doc(hidden)]
@@ -101,8 +101,8 @@ impl Vault {
         attribution: &ReceivePackAttribution,
         now: u64,
     ) -> Result<()> {
-        let session = entity_id_from_hash_material(
-            b"oneiron:push-session:v1",
+        let session = EntityId::derive_legacy_material(
+            purposes::origin::PUSH_SESSION,
             &[
                 repo.identity().as_hex().as_bytes(),
                 attribution.provenance_claim_id.as_bytes(),
@@ -411,8 +411,8 @@ fn file_operation_id(
     old_mode: Option<u32>,
     new_mode: Option<u32>,
 ) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:push-file-operation:v1",
+    EntityId::derive_legacy_material(
+        purposes::origin::PUSH_FILE_OPERATION,
         &[
             provenance.as_bytes(),
             ref_name.as_bytes(),

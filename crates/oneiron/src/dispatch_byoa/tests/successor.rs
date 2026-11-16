@@ -7,6 +7,10 @@ use crate::attempt_queue::{
     ManifestKind, RequestAttemptCancel,
 };
 use crate::error::ArtifactError;
+use oneiron_contracts::fingerprint::purposes;
+
+/// The canonical PERSON body of the host runtime's actor: its purpose's tag.
+const RUNTIME_ACTOR_BODY: &[u8] = purposes::dispatch_byoa::RUNTIME_ACTOR.tag().as_bytes();
 
 fn claimed_with_manifest(
     vault: &Vault,
@@ -529,8 +533,8 @@ fn compatible_person_collision_rejects_capture_without_overwrite_or_settlement()
     for body in [
         Vec::new(),
         b"caller-controlled person".to_vec(),
-        BYOA_RUNTIME_ACTOR_DOMAIN[..BYOA_RUNTIME_ACTOR_DOMAIN.len() - 1].to_vec(),
-        [BYOA_RUNTIME_ACTOR_DOMAIN, b"-caller"].concat(),
+        RUNTIME_ACTOR_BODY[..RUNTIME_ACTOR_BODY.len() - 1].to_vec(),
+        [RUNTIME_ACTOR_BODY, b"-caller"].concat(),
     ] {
         for disposition in [
             ByoaTerminalDisposition::Completed,
@@ -591,7 +595,7 @@ fn exact_canonical_runtime_body_is_reused_without_rewriting_actor_metadata() {
             crate::registry::ENTITY_TYPE_PERSON,
             TimeRange { start: 5, end: 7 },
             8,
-            BYOA_RUNTIME_ACTOR_DOMAIN,
+            RUNTIME_ACTOR_BODY,
         )
         .expect("canonical runtime actor");
     let original = vault.get_raw(&actor.entity_ref()).expect("original actor");

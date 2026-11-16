@@ -16,21 +16,20 @@
 use serde::{Deserialize, Serialize};
 
 use super::{ACTIVE, ModelPackChange, ModelPackReceipt, ModelPackSetting, PREFERENCE, invalid};
+use crate::EntityId;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::settings::model_pack::ModelPackPreference;
 use crate::skill_hub::pack_catalog::InstalledModelPack;
+use oneiron_contracts::fingerprint::purposes;
 
 /// Producer of the owner's notice of a pack change.
 pub const MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER: &str = "llm.model_pack.change";
 
 /// The verb a change notice's tap calls.
 pub const MODEL_PACK_REVERT_VERB: &str = "vault.model_pack.revert";
-
-/// Domain separator for a pack change's id.
-const MODEL_PACK_CHANGE_ID_DOMAIN: &[u8] = b"oneiron:model-pack-change:v1";
 
 /// What moved the pack the vault follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,8 +119,8 @@ pub(super) fn model_pack_change_ref(
     let prior_ref = prior.map_or("", |change| change.change_ref.as_str());
     let active_hash = active.map_or("", |receipt| receipt.content_hash.as_str());
     let active_pack = active.map_or("", |receipt| receipt.pack.as_str());
-    Ok(crate::store::code_snapshot::entity_id_from_hash_material(
-        MODEL_PACK_CHANGE_ID_DOMAIN,
+    Ok(EntityId::derive_legacy_material(
+        purposes::llm::MODEL_PACK_CHANGE,
         &[
             prior_ref.as_bytes(),
             active_pack.as_bytes(),

@@ -30,9 +30,7 @@ use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::AttemptInterventionKind;
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-
-/// Domain separator for a notification's producer-derived id.
-const NOTIFICATION_ID_DOMAIN: &[u8] = b"oneiron:inbox-notification:v1";
+use oneiron_contracts::fingerprint::purposes;
 
 /// Stored weight of the conversation → notification link: `Attached`'s
 /// default prior.
@@ -91,8 +89,8 @@ pub fn decode_notification_body(raw: &[u8]) -> Result<NotificationBody> {
 
 /// The row id a producer's event lands under.
 pub(crate) fn notification_id(source: &NotificationSource) -> Result<EntityId> {
-    crate::store::code_snapshot::entity_id_from_hash_material(
-        NOTIFICATION_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::inbox::NOTIFICATION,
         &[source.producer.as_bytes(), source.event.as_bytes()],
     )
 }

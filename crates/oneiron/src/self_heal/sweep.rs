@@ -16,6 +16,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::{ClaimSource, EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::purposes;
 
 /// The sweep's working-set scope.
 pub const TIER1_SWEEP_SCOPE: &str = "vault";
@@ -139,8 +140,8 @@ impl Vault {
                 }
                 _ => continue,
             };
-            let proposal_id = crate::codebase::entity_id_from_hash_material(
-                b"oneiron:self-heal:tier1-repair:v1",
+            let proposal_id = EntityId::derive_legacy_material(
+                purposes::self_heal::TIER1_REPAIR,
                 &[id.as_bytes()],
             )?;
             if self.healer_proposal(&proposal_id)?.is_some() {

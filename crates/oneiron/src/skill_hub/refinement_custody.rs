@@ -3,7 +3,6 @@
 //! only opaque ids. Neither an ASSET nor a receipt grants write authority.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{ClaimRefinementMergeReceipt, SharedSkillMergeReceipt, package_codec::invalid};
 use crate::side_table::{self, Raw, SideTable};
@@ -24,18 +23,17 @@ use crate::store::skill_refinement_custody::{
     BINDING, LATEST, LatestRuling, OWNED, RETIRED_SOURCE, refinement_custody_exists_in_txn,
     remove_refinement_carrier_in_txn,
 };
-const DOMAIN: &[u8] = b"oneiron.refinement-receipt.asset.v1\0";
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 /// Empty marker that a holder's custody is permanently closed.
 const RETIRED_HOLDER: SideTable<EntityId, (), Raw> =
     SideTable::new(&side_table::SKILL_HUB_REFINEMENT_HOLDER_RETIRED);
 const ERASE_CHUNK: usize = 128;
 
 fn receipt_id(candidate: &EntityId, ruling: &EntityId) -> Result<EntityId> {
-    let hash = Sha256::new()
-        .chain_update(DOMAIN)
-        .chain_update(candidate.as_bytes())
-        .chain_update(ruling.as_bytes())
-        .finalize();
+    let hash = LegacyDigest::new(purposes::skill_hub::REFINEMENT_RECEIPT_ASSET)
+        .raw(candidate.as_bytes())
+        .raw(ruling.as_bytes())
+        .finish();
     EntityId::from_bytes(
         hash[..16]
             .try_into()

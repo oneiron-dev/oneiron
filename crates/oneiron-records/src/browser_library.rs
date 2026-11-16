@@ -9,7 +9,6 @@ pub use crate::browser_library::admission::SourceUnavailable;
 pub use crate::browser_library::evidence::FiledScope;
 pub use crate::browser_library::evidence::SOLVED_CAPTURE_VERSION;
 pub use crate::browser_library::evidence::SOLVED_GROUP_DOMAIN;
-pub use crate::browser_library::evidence::SOLVED_RUN_DOMAIN;
 pub use crate::browser_library::evidence::SOLVED_SCOPE_DOMAIN;
 pub use crate::browser_library::evidence::SolvedRunScope;
 pub use crate::browser_library::evidence::SolvedSource;

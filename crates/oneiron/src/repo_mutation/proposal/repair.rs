@@ -24,15 +24,14 @@ use super::{
 };
 use crate::Vault;
 use crate::claim::ClaimSubject;
-use crate::codebase::{RepoRef, entity_id_from_hash_material};
+use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::repo_mutation::types::RepoForkHash;
+use oneiron_contracts::fingerprint::purposes;
 
 /// The predicate of the link from a failed proposal to its replacement.
 pub(crate) const PROPOSAL_REPLACEMENT_PREDICATE: &str = "repo.proposal_replacement";
-
-const PROPOSAL_REPLACEMENT_DOMAIN: &[u8] = b"oneiron:repo-proposal-replacement:v1";
 
 /// The failed proposal a replacement names, and the object store whose
 /// merge queue holds that failure, resolved before the replacement's writer.
@@ -73,7 +72,7 @@ pub struct RepoProposalReplacement {
 
 /// The id of the one replacement link of the failed proposal `source`.
 fn replacement_receipt_id(source: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(PROPOSAL_REPLACEMENT_DOMAIN, &[source.as_bytes()])
+    EntityId::derive_legacy_material(purposes::code::PROPOSAL_REPLACEMENT, &[source.as_bytes()])
 }
 
 /// The retained failure `source` ended in, read in `txn`: a receipted

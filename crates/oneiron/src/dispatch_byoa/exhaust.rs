@@ -7,7 +7,6 @@ use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptResultRef, AttemptSt
 use crate::blob_artifact::{
     BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance, read_blob_artifact_head_in_txn,
 };
-use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
@@ -18,9 +17,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 use super::connector::{
-    BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_ARTIFACT_ID_DOMAIN,
-    BYOA_RESULT_REF_PREFIX, BYOA_RUNTIME_ACTOR_DOMAIN, ByoaAttemptPayload, MAX_STOP_REASON_LEN,
-    decode_byoa_attempt_payload,
+    BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_RESULT_REF_PREFIX, ByoaAttemptPayload,
+    MAX_STOP_REASON_LEN, decode_byoa_attempt_payload,
 };
 use super::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_KIND, ERR_CAPTURE_CONFLICT,
@@ -32,6 +30,7 @@ use super::validate::validate_exhaust;
 use crate::error::ArtifactError;
 
 use super::stream::{ByoaStream, ByoaStreamWire};
+use oneiron_contracts::fingerprint::{LegacyPurpose, purposes};
 
 /// The proof that one network reach crossed the injected egress port.
 ///
@@ -354,8 +353,8 @@ pub(super) fn normalize_capture_reason(
 ///
 /// Returns [`ByoaError::Store`] when no non-reserved id can be derived.
 pub fn byoa_exhaust_artifact_id(attempt_id: AttemptId) -> ByoaResult<EntityId> {
-    Ok(entity_id_from_hash_material(
-        BYOA_EXHAUST_ARTIFACT_ID_DOMAIN,
+    Ok(EntityId::derive_legacy_material(
+        purposes::dispatch_byoa::EXHAUST_ARTIFACT,
         &[attempt_id.as_bytes()],
     )?)
 }
@@ -441,13 +440,13 @@ pub fn read_checkpoint_frontier(
 /// runtime on a foreign agent's behalf, and stamping a fresh actor per capture
 /// would scatter one durable responsibility across unrelated ids.
 pub(super) fn byoa_runtime_actor() -> ByoaResult<WriteActor> {
-    derived_agent(BYOA_RUNTIME_ACTOR_DOMAIN)
+    derived_agent(purposes::dispatch_byoa::RUNTIME_ACTOR, &[])
 }
 
-/// The Agent actor whose id `domain` derives.
-fn derived_agent(domain: &[u8]) -> ByoaResult<WriteActor> {
+/// The Agent actor whose id `purpose` derives with `tag_suffix` after its tag.
+fn derived_agent(purpose: LegacyPurpose, tag_suffix: &[u8]) -> ByoaResult<WriteActor> {
     Ok(WriteActor::new(
-        entity_id_from_hash_material(domain, &[])?,
+        EntityId::derive_legacy_material_with_tag_suffix(purpose, tag_suffix, &[])?,
         EdgeActorClass::Agent,
     ))
 }
@@ -462,29 +461,38 @@ pub(super) fn ensure_byoa_runtime_actor(
     learned_at: u64,
 ) -> ByoaResult<WriteActor> {
     let actor = byoa_runtime_actor()?;
-    ensure_derived_agent_in_txn(vault, wtxn, BYOA_RUNTIME_ACTOR_DOMAIN, occurred, learned_at)?;
+    ensure_derived_agent_in_txn(
+        vault,
+        wtxn,
+        purposes::dispatch_byoa::RUNTIME_ACTOR,
+        &[],
+        occurred,
+        learned_at,
+    )?;
     Ok(actor)
 }
 
-/// Materializes the stable Agent PERSON `domain` derives, as
+/// Materializes the stable Agent PERSON `purpose` derives with `tag_suffix`, as
 /// [`ensure_byoa_runtime_actor`] does for the runtime's own: only the
-/// canonical PERSON body, the domain's bytes, may own the id, and check and
-/// create share `wtxn`.
+/// canonical PERSON body, the tag's bytes and then the suffix's, may own the id,
+/// and check and create share `wtxn`.
 pub(super) fn ensure_derived_agent_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    domain: &[u8],
+    purpose: LegacyPurpose,
+    tag_suffix: &[u8],
     occurred: TimeRange,
     learned_at: u64,
 ) -> ByoaResult<WriteActor> {
-    let actor = derived_agent(domain)?;
+    let actor = derived_agent(purpose, tag_suffix)?;
+    let body = [purpose.tag().as_bytes(), tag_suffix].concat();
     if let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, &actor.entity_ref())? {
         crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
         let raw = vault
             .get_raw_in(wtxn, &actor.entity_ref())?
             .ok_or_else(|| invalid(ERR_RUNTIME_ACTOR_COLLISION))?;
         if entity_type != crate::registry::ENTITY_TYPE_PERSON
-            || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(domain)
+            || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(body.as_slice())
         {
             return Err(invalid(ERR_RUNTIME_ACTOR_COLLISION));
         }
@@ -496,7 +504,7 @@ pub(super) fn ensure_derived_agent_in_txn(
                 crate::registry::ENTITY_TYPE_PERSON,
                 occurred,
                 learned_at,
-                domain,
+                &body,
             )
             .apply(wtxn)?;
     }
