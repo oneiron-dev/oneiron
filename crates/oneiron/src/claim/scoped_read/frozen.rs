@@ -32,8 +32,8 @@ use super::*;
 use crate::claim::world_access::WorldAuthoritySet;
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
-/// [`FrozenReadLane::freeze`]'s refusal of a narrowed guest credential's lane.
-const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is not saved";
+#[doc(hidden)]
+use oneiron_records::claim::scoped_read::frozen::{GUEST_LANE_NOT_SAVED, keep_covered_ids};
 
 /// The scope a read lane read under when its work was saved (OF-506). The
 /// engine mints it from the saver's live lane ([`Self::freeze`]) or as the
@@ -349,24 +349,6 @@ impl FrozenReadLane {
         let txn = vault.store.env.read_txn()?;
         self.narrow_in_txn(vault, &txn, key)
     }
-}
-
-/// Keeps each id `axis` names that `covered` holds (FIX 12285); whether it
-/// cut one. An open or empty axis names no id and stays; one cut to no id
-/// is bottom.
-fn keep_covered_ids(axis: &mut ScopeAxis<ScopeId>, covered: &ScopeAxis<ScopeId>) -> bool {
-    let ScopeAxis::Some(ids) = axis else {
-        return false;
-    };
-    let named = ids.len();
-    ids.retain(|id| covered.contains(id));
-    if ids.len() == named {
-        return false;
-    }
-    if ids.is_empty() {
-        *axis = ScopeAxis::Bottom;
-    }
-    true
 }
 
 impl ScopedRead<'_> {

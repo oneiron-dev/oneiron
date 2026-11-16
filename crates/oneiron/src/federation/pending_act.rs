@@ -255,17 +255,8 @@ pub struct PendingAuthorityAct {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in: Option<CheckInDecision>,
 }
-/// Durable, recipient-specific notification for a holder at the instant the act starts.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PendingActStarted {
-    pub act_id: String,
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    pub vault_id: u64,
-    pub act: String,
-    pub recipient: String,
-    pub deadline: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::pending_act::PendingActStarted;
 
 /// The manifest's stored rows beside the shipped rows for the vault kind.
 struct ActPolicies {
