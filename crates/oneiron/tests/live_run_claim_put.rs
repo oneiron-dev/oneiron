@@ -290,12 +290,14 @@ fn a_held_live_run_put_resubmitted_proposed_parks_with_a_pending_review() -> Res
 /// lent it, so a live-run claim put in a vault that names a checker gets the
 /// checker's verdict instead of a checker-unavailable hold.
 ///
-/// The run is the vault owner's, on a vault whose policy lands the owner's
-/// Generated claims at Auto and names the checker (as
-/// tests/run_revert_unsettled.rs builds it); the put carries the live-run
-/// marker, which is what the gate's consult reads. The run is built as the
+/// The run is an agent's (the gate reviews only an agent's or the system's
+/// live-run put), on a vault whose policy ceilings that agent at Auto,
+/// permits Generated claims Auto (as tests/run_revert_unsettled.rs's policy
+/// does for the owner) and names the checker. The run is built as the
 /// live-run door builds it (`test_doors::live_run_claim_put::live_run_dispatcher`)
-/// and puts as `put_claim_from_host` asks (`put_claim_as_live_run`).
+/// and puts as `put_claim_from_host` asks (`put_claim_as_live_run`); its
+/// subject resolves under the agent's read credential over the whole vault,
+/// minted as tests/it/code_consent.rs mints it.
 ///
 /// Red on main: the door lends no checker, so the Auto ask pends
 /// `gate.pending.checker.unavailable`, the put parks Proposed with that
@@ -305,11 +307,11 @@ fn a_held_live_run_put_resubmitted_proposed_parks_with_a_pending_review() -> Res
 #[cfg(feature = "test-support")]
 mod lent_checker {
     use super::{RecordingAutoChecker, bounded, doors};
+    use oneiron::authority::HostSlipIssuer;
+    use oneiron::claim::ScopedReadActorKey;
     use oneiron::code_run::SelfMemoryPutClaimCall;
     use oneiron::registry::ENTITY_TYPE_PERSON;
-    use oneiron::test_support::{
-        bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
-    };
+    use oneiron::test_support::put_policy_manifest_bytes;
     use oneiron::{
         ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault,
         VaultConfig, WriteActor,
@@ -328,12 +330,13 @@ mod lent_checker {
         TimeRange { start: at, end: at }
     }
 
-    /// An owned vault whose shipped policy manifest is replaced at its own
-    /// id by [`checked_run_policy`], and its embedded owner bound under the
-    /// host root.
+    /// A vault whose shipped policy manifest is replaced at its own id by
+    /// [`checked_agent_policy`] for `agent`, a person-backed agent, and that
+    /// agent's read credential.
     struct Fixture {
         vault: Vault,
-        owner: EntityId,
+        agent: EntityId,
+        reader: ScopedReadActorKey,
         _dir: tempfile::TempDir,
     }
 
@@ -344,29 +347,18 @@ mod lent_checker {
             config.dimensions = 4;
             config.embedding_model = None;
             let vault = Vault::open_owned(dir.path(), config).map_err(at("open owned"))?;
-            let owner = vault
-                .ensure_embedded_owner_actor()
-                .map_err(at("embedded owner"))?;
+            let agent = person(&vault)?;
             let shipped = oneiron_store::policy_record::default_policy_manifest_id()
                 .map_err(at("the shipped manifest's id"))?;
-            put_policy_manifest_bytes(&vault, shipped, &checked_run_policy(owner)?)
+            put_policy_manifest_bytes(&vault, shipped, &checked_agent_policy(agent)?)
                 .map_err(at("install the policy"))?;
-            let issuer = provision_engine_machines(&vault);
-            bind_host_owner(&vault, &issuer, owner).map_err(at("owner host binding"))?;
+            let reader = agent_reader(&vault, agent)?;
             Ok(Self {
                 vault,
-                owner,
+                agent,
+                reader,
                 _dir: dir,
             })
-        }
-
-        /// A fresh PERSON, the claim's subject.
-        fn person(&self) -> TestResult<EntityId> {
-            let id = EntityId::now();
-            self.vault
-                .put_entity(&id, ENTITY_TYPE_PERSON, range(1), 1, b"person")
-                .map_err(at("put a PERSON"))?;
-            Ok(id)
         }
 
         /// The claim's approval as stored.
@@ -390,6 +382,65 @@ mod lent_checker {
                 .map(|record| record.reason_codes)
                 .collect())
         }
+
+        /// The agent's run `run`, as the live-run door builds it, lent
+        /// `checker`, puts `value` about a fresh PERSON at a fresh id.
+        fn put(
+            &self,
+            checker: &oneiron::llm::BoundedAutoChecker,
+            run: &str,
+            value: &str,
+        ) -> TestResult<EntityId> {
+            let dispatcher = doors::live_run_dispatcher(
+                &self.vault,
+                WriteActor::new(self.agent, EdgeActorClass::Agent),
+                run,
+                checker,
+            )
+            .map_err(at("the live run's dispatcher"))?;
+            let id = EntityId::now();
+            let call = claim_call(id, person(&self.vault)?, value);
+            doors::put_claim_as_live_run(&dispatcher, call, Some(&self.reader))
+                .map_err(at("the live run's claim put"))?;
+            Ok(id)
+        }
+    }
+
+    /// A fresh PERSON.
+    fn person(vault: &Vault) -> TestResult<EntityId> {
+        let id = EntityId::now();
+        vault
+            .put_entity(&id, ENTITY_TYPE_PERSON, range(1), 1, b"person")
+            .map_err(at("put a PERSON"))?;
+        Ok(id)
+    }
+
+    /// `holder`'s agent read credential over the whole vault, minted under
+    /// the vault's host root as a host mints its caller's.
+    fn agent_reader(vault: &Vault, holder: EntityId) -> TestResult<ScopedReadActorKey> {
+        let tag = b"live-run checker loan";
+        let issuer = HostSlipIssuer::from_secret(tag).map_err(at("host issuer"))?;
+        let mut claims = vault
+            .ensure_host_root_slip(&issuer)
+            .map_err(at("host root slip"))?
+            .claims;
+        let mut slip_id = [0u8; 32];
+        slip_id[..16].copy_from_slice(holder.as_bytes());
+        claims.slip_id = slip_id;
+        claims.parent_id = None;
+        claims.holder_ref = holder.to_hex();
+        claims.actor_class = Some("agent".into());
+        let slip = vault
+            .mint_capability_slip(&issuer, claims)
+            .map_err(at("agent slip"))?;
+        let binding = issuer
+            .binding_proof(&slip, tag)
+            .map_err(at("holder binding"))?;
+        let proof = vault
+            .verify_capability_slip(&issuer.public_key(), &slip, tag, &binding)
+            .map_err(at("verified agent slip"))?;
+        ScopedReadActorKey::from_verified_slip(&proof)
+            .ok_or_else(|| "the agent slip carries no read credential".into())
     }
 
     /// The run's `vault.claims.put` of `value` about `subject`, at `id`.
@@ -407,9 +458,9 @@ mod lent_checker {
         )
     }
 
-    /// tests/run_revert_unsettled.rs's policy, which lands the owner's
-    /// Generated claims at Auto, naming the host checker.
-    fn checked_run_policy(actor: EntityId) -> TestResult<Vec<u8>> {
+    /// tests/run_revert_unsettled.rs's policy, which lands Generated claims at
+    /// Auto, with its actor ceiling for `agent` and the host checker named.
+    fn checked_agent_policy(agent: EntityId) -> TestResult<Vec<u8>> {
         let axes = Value::Map(vec![
             (Value::from("criticality"), Value::from("normal")),
             (Value::from("sensitivity"), Value::from("normal")),
@@ -430,8 +481,8 @@ mod lent_checker {
             (
                 Value::from("actor_ceilings"),
                 Value::Array(vec![Value::Map(vec![
-                    (Value::from("actor_class"), Value::from("human")),
-                    (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                    (Value::from("actor_class"), Value::from("agent")),
+                    (Value::from("actor_ref"), Value::from(agent.to_hex())),
                     (Value::from("ceiling"), Value::from("auto")),
                 ])]),
             ),
@@ -461,21 +512,12 @@ mod lent_checker {
         let f = Fixture::open()?;
         let allowing = Arc::new(RecordingAutoChecker::allow());
         let checker = bounded(allowing.clone());
-        let run = doors::live_run_dispatcher(
-            &f.vault,
-            WriteActor::new(f.owner, EdgeActorClass::Human),
-            "run-checker-allows",
-            &checker,
-        )
-        .map_err(at("the live run's dispatcher"))?;
-        let id = EntityId::now();
-        doors::put_claim_as_live_run(&run, claim_call(id, f.person()?, "sencha"))
-            .map_err(at("the live run's claim put"))?;
+        let id = f.put(&checker, "run-checker-allows", "sencha")?;
         assert_eq!(
             f.approval(id)?,
             "auto",
             "FAILBEFORE LIVE-RUN-CHECKER-INJECT: the door lent no checker, so the put parked \
-             checker-unavailable (reviews {:?})",
+             (reviews {:?})",
             f.reviews(id)?
         );
         assert_eq!(
@@ -496,16 +538,7 @@ mod lent_checker {
         let f = Fixture::open()?;
         let holding = Arc::new(RecordingAutoChecker::hold());
         let checker = bounded(holding.clone());
-        let run = doors::live_run_dispatcher(
-            &f.vault,
-            WriteActor::new(f.owner, EdgeActorClass::Human),
-            "run-checker-holds",
-            &checker,
-        )
-        .map_err(at("the live run's dispatcher"))?;
-        let id = EntityId::now();
-        doors::put_claim_as_live_run(&run, claim_call(id, f.person()?, "matcha"))
-            .map_err(at("the live run's claim put"))?;
+        let id = f.put(&checker, "run-checker-holds", "matcha")?;
         assert_eq!(
             f.reviews(id)?,
             vec![vec!["gate.pending.checker".to_owned()]],

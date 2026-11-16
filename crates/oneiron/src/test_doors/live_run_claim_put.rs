@@ -6,7 +6,7 @@
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use crate::Result;
-use crate::claim::{ClaimApprovalStatus, ClaimBody};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ScopedReadActorKey};
 use crate::code_run::{HostSelfDispatcher, SelfDispatchOutcome, SelfMemoryPutClaimCall};
 use crate::entity_id::EntityId;
 use crate::llm::BoundedAutoChecker;
@@ -83,7 +83,9 @@ pub fn live_run_dispatcher<'a>(
 /// The run's claim put asking what `HostSelfDispatcher::put_claim_from_host`
 /// asks of the gates for a claim whose predicate is not critical (FIX 3983):
 /// Auto first, and when a gate pends the Auto request, Proposed, so it lands
-/// with its pending review. Without the live run's acquired lease.
+/// with its pending review. Without the live run's acquired lease. `read_as`
+/// is the key the claim's subject must resolve under; the live-run door passes
+/// none, so its writer's own read key answers.
 ///
 /// # Errors
 /// The gate's refusal, or the store's.
@@ -91,15 +93,21 @@ pub fn live_run_dispatcher<'a>(
 pub fn put_claim_as_live_run(
     run: &HostSelfDispatcher<'_>,
     call: SelfMemoryPutClaimCall,
+    read_as: Option<&ScopedReadActorKey>,
 ) -> Result<SelfDispatchOutcome> {
     match run.dispatch_memory_put_claim_requesting(
         call.clone(),
-        None,
+        read_as.cloned(),
         ClaimApprovalStatus::Auto,
         true,
     ) {
         Err(error) if crate::gate::gate_rejection_pends(&error) => run
-            .dispatch_memory_put_claim_requesting(call, None, ClaimApprovalStatus::Proposed, true),
+            .dispatch_memory_put_claim_requesting(
+                call,
+                read_as.cloned(),
+                ClaimApprovalStatus::Proposed,
+                true,
+            ),
         outcome => outcome,
     }
 }
