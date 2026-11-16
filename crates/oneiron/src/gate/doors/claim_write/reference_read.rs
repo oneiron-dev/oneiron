@@ -11,11 +11,13 @@
 //! RELATIONSHIP scope ids are not record refs and get no existence check (a
 //! claim may name one before its row exists). Invented, missing, malformed
 //! and unreadable are one unresolved result; a read that fails is an error.
+//! One subject resolves unread: the OpenAI proxy's own exchange names its
+//! writer's own principal (PROXY-EXCHANGE-SUBJECT = A).
 
 use rmpv::Value;
 
 use crate::authority::consolidation_evidence::ConsolidationProvenanceHopKind;
-use crate::claim::{ClaimBody, ClaimSubject, ScopedRead};
+use crate::claim::{ClaimBody, ClaimSource, ClaimSubject, ScopedRead};
 use crate::dreamer_consolidation::{decode_consolidation_evidence, decode_verified_locators};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -50,6 +52,14 @@ pub(crate) fn unresolved_claim_reference(
     {
         refs.retain(|named| named.pointer != "/subject");
     }
+    // A facet-narrowed proxy key never reads its own PERSON, which its
+    // exchange names as subject; naming the writer's own id discloses
+    // nothing. Every other ref is still judged under the key's read.
+    if let ClaimSubject::Entity(subject) = body.subject
+        && proxy_own_exchange_in_txn(reader, txn, body, &subject)?
+    {
+        refs.retain(|named| named.pointer != "/subject");
+    }
     let unresolved = validate_record_references_with(&refs, |reference| -> Result<bool> {
         let Ok(id) = EntityId::from_hex(reference) else {
             return Ok(false);
@@ -61,6 +71,26 @@ pub(crate) fn unresolved_claim_reference(
             .unwrap_or(false))
     })?;
     Ok(unresolved.map(str::to_owned))
+}
+
+/// Whether `body` is the OpenAI proxy's own exchange (PROXY-EXCHANGE-SUBJECT
+/// = A): an `integration.exchange` tool output whose subject is the
+/// committing credential's own principal, while that principal's proxy
+/// registration is live in `txn` with both legs of its exchange open, as the
+/// proxy's writer requires ([`crate::Vault::proxy_exchange_open_in_txn`]).
+fn proxy_own_exchange_in_txn(
+    reader: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+    subject: &EntityId,
+) -> Result<bool> {
+    if body.predicate != crate::connector_key::PROXY_EXCHANGE_PREDICATE
+        || body.source != Some(ClaimSource::ToolOutput)
+        || reader.actor_key().authenticated_person() != Some(*subject)
+    {
+        return Ok(false);
+    }
+    reader.vault().proxy_exchange_open_in_txn(txn, subject)
 }
 
 /// Every typed record ref `body` declares, at its slot's pointer, in slot

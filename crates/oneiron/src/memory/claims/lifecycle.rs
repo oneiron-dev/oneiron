@@ -163,7 +163,7 @@ impl Memory<'_> {
         producers: &[EntityId],
         read: &[&[u8]],
     ) -> MemoryResult<CommitReceipt> {
-        if input.predicate != "integration.exchange"
+        if input.predicate != crate::connector_key::PROXY_EXCHANGE_PREDICATE
             || input.subject_ref != self.actor.to_hex()
             || input.source != "tool_output"
         {
@@ -173,22 +173,9 @@ impl Memory<'_> {
         }
         let birth = self.prompted_birth(input, door, producers, read)?;
         let guard = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
-            let registered = self
-                .vault
-                .live_connector_registration_in_txn(
-                    txn,
-                    crate::connector_key::PROXY_CONNECTOR,
-                    &self.actor,
-                )?
-                .is_some_and(|registration| {
-                    use crate::connector_key::SlateDisposition::{AlwaysAsk, NeverAllow};
-                    let setting = |tool| registration.slate.tool_setting(tool);
-                    // A write the owner set to always ask is never made: the
-                    // proxy cannot ask the owner per call (FIX 4843).
-                    setting("vault.recall") != NeverAllow
-                        && !matches!(setting("vault.remember"), NeverAllow | AlwaysAsk)
-                });
-            if !registered {
+            // A write the owner set to always ask is never made: the proxy
+            // cannot ask the owner per call (FIX 4843).
+            if !self.vault.proxy_exchange_open_in_txn(txn, &self.actor)? {
                 return Err(Error::Claim(
                     crate::error::ClaimError::ActorLacksClaimAuthority {
                         reason: "the proxy's read or write grant is revoked, or its write asks per call",
