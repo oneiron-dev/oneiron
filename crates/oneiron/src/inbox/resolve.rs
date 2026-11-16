@@ -162,7 +162,6 @@ impl Vault {
                         if let Some(record) = self.store.close_pending_gate_consent_in_txn(
                             wtxn,
                             &id,
-                            now,
                             crate::store::gate_reason::GateReceiptOutcome::Rejected,
                             vec![INBOX_REASON_BUNDLE_REJECT.to_owned()],
                             Some(bundle_ref.clone()),

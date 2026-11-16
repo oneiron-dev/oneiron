@@ -353,7 +353,6 @@ impl Memory<'_> {
                     REASON,
                     None,
                     marker.as_bytes().to_vec(),
-                    now / 1_000,
                 );
                 let (context, claim_refs) =
                     decision_context::answering_members(self.vault, &*txn, &members, marker, None)?;
@@ -390,7 +389,6 @@ impl Memory<'_> {
                         .iter()
                         .flat_map(|id| *id.as_bytes())
                         .collect(),
-                    now / 1_000,
                 );
                 let (context, claim_refs) = decision_context::answering_members(
                     self.vault,
@@ -420,7 +418,6 @@ impl Memory<'_> {
             REASON,
             None,
             marker.as_bytes().to_vec(),
-            now / 1_000,
         );
         let (context, claim_refs) =
             decision_context::answering_members(self.vault, &*txn, &members, marker, None)?;
@@ -571,7 +568,6 @@ impl Memory<'_> {
                 REVERT_REASON,
                 None,
                 reverted.marker.as_bytes().to_vec(),
-                now / 1_000,
             );
             let (context, claim_refs) = decision_context::answering_members(
                 self.vault,

@@ -557,7 +557,6 @@ pub(crate) fn apply_settlement_in_txn(
             vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &loser,
-                now / 1_000,
                 crate::store::gate_reason::GateReceiptOutcome::Superseded,
                 reasons(),
                 None,
@@ -568,7 +567,6 @@ pub(crate) fn apply_settlement_in_txn(
             vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &loser,
-                now / 1_000,
                 crate::store::gate_reason::GateReceiptOutcome::Superseded,
                 reasons(),
                 None,

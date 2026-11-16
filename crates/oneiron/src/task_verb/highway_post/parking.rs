@@ -190,7 +190,6 @@ impl Memory<'_> {
                         self.vault().store.close_pending_gate_consent_in_txn(
                             wtxn,
                             &proposal_ref,
-                            now,
                             crate::store::gate_reason::GateReceiptOutcome::Rejected,
                             vec![TAKE_DECLINED_REASON.to_owned()],
                             None,

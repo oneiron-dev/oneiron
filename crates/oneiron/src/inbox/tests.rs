@@ -1242,7 +1242,7 @@ fn deleting_unresolved_proposal_shreds_tray_and_prevents_let_go_resurrection() -
                 .pending_gate_consents_for_run(run_id)?
                 .is_empty()
         );
-        assert!(vault.let_go_pending_ask_at(&claim_id, 99)?.is_none());
+        assert!(vault.let_go_pending_ask(&claim_id)?.is_none());
         let rtxn = vault.store.env.read_txn()?;
         let rows = vault
             .store

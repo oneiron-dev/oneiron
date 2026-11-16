@@ -357,7 +357,6 @@ impl Memory<'_> {
                     "gate.memory.explicit_owner_retraction",
                     Some(id),
                     blake3::hash(&raw).as_bytes().to_vec(),
-                    now,
                 );
                 self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
             }

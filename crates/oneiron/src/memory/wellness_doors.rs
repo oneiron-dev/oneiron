@@ -175,7 +175,6 @@ impl Memory<'_> {
                     "gate.affect.wellness.configured_policy",
                     target,
                     bytes,
-                    now,
                 );
                 let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
                 projection.receipt_ref = Some(format!("gate:{}", record.decision_id.to_hex()));

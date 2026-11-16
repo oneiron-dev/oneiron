@@ -14,7 +14,6 @@ impl Memory<'_> {
         review: &RunReview,
         run: &str,
         approve: bool,
-        now: u64,
         members: &[EntityId],
     ) -> MemoryResult<crate::store::GateDecisionRecord> {
         let receipt = crate::memory::authorship::decision(
@@ -32,7 +31,6 @@ impl Memory<'_> {
             },
             None,
             review.review_id.as_bytes().to_vec(),
-            now,
         );
         let mut record = self.vault().store.mint_gate_receipt_in_txn(txn, receipt)?;
         // FIX 11002: the outcome answers every Claim/Edge member with its

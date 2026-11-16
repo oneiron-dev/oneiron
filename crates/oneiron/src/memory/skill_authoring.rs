@@ -395,7 +395,6 @@ impl Memory<'_> {
                 "gate.memory.skill_authored",
                 Some(id),
                 vec![1],
-                now,
             ),
         )?;
         let Value::Map(entries) = &mut record.provenance else {
