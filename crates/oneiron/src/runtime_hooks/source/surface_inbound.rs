@@ -12,6 +12,7 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -68,18 +69,45 @@ pub(in crate::runtime_hooks) struct SurfaceInboundRow {
 }
 
 impl SurfaceInboundRow {
+    /// The event's input hash: the attempt, the receiving identity and the
+    /// actor, the connector, channel and action each after its length, and
+    /// the receive time. The run key starts with it, so it keeps its bytes
+    /// (K, PLAN-UC-04 stage 6.3).
     fn input_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron.hook-surface-inbound.v1");
-        hasher.update(&self.attempt);
-        hasher.update(self.receiving_identity.as_bytes());
-        hasher.update(self.actor.as_bytes());
+        let mut digest = LegacyDigest::new(purposes::runtime_hooks::SURFACE_INBOUND_INPUT);
+        digest
+            .raw(&self.attempt)
+            .raw(self.receiving_identity.as_bytes())
+            .raw(self.actor.as_bytes());
         for token in [&self.connector, &self.channel, &self.action] {
-            hasher.update(&(token.len() as u64).to_be_bytes());
-            hasher.update(token.as_bytes());
+            digest.len_u64_be(token.len()).raw(token.as_bytes());
         }
-        hasher.update(&self.received_at.to_be_bytes());
-        *hasher.finalize().as_bytes()
+        digest.raw(&self.received_at.to_be_bytes()).finish()
     }
+}
+
+/// The input hash of an inbound event: its attempt, connector, channel and
+/// action, the identity it addressed, its actor and its receive time.
+#[cfg(oneiron_test_support)]
+pub(crate) fn surface_inbound_input_hash_for_test(
+    attempt: [u8; 16],
+    tokens: [&str; 3],
+    receiving_identity: EntityId,
+    actor: EntityId,
+    received_at: u64,
+) -> [u8; 32] {
+    let [connector, channel, action] = tokens.map(str::to_owned);
+    SurfaceInboundRow {
+        attempt,
+        connector,
+        channel,
+        action,
+        receiving_identity,
+        actor,
+        received_at,
+        recorded_at: 0,
+    }
+    .input_hash()
 }
 
 /// Appends `event`, which `attempt` now carries, to the inbound feed in the

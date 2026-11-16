@@ -13,9 +13,8 @@ use super::*;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
-};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 
 /// The Gate `content_kind` of every support grant receipt.
 pub(crate) const SUPPORT_GRANT_CONTENT_KIND: &str = "support_grant";
@@ -30,7 +29,7 @@ const USE_DIGEST_CONTEXT: &[u8] = b"oneiron/support-grant/use/v1\0";
 /// One support grant receipt, as the door that acted reports it.
 pub(super) struct SupportReceipt {
     pub(super) reason: &'static str,
-    pub(super) outcome: &'static str,
+    pub(super) outcome: GateReceiptOutcome,
     /// Who acted: the approving owner for a mint or revoke, the support
     /// PERSON for a use.
     pub(super) actor: EntityId,
@@ -50,31 +49,23 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         receipt: SupportReceipt,
     ) -> Result<GateDecisionId> {
-        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: receipt.outcome.to_owned(),
-            reason_codes: vec![receipt.reason.to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: GateSystemNoticeRecord::receipt_details(
-                SUPPORT_GRANT_CONTENT_KIND,
-                receipt.details,
-            ),
-            actor_class: receipt.actor_class,
-            actor_ref: Some(receipt.actor.to_hex()),
-            content_kind: SUPPORT_GRANT_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: Some(slip_hex(&receipt.slip_id)),
-            diff_handle: receipt.digest.to_vec(),
-            read_frontier_hash: [0; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(txn, &record)?;
-        Ok(decision_id)
+        let mut draft = GateReceipt::new(
+            receipt.outcome,
+            SUPPORT_GRANT_CONTENT_KIND,
+            receipt.reason,
+            ReceiptActor::Verbatim {
+                class: receipt.actor_class,
+                actor_ref: Some(receipt.actor.to_hex()),
+            },
+            receipt.digest.to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        draft.grant_ref = Some(slip_hex(&receipt.slip_id));
+        draft.details = receipt.details;
+        Ok(self
+            .store
+            .record_gate_receipt_in_txn(txn, draft)?
+            .decision_id)
     }
 
     /// The use receipt of one request admitted on a support slip, in its
@@ -103,7 +94,7 @@ impl Vault {
             txn,
             SupportReceipt {
                 reason: SUPPORT_GRANT_REASON_USED,
-                outcome: "approved",
+                outcome: GateReceiptOutcome::Approved,
                 actor: holder,
                 actor_class: class.clone(),
                 slip_id: claims.slip_id,
