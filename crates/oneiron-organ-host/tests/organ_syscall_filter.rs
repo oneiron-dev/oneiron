@@ -1,10 +1,12 @@
 //! The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls", FIX
 //! [ORGAN-SECCOMP-ALLOW-LIST]): an organ that calls ptrace dies by the
 //! seccomp kill, SIGSYS, and so does a process it forked; so does a call
-//! its allow-list does not name (an inet socket). An organ under the filter
-//! still answers its ordinary calls, inputs read through regions included,
-//! and every verb of the probe answers under its list. Linux only: macOS
-//! has no seccomp.
+//! its allow-list does not name (an inet socket), and so does a call aimed
+//! at another process (a signal, a limit, a descriptor's owner, a
+//! priority), while the same calls at its own process answer. An organ
+//! under the filter still answers its ordinary calls, inputs read through
+//! regions included, and every verb of the probe answers under its list.
+//! Linux only: macOS has no seccomp.
 #![cfg(target_os = "linux")]
 
 use std::time::Duration;
@@ -72,6 +74,7 @@ fn host() -> OrganHost {
         "organ.echo",
         "probe.ptrace",
         "probe.inet_socket",
+        "probe.reach",
         "probe.sleep",
         "probe.outputs",
         "probe.fork",
@@ -107,6 +110,16 @@ fn call(verb: &str, args: Value, inputs: Vec<OrganInput>) -> OrganCall {
 /// The args of a call that the organ makes in a child it forks, or itself.
 fn in_child(child: bool) -> Value {
     Value::Map(vec![("in_child".into(), child.into())])
+}
+
+/// The args of a `probe.reach` call: `which` call aimed at `pid`, the
+/// probe's own process when `None`, with `nice` for `priority`.
+fn reach(which: &str, pid: Option<i64>, nice: i64) -> Value {
+    let mut args = vec![("call".into(), which.into()), ("nice".into(), nice.into())];
+    if let Some(pid) = pid {
+        args.push(("pid".into(), pid.into()));
+    }
+    Value::Map(args)
 }
 
 fn report_i64(report: &Value, key: &str) -> Option<i64> {
@@ -206,6 +219,51 @@ fn an_organ_call_outside_its_allow_list_dies_by_the_syscall_filter() {
         matches!(organ, Err(HostError::Crashed(_))),
         "an organ's own inet socket ends it: {organ:?}",
     );
+}
+
+#[test]
+fn an_organ_call_aimed_at_another_process_dies_by_the_syscall_filter() {
+    let (_dir, vault) = vault();
+    // At its own process a signal 0 and a read of its own limits answer:
+    // the filter allows them by the organ's own pid (or 0 for itself).
+    let host = host();
+    for (which, pid) in [("signal", None), ("limits", None), ("limits", Some(0))] {
+        let own = host
+            .call(
+                &vault,
+                call("probe.reach", reach(which, pid, 0), Vec::new()),
+            )
+            .unwrap_or_else(|err| panic!("{which} at its own process ({pid:?}): {err:?}"));
+        assert_eq!(
+            report_i64(&own.report, "returned"),
+            Some(0),
+            "{which} at its own process ({pid:?}) answers: {:?}",
+            own.report,
+        );
+    }
+    // At the host's process, the organ's parent, each kills the organ
+    // under its call before the call runs: a signal (even signal 0, which
+    // only checks permission), a read of its limits, an owner for a
+    // descriptor's signals, its own nice value set again. Each on a host
+    // of its own, so no crash backoff stands between them.
+    let host_pid = std::process::id();
+    // SAFETY: getpriority(2) of this process reads and writes no memory.
+    let nice = i64::from(unsafe { libc::getpriority(libc::PRIO_PROCESS, host_pid) });
+    for which in ["signal", "limits", "owner", "priority"] {
+        let host = host();
+        let organ = host.call(
+            &vault,
+            call(
+                "probe.reach",
+                reach(which, Some(i64::from(host_pid)), nice),
+                Vec::new(),
+            ),
+        );
+        assert!(
+            matches!(organ, Err(HostError::Crashed(_))),
+            "{which} at the host's process ends the organ: {organ:?}",
+        );
+    }
 }
 
 #[test]

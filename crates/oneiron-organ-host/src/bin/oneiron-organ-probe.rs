@@ -1,7 +1,7 @@
 //! A diagnostics organ for the host's own checks: the runtime's built-in
 //! verbs (`organ.touch`, `organ.echo`) plus `probe.sleep`, `probe.crash`,
-//! `probe.fork`, `probe.outputs`, `probe.ask`, and `probe.ptrace` and
-//! `probe.inet_socket` (Linux).
+//! `probe.fork`, `probe.outputs`, `probe.ask`, and `probe.ptrace`,
+//! `probe.inet_socket` and `probe.reach` (Linux).
 //! Hostile modes stand in for
 //! a broken organ: `--deaf` answers the handshake and then never reads its
 //! socket, `--drip` sends its `hello_ack` one byte at a time, `--ask-twice`
@@ -37,6 +37,7 @@ mod probe {
                 "probe.ask",
                 "probe.ptrace",
                 "probe.inet_socket",
+                "probe.reach",
             ]
             .map(|name| VerbSpec {
                 name: name.into(),
@@ -56,7 +57,8 @@ mod probe {
         /// With `fail`, it ends in an error once it has asked.
         /// `probe.ptrace {in_child}` makes one ptrace call and
         /// `probe.inet_socket {in_child}` opens one inet socket (`ptrace`
-        /// and `inet_socket` below).
+        /// and `inet_socket` below). `probe.reach {call, pid, nice}` makes
+        /// one call aimed at another process (`reach_process` below).
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
             let field = |key: &str| {
                 call.args
@@ -93,6 +95,18 @@ mod probe {
                     let in_child = field("in_child").and_then(|v| v.as_bool()).unwrap_or(false);
                     Ok(Answer {
                         report: inet_socket(in_child),
+                        ..Answer::default()
+                    })
+                }
+                #[cfg(target_os = "linux")]
+                "probe.reach" => {
+                    let which = field("call")
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    let pid = field("pid").and_then(|v| v.as_i64());
+                    let nice = field("nice").and_then(|v| v.as_i64()).unwrap_or(0);
+                    Ok(Answer {
+                        report: reach_process(&which, pid, nice),
                         ..Answer::default()
                     })
                 }
@@ -214,6 +228,71 @@ mod probe {
                 fd
             }
         })
+    }
+
+    /// One call aimed at process `pid` (the probe's own when absent), as an
+    /// organ reaching past itself would make it; where the call is allowed
+    /// it changes nothing. `signal`: signal 0, which only checks permission,
+    /// with `tgkill`. `limits`: a read of the process's open-file limit with
+    /// `prlimit64`. `owner`: `pid` as the owner of a new memfd's signals
+    /// with `fcntl(F_SETOWN)` (a memfd raises none). `priority`: the
+    /// process's nice value set to `nice`, its current one, with
+    /// `setpriority`. Answers the call's return and errno, as [`one_call`]
+    /// does in the organ itself.
+    #[cfg(target_os = "linux")]
+    fn reach_process(which: &str, pid: Option<i64>, nice: i64) -> Value {
+        let target = pid.unwrap_or_else(|| i64::from(std::process::id()));
+        let target = libc::c_long::try_from(target).unwrap_or(-1);
+        let nice = libc::c_long::try_from(nice).unwrap_or(0);
+        let zero: libc::c_long = 0;
+        let mut descriptor = -1;
+        // SAFETY: each call reads and writes only memory on this stack, and
+        // none changes anything where it is allowed: signal 0 sends
+        // nothing, the limit is only read, the memfd is this process's own
+        // (closed below), and the nice value set is the current one.
+        let returned = unsafe {
+            match which {
+                "signal" => libc::syscall(libc::SYS_tgkill, target, target, zero),
+                "limits" => {
+                    let mut old = [0_u64; 2];
+                    libc::syscall(
+                        libc::SYS_prlimit64,
+                        target,
+                        libc::c_long::from(libc::RLIMIT_NOFILE),
+                        std::ptr::null::<u64>(),
+                        old.as_mut_ptr(),
+                    )
+                }
+                "owner" => {
+                    descriptor = libc::memfd_create(c"probe-owner".as_ptr(), libc::MFD_CLOEXEC);
+                    libc::syscall(
+                        libc::SYS_fcntl,
+                        libc::c_long::from(descriptor),
+                        libc::c_long::from(libc::F_SETOWN),
+                        target,
+                    )
+                }
+                "priority" => libc::syscall(
+                    libc::SYS_setpriority,
+                    libc::c_long::from(libc::PRIO_PROCESS),
+                    target,
+                    nice,
+                ),
+                _ => -1,
+            }
+        };
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if descriptor >= 0 {
+            // SAFETY: close(2) of the memfd made above, which nothing else
+            // holds.
+            unsafe {
+                libc::close(descriptor);
+            }
+        }
+        Value::Map(vec![
+            ("returned".into(), i64::from(returned).into()),
+            ("errno".into(), i64::from(errno).into()),
+        ])
     }
 
     /// `make`'s one call. In the organ itself it answers the call's return
