@@ -315,9 +315,10 @@ fn artifact_routes() -> Router<Arc<SyncServer>> {
 
 /// The artifact-only listener's router: this vault's `/a/`, and under each
 /// configured artifact domain, this vault at its own subdomain
-/// (`<vault>.<domain>/<artifact>/…`). A managed vault answers on its internal
-/// authority instead (`<vault_id>.artifact.invalid/<artifact>/…`, FIX 6716)
-/// and reads no artifact domain. No API route is reachable on it.
+/// (`<vault>.<domain>/<artifact>/…`). A vault served by name answers on
+/// `*.localhost` in the same shape (APP-HOST = A). A managed vault answers on
+/// its internal authority instead (`<vault_id>.artifact.invalid/<artifact>/…`,
+/// FIX 6716) and reads no artifact domain. No API route is reachable on it.
 pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
     let local = vault_artifact_app(server.clone());
     let hosts = if let Some(vault_id) = server.config.artifact_internal_vault_id.as_deref() {
@@ -325,7 +326,9 @@ pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
     } else {
         let mut hosts = ArtifactHosts::new(&server.config.artifact_domains);
         if let Some(name) = server.config.artifact_vault_name.as_deref() {
-            hosts = hosts.with_vault_app(name, local.clone());
+            hosts = hosts
+                .with_vault_app(name, local.clone())
+                .with_local_domain();
         }
         hosts
     };
