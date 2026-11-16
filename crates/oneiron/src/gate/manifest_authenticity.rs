@@ -4,9 +4,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
-use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord, Store,
-};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::{EntityId, Vault};
 
 /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated),
@@ -291,35 +290,22 @@ impl Vault {
         id: EntityId,
         hash: [u8; 32],
     ) -> Result<GateDecisionId> {
-        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
-        let (actor_class, actor_ref) = match actor {
-            Some(actor) => ("human".to_owned(), Some(actor.to_hex())),
-            None => ("system".to_owned(), None),
-        };
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: "allow".to_owned(),
-            reason_codes: vec![reason.to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: GateSystemNoticeRecord::receipt_details(
-                MANIFEST_QUARANTINE_CONTENT_KIND,
-                vec![format!("manifest:{}", id.to_hex())],
-            ),
-            actor_class,
-            actor_ref,
-            content_kind: MANIFEST_QUARANTINE_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: hash.to_vec(),
-            read_frontier_hash: [0; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(txn, &record)?;
-        Ok(decision_id)
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Allow,
+            MANIFEST_QUARANTINE_CONTENT_KIND,
+            reason,
+            match actor {
+                Some(actor) => ReceiptActor::human(actor),
+                None => ReceiptActor::Engine,
+            },
+            hash.to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        receipt.details = vec![format!("manifest:{}", id.to_hex())];
+        Ok(self
+            .store
+            .record_gate_receipt_in_txn(txn, receipt)?
+            .decision_id)
     }
 
     /// Human removal of an untrusted narrowing, pinned to these exact bytes.

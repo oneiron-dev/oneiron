@@ -76,10 +76,23 @@ impl GateReceipt {
         handle: impl Into<Vec<u8>>,
         basis: PolicyBasis,
     ) -> Self {
+        Self::with_reasons(outcome, kind, vec![reason.into()], actor, handle, basis)
+    }
+
+    /// [`Self::new`] for a decision with several reasons, kept in order (a
+    /// verdict's reason codes).
+    pub(crate) fn with_reasons(
+        outcome: GateReceiptOutcome,
+        kind: impl Into<Cow<'static, str>>,
+        reasons: Vec<String>,
+        actor: ReceiptActor,
+        handle: impl Into<Vec<u8>>,
+        basis: PolicyBasis,
+    ) -> Self {
         Self {
             outcome,
             kind: kind.into(),
-            reasons: vec![reason.into()],
+            reasons,
             actor,
             handle: handle.into(),
             basis,
