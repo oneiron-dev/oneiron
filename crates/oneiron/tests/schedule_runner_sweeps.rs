@@ -254,8 +254,8 @@ fn an_engine_request_runs_the_jobs_it_names_at_once_and_the_run_answers_it() {
     assert_eq!(requested(&seen(&fx.vault, "test.open")), vec![false, true]);
     assert_eq!(
         fx.due("test.open"),
-        Some(T0 + HOUR + DAY),
-        "it goes on from now"
+        Some(T0 + DAY),
+        "a run now keeps the grid: the occurrence it came before stays"
     );
 
     assert_eq!(request_cadence_runs(&fx.vault).expect("request"), 1);
