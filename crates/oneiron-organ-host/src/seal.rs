@@ -32,6 +32,7 @@
 
 mod binding;
 mod custody_keys;
+mod evidence;
 mod fetch;
 mod file_keys;
 mod observe;
