@@ -210,8 +210,9 @@ pub fn voice_recognition_recorder_admits_agent(
 /// `verb`: its actor binding holds, its presented credential is still live, a live
 /// Grant from a live owner names it and lists
 /// [`VOICE_RECOGNITION_CONSENT_VERB`], and `subject`, when named, is no
-/// live owner of the vault, nor, for consent, a live member
-/// ([`Vault::holds_live_human_credential_in_txn`]). Answers that Grant.
+/// live owner of the vault, nor, for consent, a live member who can consent
+/// on their own proof ([`Vault::holds_live_human_credential_in_txn`]).
+/// Answers that Grant.
 fn agent_recorder_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -289,8 +290,10 @@ impl Memory<'_> {
     /// on their own proof. It restores consent only: the withdrawal
     /// hard-deleted the print (promise-dura-13), and recognition needs a
     /// fresh enrolment. Offered while the withdrawal is open to disown
-    /// ([`Vault::voice_withdrawal_open_to_disown_in_txn`]); the grant is dated
-    /// after the withdrawal, which therefore never voids it.
+    /// ([`Vault::voice_withdrawal_open_to_disown_in_txn`]). The grant is dated
+    /// one second after the withdrawal, so that withdrawal never voids it, a
+    /// later one still does, and a repeated tap replays the same decision.
+    /// Clients label it "That wasn't me".
     pub(crate) fn voice_consent_restore_actions(
         &self,
         row: &crate::inbox::NotificationRow,
@@ -308,19 +311,16 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::Error::from)
             .and_then(|txn| {
-                let withdrawal =
-                    vault.voice_withdrawal_open_to_disown_in_txn(&txn, self.actor(), event_id)?;
-                let now = vault.instant_in_txn(&txn)?.secs();
-                Ok(withdrawal.map(|withdrawal| (withdrawal, now)))
+                vault.voice_withdrawal_open_to_disown_in_txn(&txn, self.actor(), event_id)
             });
-        let Ok(Some((withdrawal, now))) = open else {
+        let Ok(Some(withdrawal)) = open else {
             return Vec::new();
         };
         vec![crate::inbox::NotificationAction {
             verb: VOICE_RECOGNITION_CONSENT_VERB.to_owned(),
             args: serde_json::json!({
                 "event_id": format!("{event_id}:restored"),
-                "occurred_at": now.max(withdrawal.occurred_at.saturating_add(1)),
+                "occurred_at": withdrawal.occurred_at.saturating_add(1),
                 "purposes": withdrawal.purposes,
                 "basis": {"SettingsToggle": {"surface_ref": format!("inbox:{}", row.id)}},
             }),

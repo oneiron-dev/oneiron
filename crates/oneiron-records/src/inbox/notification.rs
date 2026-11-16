@@ -58,10 +58,11 @@ pub enum NotificationKind {
     /// consent on a call (VOICE-CONSENT-LOG-MEMBERS): told to that member, a
     /// person who holds a credential in this vault, in the same write.
     /// `source.result` names the withdrawal's event id and `source.detail`
-    /// the agent and Grant that logged it. It offers the member one tap,
-    /// "that wasn't me", that logs a new recognition grant on their own proof
-    /// (VOICE-WITHDRAW-UNDO-SHAPE = B): consent only, since the print stays
-    /// deleted until a fresh enrolment.
+    /// the agent and Grant that logged it, that the print, if any, was
+    /// deleted, and that a restore then needs a fresh enrolment. It offers the
+    /// member one tap, which clients label "That wasn't me": it logs a new
+    /// recognition grant on their own proof (VOICE-WITHDRAW-UNDO-SHAPE = B),
+    /// consent only, since the print stays deleted.
     VoiceRecognitionWithdrawalLoggedForSubject,
     /// The vault's Owner or an Admin walked into a private thread, reading
     /// from now on (FIX 6381, 6466): told to the thread's members alone.
