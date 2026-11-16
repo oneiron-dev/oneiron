@@ -494,7 +494,7 @@ fn the_typed_owner_doors_say_redacted() {
 }
 
 #[test]
-fn a_clean_bodys_typed_doors_carry_no_redacted_mark() {
+fn a_clean_body_reads_with_no_redacted_mark_through_the_typed_doors() {
     let fixture = ResultBodyFixture::new(clean_lines().into_bytes(), 0..0);
     assert!(fixture.mark().is_none(), "a clean body takes no mark");
     let (card, page) = typed_replies(&fixture);

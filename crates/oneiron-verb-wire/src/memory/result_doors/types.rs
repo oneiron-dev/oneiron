@@ -202,6 +202,10 @@ pub struct ResultSliceScanning {
     pub scanned: Vec<u64>,
     pub limit: String,
     pub next: ResultSliceSelection,
+    /// `Some(true)` when the scan ran over the body's redacted view
+    /// (ARCH-0069 `#result-bodies`); none for clean bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redacted: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
