@@ -662,10 +662,12 @@ impl ScopedReadActorKey {
     /// Read inside `room`'s signed facets as each snapshot finds them, as a
     /// turn in it does (FIX 643): a named-room read outside a turn keeps every
     /// other term it has. Like every facet bound, it only narrows, and the
-    /// owner's key reads past it.
+    /// owner's key reads past it. Naming a room drops any room standing the
+    /// key held: [`Self::standing_in_room_in`] finds it again or not.
     #[must_use]
     pub(crate) fn within_room_facets(mut self, room: EntityId) -> Self {
         self.room_facets = Some(room);
+        self.standing_room = None;
         self
     }
 
@@ -705,8 +707,10 @@ impl ScopedReadActorKey {
     /// stands in `room` as `txn` reads it
     /// ([`crate::context_board::room_stander_in`]: a member, a live Ready
     /// join, a leader chat's actor, or the host). Reading inside that room's
-    /// facets then reads its stamped claims, as a turn in the room does. Any
-    /// other key is returned as it is.
+    /// facets then reads its stamped claims, as a turn in the room does, and
+    /// each serving snapshot finds it standing there again
+    /// ([`Self::room_standing_lapsed_in`]). A reader not standing in `room`
+    /// keeps no standing. Any other key is returned as it is.
     ///
     /// # Errors
     /// A store failure reading the room.
@@ -719,6 +723,7 @@ impl ScopedReadActorKey {
         if !self.home_unnamed {
             return Ok(self);
         }
+        self.standing_room = None;
         let Ok(reader) = EntityId::from_hex(&self.actor_ref) else {
             return Ok(self);
         };
@@ -726,6 +731,36 @@ impl ScopedReadActorKey {
             self.standing_room = Some(room);
         }
         Ok(self)
+    }
+
+    /// Whether this key reads stamped claims only by a room standing that
+    /// `txn` no longer finds ([`Self::standing_in_room_in`]): its reader was
+    /// standing in the named room when the key came to read inside it, and
+    /// in this serving snapshot it is not, or its id does not read. Every
+    /// CLAIM admission that serves a stamped claim asks this in its own
+    /// snapshot, so a lane kept past a lost membership, a closed Ready join
+    /// or a moved host withholds them again, as a key built then would. A key
+    /// that reads through no such standing answers `false`.
+    ///
+    /// # Errors
+    /// A store failure reading the room.
+    pub(crate) fn room_standing_lapsed_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::error::Result<bool> {
+        let Some(room) = self.standing_room else {
+            return Ok(false);
+        };
+        if !self.home_unnamed || self.room_turn.is_some() || self.room_facets != Some(room) {
+            return Ok(false);
+        }
+        let Ok(reader) = EntityId::from_hex(&self.actor_ref) else {
+            return Ok(true);
+        };
+        Ok(!crate::context_board::room_stander_in(
+            vault, txn, room, reader,
+        )?)
     }
 
     /// Whether [`Self::homed_unnamed`] built this key, inside a room or not:
