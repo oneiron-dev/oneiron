@@ -99,8 +99,7 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
         )
         .commit()?;
 
-    vault
-        .with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault.store, wtxn, &claim))?;
+    vault.with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault, wtxn, &claim))?;
     assert!(vault.get_claim(&claim)?.is_none());
     // The forward door, starting from the missing logical row, must not
     // resurrect authority from the ceremony closed before deletion.

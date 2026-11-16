@@ -290,7 +290,9 @@ fn admission_refused(denied: &RunDenied) -> Response {
 /// its status and a code, naming no key, slot or provider.
 fn refused(error: &LlmError) -> Response {
     let (status, code) = match error {
-        LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::UNAUTHORIZED, "unauthorized"),
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+            (StatusCode::UNAUTHORIZED, "unauthorized")
+        }
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
         LlmError::Retryable(RetryableLlmError::Timeout) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
         _ => (StatusCode::BAD_GATEWAY, "no_answer"),

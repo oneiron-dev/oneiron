@@ -530,7 +530,15 @@ fn a_weakening_before_the_host_provisions_names_the_missing_setup() -> Result<()
     let vault = reopen(vault)?;
     let raw = vault.get_raw(&held)?.expect("held");
     let settle = |vault: &Vault| {
-        vault.with_write_txn(|txn| vault.complete_deferred_claim_in_txn(txn, &held, true, 23, None))
+        vault.with_write_txn(|txn| {
+            vault.complete_deferred_claim_in_txn(
+                txn,
+                &held,
+                Some(crate::store::TrayRemoval::Unanswered),
+                23,
+                None,
+            )
+        })
     };
     unprovisioned(settle(&vault).expect_err("no signer for the replay"));
     assert_eq!(vault.get_raw(&held)?.expect("unchanged"), raw);

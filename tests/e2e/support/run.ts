@@ -1,21 +1,29 @@
 /** Linux-only execution and reporting. Importing this module starts nothing. */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, rm, mkdtemp, readdir, access } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import type { test as BunTest } from "bun:test";
+import type { expect as BunExpect, test as BunTest } from "bun:test";
 import { E2E_ROOT, FIXTURE_ROOT, loadFixtures, loadBuildManifest, loadBuildManifestWithVerification, requireAsset, verifyFile } from "./fixtures.ts";
 import type { BuildManifest, BuildVerification, Profile, SuitePlan, PlannedFile } from "./fixtures.ts";
 
 export const LIMITS = Object.freeze({ slots: 6, cpuPerSlot: 2, memoryMiBPerSlot: 4096,
   readyMs: 10_000, requestMs: 10_000, flowMs: 30_000, suiteMs: 600_000, stopMs: 2_000 });
 export type Outcome = "PASS" | "FAIL" | "BLOCKED" | "SKIPPED";
+/** E2E rules v2 (implementation-baseline-v1 #tests-e2e): the runner sets each case's status from a run on the
+ * prebuilt artifact set; nobody types it. See caseStatus. */
+export type CaseStatus = "PLANNED" | "PROBED" | "WRITTEN" | "PROVEN";
 export interface IdResult {
   readonly id: string; readonly outcome: Outcome; readonly durationMs: number; readonly reason?: string;
   readonly cleanupError?: string; readonly harnessError?: string;
+  /** expect(...) calls the case body made through the runner's counted expect. */
+  readonly assertions?: number;
+  /** The case failed on the error a counted expect matcher threw (not a door, deadline, harness or cleanup error). */
+  readonly failedAssertion?: boolean;
+  readonly status?: CaseStatus;
 }
 export class BlockedDoor extends Error { override name = "BlockedDoor" }
 export class DeadlineError extends Error { override name = "DeadlineError" }
@@ -26,6 +34,9 @@ class FlowLifecycle {
   readonly processes = new Set<ManagedProcess>();
   readonly resources = new Set<() => void | Promise<void>>();
   readonly controller = new AbortController();
+  /** Counted expect calls in this flow, and the last error a counted matcher threw. */
+  assertions = 0;
+  assertionError: unknown = undefined;
   private failure: DeadlineError | undefined;
   constructor(readonly id: string, readonly deadlineAt: number) {}
   assertActive(): void {
@@ -47,6 +58,87 @@ const flowStorage = new AsyncLocalStorage<FlowLifecycle>();
 export function assertFlowActive(): void { flowStorage.getStore()?.assertActive() }
 export function flowAbortSignal(): AbortSignal | undefined { return flowStorage.getStore()?.controller.signal }
 export function secretHex(bytes = 32): string { return randomBytes(bytes).toString("hex") }
+type ExpectFn = typeof BunExpect;
+let bunExpect: ExpectFn | undefined;
+// bun:test loads lazily, as in defineFile: importing the suite runner starts no work.
+const realExpect = (): ExpectFn => bunExpect ??= (require("bun:test") as typeof import("bun:test")).expect;
+function watchMatchers<T extends object>(matchers: T, flow: FlowLifecycle): T {
+  return new Proxy(matchers, { get(target, property) {
+    const value: unknown = Reflect.get(target, property, target);
+    if (typeof value === "function") return (...args: unknown[]): unknown => {
+      try {
+        const out: unknown = Reflect.apply(value, target, args);
+        return out instanceof Promise ? out.catch((error: unknown) => { flow.assertionError = error; throw error }) : out;
+      } catch (error) { flow.assertionError = error; throw error }
+    };
+    return value !== null && typeof value === "object" ? watchMatchers(value, flow) : value;
+  } });
+}
+/** Bun's expect, counted: each expect(...) call in a case is one assertion, and a failing matcher (also under .not,
+ * .resolves or .rejects) marks the case's error as an assertion failure. Case files import expect from here, never
+ * from bun:test, so the runner can tell a probe (no assertions) from a written case. */
+export const expect: ExpectFn = new Proxy(function countedExpect() {} as unknown as ExpectFn, {
+  apply(_target, _this, args: unknown[]) {
+    const matchers = Reflect.apply(realExpect(), undefined, args) as object;
+    const flow = flowStorage.getStore();
+    if (!flow) return matchers;
+    flow.assertions++;
+    return watchMatchers(matchers, flow);
+  },
+  get(_target, property) {
+    const real = realExpect();
+    const value: unknown = Reflect.get(real, property);
+    return typeof value === "function" ? value.bind(real) : value;
+  },
+});
+/** Runs `body` as one flow and reports what the counted expect saw. The runner's own tests use it. */
+export async function observeAssertions(id: string, body: () => unknown): Promise<{ readonly assertions: number; readonly failedAssertion: boolean }> {
+  const flow = new FlowLifecycle(id, performance.now() + LIMITS.flowMs);
+  return flowStorage.run(flow, async () => {
+    try { await body(); return { assertions: flow.assertions, failedAssertion: false } }
+    catch (error) { return { assertions: flow.assertions, failedAssertion: error === flow.assertionError } }
+    finally { flow.finish() }
+  });
+}
+/** A run's report, as --red-report reads it: the build head and the result rows. */
+export interface RedReport { readonly buildHead: string; readonly results: readonly IdResult[] }
+/**
+ * The case's status from this run (Engine RULING L8-01-L8-03-MECH 5A, 2026-11-14; the F3 ladder: PLANNED, no run
+ * yet; PROBED, every step answers and its effect is read back; WRITTEN, the assertions are in; PROVEN, seen red for
+ * the right reason, then green):
+ * - PROVEN: PASS with at least one assertion, and `red` (the same id in an earlier run on another build head) FAILED
+ *   on an assertion, with no harness or cleanup error. A BLOCKED, deadline, door or harness red proves nothing.
+ * - WRITTEN: the body made at least one assertion and no such red is on record (green with no red seen, or red now).
+ * - PROBED: the body ran to its end (PASS) and made no assertion.
+ * - PLANNED: anything less: not registered, todo, skip, pending door, BLOCKED, or a red before any assertion.
+ */
+export function caseStatus(result: IdResult | undefined, buildHead: string, red?: { readonly buildHead: string; readonly result: IdResult }): CaseStatus {
+  if (!result) return "PLANNED";
+  const assertions = result.assertions ?? 0;
+  if (result.outcome === "PASS" && assertions > 0 && red && red.buildHead !== buildHead && red.result.id === result.id &&
+      red.result.outcome === "FAIL" && red.result.failedAssertion === true && !red.result.harnessError && !red.result.cleanupError) return "PROVEN";
+  if (assertions > 0 && (result.outcome === "PASS" || result.outcome === "FAIL")) return "WRITTEN";
+  if (result.outcome === "PASS") return "PROBED";
+  return "PLANNED";
+}
+/** Each result row with its status, and the count per status. */
+export function withStatuses(results: readonly IdResult[], buildHead: string, red?: RedReport): { results: IdResult[]; statusCounts: Record<CaseStatus,number> } {
+  const reds = new Map((red?.results ?? []).map(row => [row.id, row] as const));
+  const statusCounts: Record<CaseStatus,number> = { PLANNED: 0, PROBED: 0, WRITTEN: 0, PROVEN: 0 };
+  const rows = results.map(row => {
+    const prior = reds.get(row.id);
+    const status = caseStatus(row, buildHead, red && prior ? { buildHead: red.buildHead, result: prior } : undefined);
+    statusCounts[status]++;
+    return { ...row, status };
+  });
+  return { results: rows, statusCounts };
+}
+async function readRedReport(path: string): Promise<RedReport & { readonly sha256: string }> {
+  const bytes = await readFile(path);
+  const parsed = JSON.parse(bytes.toString("utf8")) as { buildHead?: unknown; results?: unknown };
+  if (typeof parsed.buildHead !== "string" || !Array.isArray(parsed.results)) throw new Error("--red-report is not a runner report with buildHead and results");
+  return { buildHead: parsed.buildHead, results: parsed.results as IdResult[], sha256: createHash("sha256").update(bytes).digest("hex") };
+}
 export class Redactor {
   private readonly secrets = new Set<string>();
   add(...values: string[]): void { for (const value of values) if (value) this.secrets.add(value) }
@@ -274,14 +366,21 @@ interface FileDiagnostics {
 interface Reporter { test: typeof BunTest }
 /** Call once at module scope; pass Bun's test function to avoid importing bun:test in the runner. */
 export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
-  const file = basename(fileURLToPath(meta.url));
   // Register only in a Bun test file; importing the suite runner starts no work.
   const { beforeAll } = require("bun:test") as typeof import("bun:test");
   beforeAll(async () => { await loadBuildManifest(declaration.profile) }, LIMITS.suiteMs);
+  return caseRegistry(basename(fileURLToPath(meta.url)), declaration);
+}
+/** The variable the nightly E2E stage (scripts/nightly/nightly_e2e.py) sets to "1" to run nightly budget cases. */
+export const NIGHTLY_ENV = "E2E_NIGHTLY";
+export const NIGHTLY_REASON = `nightly budget case: runs only when ${NIGHTLY_ENV}=1 (the nightly E2E stage)`;
+/** One file's case registrations and results, without defineFile's build-manifest hook. It reads the runner's
+ * variables from `env` (process.env in a case file). */
+export function caseRegistry(file: string, declaration: FileDeclaration, env: Readonly<Record<string,string|undefined>> = process.env) {
   const results = new Map<string,IdResult>();
   const registrations = new Set<string>();
-  const resultPath = process.env.E2E_RESULT_FILE;
-  const selected = new Set((process.env.E2E_SELECTED_IDS ?? "").split(",").filter(Boolean));
+  const resultPath = env.E2E_RESULT_FILE;
+  const selected = new Set((env.E2E_SELECTED_IDS ?? "").split(",").filter(Boolean));
   const flush = async (): Promise<void> => {
     if (resultPath) await new Artifacts(dirname(resultPath)).json(basename(resultPath), { file, declaration, registrations:[...registrations], results:[...results.values()] });
   };
@@ -298,15 +397,16 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
         return flowStorage.run(flow, async () => {
           const started = performance.now();
           try {
-            if (process.env.E2E_PROFILE && process.env.E2E_PROFILE !== declaration.profile) throw new BlockedDoor("File profile mismatch");
+            if (env.E2E_PROFILE && env.E2E_PROFILE !== declaration.profile) throw new BlockedDoor("File profile mismatch");
             await withDeadline(Promise.resolve().then(() => { assertFlowActive(); return body() }), deadlineMs, id, () => flow.expire());
             assertFlowActive();
             flow.finish();
             await closeOwnedResources();
-            results.set(id, {id,outcome:"PASS",durationMs:performance.now()-started});
+            results.set(id, {id,outcome:"PASS",durationMs:performance.now()-started,assertions:flow.assertions});
           } catch (error) {
             results.set(id, {id,outcome:error instanceof BlockedDoor ? "BLOCKED" : "FAIL",durationMs:performance.now()-started,
-              reason:redactor.text(error instanceof Error ? error.message : String(error))});
+              reason:redactor.text(error instanceof Error ? error.message : String(error)),
+              assertions:flow.assertions,failedAssertion:error === flow.assertionError});
             // Bun must not inspect raw credential-bearing properties such as CliError.result.
             throw new Error(results.get(id)!.reason);
           } finally {
@@ -315,7 +415,8 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
             catch (error) {
               const prior = results.get(id);
               const cleanupError = redactor.text(String(error));
-              results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:prior?.reason ?? cleanupError,cleanupError});
+              results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:prior?.reason ?? cleanupError,cleanupError,
+                assertions:flow.assertions});
               throw new Error(cleanupError);
             }
             finally { await flush() }
@@ -354,6 +455,16 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
       results.set(id, {id,outcome:"BLOCKED",durationMs:0,reason});
       test.todo(`${id} ${reason}`, () => {});
       // Bun afterAll is supplied by the file so registration-only TODO files flush too.
+    },
+    /** A nightly budget case: a flow longer than the 30 s PR budget (Engine E2E-NIGHTLY-TODO = A). Without
+     * E2E_NIGHTLY=1 it is a todo that reports BLOCKED with NIGHTLY_REASON and its body never runs; with it, it
+     * runs as suite.test with its own deadline. */
+    nightly(test: Reporter["test"], id: string, name: string, body: () => void | Promise<void>, deadlineMs: number): void {
+      if (env[NIGHTLY_ENV] === "1") { this.test(test, id, name, body, deadlineMs); return }
+      if (selected.size && !selected.has(id)) return;
+      register(id);
+      results.set(id, {id,outcome:"BLOCKED",durationMs:0,reason:NIGHTLY_REASON});
+      test.todo(`${id} ${name} [${NIGHTLY_REASON}]`, () => {});
     },
     flush,
   };
@@ -423,9 +534,11 @@ async function reapDirectory(path: string): Promise<void> {
     await rm(resolve(path,entry),{force:true});
   }
 }
-export async function runSuite(profile: Profile, workers = 4, names: readonly string[] = []): Promise<number> {
+export async function runSuite(profile: Profile, workers = 4, names: readonly string[] = [], redReportPath = ""): Promise<number> {
   assertLinux();
   if (!Number.isInteger(workers) || workers < 1 || workers > LIMITS.slots) throw new Error("Workers must be between one and six slots");
+  const red = redReportPath ? await readRedReport(redReportPath) : undefined;
+  const redReport = red ? { buildHead: red.buildHead, sha256: red.sha256 } : null;
   const started = performance.now();
   const output = process.env.E2E_REPORT_DIR ?? await tempRoot("report");
   const artifacts = new Artifacts(output);
@@ -445,8 +558,9 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
   catch (error) {
     const plan = pinnedPlan;
     const ids = selectedFiles.flatMap(f => f.tests).filter(t => profile === "deterministic" || plan.optionalIds.includes(t.id));
-    await artifacts.json("report.json", {profile,scope,success:false,source:plan.source,
-      results:ids.map(t => ({id:t.id,outcome:"BLOCKED",durationMs:0,reason:String(error)}))});
+    const blocked = withStatuses(ids.map(t => ({id:t.id,outcome:"BLOCKED" as const,durationMs:0,reason:String(error)})),"",red);
+    await artifacts.json("report.json", {profile,scope,success:false,source:plan.source,redReport,
+      statusCounts:blocked.statusCounts,results:blocked.results});
     return 1;
   }
   const {build,plan} = ready;
@@ -542,7 +656,8 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
           E2E_CPU_CREDITS:String(file.slots*LIMITS.cpuPerSlot),E2E_MEMORY_MIB:String(file.slots*LIMITS.memoryMiBPerSlot),
           E2E_OWNERS_DIR:ownerDir,E2E_ARTIFACTS_DIR:resolve(output,file.file),E2E_RESULT_FILE:resultFile,E2E_SELECTED_IDS:id,
           E2E_TEMP_ROOT:fileRoot,E2E_BUILD_VERIFIED:verifiedPath,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!,
-          ...(process.env.E2E_MEMORY_RETAIN_VAULT?{E2E_MEMORY_RETAIN_VAULT:process.env.E2E_MEMORY_RETAIN_VAULT}:{})});
+          ...(process.env.E2E_MEMORY_RETAIN_VAULT?{E2E_MEMORY_RETAIN_VAULT:process.env.E2E_MEMORY_RETAIN_VAULT}:{}),
+          ...(process.env[NIGHTLY_ENV]==="1"?{[NIGHTLY_ENV]:"1"}:{})});
         await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
         const child = await ManagedProcess.start([...build.launcher,requireAsset(build,"bun"),"test",resolve(E2E_ROOT,file.file),"--timeout",String(LIMITS.suiteMs),"--max-concurrency","1","--reporter=junit","--reporter-outfile",junitFile],
           {cwd:E2E_ROOT,env,label:`process-${file.file}-${id}`,artifacts});
@@ -571,8 +686,9 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     outcome:row.tests.every(id => results.get(id)?.outcome === "PASS") ? "PASS" :
       row.tests.every(id => ["PASS","SKIPPED"].includes(results.get(id)?.outcome ?? "")) ? "SKIPPED" : "BLOCKED"}));
   const success = !schedulerFailure && !interrupted && durationMs <= LIMITS.suiteMs && [...results.values()].every(r => r.outcome === "PASS" || r.outcome === "SKIPPED");
+  const statuses = withStatuses([...results.values()].sort((a,b) => a.id.localeCompare(b.id)),build.head,red);
   await artifacts.json("report.json",{profile,scope,success,durationMs,schedulerFailure,source:plan.source,buildManifestSha256:process.env.E2E_BUILD_MANIFEST_SHA256,
-    buildHead:build.head,fixturePins:ready.fixturePins,realModel:build.realModel,fileDiagnostics,results:[...results.values()].sort((a,b) => a.id.localeCompare(b.id)),coverage:rows,excludedRows:plan.excludedRows});
+    buildHead:build.head,redReport,statusCounts:statuses.statusCounts,fixturePins:ready.fixturePins,realModel:build.realModel,fileDiagnostics,results:statuses.results,coverage:rows,excludedRows:plan.excludedRows});
   return success ? 0 : 1;
 }
 if (import.meta.main) {
@@ -581,10 +697,10 @@ if (import.meta.main) {
     const index=args.indexOf(flag);if(index<0) return fallback;
     const next=args[index+1];if(!next||next.startsWith("--")) throw new Error(`Missing ${flag} value`);return next;
   };
-  if(args.some(arg=>arg.startsWith("--")&&arg!=="--profile"&&arg!=="--workers"&&arg!=="--files")) throw new Error("Unknown runner option");
+  if(args.some(arg=>arg.startsWith("--")&&arg!=="--profile"&&arg!=="--workers"&&arg!=="--files"&&arg!=="--red-report")) throw new Error("Unknown runner option");
   const profile = value("--profile","deterministic");
   const workers = Number(value("--workers","4"));
   if (profile !== "deterministic" && profile !== "real-small-model") throw new Error("Unknown profile");
   const files = value("--files","").split(",").filter(Boolean);
-  process.exitCode = await runSuite(profile,workers,files);
+  process.exitCode = await runSuite(profile,workers,files,value("--red-report",""));
 }

@@ -14,6 +14,20 @@ use super::support::{invalid_row, required_value, validate_keys};
 pub(super) const GRANTS: SideTable<String, ConsentGrantRow, side_table::Raw> =
     SideTable::new(&side_table::CONSENT_STANDING_GRANT);
 
+/// Writes one standing consent Grant row under `grant_ref`, and the standing
+/// outbound grant indexes' keys for it, in the caller's write transaction.
+/// Every Grant row write goes through here, so a complete index names every
+/// outbound grant row (census L3-28A).
+pub(super) fn put_grant_row_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    grant_ref: &str,
+    row: &ConsentGrantRow,
+) -> Result<()> {
+    GRANTS.put(store, wtxn, &grant_ref.to_owned(), row)?;
+    crate::outbound_grant::index_standing_outbound_grant_row_in_txn(store, wtxn, grant_ref, row)
+}
+
 #[doc(hidden)]
 pub use oneiron_consent_state::consent::codec::{
     CONSENT_GRANT_BODY_KEYS, CONSENT_GRANT_SCHEMA_VERSION, decode_consent_grant_row,
@@ -94,7 +108,7 @@ impl crate::Vault {
                 bypass: None,
             };
             let grant_ref = super::grant::consent_grant_row_grant_ref(&row);
-            GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
+            put_grant_row_in_txn(&self.store, wtxn, &grant_ref, &row)?;
             Ok(grant_ref)
         })
     }

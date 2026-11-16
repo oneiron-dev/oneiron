@@ -14,8 +14,9 @@
  * a Web Worker and in tests.
  */
 import * as XLSX from "xlsx";
-import { checkSheetCount, PREVIEW_BUDGET, preflightPackage, WorkbookBudgetError } from "./budget";
+import { checkSheetCount, PREVIEW_BUDGET, WorkbookBudgetError } from "./budget";
 import type { PreviewBudget } from "./budget";
+import { readPackage } from "./package-read";
 import type {
   CellValueType,
   ICellData,
@@ -102,13 +103,9 @@ export function readWorkbookOutline(
   name = "workbook",
   budget: PreviewBudget = PREVIEW_BUDGET,
 ): IWorkbookData {
-  const wb = XLSX.read(preflightPackage(bytes, budget), { bookSheets: true, bookProps: true });
+  const wb = readPackage(bytes, budget, { bookSheets: true, bookProps: true });
   const names = wb.SheetNames ?? [];
   checkSheetCount(names.length, budget);
-  return outlineOf(names, name);
-}
-
-function outlineOf(names: readonly string[], name: string): IWorkbookData {
   const id = sheetId(name);
   const workbook = emptyWorkbook(id, name);
   const order: string[] = [];
@@ -129,7 +126,7 @@ function outlineOf(names: readonly string[], name: string): IWorkbookData {
 
 /** Sheet names in workbook order, without parsing cells. */
 export function readSheetMetas(bytes: Uint8Array, budget: PreviewBudget = PREVIEW_BUDGET): SheetMeta[] {
-  const wb = XLSX.read(preflightPackage(bytes, budget), { bookSheets: true });
+  const wb = readPackage(bytes, budget, { bookSheets: true });
   const names = wb.SheetNames ?? [];
   checkSheetCount(names.length, budget);
   return names.map((name) => ({ id: sheetId(name), name }));
@@ -205,10 +202,7 @@ export function readSheet(
 ): Partial<IWorksheetData> {
   const includeFormula = options.includeFormulaText ?? true;
   const budget = options.budget ?? PREVIEW_BUDGET;
-  const wb = XLSX.read(preflightPackage(bytes, budget), {
-    sheets: [sheetName],
-    ...sheetReadOptions(includeFormula),
-  });
+  const wb = readPackage(bytes, budget, { ...sheetReadOptions(includeFormula), sheets: [sheetName] });
   checkSheetCount(wb.SheetNames.length, budget);
   return sheetOf(wb, sheetName, includeFormula, budget);
 }
@@ -300,29 +294,4 @@ export function worksheetToCellData(
 function textLength(cell: ICellData): number {
   const formula = (cell.custom as { oneironFormula?: string } | undefined)?.oneironFormula;
   return (typeof cell.v === "string" ? cell.v.length : 0) + (formula?.length ?? 0);
-}
-
-/**
- * Eagerly parse the entire workbook (outline + every sheet) in one SheetJS
- * pass. Convenience for small workbooks and tests; the lazy path
- * ({@link readWorkbookOutline} + {@link readSheet}) is what the viewer uses
- * for large files.
- */
-export function readWorkbook(
-  bytes: Uint8Array,
-  options: ParseOptions & { name?: string } = {},
-): IWorkbookData {
-  const { name = "workbook", ...parseOptions } = options;
-  const includeFormula = parseOptions.includeFormulaText ?? true;
-  const budget = parseOptions.budget ?? PREVIEW_BUDGET;
-  const wb = XLSX.read(preflightPackage(bytes, budget), sheetReadOptions(includeFormula));
-  const names = wb.SheetNames ?? [];
-  checkSheetCount(names.length, budget);
-  const outline = outlineOf(names, name);
-  const sheets: IWorkbookData["sheets"] = {};
-  for (const sid of outline.sheetOrder) {
-    const stub = outline.sheets[sid]!;
-    sheets[sid] = sheetOf(wb, stub.name!, includeFormula, budget);
-  }
-  return { ...outline, sheets };
 }

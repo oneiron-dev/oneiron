@@ -6,14 +6,13 @@ use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
 
 use super::Store;
 use super::records::{
-    PendingGateConsentGroup, PendingGateConsentRecord, decode_pending_gate_consent,
-    encode_pending_gate_consent, vet_pending_gate_consent_record,
+    PendingGateConsentGroup, PendingGateConsentRecord, vet_pending_gate_consent_record,
 };
 use super::sequence_sweep::SEQUENCE_INDEX;
 use super::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT};
@@ -22,16 +21,6 @@ use super::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAP
 /// the declaration note): `RawValue` delegates to its owning codec.
 pub(super) const TRAY: SideTable<[u8; 16], PendingGateConsentRecord, Raw> =
     SideTable::new(&side_table::PENDING_GATE_CONSENT);
-
-impl RawValue for PendingGateConsentRecord {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_pending_gate_consent(self)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_pending_gate_consent(bytes)?)
-    }
-}
 
 /// One sequence row of the tray, for a reader whose contract is to surface a
 /// corrupt row rather than refuse its read (FIX 7378, FIX 7601).
@@ -66,8 +55,17 @@ pub(crate) enum TrayRemoval {
     /// The obligation stays open and nothing is shown here: an erasure, or a
     /// revision change whose put shows the item for the new revision.
     Silent,
-    /// The owner's answer to this item closed the obligation.
-    Answered,
+    /// The owner's answer to this item closed the obligation: only
+    /// `crate::gate::close_owner_answer_obligation_in_txn` builds the proof
+    /// it carries (FIX 22394).
+    Answered(crate::gate::ObligationAnswered),
+}
+
+impl TrayRemoval {
+    /// Whether an owner's answer closed the obligation.
+    pub(crate) const fn is_answered(self) -> bool {
+        matches!(self, Self::Answered(_))
+    }
 }
 
 impl Store {
@@ -166,7 +164,7 @@ impl Store {
             }
             // A confirm parked before obligations were recorded is one, and
             // only an answer removes it without recording it.
-            if removal != TrayRemoval::Answered
+            if !removal.is_answered()
                 && crate::store::critical_confirm_record::pending_row_holds_critical_confirm(
                     &record,
                 )

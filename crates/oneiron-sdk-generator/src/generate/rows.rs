@@ -834,6 +834,7 @@ impl Generator {
             type_names,
             inventory: None,
             fragment_dependencies: BTreeSet::new(),
+            wire_input_dependencies: BTreeSet::new(),
         };
         generator.host_sets()?;
         generator.callable_sets()?;

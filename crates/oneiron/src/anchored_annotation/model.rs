@@ -32,6 +32,12 @@ pub const ANNOTATION_LOCATOR_RANGE_MAX_BYTES: usize = 64;
 /// its anchor, origin and drift versions all hold this one value.
 pub const CODE_ANCHOR_VERSION: u64 = 0;
 
+/// The anchor version of every plan-doc thread (plan mode's markup). A
+/// plan-doc NOTE keeps no numbered version chain: the anchor's body names
+/// the text frontier its span was read at, and each read follows the span's
+/// characters from there to the head.
+pub const PLAN_DOC_ANCHOR_VERSION: u64 = 0;
+
 pub(super) const FORMAT_XLSX: &str = "xlsx";
 
 pub(super) const FORMAT_DOCX: &str = "docx";
@@ -45,6 +51,14 @@ pub(super) const FORMAT_HTML: &str = "html";
 pub(super) const FORMAT_TEXT: &str = "text";
 
 pub(super) const FORMAT_CODE: &str = "code";
+
+pub(super) const FORMAT_IMAGE_PIXEL: &str = "image_pixel";
+
+pub(super) const FORMAT_IMAGE_OBJECT: &str = "image_object";
+
+/// The longest side an image locator's region may reach, the image organ's
+/// side limit.
+pub const IMAGE_LOCATOR_MAX_SIDE: u32 = 65_535;
 
 pub(super) const STATE_OPEN: &str = "open";
 
@@ -115,9 +129,10 @@ impl A1Range {
 /// A format-typed anchor locator.
 ///
 /// The format-specific fields identify XLSX ranges, DOCX character spans,
-/// PPTX shapes, HTML and plain-text character spans, and character spans in
-/// one code file. Readers resolve them against one version's bytes, or the
-/// code file's, rather than guessing a location.
+/// PPTX shapes, HTML and plain-text character spans, character spans in
+/// one code file, and an image's pixel regions and overlays. Readers resolve
+/// them against one version's bytes, or the code file's, rather than
+/// guessing a location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Locator {
@@ -185,6 +200,26 @@ pub enum Locator {
         char_start: u64,
         /// Exclusive character-span end.
         char_end: u64,
+    },
+    /// An image version's half-open pixel rectangle, top-left origin, after
+    /// EXIF orientation (ARCH-0075's `pixel` unit, L4-16). It names a
+    /// region, not words, so its quote is null.
+    ImagePixel {
+        /// The left edge, in pixels.
+        x: u32,
+        /// The top edge, in pixels.
+        y: u32,
+        /// The width, at least one pixel.
+        w: u32,
+        /// The height, at least one pixel.
+        h: u32,
+    },
+    /// An image overlay by its id, `overlay/{id}` in the image organ's body
+    /// (ARCH-0075's `object` unit, L4-16). No stored image body holds an
+    /// overlay yet (IO-BODY A), so no pin takes one.
+    ImageObject {
+        /// The overlay's id in the body.
+        overlay: u32,
     },
 }
 
@@ -293,13 +328,13 @@ impl Locator {
         char_end: u64,
     ) -> Result<Self> {
         let (commit, path, file_hash) = (commit.into(), path.into(), file_hash.into());
-        if !is_lower_hex(&commit, CODEBASE_COMMIT_HASH_HEX_LEN) {
+        if !oneiron_hex::is_lower_hex(&commit, Some(CODEBASE_COMMIT_HASH_HEX_LEN)) {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                 "code locator commit is not 40 lowercase hex characters",
             )));
         }
         validate_locator_text(&path, "code locator path")?;
-        if !is_lower_hex(&file_hash, CODEBASE_CONTENT_HASH_LEN * 2) {
+        if !oneiron_hex::is_lower_hex(&file_hash, Some(CODEBASE_CONTENT_HASH_LEN * 2)) {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                 "code locator file_hash is not 64 lowercase hex characters",
             )));
@@ -318,6 +353,33 @@ impl Locator {
         })
     }
 
+    /// Builds an image pixel locator: a region of at least one pixel each
+    /// way, whose far edges stay within [`IMAGE_LOCATOR_MAX_SIDE`].
+    pub fn image_pixel(x: u32, y: u32, w: u32, h: u32) -> Result<Self> {
+        if w == 0 || h == 0 {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "image pixel locator region is empty",
+            )));
+        }
+        let within = |start: u32, length: u32| {
+            start
+                .checked_add(length)
+                .is_some_and(|end| end <= IMAGE_LOCATOR_MAX_SIDE)
+        };
+        if !within(x, w) || !within(y, h) {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "image pixel locator region passes the side limit",
+            )));
+        }
+        Ok(Self::ImagePixel { x, y, w, h })
+    }
+
+    /// Builds an image overlay locator.
+    #[must_use]
+    pub const fn image_object(overlay: u32) -> Self {
+        Self::ImageObject { overlay }
+    }
+
     /// The format discriminator string.
     #[must_use]
     pub fn format(&self) -> &'static str {
@@ -329,27 +391,23 @@ impl Locator {
             Self::Html { .. } => FORMAT_HTML,
             Self::Text { .. } => FORMAT_TEXT,
             Self::Code { .. } => FORMAT_CODE,
+            Self::ImagePixel { .. } => FORMAT_IMAGE_PIXEL,
+            Self::ImageObject { .. } => FORMAT_IMAGE_OBJECT,
         }
     }
-}
-
-/// Whether `text` is exactly `len` lowercase hexadecimal characters.
-fn is_lower_hex(text: &str, len: usize) -> bool {
-    text.len() == len
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// An anchor: the artifact version a locator resolves against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Anchor {
-    /// The blob or code artifact this anchor lands on.
+    /// The blob or code artifact, or the plan-doc NOTE, this anchor lands
+    /// on.
     pub artifact_id: EntityId,
     /// The artifact version the locator resolves against. For a code
     /// artifact the locator's commit and file hash pin the bytes, and the
-    /// version is [`CODE_ANCHOR_VERSION`].
+    /// version is [`CODE_ANCHOR_VERSION`]. For a plan-doc the body's frontier
+    /// pins the text, and the version is [`PLAN_DOC_ANCHOR_VERSION`].
     pub version: u64,
     /// The format-typed position within that version.
     pub locator: Locator,
@@ -437,6 +495,9 @@ pub struct AnnotationThread {
     pub drift: Option<DriftMarker>,
     /// The `Active` head claim id (the supersession target for state changes).
     pub head_claim_id: EntityId,
+    /// The sub-session of the plan run this thread's approval started
+    /// (agent-runtime-v1.md:342); `None` on every other thread.
+    pub sub_session_id: Option<EntityId>,
 }
 
 impl AnnotationThread {

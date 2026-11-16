@@ -1,5 +1,6 @@
 //! Attempt-local step spend due to the shared wake ledger after memo replay.
 
+use super::executor::PartitionRun;
 use super::parallel::ExtractedPartition;
 use super::recipe_failure::RecipeFailure;
 use super::sieve_ports::SliceStep;
@@ -47,25 +48,48 @@ impl StepChargeTally {
 
     /// Ends the try on a failed durable step: `Failed`, typed, with what
     /// the try already spent and its paid steps' receipts, when a spend
-    /// scope refused the step for good; any other step error parks for
-    /// `reason` with that error's cause, as [`Self::park_for`] does
-    /// (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    /// scope refused the step for good; a park on the seat, with the same
+    /// spend, when a spent model seat refused it (SEAT-PARK-MODEL-STEP-PATH);
+    /// any other step error parks for `reason` with that error's cause, as
+    /// [`Self::park_for`] does (BUDGET-TRAP-UNTYPED-NO-SENDER).
     pub(super) fn end_on_step_error(
         &self,
         reason: &str,
         error: &DurableStepError,
     ) -> DreamerAttemptExecution {
-        crate::dreamer_runner::dreamer_failed_on_refused_step(
+        if let Some(failed) = crate::dreamer_runner::dreamer_failed_on_refused_step(
             error,
             self.units,
             &self.step_bindings,
+        ) {
+            return failed;
+        }
+        if let Some((seat, reset_at_s)) = crate::dreamer_runner::dreamer_seat_refusal_of_step(error)
+        {
+            return self.park_on_seat(reason, seat, reset_at_s);
+        }
+        self.park_for(
+            reason,
+            crate::dreamer_runner::dreamer_park_cause_of_step(error),
         )
-        .unwrap_or_else(|| {
-            self.park_for(
-                reason,
-                crate::dreamer_runner::dreamer_park_cause_of_step(error),
-            )
-        })
+    }
+
+    /// Parks on the spent model `seat` that refused a step, with `reason`
+    /// and what the try already spent; the seat's available write resumes
+    /// it (SEAT-PARK-MODEL-STEP-PATH).
+    pub(super) fn park_on_seat(
+        &self,
+        reason: &str,
+        seat: crate::dreamer_runner::ModelSeatId,
+        reset_at_s: Option<u64>,
+    ) -> DreamerAttemptExecution {
+        DreamerAttemptExecution::ParkOnSeatWithSpend {
+            reason: reason.to_owned(),
+            seat: *seat.as_bytes(),
+            reset_at_s,
+            completed_units: self.units,
+            step_bindings: self.step_bindings.clone(),
+        }
     }
 
     /// Ends the try `Failed` for `reason` on a step a spend scope refused
@@ -300,6 +324,13 @@ pub(super) enum SliceFate {
         reason: String,
         refusal: StepBudgetRefusal,
     },
+    /// A spent model seat refused the slice's step: the try parks on the
+    /// seat (SEAT-PARK-MODEL-STEP-PATH).
+    SeatRefused {
+        reason: String,
+        seat: crate::dreamer_runner::ModelSeatId,
+        reset_at_s: Option<u64>,
+    },
 }
 
 /// Accounts one slice step's outcome into `charges` and reports its
@@ -356,37 +387,67 @@ pub(super) fn tally_slice_outcome(
             } else if let Some(usage) = unsaved_usage {
                 charges.record_usage(&usage);
             }
-            SliceFate::Refused(error.to_string())
+            match crate::dreamer_runner::dreamer_seat_refusal_of_step(&error) {
+                Some((seat, reset_at_s)) => SliceFate::SeatRefused {
+                    reason: error.to_string(),
+                    seat,
+                    reset_at_s,
+                },
+                None => SliceFate::Refused(error.to_string()),
+            }
         }
     })
 }
 
 /// Accounts an extracted prefix whose finish never tallies it (a
-/// window slot whose branch would not re-open, or whose extraction a
-/// changed prior set discards for a fresh run): the finish loop's own
-/// classification, so the paid steps settle beside their receipts
-/// instead of refunding at zero. Reports whether any slice trapped:
-/// that step already parked the attempt under its durable trap, so
-/// the caller must settle the trapped exit, never extract past it
-/// (FIX 12487 round 2).
+/// window slot stopped behind an earlier slot, whose branch would not
+/// re-open, or whose extraction a changed prior set discards for a
+/// fresh run): the finish loop's own classification, so the paid steps
+/// settle beside their receipts instead of refunding at zero. Reports
+/// the run a slice already decided, in the finish loop's order:
+/// `Trapped` when any slice trapped, as that step already parked the
+/// attempt under its durable trap and the caller must never extract
+/// past it (FIX 12487 round 2); else `SeatRefused` when a spent model
+/// seat refused a slice and no spend scope refused one for good, so
+/// the try waits on that seat instead of a Retry that a later pass
+/// would resume (and ask the seat again) before the seat's available
+/// write (review round 2 of #7340). `None` leaves the caller's own arm.
 pub(super) fn tally_extracted_outcomes(
     vault: &Vault,
     extracted: ExtractedPartition,
     charges: &mut StepChargeTally,
-) -> Result<bool> {
+) -> Result<Option<PartitionRun>> {
     let mut trapped = false;
+    let mut budget_refused = false;
+    let mut seat_refused = None;
     for SliceStep {
         outcome,
         unsaved_usage,
         ..
     } in extracted.steps
     {
-        if matches!(
-            tally_slice_outcome(vault, outcome, unsaved_usage, charges)?,
-            SliceFate::Trapped
-        ) {
-            trapped = true;
+        match tally_slice_outcome(vault, outcome, unsaved_usage, charges)? {
+            SliceFate::Trapped => trapped = true,
+            SliceFate::BudgetRefused { .. } => budget_refused = true,
+            SliceFate::SeatRefused {
+                reason,
+                seat,
+                reset_at_s,
+            } => {
+                seat_refused.get_or_insert((reason, seat, reset_at_s));
+            }
+            SliceFate::Finished { .. } | SliceFate::Checkpoint | SliceFate::Refused(_) => {}
         }
     }
-    Ok(trapped)
+    if trapped {
+        return Ok(Some(PartitionRun::Trapped));
+    }
+    let Some((reason, seat, reset_at_s)) = seat_refused.filter(|_| !budget_refused) else {
+        return Ok(None);
+    };
+    Ok(Some(PartitionRun::SeatRefused {
+        reason,
+        seat,
+        reset_at_s,
+    }))
 }

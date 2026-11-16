@@ -9,8 +9,8 @@ use super::experiment_selection::parse_experiment_selection;
 use crate::gate::PackInstallPolicy;
 use crate::gate::SkillEditGoalPolicy;
 use crate::gate::ceiling::{
-    ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
-    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling,
+    ActorCeiling, DelegationGrantRecord, PolicyAuthorityMarker, PolicyOwnerPatternRow,
+    PolicyOwnerPolicyRow, PolicyOwnerPrecedence, PolicyPack, SourceTrustCeiling,
 };
 use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
 use crate::gate::constants::{
@@ -120,7 +120,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) owner_policy_output_contract: Option<String>,
     pub(in crate::gate) owner_policy_patterns: Vec<PolicyOwnerPatternRow>,
     pub(in crate::gate) owner_policy_patterns_dropped: bool,
-    pub(in crate::gate) signatures: Vec<PolicySignature>,
+    pub(in crate::gate) signatures: Vec<PolicyAuthorityMarker>,
     pub(in crate::gate) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     pub(in crate::gate) project_depth_default: Option<u64>,
     pub(in crate::gate) project_depth_max: Option<u64>,

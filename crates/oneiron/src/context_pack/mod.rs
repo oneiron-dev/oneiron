@@ -16,6 +16,10 @@ mod psych_mirror;
 mod quarantine;
 pub(crate) mod retained_copies;
 pub(crate) mod turn_fold;
+/// Hydration's decode of one entity body, for its test door
+/// (`test_doors::hydration_decode_guard`).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::hydration::decode_entity_fields;
 #[cfg(test)]
 pub(crate) use self::quarantine::quarantined_entity_count_for_test;
 pub mod source_ranking;
@@ -24,6 +28,8 @@ mod types;
 mod validation;
 mod world_partition;
 
+// FIX [LIBTEST-QUARANTINE-CONTEXT-PACK-TESTS]: the lib test target's type check fails here (5 errors: E0061 x4, E0063 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

@@ -55,6 +55,10 @@ impl fmt::Debug for SyncServerConfig {
             .field("ingress", &self.ingress)
             .field("merge_queue", &self.merge_queue)
             .field("trusted_organ_builds", &self.trusted_organ_builds)
+            .field(
+                "release_payment_credentials_unfenced",
+                &self.release_payment_credentials_unfenced,
+            )
             .field("hosted_private_origins", &self.hosted_private_origins)
             .finish()
     }
@@ -144,6 +148,10 @@ impl fmt::Debug for ServeConfig {
             )
             .field("hooks", &self.hooks)
             .field("maximum_tier", &self.maximum_tier)
+            .field(
+                "off_record_dump_suppression",
+                &self.off_record_dump_suppression,
+            )
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field(
@@ -160,6 +168,10 @@ impl fmt::Debug for ServeConfig {
             )
             .field("shared_model_root", &self.shared_model_root)
             .field("trusted_organ_builds", &self.trusted_organ_builds)
+            .field(
+                "release_payment_credentials_unfenced",
+                &self.release_payment_credentials_unfenced,
+            )
             .finish()
     }
 }

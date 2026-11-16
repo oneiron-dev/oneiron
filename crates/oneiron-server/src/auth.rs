@@ -35,7 +35,9 @@ pub(crate) use binding_admission::{
 };
 pub(crate) use client_address::{ClientAddress, client_address};
 pub(crate) use left_notices::left_notice_routes;
-pub(crate) use locality::{Locality, caller_locality, proved_peer};
+pub(crate) use locality::{
+    Locality, caller_locality, proved_peer, refuse_off_device_hatch_callers,
+};
 pub(crate) use machine_proof::{
     MachineClaim, owned_machine, owned_machine_stands, required_machine_proof,
 };

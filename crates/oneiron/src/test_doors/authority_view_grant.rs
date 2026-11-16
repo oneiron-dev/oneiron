@@ -1,4 +1,5 @@
-//! Agent-binding fixture for the warm authority-view Grant regression.
+//! Fixtures for the warm authority-view regressions: the agent binding of
+//! the Grant regression, and the read counters a warm hit must keep flat.
 
 use crate::authority::HostSlipIssuer;
 use crate::{EdgeActorClass, EntityId, Result, Vault, WriteActor};
@@ -23,4 +24,12 @@ pub fn bind_agent(vault: &Vault, issuer: &HostSlipIssuer, agent: EntityId) -> Re
 #[must_use]
 pub fn past_standing_history_loads() -> usize {
     crate::authority::past_standing_history_loads_for_test()
+}
+
+/// How many custody entries this thread has opened to read: the warm
+/// reads of one authority generation read a live pact's scope opening
+/// once, not on every read (FIX 23233).
+#[must_use]
+pub fn custody_entry_reads() -> usize {
+    crate::store::custody_entry_reads_for_test()
 }

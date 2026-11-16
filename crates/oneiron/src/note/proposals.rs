@@ -17,18 +17,10 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::store::note_body::NoteActor;
 
-/// What an actor's erase does with a fork it opened that no one decided.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingNoteForkErase {
-    /// The fork goes, with its snapshot and its place in a bundle.
-    Delete,
-    /// The fork stays and names no one, as a decided fork does.
-    Keep,
-}
-
-/// A fork no one decided is still review work a reviewer could land, so an
-/// erase of the actor who opened it deletes it (FIX 3520).
-pub const ACTOR_ERASE_PENDING_NOTE_FORK: PendingNoteForkErase = PendingNoteForkErase::Delete;
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::proposals::{
+    ACTOR_ERASE_PENDING_NOTE_FORK, NoteVerdict, PendingNoteForkErase,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteFork {
@@ -47,12 +39,6 @@ pub struct NoteFork {
     #[serde(with = "crate::entity_id::serde_hex::optional")]
     pub proposal: Option<EntityId>,
     pub decided: bool,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum NoteVerdict {
-    Merge,
-    Switch,
-    Reject,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteLandingReceipt {
@@ -425,9 +411,14 @@ pub(super) fn grant_allows(
 pub(crate) enum NoteEditLanding<'a> {
     /// The Grant's answer for (actor, NOTE): [`grant_allows`].
     Grant,
-    /// The live pad the board bound to the actor's `session`: the actor's
-    /// own board block (ARCH-0032 #motivation, #scratchpad-one-store).
-    SessionPad { session: &'a str },
+    /// The live pad the board bound to the actor's `session`, the pad of
+    /// durable code run `run` when a host bound the writer to one: the
+    /// actor's own board block (ARCH-0032 #motivation,
+    /// #scratchpad-one-store).
+    SessionPad {
+        session: &'a str,
+        run: Option<EntityId>,
+    },
     /// A changed file of a folder the owner attached, landing over the note
     /// its ledger row names, under the owner's live proof: an edited file
     /// supersedes its old version (ARCH-0027 #folder-source).
@@ -449,8 +440,8 @@ pub(super) fn edit_lands(
     }
     match landing {
         NoteEditLanding::Grant => Ok(false),
-        NoteEditLanding::SessionPad { session } => {
-            vault.is_session_pad_in_txn(txn, actor.entity_ref(), session, note)
+        NoteEditLanding::SessionPad { session, run } => {
+            vault.is_session_pad_in_txn(txn, actor.entity_ref(), session, run, note)
         }
         NoteEditLanding::OwnerFolder { owner } => {
             owner.revalidate_in_txn(vault, txn)?;

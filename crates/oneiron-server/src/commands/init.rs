@@ -87,6 +87,11 @@ fn init_with_env(
         writeln!(output, "warning: {}", oneiron::PAGE_SEAL_WARNING)?;
     }
     let (vault, outcome) = setup_models(&args, &path, env.clone())?;
+    // Vaults live in the app folder, never in a synced folder (CROSS-ARCH-0019
+    // #vault-20-hot): the vault is created where it was asked for, with a warning.
+    if let Some(folder) = crate::owner::synced_folder::enclosing(vault_dir) {
+        writeln!(output, "warning: {}", folder.warning())?;
+    }
     if learning {
         turn_on_learning(&vault, &read_config(&path, env)?, &mut output)
             .context("conversation learning was not turned on; it stays off")?;
