@@ -10,7 +10,8 @@ use crate::temporal::TimeRange;
 /// Projects a solve into the seam's public availability mask.
 ///
 /// The mask carries the event type, the half-open window, the ranked UTC slots,
-/// and whether the flex pool answered — and nothing else. No event title, body,
+/// whether the flex pool answered, and the days a meeting cap filled (date and
+/// cap) — and nothing else. No event title, body,
 /// attendee, raw busy interval, or calendar identity has a field to travel in.
 #[must_use]
 pub fn slot_mask(req: &SolveRequest, solved: SolveResult) -> SlotMask {
@@ -20,6 +21,7 @@ pub fn slot_mask(req: &SolveRequest, solved: SolveResult) -> SlotMask {
         window_end_utc: req.window.end.saturating_add(1),
         slots: solved.slots,
         flex_used: solved.flex_used,
+        full_days: solved.full_days,
     }
 }
 

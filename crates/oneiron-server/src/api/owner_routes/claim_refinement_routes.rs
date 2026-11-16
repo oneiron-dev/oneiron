@@ -89,7 +89,7 @@ struct MergeConsent {
 impl From<ConsentReceipt> for MergeConsent {
     fn from(receipt: ConsentReceipt) -> Self {
         Self {
-            outcome: receipt.gate_outcome(),
+            outcome: receipt.gate_outcome().as_str(),
             decision: receipt
                 .decision_id()
                 .as_bytes()
