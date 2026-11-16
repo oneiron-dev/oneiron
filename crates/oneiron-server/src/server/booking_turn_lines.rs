@@ -1,4 +1,4 @@
-//! The lines authenticated booking requests wait in (ARCH-0062
+//! The lines booking holds wait in (ARCH-0062
 //! #booking-turn-divergence): one first-in, first-out line per booking
 //! window, so no request takes a window ahead of a request that waited on it
 //! first. The work past a bound waits in a fair queue with a deadline
@@ -23,7 +23,7 @@ use oneiron::booking::SessionKey;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 
-/// Every booking window some authenticated request is in line for.
+/// Every booking window some request holds or waits in a line for.
 #[derive(Default)]
 pub(crate) struct BookingTurnLines {
     lines: Lines,

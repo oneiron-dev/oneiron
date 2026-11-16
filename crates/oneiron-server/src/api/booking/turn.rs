@@ -4,8 +4,9 @@
 //! (its calls are counted against `[limits]` rows that ask and serve), and
 //! its quarantine admission is never rate limited, so what it can still wait
 //! on is a hold's one-active-per-session rule. Its wait keeps its arrival
-//! place (ARCH-0062 #booking-turn-divergence): a hold waits in its page
-//! session's line, first in, first out, behind every hold that came first.
+//! place (ARCH-0062 #booking-turn-divergence): an authenticated hold waits in
+//! its page session's line, first in, first out, behind every hold that came
+//! first.
 //! An anonymous hold never waits there, and never goes ahead of a hold that
 //! does: it takes the line only when nobody is in it.
 
@@ -54,10 +55,11 @@ impl<'a> Turn<'a> {
         }
     }
 
-    /// Takes this request's place in `window`'s line and waits there for
-    /// every request on that window that came first, until the deadline.
-    /// Past the deadline it is answered `booking_turn_waited_out` before any
-    /// admission ran, so nothing was spent.
+    /// Takes this authenticated request's place in `window`'s line and
+    /// waits there for every request on that window that came first, until
+    /// the deadline. Past the deadline it is answered
+    /// `booking_turn_waited_out` before any admission ran, so nothing was
+    /// spent.
     ///
     /// An anonymous request is never made to wait (ARCH-0062
     /// #rate-wait-built): it takes the head of an empty line and holds it as
