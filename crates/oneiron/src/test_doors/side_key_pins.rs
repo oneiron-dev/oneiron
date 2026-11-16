@@ -1,4 +1,4 @@
-//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2 to 6): one fixture key of
+//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2 to 7): one fixture key of
 //! each crate-private side-table key type that those PRs derive or merge, with the reader of its
 //! type.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
@@ -98,6 +98,12 @@ pub fn receive_pack_progress_key(
 /// eight big-endian bytes.
 pub fn ask_history_key(question: EntityId, sequence: u64) -> Pin {
     crate::llm::decision::questions::ask_history_key_pin_for_test(question, sequence)
+}
+
+/// `llm::decision::questions::arrival::WatchKey`: the predicate, NUL, the watching question's
+/// raw id.
+pub fn watch_key(predicate: &str, id: EntityId) -> Pin {
+    crate::llm::decision::questions::watch_key_pin_for_test(predicate, id)
 }
 
 /// `llm::step::step_index::StepIndexKey`: the raw attempt id, then the 32-byte step hash.

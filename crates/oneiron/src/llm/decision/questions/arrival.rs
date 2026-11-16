@@ -46,6 +46,18 @@ impl SideKey for WatchKey {
     }
 }
 
+/// One [`WatchKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn watch_key_pin_for_test(
+    predicate: &str,
+    id: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&WatchKey {
+        predicate: predicate.to_owned(),
+        id,
+    })
+}
+
 const QUESTION_WATCH: SideTable<WatchKey, EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_WATCH);
 pub(super) const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =

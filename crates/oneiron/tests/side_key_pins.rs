@@ -1,10 +1,10 @@
-//! UC-06 K-proofs of PRs 2 to 6: the side-table keys those PRs derive or merge spell the same
+//! UC-06 K-proofs of PRs 2 to 7: the side-table keys those PRs derive or merge spell the same
 //! bytes and read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a key a
 //! vault already holds keeps its meaning). PR 2 derives nine roster and origin keys, PR 3 five
 //! question, step and document keys, PR 4 seventeen keys of the library's modules `a` to `g`,
 //! PR 5 seventeen keys of its modules `n` to `v`. PR 6 merges the key types that spell one layout
 //! (the earlier tables keep their key names and doors, so they pin the merged types too) and adds
-//! the voice bank's two keys.
+//! the voice bank's two keys. PR 7 spells the question watch key as `side_table::key::TextIdKey`.
 //!
 //! Each test builds one table: for every fixture key, the bytes it spells, and the verdict
 //! (refused, or the bytes of the key read back) on those bytes and on malformed copies of them
@@ -13,7 +13,7 @@
 //! UTF-8), plus some raw inputs per key (a reserved id, a missing or doubled separator, an empty
 //! key). A table's sha256 is the one a model of the hand-written decoders gives
 //! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model_pr2.py` to
-//! `pin_table_model_pr6.py`), and each run prints the table so a base run and a head run can be
+//! `pin_table_model_pr7.py`), and each run prints the table so a base run and a head run can be
 //! compared line by line. A decoder that panics reads as `panic`.
 //!
 //! `ProjectRevisionHash` is public; the other keys are crate-private and are reached through
@@ -38,7 +38,7 @@ use oneiron::test_doors::side_key_pins::{
     provenance_ref_key, receive_pack_intent_key, receive_pack_progress_key, render_event_key,
     repo_revision_key, retrieval_run_id, roster_member_key, rule_key, step_index_claim_key,
     step_index_key, task_attempt_key, task_follow_up_key, text_index_key, tournament_evidence_key,
-    vad_annotation_meta_key, voice_target_key,
+    vad_annotation_meta_key, voice_target_key, watch_key,
 };
 use oneiron_verb_wire::workspace_roster::ProjectRevisionHash;
 use sha2::{Digest, Sha256};
@@ -57,6 +57,8 @@ const LIB_KEYS_N_TO_V_TABLE_SHA256: &str =
     "eeb0defe7c051bb21832b7fa5c2d38bc23788bf4430fb84f16dbc5593bd6eb5d";
 const VOICE_KEYS_TABLE_SHA256: &str =
     "2be37d91b0f093a696af38cb63902fbdaddc4d5c86075edca33e1127e5501fa8";
+const WATCH_KEY_TABLE_SHA256: &str =
+    "1d4345051158af536649d6a213bbeeac6d9a58ceca2ea74fdba463393f0ef52d";
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
 const ID_B: &str = "fedcba9876543210fedcba9876543210";
@@ -1205,4 +1207,31 @@ fn voice_keys_spell_and_read_as_the_hand_impls() {
     }
 
     assert_table("voice-keys", &table, VOICE_KEYS_TABLE_SHA256);
+}
+
+#[test]
+fn watch_key_spells_and_reads_as_the_hand_impl() {
+    let a = *id_a().as_bytes();
+    let mut table = String::new();
+    pin(
+        &mut table,
+        "WatchKey",
+        vec![
+            ("predicate", watch_key("outcome:shipped", id_a())),
+            ("empty_predicate", watch_key("", id_b())),
+            ("nul_in_predicate", watch_key("a\0b", id_a())),
+            ("id_with_nul", watch_key("\u{e9}", id(ID_NUL))),
+            ("id_with_colon", watch_key("p:q", id(ID_COLON))),
+        ],
+        &[
+            ("nil_id", joined(&[b"p\0", &[0; 16]])),
+            ("max_id", joined(&[b"p\0", &[0xff; 16]])),
+            ("no_sep", joined(&[b"p", &a])),
+            ("id_only", a.to_vec()),
+            ("bad_utf8_predicate", joined(&[&[0xff, 0], &a])),
+            ("empty", Vec::new()),
+        ],
+    );
+
+    assert_table("watch-key", &table, WATCH_KEY_TABLE_SHA256);
 }
