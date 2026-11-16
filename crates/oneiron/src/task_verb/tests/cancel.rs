@@ -163,6 +163,85 @@ fn pending_cancel_proposes_without_intervening_realization() {
     );
 }
 
+/// OWNER-SOFT-CANCEL (the Engine's 15 Nov 13:13 ruling; ARCH-0067
+/// `cancel(h)`: "AUTO the default: covers own tasks and own spawns"): the
+/// vault owner's soft cancel of a TASK it created is effected on the owner's
+/// proof, with no standing grant, no gate decision and no proposal. A person
+/// who is not the vault owner still proposes on a default policy, as an agent
+/// does (`pending_cancel_proposes_without_intervening_realization`), and
+/// `manual` stays a proposal for the owner too.
+#[test]
+fn owner_soft_cancel_of_own_task_is_auto_without_grant() {
+    let (_dir, vault) = open_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let facade = vault.memory(owner, EdgeActorClass::Human);
+    let task_ref = facade
+        .tasks_create(&spec(120))
+        .expect("owner creates task")
+        .task_ref
+        .expect("task ref");
+    let decisions_before = vault.gate_decisions(512).expect("gate decisions").len();
+
+    let cancel = facade
+        .cancel(TaskCancelTarget::Task(task_ref))
+        .expect("owner cancel");
+
+    assert_eq!(cancel.approval, ClaimApprovalStatus::Auto);
+    assert!(cancel.effected);
+    assert_eq!(cancel.status, Some(RunTreeStatus::Cancelled));
+    assert_eq!(cancel.proposal_ref, None);
+    assert_eq!(cancel.gate_decision_ref, None);
+    assert!(!cancel.forced);
+    assert_eq!(
+        vault.gate_decisions(512).expect("gate decisions").len(),
+        decisions_before
+    );
+    // Read back: the TASK records its cancellation, and no realization of it
+    // is left to run.
+    assert!(task_is_cancelled(&vault, task_ref).expect("cancel state"));
+    let task_hex = task_ref.to_hex();
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .list()
+            .expect("list attempts")
+            .iter()
+            .filter(|attempt| {
+                attempt.task_ref.as_deref() == Some(task_hex.as_str())
+                    && attempt.state != AttemptState::Cancelled
+            })
+            .count(),
+        0
+    );
+
+    let manual_ref = facade
+        .tasks_create(&spec(121))
+        .expect("owner creates task")
+        .task_ref
+        .expect("task ref");
+    let manual = facade
+        .cancel_with_mode(TaskCancelTarget::Task(manual_ref), TaskCancelMode::Manual)
+        .expect("owner manual cancel");
+    assert_eq!(manual.approval, ClaimApprovalStatus::Proposed);
+    assert!(!manual.effected);
+    assert!(!task_is_cancelled(&vault, manual_ref).expect("cancel state"));
+
+    let person = EntityId::from_bytes([0xE5; 16]).expect("person id");
+    put_person(&vault, person);
+    let person_facade = vault.memory(person, EdgeActorClass::Human);
+    let person_ref = person_facade
+        .tasks_create(&spec(122))
+        .expect("person creates task")
+        .task_ref
+        .expect("task ref");
+    let person_cancel = person_facade
+        .cancel(TaskCancelTarget::Task(person_ref))
+        .expect("person cancel");
+    assert_eq!(person_cancel.approval, ClaimApprovalStatus::Proposed);
+    assert!(!person_cancel.effected);
+    assert!(person_cancel.gate_decision_ref.is_some());
+    assert!(!task_is_cancelled(&vault, person_ref).expect("cancel state"));
+}
+
 #[test]
 fn leased_realization_keeps_cancel_receipt_running() {
     let (_dir, vault) = open_vault();
