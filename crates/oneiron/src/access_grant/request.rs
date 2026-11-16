@@ -43,6 +43,14 @@ struct RequestRow {
     addressed_to: Option<String>,
 }
 
+/// The two fields a pending page reads of a row before it decodes it whole
+/// (FIX 14): a decided row, or one asking someone else, is skipped on them.
+#[derive(serde::Deserialize)]
+struct RequestRowProbe {
+    status: AccessRequestStatus,
+    addressed_to: Option<String>,
+}
+
 /// Who answers an access request through the addressed door (FIX 1379).
 #[derive(Clone, Copy)]
 pub enum AccessRequestResponder<'a> {
@@ -111,6 +119,61 @@ impl AccessRequest {
             addressed_to,
         })
     }
+}
+
+/// Puts `decided` requests denied by `answered_by`, then one pending
+/// request per entry of `pending` asking that addressee (None: the owner
+/// alone), each for one messages-read grant, in one write transaction. The
+/// pending requests' ids, in key order. Test door (FIX 14): a page over 100k
+/// decided rows needs no 200k separate writes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn seed_access_requests_for_test(
+    vault: &Vault,
+    answered_by: EntityId,
+    decided: usize,
+    pending: &[Option<EntityId>],
+) -> Result<Vec<EntityId>> {
+    let grant = AccessGrant {
+        principal_ref: EntityId::from_bytes([0x52; 16])?,
+        scope: AccessGrantScope::Messages {
+            space_ref: EntityId::from_bytes([0x53; 16])?,
+        },
+        capability: super::AccessGrantCapability::MessagesRead,
+        status: AccessGrantStatus::Active,
+        created_at: 1,
+        revoked_at: None,
+        expires_at: None,
+        authority_scope: crate::federation::scope_codec::read_preset(),
+        companion_bounds: None,
+    };
+    let mut txn = vault.store.env.write_txn()?;
+    for _ in 0..decided {
+        let request = AccessRequest {
+            id: EntityId::now(),
+            grant: grant.clone(),
+            status: AccessRequestStatus::Denied,
+            decided_by: Some(answered_by),
+            decided_at: Some(2),
+            addressed_to: None,
+        };
+        REQUESTS.put(&vault.store, &mut txn, &request.id, &request.to_row()?)?;
+    }
+    let mut ids = Vec::with_capacity(pending.len());
+    for addressed_to in pending {
+        let request = AccessRequest {
+            id: EntityId::now(),
+            grant: grant.clone(),
+            status: AccessRequestStatus::Pending,
+            decided_by: None,
+            decided_at: None,
+            addressed_to: *addressed_to,
+        };
+        REQUESTS.put(&vault.store, &mut txn, &request.id, &request.to_row()?)?;
+        ids.push(request.id);
+    }
+    txn.commit()?;
+    ids.sort_by_key(|id| *id.as_bytes());
+    Ok(ids)
 }
 
 impl Vault {
@@ -198,7 +261,7 @@ impl Vault {
         after: Option<&EntityId>,
         limit: usize,
     ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
-        self.pending_access_requests_page_where(after, limit, |_| true)
+        self.pending_access_requests_page_where(after, limit, None)
     }
 
     /// [`Self::pending_access_requests_page`] over the pending requests that
@@ -212,17 +275,16 @@ impl Vault {
         after: Option<&EntityId>,
         limit: usize,
     ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
-        self.pending_access_requests_page_where(after, limit, |request| {
-            request.addressed_to == Some(addressee)
-        })
+        self.pending_access_requests_page_where(after, limit, Some(addressee))
     }
 
-    /// The page of pending requests `keep` takes, after the cursor `after`.
+    /// The page of pending requests after the cursor `after`: every one,
+    /// or with `addressee` only those that ask it.
     fn pending_access_requests_page_where(
         &self,
         after: Option<&EntityId>,
         limit: usize,
-        keep: impl Fn(&AccessRequest) -> bool,
+        addressee: Option<EntityId>,
     ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
         if limit == 0 {
             return Ok((Vec::new(), None));
@@ -231,10 +293,26 @@ impl Vault {
         // Keys order by request id, so the rows after the cursor start past it.
         let start = after.map_or(Bound::Unbounded, Bound::Excluded);
         let mut requests: Vec<AccessRequest> = Vec::new();
-        for entry in REQUESTS.iter_range(&self.store, &txn, start, Bound::Unbounded)? {
-            let (id, row) = entry?;
-            let request = AccessRequest::from_row(id, row)?;
-            if request.status != AccessRequestStatus::Pending || !keep(&request) {
+        for entry in REQUESTS.iter_raw_range(&self.store, &txn, start, Bound::Unbounded)? {
+            let (id, bytes) = entry?;
+            // Status and addressee first, so a decided row, or one asking
+            // someone else, costs no grant decode (FIX 14). A row that does
+            // not read so is decoded whole, which refuses it as before.
+            if let Ok(probe) = serde_json::from_slice::<RequestRowProbe>(&bytes)
+                && let Ok(asks) = probe
+                    .addressed_to
+                    .as_deref()
+                    .map(EntityId::from_hex)
+                    .transpose()
+                && (probe.status != AccessRequestStatus::Pending
+                    || addressee.is_some_and(|addressee| asks != Some(addressee)))
+            {
+                continue;
+            }
+            let request = AccessRequest::from_row(id, REQUESTS.decode_value(&bytes)?)?;
+            if request.status != AccessRequestStatus::Pending
+                || addressee.is_some_and(|addressee| request.addressed_to != Some(addressee))
+            {
                 continue;
             }
             if requests.len() == limit {
