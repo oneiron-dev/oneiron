@@ -5,7 +5,8 @@
 //! (128). Each key's default is today's const, so nothing moves until the owner sets it.
 //!
 //! The raise tests fail before Part 2 (the doors do not read the keys yet) and pass after it;
-//! the no-row tests pass on both.
+//! the no-row tests pass on both. The lowered-cap test (max 1, no limit named) fails before
+//! the review fix, where a request with no limit skipped the key, and passes after it.
 //!
 //! Public paths only: the generated engine fns in `oneiron::verbs`, `Vault::set_setting` for
 //! the owner's rows, and `Vault::put_code_run_replay_record` for the checkpoint runs.
@@ -281,5 +282,27 @@ fn checkpoint_page_serves_128_steps_with_no_setting_row() -> TestResult {
     )?
     .expect("the run reads");
     assert_eq!(view.steps.len(), 128);
+    Ok(())
+}
+
+/// The cap bounds a request that names no limit too: with the owner's max at 1, the default
+/// page (32 steps) shrinks to one step and `next_step` names step 1 (review 1 of #8634, P1).
+#[test]
+fn checkpoint_page_without_limit_serves_one_step_once_max_limit_is_one() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let memory = owner_memory(&vault)?;
+    let run = run_with_steps(&vault, 40)?;
+    set_vault_u32(&vault, "engine_executor.checkpoint_read.max_limit", 1)?;
+    let view = oneiron::verbs::vault_runs_checkpoint(
+        &memory,
+        CheckpointReadRequest {
+            run_ref: run.to_hex(),
+            from_step: 0,
+            limit: None,
+        },
+    )?
+    .expect("the run reads");
+    assert_eq!(view.steps.len(), 1);
+    assert_eq!(view.next_step, Some(1));
     Ok(())
 }
