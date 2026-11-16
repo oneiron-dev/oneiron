@@ -16,7 +16,7 @@ fn a_bare_classify_then_the_enforce_door_leaves_exactly_one_row() -> Result<()> 
         1,
         "the door that MADE the decision writes its row"
     );
-    assert_eq!(after_classify[0].outcome, "owner_plane_block");
+    assert_eq!(after_classify[0].outcome, "deny");
     assert!(has_trace(&after_classify[0], "gate.policy_model.block"));
 
     // The enforce door records nothing: the decision is already in the ledger.
@@ -417,7 +417,7 @@ fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].receipt_id, receipt_ref);
-    assert_eq!(receipts[0].outcome, "block");
+    assert_eq!(receipts[0].outcome, "deny");
     assert_eq!(receipts[0].actor.as_deref(), Some("agent:relay"));
     assert!(has_trace(&receipts[0], "gate.policy_model.block"));
     assert!(has_trace(

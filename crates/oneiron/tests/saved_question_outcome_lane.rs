@@ -18,6 +18,30 @@
 //! not its task ask, at arrival, at a manual projection or at its window's
 //! close. A fact the agent's lane reads labels its question by its window's
 //! close, or by a manual projection before it.
+//!
+//! PERSON-CHANGED-PAIRS-SKIP-SAVED-LANE: when a person's answer to a saved
+//! question's ask changed the model's answer, that answer pairs for the
+//! question only when the lane its version was saved under reads every row
+//! the ask was put over. The owner's answer over a claim outside the bound
+//! question's worlds, or (for the agent's question) in a relationship the
+//! agent is not in, pairs for the owner's own question over the same claim,
+//! and never for the bound or the agent's question: neither in its
+//! person-changed pairs nor in its calibration pairs. The answer over a claim
+//! the lane reads pairs for each. A record a host puts under an ask pairs
+//! only as that ask's own answered change: a record naming the question's
+//! first version, saved under the owner's own lane, put under an open ask of
+//! its second version over a claim outside that version's worlds, pairs
+//! nothing.
+//!
+//! STORED-OUTCOME-READS-SKIP-SAVED-LANE: a stored outcome label and a closed
+//! outcome window read only while what they record still stands under the
+//! lane their question's version was saved under, as a calibration pair is
+//! judged again at each read. Once the owner revokes the agent's read grant,
+//! the agent's stored label from the owner's fact, its window that closed
+//! observed, and its window that closed in silence read no more, while the
+//! owner's own question over the same unit reads each as before. A window
+//! that closed unknown reads as it closed, even after a fact recorded later
+//! labels its answer.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,15 +52,17 @@ use oneiron::claim::world_access::WorldAuthoritySet;
 use oneiron::claim::{CallerLocality, ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::questions::{
-    AnswerRecord, GraphAnswerer, GraphPrediction, GraphUnitContext, OutcomeBinding, OutcomeLabel,
-    OutcomeSource, OutcomeWindowClose, QuestionActivation, QuestionDefinitionInput, RefreshPolicy,
-    WindowOutcome, calibration_pairs, close_due_outcome_windows, closed_outcome_windows,
-    create_question, create_question_with_lane, outcome_labels, project_bound_outcomes,
-    refresh_standing_question_with,
+    AnswerRecord, CalibrationPair, GraphAnswerer, GraphPrediction, GraphUnitContext,
+    OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation,
+    QuestionDefinitionInput, RefreshPolicy, SILENCE_OUTCOME, WindowOutcome, calibration_pairs,
+    close_due_outcome_windows, closed_outcome_windows, create_question, create_question_with_lane,
+    edit_question_with_lane, outcome_labels, person_changed_pairs, project_bound_outcomes,
+    read_question, refresh_standing_question_with,
 };
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
-    DecisionQuestionInput, DecisionRung, ProviderPin,
+    AnswerContract, AskTo, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
+    DecisionQuestion, DecisionQuestionInput, DecisionRung, HumanAskReason, HumanDecisionRequest,
+    ProviderDecision, ProviderPin,
 };
 use oneiron::memory::{
     AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, StructuralPutInput,
@@ -307,6 +333,17 @@ fn binding() -> OutcomeBinding {
         mapping: BTreeMap::from([("yes".to_owned(), true)]),
         noise_weight: 1.0,
         linked_by: None,
+    }
+}
+
+/// [`definition`], its binding labelling a window that closes with no fact
+/// `false`, by the silence outcome.
+fn definition_with_silence(unit: EntityId) -> QuestionDefinitionInput {
+    let mut silence = binding();
+    silence.mapping.insert(SILENCE_OUTCOME.to_owned(), false);
+    QuestionDefinitionInput {
+        binding: Some(silence),
+        ..definition(unit)
     }
 }
 
@@ -603,6 +640,21 @@ impl AgentVault {
         );
         fact
     }
+
+    /// The owner writes the shipped policy back without the agent's rows:
+    /// its `core:read` grant is revoked, and its live lane reads none of
+    /// `rows` any more.
+    fn revoke_the_agents_read_grant(&self, rows: &[EntityId]) {
+        grant_derive_rows(&self.base.vault, &[])
+            .expect("precondition: the owner writes the policy without the agent's rows");
+        for row in rows {
+            assert!(
+                !reads(&self.base.vault, &self.agent_key, row),
+                "precondition: the agent's live lane no longer reads {row:?} once its read grant \
+                 is revoked"
+            );
+        }
+    }
 }
 
 fn agent_vault() -> AgentVault {
@@ -701,14 +753,34 @@ impl AgentFixture {
         closed_outcome_windows(self.vault(), self.reach.agent, self.question)
             .expect("the agent's question windows")
     }
+
+    fn control_windows(&self) -> Vec<OutcomeWindowClose> {
+        closed_outcome_windows(self.vault(), self.reach.base.owner, self.control)
+            .expect("the owner's question windows")
+    }
+
+    fn pairs(&self) -> Vec<CalibrationPair> {
+        calibration_pairs(
+            self.vault(),
+            self.reach.agent,
+            self.question,
+            CallerLocality::OnDevice,
+        )
+        .expect("the agent's calibration pairs")
+    }
 }
 
 fn agent_fixture() -> AgentFixture {
+    agent_fixture_with(definition)
+}
+
+/// The agent's question and the owner's control, each defined by `define`.
+fn agent_fixture_with(define: fn(EntityId) -> QuestionDefinitionInput) -> AgentFixture {
     let reach = agent_vault();
     let base = &reach.base;
     let agent_actor = WriteActor::new(reach.agent, EdgeActorClass::Agent);
     let owner_actor = WriteActor::new(base.owner, EdgeActorClass::Human);
-    let record = create_question(&base.vault, agent_actor, definition(base.unit), base.now)
+    let record = create_question(&base.vault, agent_actor, define(base.unit), base.now)
         .expect("precondition: the agent saves a question over the owner's unit");
     assert!(
         record.principal == reach.agent && record.read_lane.is_principal(),
@@ -717,7 +789,7 @@ fn agent_fixture() -> AgentFixture {
         record.principal,
         record.read_lane
     );
-    let control_record = create_question(&base.vault, owner_actor, definition(base.unit), base.now)
+    let control_record = create_question(&base.vault, owner_actor, define(base.unit), base.now)
         .expect("precondition: the owner saves the same question under its own lane");
     let question = record.definition.question.id;
     let control = control_record.definition.question.id;
@@ -843,6 +915,91 @@ fn an_agents_saved_question_labels_an_owner_fact_it_reads_at_a_manual_projection
         "actor=agent's question saved under its own lane; expected the owner's fact {fact:?}, \
          which its lane reads, to label its answer once a manual projection has run; seen \
          {labels:?}"
+    );
+}
+
+#[test]
+fn an_agents_stored_label_and_observed_window_read_no_more_once_the_owner_revokes_its_read_grant() {
+    let fixture = agent_fixture();
+    let fact = fixture
+        .reach
+        .write_fact_inside_the_agents_reach(fixture.fact_at());
+    fixture.assert_control_labelled(fact, "at arrival");
+    fixture.close_windows();
+    let labels = fixture.labels();
+    assert!(
+        labels.len() == 1 && labels[0].fact == fact && labels[0].answer == fixture.answer.claim,
+        "precondition: the owner's fact {fact:?} labels the agent's answer by its window's close; \
+         seen {labels:?}"
+    );
+    let windows = fixture.windows();
+    assert!(
+        windows.len() == 1 && matches!(windows[0].outcome, WindowOutcome::Observed),
+        "precondition: the agent's window closes observed; seen {windows:?}"
+    );
+    fixture.reach.revoke_the_agents_read_grant(&[fact]);
+    let pairs = fixture.pairs();
+    assert!(
+        pairs.is_empty(),
+        "precondition: the live calibration read pairs nothing for the agent once its read grant \
+         is revoked; seen {pairs:?}"
+    );
+    fixture.assert_control_labelled(fact, "after the agent's read grant is revoked");
+    let control_windows = fixture.control_windows();
+    assert!(
+        control_windows.len() == 1 && matches!(control_windows[0].outcome, WindowOutcome::Observed),
+        "precondition: the owner's own window still reads observed after the agent's read grant \
+         is revoked; seen {control_windows:?}"
+    );
+    let labels = fixture.labels();
+    assert!(
+        labels.is_empty(),
+        "actor=agent's question saved under its own lane; expected its stored label from the \
+         owner's fact {fact:?} to read no more once the owner revoked its read grant; seen \
+         {labels:?}"
+    );
+    let windows = fixture.windows();
+    assert!(
+        windows.is_empty(),
+        "actor=agent's question saved under its own lane; expected its window that closed \
+         observed to read no more once the owner revoked its read grant; seen {windows:?}"
+    );
+}
+
+#[test]
+fn an_agents_silence_window_reads_no_more_once_the_owner_revokes_its_read_grant() {
+    let fixture = agent_fixture_with(definition_with_silence);
+    fixture.close_windows();
+    let windows = fixture.windows();
+    assert!(
+        windows.len() == 1 && windows[0].outcome == WindowOutcome::Silence(false),
+        "precondition: the agent's window closes in silence, no fact in it; seen {windows:?}"
+    );
+    assert_eq!(
+        fixture.pairs().len(),
+        1,
+        "precondition: the agent's silence window pairs its answer"
+    );
+    let unit = fixture.reach.base.unit;
+    fixture.reach.revoke_the_agents_read_grant(&[unit]);
+    let pairs = fixture.pairs();
+    assert!(
+        pairs.is_empty(),
+        "precondition: the live calibration read pairs nothing for the agent once its read grant \
+         is revoked; seen {pairs:?}"
+    );
+    let control_windows = fixture.control_windows();
+    assert!(
+        control_windows.len() == 1 && control_windows[0].outcome == WindowOutcome::Silence(false),
+        "precondition: the owner's own window still reads closed in silence after the agent's \
+         read grant is revoked; seen {control_windows:?}"
+    );
+    let windows = fixture.windows();
+    assert!(
+        windows.is_empty(),
+        "actor=agent's question saved under its own lane; expected its window that closed in \
+         silence over unit {unit:?} to read no more once the owner revoked its read grant; seen \
+         {windows:?}"
     );
 }
 
@@ -1009,5 +1166,390 @@ fn a_world_bound_saved_question_labels_a_fact_recorded_after_its_window_closed_a
         pairs.len() == 1 && pairs[0].outcome.fact == fact,
         "actor=owner's question saved under the base-world lane; expected one calibration pair \
          from fact {fact:?} recorded after its window closed; seen {pairs:?}"
+    );
+    let windows = closed_outcome_windows(&fixture.vault, fixture.owner, fixture.bound)
+        .expect("bound question windows");
+    assert!(
+        windows.len() == 1 && matches!(windows[0].outcome, WindowOutcome::Unknown),
+        "actor=owner's question saved under the base-world lane; expected its window to read as \
+         it closed, unknown, after fact {fact:?} recorded later labels its answer; seen \
+         {windows:?}"
+    );
+}
+
+/// The pin of the model read whose answer went up to the person rung.
+fn prior_pin() -> ProviderPin {
+    ProviderPin {
+        rung: DecisionRung::Local,
+        model: "local/fixture".into(),
+        version: "r1".into(),
+    }
+}
+
+/// `principal`'s `question` going up to the owners over `evidence`, with
+/// the model's yes at 0.9.
+fn asked_up(
+    question: DecisionQuestion,
+    principal: EntityId,
+    evidence: Vec<EntityId>,
+) -> HumanDecisionRequest {
+    HumanDecisionRequest {
+        question,
+        principal,
+        evidence,
+        reason: HumanAskReason::Uncertain,
+        prior: Some(ProviderDecision {
+            answer: DecisionAnswer::Noul(true),
+            probability: Some(0.9),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        }),
+        prior_provider: Some(prior_pin()),
+        queue_pin: ProviderPin {
+            rung: DecisionRung::Human,
+            model: "questions.saved_lane.person".into(),
+            version: "1".into(),
+        },
+        to: AskTo::owner(),
+        correlation: None,
+    }
+}
+
+/// `principal`'s saved `question` goes up to the owners over `evidence`,
+/// with the model's yes at 0.9, and the owner answers no: a person changed
+/// the model's answer. The ask's id, the source its person-changed record is
+/// bound to.
+fn owner_changes_an_asked_up_answer(
+    vault: &Vault,
+    proof: &AuthenticatedOwner,
+    principal: EntityId,
+    question: EntityId,
+    evidence: Vec<EntityId>,
+) -> EntityId {
+    let record = read_question(vault, principal, question, None)
+        .expect("read the saved question")
+        .expect("precondition: the principal's saved question");
+    let seq = vault
+        .queue_decision_ask(&asked_up(
+            record.definition.question,
+            principal,
+            evidence.clone(),
+        ))
+        .expect("precondition: the ask goes up to the owners");
+    let ask = vault
+        .answer_decision_ask(proof, seq, DecisionAnswer::Noul(false))
+        .expect("precondition: the owner answers the ask");
+    assert!(
+        ask.answer.as_ref().is_some_and(|answer| answer.changed) && ask.evidence == evidence,
+        "precondition: the owner's answer to question {question:?} changes the model's over \
+         evidence {evidence:?}; seen {ask:?}"
+    );
+    ask.id
+}
+
+/// The asks each pair names as its outcome, in the order read.
+fn paired_asks(pairs: &[CalibrationPair]) -> Vec<EntityId> {
+    pairs.iter().map(|pair| pair.outcome.answer).collect()
+}
+
+#[test]
+fn a_world_bound_saved_question_takes_no_person_changed_pair_over_a_claim_outside_its_worlds() {
+    let fixture = fixture();
+    let claim_in = |world: EntityId| {
+        write_owner_claim(
+            &fixture.vault,
+            fixture.owner,
+            &fixture.proof,
+            fixture.unit,
+            REFERENCE_PREDICATE,
+            fixture.fact_at(),
+            world,
+            all_relationships(),
+        )
+    };
+    let inside = claim_in(base_world_id());
+    let outside = claim_in(fixture.other_world);
+    assert!(
+        fixture.owner_reads(&outside)
+            && fixture.bound_lane_reads(&inside)
+            && !fixture.bound_lane_reads(&outside),
+        "precondition: the owner reads claim {outside:?} in world {:?}, and the base-world lane \
+         reads claim {inside:?} and not that one",
+        fixture.other_world
+    );
+    let over_inside = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.bound,
+        vec![fixture.unit, inside],
+    );
+    let over_outside = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.bound,
+        vec![fixture.unit, outside],
+    );
+    let control = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.control,
+        vec![fixture.unit, outside],
+    );
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("the owner's question person-changed pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![control],
+        "precondition: the owner's own question pairs the owner's answer over claim {outside:?}"
+    );
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.bound,
+        CallerLocality::OnDevice,
+    )
+    .expect("bound question person-changed pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over_inside],
+        "actor=owner's question saved under the base-world lane; expected a person-changed pair \
+         from its ask over claim {inside:?} only, none from its ask {over_outside:?} over claim \
+         {outside:?} outside its worlds; seen {pairs:?}"
+    );
+    let pairs = calibration_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.bound,
+        CallerLocality::OnDevice,
+    )
+    .expect("bound question calibration pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over_inside],
+        "actor=owner's question saved under the base-world lane; expected a calibration pair \
+         from its ask over claim {inside:?} only, none from its ask {over_outside:?} over claim \
+         {outside:?} outside its worlds; seen {pairs:?}"
+    );
+}
+
+#[test]
+fn a_person_changed_record_naming_an_earlier_version_under_an_open_ask_pairs_nothing() {
+    let fixture = fixture();
+    let actor = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+    let claim_in = |world: EntityId| {
+        write_owner_claim(
+            &fixture.vault,
+            fixture.owner,
+            &fixture.proof,
+            fixture.unit,
+            REFERENCE_PREDICATE,
+            fixture.fact_at(),
+            world,
+            all_relationships(),
+        )
+    };
+    let inside = claim_in(base_world_id());
+    let outside = claim_in(fixture.other_world);
+    assert!(
+        fixture.owner_reads(&outside)
+            && fixture.bound_lane_reads(&inside)
+            && !fixture.bound_lane_reads(&outside),
+        "precondition: the owner reads claim {outside:?} in world {:?}, and the base-world lane \
+         reads claim {inside:?} and not that one",
+        fixture.other_world
+    );
+    let first = read_question(&fixture.vault, fixture.owner, fixture.control, Some(1))
+        .expect("read the owner's question at its first version")
+        .expect("precondition: the owner's question keeps its first version");
+    assert!(
+        first.read_lane.is_principal(),
+        "precondition: the first version reads under the owner's own lane"
+    );
+    let narrowed = edit_question_with_lane(
+        &fixture.vault,
+        actor,
+        &fixture.bound_lane(),
+        fixture.control,
+        1,
+        definition(fixture.unit),
+        fixture.fact_at(),
+    )
+    .expect("precondition: the owner saves a second version through the base-world lane");
+    assert!(
+        narrowed.definition.question.version == 2 && !narrowed.read_lane.is_principal(),
+        "precondition: the second version keeps the base-world bound; seen version {} lane {:?}",
+        narrowed.definition.question.version,
+        narrowed.read_lane
+    );
+    let over_inside = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.control,
+        vec![fixture.unit, inside],
+    );
+    let seq = fixture
+        .vault
+        .queue_decision_ask(&asked_up(
+            narrowed.definition.question,
+            fixture.owner,
+            vec![fixture.unit, outside],
+        ))
+        .expect("precondition: a second-version ask over the outside claim goes up to the owners");
+    let open = fixture
+        .vault
+        .decision_ask(seq)
+        .expect("read the open ask")
+        .expect("precondition: the vault keeps the open ask");
+    assert!(
+        open.answer.is_none() && open.question.version == 2,
+        "precondition: no one answered the second-version ask over claim {outside:?}; seen {open:?}"
+    );
+    let record = asked_up(
+        first.definition.question,
+        fixture.owner,
+        vec![fixture.unit, outside],
+    )
+    .changed_by(DecisionAnswer::Noul(false))
+    .expect("a person's no to the first version")
+    .expect("precondition: the no changes the model's yes");
+    fixture
+        .vault
+        .record_person_changed_answer(open.id, &record)
+        .expect("precondition: the host keeps a first-version record under the open ask");
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("narrowed question person-changed pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over_inside],
+        "actor=owner's question narrowed to the base-world lane at version 2; expected a \
+         person-changed pair from its answered ask over claim {inside:?} only, none from the \
+         first-version record put under its open ask {:?} over claim {outside:?}; seen {pairs:?}",
+        open.id
+    );
+    let pairs = calibration_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("narrowed question calibration pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over_inside],
+        "actor=owner's question narrowed to the base-world lane at version 2; expected a \
+         calibration pair from its answered ask over claim {inside:?} only, none from the \
+         first-version record put under its open ask {:?} over claim {outside:?}; seen {pairs:?}",
+        open.id
+    );
+}
+
+#[test]
+fn an_agents_saved_question_takes_no_person_changed_pair_over_an_owner_claim_in_a_relationship_it_is_not_in()
+ {
+    let fixture = agent_fixture();
+    let reach = &fixture.reach;
+    let base = &reach.base;
+    let claim_scoped = |relationships: ClaimRelationships| {
+        write_owner_claim(
+            &base.vault,
+            base.owner,
+            &base.proof,
+            base.unit,
+            REFERENCE_PREDICATE,
+            fixture.fact_at(),
+            base_world_id(),
+            relationships,
+        )
+    };
+    let inside = claim_scoped(all_relationships());
+    let outside = claim_scoped(ClaimRelationships::Relationships(vec![
+        reach.relationship.to_hex(),
+    ]));
+    assert!(
+        reads(&base.vault, &base.owner_key, &outside)
+            && reads(&base.vault, &reach.agent_key, &inside)
+            && !reads(&base.vault, &reach.agent_key, &outside),
+        "precondition: the owner reads claim {outside:?} scoped to relationship {:?}, and the \
+         agent's live lane reads claim {inside:?} and not that one",
+        reach.relationship
+    );
+    let over_inside = owner_changes_an_asked_up_answer(
+        &base.vault,
+        &base.proof,
+        reach.agent,
+        fixture.question,
+        vec![base.unit, inside],
+    );
+    let over_outside = owner_changes_an_asked_up_answer(
+        &base.vault,
+        &base.proof,
+        reach.agent,
+        fixture.question,
+        vec![base.unit, outside],
+    );
+    let control = owner_changes_an_asked_up_answer(
+        &base.vault,
+        &base.proof,
+        base.owner,
+        fixture.control,
+        vec![base.unit, outside],
+    );
+    let pairs = person_changed_pairs(
+        &base.vault,
+        base.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("the owner's question person-changed pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![control],
+        "precondition: the owner's own question pairs the owner's answer over claim {outside:?}"
+    );
+    let pairs = person_changed_pairs(
+        &base.vault,
+        reach.agent,
+        fixture.question,
+        CallerLocality::OnDevice,
+    )
+    .expect("the agent's question person-changed pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over_inside],
+        "actor=agent's question saved under its own lane; expected a person-changed pair from \
+         its ask over claim {inside:?} only, none from its ask {over_outside:?} over claim \
+         {outside:?} scoped to relationship {:?}, which it is not in; seen {pairs:?}",
+        reach.relationship
+    );
+    let pairs = calibration_pairs(
+        &base.vault,
+        reach.agent,
+        fixture.question,
+        CallerLocality::OnDevice,
+    )
+    .expect("the agent's question calibration pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over_inside],
+        "actor=agent's question saved under its own lane; expected a calibration pair from its \
+         ask over claim {inside:?} only, none from its ask {over_outside:?} over claim \
+         {outside:?} scoped to relationship {:?}, which it is not in; seen {pairs:?}",
+        reach.relationship
     );
 }
