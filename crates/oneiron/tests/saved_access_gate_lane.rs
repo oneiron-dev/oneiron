@@ -20,6 +20,13 @@
 //! owner's CLAIM past its MESSAGE-only policy row and lost the read
 //! alternative of its own agent Grant.
 //!
+//! A saved owner-floor lane keeps that floor wherever its rebuilt reader
+//! stands on it (blind review round 2 on #8065): a lane frozen again from
+//! that reader keeps the floor's basis, and a standing question's NOTE
+//! position check keeps the floor held to the reader's bounds. Red on
+//! 044c4566d27: the lane frozen again no longer reads the owner's TASK, and
+//! the owner's NOTE source is not found.
+//!
 //! The asker is the house mind a fresh vault seeds (`sys.team_lead`). Its
 //! shipped policy row lets it read the owner's MESSAGEs, so the grant gate
 //! alone decides. Red on #8061 (a0e7a94c82a): the saved reader reads the
@@ -448,6 +455,124 @@ fn an_owner_key_under_the_access_gate_saves_a_question_that_reads_the_owners_tas
     assert!(
         !message,
         "actor=the owner's floor under the access gate, no proof; expected its saved question's reader to keep refusing the unscoped MESSAGE its live lane refused; seen {seen}"
+    );
+}
+
+/// A lane frozen again from the reader the owner's gated floor rebuilt
+/// keeps the floor that reader's owner alternative read under, so its
+/// question still reads the owner's TASK, and keeps the access gate (blind
+/// review round 2 P1 on #8065).
+#[test]
+fn an_owner_floor_lane_frozen_again_from_its_rebuilt_reader_reads_the_owners_task() {
+    let fixture = fixture();
+    let task = owner_task(&fixture);
+    let frozen = saved_lane(&fixture, gated_owner_key(&fixture));
+    let rebuilt = saved_question_reader(&fixture.vault, fixture.owner, &frozen)
+        .expect("the saved question's reader rebuilds");
+    let (first, seen) = reads(&question_read(&fixture.vault, rebuilt.clone()), task);
+    assert!(
+        first,
+        "precondition: the owner-floor question's rebuilt reader reads the owner's TASK; seen {seen}"
+    );
+    let refrozen = saved_lane(&fixture, rebuilt);
+    let (read, seen) = saved_reads(&fixture, fixture.owner, &refrozen, task);
+    assert!(
+        read,
+        "actor=the owner's floor under the access gate, lane frozen again from its rebuilt reader; expected its saved question's reader to read the TASK the live lane read; seen {seen}"
+    );
+    let (message, seen) = saved_reads(&fixture, fixture.owner, &refrozen, fixture.message);
+    assert!(
+        !message,
+        "actor=the owner's floor under the access gate, lane frozen again from its rebuilt reader; expected its saved question's reader to keep refusing the unscoped MESSAGE; seen {seen}"
+    );
+}
+
+/// The owner's floor under the access gate read the owner's own NOTE, so
+/// the standing question saved under it resolves its sources over that
+/// NOTE: the NOTE's position check keeps the floor held to the rebuilt
+/// reader's bounds, as its row check does (blind review round 2 P1 on
+/// #8065 and on #8105). No policy row lets a person read a NOTE here.
+#[test]
+fn an_owner_floor_standing_question_resolves_its_source_over_the_owners_note() {
+    use oneiron::llm::decision::questions::{
+        QuestionActivation, QuestionDefinitionInput, RefreshPolicy, create_question_with_lane,
+        standing_source_frontier,
+    };
+    use oneiron::llm::decision::{
+        AnswerContract, DecisionBand, DecisionClass, DecisionDial, DecisionQuestionInput,
+        DecisionRung,
+    };
+    let fixture = fixture();
+    let asker = oneiron::WriteActor::new(fixture.owner, EdgeActorClass::Human);
+    let note = fixture
+        .vault
+        .create_note(
+            "research",
+            "The spring garden needs a watering rota.",
+            asker,
+        )
+        .expect("the owner's NOTE");
+    let key = gated_owner_key(&fixture);
+    let (live, seen) = reads(&fixture.vault.scoped_read(key.clone()), note);
+    assert!(
+        live,
+        "precondition: the owner's live lane under the access gate reads the owner's NOTE; seen {seen}"
+    );
+    let definition = QuestionDefinitionInput {
+        question: DecisionQuestionInput {
+            text: "Does the garden need a watering rota?".into(),
+            class: DecisionClass::Judgment,
+            contract: AnswerContract::Noul,
+            accept_type: false,
+        },
+        adapter: "graph".into(),
+        units: vec![note],
+        recipe: "unit".into(),
+        profile: "fixture".into(),
+        dial: DecisionDial {
+            first: DecisionRung::Local,
+            ceiling: DecisionRung::Local,
+            band: DecisionBand::default(),
+        },
+        activation: QuestionActivation::Standing,
+        refresh: RefreshPolicy {
+            on_arrival: false,
+            every_seconds: None,
+        },
+        delivery: "none".into(),
+        learning: false,
+        binding: None,
+        criteria: Default::default(),
+        audience: Default::default(),
+        posture: None,
+        media: Default::default(),
+        deadline_ms: None,
+        artifacts: Vec::new(),
+    };
+    let record = create_question_with_lane(
+        &fixture.vault,
+        asker,
+        &fixture.vault.scoped_read(key),
+        definition,
+        2,
+    )
+    .expect("the owner's standing question over the NOTE is stored");
+    assert!(
+        !record.read_lane.reads_as_principal(),
+        "precondition: the question saved under the owner's gated floor keeps its grant basis"
+    );
+    let frontier = standing_source_frontier(
+        &fixture.vault,
+        fixture.owner,
+        record.definition.question.id,
+        1,
+        asker,
+        note,
+        &[],
+    );
+    assert!(
+        frontier.is_ok(),
+        "actor=the owner's floor under the access gate, no proof; expected its standing question's sources to resolve over the owner's NOTE the live lane read; seen {frontier:?}"
     );
 }
 
