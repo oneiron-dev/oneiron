@@ -616,13 +616,14 @@ pub(super) fn prepare_call(
     // (UNBUILT-02); a call heard in a room keeps in the room (PR 4).
     let record = if standalone {
         standalone_call_record(server, person, agent, payer, auth.peer(), auth.locality())
-    } else if let Some(binding) = container.as_ref() {
+    } else if let Some(room) = brain_room {
+        // The binding moved into the session above; the room's id is Copy.
         room_call_record(
             server,
             payer,
             auth.peer(),
             auth.locality(),
-            binding.container,
+            room,
             branch,
             &members,
             roster_ref,
