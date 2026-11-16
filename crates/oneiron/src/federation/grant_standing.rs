@@ -515,13 +515,16 @@ fn derived_row(
     Ok(RowRead::Read(None))
 }
 
-/// A base agent's engine-default row `grant` at `id`, which no act gives, read for the verbs
-/// in the meet with its agent's Steward reach in `txn` ([`super::steward_reach_in`], the meet
-/// every Steward use reads; Engine RULING R4-DEFAULT-END-AFTER-WHOLE-REVOKE = C). Every row
+/// A base agent's engine-default row `grant` at `id`, which no act gives, read for the meet
+/// with its agent's Steward reach in `txn` ([`super::steward_reach_in`], the meet every
+/// Steward use reads; Engine RULING R4-DEFAULT-END-AFTER-WHOLE-REVOKE = C): the verbs every
+/// standing row gives, and each data axis no wider than any standing row holds it. Every row
 /// that stands naming the agent counts in that meet, this one among them, so a row no act
 /// gives can only narrow it: after the owner's whole revoke, the opt-out's row gives no verb,
 /// and a default-shape row put after it gives none at any reader; after a narrowing it gives
-/// only the verbs the owner kept. `None` when the meet leaves it no verb.
+/// only the verbs the owner kept; and it reaches no record the standing rows do not reach
+/// together (the policy scope the engine stood its default under among them). `None` when the
+/// meet leaves it no verb.
 fn engine_default_within_reach(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -538,7 +541,9 @@ fn engine_default_within_reach(
     if met.is_bottom() {
         return Ok(None);
     }
-    grant.authority_scope.verbs = met;
+    let mut scope = grant.authority_scope.meet(&reach.scope);
+    scope.verbs = met;
+    grant.authority_scope = scope;
     Ok(Some(SharedGrantRow::Derived(id, grant)))
 }
 
