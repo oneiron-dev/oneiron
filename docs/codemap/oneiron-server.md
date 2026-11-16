@@ -327,7 +327,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/presentation.rs` | src | m | 6 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/esign/signing_session.rs` | src | m | 15 crate-vis | — | The signing lens's session (ARCH-0064a §6 and [SGN-03], census L3-22) |
-| `src/api/esign_qr.rs` | src | s | 2 crate-vis | — | The public QR page a sealed document's certificate names (ARCH-0064a section 6, [SGN-05])… |
+| `src/api/esign_qr.rs` | src | s | 3 crate-vis | — | The public QR page a sealed document's certificate names (ARCH-0064a section 6, [SGN-05])… |
 | `src/api/facade.rs` | src | m | 37 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 18 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/action_routes/execution.rs` | src | s | 4 crate-vis | — | How one action runs (OF-181): the principal its call reads as, and the driver thread it runs on with its… |
@@ -419,7 +419,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 5 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/git_push_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and… |
 | `src/api/facade/goal_optimize_doors.rs` | src | m | 15 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
-| `src/api/facade/graduation_doors.rs` | src | s | 11 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
+| `src/api/facade/graduation_doors.rs` | src | s | 9 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
 | `src/api/facade/grants_doors.rs` | src | s | 2 crate-vis | — | `self.grants.answer` (FIX 1379): an access request answered by the vault owner, or by the person or agent it… |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 13 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/graph_ask_doors/question_answers.rs` | src | s | 1 crate-vis | — | `vault.questions.answers` (FIX 1585, FIX 2337): the engine's one reader (`question_answers`), as the… |
@@ -684,7 +684,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/read_rows.rs` | src | s | 7 crate-vis | — | Raw scoped-read rows and bodies on the request's memory line |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/message_result.rs` | src | s | 2 crate-vis | — | `POST /v1/core/messages/{message}/result`: the result a MESSAGE carries in place of an answer too large to… |
-| `src/api/mod.rs` | src | m | 65 crate-vis | — | HTTP query routes for web dashboard access |
+| `src/api/mod.rs` | src | m | 66 crate-vis | — | HTTP query routes for web dashboard access |
 | `src/api/native_read_hooks.rs` | src | m | 12 crate-vis | — | The verb-hook boundary of the direct native HTTP read routes (ARCH-0080 §3, FIX 1435) |
 | `src/api/oauth_server/authorize.rs` | src | s | 3 crate-vis | — | `GET /oauth/authorize` and its poll, `GET /oauth/authorize/status` |
 | `src/api/oauth_server/client_document.rs` | src | s | 1 crate-vis | — | The client an authorize request names: a registered one from the clients table, or one whose https… |
@@ -694,6 +694,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/oauth_server/registration.rs` | src | s | 2 crate-vis | — | `POST /oauth/register`: dynamic client registration (RFC 7591) for public clients, which prove each code… |
 | `src/api/oauth_server/token.rs` | src | s | 4 crate-vis | — | `POST /oauth/token` (RFC 6749 §3.2, form-encoded): an authorization code with its PKCE verifier, or a… |
 | `src/api/off_record_rooms.rs` | src | m | 12 crate-vis | — | Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
+| `src/api/one_click_unsubscribe.rs` | src | s | 2 crate-vis | — | The public one-click unsubscribe door a bulk campaign email's List-Unsubscribe names (ARCH-0059 #opt-out… |
 | `src/api/openai_proxy/choices.rs` | src | s | 10 crate-vis | — | FIX 8188, 8189: every choice a call asks for, on the caller's own clock |
 | `src/api/openai_proxy/exchange.rs` | src | s | 2 crate-vis | — | The exchange a call proposes back (FIX 8188, 8192): the newest user text, every answer the caller got and… |
 | `src/api/openai_proxy/mod.rs` | src | m | 4 crate-vis | — | OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps… |
@@ -1487,7 +1488,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/state_serve/reap/host_holds.rs` | src | s | 1 crate-vis | — | The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`, its… |
 | `src/managed/state_serve/refusal.rs` | src | s | 1 crate-vis | — | The body a frozen engine's refusal is served with |
 | `src/managed/state_serve/relay_delete.rs` | src | s | 3 crate-vis | — | The relay delete ctl requests a managed vault answers (FIX 6826): `relay_delete_execute`… |
-| `src/managed/state_serve/route_selection_tests.rs` | test | s | — | — | Every route the API listener registers either verifies a console owner's attestation or is listed here with… |
+| `src/managed/state_serve/route_selection_tests.rs` | test | m | — | — | Every route the API listener registers either verifies a console owner's attestation or is listed here with… |
 | `src/managed/state_serve/usage_export.rs` | src | s | 1 crate-vis | — | Generic original-usage export over ctl (LC191311): read-only managed handler |
 | `src/managed/usage_meter.rs` | src | s | 2 crate-vis | — | The usage meter a managed start binds to its hosted vault before any worker starts (census L8-12… |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 7 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
@@ -1986,8 +1987,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mcp_page_mint.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/mcp_page_continuation_rejudge.rs`: one act run at a vault's next page one mint, after its… |
 | `src/test_doors/mcp_surface.rs` | src | s | 2 fn | — | Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the… |
 | `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 11 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
-| `src/test_doors/mod.rs` | src | s | 24 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 25 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
+| `src/test_doors/one_click_wire_counter.rs` | src | s | 1 fn | — | Door for `tests/campaign_one_click_unsubscribe.rs`: runs a closure while the wire window's counter lock is… |
 | `src/test_doors/openapi_document.rs` | src | s | 2 fn | — | Door for `tests/openapi_document_reuse.rs` and `tests/openapi_document_precompute.rs`: how many times this… |
 | `src/test_doors/pre_idle_reuse.rs` | src | s | 1 struct · 6 fn | ManagedBackups | Door for `tests/pre_idle_held_verdict.rs` ([HELD-WHOLE-READ-OFF-PRE-IDLE]): a managed vault's owner host… |
 | `src/test_doors/replay_admission.rs` | src | s | 5 fn | — | Doors to an exact replay's admission (FIX-LIST REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG): a runtime whose… |
@@ -2052,9 +2054,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/web_connector/providers/tinyfish.rs` | src | s | 2 crate-vis | — | Tinyfish: TinySearch and TinyFetch, free within their daily allowances, on the user's own key or the hub… |
 | `src/wire_health.rs` | src | m | 1 struct · 3 enum · 2 fn · 2 const · 5 crate-vis | AnsweredBy, CheckState, CrossingSource, HealthCheck | The health check past a threshold (OF-520, ARCH-0044 C5) |
 | `src/wire_health/evidence.rs` | src | m | 4 crate-vis | — | What the health check reads: each kind of kept crossing past its cursor, as one subject's crossing, and how… |
-| `src/wire_telemetry.rs` | src | L | 6 struct · 1 enum · 11 fn · 2 re-export · 15 crate-vis | LimitQuestions, WireCrossed, WireLimitQuestion, WireQuestion, WireQuestionKind, WireTelemetry, WireWindowReceipt | RC42 observation-only wire counters |
+| `src/wire_telemetry.rs` | src | L | 6 struct · 1 enum · 11 fn · 1 const · 2 re-export · 16 crate-vis | LimitQuestions, WireCrossed, WireLimitQuestion, WireQuestion, WireQuestionKind, WireTelemetry, WireWindowReceipt | RC42 observation-only wire counters |
 | `src/wire_telemetry/connection_pressure.rs` | src | m | 21 crate-vis | — | The shared connection pool's live pressure check (FIX 7656, OF-520) |
-| `src/wire_telemetry/http.rs` | src | s | 2 crate-vis | — | The HTTP observer every routed request passes, and the tick that keeps the observed window |
+| `src/wire_telemetry/http.rs` | src | s | 3 crate-vis | — | The HTTP observer every routed request passes, and the tick that keeps the observed window |
 | `src/wire_telemetry/kept.rs` | src | s | 4 crate-vis | — | The kept questions as the health check reads them (OF-520): the call-volume questions past its cursor, a… |
 | `src/wire_telemetry/rows.rs` | src | s | 1 enum · 1 fn · 1 const | LimitRow | The `[limits]` rows this server's questions name (moved out of `wire_telemetry.rs` whole, so the telemetry… |
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
@@ -2071,6 +2073,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/broker_followup_job_binding.rs` | test | s | — | — | Census L8-46: provider follow-up URLs stay bound to the admitted destination and job, including the video… |
 | `tests/broker_rerank.rs` | test | m | — | — | L9-12: a reranker whose provider key is a vault secret reranks through the credential broker's rerank shape… |
 | `tests/calendar_ics_hosted_egress.rs` | test | s | — | — | CAL-02: an ICS feed goes out through the one shared network boundary (ARCH-0060 :130, "The adapter keeps no… |
+| `tests/campaign_one_click_unsubscribe.rs` | test | m | — | — | The one-click unsubscribe link a bulk campaign email carries (ARCH-0059 #opt-out, RFC 8058; FIX… |
 | `tests/claude_code_plugin.rs` | test | m | — | — | The Claude Code plugin (`plugins/claude-code`; ARCH-0028 #plugin-agent-plugins, ARCH-0067 row 34): the… |
 | `tests/coach_offer_run.rs` | test | L | — | — | `vault.coach.training_offers.run` served over the real facade route (LEARNING-08, COACH-OFFER-PASS): one… |
 | `tests/code_run_reply_evidence.rs` | test | m | — | — | RAW-PROVIDER-EVIDENCE-READ (CODE-RUNTIME-02): `vault.code.reply_evidence` reads the model reply a code run… |
