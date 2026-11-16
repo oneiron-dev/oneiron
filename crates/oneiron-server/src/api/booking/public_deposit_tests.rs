@@ -1098,13 +1098,25 @@ async fn a_capture_a_restricted_key_may_not_make_stays_owed_and_lands_once_the_k
     // clock, so no pass may run ahead of that clock: the earlier ones run
     // behind it. In the first three every ask is refused again: a live row
     // asks Stripe, no move fails for good, and the capture stays owed.
-    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    //
+    // Each pass runs off the runtime, as the settle worker runs it: the
+    // Stripe client blocks, and the fake Stripe answers on this runtime.
     let now = now_secs().expect("clock");
     let pass_at = |pass: u64| now - (3 - pass) * 3_601;
+    let settle_pass = |at: u64| {
+        let vault = Arc::clone(&fixture.server.vault);
+        let base = fixture.server.booking_deposit_stripe_base().to_owned();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                settle_deposits_once(&vault, &base, at).expect("settle pass")
+            })
+            .await
+            .expect("the settle pass ran")
+        }
+    };
     for pass in 0..3_u64 {
         let asked_before = capture_posts();
-        let drain =
-            settle_deposits_once(&fixture.server.vault, &base, pass_at(pass)).expect("settle pass");
+        let drain = settle_pass(pass_at(pass)).await;
         assert_eq!(
             drain.failed, 0,
             "pass {pass}: a refused capture fails no move for good"
@@ -1130,8 +1142,7 @@ async fn a_capture_a_restricted_key_may_not_make_stays_owed_and_lands_once_the_k
     // The owner gives the key the permission: the next pass captures, once.
     let refused_captures = capture_posts();
     stripe.lock().expect("fake stripe").refuse_intent_moves = false;
-    let drain =
-        settle_deposits_once(&fixture.server.vault, &base, pass_at(3)).expect("settle pass");
+    let drain = settle_pass(pass_at(3)).await;
     assert_eq!(
         drain.captured, 1,
         "the owed capture runs once the key may capture"
