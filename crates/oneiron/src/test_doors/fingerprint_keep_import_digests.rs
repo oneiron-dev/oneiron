@@ -20,13 +20,11 @@ pub fn note_import_content_hash(batch: &crate::note::ImportedNoteBatch) -> crate
     crate::note::note_import_content_hash_for_test(batch)
 }
 
-/// A history message's hash, as the ingest ledger stores it, with the speaker unknown or known.
+/// A history message's hashes, as the ingest ledger stores them, as each speaker said it: by
+/// role, as a Slack member, unknown.
 #[must_use]
-pub fn history_message_hash(
-    message: &crate::ingest::history::HistoryMessage,
-    unknown_speaker: bool,
-) -> String {
-    crate::ingest::history::history_message_hash_for_test(message, unknown_speaker)
+pub fn history_message_hashes(message: &crate::ingest::history::HistoryMessage) -> [String; 3] {
+    crate::ingest::history::history_message_hashes_for_test(message)
 }
 
 /// The content hash of a blob version whose body is held in memory.

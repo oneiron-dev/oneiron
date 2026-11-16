@@ -15,7 +15,8 @@ legacy_purposes! {
     CLAIM_IMPORT_CONTENT = (Blake3, NotHashed, "oneiron.ingest.claim_import_content.v1");
 
     /// A history message's hash (`ingest::history::ledger::hash`), stored in
-    /// `LedgerRow.hashes`. BLAKE3: `unknown\0` when the source left the speaker unknown,
-    /// then `user\0` or `asst\0`, then the words, with no lengths; written as lowercase hex.
+    /// `LedgerRow.hashes`. BLAKE3: `slack-member\0` for a Slack member's words, `unknown\0`
+    /// when the source left the speaker unknown, then `user\0` or `asst\0`, then the words,
+    /// with no lengths; written as lowercase hex.
     HISTORY_MESSAGE = (Blake3, NotHashed, "oneiron.ingest.history_message.v1");
 }

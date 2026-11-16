@@ -10,7 +10,8 @@
 //! rows and compared on export and append. So each must give main's bytes for every input.
 //! The `base_*` modules hold main's lines at 709cd244c3eb, copied by range (each range is named
 //! above its copy; the generator is `lanes/kimi/OPUS-UC04-FINGERPRINT/check/gen_keep_oracle.py`)
-//! and differing from them only in indentation. The few lines around the copies are the
+//! and differing from them only in indentation; `base_ledger` holds main's at cc184ff09aea,
+//! where the ledger's hash tells a Slack member's words apart. The few lines around the copies are the
 //! imports main's lines name and, for the blob hash, a one-variant stand-in of main's private
 //! `VersionBody` around the copied match arm.
 //!
@@ -125,16 +126,41 @@ mod base_note {
 mod base_ledger {
     use oneiron::ingest::history::{HistoryMessage, HistoryRole};
 
-    /// Main's hash, which is private there.
-    pub(crate) fn main_history_message_hash(message: &HistoryMessage, unknown_speaker: bool) -> String {
-        hash(message, unknown_speaker)
+    /// Main's hashes as each speaker said the words, which are private there.
+    pub(crate) fn main_history_message_hashes(message: &HistoryMessage) -> [String; 3] {
+        erasure_hashes(message)
     }
 
-    // main 709cd244c3eb: crates/oneiron/src/ingest/history/ledger.rs:156-167
-    fn hash(message: &HistoryMessage, unknown_speaker: bool) -> String {
+    // main cc184ff09aea: crates/oneiron/src/ingest/history/ledger.rs:135-146
+    /// Who a message's hash says spoke it.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Speaker {
+        /// The message's side tells it: the owner's own words, or a speaker the
+        /// source names by a fixed word.
+        ByRole,
+        /// A Slack member ([`super::slack::SPEAKER_PREFIX`]): the member map
+        /// decides whether the words are the owner's or a contact's.
+        SlackMember,
+        /// No speaker the source names ([`UNKNOWN_SPEAKER`]).
+        Unknown,
+    }
+
+    // main cc184ff09aea: crates/oneiron/src/ingest/history/ledger.rs:199-201
+    fn erasure_hashes(message: &HistoryMessage) -> [String; 3] {
+        [Speaker::ByRole, Speaker::SlackMember, Speaker::Unknown].map(|speaker| hash(message, speaker))
+    }
+
+    // main cc184ff09aea: crates/oneiron/src/ingest/history/ledger.rs:206-223
+    fn hash(message: &HistoryMessage, speaker: Speaker) -> String {
         let mut hasher = blake3::Hasher::new();
-        if unknown_speaker {
-            hasher.update(b"unknown\0");
+        match speaker {
+            Speaker::ByRole => {}
+            Speaker::SlackMember => {
+                hasher.update(b"slack-member\0");
+            }
+            Speaker::Unknown => {
+                hasher.update(b"unknown\0");
+            }
         }
         hasher.update(match message.role {
             HistoryRole::User => b"user\0",
@@ -368,13 +394,12 @@ fn the_history_message_hash_keeps_its_bytes() {
     let messages = messages();
     assert_eq!(messages.len(), 20);
     for message in &messages {
-        for unknown_speaker in [false, true] {
-            assert_eq!(
-                door::history_message_hash(message, unknown_speaker),
-                base_ledger::main_history_message_hash(message, unknown_speaker),
-                "{message:?} unknown speaker {unknown_speaker}"
-            );
-        }
+        // By role, as a Slack member, unknown: the three hashes of main's three speakers.
+        assert_eq!(
+            door::history_message_hashes(message),
+            base_ledger::main_history_message_hashes(message),
+            "{message:?}"
+        );
     }
 }
 

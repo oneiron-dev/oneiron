@@ -3,6 +3,7 @@
 use crate::claim_check::AutoCheckSignals;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -56,10 +57,12 @@ pub(super) fn auto_check_signals(
         if now.saturating_sub(record.created_at) < config.window_secs {
             signals.recent_writes = signals.recent_writes.saturating_add(1);
         }
-        match record.outcome.as_str() {
-            "allow" => signals.failure_streak = 0,
-            "deny" => signals.failure_streak = signals.failure_streak.saturating_add(1),
-            "pending"
+        match record.gate_outcome() {
+            Some(GateReceiptOutcome::Allow) => signals.failure_streak = 0,
+            Some(GateReceiptOutcome::Deny) => {
+                signals.failure_streak = signals.failure_streak.saturating_add(1);
+            }
+            Some(GateReceiptOutcome::Pending)
                 if record
                     .reason_codes
                     .iter()
@@ -67,7 +70,19 @@ pub(super) fn auto_check_signals(
             {
                 signals.failure_streak = signals.failure_streak.saturating_add(1);
             }
-            _ => {}
+            Some(
+                GateReceiptOutcome::Pending
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::Rejected
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => {}
         }
     }
     Ok(signals)
