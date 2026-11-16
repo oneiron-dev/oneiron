@@ -501,6 +501,15 @@ fn find<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     }
 }
 
+/// An agent verb answer's `output`, which the facade carries as JSON text,
+/// parsed; `answer` itself when it carries none.
+fn verb_output(answer: &Value) -> Value {
+    find(answer, "output")
+        .and_then(Value::as_str)
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_else(|| answer.clone())
+}
+
 /// The slate row named `tool` in a register reply.
 fn slate_row<'a>(registered: &'a Value, tool: &str) -> &'a Value {
     registered["slate"]["manifest"]
@@ -612,8 +621,9 @@ fn a_get_call_sends_one_request_to_the_installed_endpoint_with_the_held_token() 
             seen[0].headers.get("authorization").map(String::as_str),
             Some(format!("Bearer {SECRET_VALUE}").as_str())
         );
-        let structured = find(&answer, "structured_content")
-            .or_else(|| find(&answer, "structuredContent"))
+        let output = verb_output(&answer);
+        let structured = find(&output, "structured_content")
+            .or_else(|| find(&output, "structuredContent"))
             .unwrap_or_else(|| panic!("no structured content: {answer}"));
         assert_eq!(structured["id"], "n1", "{answer}");
         assert!(
@@ -651,8 +661,9 @@ fn a_post_carries_the_intent_key_and_a_replay_sends_nothing() {
         );
         let body: Value = serde_json::from_slice(&seen[0].body).expect("JSON body");
         assert_eq!(body, json!({"id": "n2", "text": "made by owen"}));
-        let structured = find(&second, "structured_content")
-            .or_else(|| find(&second, "structuredContent"))
+        let output = verb_output(&second);
+        let structured = find(&output, "structured_content")
+            .or_else(|| find(&output, "structuredContent"))
             .unwrap_or_else(|| panic!("no structured content in the replay: {second}"));
         assert_eq!(structured["id"], "n2", "{second}");
     });
