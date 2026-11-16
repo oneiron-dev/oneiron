@@ -974,13 +974,51 @@ fn member_selector_carries(
     reach: &Reach,
     alter: impl FnOnce(&loro::LoroDoc),
 ) -> BTreeSet<EntityId> {
+    let window = oneiron::sync::WindowKey::from_timestamp(OCCURRED_AT);
+    let selected = member_selector_window(&reach.fixture.vault, &window, alter);
+    let mut carried = BTreeSet::new();
+    selected.get_map("entities").for_each(|key, _| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            carried.insert(id);
+        }
+    });
+    carried
+}
+
+/// A fresh Member's restricted selector window `key` of `vault`, filtered
+/// from the window packed there once `alter` has changed it.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn member_selector_window(
+    vault: &Vault,
+    key: &oneiron::sync::WindowKey,
+    alter: impl FnOnce(&loro::LoroDoc),
+) -> loro::LoroDoc {
+    use oneiron::sync::filtered_window_doc;
+    use oneiron::sync::schema::create_window_doc;
+    use oneiron::sync::window::reverse_rematerialize;
+
+    let (scope, selector) = member_selector(vault);
+    let source = create_window_doc("selector", key);
+    reverse_rematerialize(vault, &source, key).expect("the window pack");
+    alter(&source);
+    filtered_window_doc(vault, &source, key, scope, &selector)
+        .expect("the member's restricted selector window")
+}
+
+/// A fresh Member of `vault` under the read preset: its grant's scope and
+/// its authorized restricted selector.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn member_selector(
+    vault: &Vault,
+) -> (
+    oneiron::federation::FederationGrantScope,
+    oneiron::sync::SyncSelector,
+) {
     use oneiron::federation::{
         FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     };
-    use oneiron::sync::schema::create_window_doc;
-    use oneiron::sync::window::reverse_rematerialize;
     use oneiron::sync::{
-        SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
+        SyncSelector, SyncSelectorWorld, authorize_sync_selector,
         put_selector_test_federation_grant,
     };
     use oneiron_authority::federation::scope_codec::read_preset;
@@ -988,14 +1026,12 @@ fn member_selector_carries(
     const SHARED_VAULT_ID: u64 = 7;
 
     let member = EntityId::now();
-    let now = reach.fixture.vault.now_recorded_at();
+    let now = vault.now_recorded_at();
     let at = TimeRange {
         start: now,
         end: now,
     };
-    reach
-        .fixture
-        .vault
+    vault
         .put_entity(
             &member,
             oneiron::registry::ENTITY_TYPE_PERSON,
@@ -1014,24 +1050,12 @@ fn member_selector_carries(
         FederationGrantPreset::Member,
     );
     grant.authority_scope = read_preset();
-    put_selector_test_federation_grant(&reach.fixture.vault, &grant_id, &grant, now)
+    put_selector_test_federation_grant(vault, &grant_id, &grant, now)
         .expect("FIXTURE: the member's federation grant");
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    authorize_sync_selector(&reach.fixture.vault, scope, &selector)
+    authorize_sync_selector(vault, scope, &selector)
         .expect("FIXTURE: the member's selector is authorized");
-    let key = WindowKey::from_timestamp(OCCURRED_AT);
-    let source = create_window_doc("selector", &key);
-    reverse_rematerialize(&reach.fixture.vault, &source, &key).expect("the window pack");
-    alter(&source);
-    let selected = filtered_window_doc(&reach.fixture.vault, &source, &key, scope, &selector)
-        .expect("the member's restricted selector window");
-    let mut carried = BTreeSet::new();
-    selected.get_map("entities").for_each(|key, _| {
-        if let Ok(id) = EntityId::from_hex(key) {
-            carried.insert(id);
-        }
-    });
-    carried
+    (scope, selector)
 }
 
 /// The row bytes the packed window `doc` holds for `id`.
@@ -1146,10 +1170,31 @@ fn a_restricted_selector_does_not_carry_a_row_derived_from_a_kept_call() {
 #[cfg(all(feature = "sync", feature = "test-hooks"))]
 #[test]
 fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
+    assert_selector_withholds_a_claim_born_from_a_kept_call(
+        oneiron::provenance::made_by::MadeByInputRole::Prompt,
+    );
+}
+
+/// R1 review 5 N1: a door that writes a CLAIM from evidence TURNs (the
+/// scoped CLAIM upsert's `evidence_turn_refs`) names them as `Input`, not
+/// `Prompt`; the CLAIM's words came from them all the same.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_row_written_from_a_kept_call_as_evidence() {
+    assert_selector_withholds_a_claim_born_from_a_kept_call(
+        oneiron::provenance::made_by::MadeByInputRole::Input,
+    );
+}
+
+/// An ordinary CLAIM whose birth names A's kept MESSAGE as one input of
+/// `role` never rides the Member's restricted selector; its control, born
+/// the same way from the ordinary MESSAGE, does.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn assert_selector_withholds_a_claim_born_from_a_kept_call(
+    role: oneiron::provenance::made_by::MadeByInputRole,
+) {
     use oneiron::provenance::birth::RowBirth;
-    use oneiron::provenance::made_by::{
-        MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
-    };
+    use oneiron::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByProcess};
     use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
     use oneiron::sync::client::ImportTier;
     use oneiron::sync::replay::{ReplicatedEntity, replay_entity_with_birth};
@@ -1179,9 +1224,9 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
                 .expect("subject PERSON body"),
         )
         .expect("FIXTURE: an ordinary subject PERSON");
-    // One open CLAIM per prompt input, as
+    // One open CLAIM per input, as
     // `selector_born_with_prompt_label::open_record_with_prompts` builds
-    // them, adapted to a single Prompt input in this window.
+    // them, adapted to a single input of `role` in this window.
     let prompt_claim = |prompt: EntityId, label: &str| {
         let row = EntityId::now();
         let mut body = ClaimBody::new(
@@ -1205,10 +1250,7 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
             .expect("FIXTURE: the prompt row exists");
         let birth = RowBirth {
             made_by: MadeBy {
-                inputs: vec![MadeByInput {
-                    row: prompt,
-                    role: MadeByInputRole::Prompt,
-                }],
+                inputs: vec![MadeByInput { row: prompt, role }],
                 process: MadeByProcess {
                     actor: owner,
                     class: MadeByClass::Stated,
@@ -1240,7 +1282,7 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
         assert_eq!(
             vault.row_birth(&row).expect("FIXTURE: read the row birth"),
             Some(birth),
-            "FIXTURE: the {label} CLAIM retains the exact birth with one Prompt input",
+            "FIXTURE: the {label} CLAIM retains the exact birth with one {role:?} input",
         );
         row
     };
@@ -1259,11 +1301,11 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
     });
     assert!(
         carried.contains(&prompted_control),
-        "precondition: the Member restricted window carries the ordinary prompt-born CLAIM prompted_control",
+        "precondition: the Member restricted window carries the ordinary CLAIM prompted_control born from a {role:?} input",
     );
     assert!(
         !carried.contains(&prompted_phone),
-        "LEAK: the Member restricted window carries a CLAIM a model wrote from A's kept MESSAGE",
+        "LEAK: the Member restricted window carries a CLAIM born from A's kept MESSAGE as a {role:?} input",
     );
 }
 
@@ -2072,5 +2114,422 @@ fn a_restricted_selector_does_not_carry_a_summary_of_a_kept_call() {
     assert!(
         !carried.contains(&r_phone),
         "LEAK: the Member restricted window carries the phone reply TURN R_phone",
+    );
+}
+
+/// One MESSAGE holding `words`, written by the owner outside any call.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn witness_owner_message(vault: &Vault, owner: EntityId, words: &str) -> EntityId {
+    let turn = WitnessTurn {
+        conversation_ref: EntityId::now().to_hex(),
+        turn_ref: None,
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "text".to_owned(),
+            content: words.to_owned(),
+            parts: None,
+            metadata: None,
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: vault.now_recorded_at(),
+        assertions: Default::default(),
+    };
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&turn)
+        .expect("FIXTURE: the owner's MESSAGE is witnessed");
+    EntityId::from_hex(&receipt.messages[0].id).expect("owner message id")
+}
+
+/// R1 review 5 N2: a NOTE whose core lies in another month's window rides
+/// this month's export only as an attachment of a review bundle, judged by
+/// NOTE admission, never by the window filter's own row check. NOTE N,
+/// drawn from a MESSAGE the owner then erases, turns stale: its pending
+/// proposal must not ride a Member's restricted window beside the bundle,
+/// while a live NOTE of N's month, held the same way, still rides. Two
+/// NOTE months need a clock the test moves, so this runs on a vault of its
+/// own, and N is drawn from an owner MESSAGE: the read admission refuses
+/// any row raw readability refuses (REACH-ERASED-SOURCE-EGRESS = A).
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_stale_notes_proposal_held_in_another_months_bundle() {
+    use oneiron::WriteActor;
+    use oneiron::memory::SafeDeleteReason;
+    use oneiron::note::NoteProgramEdit;
+    use oneiron::store::ports::ManualClock;
+    use oneiron::sync::WindowKey;
+
+    // N and C are learned in the last minute of February, O and P in the
+    // first minutes of March: two windows, two minutes apart, so nothing
+    // the fixture holds lapses in between.
+    const MARCH_1: u64 = 1_772_323_200;
+    const STALE_WORDS: &str = "the boiler fixed before the inspection";
+    let clock = ManualClock::new(MARCH_1 - 60);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let vault = Vault::open(dir.path(), config).expect("fresh vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let (owner, _) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let note = |markdown: &str| {
+        vault
+            .create_note("research", markdown, actor)
+            .expect("FIXTURE: an owner NOTE")
+    };
+    // February: N, drawn from the owner's MESSAGE S, and the control C.
+    let source = witness_owner_message(
+        &vault,
+        owner,
+        "The boiler needs fixing before the inspection.",
+    );
+    let stale = note("Notes from the call about the boiler.");
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(&vault, &stale, &source)
+        .expect("FIXTURE: N registered as drawn from the MESSAGE S");
+    let control = note("Notes from the meeting about the garden.");
+    // March: O and P, each bundled below with a February NOTE's rewrite.
+    clock.set(MARCH_1 + 60);
+    let ordinary = note("The weekly review covers the schedule.");
+    let paired = note("The weekly review covers the agenda.");
+    let fork = |id: EntityId, text: &str| {
+        vault
+            .fork_note(
+                id,
+                &NoteProgramEdit::Rewrite {
+                    text: text.to_owned(),
+                },
+                actor,
+            )
+            .expect("FIXTURE: an undecided rewrite fork")
+    };
+    let stale_fork = fork(
+        stale,
+        "Rewrite: the caller wants the boiler fixed before the inspection.",
+    );
+    let ordinary_fork = fork(ordinary, "Move the standup to Tuesday.");
+    let control_fork = fork(control, "Move the garden visit to Friday.");
+    let paired_fork = fork(paired, "Move the retro to Monday.");
+    vault
+        .open_note_proposal(
+            &[stale_fork, ordinary_fork],
+            "Two rewrites from this week.",
+            actor,
+        )
+        .expect("FIXTURE: one bundle holds N's and O's rewrites");
+    vault
+        .open_note_proposal(&[control_fork, paired_fork], "Two more rewrites.", actor)
+        .expect("FIXTURE: one bundle holds C's and P's rewrites");
+    let march = WindowKey::from_timestamp(MARCH_1);
+    for (id, label, in_march) in [
+        (stale, "N", false),
+        (control, "C", false),
+        (ordinary, "O", true),
+        (paired, "P", true),
+    ] {
+        let learned = WindowKey::from_timestamp(vault.get_learned_at(&id).expect("learned at"));
+        assert_eq!(
+            learned == march,
+            in_march,
+            "FIXTURE: NOTE {label} is learned in {}",
+            if in_march { "March" } else { "February" },
+        );
+    }
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .safe_delete(&source.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner erases the MESSAGE S");
+    assert!(
+        vault.get_raw(&stale).expect("read N").is_none(),
+        "FIXTURE: N reads as absent once S is erased",
+    );
+    assert!(
+        vault.get_raw(&control).expect("read C").is_some(),
+        "FIXTURE: C still reads",
+    );
+    let carrier = |id: EntityId, fork: EntityId| {
+        format!("note_proposal_doc:v1:{}:{}", id.to_hex(), fork.to_hex())
+    };
+    let forks = [
+        (stale, stale_fork, "N"),
+        (control, control_fork, "C"),
+        (ordinary, ordinary_fork, "O"),
+        (paired, paired_fork, "P"),
+    ];
+    let selected = member_selector_window(&vault, &march, |source| {
+        for (id, label) in [(stale, "N"), (control, "C")] {
+            assert!(
+                source.get_map("entities").get(&id.to_hex()).is_none(),
+                "FIXTURE: March's packed window holds no core of the February NOTE {label}",
+            );
+        }
+        for (id, fork, label) in forks {
+            assert!(
+                source
+                    .get_map("documents")
+                    .get(&carrier(id, fork))
+                    .is_some(),
+                "FIXTURE: March's packed window holds {label}'s proposal",
+            );
+        }
+    });
+    let documents = selected.get_map("documents");
+    for (id, fork, label) in &forks[1..] {
+        assert!(
+            documents.get(&carrier(*id, *fork)).is_some(),
+            "precondition: the Member restricted window carries {label}'s proposal",
+        );
+    }
+    assert!(
+        documents.get(&carrier(stale, stale_fork)).is_none(),
+        "LEAK: the Member restricted window carries the stale NOTE N's proposal",
+    );
+    documents.for_each(|key, value| {
+        if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes)) = value {
+            assert!(
+                !bytes
+                    .windows(STALE_WORDS.len())
+                    .any(|part| part == STALE_WORDS.as_bytes()),
+                "LEAK: the Member restricted window's document {key} holds N's proposal words",
+            );
+        }
+    });
+}
+
+/// R1 door test (REACH-READ-DOOR-TESTS = A, Engine 09:28): a brief quoting
+/// another NOTE carries the quoted words in its pin, and its birth
+/// registers no source, so the brief still reads once the quoted NOTE Y
+/// turns stale: the window filter lets the brief ride, and its export to a
+/// Member meets Y only at pin disclosure, where Y's NOTE read admission is
+/// the one gate (REACH-ERASED-SOURCE-EGRESS = A). Y is drawn from an owner
+/// MESSAGE the owner then erases. A brief quoting a live NOTE still
+/// exports.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_export_a_brief_quoting_a_stale_note() {
+    use oneiron::WriteActor;
+    use oneiron::memory::{ClaimInput, SafeDeleteReason};
+    use oneiron::note::NotePin;
+    use oneiron::sync::bridge::Materializer;
+    use oneiron::sync::manager::WindowManager;
+    use oneiron::sync::types::WindowKey;
+
+    const STALE_QUOTE: &str = "the boiler fails before the inspection";
+    const LIVE_QUOTE: &str = "the garden visit moves to Friday";
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault"));
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let (owner, _) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let claim = EntityId::now();
+    memory
+        .claim_upsert(&ClaimInput {
+            id: Some(claim.to_hex()),
+            predicate: "profile.home".to_owned(),
+            subject_ref: owner.to_hex(),
+            value: json!("the house on the hill"),
+            confidence: 0.9,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+            confidence_details: None,
+        })
+        .expect("FIXTURE: the owner's CLAIM each pin cites");
+    memory
+        .bless_brief_kind()
+        .expect("FIXTURE: the owner blesses the brief kind");
+    let source = witness_owner_message(&vault, owner, "The boiler fails before the inspection.");
+    let quoted = |markdown: &str, quote: &str| -> (EntityId, NotePin) {
+        let note = vault
+            .create_note("research", markdown, actor)
+            .expect("FIXTURE: an owner NOTE");
+        let text = vault
+            .note_document(note)
+            .expect("FIXTURE: the NOTE's text")
+            .markdown;
+        let at = text.find(quote).expect("FIXTURE: the NOTE holds its quote");
+        let start = text[..at].chars().count();
+        let pin = vault
+            .pin_note_span(note, claim, start, start + quote.chars().count())
+            .expect("FIXTURE: a pin of the quote");
+        assert_eq!(pin.quote_text, quote, "FIXTURE: the pin quotes the span");
+        (note, pin)
+    };
+    let (stale, stale_pin) = quoted(&format!("Call notes: {STALE_QUOTE}."), STALE_QUOTE);
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(&vault, &stale, &source)
+        .expect("FIXTURE: Y registered as drawn from the MESSAGE S");
+    let (live, live_pin) = quoted(&format!("Visit notes: {LIVE_QUOTE}."), LIVE_QUOTE);
+    let brief = |title: &str, pin: &NotePin| {
+        let receipt = memory
+            .author_brief(title, std::slice::from_ref(pin))
+            .expect("FIXTURE: an owner brief citing one pin");
+        EntityId::from_hex(&receipt.id_hex).expect("brief id")
+    };
+    let stale_brief = brief("A brief on the call.", &stale_pin);
+    let live_brief = brief("A brief on the visit.", &live_pin);
+    memory
+        .safe_delete(&source.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner erases the MESSAGE S");
+    assert!(
+        vault.get_raw(&stale).expect("read Y").is_none(),
+        "FIXTURE: Y reads as absent once S is erased",
+    );
+    for (id, label) in [
+        (live, "the live quoted NOTE"),
+        (stale_brief, "the brief X quoting Y"),
+        (live_brief, "the brief X2 quoting the live NOTE"),
+    ] {
+        assert!(
+            vault.get_raw(&id).expect("read").is_some(),
+            "FIXTURE: {label} still reads",
+        );
+    }
+    let key = WindowKey::from_timestamp(vault.get_learned_at(&stale_brief).expect("learned at"));
+    assert!(
+        WindowKey::from_timestamp(vault.get_learned_at(&live_brief).expect("learned at")) == key,
+        "FIXTURE: both briefs sit in one window",
+    );
+    let window = member_selector_window(&vault, &key, |_| {});
+    let entities = window.get_map("entities");
+    for (id, label) in [(stale_brief, "X"), (live_brief, "X2")] {
+        assert!(
+            entities.get(&id.to_hex()).is_some(),
+            "precondition: the Member's window carries brief {label}, so its pin is the gate",
+        );
+    }
+    let (scope, selector) = member_selector(&vault);
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "pin-disclosure",
+    ));
+    let empty = loro::VersionVector::new().encode();
+    manager
+        .export_document(live_brief, scope, &selector, &empty)
+        .expect("precondition: a Member exports the brief quoting a live NOTE");
+    let exported = manager.export_document(stale_brief, scope, &selector, &empty);
+    assert!(
+        exported.is_err(),
+        "LEAK: a Member exports the brief whose pin quotes the stale NOTE Y",
+    );
+    let refusal = format!("{:?}", exported.err());
+    assert!(
+        refusal.contains("DocumentAdmissionDenied"),
+        "the export is refused at Y's NOTE read admission: {refusal}",
+    );
+}
+
+/// R1 door test (REACH-READ-DOOR-TESTS = A, Engine 09:28): a federation
+/// lane's release (FIX 8861). A local edit's UPDATE is saved while its row
+/// reads, waits in the document journal and the send buffer, and is judged
+/// again only as it leaves, by the client's release check: the device-only
+/// destination check, which fences device-only worlds and ASSET_TEXT
+/// sources, and the peer's read admission. A row that turns stale meanwhile
+/// (drawn from a MESSAGE the owner then erases) meets only that read
+/// admission's stored-row check (REACH-ERASED-SOURCE-EGRESS = A). A live
+/// control's UPDATE still leaves.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_federation_lane_does_not_release_a_saved_update_of_a_row_turned_stale() {
+    use oneiron::WriteActor;
+    use oneiron::memory::SafeDeleteReason;
+    use oneiron::sync::bridge::Materializer;
+    use oneiron::sync::client::{SyncClient, SyncClientConfig};
+    use oneiron::sync::federation_burst::FederationPeer;
+    use oneiron::sync::manager::WindowManager;
+    use oneiron::test_doors::world_follow::frame_withheld;
+
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault"));
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let (owner, _) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let source = witness_owner_message(&vault, owner, "The boiler fails before the inspection.");
+    let target = witness_owner_message(&vault, owner, "Notes drawn from the boiler call.");
+    let control = witness_owner_message(&vault, owner, "Notes on the garden visit.");
+    let (scope, selector) = member_selector(&vault);
+    let peer = FederationPeer::authorize(&vault, selector.member_ref, scope, &selector)
+        .expect("FIXTURE: the Member's federation peer");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "federation-release",
+    ));
+    let (client, _events) = SyncClient::new(
+        Arc::clone(&manager),
+        SyncClientConfig {
+            federation_peer: Some(peer),
+            ..SyncClientConfig::default()
+        },
+    )
+    .expect("FIXTURE: the federation lane's sync client");
+    let edit = |id: EntityId| {
+        let document = manager
+            .documents()
+            .open(id)
+            .expect("FIXTURE: the row's document opens");
+        let update = document
+            .edit_text(actor, vault.now_recorded_at(), 0, 0, "Edited: ")
+            .expect("FIXTURE: a local edit while the row reads");
+        (document, update)
+    };
+    let (target_document, target_update) = edit(target);
+    let (_control_document, control_update) = edit(control);
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(&vault, &target, &source)
+        .expect("FIXTURE: T registered as drawn from the MESSAGE S");
+    for (update, label) in [(&target_update, "T"), (&control_update, "the control")] {
+        assert!(
+            !frame_withheld(&client, update),
+            "precondition: the federation lane releases {label}'s UPDATE while its row reads",
+        );
+    }
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .safe_delete(&source.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner erases the MESSAGE S");
+    assert!(
+        vault.get_raw(&target).expect("read T").is_none(),
+        "FIXTURE: T reads as absent once S is erased",
+    );
+    assert!(
+        vault.get_raw(&control).expect("read the control").is_some(),
+        "FIXTURE: the control still reads",
+    );
+    assert!(
+        target_document
+            .pending_frames()
+            .expect("T's document journal")
+            .contains(&target_update),
+        "FIXTURE: T's saved UPDATE still waits in its journal for release",
+    );
+    assert!(
+        !frame_withheld(&client, &control_update),
+        "precondition: the federation lane still releases the live control's UPDATE",
+    );
+    assert!(
+        frame_withheld(&client, &target_update),
+        "LEAK: the federation lane releases the saved UPDATE of T, stale once its source S is erased",
     );
 }
