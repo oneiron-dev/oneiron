@@ -69,8 +69,10 @@ pub(crate) async fn vault_coach_training_runs_prepare(
 /// `vault.coach.training_runs.execute`: this host's next step for a run its
 /// owner authorized, for the owner or an agent whose own live Grant lists
 /// the verb, checked in each snapshot the door reads and again in each
-/// writer its steps start. The answer is the run's progress, not row
-/// content, so the door lists none.
+/// writer its steps start. The answer carries the run's evaluation and
+/// training split, so the door lists the run's known source rows (FIX 5760),
+/// and a caller off this device reads a run a device-local world keeps one
+/// of as no run, in each snapshot (DEC-0005).
 pub(crate) async fn vault_coach_training_runs_execute(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -152,7 +154,7 @@ fn execute(
         // A dispatched run stays authorized until its trainer's thread
         // commits it running; a new hold is that thread's refusal.
         if dispatched && run.state == TrainingState::Authorized && run.hold == before.hold {
-            if let Some(observation) = past_bound(&run, started, bound) {
+            if let Some(observation) = past_bound(memory, &run, started, bound) {
                 return Ok(observation);
             }
             std::thread::sleep(left(started, bound).min(EXECUTE_POLL_INTERVAL));
@@ -179,10 +181,10 @@ fn execute(
             }
             TrainingRunProgress::Running { .. } => {}
             TrainingRunProgress::Outstanding { .. } | TrainingRunProgress::Done => {
-                return Ok(answer(run, started));
+                return Ok(answer(memory, run, started));
             }
         }
-        if let Some(observation) = past_bound(&run, started, bound) {
+        if let Some(observation) = past_bound(memory, &run, started, bound) {
             return Ok(observation);
         }
         std::thread::sleep(left(started, bound).min(EXECUTE_POLL_INTERVAL));
@@ -191,13 +193,14 @@ fn execute(
 
 /// The answer for `run` once the bound has passed.
 fn past_bound(
+    memory: &Memory<'_>,
     run: &TrainingRun,
     started: Instant,
     bound: Duration,
 ) -> Option<TrainingRunObservation> {
     left(started, bound)
         .is_zero()
-        .then(|| answer(run.clone(), started))
+        .then(|| answer(memory, run.clone(), started))
 }
 
 /// What is left of the bound.
@@ -205,9 +208,10 @@ fn left(started: Instant, bound: Duration) -> Duration {
     bound.saturating_sub(started.elapsed())
 }
 
-fn answer(run: TrainingRun, started: Instant) -> TrainingRunObservation {
+/// The answer for `run`, listing its known source rows ([`training_run_observation`]).
+fn answer(memory: &Memory<'_>, run: TrainingRun, started: Instant) -> TrainingRunObservation {
     let waited_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    training_run_observation(run, waited_ms)
+    training_run_observation(memory, run, waited_ms)
 }
 
 /// A step that errs on this host, by kind only: an engine error can quote
