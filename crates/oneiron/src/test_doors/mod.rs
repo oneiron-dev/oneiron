@@ -10,6 +10,7 @@ pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_provenance;
 pub mod authority_ancestor_index;
+pub mod authority_fold_encoding;
 pub mod authority_sequence_floor;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;

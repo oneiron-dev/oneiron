@@ -82,6 +82,8 @@ mod explicit_revocation;
 mod export_act;
 mod export_secret_work;
 mod first_seen_clock;
+#[cfg(oneiron_test_support)]
+pub(crate) mod fold_encoding_door;
 mod fold_engine;
 mod fold_project;
 mod fold_resume;
