@@ -90,6 +90,11 @@ side_tables! {
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
     SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// A prediction's set body the home pushed for one machine, home-local and never synced:
+    /// only that machine fetches it, by digest, over its connection. Value: the canonical
+    /// `PredictedResidenceSet` body. Key: hex32 (machine) hex64 (digest).
+    SYNC_RESIDENCE_PREDICTED_BODY: SyncState b"pb:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
     PROJECT_DEPTH_LOCAL_BIRTH: SyncState b"project:birth:local:" Raw
@@ -228,6 +233,12 @@ side_tables! {
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The home's touch log of one proved machine, home-local and never synced: the seeds of
+    /// that machine's prediction (ARCH-0023b #predicted-residence). Value: recorded-clock
+    /// seconds (u64be) of the machine's last touch of the entity. Key: hex32 (machine) hex32
+    /// (entity).
+    SYNC_RESIDENCE_MACHINE_TOUCH: SyncState b"rt:m:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// Deferred SpawnedBy anchor, keyed by window, session and turn. Key: yyyy-mm ":" hex32 ":" hex32.
     DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw
