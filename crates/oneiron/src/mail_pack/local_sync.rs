@@ -15,6 +15,7 @@ use super::imap::ImapMailWire;
 use super::importer::{MailSyncBudget, MailSyncReport};
 use super::microsoft365::HttpGraphMailWire;
 use super::microsoft365_calendar::HttpGraphCalendarWire;
+use super::push::MailWatchAct;
 use super::source::MailProvider;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -85,6 +86,30 @@ impl Vault {
         Err(MemoryError::bad_request(
             "this host reads Google, Microsoft 365 and IMAP mailboxes",
         ))
+    }
+
+    /// One act on the push channel of the mail source `source` through this
+    /// host's wire for its provider, under the host's Pub/Sub `topic`
+    /// ([`Vault::mail_watch_step`]); `None` for a source whose provider has
+    /// no push here (only Gmail's is served). It reads the provider over
+    /// blocking HTTP: call it off any async runtime.
+    ///
+    /// # Errors
+    ///
+    /// No such source, or the act's own.
+    pub fn mail_source_watch_step(
+        &self,
+        source: EntityId,
+        topic: Option<&str>,
+    ) -> MemoryResult<Option<MailWatchAct>> {
+        let snapshot = self
+            .mail_sync_source(source)?
+            .ok_or_else(|| MemoryError::not_found("no mail source by that ref"))?;
+        if !reads_google_mail(snapshot.provider) {
+            return Ok(None);
+        }
+        let wire = HttpGmailMailWire::new(self)?;
+        self.mail_watch_step(source, &wire, topic)
     }
 }
 
