@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_identity_shape::ChannelIdentityShape;
@@ -91,8 +92,9 @@ pub struct ChannelIdentityReceiveCapabilities {
 }
 
 /// Policy-risk tier surfaced to gate and disclosure consumers.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("channel.identity.policy.risk")]
 pub enum ChannelIdentityPolicyRisk {
     Normal,
     HoldToProposal,
@@ -101,10 +103,7 @@ pub enum ChannelIdentityPolicyRisk {
 impl ChannelIdentityPolicyRisk {
     #[must_use]
     pub const fn as_gate_scope_value(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::HoldToProposal => "hold_to_proposal",
-        }
+        self.as_str()
     }
 }
 
