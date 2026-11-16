@@ -17,8 +17,8 @@ use std::sync::Arc;
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, BudgetHoldLease,
-    DispatchAgent, LaunchUsdPrices, RunBudgetChoice, SpawnSpend, SpendScopeId, UsdPriceTarget,
-    UsdUnitPrice, run_budget_questions,
+    BudgetHoldState, DispatchAgent, LaunchUsdPrices, RunBudgetChoice, SpawnSpend, SpendScopeId,
+    UsdPriceTarget, UsdUnitPrice, run_budget_questions,
 };
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResumePoint, ClaimAttempt, ClaimOutcome,
@@ -329,6 +329,100 @@ fn the_runs_hold_takes_the_early_asks_place() -> TestResult {
             .all(|question| question.projected_units.is_none()),
         "no early ask stays open beside the hold"
     );
+    Ok(())
+}
+
+/// A run launched under the owner's spend scope and held at its cap asks the
+/// owner in the early ask's place, and his overdraft raises the hard root the
+/// launch projected against and resumes the run. Before, the run's own soft
+/// scope, reserved under that root, read as no owner's to raise: the hold
+/// withdrew the early ask and asked nothing (review round 2 of #8217).
+#[test]
+fn a_held_run_under_its_spend_scope_asks_the_owner_in_the_early_asks_place() -> TestResult {
+    let f = fixture(true)?;
+    let root = open_root(&f, "owen-forecast-held-ask", SHORT_ROOT)?;
+    let run = launch(&f, &root)?;
+    let early = run_budget_questions(&f.vault)?[0].seq;
+    let ClaimOutcome::Claimed(leased) = AttemptQueue::new(&f.vault).claim(ClaimAttempt {
+        lease_owner: LEASE_OWNER.to_owned(),
+        now: NOW + 1,
+    })?
+    else {
+        panic!("the run is ready to lease")
+    };
+    assert_eq!(leased.id, run);
+    hold(&f, &leased, NOW + 2)?;
+
+    let listed = run_budget_questions(&f.vault)?;
+    assert_eq!(
+        listed.len(),
+        1,
+        "the hold asks in the early ask's place: {listed:?}"
+    );
+    let held = &listed[0];
+    assert_ne!(held.seq, early, "the hold's own ask");
+    assert_eq!(held.projected_units, None, "a held run's ask");
+    assert!(
+        held.choices.contains(&RunBudgetChoice::Overdraft),
+        "the hold offers an overdraft: {:?}",
+        held.choices
+    );
+    assert!(held.add_funds_price.is_some(), "the root's unit is priced");
+
+    f.vault
+        .press_run_budget_ask(&f.owner, held.seq, RunBudgetChoice::Overdraft, None)?;
+    assert_eq!(
+        cap_of(&f, &root)?,
+        SHORT_ROOT + held.default_overdraft_units,
+        "the overdraft raises the hard root the run draws from"
+    );
+    assert_eq!(
+        AgentDispatcher::new(&f.vault)
+            .plan_hold(run)?
+            .expect("the run's hold")
+            .state,
+        BudgetHoldState::Resumed
+    );
+    Ok(())
+}
+
+/// Launches the fixture's agent as a root run whose own `budget` is carved
+/// from `root`.
+fn launch_carved(f: &Fixture, root: &SpendScopeId, budget: u64) -> TestResult<AttemptId> {
+    let AgentDispatchOutcome::Dispatched(status) = AgentDispatcher::new(&f.vault)
+        .dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(f.agent),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: None,
+                now: NOW,
+            },
+            AgentSpawnContext {
+                spend: Some(SpawnSpend {
+                    scope: root.clone(),
+                }),
+                budget: Some(budget),
+                ..AgentSpawnContext::default()
+            },
+        )?
+    else {
+        panic!("the agent dispatches without running a model")
+    };
+    Ok(status.attempt.id)
+}
+
+/// A root launch whose own budget is carved from the owner's spend scope asks
+/// nothing early: the run holds at its carve, which no raise of that scope
+/// lifts, and the carve's room is its parent's, so the hold asks nothing
+/// either. Before, the launch asked to raise the scope above the carve: the
+/// early ask and the hold now resolve one scope (review round 2 of #8217).
+#[test]
+fn a_root_launch_carved_from_its_spend_scope_asks_nothing_early() -> TestResult {
+    let f = fixture(true)?;
+    let root = open_root(&f, "owen-forecast-carved", SHORT_ROOT)?;
+    launch_carved(&f, &root, SHORT_ROOT / 2)?;
+    assert!(run_budget_questions(&f.vault)?.is_empty());
     Ok(())
 }
 
