@@ -311,6 +311,7 @@ impl Vault {
                         result: None,
                         result_absence: Some(ConnectorResultAbsence::NotRetained),
                         budget_steering: Vec::new(),
+                        session_manifest: None,
                     }),
                 held.source_rows,
             )),

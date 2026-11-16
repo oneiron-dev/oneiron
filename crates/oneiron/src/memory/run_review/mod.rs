@@ -8,6 +8,7 @@ mod changes;
 mod receipts;
 mod restore_group;
 mod revert;
+pub(crate) mod setting_keys;
 mod settle;
 mod snapshot;
 mod topology;
@@ -19,15 +20,17 @@ pub(crate) use changes::{journal_changes, journal_row_sizes};
 pub(crate) use changes::{
     record_run_claim_in_txn, record_run_deletion_in_txn, record_run_edge_in_txn,
     record_run_effect_in_txn, record_run_note_in_txn, record_run_note_landing_in_txn,
-    record_run_topology_in_txn,
+    record_run_owner_task_cancel_in_txn, record_run_topology_in_txn,
 };
 pub(crate) use receipts::run_settlement_receipts;
 
+use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
+use setting_keys::RUN_REVIEW_AGENT_MAY_READ;
 
 /// An existing change joining this explicit review. No raw entity, approval,
 /// actor or external action can be supplied through this door.
@@ -58,6 +61,14 @@ pub enum RunReviewChange {
     Erase {
         entity_ref: String,
     },
+    /// A soft cancel of the vault owner's own TASK that ran on the owner's
+    /// proof, with no gate asked (OWNER-SOFT-CANCEL), so no gate receipt
+    /// stands for it: the change names the TASK and the id the cancel took
+    /// for itself. It is never replayed or undone.
+    OwnerTaskCancel {
+        task_ref: String,
+        cancel_ref: String,
+    },
 }
 
 impl RunReviewChange {
@@ -67,7 +78,8 @@ impl RunReviewChange {
     /// row of its own, so its ref is its kind and the entity it removed,
     /// `delete:<entity>` or `erase:<entity>`: a run that wrote a claim and
     /// then deleted it, or deleted and then erased one entity, keeps each
-    /// change apart.
+    /// change apart. An owner's gate-free TASK cancel is named by the id it
+    /// took for itself.
     fn change(&self) -> String {
         match self {
             Self::Claim { claim_ref } => claim_ref.clone(),
@@ -77,6 +89,7 @@ impl RunReviewChange {
             Self::ExternalEffect { receipt_ref } => receipt_ref.clone(),
             Self::Delete { entity_ref } => format!("delete:{entity_ref}"),
             Self::Erase { entity_ref } => format!("erase:{entity_ref}"),
+            Self::OwnerTaskCancel { cancel_ref, .. } => cancel_ref.clone(),
         }
     }
 
@@ -90,7 +103,8 @@ impl RunReviewChange {
             | Self::Note { note_ref: row, .. }
             | Self::Topology { event_ref: row }
             | Self::Delete { entity_ref: row }
-            | Self::Erase { entity_ref: row } => row,
+            | Self::Erase { entity_ref: row }
+            | Self::OwnerTaskCancel { task_ref: row, .. } => row,
         };
         Ok(vec![EntityId::from_hex(row)?])
     }
@@ -185,6 +199,86 @@ fn require_owner(
     Ok(WriteActor::new(person, EdgeActorClass::Human))
 }
 
+/// The CALL behind the run-review reads (restriction wave 7, C28): with
+/// the owner's proof, today's owner read, unchanged; without one, an AGENT
+/// caller reads when, in this same read transaction, the owner's setting
+/// `memory.run_review.agent_may_read` reads true and the agent's own live
+/// Grant from a live owner names the read's verb. A human without the proof,
+/// a System caller, and an agent with the key off or no Grant naming the
+/// verb are FORBIDDEN. Settle, revert and every restore-group path keep
+/// `require_owner` and stay owner-only.
+fn admit_run_reader(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    owner: Option<&AuthenticatedOwner>,
+    verb: &str,
+) -> MemoryResult<()> {
+    match owner {
+        Some(owner) => require_owner(memory, txn, owner).map(|_| ()),
+        None => {
+            super::verify_actor_binding_in_txn(
+                memory.vault(),
+                txn,
+                memory.actor(),
+                memory.actor_class(),
+            )?;
+            if memory.actor_class() != EdgeActorClass::Agent {
+                return Err(run_reader_refused(
+                    verb,
+                    "only the owner's own proof or an agent's own Grant reads a run",
+                ));
+            }
+            if let Some(slip) = memory.presented_credential()
+                && !memory.vault().capability_slip_is_live_in_txn(txn, slip)?
+            {
+                return Err(run_reader_refused(
+                    verb,
+                    "the caller's credential is no longer live",
+                ));
+            }
+            let key_on = RUN_REVIEW_AGENT_MAY_READ
+                .read_in_txn(memory.vault(), txn, &[], None)?
+                .value;
+            if !key_on {
+                return Err(run_reader_refused(
+                    verb,
+                    "the owner's setting memory.run_review.agent_may_read is off",
+                ));
+            }
+            let standing = principal_standing_or_lapse_in_txn(
+                memory.vault(),
+                txn,
+                memory.actor(),
+                memory.actor_class(),
+                verb,
+            )?;
+            match standing.map(|standing| standing.grant) {
+                Ok(Some(_)) => Ok(()),
+                Err(NoStanding::PactStandingLapsed) => {
+                    Err(run_reader_refused(verb, PACT_STANDING_LAPSED))
+                }
+                Ok(None) | Err(NoStanding::NotStanding) => Err(run_reader_refused(
+                    verb,
+                    "no live Grant from a live owner names this agent and lists the verb",
+                )),
+            }
+        }
+    }
+}
+
+/// The run-review reads' refusal of a caller they do not admit.
+fn run_reader_refused(verb: &str, why: &str) -> MemoryError {
+    MemoryError::new(
+        super::MEMORY_CODE_FORBIDDEN,
+        format!(
+            "{verb} takes the vault owner's own proof, or an agent's own Grant that names it while the owner's setting memory.run_review.agent_may_read is on: {why}"
+        ),
+        &[
+            "Call with your own owner credential, or have the owner turn on memory.run_review.agent_may_read and grant this agent the verb by name.",
+        ],
+    )
+}
+
 fn fingerprint(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
@@ -196,6 +290,17 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: &RunSettlementRequest,
     ) -> MemoryResult<RunSettlement> {
+        self.run_settlement_as_reader(Some(owner), input)
+    }
+
+    /// [`Self::run_settlement_as_owner`] for the owner's proof or, without
+    /// one, an agent's own Grant naming `vault.runs.settlement` while the
+    /// owner's setting `memory.run_review.agent_may_read` is on.
+    pub fn run_settlement_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        input: &RunSettlementRequest,
+    ) -> MemoryResult<RunSettlement> {
         let run = run_key(&input.run_id)?;
         let txn = self
             .vault()
@@ -203,7 +308,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        require_owner(self, &txn, owner)?;
+        admit_run_reader(self, &txn, owner, "vault.runs.settlement")?;
         let journal = SETTLEMENTS
             .get(&self.vault().store, &txn, &run)?
             .ok_or_else(|| MemoryError::not_found("no run settlement has that id"))?;
@@ -225,13 +330,24 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: &RunReviewRequest,
     ) -> MemoryResult<RunReview> {
+        self.review_run_as_reader(Some(owner), input)
+    }
+
+    /// [`Self::review_run_as_owner`] for the owner's proof or, without one,
+    /// an agent's own Grant naming `vault.runs.review` while the owner's
+    /// setting `memory.run_review.agent_may_read` is on.
+    pub fn review_run_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        input: &RunReviewRequest,
+    ) -> MemoryResult<RunReview> {
         let txn = self
             .vault()
             .store
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        require_owner(self, &txn, owner)?;
+        admit_run_reader(self, &txn, owner, "vault.runs.review")?;
         let reviewed = snapshot::review_in_txn(self, &txn, input)?;
         self.produced_from(
             input
