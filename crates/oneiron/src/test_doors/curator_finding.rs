@@ -9,6 +9,9 @@
 //! - [`land_stale_consolidation`] lands a claim as the Dreamer's own
 //!   consolidation on its last curator rung, a target the curator grades.
 //! - [`run_curator_once`] runs one curator pass, as the wake driver runs it.
+//! - [`open_conflict_with_retract_finding`] opens a conflict whose retained
+//!   alternative is such a finding, for
+//!   `tests/retained_curator_keep_restriction.rs`.
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::{Error, Result};
@@ -27,21 +30,11 @@ pub fn emit_retract_finding(vault: &Vault, target: EntityId) -> Result<EntityId>
     let id = EntityId::now();
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*txn, &target)?
-            .ok_or(Error::EntityNotFound)?;
-        let body = raw
-            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            .filter(|body| !body.is_empty())
-            .ok_or(Error::EntityNotFound)?;
-        let value = serde_json::json!({
-            "target": target.to_hex(),
-            "source_hash": blake3::hash(body).to_hex().to_string(),
-            "action": { "kind": "retract" },
-        });
+        let value = retract_value_in(vault, txn, target)?;
         let candidate = ClaimCandidate::new(
             crate::dreamer_runner::maintenance::CURATOR_PROPOSAL_PREDICATE,
             ClaimSubject::Entity(target),
-            Value::from(value.to_string()),
+            Value::from(value),
             1.0,
         )
         .with_evidence(crate::dreamer_consolidation::encode_consolidation_evidence(
@@ -76,6 +69,50 @@ pub fn emit_retract_finding(vault: &Vault, target: EntityId) -> Result<EntityId>
             .apply_recording_gate_decisions(txn)
     })?;
     Ok(id)
+}
+
+/// The value of the curator finding that retracts `target`, graded on the
+/// body `target` holds in `txn`: its rung, `target` and `source_hash`, as
+/// JSON text.
+fn retract_value_in(vault: &Vault, txn: &heed::RoTxn<'_>, target: EntityId) -> Result<String> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &target)?
+        .ok_or(Error::EntityNotFound)?;
+    let body = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .filter(|body| !body.is_empty())
+        .ok_or(Error::EntityNotFound)?;
+    Ok(serde_json::json!({
+        "target": target.to_hex(),
+        "source_hash": blake3::hash(body).to_hex().to_string(),
+        "action": { "kind": "retract" },
+    })
+    .to_string())
+}
+
+/// Opens a conflict over `member` whose one retained alternative is the
+/// Dreamer's curator finding that retracts `target`, graded on the body
+/// `target` holds now, about `member`'s subject: a finding a Keep lands and,
+/// approving it, applies. Returns the marker and the alternative's selector.
+///
+/// # Errors
+///
+/// The vault's, a `target` that is no stored row, and
+/// [`super::derive::open_conflict_with_retained`]'s.
+pub fn open_conflict_with_retract_finding(
+    vault: &Vault,
+    member: EntityId,
+    target: EntityId,
+) -> Result<(EntityId, EntityId)> {
+    let value = {
+        let txn = vault.store.env.read_txn()?;
+        retract_value_in(vault, &txn, target)?
+    };
+    super::derive::open_conflict_with_retained(
+        vault,
+        member,
+        crate::dreamer_runner::maintenance::CURATOR_PROPOSAL_PREDICATE,
+        Value::from(value),
+    )
 }
 
 /// Lands `predicate` about `subject` holding `value` as the Dreamer's own

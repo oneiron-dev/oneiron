@@ -1144,6 +1144,26 @@ pub fn open_conflict_with_alternative(
     member: EntityId,
     value: &str,
 ) -> Result<(EntityId, EntityId)> {
+    let predicate = vault
+        .get_claim(&member)?
+        .ok_or(crate::error::Error::EntityNotFound)?
+        .predicate;
+    open_conflict_with_retained(vault, member, &predicate, rmpv::Value::from(value))
+}
+
+/// Opens a conflict over `member` with one retained alternative that claims
+/// `predicate` holding `value` about `member`'s subject, its evidence
+/// `member` itself. Returns the marker and the alternative's selector.
+///
+/// # Errors
+///
+/// The vault's, a member that is no claim, or inadmissible evidence.
+pub fn open_conflict_with_retained(
+    vault: &Vault,
+    member: EntityId,
+    predicate: &str,
+    value: rmpv::Value,
+) -> Result<(EntityId, EntityId)> {
     use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
     use crate::dreamer_consolidation::{PromotionCandidate, retained_alternatives_entry_for_test};
     use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -1176,12 +1196,7 @@ pub fn open_conflict_with_alternative(
     let retained = VerifiedCandidate {
         proposal: PromotionCandidate {
             claim_id: alternative,
-            candidate: ClaimCandidate::new(
-                body.predicate.clone(),
-                body.subject,
-                Value::from(value),
-                0.9,
-            ),
+            candidate: ClaimCandidate::new(predicate, body.subject, value, 0.9),
             evidence_turn_refs: evidence.refs(),
             provenance_chain: Vec::new(),
             supersedes: None,
