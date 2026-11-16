@@ -118,6 +118,7 @@ mod skill_defaults;
 mod skill_execution;
 mod skill_fit;
 mod skill_fork;
+mod skill_merge;
 mod skills;
 mod standing;
 // FIX 17553: the owner resets a person's step-up passkeys.
@@ -458,6 +459,7 @@ pub use self::skill_attribution::*;
 pub use self::skill_defaults::*;
 pub use self::skill_execution::*;
 pub use self::skill_fit::*;
+pub use self::skill_merge::*;
 pub use self::skills::*;
 pub use self::standing::*;
 pub use self::step_up::*;
