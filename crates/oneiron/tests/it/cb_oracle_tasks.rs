@@ -264,7 +264,7 @@ mod cb_t {
 
     /// Cancel semantics across the auto-approval ladder.
     struct CancelLadderOutcome {
-        /// Ladder modes available on `cancel`, sorted.
+        /// Check-in modes available on `cancel`, strictest first.
         ladder_modes: Vec<String>,
         /// Mode in effect with no explicit policy set.
         default_mode: String,
