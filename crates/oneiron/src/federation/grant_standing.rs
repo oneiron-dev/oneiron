@@ -245,20 +245,25 @@ pub(crate) fn shared_grant_row_in_fold(
 }
 
 /// What the live Grant row `id` of this vault's own store, whose stored body is `body`,
-/// confers at `now` under `fold`: over a shared vault, [`shared_grant_row_in_fold`]; over an
-/// own-device residence, an owner's signed mint row (an `owner_agent` row, a git push Grant,
-/// an `engine.controls` Grant) only on its counted mint, and every other row there (an
-/// own-device or engine-default Grant, read as derived in R4) from itself. `None` for a row
-/// that does not stand. The caller has read the row live.
+/// confers at `now` under `fold`. A row over this shared vault (its scope is `shared_scope`,
+/// [`Vault::shared_vault_scope_in_txn`]) reads as [`shared_grant_row_in_fold`] reads it. Of
+/// every other row (an own-device residence row, a guest's Grant), an owner's signed mint
+/// row (an `owner_agent` row, a git push Grant, an `engine.controls` Grant) stands only on
+/// its counted mint, and the rest (an own-device or engine-default Grant, read as derived in
+/// R4; a guest's Grant until R3c) read from themselves. `None` for a row that does not stand.
+/// The caller has read the row live.
 #[must_use]
 pub(crate) fn grant_row_in_fold(
     fold: &AuthorityFold,
     id: EntityId,
     body: &[u8],
+    shared_scope: Option<&FederationGrantScope>,
     now: u64,
 ) -> Option<SharedGrantRow> {
     let (grant, terms_key) = decode_federation_grant_body_keyed(body).ok()?;
-    if matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+    // The own-device residence is a `Vault` scope too, so the row's scope shape alone never
+    // tells a member row from a personal vault's row.
+    if shared_scope == Some(&grant.scope) {
         return shared_grant_row_decoded(fold, id, grant, terms_key, now);
     }
     let owner_mint =
