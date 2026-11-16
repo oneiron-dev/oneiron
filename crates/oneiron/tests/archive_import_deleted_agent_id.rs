@@ -76,6 +76,15 @@ fn vault_with_archived_agent() -> (tempfile::TempDir, Vault, EntityId, Vec<u8>) 
     (dir, vault, agent, archive)
 }
 
+/// Whether `agent` holds no definition body here: its row purged, or the empty shell a plain
+/// delete keeps (`Vault::get` reads that shell as an empty body).
+fn holds_no_definition(vault: &Vault, agent: EntityId) -> bool {
+    vault
+        .get(&agent)
+        .expect("the row read")
+        .is_none_or(|body| body.is_empty())
+}
+
 /// Deletes `agent` for `reason`, imports `archive` back, and returns the import's refusal.
 fn delete_then_import(
     vault: &Vault,
@@ -87,8 +96,8 @@ fn delete_then_import(
         .delete_entity_with_reason(&agent, reason)
         .expect("the agent is deleted");
     assert!(
-        vault.get(&agent).expect("the row read").is_none(),
-        "FIXTURE: the deleted agent reads as gone"
+        holds_no_definition(vault, agent),
+        "FIXTURE: the deleted agent holds no definition"
     );
     vault
         .import_whole_vault_archive(archive)
@@ -103,7 +112,7 @@ fn a_hard_deleted_agent_does_not_come_back_from_an_archive() {
     let refusal = delete_then_import(&vault, agent, DeleteReason::UserHardDelete, &archive);
 
     assert!(
-        vault.get(&agent).expect("the row read").is_none(),
+        holds_no_definition(&vault, agent),
         "an agent whose row a hard delete purged stays deleted after an archive import"
     );
     assert_eq!(
@@ -122,7 +131,7 @@ fn a_deleted_agent_whose_row_remains_is_refused_as_before() {
     let refusal = delete_then_import(&vault, agent, DeleteReason::UserDelete, &archive);
 
     assert!(
-        vault.get(&agent).expect("the row read").is_none(),
+        holds_no_definition(&vault, agent),
         "a deleted agent stays deleted after an archive import"
     );
     assert_eq!(refusal.as_deref(), Some(DELETED_COLLISION));
