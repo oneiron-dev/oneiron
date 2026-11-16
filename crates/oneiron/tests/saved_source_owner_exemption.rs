@@ -31,11 +31,12 @@
 //! (Astra on #8148). Its owner binding outlives a merge, and the exemption
 //! judged only the row and the binding, so a merged PERSON bound as the
 //! vault's human owner kept it: a narrower credential of its own, kept from
-//! before the merge or judged after it, and its saved question's asker
-//! reader still read a relationship's MESSAGE, and the source reader took
-//! the exemption on the same judgement. Red at 89f8f81cfa8 (this PR's base
-//! with its tests), where the asker reader and the credential lanes read
-//! it; the source reader there held no exemption at all.
+//! before the merge or judged after it, still read a relationship's
+//! MESSAGE. Red at 89f8f81cfa8 (this PR's base with its tests), where the
+//! credential lanes read it. That PERSON's saved question is not tested
+//! here: its asker reader read no relationship MESSAGE even before the
+//! merge, so no case can show the merge taking the exemption away (FIX
+//! HOST-BOUND-OWNER-QUESTION-LANE-SKIPS-EXEMPTION).
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_source_owner_exemption`.
 #![cfg(oneiron_test_support)]
@@ -585,21 +586,6 @@ fn fresh_credential_reads(fixture: &BoundPerson, row: EntityId) -> (bool, String
     }
 }
 
-/// What `principal`'s saved question reads of `row` through `reader` (its
-/// asker or its source reader door), saved under `frozen`.
-fn saved_reads<E: std::fmt::Debug>(
-    vault: &Vault,
-    reader: impl Fn(&Vault, EntityId, &FrozenReadLane) -> Result<ScopedReadActorKey, E>,
-    principal: EntityId,
-    frozen: &FrozenReadLane,
-    row: EntityId,
-) -> (bool, String) {
-    match reader(vault, principal, frozen) {
-        Ok(key) => reads(&question_read(vault, key), row),
-        Err(error) => (false, format!("rebuild={error:?}")),
-    }
-}
-
 /// A merged PERSON keeps its owner binding but is no owner: a narrower
 /// credential of its own, its lane kept from before the merge or judged
 /// after it, reads no MESSAGE in a relationship it holds no grant in.
@@ -632,48 +618,5 @@ fn a_merged_bound_persons_narrower_credential_reads_no_relationship_message() {
     assert!(
         !read,
         "actor=a merged PERSON's narrower credential, judged after the merge; expected no owner's exemption and the relationship MESSAGE refused; seen {seen}"
-    );
-}
-
-/// A merged PERSON's saved question, under its own lane, holds no owner's
-/// exemption: its asker reader, which read the relationship's MESSAGE
-/// while the PERSON was a live owner, and its source reader refuse it.
-#[test]
-fn a_merged_bound_persons_saved_question_reads_no_relationship_message() {
-    let fixture = bound_person_fixture();
-    let lane = FrozenReadLane::principal();
-    let (read, seen) = saved_reads(
-        &fixture.vault,
-        saved_question_reader,
-        fixture.person,
-        &lane,
-        fixture.relationship_message,
-    );
-    assert!(
-        read,
-        "precondition: the bound PERSON's saved question's asker reader, under the owner's exemption, reads its MESSAGE in a relationship it holds no grant in; seen {seen}"
-    );
-    merge_away(&fixture);
-    let (read, seen) = saved_reads(
-        &fixture.vault,
-        saved_question_reader,
-        fixture.person,
-        &lane,
-        fixture.relationship_message,
-    );
-    assert!(
-        !read,
-        "actor=a merged PERSON, own lane; expected its saved question's asker reader to hold no owner's exemption and refuse the relationship MESSAGE; seen {seen}"
-    );
-    let (read, seen) = saved_reads(
-        &fixture.vault,
-        saved_source_reader,
-        fixture.person,
-        &lane,
-        fixture.relationship_message,
-    );
-    assert!(
-        !read,
-        "actor=a merged PERSON, own lane; expected its saved question's source reader to hold no owner's exemption and refuse the relationship MESSAGE; seen {seen}"
     );
 }
