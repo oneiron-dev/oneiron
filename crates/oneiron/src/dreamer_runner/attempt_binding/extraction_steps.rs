@@ -89,12 +89,11 @@ impl DreamerAttemptBinding {
         &self,
         input: ModelStepReceiptRequest,
     ) -> MemoryResult<ModelStepReceipt> {
-        let txn = self
-            .vault
-            .store
-            .env
-            .read_txn()
-            .map_err(crate::Error::from)?;
+        let vault = &*self.vault;
+        let memory = vault.memory(self.stamp.actor, self.actor().actor_class());
+        let read = memory.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let _pins = read.prepare_point_read::<MemoryError>()?;
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         self.check_in_txn(&txn)?;
         if input.live_run.is_some() {
             return Err(MemoryError::bad_request(
@@ -102,8 +101,51 @@ impl DreamerAttemptBinding {
             ));
         }
         let hash = extraction_step_hash(&input.step_key)?;
-        crate::llm::request_hash_step_receipt_in_txn(&self.vault, &txn, self.lease.attempt(), &hash)
-            .map_err(MemoryError::from)
+        memory.prove_read_authority_in_txn(&txn)?;
+        let reader_scope =
+            crate::snapshot_read::extraction_reader_scope_in_txn(&memory, &txn, None)?;
+        let receipt = read.read_projected_in_txn(&txn, &[], None, |txn, _| {
+            if !self.serves_every_queued_turn_in_txn(txn, &read, reader_scope.as_ref())? {
+                return Err(MemoryError::from(crate::Error::EntityNotFound));
+            }
+            crate::llm::request_hash_step_receipt_in_txn(vault, txn, self.lease.attempt(), &hash)
+                .map_err(MemoryError::from)
+        })?;
+        Ok(receipt.value)
+    }
+
+    /// Whether this actor's live read still serves every TURN the attempt queued.
+    ///
+    /// A saved reply quotes the attempt's TURNs, and its record lists none of them. So a
+    /// receipt answers only while the inputs page would still serve every queued TURN; once
+    /// one is withheld, every hash answers as an unknown hash does.
+    fn serves_every_queued_turn_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        read: &crate::claim::ScopedRead<'_>,
+        reader_scope: Option<&crate::federation::Scope>,
+    ) -> MemoryResult<bool> {
+        let vault = &*self.vault;
+        let (scope, branch) =
+            crate::snapshot_read::queued_extraction_branch_in_txn(vault, txn, self.attempt())?;
+        for part in &branch.parts {
+            let key = branch.part_key(part.conversation_ref);
+            for turn in &part.turns {
+                let served = crate::snapshot_read::extraction_turn_in_txn(
+                    vault,
+                    txn,
+                    read,
+                    reader_scope,
+                    scope,
+                    &key,
+                    *turn,
+                )?;
+                if served.is_none() {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 }
 
