@@ -51,6 +51,7 @@ mod anchor_marks;
 mod ask_forward_holder;
 mod backup_signer_delegation;
 mod carried_act;
+mod carrier_reading;
 mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
@@ -110,6 +111,7 @@ mod import_order;
 mod ingest_observation;
 mod install_fold;
 mod invitee_slip;
+pub(crate) use invitee_slip::slip_holder_is_deleted_in_txn;
 mod invocation_slip;
 mod leave_notice_continuity;
 mod left_notices;
@@ -157,6 +159,7 @@ mod sequence_ancestry;
 #[cfg(oneiron_test_support)]
 pub(crate) mod sequence_floor_door;
 mod sequence_observation;
+pub(crate) mod setting_keys;
 mod slip;
 mod slip_pairing;
 mod slip_renewal;
@@ -213,9 +216,10 @@ pub use oneiron_authority::authority::{
     MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
     ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
-    OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
-    RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
-    ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
+    OwnerWorkRequest, OwnerWorkResult, PredictedResidenceSet, PrivacyDirection,
+    RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, RESIDENCE_PREDICTED_WINDOWS_DEFAULT,
+    RESIDENCE_REASON_MAX, RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
     SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
     SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
@@ -275,6 +279,7 @@ pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
 };
+pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{
     AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,
@@ -289,8 +294,9 @@ pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use checkpoint_root_attest::{
-    AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner, ROOT_CHECKPOINT_AUTHORITY,
-    ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest, RootCheckpointAuthority, RootCheckpointPickup,
+    ASK_WORD_PROOF_DOMAIN, AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner,
+    ROOT_CHECKPOINT_AUTHORITY, ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest,
+    RootCheckpointAuthority, RootCheckpointPickup,
 };
 pub use checkpoint_root_delivery::{RootAttestationDelivery, RootAttestationDeliveryState};
 pub use checkpoint_root_intake::{
