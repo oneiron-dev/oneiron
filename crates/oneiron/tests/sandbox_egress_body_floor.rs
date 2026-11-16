@@ -1,9 +1,12 @@
 //! FIX 7946 (RULING FIX-SERVER-7946-EGRESS-BODY = B, Engine 15 Nov 19:27): a
 //! code sandbox's egress reads a response body whole under the vault's host
-//! byte floor and the request deadline. `max_response_bytes` no longer
-//! refuses a body; a full floor is waited for until it frees, and only a
-//! floor still full at the deadline refuses, as the floor's own typed
-//! saturation.
+//! byte floor and the request deadline. On a vault whose host attached its
+//! floor, `max_response_bytes` no longer refuses a body; a full floor is
+//! waited for until it frees, and only a floor still full at the deadline
+//! refuses, as the floor's own typed saturation. A body still arriving at
+//! the deadline refuses as `TimedOut`, however much room the floor has
+//! (review P1 of #8322). A vault with no attached floor charges no bytes,
+//! so there `max_response_bytes` still refuses a body past it.
 //!
 //! Each test serves its body from the proxy's fixture origin
 //! (`http://127.0.0.1:8080/`, public `OpenEgressProxy::with_fixture`), whose
@@ -31,6 +34,8 @@ const PAST_BOUND_BYTES: usize = 4096;
 const WITHIN_BOUND_BYTES: usize = 512;
 /// The bound main refused every body past.
 const MAX_RESPONSE_BYTES: usize = 1024;
+/// A body of many reads, so it is still arriving at a short deadline.
+const ARRIVING_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// A floor that refuses its first `full_for` byte charges as full, then
 /// takes every charge; it counts every charge it was asked.
@@ -64,6 +69,38 @@ impl HostNetFloor for FillingFloor {
         } else {
             Ok(HostNetPermit::new(()))
         }
+    }
+}
+
+/// A floor with room for every byte charge, which answers each after
+/// `pause`: a body read under it keeps arriving, never waits on the floor.
+struct PacedFloor {
+    pause: Duration,
+    asked: AtomicU64,
+}
+
+impl PacedFloor {
+    fn new(pause: Duration) -> Arc<Self> {
+        Arc::new(Self {
+            pause,
+            asked: AtomicU64::new(0),
+        })
+    }
+
+    fn asked(&self) -> u64 {
+        self.asked.load(Ordering::SeqCst)
+    }
+}
+
+impl HostNetFloor for PacedFloor {
+    fn acquire(&self, _fds: usize, _workers: usize) -> io::Result<HostNetPermit> {
+        Ok(HostNetPermit::new(()))
+    }
+
+    fn acquire_bytes(&self, _bytes: u64) -> io::Result<HostNetPermit> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        std::thread::sleep(self.pause);
+        Ok(HostNetPermit::new(()))
     }
 }
 
@@ -115,6 +152,11 @@ impl Fixture {
 #[test]
 fn a_body_past_max_response_bytes_is_delivered_whole() -> TestResult {
     let fixture = Fixture::new(PAST_BOUND_BYTES, Duration::from_secs(30))?;
+    let floor = FillingFloor::new(0);
+    let attached = Arc::clone(&floor);
+    fixture
+        .vault
+        .attach_host_net_floor(move || attached as Arc<dyn HostNetFloor>);
     let answer = fixture.fetch().map_err(|error| {
         format!(
             "a {PAST_BOUND_BYTES}-byte body past the {MAX_RESPONSE_BYTES}-byte bound was refused: {error}"
@@ -125,6 +167,64 @@ fn a_body_past_max_response_bytes_is_delivered_whole() -> TestResult {
         answer.body.as_ref(),
         fixture.body.as_slice(),
         "the body past max_response_bytes is delivered whole, byte for byte"
+    );
+    assert!(
+        floor.asked() > 0,
+        "the body's bytes are charged on the attached host byte floor"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_vault_with_no_attached_floor_keeps_the_byte_bound() -> TestResult {
+    let fixture = Fixture::new(PAST_BOUND_BYTES, Duration::from_secs(30))?;
+    if let Ok(answer) = fixture.fetch() {
+        return Err(format!(
+            "a vault with no host floor attached charges no bytes, yet delivered a {}-byte body past the {MAX_RESPONSE_BYTES}-byte bound",
+            answer.body.len()
+        )
+        .into());
+    }
+    let within = Fixture::new(WITHIN_BOUND_BYTES, Duration::from_secs(30))?;
+    let answer = within.fetch().map_err(|error| {
+        format!("a {WITHIN_BOUND_BYTES}-byte body within the bound was refused: {error}")
+    })?;
+    assert_eq!(answer.body.as_ref(), within.body.as_slice());
+    Ok(())
+}
+
+#[test]
+fn a_body_still_arriving_at_the_deadline_refuses_as_timed_out() -> TestResult {
+    let deadline = Duration::from_millis(300);
+    let pause = Duration::from_millis(40);
+    let fixture = Fixture::new(ARRIVING_BODY_BYTES, deadline)?;
+    let floor = PacedFloor::new(pause);
+    let attached = Arc::clone(&floor);
+    fixture
+        .vault
+        .attach_host_net_floor(move || attached as Arc<dyn HostNetFloor>);
+    let started = Instant::now();
+    let refused = match fixture.fetch() {
+        Ok(answer) => {
+            return Err(format!(
+                "a body still arriving at the {deadline:?} deadline was delivered whole ({} bytes after {:?}, {} floor charges)",
+                answer.body.len(),
+                started.elapsed(),
+                floor.asked()
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let waited = started.elapsed();
+    assert_eq!(
+        refused.kind(),
+        io::ErrorKind::TimedOut,
+        "the refusal is the request deadline: {refused}"
+    );
+    assert!(
+        waited >= deadline,
+        "the read went on until the deadline ({deadline:?}); refused after {waited:?}"
     );
     Ok(())
 }

@@ -301,24 +301,41 @@ fn deliver(
 /// holds the body until its caller drops them. A full floor is waited
 /// for, backing off, until it frees or `deadline` passes; then the read
 /// refuses with the floor's own typed saturation (`WouldBlock` naming
-/// the byte floor). No byte count refuses a body: its size is measured
-/// on `limits.sandbox_egress_response_bytes`, which asks past its row.
+/// the byte floor). A body still arriving at `deadline` refuses as
+/// `TimedOut`, whatever the floor answers. On a floored vault no byte
+/// count refuses a body: its size is measured on
+/// `limits.sandbox_egress_response_bytes`, which asks past its row. A
+/// vault no host attached a floor to keeps no byte line, so there a body
+/// past `max_response_bytes` still refuses.
 pub(super) fn read_body_under_floor(
     proxy: &OpenEgressProxy,
     source: &mut impl Read,
     deadline: Instant,
 ) -> io::Result<(Vec<u8>, Vec<HostNetPermit>)> {
     let floor = proxy.host_net_floor();
+    let unfloored_bound = (!proxy.vault.runtime().host_net_floor().is_attached())
+        .then_some(proxy.config.max_response_bytes);
     let mut bytes = Vec::new();
     let mut held = Vec::new();
     let mut chunk = vec![0_u8; BODY_CHUNK_BYTES];
     loop {
+        // A floor with room never waits, so only this check ends a body
+        // that keeps arriving.
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "egress response deadline",
+            ));
+        }
         let read = match source.read(&mut chunk) {
             Ok(0) => break,
             Ok(read) => read,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(io::Error::other(error)),
         };
+        if unfloored_bound.is_some_and(|bound| bytes.len().saturating_add(read) > bound) {
+            return Err(io::Error::other("egress response byte bound"));
+        }
         held.push(lease_body_bytes(floor, read as u64, deadline)?);
         bytes
             .try_reserve(read)
