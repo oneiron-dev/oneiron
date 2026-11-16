@@ -64,12 +64,13 @@ async fn the_recall_of_a_queued_retry_names_the_user_turn_it_answers_and_its_con
 
     let lines = chat_turn(&server, &conversation.to_hex(), "my sister lives in Lisbon").await;
     // The live turn's recall names the user TURN (FIX
-    // RETRIEVAL-TURN-CONVENTION-HOST-STAMP, `chat_retrieval_turn`).
-    let live_runs = vault.retrieval_runs(64).unwrap();
-    assert_eq!(live_runs.len(), 1, "the live turn's recall: {live_runs:?}");
-    let user_turn = live_runs[0]
-        .turn
-        .expect("the live turn's run names its turn");
+    // RETRIEVAL-TURN-CONVENTION-HOST-STAMP, `chat_retrieval_turn`). Only a
+    // chat host's recall names a turn, so a background recall's run is not
+    // counted.
+    let before = vault.retrieval_runs(64).unwrap();
+    let live: Vec<_> = before.iter().filter_map(|run| run.turn).collect();
+    assert_eq!(live.len(), 1, "the live turn's recall: {before:?}");
+    let user_turn = live[0];
     assert_eq!(user_turn.episode_id, *conversation.as_bytes());
     assert_eq!(user_turn.turn_idx, 0);
 
@@ -105,23 +106,19 @@ async fn the_recall_of_a_queued_retry_names_the_user_turn_it_answers_and_its_con
     let attempts = AttemptQueue::new(vault).list().unwrap();
     assert!(ran, "the worker settles the Retry {receipt}: {attempts:?}");
 
-    // The Retry's board recall wrote one more run, which names the same
-    // user TURN, in its conversation, at its place there.
+    // The Retry's board recall wrote one more named run, which names the
+    // same user TURN, in its conversation, at its place there.
     let retry_runs: Vec<_> = vault
         .retrieval_runs(64)
         .unwrap()
         .into_iter()
-        .filter(|run| run.run_id != live_runs[0].run_id)
+        .filter(|run| before.iter().all(|old| old.run_id != run.run_id))
         .collect();
+    let retry_turns: Vec<_> = retry_runs.iter().filter_map(|run| run.turn).collect();
     assert_eq!(
-        retry_runs.len(),
-        1,
-        "the Retry's board recall writes one run: {retry_runs:?}; attempts {attempts:?}"
-    );
-    assert_eq!(
-        retry_runs[0].turn,
-        Some(user_turn),
-        "the Retry's run names the user TURN its reply answers"
+        retry_turns,
+        vec![user_turn],
+        "the Retry's run names the user TURN its reply answers: {retry_runs:?}; attempts {attempts:?}"
     );
     host.shutdown().await;
 }
