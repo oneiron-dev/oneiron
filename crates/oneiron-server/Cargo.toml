@@ -332,6 +332,12 @@ name = "broker_stream_key_secret"
 path = "tests/broker_stream_key_secret.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# The drafter doors (owner list/status/policy/revert, agent list_as/revert_as) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_drafters_doors"
+path = "tests/vault_drafters_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
@@ -343,12 +349,6 @@ required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 [[test]]
 name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
-required-features = ["oneiron/test-support"]
-
-# The drafter doors (owner list/status/policy/revert, agent list_as/revert_as) root on a `MemoryKeystore`.
-[[test]]
-name = "vault_drafters_doors"
-path = "tests/vault_drafters_doors.rs"
 required-features = ["oneiron/test-support"]
 
 # L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
