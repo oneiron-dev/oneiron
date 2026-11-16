@@ -22,6 +22,11 @@
 //! - A federation UPDATE that does not stand is not sent, and its window's
 //!   ready request is owed again; a residence reply is replaced by
 //!   RESULT_CHANGED.
+//! - The body frames a federation socket is served (FIX 12118) are one answer
+//!   under every grant whose windows they were served from
+//!   ([`SelectorAnswers::queue_under`]): a body's Data frames that do not
+//!   stand are not sent, and its End still goes, so the peer's attempt lands
+//!   nothing and is asked for again under the grant as it is then.
 
 use std::collections::HashMap;
 
@@ -64,7 +69,8 @@ pub(crate) struct SelectorAnswers {
 }
 
 enum Judged {
-    Waiting(Box<SelectorReleaseBasis>),
+    /// What the answer was made under: it stands while every basis does.
+    Waiting(Vec<SelectorReleaseBasis>),
     Stood,
 }
 
@@ -83,6 +89,17 @@ impl SelectorAnswers {
         basis: SelectorReleaseBasis,
         frames: Vec<Vec<u8>>,
     ) -> Vec<Vec<u8>> {
+        self.queue_under(vec![basis], frames)
+    }
+
+    /// The frames of one answer made under every basis in `bases`, tagged
+    /// for the release: it stands only while each of them does, and an
+    /// answer made under none never stands.
+    pub(crate) fn queue_under(
+        &mut self,
+        bases: Vec<SelectorReleaseBasis>,
+        frames: Vec<Vec<u8>>,
+    ) -> Vec<Vec<u8>> {
         if frames.is_empty() {
             return frames;
         }
@@ -91,8 +108,10 @@ impl SelectorAnswers {
         // A test commits its change here, in the gap between the answer's
         // queue and its release.
         #[cfg(oneiron_test_support)]
-        crate::test_doors::selector_release::run(basis.grant_id());
-        self.queued.insert(token, Judged::Waiting(Box::new(basis)));
+        for basis in &bases {
+            crate::test_doors::selector_release::run(basis.grant_id());
+        }
+        self.queued.insert(token, Judged::Waiting(bases));
         let count = frames.len();
         frames
             .into_iter()
@@ -107,7 +126,9 @@ impl SelectorAnswers {
     pub(crate) fn release(&mut self, vault: &Vault, frame: &QueuedAnswerFrame<'_>) -> bool {
         let stands = match self.queued.remove(&frame.token) {
             Some(Judged::Stood) => true,
-            Some(Judged::Waiting(basis)) => basis.stands(vault),
+            Some(Judged::Waiting(bases)) => {
+                !bases.is_empty() && bases.iter().all(|basis| basis.stands(vault))
+            }
             None => false,
         };
         if stands && !frame.last {
