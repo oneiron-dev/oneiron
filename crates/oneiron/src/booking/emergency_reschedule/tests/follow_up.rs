@@ -9,7 +9,7 @@ fn pick(
 ) -> Result<CalendarRevision, BookingError> {
     counterparty_pick(
         vault,
-        &item.actions[index],
+        &released_actions(vault, item)[index],
         &calendars(),
         &consumer(vault, now),
         sink,
@@ -144,14 +144,14 @@ fn picked_request_admission_failure_resumes_saved_content_after_identity_returns
     let item = execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
     let (snapshot, index) = crate::booking::lifecycle::read_emergency_pick(
         &vault,
-        &item.actions[0],
+        &released_actions(&vault, &item)[0],
         &consumer(&vault, NOW + 1),
     )
     .unwrap();
     let prepared = super::super::pick::prepare_pick(&vault, &snapshot, index, NOW + 1).unwrap();
     crate::booking::lifecycle::pick_emergency_item(
         &vault,
-        &item.actions[0],
+        &released_actions(&vault, &item)[0],
         &calendars(),
         &consumer(&vault, NOW + 1),
         &prepared,
@@ -184,7 +184,7 @@ fn pick_busy_race_after_request_preparation_does_not_advance_sequence() {
     let item = execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
     let (snapshot, index) = crate::booking::lifecycle::read_emergency_pick(
         &vault,
-        &item.actions[0],
+        &released_actions(&vault, &item)[0],
         &consumer(&vault, NOW + 1),
     )
     .unwrap();
@@ -193,7 +193,7 @@ fn pick_busy_race_after_request_preparation_does_not_advance_sequence() {
     let before = (meta(&vault), entities(&vault));
     let error = crate::booking::lifecycle::pick_emergency_item(
         &vault,
-        &item.actions[0],
+        &released_actions(&vault, &item)[0],
         &calendars(),
         &consumer(&vault, NOW + 1),
         &prepared,
@@ -254,7 +254,7 @@ fn competing_same_pick_preparations_reuse_the_winning_checkpoint() {
     let item = execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
     let (snapshot, index) = crate::booking::lifecycle::read_emergency_pick(
         &vault,
-        &item.actions[0],
+        &released_actions(&vault, &item)[0],
         &consumer(&vault, NOW + 1),
     )
     .unwrap();
@@ -263,7 +263,7 @@ fn competing_same_pick_preparations_reuse_the_winning_checkpoint() {
     assert_ne!(first.content_hash, second.content_hash);
     let winner = crate::booking::lifecycle::pick_emergency_item(
         &vault,
-        &item.actions[0],
+        &released_actions(&vault, &item)[0],
         &calendars(),
         &consumer(&vault, NOW + 1),
         &first,
@@ -271,7 +271,7 @@ fn competing_same_pick_preparations_reuse_the_winning_checkpoint() {
     .unwrap();
     let replay = crate::booking::lifecycle::pick_emergency_item(
         &vault,
-        &item.actions[0],
+        &released_actions(&vault, &item)[0],
         &calendars(),
         &consumer(&vault, NOW + 2),
         &second,

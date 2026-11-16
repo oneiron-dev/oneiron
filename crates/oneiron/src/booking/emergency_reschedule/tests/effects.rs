@@ -51,7 +51,8 @@ fn retry_after_partial_failure_reuses_same_sequence_and_content() {
         assert_eq!(resumed_plan.plans, vec![plan.clone()]);
         let item = execute(&vault, &plan, &mut sink, NOW + 1).unwrap();
         assert_eq!(item.calendar, prior.calendar);
-        assert_eq!(item.actions, prior.actions);
+        assert_eq!(item.action_digests, prior.action_digests);
+        assert_eq!(item.apology_content_ref, prior.apology_content_ref);
         assert!(item.calendar_delivered && item.apology_delivered);
         assert_eq!(
             sink.calls
@@ -70,7 +71,8 @@ fn counterparty_pick_delegates_to_lifecycle_home_node_writer() {
     let (_dir, vault, receipt, plan) = executable(EmergencyActionPolicy::Cancel);
     let item = execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
     let mut sink = spy(&vault, &plan);
-    let token = &item.actions[0];
+    let actions = released_actions(&vault, &item);
+    let token = &actions[0];
     let mut remote = consumer(&vault, NOW);
     remote.local_node_id = 10;
     let before = (meta(&vault), entities(&vault));
@@ -107,7 +109,7 @@ fn counterparty_pick_delegates_to_lifecycle_home_node_writer() {
     );
     let picked = counterparty_pick(
         &vault,
-        &item.actions[1],
+        &released_actions(&vault, &item)[1],
         &calendars(),
         &consumer(&vault, NOW),
         &mut sink,
@@ -118,7 +120,7 @@ fn counterparty_pick_delegates_to_lifecycle_home_node_writer() {
     assert_eq!(
         counterparty_pick(
             &vault,
-            &item.actions[1],
+            &released_actions(&vault, &item)[1],
             &calendars(),
             &consumer(&vault, NOW),
             &mut sink

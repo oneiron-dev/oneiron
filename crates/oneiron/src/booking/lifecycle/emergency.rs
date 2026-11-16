@@ -238,6 +238,9 @@ pub(in crate::booking) fn commit_emergency_item(
             plan.booking.calendar.clone()
         };
         let actions = mint_emergency_actions(vault, txn, plan, &key)?;
+        // The usable actions leave this writer only inside the apology.
+        let apology_content_ref =
+            emergency::persist_apology_in(vault, txn, plan, &actions, input.now_utc)?;
         let item = EmergencyItem {
             plan: plan.clone(),
             calendar,
@@ -249,7 +252,8 @@ pub(in crate::booking) fn commit_emergency_item(
                 EmergencyLocalBasis::EmergencyAtOrAfterStart
             },
             committed_at: input.now_utc,
-            actions,
+            action_digests: actions.iter().map(token_digest).collect(),
+            apology_content_ref,
             // A RequestUpdate, and a Cancel with no initial invitation, owe
             // no calendar effect at commit.
             calendar_delivered: plan.payload.is_none(),
@@ -298,7 +302,8 @@ fn validate_emergency_proposals(
 }
 
 /// One released pick action per proposal, each row naming the item it picks
-/// for.
+/// for. Only digests are stored; the usable actions are returned for the
+/// apology alone.
 fn mint_emergency_actions(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -377,7 +382,7 @@ fn emergency_pick_in(
             "emergency actions are not released until both deliveries complete",
         ));
     }
-    if item.actions.get(action.proposal_index) != Some(token) {
+    if item.action_digests.get(action.proposal_index) != Some(&token_digest(token)) {
         return Err(emergency_refused(
             "emergency action does not bind this proposal",
         ));

@@ -95,7 +95,16 @@ pub struct EmergencyItem {
     pub calendar: CalendarRevision,
     pub basis: EmergencyLocalBasis,
     pub committed_at: u64,
-    pub actions: Vec<crate::booking::OpaqueLifecycleToken>,
+    /// The released pick actions' digests (the lifecycle's token digest),
+    /// one per proposal and in its order. The usable actions leave the
+    /// commit only inside the apology (canon ARCH-0062:114: stored booking
+    /// metadata holds digests of its tokens, never their usable values).
+    #[serde(with = "action_digests_serde")]
+    pub(crate) action_digests: Vec<[u8; 32]>,
+    /// The visitor's apology, rendered with the actions and stored as a blob
+    /// in the commit's writer; its delivery and recovery read it by this
+    /// reference.
+    pub(crate) apology_content_ref: String,
     pub calendar_delivered: bool,
     pub apology_delivered: bool,
     pub(crate) picked: Option<EmergencyPick>,
@@ -104,6 +113,40 @@ pub struct EmergencyItem {
 impl EmergencyItem {
     pub fn picked(&self) -> Option<&EmergencyPick> {
         self.picked.as_ref()
+    }
+}
+
+/// The action digests as lowercase hex strings, the booking side tables'
+/// spelling of a digest (`lifecycle::digest_serde`), not 32-integer arrays.
+mod action_digests_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::booking::lifecycle::hex_lower;
+
+    pub(super) fn serialize<S: Serializer>(
+        digests: &[[u8; 32]],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        digests
+            .iter()
+            .map(|digest| hex_lower(digest))
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<[u8; 32]>, D::Error> {
+        Vec::<String>::deserialize(deserializer)?
+            .iter()
+            .map(|hex| {
+                oneiron_hex::decode::<32>(hex).ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "emergency action digest is not 32 lowercase hex bytes",
+                    )
+                })
+            })
+            .collect()
     }
 }
 

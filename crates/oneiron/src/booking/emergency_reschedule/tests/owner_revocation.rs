@@ -10,7 +10,7 @@ fn revoked_owner_cannot_persist_plans_or_replay_a_pending_pick_at_outbound_gate(
     assert!(
         counterparty_pick(
             &vault,
-            &item.actions[1],
+            &released_actions(&vault, &item)[1],
             &calendars(),
             &consumer(&vault, NOW + 1),
             &mut sink
