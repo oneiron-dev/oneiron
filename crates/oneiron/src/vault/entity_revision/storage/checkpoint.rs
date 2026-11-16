@@ -1,13 +1,14 @@
 //! The checkpoint getter of the revision ledger (KS7-2): each entity's
-//! revision state, retained frontiers, frontier identities, vector refill
-//! marker, staged index inputs and staged phonetic codes, under its own
-//! entity tree, each row exact. An identity-topology author carrier's
-//! state, retained frontiers and reverse rows hash the carrier's raw row,
-//! its actor included, and its revision document (one a pin made) holds that
-//! row: each is that actor's actor-keyed row under the carrier's tree, as the
-//! carrier row is (FIX 17143), so an erase of the actor leaves neither the
-//! row nor a hash of it in an image. Its document's bindings are not checked
-//! on restore: no split of it is restored, only the whole document.
+//! revision state, retained frontiers, frontier identities, memory timeline
+//! (L3-39), vector refill marker, staged index inputs and staged phonetic
+//! codes, under its own entity tree, each row exact. An identity-topology
+//! author carrier's state, retained frontiers, timeline and reverse rows
+//! hash the carrier's raw row, its actor included, and its revision document
+//! (one a pin made) holds that row: each is that actor's actor-keyed row
+//! under the carrier's tree, as the carrier row is (FIX 17143), so an erase
+//! of the actor leaves neither the row nor a hash of it in an image. Its
+//! document's bindings are not checked on restore: no split of it is
+//! restored, only the whole document.
 //!
 //! The retained revision document holds the whole raw entity row of every
 //! revision. It splits through its own codec ([`document`], FIX 6072) when
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
+use super::super::timeline::TIMELINE;
 use super::super::vector_refill::REFILL;
 use super::super::{pending_index, phonetic};
 use super::{DOC, FRONTIER, IDENTITY, STATE};
@@ -52,6 +54,7 @@ pub(crate) static ADAPTER: Adapter = Adapter {
         &CapturedByAdapter(DOC),
         &CapturedByAdapter(FRONTIER),
         &CapturedByAdapter(IDENTITY),
+        &CapturedByAdapter(TIMELINE),
         &CapturedByAdapter(REFILL),
         pending_index::checkpoint::TABLE,
         phonetic::checkpoint::TABLE,
@@ -103,6 +106,18 @@ fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
             None => out.exact(owner, row.at, row.bytes),
         }
     }
+    // A timeline row names a revision of its key's entity: a carrier's
+    // names a hash of the carrier row, as its frontier rows do.
+    for row in rows::typed_rows(store, txn, TIMELINE, out)? {
+        let owner = OwnerRef::entity(&row.key.0);
+        match carriers.get(&row.key.0) {
+            Some(actor) => {
+                let table = TIMELINE.decl().prefix;
+                rows::actor_keyed(out, owner, *actor, &row.at, table, &row.bytes)?;
+            }
+            None => out.exact(owner, row.at, row.bytes),
+        }
+    }
     // A reverse row belongs to the entity its value names, never to its
     // key's revision hash.
     for row in identities {
@@ -146,6 +161,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
             .map_err(|_| rows::bad_part())
     } else if at.in_table(IDENTITY.decl()) {
         rows::check_row(IDENTITY, at, value)
+    } else if at.in_table(TIMELINE.decl()) {
+        rows::check_row(TIMELINE, at, value)
     } else if at.in_table(REFILL.decl()) {
         rows::check_row(REFILL, at, value)
     } else if pending_index::checkpoint::owns(at) {
