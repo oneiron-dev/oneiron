@@ -196,7 +196,7 @@ impl Vault {
             let invitation: SharedInvitation = decode(&raw)?;
             if invitation.vault_id == vault_id
                 && invitation.state == SharedInvitationState::Pending
-                && now < invitation.expires_at
+                && !oneiron_store::expiry::is_expired(now, invitation.expires_at)
             {
                 pending.push(invitation);
             }
@@ -218,7 +218,8 @@ impl Vault {
         now: u64,
     ) -> bool {
         let pending = self.invitation_in_txn(txn, invitee, id).is_ok_and(|open| {
-            open.state == SharedInvitationState::Pending && now < open.expires_at
+            open.state == SharedInvitationState::Pending
+                && !oneiron_store::expiry::is_expired(now, open.expires_at)
         });
         pending
             && self
@@ -247,7 +248,7 @@ impl Vault {
         let invitation = self.invitation_in_txn(txn, invitee, id)?;
         if invitation.vault_id != vault_id
             || invitation.state != SharedInvitationState::Pending
-            || now >= invitation.expires_at
+            || oneiron_store::expiry::is_expired(now, invitation.expires_at)
         {
             return Err(invalid());
         }
@@ -267,7 +268,10 @@ impl Vault {
         Ok(self
             .invitations_of_in_txn(txn, member, vault_id)?
             .iter()
-            .any(|open| open.state == SharedInvitationState::Pending && now < open.expires_at))
+            .any(|open| {
+                open.state == SharedInvitationState::Pending
+                    && !oneiron_store::expiry::is_expired(now, open.expires_at)
+            }))
     }
 
     /// The `add_member` effect: one pending invitation of `member` at `role`,
@@ -294,8 +298,7 @@ impl Vault {
             invitee: member.to_hex(),
             role,
             issued_at: now,
-            expires_at: now
-                .checked_add(SHARED_INVITATION_TTL_SECS)
+            expires_at: oneiron_store::expiry::expires_at_checked(now, SHARED_INVITATION_TTL_SECS)
                 .ok_or_else(invalid)?,
             state: SharedInvitationState::Pending,
             founding,
@@ -507,7 +510,7 @@ impl Vault {
         let inviter = EntityId::from_hex(&invitation.inviter)?;
         if invitation.vault_id != vault_id
             || invitation.state != SharedInvitationState::Pending
-            || now >= invitation.expires_at
+            || oneiron_store::expiry::is_expired(now, invitation.expires_at)
             || self.member_role_in_txn(txn, vault_id, actor)?.is_some()
         {
             return Err(invalid());
@@ -627,7 +630,10 @@ impl Vault {
         Ok(self
             .invitations_of_in_txn(&txn, reader, vault_id)?
             .into_iter()
-            .filter(|open| open.state == SharedInvitationState::Pending && now < open.expires_at)
+            .filter(|open| {
+                open.state == SharedInvitationState::Pending
+                    && !oneiron_store::expiry::is_expired(now, open.expires_at)
+            })
             .collect())
     }
 }

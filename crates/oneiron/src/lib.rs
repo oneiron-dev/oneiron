@@ -47,6 +47,7 @@ pub use oneiron_base::host_descriptors;
 pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
+pub mod idle_fold;
 pub mod limit_ask;
 pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
@@ -117,6 +118,7 @@ pub mod model_step_context;
 pub(crate) mod model_step_effect;
 pub mod model_step_error;
 pub use oneiron_store::model_step_record;
+pub mod phonetic_learned;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
@@ -333,6 +335,7 @@ pub mod host_net_floor;
 pub mod lens;
 pub mod memory;
 pub use oneiron_base::panic_report;
+pub mod schedule;
 pub mod setting;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
@@ -456,6 +459,11 @@ pub use crate::context_pack::{
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
 };
 pub use crate::corpus::CorpusScope;
+// `credential_door` is crate-only; what an API call does and the per-API
+// verb-class tables are public (L8-57), for the server's door and the tests.
+pub use crate::credential_door::{
+    ApiAction, ApiProtocol, ApiVerbClassRow, ApiVerbClassTable, read_api_actions,
+};
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecordState,
@@ -520,10 +528,9 @@ pub use crate::feedback::{
 };
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
-    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
-    GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
-    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
-    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
+    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_REASON_APPROVED,
+    GATE_BUNDLE_REASON_DECLINED, GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED,
+    GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
 };
 pub use crate::genui::{
     FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
