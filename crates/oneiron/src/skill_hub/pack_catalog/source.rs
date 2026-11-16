@@ -13,6 +13,9 @@ pub struct PackSource {
     pub(super) hooks: Vec<super::PackHook>,
     pub(super) organs: Vec<super::PackOrgan>,
     pub(super) lenses: Vec<super::PackLens>,
+    /// The per-API verb-class table the source carries in
+    /// [`super::VERB_CLASS_TABLE_FILE`], checked when the source is read.
+    pub(super) verb_classes: Option<crate::credential_door::ApiVerbClassTable>,
 }
 impl PackSource {
     /// Every file of any size and count is read whole (FIX 8202): no byte,
@@ -87,6 +90,7 @@ impl PackSource {
         if manifest.kind == PackKind::Model {
             super::model_pack::read_source_model_pack(&manifest, &files)?;
         }
+        let verb_classes = super::verb_class_pack::read_source_verb_class_table(&manifest, &files)?;
         let mut sections = Vec::new();
         for file in &files {
             if file.path.starts_with("knowledge/sections/") && file.path.ends_with(".json") {
@@ -156,6 +160,7 @@ impl PackSource {
             hooks,
             organs,
             lenses,
+            verb_classes,
         })
     }
     pub fn entity_id(&self) -> Result<crate::EntityId> {
@@ -178,6 +183,11 @@ impl PackSource {
     }
     pub fn lenses(&self) -> &[super::PackLens] {
         &self.lenses
+    }
+    /// The per-API verb-class table this source carries, when it carries one.
+    #[must_use]
+    pub fn verb_class_table(&self) -> Option<&crate::credential_door::ApiVerbClassTable> {
+        self.verb_classes.as_ref()
     }
     /// The lens this source carries in its folder `name`.
     #[must_use]
