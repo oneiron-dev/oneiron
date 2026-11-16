@@ -197,19 +197,23 @@ struct CancelRootRequest {
 }
 
 /// One root request pending on this install, as its target's surface shows
-/// it. `carrier`, `carrier_role` and `carrier_is_yours` are this install's
-/// own reading of the key that signed the request
-/// ([`oneiron::authority::CarrierReading`]): a prompt names who asked from
-/// them, never from the request's own words (CARRIED-PIN-PROMPT-HOSTED-CARRIER
-/// = A).
+/// it. `carrier` is the machine the request names. `carrier_role` and
+/// `carrier_is_yours` are this install's own reading of the key that signed
+/// the request ([`oneiron::authority::CarrierReading`]): a prompt names who
+/// asked from those two, never from the request's own words
+/// (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A). With no `carrier_role` the
+/// machine id is the request's word alone, and a prompt names no machine by
+/// it.
 #[derive(Debug, Serialize)]
 struct PendingRootRequest {
     change: RootChangeWire,
     receipt: OwnerWorkView,
-    /// The machine whose install key signed the request, as hex.
+    /// The machine the request names as its carrier, as hex: the request's
+    /// own word until `carrier_role` is set.
     carrier: String,
-    /// The role this install's records give that key on the carrier, as
-    /// `/machines/answer` names roles; none when its records give it none.
+    /// The role this install's records give the key that signed the request
+    /// on that machine, as `/machines/answer` names roles; none when its
+    /// records do not tie that machine to the key.
     carrier_role: Option<&'static str>,
     /// Whether this install trusts that key as one of the owner's machines.
     carrier_is_yours: bool,

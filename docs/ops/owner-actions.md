@@ -2319,10 +2319,12 @@ Another install's root changes through your request and its target install:
   holder" until the target acts, or why nothing was recorded (the target is this install, or not
   a linked one).
 - The target lists what waits for it at `GET /v1/owner/roots/requests`. Each entry names the
-  machine that carried the request (`carrier`), the role this install's own records give the key
-  that signed it (`carrier_role`), and whether this install trusts that key as one of your
-  machines (`carrier_is_yours`). What the request itself says about who asked is that machine's
-  claim, so read these three fields instead.
+  machine the request says carried it (`carrier`), the role this install's own records give the
+  key that signed the request on that machine (`carrier_role`), and whether this install trusts
+  that key as one of your machines (`carrier_is_yours`). The machine id is the request's own
+  claim. Read who asked from `carrier_role` and `carrier_is_yours`: when `carrier_role` is
+  absent, this install's records tie that machine to no key they read, so treat the asker as
+  unknown.
 - `GET /v1/owner/owner-work/{request}` reads where any owner work request stands.
 - A pin needs no kit. A pin of the root the target already pins runs on its own. A pin of any
   other root waits on the target for your confirm there: `GET /v1/owner/roots` shows that root as

@@ -151,21 +151,25 @@ pub fn cancel_root_request_as(
 }
 
 /// One root request naming this install with no result yet, as
-/// `vault.roots.requests.list` answers it: its change, its receipt, and the
-/// machine that carried it as this install's own records read the key that
-/// signed it ([`crate::authority::CarrierReading`]). A surface names who
-/// asked from the three carrier fields, never from the request's own words
-/// (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A).
+/// `vault.roots.requests.list` answers it: its change, its receipt, the
+/// machine it names as its carrier, and this install's own reading of the
+/// key that signed it ([`crate::authority::CarrierReading`]). A surface names
+/// who asked from `carrier_role` and `carrier_is_yours`, never from the
+/// request's own words (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A). With no
+/// `carrier_role` the machine id is the request's word alone, and a surface
+/// names no machine by it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,
-    /// The machine whose install key signed the request.
+    /// The machine the request names as its carrier: the request's own word
+    /// until `carrier_role` is set.
     pub carrier: EntityId,
-    /// The role this install's records give that key on the carrier:
-    /// `yours`, `work_school`, `rented`, `hosted_node`, `execution_node`,
-    /// `removed` or `unanswered`. `None` when its records give it none.
+    /// The role this install's records give the key that signed the request
+    /// on that machine: `yours`, `work_school`, `rented`, `hosted_node`,
+    /// `execution_node`, `removed` or `unanswered`. `None` when its records
+    /// do not tie that machine to the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carrier_role: Option<String>,
     /// Whether this install trusts that key as one of the owner's machines.

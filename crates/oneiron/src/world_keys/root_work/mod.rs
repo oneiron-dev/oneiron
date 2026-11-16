@@ -180,10 +180,13 @@ pub struct ListedRootRequest {
     pub entry: AuthorityEntryHash,
     pub change: RootChange,
     pub receipt: OwnerWorkReceipt,
-    /// The machine that carried the request, as this install reads the key
-    /// that signed it ([`AuthorityFold::carrier_reading`]): what a surface
-    /// names as the asker. The owner the request names and its surface are
-    /// that carrier's word (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A).
+    /// The machine the request names as its carrier, with this install's
+    /// reading of the key that signed it ([`AuthorityFold::carrier_reading`]).
+    /// A surface names the asker from the reading's role and `is_mine`; a
+    /// reading with no role ties the named machine to no key this install
+    /// reads, and a surface names no machine by its id. The owner the request
+    /// names and its surface are that carrier's word
+    /// (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A).
     pub carrier: CarrierReading,
 }
 
