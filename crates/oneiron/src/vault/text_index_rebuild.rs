@@ -260,7 +260,7 @@ impl Vault {
     /// A read whose answer is a record of every match, the org compliance
     /// search (ruling ANALYZER-REINDEX-COMPLIANCE-SEARCH = A, 16 Nov 07:19),
     /// refuses while the text index is not trusted
-    /// ([`Self::ensure_text_index_trusted`]) or while a rebuild stands in
+    /// ([`Self::ensure_text_index_stamp_matches`]) or while a rebuild stands in
     /// `txn`'s snapshot: the documents not yet indexed again would be missing
     /// from its count. The refusal says how far the rebuild is, so the caller
     /// knows when to retry.
@@ -268,7 +268,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> crate::memory::MemoryResult<()> {
-        self.ensure_text_index_trusted()?;
+        self.ensure_text_index_stamp_matches(txn)?;
         match read_text_index_rebuild_progress(&self.store, txn)? {
             None => Ok(()),
             Some(TextIndexRebuildProgress { done, total }) => Err(crate::memory::MemoryError::new(
@@ -288,7 +288,8 @@ impl Vault {
     /// newest content change first, until it ends or `stop` says so after a
     /// page. A page is `page` documents, or fewer once their stored source
     /// text reaches [`PAGE_SOURCE_BYTES`]. Each run does at least one page
-    /// while a rebuild stands.
+    /// while a rebuild stands. A page refuses, indexing nothing, once the
+    /// stored stamp is another analyzer's.
     pub(crate) fn run_text_index_rebuild(
         &self,
         page: usize,
@@ -303,6 +304,11 @@ impl Vault {
                 run.complete = true;
                 return Ok(run);
             };
+            // A page indexes under this handle's analyzer, so only into an
+            // index stamped with it: another process's open may have
+            // restamped it under another (FIX
+            // TEXT-READ-HANDLE-ANALYZER-MISMATCH).
+            self.ensure_text_index_stamp_matches(&wtxn)?;
             if marker.unlisted {
                 marker = TextIndexRebuildMarker {
                     done: 0,
