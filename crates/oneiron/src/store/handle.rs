@@ -284,6 +284,9 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// The row the authority door last held at the owner's reserve, for the
+    /// reserve's typed check (Astra owner-reserve r2 F4). Never persisted.
+    pub(crate) authority_owner_reserve_hold: Mutex<Option<crate::authority::OwnerReserveHold>>,
     /// The adopted checkpoint image, verified once per stored rows, with its
     /// carried bodies decoded once (FIX 2987/3006/3415/3449). Keyed by the
     /// exact stored rows, never by generation; dies with the handle.
