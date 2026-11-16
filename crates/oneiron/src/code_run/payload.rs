@@ -29,7 +29,7 @@ use super::types::{
     SelfMemoryEdgeWriteResult, SelfMemoryWriteResult, SelfSandboxProposalDiskFloor,
     SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind,
 };
-use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
+use super::{ProgramStepFeedback, SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
 pub(super) use self::fold_words::{answer_fold_words, keep_erased_fold_words};
@@ -205,13 +205,20 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 SelfStoredReplyKind::TaskAskSettled => "task_ask_settled",
                 SelfStoredReplyKind::TaskAskWorldPrivacy => "task_ask_world_privacy",
                 SelfStoredReplyKind::TaskWaitSet => "task_wait_set",
+                SelfStoredReplyKind::TaskWaitSetWithFeedback => "task_wait_set_with_feedback",
                 SelfStoredReplyKind::TeamStartReceipt => "team_start_receipt",
             };
-            request_map(vec![
+            let mut entries = vec![
                 ("kind", Value::from("stored_reply")),
                 ("source_kind", Value::from(source_kind)),
                 ("output", Value::from(stored.output.to_string())),
-            ])
+            ];
+            if !stored.program_steps.is_empty() {
+                let steps = serde_json::to_string(&stored.program_steps)
+                    .map_err(|_| invalid_code_run_replay("dispatch outcome does not encode"))?;
+                entries.push(("program_steps", Value::from(steps)));
+            }
+            request_map(entries)
         }
     })
 }
@@ -453,15 +460,24 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 "task_ask_settled" => SelfStoredReplyKind::TaskAskSettled,
                 "task_ask_world_privacy" => SelfStoredReplyKind::TaskAskWorldPrivacy,
                 "task_wait_set" => SelfStoredReplyKind::TaskWaitSet,
+                "task_wait_set_with_feedback" => SelfStoredReplyKind::TaskWaitSetWithFeedback,
                 "team_start_receipt" => SelfStoredReplyKind::TeamStartReceipt,
                 _ => {
                     return Err(invalid_code_run_replay("unknown stored reply source kind"));
                 }
             };
+            let program_steps: Vec<ProgramStepFeedback> = match map_get(entries, "program_steps")
+                .ok()
+            {
+                None => Vec::new(),
+                Some(entry) => serde_json::from_str(str_value(entry)?)
+                    .map_err(|_| invalid_code_run_replay("invalid stored reply program steps"))?,
+            };
             Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
                 kind,
                 output: serde_json::from_str(str_value(map_get(entries, "output")?)?)
                     .map_err(|_| invalid_code_run_replay("invalid stored reply output"))?,
+                program_steps,
             }))
         }
         _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),

@@ -104,6 +104,7 @@ mod embedding_space_doors;
 // Untangle 6.6d: the engine-control knob verbs, for the owner or a holder.
 mod engine_control_doors;
 mod errors;
+mod esign_rules_doors;
 mod eval_doors;
 pub(super) mod export_transfer;
 mod extraction_doors;
@@ -205,6 +206,8 @@ mod run_review_doors;
 pub(crate) mod run_write_polls;
 mod runner_seat_doors;
 mod saved_query_doors;
+// The Schedule primitive's verbs (DESIGN 15-setting-primitive, stage 0.2).
+mod schedule_doors;
 mod seal_doors;
 mod search_home_doors;
 mod secret_body;
