@@ -24,13 +24,14 @@ use std::sync::{Arc, Mutex};
 use oneiron::calendar::CalendarError;
 use oneiron::calendar::claims::PREDICATE_CALENDAR_ORIGIN;
 use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedConsent, CalendarIcsFeedRequest,
-    CalendarIcsFeedReviewDecision, CalendarIcsFeedReviewRequest,
+    self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewDecision,
+    CalendarIcsFeedReviewRequest,
 };
 use oneiron::calendar::ingest::{IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse};
 use oneiron::calendar::passport::resolve_event_by_uid;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, Error, Result, Vault, VaultConfig};
 use oneiron_contracts::fingerprint::{LegacyHash, TagMode, purposes};
@@ -82,15 +83,25 @@ impl Fixture {
         self.vault.memory(self.owner, EdgeActorClass::Human)
     }
 
+    /// The owner installs the feed as the `calendar.ics_feed` setting, one item per system.
     fn install(&self, config: &IcsFeedPollConfig) {
-        feed::configure(
-            &self.memory(),
-            &self.proof,
-            &CalendarIcsFeedConfigureRequest {
-                config: config.clone(),
-            },
-        )
-        .expect("install the feed");
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&self.proof),
+                SetSetting {
+                    item: Some(config.system.clone()),
+                    ..SetSetting::vault_value(
+                        "calendar.ics_feed",
+                        serde_json::to_value(config).expect("feed config as JSON"),
+                    )
+                },
+            )
+            .expect("install the feed");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's install applies: {outcome:?}"
+        );
     }
 
     fn poll(&self, config: &IcsFeedPollConfig, response: IcsFetchResponse) {
