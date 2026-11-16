@@ -44,6 +44,24 @@ impl CitationCheck {
         }
     }
 
+    /// The text verification cites TURN `turn` against, when it has one.
+    pub(in crate::dreamer_consolidation) fn cited_text(
+        &self,
+        turn: &crate::entity_id::EntityId,
+    ) -> Option<&str> {
+        self.pins.cited_text(turn)
+    }
+
+    /// The byte offset MESSAGE `message`'s words start at in TURN `turn`'s
+    /// cited text, when that text projects it.
+    pub(in crate::dreamer_consolidation) fn message_offset(
+        &self,
+        turn: &crate::entity_id::EntityId,
+        message: &crate::entity_id::EntityId,
+    ) -> Option<usize> {
+        self.pins.message_offset(turn, message)
+    }
+
     /// [`check_extraction_reply`], then the citation faults verification
     /// fails the whole partition on, for the reply a child reading under
     /// `scope` with `labels` gets. Only a candidate that surely reaches
@@ -79,9 +97,11 @@ impl CitationCheck {
         };
         for (index, item) in reply.candidates.iter().enumerate() {
             // The candidate's subject, value and admitted sources, apart
-            // from whether each of its quotes bound.
-            // A fallback returned above: this reply is a model's.
-            let Ok((parsed, unbound)) = read_candidate(item, ctx, scope, false) else {
+            // from whether each of its quotes bound. A fallback returned
+            // above: this reply is a model's, or the engine's relation reply
+            // (L2-03), which cites in the authored shape.
+            let authored = super::wire::is_relation_reply(response);
+            let Ok((parsed, unbound)) = read_candidate(item, ctx, scope, authored) else {
                 continue;
             };
             if call

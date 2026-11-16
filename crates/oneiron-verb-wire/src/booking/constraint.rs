@@ -97,3 +97,29 @@ pub struct RankedSlot {
     pub end_utc: u64,
     pub rank: f32,
 }
+
+/// The meeting cap that filled a day: one of the event type's two knobs.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BookingCapKind {
+    /// `daily_cap`: confirmed bookings per visitor-local day.
+    Daily,
+    /// `weekly_cap`: confirmed bookings per visitor-local Monday week.
+    Weekly,
+}
+
+/// A visitor-local day an event type's meeting cap has filled (ARCH-0062 §7,
+/// meeting caps surfaces): the solver removed its candidate times because the
+/// day, or its Monday week, already holds the cap's number of confirmed
+/// bookings. The page shows the day as full.
+///
+/// Date-only by construction: no booking title, interval, attendee or count
+/// has a field to travel in, so the marker stays inside the SLOTS rung. A day
+/// with no candidate times (no working hours) is never full.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+pub struct FullDay {
+    /// The visitor-local calendar date, `YYYY-MM-DD`.
+    pub date: String,
+    /// The cap that filled it; the daily cap when both have.
+    pub cap: BookingCapKind,
+}
