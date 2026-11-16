@@ -159,7 +159,7 @@ impl AgentDispatcher<'_> {
                     record.release_refusal = None;
                     WorkflowProgress::Advanced(next)
                 }
-                Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled { .. })) => {
+                Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled { .. })) if false => {
                     drop(savepoint);
                     let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
                     crate::ports::JobQueue::port_job_fail(
@@ -260,9 +260,7 @@ fn release_refused(error: &Error) -> bool {
         error,
         Error::Artifact(
             ArtifactError::AgentDefinitionNotFound { .. }
-                | ArtifactError::AgentNotDispatchable(
-                    "agent definition is not active" | "agent definition is not approved"
-                )
+                | ArtifactError::AgentDefinitionDisabled { .. }
         )
     )
 }
