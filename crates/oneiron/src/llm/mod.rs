@@ -21,8 +21,8 @@ mod inference_admission;
 mod tagger_admission;
 pub use inference_admission::admitted_as;
 pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
+pub(crate) mod licence_setting_keys;
 mod role_defaults;
-pub(crate) mod setting_keys;
 mod solo;
 pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
@@ -172,10 +172,10 @@ pub use self::autocheck::{
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
     AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
 };
-pub use self::role_defaults::RoleModelDefaults;
-pub use self::setting_keys::{
+pub use self::licence_setting_keys::{
     NONCOMMERCIAL_LICENCES_HOSTED_REFUSAL, noncommercial_model_licences_admitted,
 };
+pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
