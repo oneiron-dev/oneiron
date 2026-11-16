@@ -367,50 +367,57 @@ pub(super) async fn handle_window_sync(
             // Admission runs on an isolated document before Observer B or
             // persistence can see the input. Rejected diagnostics must never
             // be relayed as raw history, even if a later export would scrub.
-            if let Err(error) = oneiron::sync::window::validate_window_update_residence_with_vault(
+            // It returns the entity ids the update's history inserts, which
+            // owe a compaction when one names a row hard-deleted here (census
+            // L6-05).
+            let admitted = oneiron::sync::window::admit_window_update_residence_with_vault(
                 server.vault.as_ref(),
                 &doc,
                 update,
                 &key,
-            ) {
-                // The home's own shallow root cut away what the device's update builds on. The
-                // home never installs a device's window: the device takes the home's and writes
-                // its own state on top, and an old device that cannot is refused.
-                if oneiron::sync::window::update_reaches_below_root(&doc, update) {
-                    // The window goes out whole only as a version request's answer would.
-                    if protocol::is_residence_version(conn_state.protocol_version) {
-                        let selector = conn_state
-                            .promoted_windows
-                            .get(&key)
-                            .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
-                        authorize_promoted_window(
-                            server,
-                            require_bound_app_auth(server, conn_state)?,
-                            conn_state.peer_machine(server.vault()),
-                            &key,
-                            selector,
-                            &doc,
-                        )?;
+            );
+            let inserts = match admitted {
+                Ok(inserts) => inserts,
+                Err(error) => {
+                    // The home's own shallow root cut away what the device's update builds on. The
+                    // home never installs a device's window: the device takes the home's and writes
+                    // its own state on top, and an old device that cannot is refused.
+                    if oneiron::sync::window::update_reaches_below_root(&doc, update) {
+                        // The window goes out whole only as a version request's answer would.
+                        if protocol::is_residence_version(conn_state.protocol_version) {
+                            let selector = conn_state
+                                .promoted_windows
+                                .get(&key)
+                                .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
+                            authorize_promoted_window(
+                                server,
+                                require_bound_app_auth(server, conn_state)?,
+                                conn_state.peer_machine(server.vault()),
+                                &key,
+                                selector,
+                                &doc,
+                            )?;
+                        }
+                        if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
+                            let _ = direct_tx.send(frame);
+                        }
+                        return Ok(ControlFlow::Continue(()));
                     }
-                    if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
-                        let _ = direct_tx.send(frame);
+                    // The device's own bytes refused count on its burst
+                    // streak, as a federated peer's do (L7-41); a read fault
+                    // of this home's does not.
+                    let refusal = map_update_admission_err(error);
+                    if !matches!(refusal, ProtocolError::AdmissionReadFailed(_))
+                        && let Err(error) = oneiron::sync::federation_burst::record_device_refusal(
+                            server.vault(),
+                            &device_peer(server, conn_state),
+                        )
+                    {
+                        tracing::warn!(%error, "an own device's refused update was not counted");
                     }
-                    return Ok(ControlFlow::Continue(()));
+                    return Err(refusal);
                 }
-                // The device's own bytes refused count on its burst streak, as
-                // a federated peer's do (L7-41); a read fault of this home's
-                // does not.
-                let refusal = map_update_admission_err(error);
-                if !matches!(refusal, ProtocolError::AdmissionReadFailed(_))
-                    && let Err(error) = oneiron::sync::federation_burst::record_device_refusal(
-                        server.vault(),
-                        &device_peer(server, conn_state),
-                    )
-                {
-                    tracing::warn!(%error, "an own device's refused update was not counted");
-                }
-                return Err(refusal);
-            }
+            };
             let mut write_auth = None;
             if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
@@ -489,6 +496,7 @@ pub(super) async fn handle_window_sync(
                 (conn_id, conn_state.peer_machine(server.vault())),
                 (&key, &doc),
                 update,
+                inserts,
                 write_auth,
             )
             .await;
@@ -585,8 +593,11 @@ pub(super) struct LandedDeviceUpdate {
 /// bytes persist, then import, under the live-window turn, and go to every
 /// socket but `sender`'s when they add an operation. `sender` is the socket
 /// the update came on, with the machine it proved, or `0` for a burst the
-/// home's drain lands, which no socket sent (L7-41). `write_auth`, when
-/// given, is rechecked in the writer that persists the update.
+/// home's drain lands, which no socket sent (L7-41). `inserts` are the
+/// entity ids the update's history inserts as its admission read them, which
+/// owe a compaction when one names a row hard-deleted here (census L6-05); a
+/// translated copy's admission reads its own. `write_auth`, when given, is
+/// rechecked in the writer that persists the update.
 ///
 /// # Errors
 /// The copy translation's store failure; a translated update the window
@@ -598,6 +609,7 @@ pub(super) async fn land_device_update(
     (sender, machine): (u32, PeerMachine),
     (key, doc): (&WindowKey, &LoroDoc),
     update: &[u8],
+    inserts: oneiron::sync::window::UpdateInserts,
     write_auth: Option<&CoreAuth>,
 ) -> Result<Option<LandedDeviceUpdate>, DeviceLandingError> {
     let admitted = oneiron::sync::selector::admit_repo_sync_frame(
@@ -610,15 +622,19 @@ pub(super) async fn land_device_update(
     let oneiron::sync::selector::RepoSyncAdmission::Admit(update, landings) = admitted else {
         return Ok(None);
     };
-    if let std::borrow::Cow::Owned(translated) = &update {
-        oneiron::sync::window::validate_window_update_residence_with_vault(
+    // The bytes that persist are the translated copy's, when there is one:
+    // its admission reads the inserts they carry.
+    let inserts = if let std::borrow::Cow::Owned(translated) = &update {
+        oneiron::sync::window::admit_window_update_residence_with_vault(
             server.vault.as_ref(),
             doc,
             translated,
             key,
         )
-        .map_err(map_update_admission_err)?;
-    }
+        .map_err(map_update_admission_err)?
+    } else {
+        inserts
+    };
     let update = update.as_ref();
     // Durability BEFORE the observed import and fan-out (ARCH-0023b
     // Observer A duty: "MUST persist synchronously"; FIX 5999).
@@ -645,7 +661,7 @@ pub(super) async fn land_device_update(
         server.reassert_manager.materializer(),
         || -> Result<_, ProtocolError> {
             server
-                .persist_imported_update(key, &persisted, &landings, write_auth)
+                .persist_imported_update(key, &persisted, &inserts, &landings, write_auth)
                 .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             let positions = oneiron::sync::prepare_own_device_push_positions(
                 server.vault(),
