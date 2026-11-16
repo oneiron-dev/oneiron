@@ -241,7 +241,7 @@ fn critical_write_confirm_three_sibling_nonce_collision_keeps_provenance_associa
     );
     assert_eq!(left_then_right, right_then_left);
     assert_eq!(
-        left_then_right.critical_write_confirm_nonce_provenance[&[51; 16]],
+        left_then_right.critical_write_confirm_nonce_provenance[&[51; 16]].to_btree_set(),
         BTreeSet::from([[40; 32], [41; 32]]),
         "the evicted Z id remains a nonce contender"
     );

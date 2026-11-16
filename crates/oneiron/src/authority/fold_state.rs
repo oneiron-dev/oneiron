@@ -321,9 +321,10 @@ pub(super) struct FoldState {
     ///
     /// This is kept apart from `critical_write_confirms`, whose deterministic
     /// winner selection can discard a sibling needed to poison nonce reuse.
-    pub(super) critical_write_confirm_nonce_provenance: PersistentMap<[u8; 16], BTreeSet<[u8; 32]>>,
+    pub(super) critical_write_confirm_nonce_provenance:
+        PersistentMap<[u8; 16], PersistentSet<[u8; 32]>>,
     pub(super) conflicted_critical_write_confirms: PersistentSet<[u8; 32]>,
-    pub(super) federation_grant_bindings: PersistentMap<EntityId, BTreeSet<[u8; 32]>>,
+    pub(super) federation_grant_bindings: PersistentMap<EntityId, PersistentSet<[u8; 32]>>,
     /// Live binding content per authority key (`RevokeActor` never edits this).
     ///
     /// Kept SEPARATE from the revocation watermarks so a `RevokeActor` folding
@@ -331,21 +332,22 @@ pub(super) struct FoldState {
     pub(super) actor_bindings: PersistentMap<AuthorityKey, ActorBindingState>,
     /// Inclusive revocation watermark per authority key, merged by max.
     pub(super) actor_binding_revocations: PersistentMap<AuthorityKey, u64>,
-    pub(super) actor_revocation_hashes: PersistentMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
+    pub(super) actor_revocation_hashes:
+        PersistentMap<AuthorityKey, PersistentSet<AuthorityEntryHash>>,
     pub(super) seqs: PersistentMap<AuthorityKey, u64>,
     pub(super) machines: PersistentMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
     /// Every claim of each install key (the machine, its admitter, and an
     /// owner-held roster signer), merged by union.
-    pub(super) machine_keys: PersistentMap<[u8; 32], BTreeSet<KeyClaim>>,
+    pub(super) machine_keys: PersistentMap<[u8; 32], PersistentSet<KeyClaim>>,
     /// Each machine's held answers by entry (row CARRIER-OWNER-PROOF): the
     /// carried answers that needed an owner key's proof and carried none.
     /// They stand for nothing (no head, no removal, no key claim). Merged by
     /// union; a held answer the owner answered on either side stays answered.
     pub(super) held_machine_answers:
-        PersistentMap<EntityId, BTreeMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
+        PersistentMap<EntityId, PersistentMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
-    pub(super) root_anchors: PersistentMap<[u8; 32], BTreeSet<RecoveryRootId>>,
+    pub(super) root_anchors: PersistentMap<[u8; 32], PersistentSet<RecoveryRootId>>,
     /// The entries that folded through an owner anchor's branch (its roots
     /// and its marks), merged by union. They rest on no roster key, even when
     /// a roster also names the anchor's public key.
@@ -426,7 +428,7 @@ pub(super) struct FoldState {
     /// rotated to or re-rooted to it, on any branch. A key is in the host's
     /// custody when it, or any key up this graph, is marked as the host's,
     /// whatever labels it carries and whichever branch carried the mark.
-    pub(super) key_admitters: PersistentMap<AuthorityKey, BTreeSet<AuthorityKey>>,
+    pub(super) key_admitters: PersistentMap<AuthorityKey, PersistentSet<AuthorityKey>>,
     /// The fold judges a hosted vault (`FoldContext::hosted`), fixed at genesis.
     pub(super) hosted: bool,
     /// Every row an accepted bind or rebind named, merged by union: the
@@ -463,9 +465,23 @@ impl FoldState {
             && self
                 .actor_revocation_hashes
                 .get(key)
-                .is_none_or(|revocations| revocations.is_subset(&binding.observed_revocations)))
+                .is_none_or(|revocations| {
+                    revocations
+                        .iter()
+                        .all(|hash| binding.observed_revocations.contains(hash))
+                }))
         .then_some(binding)
     }
+}
+
+/// Each key's persistent set as a std set: the seam to the std-typed
+/// checkpoint image and public fold, copied once per fold, never per row.
+pub(super) fn to_btree_set_map<K: Ord + Clone, T: Ord + Clone>(
+    map: &PersistentMap<K, PersistentSet<T>>,
+) -> BTreeMap<K, BTreeSet<T>> {
+    map.iter()
+        .map(|(key, set)| (key.clone(), set.to_btree_set()))
+        .collect()
 }
 
 /// Projects fold-internal binding state onto the public tuple.

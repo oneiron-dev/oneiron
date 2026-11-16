@@ -215,7 +215,7 @@ pub(super) fn project_once(
             state.conflicted_critical_write_confirms.to_btree_set()
         }),
         federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            state.federation_grant_bindings.to_btree_map()
+            crate::authority::fold_state::to_btree_set_map(&state.federation_grant_bindings)
         }),
         actor_bindings,
         machines,
@@ -224,9 +224,9 @@ pub(super) fn project_once(
             super::owner_proof::asking_owner_choices(state)
         }),
         pinned_root: None,
-        root_anchors: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.root_anchors.to_btree_map()),
+        root_anchors: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            crate::authority::fold_state::to_btree_set_map(&state.root_anchors)
+        }),
         anchor_entries: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.anchor_entries.to_btree_set()),

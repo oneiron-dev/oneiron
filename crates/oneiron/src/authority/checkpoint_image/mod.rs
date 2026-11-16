@@ -454,10 +454,9 @@ impl AuthorityCheckpointV2 {
                 .keys()
                 .all(|hash| self.per_parent.contains_key(hash))
             || safety.nonce_provenance
-                != aggregate
-                    .merged
-                    .critical_write_confirm_nonce_provenance
-                    .to_btree_map()
+                != crate::authority::fold_state::to_btree_set_map(
+                    &aggregate.merged.critical_write_confirm_nonce_provenance,
+                )
         {
             return Err(refused("checkpoint image safety indexes"));
         }

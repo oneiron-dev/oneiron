@@ -3,10 +3,10 @@
 //! any branch is terminal.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oneiron_persistent_collections::PersistentMap;
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::entity_id::EntityId;
 
@@ -129,7 +129,7 @@ pub(in crate::authority) fn merge_machine_chain(
 
 pub(in crate::authority) fn merge_machine_maps(
     merged: &mut PersistentMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
-    keys: &mut PersistentMap<[u8; 32], BTreeSet<KeyClaim>>,
+    keys: &mut PersistentMap<[u8; 32], PersistentSet<KeyClaim>>,
     right: &FoldState,
 ) {
     // A machine or key the merge leaves as it was is not written.
